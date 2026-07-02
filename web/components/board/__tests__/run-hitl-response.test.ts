@@ -46,6 +46,14 @@ const CONSENSUS_SCHEMA = {
   disagreements: [{ axis: "risk", summary: "Different rollout order." }],
 };
 
+const BUDGET_BREACH_SCHEMA = {
+  kind: "budget_breach",
+  scope: "run",
+  meter: "tokens",
+  current: 1200,
+  limit: 1000,
+};
+
 function render(over: Partial<ResponseProps> = {}): string {
   const base: ResponseProps = {
     runId: "run-1",
@@ -137,6 +145,40 @@ describe("RunHitlResponse — review gate panel wiring (ADR-072 Task 13)", () =>
     expect(html).not.toContain("run.reviewOpenCount");
     expect(html).not.toContain("run.reviewOutdatedCount");
     expect(html).not.toContain("run.reviewApproveOpenWarn");
+  });
+});
+
+describe("RunHitlResponse — budget breach staged controls", () => {
+  it("disables budget actions while a composite claim is active", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      claimStage: "preserving",
+      availableOptions: [
+        {
+          optionId: "raise",
+          label: "raise",
+          helperText: "raise",
+          destructive: false,
+          dropAllowed: false,
+          requiresBranchName: false,
+          modes: [],
+        },
+        {
+          optionId: "abandon",
+          label: "abandon",
+          helperText: "abandon",
+          destructive: true,
+          dropAllowed: false,
+          requiresBranchName: false,
+          modes: [],
+        },
+      ],
+    });
+
+    expect(buttonTagFor(html, "run.budgetRaiseResume")).toContain("disabled");
+    expect(buttonTagFor(html, "run.budgetAbandon")).toContain("disabled");
+    expect(html).toContain('data-testid="budget-claim-stage"');
   });
 });
 

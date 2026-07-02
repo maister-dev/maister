@@ -6,6 +6,12 @@ import type {
   ReviewSchema,
   ReviewThreadCountsView,
 } from "@/components/board/hitl-decision-controls";
+import type {
+  BudgetBreachAvailableOption,
+  BudgetBreachClaimStage,
+  BudgetBreachParkMode,
+  BudgetBreachProgressDto,
+} from "@/lib/runs/budget-breach-fork";
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -44,6 +50,9 @@ export interface RunHitlResponseProps {
     | "budget_breach"
     | "hook_trip";
   options: HitlOption[];
+  availableOptions?: BudgetBreachAvailableOption[];
+  budgetProgress?: BudgetBreachProgressDto | null;
+  claimStage?: BudgetBreachClaimStage | null;
   schema: unknown;
   canAct: boolean;
   onRespond?: () => void;
@@ -60,6 +69,9 @@ export function RunHitlResponse({
   hitlRequestId,
   kind,
   options,
+  availableOptions,
+  budgetProgress,
+  claimStage,
   schema,
   canAct,
   onRespond,
@@ -76,6 +88,10 @@ export function RunHitlResponse({
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [comments, setComments] = useState("");
   const [confidence, setConfidence] = useState("");
+  const [budgetParkMode, setBudgetParkMode] =
+    useState<BudgetBreachParkMode>("snapshot");
+  const [budgetBranchName, setBudgetBranchName] = useState("");
+  const [budgetDropWorkspace, setBudgetDropWorkspace] = useState(false);
   // Pre-fill the raise input with the suggested ceiling = breached current × 2
   // (spec §6.2). `current` ≥ the breached limit at escalate, so current × 2 is
   // always a valid suggestion (> limit). Empty for non-budget kinds.
@@ -180,7 +196,12 @@ export function RunHitlResponse({
     void post({ response });
   }
 
-  const disabled = busy || pending || !canAct;
+  const activeBudgetClaim =
+    kind === "budget_breach" &&
+    claimStage !== null &&
+    claimStage !== "failed" &&
+    claimStage !== "relaunch_failed";
+  const disabled = busy || pending || !canAct || activeBudgetClaim;
 
   // M11a graph review HITL: the row's schema declares the allow-list.
   const reviewSchema =
@@ -242,10 +263,8 @@ export function RunHitlResponse({
     handleDecision(reworkDecision);
   }
 
-  // budget_breach raise: POST { optionId: "raise", raiseTo: <int> }. The ceiling
-  // must be a positive integer GREATER than the breached limit (mirrors the
-  // server's fail-closed validation); rejected inline otherwise. The breached
-  // limit is read from the row's schema — never a user-entered field.
+  // budget_breach raise: POST the canonical object while the service still
+  // accepts the legacy raiseTo/number response payloads for old clients.
   function handleBudgetRaise(): void {
     const breach = budgetBreachFromSchema(schema);
     const trimmed = budgetCeiling.trim();
@@ -262,7 +281,45 @@ export function RunHitlResponse({
       return;
     }
 
-    void post({ optionId: "raise", raiseTo: n });
+    void post({
+      optionId: "raise",
+      response: { dimension: breach?.meter, newLimit: n },
+    });
+  }
+
+  function handleBudgetRestart(): void {
+    void post({ optionId: "restart" });
+  }
+
+  function handleBudgetPark(): void {
+    const branchName = budgetBranchName.trim();
+
+    if (budgetParkMode === "export" && branchName.length === 0) {
+      setError(t("budgetParkBranchRequired"));
+
+      return;
+    }
+
+    void post({
+      optionId: "park",
+      response: {
+        mode: budgetParkMode,
+        ...(budgetParkMode === "export" ? { branchName } : {}),
+      },
+    });
+  }
+
+  function handleBudgetAbandon(): void {
+    if (budgetDropWorkspace) {
+      const confirmed = window.confirm(t("budgetDropConfirm"));
+
+      if (!confirmed) return;
+    }
+
+    void post({
+      optionId: "abandon",
+      response: { dropWorkspace: budgetDropWorkspace },
+    });
   }
 
   // Confidence applies to form/human/review; NOT permission, infra_recovery,
@@ -302,7 +359,30 @@ export function RunHitlResponse({
     budgetBreachTitle: t("budgetBreachTitle"),
     budgetNewCeiling: t("budgetNewCeiling"),
     budgetRaiseResume: t("budgetRaiseResume"),
+    budgetRestart: t("budgetRestart"),
+    budgetPark: t("budgetPark"),
     budgetAbandon: t("budgetAbandon"),
+    budgetDropWorkspace: t("budgetDropWorkspace"),
+    budgetParkModeSnapshot: t("budgetParkModeSnapshot"),
+    budgetParkModeExport: t("budgetParkModeExport"),
+    budgetParkBranchName: t("budgetParkBranchName"),
+    budgetParkBranchPlaceholder: t("budgetParkBranchPlaceholder"),
+    budgetProgressLabel: t("budgetProgressLabel"),
+    budgetProgressBudget: t("budgetProgressBudget"),
+    budgetProgressNodes: t("budgetProgressNodes"),
+    budgetProgressDiff: t("budgetProgressDiff"),
+    budgetProgressGates: t("budgetProgressGates"),
+    budgetProgressWallclock: t("budgetProgressWallclock"),
+    budgetProgressResumes: t("budgetProgressResumes"),
+    budgetProgressNoData: t("budgetProgressNoData"),
+    budgetClaimStage: t("budgetClaimStage"),
+    "budgetClaimStage.claimed": t("budgetClaimStageLabels.claimed"),
+    "budgetClaimStage.preserving": t("budgetClaimStageLabels.preserving"),
+    "budgetClaimStage.terminalized": t("budgetClaimStageLabels.terminalized"),
+    "budgetClaimStage.failed": t("budgetClaimStageLabels.failed"),
+    "budgetClaimStage.relaunch_failed": t(
+      "budgetClaimStageLabels.relaunch_failed",
+    ),
     budgetBreachSummary: t("budgetBreachSummary"),
     "budgetScope.run": t("budgetScope.run"),
     "budgetScope.task": t("budgetScope.task"),
@@ -334,7 +414,13 @@ export function RunHitlResponse({
 
   return (
     <HitlDecisionControls
+      availableOptions={availableOptions}
+      budgetBranchName={budgetBranchName}
       budgetCeiling={budgetCeiling}
+      budgetDropWorkspace={budgetDropWorkspace}
+      budgetParkMode={budgetParkMode}
+      budgetProgress={budgetProgress}
+      claimStage={claimStage}
       comments={comments}
       compact={compact}
       confidence={confidence}
@@ -351,7 +437,13 @@ export function RunHitlResponse({
       schema={schema}
       showConfidence={showConfidence}
       onBudgetCeilingChange={setBudgetCeiling}
+      onBudgetAbandon={handleBudgetAbandon}
+      onBudgetBranchNameChange={setBudgetBranchName}
+      onBudgetDropWorkspaceChange={setBudgetDropWorkspace}
+      onBudgetPark={handleBudgetPark}
+      onBudgetParkModeChange={setBudgetParkMode}
       onBudgetRaise={handleBudgetRaise}
+      onBudgetRestart={handleBudgetRestart}
       onCommentsChange={setComments}
       onConfidenceChange={setConfidence}
       onDecision={handleDecision}

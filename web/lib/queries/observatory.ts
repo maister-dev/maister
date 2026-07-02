@@ -453,7 +453,7 @@ async function getBudgetSummary(
   const rows = await client
     .select({
       escalations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.escalated' and ${domainEvents.payload}->>'reason' = 'budget_exceeded')::int`,
-      terminations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.failed' and ${domainEvents.payload}->>'reason' in ('budget_exceeded', 'BUDGET_EXCEEDED', 'budget_breach'))::int`,
+      terminations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.failed' and ${domainEvents.payload}->>'reason' in ('budget_exceeded', 'BUDGET_EXCEEDED', 'budget_breach', 'budget_restart', 'budget_abandoned'))::int`,
       hookTrips: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.escalated' and ${domainEvents.payload}->>'reason' = 'hook_trip')::int`,
     })
     .from(domainEvents)

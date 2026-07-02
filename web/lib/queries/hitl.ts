@@ -14,6 +14,15 @@ import {
 } from "@/lib/runs/active-run-session";
 import { resolveStages, type StageChip } from "@/lib/queries/hitl-stage";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import {
+  budgetBreachClaimStage,
+  getBudgetBreachAvailableOptions,
+  isActiveBudgetBreachClaim,
+  type BudgetBreachAvailableOption,
+  type BudgetBreachAvailabilityContext,
+  type BudgetBreachClaimStage,
+  type BudgetBreachRunStatus,
+} from "@/lib/runs/budget-breach-fork";
 
 const {
   actorIdentities,
@@ -99,6 +108,8 @@ export interface HitlItem {
   taskTitle: string | null;
   prompt: string;
   options: HitlOption[];
+  availableOptions?: BudgetBreachAvailableOption[];
+  claimStage?: BudgetBreachClaimStage | null;
   time: string;
   // Absolute ISO 8601 counterpart of the relative `time` — the external
   // inbox contract (ExtHitlInboxItem.createdAt) needs the raw timestamp.
@@ -171,12 +182,21 @@ export type HitlRowBase = {
   kind: HitlRequest["kind"];
   prompt: string;
   rawSchema: unknown;
+  storedResponse: unknown;
   criticality: "low" | "medium" | "high" | "critical" | null;
   createdAt: Date;
   capabilityAgent: AdapterId | null;
   runnerSnapshot: RunnerSnapshot | null;
   branch: string;
   flowRef: string;
+  runKind: BudgetBreachAvailabilityContext["runKind"];
+  runStatus: BudgetBreachRunStatus;
+  taskId: string | null;
+  agentId: string | null;
+  parentRunId: string | null;
+  agentWorkspace: BudgetBreachAvailabilityContext["agentWorkspace"];
+  workspaceId: string | null;
+  workspaceRemovedAt: Date | null;
   taskNumber: number | null;
   taskKey: string | null;
   taskTitle: string | null;
@@ -212,6 +232,29 @@ export function mapRowsToHitlItems(
       assignment?.assigneeActorId != null
         ? (actorsById.get(assignment.assigneeActorId) ?? null)
         : null;
+    const claimStage =
+      row.kind === "budget_breach"
+        ? budgetBreachClaimStage(row.storedResponse)
+        : null;
+    const activeBudgetClaim =
+      row.kind === "budget_breach" &&
+      isActiveBudgetBreachClaim(row.storedResponse);
+    const budgetAvailableOptions =
+      row.kind === "budget_breach"
+        ? activeBudgetClaim
+          ? []
+          : getBudgetBreachAvailableOptions({
+              runKind: row.runKind,
+              status: row.runStatus,
+              taskId: row.taskId,
+              flowId: row.flowId,
+              agentId: row.agentId,
+              parentRunId: row.parentRunId,
+              agentWorkspace: row.agentWorkspace,
+              hasOwnedWorkspace:
+                row.workspaceId !== null && row.workspaceRemovedAt === null,
+            })
+        : undefined;
 
     return {
       hitlRequestId: row.hitlRequestId,
@@ -241,7 +284,17 @@ export function mapRowsToHitlItems(
           : null,
       taskTitle: row.taskTitle,
       prompt: row.prompt,
-      options: extractOptions(row.kind, row.rawSchema),
+      options:
+        budgetAvailableOptions !== undefined
+          ? budgetAvailableOptions.map((option) => ({
+              optionId: option.optionId,
+              label: option.label,
+            }))
+          : extractOptions(row.kind, row.rawSchema),
+      ...(budgetAvailableOptions !== undefined
+        ? { availableOptions: budgetAvailableOptions }
+        : {}),
+      claimStage,
       time: relativeTime(row.createdAt, now),
       createdAt: row.createdAt.toISOString(),
       // Permission schemas carry supervisor-internal handles (requestId,
@@ -252,6 +305,15 @@ export function mapRowsToHitlItems(
       criticality: row.criticality,
     };
   });
+}
+
+export function isInboxVisibleHitlRow(
+  row: Pick<HitlRowBase, "kind" | "storedResponse">,
+): boolean {
+  return (
+    row.kind !== "budget_breach" ||
+    !isActiveBudgetBreachClaim(row.storedResponse)
+  );
 }
 
 export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
@@ -281,12 +343,21 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       kind: hitlRequests.kind,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
+      storedResponse: hitlRequests.response,
       criticality: hitlRequests.criticality,
       createdAt: hitlRequests.createdAt,
       capabilityAgent: activeSessionCapabilityAgent(runs.id),
       runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
-      branch: workspaces.branch,
+      branch: sql<string>`coalesce(${workspaces.branch}, ${runs.agentId}, ${projects.mainBranch})`,
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
+      runKind: runs.runKind,
+      runStatus: runs.status,
+      taskId: runs.taskId,
+      agentId: runs.agentId,
+      parentRunId: runs.parentRunId,
+      agentWorkspace: runs.agentWorkspace,
+      workspaceId: workspaces.id,
+      workspaceRemovedAt: workspaces.removedAt,
       taskNumber: tasks.number,
       taskKey: projects.taskKey,
       taskTitle: tasks.title,
@@ -296,7 +367,7 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
     })
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
-    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(flows, eq(flows.id, runs.flowId))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -307,7 +378,8 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       ),
     )
     .orderBy(asc(hitlRequests.createdAt));
-  const hitlIds = rows.map((row) => row.hitlRequestId);
+  const visibleRows = rows.filter(isInboxVisibleHitlRow);
+  const hitlIds = visibleRows.map((row) => row.hitlRequestId);
   const assignmentRows =
     hitlIds.length > 0
       ? await client
@@ -334,9 +406,9 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
     assignmentRows.map((assignment) => [assignment.hitlRequestId, assignment]),
   );
 
-  const stagesByHitlId = await resolveStages(client, rows);
+  const stagesByHitlId = await resolveStages(client, visibleRows);
   const items = mapRowsToHitlItems(
-    rows,
+    visibleRows,
     assignmentsByHitlId,
     actorsById,
     stagesByHitlId,

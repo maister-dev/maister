@@ -44,7 +44,7 @@ Implemented surfaces are `web/lib/queries/observatory.ts`,
   HITL waits, and artifact-instance links that explain an aggregate row without
   exposing server-only handles or raw payloads.
 - **Sensor firing stats (M29 — Implemented)** — per `(projectId, flowId, nodeId,
-  gateId)` group and per gate `kind` rollup: terminal-status counts
+gateId)` group and per gate `kind` rollup: terminal-status counts
   (`passed/failed/stale/skipped/overridden`), `executions`, and `fail_rate`
   per the ADR-073 formulas.
 - **Never-fired flag (M29 — Implemented)** — a per-gate boolean raised when a
@@ -104,13 +104,13 @@ token totals, two grouped breakdowns over the persisted rollup columns:
 - **`byModel`** — keyed by the cost record `model` string (`"unknown"` when
   absent), summed across every in-scope `run_cost_rollups.by_model`.
 - **`byRunner`** — keyed by a snapshot-derived stable label `runnerKey =
-  "<adapter>/<model>"` (e.g. `claude/claude-sonnet-4-6`), summed across every
+"<adapter>/<model>"` (e.g. `claude/claude-sonnet-4-6`), summed across every
   in-scope `run_cost_rollups.by_runner`. The key is derived from
   `run_sessions.runner_snapshot` (not the catalog FK), so a deleted runner row
   never erases historical attribution. Cost with no matching `run_sessions` row
   buckets under `"unknown"`.
 
-**Conditional by-runner precision.** The multi-runner split is *exact* only when
+**Conditional by-runner precision.** The multi-runner split is _exact_ only when
 a flow declares multiple logical sessions (distinct `sessionName` per node →
 distinct `run_sessions` rows with distinct snapshots). A single-session flow,
 and every scratch/agent run, maps all cost to one runner via `sessionName =
@@ -127,7 +127,7 @@ Observatory is read-only, reconciliation runs on **write paths** only, via two
 triggers with split roles:
 
 - **`system_sweep` backstop — the completeness guarantee.** Keys on
-  `runs.ended_at` (set on *every* terminal transition, NULL for active runs),
+  `runs.ended_at` (set on _every_ terminal transition, NULL for active runs),
   **not** a terminal-status allow-list and **not** a domain event. This is
   required because **scratch success emits no terminal domain event** (`run.done`
   is emitted only by promotion; only `run.failed` / `run.crashed` /
@@ -138,18 +138,18 @@ triggers with split roles:
   unreconcilable run settles after one attempt (no starvation of newer runs) and
   a pre-`0083` rollup with empty `by_runner` is backfilled once. Predicate:
   `ended_at IS NOT NULL AND ended_at > now − lookback AND (cost_reconciled_at IS
-  NULL OR cost_reconciled_at < ended_at + SETTLE_GRACE)`. `SETTLE_GRACE` (~2 min)
+NULL OR cost_reconciled_at < ended_at + SETTLE_GRACE)`. `SETTLE_GRACE` (~2 min)
   forces one extra re-reconcile so the supervisor's async final `cost.jsonl`
   flush is captured; a settled run is skipped. Lookback =
   `MAISTER_COST_RECONCILE_LOOKBACK_HOURS` (default 168h). See
   [scheduler.md](scheduler.md).
 - **`cost-rollup-reconcile` domain-event consumer — the low-latency fast-path.**
   Subscribes to the existing terminal kinds (`run.done | run.failed |
-  run.crashed | run.abandoned`; no new event kind), `startFrom: "now"`
+run.crashed | run.abandoned`; no new event kind), `startFrom: "now"`
   (forward-only — the sweep owns backfill). It is **poison-safe**: it reconciles
   each run inside a per-run try/catch that logs WARN and never throws, so a
   single permanently-failing run cannot stall the dispatch cursor. It is a
-  fast-path for terminals that *do* emit, **never** the completeness guarantee.
+  fast-path for terminals that _do_ emit, **never** the completeness guarantee.
   See [domain-events.md](domain-events.md).
 
 Both rely on `reconcileRunCostRollups` idempotency (at-least-once dispatch +
@@ -160,20 +160,20 @@ sweep re-reconcile); a re-reconcile after a runner/session change refreshes
 
 ```ts
 interface CostDimensionRow {
-  key: string;          // model string, or "<adapter>/<model>", or "unknown"
-  label: string;        // display label (same as key today)
+  key: string; // model string, or "<adapter>/<model>", or "unknown"
+  label: string; // display label (same as key today)
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
-  totalTokens: number;  // sum of the four kinds
+  totalTokens: number; // sum of the four kinds
 }
 
 interface ObservatoryCostSummary {
   // …existing flat totals (inputTokens, …, resumeTokens, totalTokens,
   // projectCount, flowCount, nodeCount)…
-  byModel: CostDimensionRow[];   // sorted by totalTokens desc, then key
-  byRunner: CostDimensionRow[];  // sorted by totalTokens desc, then key
+  byModel: CostDimensionRow[]; // sorted by totalTokens desc, then key
+  byRunner: CostDimensionRow[]; // sorted by totalTokens desc, then key
 }
 ```
 
@@ -182,19 +182,21 @@ read-only count of token-budget breaches in the window, sourced project-scoped
 from `domain_events` — escalations (`kind = 'run.escalated'`,
 `payload->>'reason' = 'budget_exceeded'`) and terminations (`kind =
 'run.failed'`, `payload->>'reason' in ('budget_exceeded', 'BUDGET_EXCEEDED',
-'budget_breach')` — the terminate reason is not normalized across
-flow/scratch/agent/tree-root, so all three variants are matched). The WARN rung
+'budget_breach', 'budget_restart', 'budget_abandoned')` — the terminate reason
+is not normalized across flow/scratch/agent/tree-root and ADR-125 adds restart
+and human-abandon reasons). `budget_parked` is intentionally excluded because
+that path emits `run.abandoned` after preserving the work product. The WARN rung
 is a `logExecPolicyAction` log line with no domain event and is therefore NOT
 surfaced here. One grouped scan, no per-run loop, no new route.
 
 UI/test acceptance:
 
-| Surface | Acceptance and states | Test owner |
-| --- | --- | --- |
-| Portfolio Observatory cost tab/filter | Groups by project and Flow, shows token totals by kind, model breakdown, resume-tax subtotal, honest denominators, volatile marker for active runs, and useful empty state for no cost rows. All labels have EN/RU messages. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/observatory-cost*.test.ts` |
-| Project/node drill-down | Filters preserve URL-synchronized Observatory state, show node-attempt token totals/durations, and render "insufficient data" instead of fake zeroes when the denominator is too small. | `web/e2e/multi-run-cost-policy.spec.ts`; pure rollup tests |
-| Read-only failure mode | Missing or stale derived rollups show a bounded warning/empty row; the UI never triggers recomputation through a mutating HTTP route and never polls raw `cost.jsonl`. | `web/e2e/multi-run-cost-policy.spec.ts`; query integration tests |
-| Runner breakdown card | Portfolio + project cost tab render a "By runner" card with `<adapter>/<model>` rows, an `"unknown"` row for unattributed cost, an empty-state row, and EN/RU labels. | `web/components/observatory/__tests__/observatory-components.test.ts`; `web/e2e/observatory-cost-breakdown.spec.ts` |
+| Surface                               | Acceptance and states                                                                                                                                                                                                        | Test owner                                                                                                          |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Portfolio Observatory cost tab/filter | Groups by project and Flow, shows token totals by kind, model breakdown, resume-tax subtotal, honest denominators, volatile marker for active runs, and useful empty state for no cost rows. All labels have EN/RU messages. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/observatory-cost*.test.ts`                      |
+| Project/node drill-down               | Filters preserve URL-synchronized Observatory state, show node-attempt token totals/durations, and render "insufficient data" instead of fake zeroes when the denominator is too small.                                      | `web/e2e/multi-run-cost-policy.spec.ts`; pure rollup tests                                                          |
+| Read-only failure mode                | Missing or stale derived rollups show a bounded warning/empty row; the UI never triggers recomputation through a mutating HTTP route and never polls raw `cost.jsonl`.                                                       | `web/e2e/multi-run-cost-policy.spec.ts`; query integration tests                                                    |
+| Runner breakdown card                 | Portfolio + project cost tab render a "By runner" card with `<adapter>/<model>` rows, an `"unknown"` row for unattributed cost, an empty-state row, and EN/RU labels.                                                        | `web/components/observatory/__tests__/observatory-components.test.ts`; `web/e2e/observatory-cost-breakdown.spec.ts` |
 
 ### Acceptance & edge-case register (ADR-117)
 
@@ -202,23 +204,23 @@ Each criterion maps to exactly one owning test (minimum overlap — the sweep-on
 and poison cases live only in the Phase-2 integration specs, not duplicated at
 the unit layer).
 
-| Criterion / edge case | Owning test |
-| --- | --- |
-| Scratch run included without being opened (rollup written by a trigger) | `cost-rollup-reconcile.integration.test.ts` |
-| Scratch success with **no** terminal event → included via the `ended_at` sweep | `cost-reconcile-sweep.integration.test.ts` |
-| Multi-model split in `by_model` | `cost-rollups.test.ts` |
-| Multi-session flow → multi-runner split in `by_runner` | `cost-rollups.integration.test.ts` |
-| Single-session flow with N nodes → exactly one runner bucket (D2a) | `cost-rollups.integration.test.ts` |
-| `"unknown"` runner bucket (cost record with no `run_sessions` row) | `cost-rollups.integration.test.ts` |
-| Idempotent re-reconcile after session runner change → no stale `by_runner` key | `cost-rollups.integration.test.ts` |
-| Poison-message safety: always-failing run never stalls the consumer cursor | `cost-rollup-reconcile.integration.test.ts` |
-| Late cost-flush captured via `SETTLE_GRACE` re-reconcile | `cost-reconcile-sweep.integration.test.ts` |
-| Long-settled rollup skipped (no redundant disk read) | `cost-reconcile-sweep.integration.test.ts` |
-| Read-only boundary: `getCostSummary` performs no reconcile / no `cost.jsonl` read | `observatory-cost.integration.test.ts` |
-| Resume tax not double-counted into the session bucket | `cost-rollups.test.ts` |
-| Project-less local-package run handled gracefully | `cost-rollup-reconcile.integration.test.ts` |
-| Empty project → `byModel: []`, `byRunner: []` | `observatory-cost.integration.test.ts` |
-| Project/portfolio `byModel` + `byRunner` summed across runs, sorted deterministically | `observatory-cost.integration.test.ts` |
+| Criterion / edge case                                                                 | Owning test                                 |
+| ------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Scratch run included without being opened (rollup written by a trigger)               | `cost-rollup-reconcile.integration.test.ts` |
+| Scratch success with **no** terminal event → included via the `ended_at` sweep        | `cost-reconcile-sweep.integration.test.ts`  |
+| Multi-model split in `by_model`                                                       | `cost-rollups.test.ts`                      |
+| Multi-session flow → multi-runner split in `by_runner`                                | `cost-rollups.integration.test.ts`          |
+| Single-session flow with N nodes → exactly one runner bucket (D2a)                    | `cost-rollups.integration.test.ts`          |
+| `"unknown"` runner bucket (cost record with no `run_sessions` row)                    | `cost-rollups.integration.test.ts`          |
+| Idempotent re-reconcile after session runner change → no stale `by_runner` key        | `cost-rollups.integration.test.ts`          |
+| Poison-message safety: always-failing run never stalls the consumer cursor            | `cost-rollup-reconcile.integration.test.ts` |
+| Late cost-flush captured via `SETTLE_GRACE` re-reconcile                              | `cost-reconcile-sweep.integration.test.ts`  |
+| Long-settled rollup skipped (no redundant disk read)                                  | `cost-reconcile-sweep.integration.test.ts`  |
+| Read-only boundary: `getCostSummary` performs no reconcile / no `cost.jsonl` read     | `observatory-cost.integration.test.ts`      |
+| Resume tax not double-counted into the session bucket                                 | `cost-rollups.test.ts`                      |
+| Project-less local-package run handled gracefully                                     | `cost-rollup-reconcile.integration.test.ts` |
+| Empty project → `byModel: []`, `byRunner: []`                                         | `observatory-cost.integration.test.ts`      |
+| Project/portfolio `byModel` + `byRunner` summed across runs, sorted deterministically | `observatory-cost.integration.test.ts`      |
 
 ## Process flows
 
@@ -264,12 +266,12 @@ flowchart TD
 
 Worked examples use `now = 2026-06-05T12:00:00.000Z`.
 
-| Example | Rows in scope | Expected |
-| ------- | ------------- | -------- |
-| No runs | zero eligible flow runs | `runCount=0`, `correctionRate=0`, empty groups |
-| Rework plus second human review | one run, node `implement` attempts `1,2`; node `review` attempts `1,2`; first review has `status='Reworked'` | `runCount=1`, `retryCount=2`, `reworkCount=1`, `correctionRate=3` |
-| Legacy run without node attempts | one flow run, zero `node_attempts` | excluded from denominator and numerator |
-| Artifact with null `artifact_def_id` | artifact linked to a contributing node attempt with `kind='log'` | included in artifact bucket `kind:log` |
+| Example                              | Rows in scope                                                                                                | Expected                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| No runs                              | zero eligible flow runs                                                                                      | `runCount=0`, `correctionRate=0`, empty groups                    |
+| Rework plus second human review      | one run, node `implement` attempts `1,2`; node `review` attempts `1,2`; first review has `status='Reworked'` | `runCount=1`, `retryCount=2`, `reworkCount=1`, `correctionRate=3` |
+| Legacy run without node attempts     | one flow run, zero `node_attempts`                                                                           | excluded from denominator and numerator                           |
+| Artifact with null `artifact_def_id` | artifact linked to a contributing node attempt with `kind='log'`                                             | included in artifact bucket `kind:log`                            |
 
 ### Autonomy Score formula
 
@@ -300,12 +302,12 @@ flowchart TD
 
 Worked examples use `now = 2026-06-05T12:00:00.000Z`.
 
-| Example | Rows in scope | Expected |
-| ------- | ------------- | -------- |
-| Active run with open HITL | run `11:00..now`, one open HITL `11:30..now` | `totalSeconds=3600`, `waitSeconds=1800`, `openWaitCount=1`, `autonomyScore=0.5`, `volatile=true` |
-| Overlapping waits | run `10:00..11:00`, waits `10:10..10:30` and `10:20..10:40` | merged wait is `10:10..10:40`, `waitSeconds=1800`, `autonomyScore=0.5` |
-| Review dwell without HITL | run `10:00..11:00`, no `hitl_requests`, run sat in `Review` after completion | `waitSeconds=0`, `autonomyScore=1`, `reviewDwellExcluded=true` |
-| Zero-duration run | run starts and ends at same timestamp | denominator clamps to one second |
+| Example                   | Rows in scope                                                                | Expected                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Active run with open HITL | run `11:00..now`, one open HITL `11:30..now`                                 | `totalSeconds=3600`, `waitSeconds=1800`, `openWaitCount=1`, `autonomyScore=0.5`, `volatile=true` |
+| Overlapping waits         | run `10:00..11:00`, waits `10:10..10:30` and `10:20..10:40`                  | merged wait is `10:10..10:40`, `waitSeconds=1800`, `autonomyScore=0.5`                           |
+| Review dwell without HITL | run `10:00..11:00`, no `hitl_requests`, run sat in `Review` after completion | `waitSeconds=0`, `autonomyScore=1`, `reviewDwellExcluded=true`                                   |
+| Zero-duration run         | run starts and ends at same timestamp                                        | denominator clamps to one second                                                                 |
 
 ### Signal clustering
 
@@ -425,12 +427,14 @@ flowchart TD
 - **(M29 — Implemented)** Every harness rate MUST render with its denominator, and
   any group with `executions < 3` MUST render as "—" (insufficient data), never
   as `0%`.
-- **(ADR-101 — Implemented)** Budget surfacing MUST read `domain_events`
-  project-scoped within the window via ONE grouped SELECT (escalations =
-  `run.escalated`/`budget_exceeded`; terminations = `run.failed`/{`budget_exceeded`,
-  `BUDGET_EXCEEDED`, `budget_breach`}); it MUST count only budget-reason events,
-  MUST NOT surface the WARN rung (no domain event), and MUST stay read-only (no
-  actions, EN+RU labels).
+- **(ADR-101 / ADR-125 — Implemented)** Budget surfacing MUST read
+  `domain_events` project-scoped within the window via ONE grouped SELECT
+  (escalations = `run.escalated`/`budget_exceeded`; terminations =
+  `run.failed`/{`budget_exceeded`, `BUDGET_EXCEEDED`, `budget_breach`,
+  `budget_restart`, `budget_abandoned`}); it MUST count only budget-reason
+  failed events, MUST exclude `run.abandoned`/`budget_parked`, MUST NOT surface
+  the WARN rung (no domain event), and MUST stay read-only (no actions, EN+RU
+  labels).
 
 ## Edge cases
 

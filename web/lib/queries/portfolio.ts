@@ -33,7 +33,7 @@ import {
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
-import { mapRowsToHitlItems } from "@/lib/queries/hitl";
+import { isInboxVisibleHitlRow, mapRowsToHitlItems } from "@/lib/queries/hitl";
 import { resolveStages } from "@/lib/queries/hitl-stage";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
@@ -424,7 +424,9 @@ export async function getPortfolio(
       .select({
         projectId: runs.projectId,
         runId: runs.id,
+        kind: hitlRequests.kind,
         prompt: hitlRequests.prompt,
+        storedResponse: hitlRequests.response,
         capabilityAgent: activeSessionCapabilityAgent(runs.id),
         runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
         branch: workspaces.branch,
@@ -580,7 +582,10 @@ export async function getPortfolio(
   const assignmentNeedRunIds = new Set(needRows.map((row) => row.runId));
   const effectiveNeedRows = [
     ...needRows,
-    ...legacyNeedRows.filter((row) => !assignmentNeedRunIds.has(row.runId)),
+    ...legacyNeedRows.filter(
+      (row) =>
+        !assignmentNeedRunIds.has(row.runId) && isInboxVisibleHitlRow(row),
+    ),
   ];
 
   for (const row of effectiveNeedRows) {
@@ -1098,13 +1103,22 @@ export async function getCrossProjectHitlInbox(
       kind: hitlRequests.kind,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
+      storedResponse: hitlRequests.response,
       criticality: hitlRequests.criticality,
       createdAt: hitlRequests.createdAt,
       capabilityAgent: activeSessionCapabilityAgent(runs.id),
       runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
-      branch: workspaces.branch,
+      branch: sql<string>`coalesce(${workspaces.branch}, ${runs.agentId}, ${projects.mainBranch})`,
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       projectId: runs.projectId,
+      runKind: runs.runKind,
+      runStatus: runs.status,
+      taskId: runs.taskId,
+      agentId: runs.agentId,
+      parentRunId: runs.parentRunId,
+      agentWorkspace: runs.agentWorkspace,
+      workspaceId: workspaces.id,
+      workspaceRemovedAt: workspaces.removedAt,
       taskNumber: tasks.number,
       taskKey: projects.taskKey,
       taskTitle: tasks.title,
@@ -1116,7 +1130,7 @@ export async function getCrossProjectHitlInbox(
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .innerJoin(projects, eq(projects.id, runs.projectId))
-    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(flows, eq(flows.id, runs.flowId))
     .where(
       and(
@@ -1127,12 +1141,14 @@ export async function getCrossProjectHitlInbox(
     )
     .orderBy(asc(hitlRequests.createdAt));
 
-  if (rows.length === 0) {
+  const visibleRows = rows.filter(isInboxVisibleHitlRow);
+
+  if (visibleRows.length === 0) {
     return { items: [], count: 0 };
   }
 
   // Batched assignment + actor lookups (no N+1).
-  const hitlIds = rows.map((row) => row.hitlRequestId);
+  const hitlIds = visibleRows.map((row) => row.hitlRequestId);
   const assignmentRows = await client
     .select()
     .from(assignments)
@@ -1163,9 +1179,9 @@ export async function getCrossProjectHitlInbox(
     visibleProjects.map((p) => [p.id, { slug: p.slug, name: p.name }]),
   );
 
-  const stagesByHitlId = await resolveStages(client, rows);
+  const stagesByHitlId = await resolveStages(client, visibleRows);
   const baseItems = mapRowsToHitlItems(
-    rows,
+    visibleRows,
     assignmentsByHitlId,
     actorsById,
     stagesByHitlId,
@@ -1176,7 +1192,7 @@ export async function getCrossProjectHitlInbox(
     // The HITL query inner-joins projects + filters inArray(projectIds), so
     // projectId is non-null. Project-less local-package assistant HITL stays
     // private to the scratch conversation because it has no project scope.
-    const projId = requireRunProjectId(rows[idx].projectId);
+    const projId = requireRunProjectId(visibleRows[idx].projectId);
     const proj = projectById.get(projId) ?? { slug: projId, name: projId };
 
     return {

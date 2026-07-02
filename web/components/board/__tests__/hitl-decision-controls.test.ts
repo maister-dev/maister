@@ -1,4 +1,5 @@
 import type { HitlOption } from "@/lib/queries/hitl";
+import type { BudgetBreachAvailableOption } from "@/lib/runs/budget-breach-fork";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -73,7 +74,23 @@ const BUDGET_LABELS = {
   budgetBreachTitle: "Budget breach",
   budgetNewCeiling: "New ceiling",
   budgetRaiseResume: "Raise & resume",
-  budgetAbandon: "Abandon",
+  budgetRestart: "Restart fresh",
+  budgetPark: "Park result",
+  budgetAbandon: "Discard",
+  budgetDropWorkspace: "Drop workspace now",
+  budgetParkModeSnapshot: "Snapshot",
+  budgetParkModeExport: "Export branch",
+  budgetParkBranchName: "Branch name",
+  budgetParkBranchPlaceholder: "maister/budget-parked",
+  budgetProgressLabel: "Progress",
+  budgetProgressBudget: "Budget",
+  budgetProgressNodes: "Nodes",
+  budgetProgressDiff: "Diff",
+  budgetProgressGates: "Gates",
+  budgetProgressWallclock: "Wall-clock",
+  budgetProgressResumes: "Resumes",
+  budgetProgressNoData: "No data",
+  budgetClaimStage: "$stage",
   budgetBreachSummary: "$scope $meter reached $current of $limit.",
   "budgetScope.run": "Run",
   "budgetScope.task": "Task",
@@ -839,6 +856,45 @@ const BUDGET_BREACH_SCHEMA = {
   decisions: ["raise", "abandon"],
 };
 
+const FOUR_WAY_OPTIONS: BudgetBreachAvailableOption[] = [
+  {
+    optionId: "raise",
+    label: "raise",
+    helperText: "raise",
+    destructive: false,
+    dropAllowed: false,
+    requiresBranchName: false,
+    modes: [],
+  },
+  {
+    optionId: "restart",
+    label: "restart",
+    helperText: "restart",
+    destructive: false,
+    dropAllowed: false,
+    requiresBranchName: false,
+    modes: [],
+  },
+  {
+    optionId: "park",
+    label: "park",
+    helperText: "park",
+    destructive: false,
+    dropAllowed: false,
+    requiresBranchName: false,
+    modes: ["snapshot", "export"],
+  },
+  {
+    optionId: "abandon",
+    label: "abandon",
+    helperText: "abandon",
+    destructive: true,
+    dropAllowed: true,
+    requiresBranchName: false,
+    modes: [],
+  },
+];
+
 describe("HitlDecisionControls — budget_breach card", () => {
   it("renders the breach summary with scope, meter, current and limit", () => {
     const html = render({
@@ -856,6 +912,7 @@ describe("HitlDecisionControls — budget_breach card", () => {
       kind: "budget_breach",
       schema: BUDGET_BREACH_SCHEMA,
       labels: BUDGET_LABELS,
+      availableOptions: [FOUR_WAY_OPTIONS[0]],
       budgetCeiling: "2400",
     });
 
@@ -864,17 +921,94 @@ describe("HitlDecisionControls — budget_breach card", () => {
     expect(html).toContain('value="2400"');
   });
 
-  it("renders both the Raise and Abandon buttons", () => {
+  it("does not invent budget actions when server availability is absent", () => {
     const html = render({
       kind: "budget_breach",
       schema: BUDGET_BREACH_SCHEMA,
       labels: BUDGET_LABELS,
     });
 
+    expect(html).toContain('data-testid="budget-breach-card"');
+    expect(html).not.toContain('data-testid="budget-breach-raise"');
+    expect(html).not.toContain('data-testid="budget-breach-abandon"');
+    expect(html).not.toContain('data-testid="budget-breach-restart"');
+    expect(html).not.toContain('data-testid="budget-breach-park"');
+  });
+
+  it("renders the server-provided four-way option surface", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+      availableOptions: [...FOUR_WAY_OPTIONS],
+    });
+
     expect(html).toContain('data-testid="budget-breach-raise"');
-    expect(html).toContain("Raise &amp; resume");
+    expect(html).toContain('data-testid="budget-breach-restart"');
+    expect(html).toContain('data-testid="budget-breach-park"');
     expect(html).toContain('data-testid="budget-breach-abandon"');
-    expect(html).toContain(">Abandon<");
+    expect(html).toContain('data-testid="budget-drop-workspace"');
+    expect(html).toContain("Restart fresh");
+    expect(html).toContain("Park result");
+  });
+
+  it("renders export branch input only when export mode is selected", () => {
+    const snapshotHtml = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+      availableOptions: [...FOUR_WAY_OPTIONS],
+      budgetParkMode: "snapshot",
+    });
+    const exportHtml = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+      availableOptions: [...FOUR_WAY_OPTIONS],
+      budgetParkMode: "export",
+      budgetBranchName: "maister/budget-parked",
+    });
+
+    expect(snapshotHtml).not.toContain('data-testid="budget-park-branch"');
+    expect(exportHtml).toContain('data-testid="budget-park-branch"');
+    expect(exportHtml).toContain('value="maister/budget-parked"');
+  });
+
+  it("renders the progress DTO without exposing file contents", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+      availableOptions: [...FOUR_WAY_OPTIONS],
+      budgetProgress: {
+        breach: {
+          dimension: "tokens",
+          limit: 1000,
+          spent: 1200,
+          overshootPct: 20,
+        },
+        budgetByDimension: {
+          tokens: { limit: 1000, spent: 1200, source: "value" },
+          failures: { limit: null, spent: null, source: "no-data" },
+          wallclock: { limit: 60, spent: 18, source: "value" },
+        },
+        nodes: { completed: 2, total: 5, currentNodeId: "implement" },
+        diff: { filesChanged: 3, insertions: 10, deletions: 2 },
+        gates: {
+          satisfied: 1,
+          failed: 1,
+          open: 2,
+          unknown: 0,
+        },
+        wallclockMinutes: 18,
+        resumeCount: 1,
+      },
+    });
+
+    expect(html).toContain('data-testid="budget-progress"');
+    expect(html).toContain("1200 / 1000");
+    expect(html).toContain("2 / 5");
+    expect(html).toContain("3 files, +10 / -2");
   });
 
   it("never renders a confidence input for budget_breach", () => {
@@ -911,11 +1045,12 @@ describe("HitlDecisionControls — budget_breach card", () => {
       kind: "budget_breach",
       schema: BUDGET_BREACH_SCHEMA,
       labels: BUDGET_LABELS,
+      availableOptions: [...FOUR_WAY_OPTIONS],
       disabled: true,
     });
 
     expect(buttonTagFor(html, "Raise &amp; resume")).toContain("disabled");
-    expect(buttonTagFor(html, ">Abandon<")).toContain("disabled");
+    expect(buttonTagFor(html, ">Discard<")).toContain("disabled");
   });
 });
 

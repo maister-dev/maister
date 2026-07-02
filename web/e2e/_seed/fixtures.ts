@@ -129,6 +129,14 @@ export type E2EM40Fixture = {
   noProgressTaskTitle: string;
 };
 
+export type E2EBudgetForkFixture = {
+  projectSlug: string;
+  projectId: string;
+  runId: string;
+  hitlRequestId: string;
+  taskTitle: string;
+};
+
 // M19 Phase 5: reconcile + GC UI fixture. One project carrying:
 //   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
 //     node → recoverable: true (run-detail crashed section + board Crashed col);
@@ -199,6 +207,7 @@ export type E2EFixtures = {
     orchestrator: E2EOrchestratorFixture;
     m38: E2EM38Fixture;
     m40: E2EM40Fixture;
+    budgetFork: E2EBudgetForkFixture;
   };
 };
 

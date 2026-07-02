@@ -123,28 +123,55 @@ Because the stop commit is durable before the worktree op, no two-phase
 idempotency marker is added; the crash/failure windows degrade to the parked
 state, from which the plain `Archive`/`Drop` actions complete the work:
 
-| Failure | HTTP | Run state | Recovery |
-| --- | --- | --- | --- |
-| Stop step fails | 5xx / 409 | unchanged (still live) | retry the combined action |
-| Stop ok, archive/drop fails | that op's error code | `Review` (worktree intact) | plain `Archive` / `Drop` from the menu |
-| Process crash between stop-commit and archive/drop-commit | — | `Review`, no orphan (worktree op never started) | plain `Archive` / `Drop` |
+| Failure                                                   | HTTP                 | Run state                                       | Recovery                               |
+| --------------------------------------------------------- | -------------------- | ----------------------------------------------- | -------------------------------------- |
+| Stop step fails                                           | 5xx / 409            | unchanged (still live)                          | retry the combined action              |
+| Stop ok, archive/drop fails                               | that op's error code | `Review` (worktree intact)                      | plain `Archive` / `Drop` from the menu |
+| Process crash between stop-commit and archive/drop-commit | —                    | `Review`, no orphan (worktree op never started) | plain `Archive` / `Drop`               |
 
 Combined `Stop & *` for `runKind=agent` is out of scope this iteration; an agent
 row exposes only the plain (terminating) `Stop`.
 
+## Budget-breach preserve/drop composites
+
+`budget_breach` (ADR-125) composes a narrower lifecycle path from the same
+workbench primitives but does **not** call the generic `stop`,
+`stopThenArchive`, or `stopThenDrop` dispatcher. The generic stop contract parks
+flow/scratch work in `Review`; a budget operator choosing **Park the result**
+means "preserve the work and stop this run", so the budget composite owns a
+preserve-then-terminal transition:
+
+- **Park / snapshot**: checkpoint any active session defensively, snapshot dirty
+  work on the run branch when needed, archive the preserved ref, then mark the
+  run `Abandoned` with `reason="budget_parked"`.
+- **Park / export**: validate the requested branch name, reject local/remote
+  collisions, snapshot dirty work first, create/push the exported branch through
+  the existing branch/export primitives, archive the exported ref, then mark the
+  run `Abandoned`.
+- **Discard with dropWorkspace**: first run the default budget abandon terminal
+  path (`Failed`, `BUDGET_EXCEEDED`), then remove the owned worktree and run
+  branch. The final run status remains `Failed`; no-workspace rows accept the
+  flag as a no-op and the UI hides the destructive variant.
+
+The budget composite shares the lifecycle claim discipline where it performs
+git/filesystem preservation, but its idempotency marker is the
+`hitl_requests.response.stage` field. Failures before the first preservation
+write set `stage:"failed"` and allow the operator to answer again; after a ref
+is preserved, only same-payload completion is allowed.
+
 ## Route contracts and trust boundary
 
-| Route                                    | Purpose                                                           | Trusted identifiers                                                                         |
-| ---------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Route                                    | Purpose                                                                                                                | Trusted identifiers                                                                         |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `POST /api/runs/{runId}/stop`            | Stop a live workbench, dispatched on `run_kind` (flow → `Review`, scratch → `Review`/`Abandoned`, agent → `Abandoned`) | `runId` is URL-param; `run_kind`, project, ACP session, and workspace metadata are DB state |
-| `POST /api/runs/{runId}/stop-archive`    | Stop then archive a live flow or scratch run (Implemented)           | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
-| `POST /api/runs/{runId}/stop-drop`       | Stop then drop a live flow run (Implemented); scratch reuses `/discard` | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
-| `POST /api/runs/{runId}/archive`         | Preserve worktree into `maister/archive/{runId}`                  | branch, paths, base ref, and project are DB state                                           |
-| `POST /api/runs/{runId}/drop`            | Preserve then remove an owned worktree                            | worktree path and allowed root are server state                                             |
-| `POST /api/runs/{runId}/export-branch`   | Push the run branch; optional force-with-lease retry              | remote and force are body-controlled; branch and paths are DB state                         |
-| `GET /api/runs/{runId}/handoff-metadata` | Read dirty state, remotes, suggested branch, and checkout preview | runId is URL-param; branch and paths are DB state                                           |
-| `POST /api/runs/{runId}/snapshot-commit` | Commit dirty work on the run branch                               | commit message is body-controlled; branch and paths are DB state                            |
-| `POST /api/runs/{runId}/handoff-branch`  | Create and push a continuation branch                             | remote and handoff branch are body-controlled; current branch, HEAD, and paths are DB state |
+| `POST /api/runs/{runId}/stop-archive`    | Stop then archive a live flow or scratch run (Implemented)                                                             | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
+| `POST /api/runs/{runId}/stop-drop`       | Stop then drop a live flow run (Implemented); scratch reuses `/discard`                                                | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
+| `POST /api/runs/{runId}/archive`         | Preserve worktree into `maister/archive/{runId}`                                                                       | branch, paths, base ref, and project are DB state                                           |
+| `POST /api/runs/{runId}/drop`            | Preserve then remove an owned worktree                                                                                 | worktree path and allowed root are server state                                             |
+| `POST /api/runs/{runId}/export-branch`   | Push the run branch; optional force-with-lease retry                                                                   | remote and force are body-controlled; branch and paths are DB state                         |
+| `GET /api/runs/{runId}/handoff-metadata` | Read dirty state, remotes, suggested branch, and checkout preview                                                      | runId is URL-param; branch and paths are DB state                                           |
+| `POST /api/runs/{runId}/snapshot-commit` | Commit dirty work on the run branch                                                                                    | commit message is body-controlled; branch and paths are DB state                            |
+| `POST /api/runs/{runId}/handoff-branch`  | Create and push a continuation branch                                                                                  | remote and handoff branch are body-controlled; current branch, HEAD, and paths are DB state |
 
 All routes require a session and project membership at `member` or above. Stop,
 stop-archive, stop-drop, archive, and drop use `recoverRun` (the combined routes

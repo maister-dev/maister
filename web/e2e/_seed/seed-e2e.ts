@@ -3387,6 +3387,26 @@ type M17FixtureRecord = {
   project2Branch: string;
 };
 
+type BudgetForkFixtureRecord = {
+  projectSlug: string;
+  projectId: string;
+  runId: string;
+  hitlRequestId: string;
+  taskTitle: string;
+};
+
+const BUDGET_FORK_SLUG = "e2e-budget-fork";
+const BUDGET_FORK_BRANCH = "maister/e2e-budget-fork";
+const BUDGET_FORK_TASK_TITLE = "Budget Fork Decision";
+const BUDGET_FORK_SCHEMA = {
+  kind: "budget_breach",
+  scope: "run",
+  meter: "tokens",
+  current: 1200,
+  limit: 1000,
+  decisions: ["raise", "abandon"],
+};
+
 async function seedM17Fixture(
   pool: Pool,
   _userId: string,
@@ -3600,6 +3620,132 @@ async function seedM17Fixture(
     project2RunId: ids.run2,
     project2HitlId: ids.hitl2,
     project2Branch: M17_BRANCH2,
+  };
+}
+
+async function seedBudgetForkFixture(
+  pool: Pool,
+  _userId: string,
+): Promise<BudgetForkFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    hitl: randomUUID(),
+    implAttempt: randomUUID(),
+    reviewAttempt: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-budget-fork`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [BUDGET_FORK_SLUG]);
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      ids.project,
+      BUDGET_FORK_SLUG,
+      "MAIster E2E Budget Fork",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-budget-fork@v0.0.1`,
+      JSON.stringify(M17_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
+    [
+      ids.task,
+      ids.project,
+      BUDGET_FORK_TASK_TITLE,
+      "Decide how to handle a budget breach",
+      ids.flow,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs
+       (id, task_id, project_id, flow_id, status, current_step_id, flow_version,
+        execution_policy, budget_state, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', $5, $6, now() - interval '17 minutes')`,
+    [
+      ids.run,
+      ids.task,
+      ids.project,
+      ids.flow,
+      JSON.stringify({
+        preset: "supervised",
+        overrides: {
+          budget: {
+            run: {
+              maxTokens: 1000,
+              consecutiveFailures: 3,
+              wallClockMinutes: 60,
+            },
+          },
+          onBudgetBreach: "escalate",
+        },
+      }),
+      JSON.stringify({ notified: { run: "escalate" }, ceilingOverride: {} }),
+    ],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: PLATFORM_DEFAULT_RUNNER_ID,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(PLATFORM_DEFAULT_RUNNER_ID),
+  });
+  await pool.query(
+    `INSERT INTO workspaces
+       (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, target_branch)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', 'maister/e2e-budget-target')`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      BUDGET_FORK_BRANCH,
+      worktreePath,
+      repoPath,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+    [ids.implAttempt, ids.run],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.reviewAttempt, ids.run],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, criticality)
+     VALUES ($1, $2, 'review', 'budget_breach', $3, $4, 'high')`,
+    [
+      ids.hitl,
+      ids.run,
+      JSON.stringify(BUDGET_FORK_SCHEMA),
+      "Budget exceeded; choose how to continue.",
+    ],
+  );
+
+  return {
+    projectSlug: BUDGET_FORK_SLUG,
+    projectId: ids.project,
+    runId: ids.run,
+    hitlRequestId: ids.hitl,
+    taskTitle: BUDGET_FORK_TASK_TITLE,
   };
 }
 
@@ -4734,7 +4880,7 @@ async function seedScratchDetailFixture(
 
   for (const [sequence, role, content] of messages) {
     await pool.query(
-      `INSERT INTO scratch_messages (id, run_id, sequence, role, content)
+      `INSERT INTO run_messages (id, run_id, sequence, role, content)
        VALUES ($1, $2, $3, $4, $5)`,
       [randomUUID(), ids.run, sequence, role, content],
     );
@@ -6196,6 +6342,7 @@ async function main(): Promise<void> {
     const m15 = await seedM15Fixture(pool, admin.id);
     const m16 = await seedM16Fixture(pool, admin.id);
     const m17 = await seedM17Fixture(pool, admin.id);
+    const budgetFork = await seedBudgetForkFixture(pool, admin.id);
     const m18 = await seedM18Fixture(pool, admin.id);
     const m27 = await seedM27Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
@@ -6253,6 +6400,7 @@ async function main(): Promise<void> {
         m15,
         m16,
         m17,
+        budgetFork,
         m18,
         m27,
         m22,
@@ -6295,6 +6443,7 @@ async function main(): Promise<void> {
         `, m15 failed ${m15.failedRunId} overridden ${m15.overriddenRunId} (${M15_SLUG})` +
         `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})` +
         `, m17 proj1 ${m17.project1RunId} proj2 ${m17.project2RunId} (${M17_PROJECT1_SLUG}, ${M17_PROJECT2_SLUG})` +
+        `, budget-fork ${budgetFork.runId} (${BUDGET_FORK_SLUG})` +
         `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})` +
         `, m27 flow ${m27.flowRunId} scratch ${m27.scratchRunId} (${M27_SLUG})` +
         `, m22 run ${m22.runId} (${M22_SLUG})` +

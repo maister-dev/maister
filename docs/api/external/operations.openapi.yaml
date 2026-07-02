@@ -65,8 +65,10 @@ tags:
       Human-in-the-loop list + respond via token auth (M17, 0063 Implemented).
       Run-scoped list enforces `hitl:read`; cross-project personal inbox
       enforces `hitl:inbox:read`; permission/form responses enforce
-      `hitl:respond`; human/infra_recovery/budget_breach responses require a
-      global personal user token with exact `hitl:respond:human`.
+      `hitl:respond`; human responses require a global personal user token with
+      exact `hitl:respond:human`. `infra_recovery` and `budget_breach`
+      responses remain session-auth-only in ADR-125 and are not opened to
+      external token actors.
   - name: comments
     description: |
       (ADR-078, Implemented) Task comment list + create via token auth. The
@@ -419,7 +421,12 @@ paths:
       operationId: extTriageTask
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - {
+            name: taskId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
       requestBody:
         required: true
         content:
@@ -480,7 +487,12 @@ paths:
       operationId: extListTaskRelations
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - {
+            name: taskId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
       responses:
         "200":
           description: Relations touching the task.
@@ -508,7 +520,12 @@ paths:
       operationId: extAddTaskRelation
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - {
+            name: taskId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
       requestBody:
         required: true
         content:
@@ -547,7 +564,12 @@ paths:
       operationId: extRemoveTaskRelation
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - {
+            name: taskId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
       requestBody:
         required: true
         content:
@@ -591,7 +613,7 @@ paths:
         Writes a `token_audit_log` row with scope `flows:read` after success.
       operationId: extListProjectFlows
       security:
-        - projectToken: [flows:read]
+        - projectToken: ["flows:read"]
       parameters:
         - name: slug
           in: path
@@ -634,7 +656,7 @@ paths:
         Writes a `token_audit_log` row with scope `runners:read` after success.
       operationId: extListProjectRunners
       security:
-        - projectToken: [runners:read]
+        - projectToken: ["runners:read"]
       parameters:
         - name: slug
           in: path
@@ -1661,10 +1683,12 @@ paths:
           `optionId` on retry → idempotent 200; idle-resume scheduled → 202.
         - **form**: supply `response` (validated against the row's `schema`;
           422 on failure), with optional `confidence` (`0..1`).
-        - **human / infra_recovery / budget_breach**: requires a global
-          personal user token with exact `hitl:respond:human`; `*` alone is
-          insufficient. The response is recorded as a human user action with
-          `HitlActor.kind='user'` and `userId=ownerUserId`.
+        - **human**: requires a global personal user token with exact
+          `hitl:respond:human`; `*` alone is insufficient. The response is
+          recorded as a human user action with `HitlActor.kind='user'` and
+          `userId=ownerUserId`.
+        - **infra_recovery / budget_breach**: not externally respondable in this
+          version; use the session-auth HITL route.
 
         **Actor-kind gate (D7).** Project tokens, project-scoped user tokens,
         and agent tokens MAY answer only `kind ∈ {permission, form}` and return
@@ -1824,8 +1848,7 @@ components:
             does not hold `*`. The body NEVER reveals which scopes the token
             holds.
           - **Exact human scope** — `hitl:respond:human` is required for
-            `human`, `infra_recovery`, and `budget_breach` responses; `*`
-            alone is insufficient.
+            `human` responses; `*` alone is insufficient.
           - **Actor-kind gate (D7, respond only)** — a project token,
             project-scoped user token, or agent token attempted to answer a
             human-only request. Those token actors may answer only
@@ -2507,7 +2530,8 @@ components:
         fields — web-internal inbox data (assignment/actor/agent/schema) never
         crosses this boundary. NEVER includes `acp_session_id`, absolute
         worktree paths, token material, or supervisor-internal handles.
-      required: [projectId, projectSlug, runId, hitlRequestId, kind, title, createdAt]
+      required:
+        [projectId, projectSlug, runId, hitlRequestId, kind, title, createdAt]
       properties:
         projectId:
           type: string
@@ -2604,9 +2628,11 @@ components:
       description: |
         (M17) HITL response payload. Supply `optionId` for a `permission`
         request, `response` for a `form` or `human` request, or the
-        kind-specific option/fields for `infra_recovery` and `budget_breach`.
-        Project/agent/project-scoped user tokens cannot answer human-only
-        kinds; global personal tokens need exact `hitl:respond:human`.
+        kind-specific option for `human` gates that use decision schemas.
+        `infra_recovery` and `budget_breach` rows may be listed but are not
+        externally respondable in ADR-125. Project/agent/project-scoped user
+        tokens cannot answer human-only kinds; global personal tokens need exact
+        `hitl:respond:human` for `human`.
       properties:
         optionId:
           type: string

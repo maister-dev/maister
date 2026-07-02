@@ -25,8 +25,8 @@ Domain boundary: the policy type + preset table + resolvers
 (`web/lib/runs/execution-policy.ts`), the launch resolution/snapshot/authz
 (`web/lib/services/runs.ts`), and the per-axis enforcement sites in the flow
 engine, the supervisor, and the promote/delivery path. Out of scope: gate
-*execution* (M11a — [`flow-graph.md`](flow-graph.md)), readiness
-(M15 — [`readiness.md`](readiness.md)), the delivery policy's merge *mechanics*
+_execution_ (M11a — [`flow-graph.md`](flow-graph.md)), readiness
+(M15 — [`readiness.md`](readiness.md)), the delivery policy's merge _mechanics_
 (ADR-058/077 — [`outbound-webhooks.md`](outbound-webhooks.md) /
 [`workspaces.md`](workspaces.md)), and the HITL substrate
 ([`hitl.md`](hitl.md)).
@@ -42,8 +42,8 @@ engine, the supervisor, and the promote/delivery path. Out of scope: gate
   axis; a null/absent/malformed snapshot resolves to the SAFE default.
 - **`logExecPolicyAction`** — the typed audit boundary every autonomy action
   funnels through (`launched | check_downgraded | rework_exhausted |
-  ralph_relaunch | escalated | permission_auto_approved | human_gate_auto_passed |
-  dirty_auto_resolved | history_rewritten`).
+ralph_relaunch | escalated | permission_auto_approved | human_gate_auto_passed |
+dirty_auto_resolved | history_rewritten`).
 - **`run.escalated`** — domain-event + webhook kind emitted on an on-stuck route
   (B3) AND on a budget escalate (`reason=budget_exceeded`, no new kind — ADR-101).
   See [`domain-events.md`](domain-events.md) +
@@ -55,7 +55,7 @@ engine, the supervisor, and the promote/delivery path. Out of scope: gate
   per-run mutable raise-and-resume override + per-scope `notified` rung live on
   `runs.budget_state jsonb` (migration `0061`). Breach actions funnel through
   `logExecPolicyAction` as `budget_warned | budget_escalated | budget_terminated |
-  budget_raised`; a hard-cap terminate fails the run with
+budget_raised`; a hard-cap terminate fails the run with
   `MaisterError("BUDGET_EXCEEDED")` and opens a `budget_breach` HITL on escalate.
   See [`hitl.md`](hitl.md) + [`../error-taxonomy.md`](../error-taxonomy.md).
 
@@ -65,18 +65,18 @@ No preset alone trips the no-blind-ship guard: `checks` stays `strict` at every
 level, so auto-pass / auto-promote always sit behind at least one validation
 layer.
 
-| Axis (group) | `supervised` | `assisted` | `unattended` |
-| ------------ | ------------ | ---------- | ------------ |
-| `reworkExhaustion` (A1) | escalate | escalate | escalate |
-| `crashRetry` (A2) | fail | fail | ralph_loop |
-| `checks` (A3) | strict | strict | strict |
-| `permissions` (B1) | ask | auto_approve | auto_approve |
-| `humanGate` (B2) | stop | stop | auto_pass |
-| `onStuck` (B3) | escalate | escalate | escalate |
-| `promotion` (C1) | manual | manual | auto_on_ready |
-| `commits` (C2) | keep_all | keep_all | squash_rework |
-| `dirtyResolve` (C3) | ask | proceed | proceed |
-| `budget` (spend) | unset (unlimited) | unset (unlimited) | unset (unlimited) |
+| Axis (group)            | `supervised`      | `assisted`        | `unattended`      |
+| ----------------------- | ----------------- | ----------------- | ----------------- |
+| `reworkExhaustion` (A1) | escalate          | escalate          | escalate          |
+| `crashRetry` (A2)       | fail              | fail              | ralph_loop        |
+| `checks` (A3)           | strict            | strict            | strict            |
+| `permissions` (B1)      | ask               | auto_approve      | auto_approve      |
+| `humanGate` (B2)        | stop              | stop              | auto_pass         |
+| `onStuck` (B3)          | escalate          | escalate          | escalate          |
+| `promotion` (C1)        | manual            | manual            | auto_on_ready     |
+| `commits` (C2)          | keep_all          | keep_all          | squash_rework     |
+| `dirtyResolve` (C3)     | ask               | proceed           | proceed           |
+| `budget` (spend)        | unset (unlimited) | unset (unlimited) | unset (unlimited) |
 
 The `budget` axis (Implemented, ADR-101) defaults to **all-unset (unlimited)** at
 every preset — fail-open, "run, don't constrain". `unattended` is OPTIONALLY
@@ -142,10 +142,9 @@ flowchart TD
 The budget axis meters token spend (`run_cost_rollups`), consecutive failures,
 and tree wall-clock against the effective per-scope limits each watchdog tick,
 and climbs a warn → escalate → terminate ladder; an unset or `0` meter is skipped
-(fail-open). `run`/`task` scope ESCALATE pauses a **flow** run to `NeedsInput` (a
-`budget_breach` HITL, worktree kept); escalate is flow-only in v1 — a non-flow
-(`agent`/`scratch`) run/task breach has no `runFlow` resume route, so it is
-promoted to terminate (ADR-101). `tree` scope has NO escalate rung — a
+(fail-open). `run`/`task` scope ESCALATE pauses a run to `NeedsInput` or
+`NeedsInputIdle` with a `budget_breach` HITL and the worktree kept when the run
+kind has a resumable path. `tree` scope has NO escalate rung — a
 `WaitingOnChildren` root has no `→ NeedsInput` transition, so it goes straight to
 a cascade-terminate.
 
@@ -153,21 +152,53 @@ a cascade-terminate.
 stateDiagram-v2
     [*] --> UnderWarn: meter below warnAtPct
     UnderWarn --> Warn: spend or failures or wallclock >= warnAtPct (80%)
-    Warn --> Escalate: flow tokens >= 100% maxTokens (run/task scope)
-    UnderWarn --> Escalate: flow tokens >= 100% maxTokens (run/task scope)
-    Warn --> Terminate: tokens >= hardMaxTokens, OR non-flow run/task breach
-    UnderWarn --> Terminate: non-flow run/task breach (escalate is flow-only)
+    Warn --> Escalate: supported run/task breach >= 100% limit
+    UnderWarn --> Escalate: supported run/task breach >= 100% limit
+    Warn --> Terminate: hard limit, OR unsupported run/task breach
+    UnderWarn --> Terminate: unsupported run/task breach
     Escalate --> Terminate: tokens >= hardMaxTokens after resume
     UnderWarn --> TreeTerminate: tree tokens or wallclock breach (no escalate rung)
     Warn --> TreeTerminate: tree tokens or wallclock breach (no escalate rung)
     Escalate --> Resumed: Raise and resume — ceilingOverride raised
+    Escalate --> Restarted: Restart fresh — old run Failed, new attempt launched
+    Escalate --> Parked: Park result — preserved ref, run Abandoned
     Resumed --> UnderWarn: notified cleared, re-warns in the raised band
-    Escalate --> Abandoned: Abandon — run Failed (BUDGET_EXCEEDED)
+    Escalate --> Abandoned: Discard — run Failed (BUDGET_EXCEEDED)
     Warn --> UnderWarn: continues running (warn does not kill)
     Terminate --> [*]: run terminal Failed (BUDGET_EXCEEDED)
     TreeTerminate --> [*]: cascadeAbandonRunTree then root Failed
+    Restarted --> [*]
+    Parked --> [*]
     Abandoned --> [*]
 ```
+
+### Budget-breach decision surface
+
+When the watchdog opens `budget_breach`, the operator chooses from a
+server-guarded four-way fork (ADR-125):
+
+| Option           | Effect                                                                                                                                                                                                                                                   | Availability                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Raise & continue | Increase `runs.budget_state.ceilingOverride[scope][field]`, clear `notified[scope]`, then resume through the existing flow/agent resume path.                                                                                                            | Every valid `budget_breach` row.                                                          |
+| Restart fresh    | Terminalize the old run as `Failed` with `reason=budget_restart`, then relaunch the same task through `launchRun` or `launchAgentRun` without the old policy snapshot. The new attempt resolves the current execution policy and starts with zero spend. | Top-level task-bound flow runs and top-level task-bound `agent` worktree runs.            |
+| Park the result  | Snapshot or export the owned worktree, archive the preserved ref, then mark the run `Abandoned` with `reason=budget_parked`.                                                                                                                             | Runs with an owned worktree row; not orchestrator children or `agent` `none`/`repo_read`. |
+| Discard          | Today's abandon behavior: run `Failed`, `BUDGET_EXCEEDED`, TTL cleanup. With `dropWorkspace:true`, remove the owned worktree and run branch after the terminal update.                                                                                   | Every valid `budget_breach` row; drop is hidden/no-op without a worktree.                 |
+
+The response row uses one shared staged claim gate. Legacy raise and abandon set
+`respondedAt` immediately as before. Restart first stores
+`response.stage="claimed"` with `respondedAt IS NULL`; park enters directly at
+`response.stage="preserving"` because preservation is its first resumable phase.
+The marker is written only after the composite reaches durable success or a
+final post-terminal failure. Pre-boundary failures set `stage:"failed"` and are
+re-answerable. Active non-failed claims are excluded from needs-you counts and
+render disabled controls.
+
+The card DTO embeds a computed `BudgetBreachProgressDto`: breached dimension,
+limit, spent, overshoot, per-dimension budget observations with
+`source:"value"|"no-data"`, node progress, diff numstat or `null`, gate counts,
+wall-clock minutes, and resume count. It is computed on read and never stores or
+returns file contents. Missing worktree, rollup, gate, or ledger data degrades
+field-by-field instead of returning 5xx.
 
 ## Expectations
 
@@ -233,14 +264,15 @@ E1–E12 invariants.)
   (unlimited) — it NEVER throws and NEVER constrains a run on a corrupt snapshot.
 - WARN fires at `warnAtPct` (default 80%) WITHOUT killing and at most once per
   scope per band, idempotent via `runs.budget_state.notified[scope]`.
-- ESCALATE at 100% `maxTokens` (run/task scope, **flow runs only**) MUST halt the
-  live session first, then pause to `runs.status = 'NeedsInput'` with a
+- ESCALATE at 100% `maxTokens` (run/task scope) MUST halt the live session first,
+  then pause to `runs.status = 'NeedsInput'` or `NeedsInputIdle` with a
   `budget_breach` HITL, keep the worktree, and emit `run.escalated`
-  (`reason=budget_exceeded`) — all persistent writes (status, node attempt, HITL
-  row, assignment, `run.needs_input` + `run.escalated` outbox) in ONE transaction.
-  A non-flow (`agent`/`scratch`) run/task breach has no `runFlow` resume route, so
-  its escalate-band verdict is promoted to terminate (escalate-raise is flow-only
-  in v1).
+  (`reason=budget_exceeded`) where the run kind has a supported resume route.
+  Agent worktree runs use the shared cap-guarded resume path; scratch and
+  unsupported agent workspace modes are not restartable in the four-way fork.
+  Persistent writes (status, node attempt where applicable, HITL row,
+  assignment, `run.needs_input` + `run.escalated` outbox) happen in one
+  transaction.
 - TERMINATE at `hardMaxTokens` (= `maxTokens × MAISTER_BUDGET_HARD_MULTIPLIER`,
   default 1.25, when unset) MUST call `deleteSession`, then mark the run terminal
   `Failed` with `MaisterError("BUDGET_EXCEEDED")`; it NEVER marks `Failed` until
@@ -256,10 +288,22 @@ E1–E12 invariants.)
 - Raise-and-resume MUST write `runs.budget_state.ceilingOverride` (additive; the
   `runs.execution_policy` snapshot stays immutable), log `budget_raised`, clear
   `notified[scope]`, and the resumed run MUST NOT immediately re-escalate.
+- Restart MUST terminalize the old run before launching the new one. The new run
+  MUST omit the old policy snapshot so policy resolution and cost rollups start
+  fresh. If caps are full, the new run may be `Pending` with a queue position.
+- Park MUST preserve the work product (snapshot commit or exported branch)
+  before the run becomes `Abandoned`; `budget_parked` is not counted as a budget
+  termination because the work product is intentionally retained.
+- Structured logs for budget composites MUST use structured fields:
+  `runId`, `hitlRequestId`, `taskId`, `oldRunId`, `newRunId`, `optionId`,
+  `mode`, `branchName`, `scope`, `meter`, `previousLimit`, `newLimit`,
+  `compositeStage`, `workspaceId`, and `ref`. Never log file contents,
+  arbitrary response text, secrets, or supervisor handles.
 - The breach mechanism MUST branch on `runs.run_kind` (`flow | agent | scratch`)
   BEFORE routing. TERMINATE has a verified adapter for every kind; ESCALATE is
-  flow-only in v1 (a non-flow escalate-band breach is promoted to terminate —
-  agent/scratch budget escalate-raise is deferred to a future iteration).
+  available for run/task breaches whose run kind and workspace mode have a
+  supported pause/response path (flow, scratch with owned worktree, and
+  agent-worktree). Unsupported agent workspace modes promote to terminate.
   Terminate per kind, ALL → run `Failed` (a budget-kill is a deliberate,
   NON-recoverable terminal — Recover gates on `runs.status='Crashed'`): flow →
   `markNodeFailed` + run `Failed`; agent → `finalizeAgentRun("Failed")`; scratch

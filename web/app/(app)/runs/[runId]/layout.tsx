@@ -1508,7 +1508,10 @@ export default async function RunDetailLayout({
                     />
                   ) : null}
                   <RunHitlResponse
+                    availableOptions={detail.pendingHitl.availableOptions}
+                    budgetProgress={detail.pendingHitl.budgetProgress}
                     canAct={canAct}
+                    claimStage={detail.pendingHitl.claimStage}
                     criticality={detail.pendingHitl.criticality}
                     hitlRequestId={detail.pendingHitl.hitlRequestId}
                     kind={detail.pendingHitl.kind}

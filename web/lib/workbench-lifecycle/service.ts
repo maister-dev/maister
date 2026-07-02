@@ -197,6 +197,7 @@ export type WorkbenchLifecycleDeps = {
 
 export type WorkbenchLifecycleOptions = {
   deps?: WorkbenchLifecycleDeps;
+  allowPausedBudgetRun?: boolean;
 };
 
 export type ArchiveWorkbenchResult = {
@@ -277,6 +278,14 @@ export type SnapshotWorkbenchCommitResult = {
   snapshotCreated: boolean;
 };
 
+export function isCleanWorkbenchPrecondition(err: unknown): boolean {
+  return (
+    err instanceof MaisterError &&
+    err.code === "PRECONDITION" &&
+    err.details?.reason === "clean_worktree"
+  );
+}
+
 export type CreateWorkbenchHandoffBranchInput = {
   remote: string;
   handoffBranch: string;
@@ -326,6 +335,7 @@ function isEnabled(
 function requireActionAllowed(
   ctx: LifecycleContext,
   id: WorkbenchLifecycleActionId,
+  options?: { allowPausedBudgetRun?: boolean },
 ): void {
   const action = deriveWorkbenchLifecycleActions({
     runKind: ctx.run.runKind,
@@ -337,6 +347,16 @@ function requireActionAllowed(
   }).find((candidate) => candidate.id === id);
 
   if (action?.enabled) return;
+
+  if (
+    options?.allowPausedBudgetRun === true &&
+    (ctx.run.status === "NeedsInput" || ctx.run.status === "NeedsInputIdle") &&
+    id !== "stop" &&
+    ctx.workspace !== null &&
+    ctx.workspace.removedAt === null
+  ) {
+    return;
+  }
 
   throw new MaisterError(
     "PRECONDITION",
@@ -544,15 +564,18 @@ export async function archiveWorkbench(
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
-  return archiveWorkbenchForCtx(runId, ctx, deps);
+  return archiveWorkbenchForCtx(runId, ctx, deps, {
+    allowPausedBudgetRun: options?.allowPausedBudgetRun,
+  });
 }
 
 async function archiveWorkbenchForCtx(
   runId: string,
   ctx: LifecycleContext,
   deps: WorkbenchLifecycleDeps,
+  options?: { allowPausedBudgetRun?: boolean },
 ): Promise<ArchiveWorkbenchResult> {
-  requireActionAllowed(ctx, "archive");
+  requireActionAllowed(ctx, "archive", options);
 
   const workspace = requireWorkspace(ctx);
   const claim = await deps.claimLifecycleOperation({
@@ -605,7 +628,9 @@ export async function getWorkbenchHandoffMetadata(
   const ctx = await deps.loadContext(runId);
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
-  requireActionAllowed(ctx, "exportBranch");
+  requireActionAllowed(ctx, "exportBranch", {
+    allowPausedBudgetRun: options?.allowPausedBudgetRun,
+  });
 
   const workspace = requireWorkspace(ctx);
   const [dirty, remotes] = await Promise.all([
@@ -655,7 +680,9 @@ export async function snapshotWorkbenchCommit(
   const ctx = await deps.loadContext(runId);
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
-  requireActionAllowed(ctx, "exportBranch");
+  requireActionAllowed(ctx, "exportBranch", {
+    allowPausedBudgetRun: args.allowPausedBudgetRun,
+  });
 
   const workspace = requireWorkspace(ctx);
   const commitMessage = requireCommitMessage(args.commitMessage);
@@ -665,6 +692,7 @@ export async function snapshotWorkbenchCommit(
     throw new MaisterError(
       "PRECONDITION",
       `worktree is clean for run ${runId}`,
+      { details: { reason: "clean_worktree", runId } },
     );
   }
 
@@ -729,7 +757,9 @@ export async function createWorkbenchHandoffBranch(
   const ctx = await deps.loadContext(runId);
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
-  requireActionAllowed(ctx, "exportBranch");
+  requireActionAllowed(ctx, "exportBranch", {
+    allowPausedBudgetRun: args.allowPausedBudgetRun,
+  });
 
   const workspace = requireWorkspace(ctx);
   const remote = validateInput(remoteNameSchema, args.remote, "remote");

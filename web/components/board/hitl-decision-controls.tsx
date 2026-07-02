@@ -1,6 +1,19 @@
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { ReactElement } from "react";
+import type {
+  BudgetBreachAvailableOption,
+  BudgetBreachClaimStage,
+  BudgetBreachParkMode,
+  BudgetBreachProgressDto,
+} from "@/lib/runs/budget-breach-fork";
 
+import {
+  ArchiveBoxIcon,
+  ArrowPathIcon,
+  ArrowUturnRightIcon,
+  ExclamationTriangleIcon,
+  TrashIcon,
+} from "@heroicons/react/24/outline";
 import clsx from "clsx";
 
 export interface HitlDecisionControlsLabels {
@@ -37,7 +50,28 @@ export interface HitlDecisionControlsLabels {
   budgetBreachTitle?: string;
   budgetNewCeiling?: string;
   budgetRaiseResume?: string;
+  budgetRestart?: string;
+  budgetPark?: string;
   budgetAbandon?: string;
+  budgetDropWorkspace?: string;
+  budgetParkModeSnapshot?: string;
+  budgetParkModeExport?: string;
+  budgetParkBranchName?: string;
+  budgetParkBranchPlaceholder?: string;
+  budgetProgressLabel?: string;
+  budgetProgressBudget?: string;
+  budgetProgressNodes?: string;
+  budgetProgressDiff?: string;
+  budgetProgressGates?: string;
+  budgetProgressWallclock?: string;
+  budgetProgressResumes?: string;
+  budgetProgressNoData?: string;
+  budgetClaimStage?: string;
+  "budgetClaimStage.claimed"?: string;
+  "budgetClaimStage.preserving"?: string;
+  "budgetClaimStage.terminalized"?: string;
+  "budgetClaimStage.failed"?: string;
+  "budgetClaimStage.relaunch_failed"?: string;
   // `$scope`/`$meter`/`$current`/`$limit` template (house `$`-token pattern).
   budgetBreachSummary?: string;
   "budgetScope.run"?: string;
@@ -175,6 +209,12 @@ export interface HitlDecisionControlsProps {
   // budget_breach: controlled "new ceiling" value (raw text — positive-int
   // enforced at submit, mirrors the server's fail-closed raise validation).
   budgetCeiling?: string;
+  budgetProgress?: BudgetBreachProgressDto | null;
+  availableOptions?: BudgetBreachAvailableOption[];
+  claimStage?: BudgetBreachClaimStage | null;
+  budgetParkMode?: BudgetBreachParkMode;
+  budgetBranchName?: string;
+  budgetDropWorkspace?: boolean;
   disabled: boolean;
   compact?: boolean;
   error: string | null;
@@ -185,6 +225,12 @@ export interface HitlDecisionControlsProps {
   onFormFieldChange: (name: string, value: string) => void;
   onBudgetCeilingChange?: (v: string) => void;
   onBudgetRaise?: () => void;
+  onBudgetRestart?: () => void;
+  onBudgetParkModeChange?: (v: BudgetBreachParkMode) => void;
+  onBudgetBranchNameChange?: (v: string) => void;
+  onBudgetPark?: () => void;
+  onBudgetDropWorkspaceChange?: (v: boolean) => void;
+  onBudgetAbandon?: () => void;
   onDecision: (decision: string) => void;
   onSendBack: () => void;
   onOption: (optionId: string) => void;
@@ -424,6 +470,80 @@ function fillTemplate(
 
 function labeledNumber(template: string, n: number): string {
   return fillTemplate(template, { $n: n });
+}
+
+function optionById(
+  options: BudgetBreachAvailableOption[] | undefined,
+  optionId: string,
+): BudgetBreachAvailableOption | null {
+  return options?.find((option) => option.optionId === optionId) ?? null;
+}
+
+function budgetObservationText(
+  observation: { limit: number | null; spent: number | null },
+  noDataLabel: string,
+): string {
+  if (observation.limit === null || observation.spent === null) {
+    return noDataLabel;
+  }
+
+  return `${observation.spent} / ${observation.limit}`;
+}
+
+function BudgetProgressBlock({
+  progress,
+  labels,
+}: {
+  progress: BudgetBreachProgressDto;
+  labels: HitlDecisionControlsLabels;
+}): ReactElement {
+  const noData = labels.budgetProgressNoData ?? "No data";
+
+  return (
+    <div
+      className="grid gap-2 rounded-[8px] border border-line bg-paper px-3 py-2"
+      data-testid="budget-progress"
+    >
+      <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+        {labels.budgetProgressLabel ?? "Progress"}
+      </p>
+      <div className="grid grid-cols-1 gap-2 text-[11.5px] text-ink-2 sm:grid-cols-2">
+        <span className="font-mono">
+          {labels.budgetProgressBudget ?? "Budget"}:{" "}
+          {budgetObservationText(
+            progress.budgetByDimension[progress.breach.dimension],
+            noData,
+          )}{" "}
+          (+{progress.breach.overshootPct}%)
+        </span>
+        <span className="font-mono">
+          {labels.budgetProgressNodes ?? "Nodes"}:{" "}
+          {progress.nodes.completed === null || progress.nodes.total === null
+            ? noData
+            : `${progress.nodes.completed} / ${progress.nodes.total}`}
+        </span>
+        <span className="font-mono">
+          {labels.budgetProgressDiff ?? "Diff"}:{" "}
+          {progress.diff === null
+            ? noData
+            : `${progress.diff.filesChanged} files, +${progress.diff.insertions} / -${progress.diff.deletions}`}
+        </span>
+        <span className="font-mono">
+          {labels.budgetProgressGates ?? "Gates"}:{" "}
+          {`${progress.gates.satisfied} satisfied, ${progress.gates.failed} failed, ${progress.gates.open} open`}
+        </span>
+        <span className="font-mono">
+          {labels.budgetProgressWallclock ?? "Wall-clock"}:{" "}
+          {progress.wallclockMinutes === null
+            ? noData
+            : `${progress.wallclockMinutes}m`}
+        </span>
+        <span className="font-mono">
+          {labels.budgetProgressResumes ?? "Resumes"}: {progress.resumeCount}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 const CRITICALITY_PILL: Record<"low" | "medium" | "high" | "critical", string> =
@@ -767,6 +887,12 @@ export function HitlDecisionControls({
   jsonValue,
   formValues,
   budgetCeiling,
+  budgetProgress,
+  availableOptions,
+  claimStage,
+  budgetParkMode,
+  budgetBranchName,
+  budgetDropWorkspace,
   disabled,
   compact,
   error,
@@ -777,6 +903,12 @@ export function HitlDecisionControls({
   onFormFieldChange,
   onBudgetCeilingChange,
   onBudgetRaise,
+  onBudgetRestart,
+  onBudgetParkModeChange,
+  onBudgetBranchNameChange,
+  onBudgetPark,
+  onBudgetDropWorkspaceChange,
+  onBudgetAbandon,
   onDecision,
   onSendBack,
   onOption,
@@ -821,6 +953,13 @@ export function HitlDecisionControls({
       : null;
   const reworkLocked = (d: string): boolean =>
     reworkExhausted && isReworkDecision(d);
+  const budgetAvailableOptions =
+    kind === "budget_breach" ? (availableOptions ?? []) : [];
+  const budgetRaiseOption = optionById(budgetAvailableOptions, "raise");
+  const budgetRestartOption = optionById(budgetAvailableOptions, "restart");
+  const budgetParkOption = optionById(budgetAvailableOptions, "park");
+  const budgetAbandonOption = optionById(budgetAvailableOptions, "abandon");
+  const selectedParkMode = budgetParkMode ?? "snapshot";
 
   return (
     <div className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}>
@@ -998,9 +1137,24 @@ export function HitlDecisionControls({
         </div>
       ) : kind === "budget_breach" && budgetBreach ? (
         <div className="flex flex-col gap-3" data-testid="budget-breach-card">
-          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
-            {labels.budgetBreachTitle ?? "Budget breach"}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
+              {labels.budgetBreachTitle ?? "Budget breach"}
+            </p>
+            {claimStage ? (
+              <span
+                className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.04em] text-mute"
+                data-testid="budget-claim-stage"
+              >
+                {fillStringTemplate(labels.budgetClaimStage ?? "$stage", {
+                  $stage:
+                    labels[
+                      `budgetClaimStage.${claimStage}` as keyof HitlDecisionControlsLabels
+                    ] ?? claimStage,
+                })}
+              </span>
+            ) : null}
+          </div>
           <p
             className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12.5px] leading-[1.5] text-ink-2"
             data-testid="budget-breach-summary"
@@ -1022,47 +1176,171 @@ export function HitlDecisionControls({
               },
             )}
           </p>
-          <label
-            className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
-            htmlFor="hitl-budget-ceiling"
-          >
-            {labels.budgetNewCeiling ?? "New ceiling"}
-          </label>
-          <input
-            className="w-40 rounded-[7px] border border-line bg-paper px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-amber"
-            data-testid="budget-breach-ceiling"
-            disabled={disabled}
-            id="hitl-budget-ceiling"
-            inputMode="numeric"
-            type="text"
-            value={budgetCeiling ?? ""}
-            onChange={(e) => onBudgetCeilingChange?.(e.target.value)}
-          />
+          {budgetProgress ? (
+            <BudgetProgressBlock labels={labels} progress={budgetProgress} />
+          ) : null}
+          {budgetRaiseOption ? (
+            <div className="flex flex-col gap-1.5">
+              <label
+                className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+                htmlFor="hitl-budget-ceiling"
+              >
+                {labels.budgetNewCeiling ?? "New ceiling"}
+              </label>
+              <input
+                className="w-40 rounded-[7px] border border-line bg-paper px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-amber"
+                data-testid="budget-breach-ceiling"
+                disabled={disabled}
+                id="hitl-budget-ceiling"
+                inputMode="numeric"
+                type="text"
+                value={budgetCeiling ?? ""}
+                onChange={(e) => onBudgetCeilingChange?.(e.target.value)}
+              />
+            </div>
+          ) : null}
+          {budgetParkOption ? (
+            <div className="flex flex-col gap-2 rounded-[8px] border border-line bg-paper px-3 py-2">
+              <div className="flex flex-wrap gap-1.5">
+                {budgetParkOption.modes.includes("snapshot") ? (
+                  <button
+                    className={clsx(
+                      "rounded-md border px-2.5 py-1 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em]",
+                      selectedParkMode === "snapshot"
+                        ? "border-amber bg-amber text-white"
+                        : "border-line bg-ivory text-ink-2 hover:bg-paper",
+                      disabled && "opacity-60",
+                    )}
+                    data-testid="budget-park-mode-snapshot"
+                    disabled={disabled}
+                    type="button"
+                    onClick={() => onBudgetParkModeChange?.("snapshot")}
+                  >
+                    {labels.budgetParkModeSnapshot ?? "Snapshot"}
+                  </button>
+                ) : null}
+                {budgetParkOption.modes.includes("export") ? (
+                  <button
+                    className={clsx(
+                      "rounded-md border px-2.5 py-1 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em]",
+                      selectedParkMode === "export"
+                        ? "border-amber bg-amber text-white"
+                        : "border-line bg-ivory text-ink-2 hover:bg-paper",
+                      disabled && "opacity-60",
+                    )}
+                    data-testid="budget-park-mode-export"
+                    disabled={disabled}
+                    type="button"
+                    onClick={() => onBudgetParkModeChange?.("export")}
+                  >
+                    {labels.budgetParkModeExport ?? "Export branch"}
+                  </button>
+                ) : null}
+              </div>
+              {selectedParkMode === "export" ? (
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+                    {labels.budgetParkBranchName ?? "Branch name"}
+                  </span>
+                  <input
+                    className="rounded-[7px] border border-line bg-paper px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-amber"
+                    data-testid="budget-park-branch"
+                    disabled={disabled}
+                    placeholder={
+                      labels.budgetParkBranchPlaceholder ??
+                      "maister/budget-parked"
+                    }
+                    type="text"
+                    value={budgetBranchName ?? ""}
+                    onChange={(e) => onBudgetBranchNameChange?.(e.target.value)}
+                  />
+                </label>
+              ) : null}
+            </div>
+          ) : null}
+          {budgetAbandonOption?.dropAllowed ? (
+            <label className="inline-flex items-center gap-2 font-mono text-[11px] text-mute">
+              <input
+                checked={budgetDropWorkspace === true}
+                className="h-3.5 w-3.5"
+                data-testid="budget-drop-workspace"
+                disabled={disabled}
+                type="checkbox"
+                onChange={(e) =>
+                  onBudgetDropWorkspaceChange?.(e.target.checked)
+                }
+              />
+              {labels.budgetDropWorkspace ?? "Drop workspace now"}
+            </label>
+          ) : null}
           <div className="flex flex-wrap gap-2">
-            <button
-              className={clsx(
-                "rounded-lg border border-amber bg-amber px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
-                disabled && "opacity-60",
-              )}
-              data-testid="budget-breach-raise"
-              disabled={disabled}
-              type="button"
-              onClick={() => onBudgetRaise?.()}
-            >
-              {labels.budgetRaiseResume ?? "Raise & resume"}
-            </button>
-            <button
-              className={clsx(
-                "rounded-lg border border-rose-300 bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-rose-600 hover:border-rose-400 hover:bg-rose-50",
-                disabled && "opacity-60",
-              )}
-              data-testid="budget-breach-abandon"
-              disabled={disabled}
-              type="button"
-              onClick={() => onOption("abandon")}
-            >
-              {labels.budgetAbandon ?? "Abandon"}
-            </button>
+            {budgetRaiseOption ? (
+              <button
+                className={clsx(
+                  "inline-flex items-center gap-1.5 rounded-lg border border-amber bg-amber px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+                  disabled && "opacity-60",
+                )}
+                data-testid="budget-breach-raise"
+                disabled={disabled}
+                type="button"
+                onClick={() => onBudgetRaise?.()}
+              >
+                <ArrowUturnRightIcon className="h-3.5 w-3.5" />
+                {labels.budgetRaiseResume ?? budgetRaiseOption.label}
+              </button>
+            ) : null}
+            {budgetRestartOption ? (
+              <button
+                className={clsx(
+                  "inline-flex items-center gap-1.5 rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-mute hover:text-ink",
+                  disabled && "opacity-60",
+                )}
+                data-testid="budget-breach-restart"
+                disabled={disabled}
+                type="button"
+                onClick={() => onBudgetRestart?.()}
+              >
+                <ArrowPathIcon className="h-3.5 w-3.5" />
+                {labels.budgetRestart ?? budgetRestartOption.label}
+              </button>
+            ) : null}
+            {budgetParkOption ? (
+              <button
+                className={clsx(
+                  "inline-flex items-center gap-1.5 rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-mute hover:text-ink",
+                  disabled && "opacity-60",
+                )}
+                data-testid="budget-breach-park"
+                disabled={disabled}
+                type="button"
+                onClick={() => onBudgetPark?.()}
+              >
+                <ArchiveBoxIcon className="h-3.5 w-3.5" />
+                {labels.budgetPark ?? budgetParkOption.label}
+              </button>
+            ) : null}
+            {budgetAbandonOption ? (
+              <button
+                className={clsx(
+                  "inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-rose-600 hover:border-rose-400 hover:bg-rose-50",
+                  disabled && "opacity-60",
+                )}
+                data-testid="budget-breach-abandon"
+                disabled={disabled}
+                type="button"
+                onClick={() => {
+                  if (onBudgetAbandon) onBudgetAbandon();
+                  else onOption("abandon");
+                }}
+              >
+                {budgetDropWorkspace ? (
+                  <TrashIcon className="h-3.5 w-3.5" />
+                ) : (
+                  <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+                )}
+                {labels.budgetAbandon ?? budgetAbandonOption.label}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : kind === "hook_trip" && hookTrip ? (

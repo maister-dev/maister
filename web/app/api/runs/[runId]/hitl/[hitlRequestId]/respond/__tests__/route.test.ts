@@ -13,10 +13,13 @@ import {
   assignments as assignmentsTable,
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
+  runSessions as runSessionsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
+  tasks as tasksTable,
   domainEvents as domainEventsTable,
   webhookEvents as webhookEventsTable,
+  workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
@@ -31,6 +34,9 @@ type Tables = {
   assignment_events: Row[];
   webhook_events: Row[];
   domain_events: Row[];
+  workspaces: Row[];
+  run_sessions: Row[];
+  tasks: Row[];
 };
 
 const dbState: {
@@ -47,6 +53,9 @@ const dbState: {
     assignment_events: [],
     webhook_events: [],
     domain_events: [],
+    workspaces: [],
+    run_sessions: [],
+    tasks: [],
   },
   updates: [],
 };
@@ -61,6 +70,9 @@ function tableOf(t: unknown): keyof Tables {
   if (t === assignmentEventsTable) return "assignment_events";
   if (t === webhookEventsTable) return "webhook_events";
   if (t === domainEventsTable) return "domain_events";
+  if (t === workspacesTable) return "workspaces";
+  if (t === runSessionsTable) return "run_sessions";
+  if (t === tasksTable) return "tasks";
   throw new Error("unknown table");
 }
 
@@ -78,9 +90,22 @@ const selectChain = (cols?: Row) => ({
           })
         : dbState.tables[name];
 
-    return {
-      where: async () => project(),
+    const query: any = {
+      where: () => query,
+      orderBy: () => query,
+      innerJoin: () => query,
+      limit: async (count: number) => project().slice(0, count),
+      then: (
+        onFulfilled?: ((value: Row[]) => unknown) | null,
+        onRejected?: ((reason: unknown) => unknown) | null,
+      ) => Promise.resolve(project()).then(onFulfilled, onRejected),
+      catch: (onRejected?: ((reason: unknown) => unknown) | null) =>
+        Promise.resolve(project()).catch(onRejected),
+      finally: (onFinally?: (() => void) | null) =>
+        Promise.resolve(project()).finally(onFinally ?? undefined),
     };
+
+    return query;
   },
 });
 
@@ -162,18 +187,39 @@ const deliverPermissionSpy = vi.fn(
   ): Promise<{ ok: true }> => ({ ok: true }),
 );
 const runFlowSpy = vi.fn(async (_runId: string): Promise<void> => undefined);
+const launchRunSpy = vi.fn(async (..._args: unknown[]) => ({
+  runId: "run-budget-restart",
+  status: "Pending",
+  queuePosition: 1,
+}));
+const addTaskCommentSpy = vi.fn(async (..._args: unknown[]) => ({
+  id: "comment-budget",
+}));
 
 // M8 review finding #2 / #3: mocks for the idle-branch
 // dependencies. Tests override these per-case.
 const resumeRunSpy = vi.fn();
 const scheduleResumedSessionDriveSpy = vi.fn();
 const startAgentSessionSpy = vi.fn();
+const launchAgentRunSpy = vi.fn();
+const dropWorkbenchSpy = vi.fn(async (_runId: string) => ({
+  ok: true,
+  runId: "run-budget",
+  runStatus: "Abandoned",
+  workspaceRemoved: true,
+  archivedBranch: null,
+}));
 
 vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
 vi.mock("@/lib/supervisor-client", () => ({
+  checkpointSession: vi.fn(async (sessionId: string) => ({
+    alreadyCheckpointed: false,
+    sessionId,
+    monotonicId: 1,
+  })),
   deliverPermission: (sessionId: string, requestId: string, optionId: string) =>
     deliverPermissionSpy(sessionId, requestId, optionId),
 }));
@@ -191,9 +237,35 @@ vi.mock("@/lib/runs/resume-driver", () => ({
     scheduleResumedSessionDriveSpy(...(args as unknown[])),
 }));
 
+vi.mock("@/lib/services/runs", () => ({
+  launchRun: (...args: unknown[]) => launchRunSpy(...args),
+}));
+
 vi.mock("@/lib/agents/launch", () => ({
   startAgentSession: (...args: unknown[]) =>
     startAgentSessionSpy(...(args as unknown[])),
+  launchAgentRun: (...args: unknown[]) =>
+    launchAgentRunSpy(...(args as unknown[])),
+}));
+
+vi.mock("@/lib/social/comments", () => ({
+  addTaskComment: (...args: unknown[]) => addTaskCommentSpy(...args),
+}));
+
+vi.mock("@/lib/social/relations", () => ({
+  getOpenRelationBlockers: vi.fn(async () => new Map()),
+}));
+
+vi.mock("@/lib/workbench-lifecycle/service", () => ({
+  archiveWorkbench: vi.fn(),
+  createWorkbenchHandoffBranch: vi.fn(),
+  dropWorkbench: (runId: string) => dropWorkbenchSpy(runId),
+  getWorkbenchHandoffMetadata: vi.fn(),
+  isCleanWorkbenchPrecondition: (err: unknown) =>
+    err instanceof Error && err.message.includes("worktree is clean"),
+  snapshotWorkbenchCommit: vi.fn(),
+  stopThenArchive: vi.fn(),
+  stopWorkbenchRun: vi.fn(),
 }));
 
 // Stub the authz boundary so the route's RBAC check passes without pulling
@@ -226,17 +298,37 @@ beforeEach(async () => {
     assignment_events: [],
     webhook_events: [],
     domain_events: [],
+    workspaces: [],
+    run_sessions: [],
+    tasks: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();
   deliverPermissionSpy.mockImplementation(async () => ({ ok: true }));
   runFlowSpy.mockReset();
   runFlowSpy.mockImplementation(async () => undefined);
+  launchRunSpy.mockReset();
+  launchRunSpy.mockResolvedValue({
+    runId: "run-budget-restart",
+    status: "Pending",
+    queuePosition: 1,
+  });
+  addTaskCommentSpy.mockReset();
+  addTaskCommentSpy.mockResolvedValue({ id: "comment-budget" });
   resumeRunSpy.mockReset();
   scheduleResumedSessionDriveSpy.mockReset();
   scheduleResumedSessionDriveSpy.mockImplementation(() => "drive-id");
   startAgentSessionSpy.mockReset();
   startAgentSessionSpy.mockResolvedValue(undefined);
+  launchAgentRunSpy.mockReset();
+  dropWorkbenchSpy.mockClear();
+  dropWorkbenchSpy.mockResolvedValue({
+    ok: true,
+    runId: "run-budget",
+    runStatus: "Abandoned",
+    workspaceRemoved: true,
+    archivedBranch: null,
+  });
 });
 
 afterEach(async () => {
@@ -348,6 +440,84 @@ function seedFormRow(
   });
 
   return { runId, hitlRequestId, stepId: "review" };
+}
+
+function seedBudgetBreachRow(
+  overrides: Partial<{
+    runStatus: string;
+    response: unknown;
+    respondedAt: Date | null;
+    workspace: boolean;
+    parentRunId: string | null;
+    taskId: string | null;
+    flowId: string | null;
+    runKind: "flow" | "scratch" | "agent";
+    agentId: string | null;
+    agentWorkspace: "none" | "repo_read" | "worktree" | null;
+  }> = {},
+): { runId: string; hitlRequestId: string } {
+  const runId = "run-budget";
+  const hitlRequestId = "hitl-budget";
+
+  dbState.tables.runs.push({
+    id: runId,
+    projectId: "proj-1",
+    runKind: overrides.runKind ?? "flow",
+    status: overrides.runStatus ?? "NeedsInput",
+    currentStepId: "plan",
+    taskId: overrides.taskId === undefined ? "task-1" : overrides.taskId,
+    flowId: overrides.flowId === undefined ? "flow-1" : overrides.flowId,
+    parentRunId:
+      overrides.parentRunId === undefined ? null : overrides.parentRunId,
+    agentId: overrides.agentId === undefined ? null : overrides.agentId,
+    agentWorkspace:
+      overrides.agentWorkspace === undefined ? null : overrides.agentWorkspace,
+    budgetState: {
+      notified: { run: "escalate" },
+      ceilingOverride: {},
+    },
+  });
+  dbState.tables.projects.push({ id: "proj-1", slug: "demo" });
+  if (overrides.taskId !== null) {
+    dbState.tables.tasks.push({
+      id: overrides.taskId === undefined ? "task-1" : overrides.taskId,
+      projectId: "proj-1",
+      status: "InFlight",
+      triageStatus: "triaged",
+    });
+  }
+  dbState.tables.hitl_requests.push({
+    id: hitlRequestId,
+    runId,
+    stepId: "plan",
+    kind: "budget_breach",
+    schema: {
+      kind: "budget_breach",
+      scope: "run",
+      meter: "tokens",
+      current: 1200,
+      limit: 1000,
+      decisions: ["raise", "abandon"],
+    },
+    response: overrides.response ?? null,
+    respondedAt: overrides.respondedAt ?? null,
+  });
+  if (overrides.workspace ?? true) {
+    dbState.tables.workspaces.push({
+      id: "workspace-1",
+      runId,
+      removedAt: null,
+      baseBranch: "main",
+      targetBranch: "maister/budget",
+    });
+  }
+  dbState.tables.run_sessions.push({
+    id: "session-budget",
+    runId,
+    runnerId: "runner-1",
+  });
+
+  return { runId, hitlRequestId };
 }
 
 async function invokePost(runId: string, hitlRequestId: string, body: unknown) {
@@ -1295,5 +1465,165 @@ describe("HITL respond route — auth-first ordering", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("PASSWORD_CHANGE_REQUIRED");
     expect(dbState.updates).toHaveLength(0);
+  });
+});
+
+describe("HITL respond route — kind=budget_breach", () => {
+  it("accepts the canonical raise payload and stores the canonical response", async () => {
+    const { runId, hitlRequestId } = seedBudgetBreachRow();
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "raise",
+      response: { dimension: "tokens", newLimit: 2000 },
+    });
+
+    expect(res.status).toBe(202);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "raise",
+      dimension: "tokens",
+      newLimit: 2000,
+    });
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+    expect(
+      (dbState.tables.runs[0].budgetState as any).ceilingOverride.run.maxTokens,
+    ).toBe(2000);
+  });
+
+  it("accepts top-level dropWorkspace as the abandon/drop alias", async () => {
+    const { runId, hitlRequestId } = seedBudgetBreachRow();
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "abandon",
+      dropWorkspace: true,
+    });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "abandon",
+      dropWorkspace: true,
+    });
+    expect(dbState.tables.runs[0].status).toBe("Failed");
+    expect(dropWorkbenchSpy).toHaveBeenCalledWith(runId);
+  });
+
+  it("keeps bare abandon wire-compatible and leaves the workspace for TTL cleanup", async () => {
+    const { runId, hitlRequestId } = seedBudgetBreachRow();
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "abandon",
+    });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "abandon",
+      dropWorkspace: false,
+    });
+    expect(dbState.tables.runs[0].status).toBe("Failed");
+    expect(dropWorkbenchSpy).not.toHaveBeenCalled();
+  });
+
+  it("treats abandon/drop as a no-op when the run has no owned workspace", async () => {
+    const { hitlRequestId, runId } = seedBudgetBreachRow({ workspace: false });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "abandon",
+      response: { dropWorkspace: true },
+    });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "abandon",
+      dropWorkspace: true,
+    });
+    expect(dropWorkbenchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unavailable restart before consuming the HITL row", async () => {
+    const { runId, hitlRequestId } = seedBudgetBreachRow({
+      parentRunId: "parent-run",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "restart",
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRECONDITION");
+    expect(dbState.tables.hitl_requests[0].response).toBeNull();
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    expect(launchRunSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses park when the worktree is unavailable before consuming the HITL row", async () => {
+    const { runId, hitlRequestId } = seedBudgetBreachRow({ workspace: false });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "park",
+      response: { mode: "snapshot" },
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRECONDITION");
+    expect(dbState.tables.hitl_requests[0].response).toBeNull();
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+  });
+
+  it("terminalizes and relaunches a flow restart with recovered launch options", async () => {
+    const { runId, hitlRequestId } = seedBudgetBreachRow();
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "restart",
+    });
+    const payload = await res.json();
+
+    expect(res.status).toBe(202);
+    expect(payload).toMatchObject({
+      ok: true,
+      runStatus: "Failed",
+      newRunId: "run-budget-restart",
+      newRunStatus: "Pending",
+      queuePosition: 1,
+    });
+    expect(dbState.tables.runs[0].status).toBe("Failed");
+    expect(dbState.tables.hitl_requests[0].response).toMatchObject({
+      optionId: "restart",
+      stage: "terminalized",
+      ref: "run-budget-restart",
+    });
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+    expect(launchRunSpy).toHaveBeenCalledTimes(1);
+    expect(launchRunSpy.mock.calls[0]?.[0]).toEqual({
+      taskId: "task-1",
+      flowId: "flow-1",
+      runnerId: "runner-1",
+      baseBranch: "main",
+      targetBranch: "maister/budget",
+      triggerSource: "manual",
+      triggerPayload: {
+        kind: "budget_restart",
+        oldRunId: runId,
+        hitlRequestId,
+      },
+      allowConcurrent: false,
+    });
+    expect(addTaskCommentSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a delivered budget response when the retry payload differs", async () => {
+    const { runId, hitlRequestId } = seedBudgetBreachRow({
+      response: {
+        optionId: "raise",
+        dimension: "tokens",
+        newLimit: 2000,
+      },
+      respondedAt: new Date("2026-07-02T10:00:00.000Z"),
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "abandon",
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONFLICT");
   });
 });

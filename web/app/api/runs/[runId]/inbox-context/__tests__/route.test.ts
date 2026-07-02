@@ -64,6 +64,9 @@ const SAMPLE_CONTEXT: InboxCardContext = {
   ],
   diff: { files: 2, additions: 10, deletions: 3 },
   progress: { done: 1, total: 4 },
+  budgetProgress: null,
+  availableOptions: [],
+  claimStage: null,
 };
 
 function seedRun(overrides: Partial<Row> = {}): string {

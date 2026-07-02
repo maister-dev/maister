@@ -72,14 +72,16 @@ beforeEach(async () => {
   });
 
   await db.insert(schema.projects).values([
-    { taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    {
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: visibleProjectId,
       slug: "observatory-visible",
       name: "Visible",
       repoPath: `/repos/observatory-visible-${visibleProjectId}`,
       maisterYamlPath: "/repos/visible/maister.yaml",
     },
-    { taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    {
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: hiddenProjectId,
       slug: "observatory-hidden",
       name: "Hidden",
@@ -226,6 +228,16 @@ describe("observatory read models", () => {
       kind: "run.failed",
       reason: "budget_exceeded",
     });
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.failed",
+      reason: "budget_restart",
+    });
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.failed",
+      reason: "budget_abandoned",
+    });
     // A non-budget failure must NOT count.
     await seedDomainEvent({
       projectId: visibleProjectId,
@@ -266,12 +278,12 @@ describe("observatory read models", () => {
 
     expect(portfolio.budget).toEqual({
       budgetEscalations: 1,
-      budgetTerminations: 3,
+      budgetTerminations: 5,
       hookTripEscalations: 0,
     });
     expect(project.budget).toEqual({
       budgetEscalations: 1,
-      budgetTerminations: 3,
+      budgetTerminations: 5,
       hookTripEscalations: 0,
     });
   });
@@ -985,7 +997,8 @@ async function seedRun(input: {
   const runId = `${input.suffix}-run`;
   const implementAttemptId = `${input.suffix}-impl-1`;
 
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId: input.projectId,
     title: input.suffix,

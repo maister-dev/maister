@@ -5,7 +5,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -16,8 +16,43 @@ import { resolveManifest } from "@/lib/flows/graph/current-node-kind";
 import { runtimeRoot } from "@/lib/instance-config";
 import { interpretScratchUpdate } from "@/lib/scratch-runs/transcript";
 import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
+import {
+  consecutiveFailedAttempts,
+  consecutiveFailedRuns,
+  treeWallClockMinutes,
+} from "@/lib/runs/budget-meters";
+import {
+  budgetBreachClaimStage,
+  budgetBreachProgressFromInput,
+  budgetBreachSchemaView,
+  getBudgetBreachAvailableOptions,
+  isActiveBudgetBreachClaim,
+  type BudgetBreachAvailableOption,
+  type BudgetBreachBudgetObservation,
+  type BudgetBreachClaimStage,
+  type BudgetBreachMeter,
+  type BudgetBreachProgressDto,
+  type BudgetBreachRunStatus,
+} from "@/lib/runs/budget-breach-fork";
+import {
+  budgetFromSnapshot,
+  type BudgetAxis,
+  type BudgetLimits,
+  type BudgetScope,
+  type BudgetState,
+} from "@/lib/runs/execution-policy";
+import { effectiveLimit, isSetLimit } from "@/lib/runs/keepalive-sweeper";
 
-const { gateResults, nodeAttempts, projects, stepRuns, workspaces } = schema;
+const {
+  gateResults,
+  hitlRequests,
+  nodeAttempts,
+  projects,
+  runCostRollups,
+  runs,
+  stepRuns,
+  workspaces,
+} = schema;
 
 const log = pino({
   name: "inbox-context",
@@ -52,6 +87,9 @@ export interface InboxCardContext {
   gates: InboxGateChip[];
   diff: { files: number; additions: number; deletions: number } | null;
   progress: { done: number; total: number } | null;
+  budgetProgress: BudgetBreachProgressDto | null;
+  availableOptions: BudgetBreachAvailableOption[];
+  claimStage: BudgetBreachClaimStage | null;
 }
 
 export interface InboxContextRun {
@@ -283,6 +321,371 @@ async function loadDiffSummary(
   }
 }
 
+type PendingBudgetBreachRow = {
+  schema: unknown;
+  response: unknown;
+  runKind: "flow" | "scratch" | "agent";
+  status: BudgetBreachRunStatus;
+  taskId: string | null;
+  flowId: string | null;
+  agentId: string | null;
+  parentRunId: string | null;
+  rootRunId: string | null;
+  agentWorkspace: "none" | "repo_read" | "worktree" | null;
+  startedAt: Date;
+  endedAt: Date | null;
+  resumeStartedAt: Date | null;
+  executionPolicy: unknown;
+  budgetState: BudgetState | null;
+  workspaceId: string | null;
+  workspaceRemovedAt: Date | null;
+};
+
+function zeroGateSummary(): BudgetBreachProgressDto["gates"] {
+  return {
+    open: 0,
+    satisfied: 0,
+    failed: 0,
+    unknown: 0,
+  };
+}
+
+function summarizeGates(
+  gates: InboxGateChip[],
+): BudgetBreachProgressDto["gates"] {
+  return gates.reduce((summary, gate) => {
+    if (gate.status === "passed" || gate.status === "overridden") {
+      summary.satisfied += 1;
+    } else if (gate.status === "failed") {
+      summary.failed += 1;
+    } else if (gate.status === "pending" || gate.status === "running") {
+      summary.open += 1;
+    } else {
+      summary.unknown += 1;
+    }
+
+    return summary;
+  }, zeroGateSummary());
+}
+
+function emptyBudgetObservation(): BudgetBreachBudgetObservation {
+  return { limit: null, spent: null, source: "no-data" };
+}
+
+function effectiveBudgetLimitOrNull(
+  snapshotBudget: BudgetAxis,
+  override: BudgetAxis | undefined,
+  scope: BudgetScope,
+  field: keyof BudgetLimits,
+): number | null {
+  const limit = effectiveLimit(snapshotBudget, override, scope, field);
+
+  return isSetLimit(limit) ? limit : null;
+}
+
+function observation(
+  limit: number | null,
+  spent: number | null,
+): BudgetBreachBudgetObservation {
+  return {
+    limit,
+    spent,
+    source: limit !== null && spent !== null ? "value" : "no-data",
+  };
+}
+
+function wallclockMinutes(row: PendingBudgetBreachRow, now: Date): number {
+  const end = row.endedAt ?? now;
+
+  return Math.max(
+    0,
+    Math.round((end.getTime() - row.startedAt.getTime()) / 60_000),
+  );
+}
+
+const baseTokenSpend = sql<number | string>`coalesce(sum(
+  ${runCostRollups.inputTokens}
+  + ${runCostRollups.outputTokens}
+  + ${runCostRollups.cacheReadTokens}
+  + ${runCostRollups.cacheCreationTokens}
+), 0)`;
+
+function tokenSpendFromAggregate(
+  row: { total: number | string | null; rows: number | string | null } | null,
+): number | null {
+  if (row === null || Number(row.rows ?? 0) === 0) {
+    return null;
+  }
+
+  return Number(row.total ?? 0);
+}
+
+async function loadTokenSpend(
+  client: Db,
+  run: InboxContextRun,
+  row: PendingBudgetBreachRow,
+  scope: BudgetScope,
+): Promise<number | null> {
+  if (scope === "run") {
+    const rows = await client
+      .select({
+        total: baseTokenSpend,
+        rows: sql<number | string>`count(${runCostRollups.runId})`,
+      })
+      .from(runCostRollups)
+      .where(eq(runCostRollups.runId, run.id));
+
+    return tokenSpendFromAggregate(rows[0] ?? null);
+  }
+
+  if (scope === "task") {
+    if (!row.taskId) return null;
+    const rows = await client
+      .select({
+        total: baseTokenSpend,
+        rows: sql<number | string>`count(${runCostRollups.runId})`,
+      })
+      .from(runCostRollups)
+      .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+      .where(eq(runs.taskId, row.taskId));
+
+    return tokenSpendFromAggregate(rows[0] ?? null);
+  }
+
+  const rootRunId = row.rootRunId ?? run.id;
+  const rows = await client
+    .select({
+      total: baseTokenSpend,
+      rows: sql<number | string>`count(${runCostRollups.runId})`,
+    })
+    .from(runCostRollups)
+    .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+    .where(eq(runs.rootRunId, rootRunId));
+
+  return tokenSpendFromAggregate(rows[0] ?? null);
+}
+
+async function loadFailureSpend(
+  client: Db,
+  run: InboxContextRun,
+  row: PendingBudgetBreachRow,
+  scope: BudgetScope,
+): Promise<number | null> {
+  if (scope === "run") {
+    return consecutiveFailedAttempts(run.id, { client });
+  }
+
+  if (scope === "task") {
+    return row.taskId
+      ? consecutiveFailedRuns(
+          { taskId: row.taskId },
+          { client, excludeRunId: run.id },
+        )
+      : null;
+  }
+
+  return consecutiveFailedRuns(
+    { rootRunId: row.rootRunId ?? run.id },
+    { client, excludeRunId: run.id },
+  );
+}
+
+async function loadWallclockSpend(
+  client: Db,
+  row: PendingBudgetBreachRow,
+  run: InboxContextRun,
+  scope: BudgetScope,
+  now: Date,
+): Promise<number | null> {
+  if (scope !== "tree") {
+    return wallclockMinutes(row, now);
+  }
+
+  return treeWallClockMinutes(row.rootRunId ?? run.id, { client });
+}
+
+async function budgetObservation(args: {
+  client: Db;
+  run: InboxContextRun;
+  row: PendingBudgetBreachRow;
+  scope: BudgetScope;
+  dimension: BudgetBreachMeter;
+  limit: number | null;
+  now: Date;
+}): Promise<BudgetBreachBudgetObservation> {
+  if (args.limit === null) return emptyBudgetObservation();
+
+  try {
+    const spent =
+      args.dimension === "tokens"
+        ? await loadTokenSpend(args.client, args.run, args.row, args.scope)
+        : args.dimension === "failures"
+          ? await loadFailureSpend(args.client, args.run, args.row, args.scope)
+          : await loadWallclockSpend(
+              args.client,
+              args.row,
+              args.run,
+              args.scope,
+              args.now,
+            );
+
+    return observation(args.limit, spent);
+  } catch (err) {
+    log.warn(
+      {
+        runId: args.run.id,
+        scope: args.scope,
+        dimension: args.dimension,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "[inbox-context] budget progress spend read failed",
+    );
+
+    return observation(args.limit, null);
+  }
+}
+
+async function loadPendingBudgetBreach(
+  client: Db,
+  runId: string,
+): Promise<PendingBudgetBreachRow | null> {
+  const rows = await client
+    .select({
+      schema: hitlRequests.schema,
+      response: hitlRequests.response,
+      runKind: runs.runKind,
+      status: runs.status,
+      taskId: runs.taskId,
+      flowId: runs.flowId,
+      agentId: runs.agentId,
+      parentRunId: runs.parentRunId,
+      rootRunId: runs.rootRunId,
+      agentWorkspace: runs.agentWorkspace,
+      startedAt: runs.startedAt,
+      endedAt: runs.endedAt,
+      resumeStartedAt: runs.resumeStartedAt,
+      executionPolicy: runs.executionPolicy,
+      budgetState: runs.budgetState,
+      workspaceId: workspaces.id,
+      workspaceRemovedAt: workspaces.removedAt,
+    })
+    .from(hitlRequests)
+    .innerJoin(runs, eq(runs.id, hitlRequests.runId))
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+    .where(
+      and(
+        eq(hitlRequests.runId, runId),
+        eq(hitlRequests.kind, "budget_breach"),
+        isNull(hitlRequests.respondedAt),
+        eq(runs.id, runId),
+      ),
+    )
+    .orderBy(desc(hitlRequests.createdAt))
+    .limit(1);
+
+  const row = rows[0];
+
+  if (!row) return null;
+
+  return {
+    ...row,
+    budgetState: row.budgetState ?? null,
+  };
+}
+
+async function buildBudgetProgress(
+  client: Db,
+  run: InboxContextRun,
+  row: PendingBudgetBreachRow,
+  gates: InboxGateChip[],
+  progress: InboxCardContext["progress"],
+  diff: InboxCardContext["diff"],
+): Promise<BudgetBreachProgressDto | null> {
+  const schemaView = budgetBreachSchemaView(row.schema);
+
+  if (schemaView === null) return null;
+
+  const snapshotBudget = budgetFromSnapshot(row.executionPolicy);
+  const ceilingOverride = row.budgetState?.ceilingOverride;
+  const scope = schemaView.scope;
+  const now = new Date();
+  const minutes = wallclockMinutes(row, now);
+  const budgetByDimension: Record<
+    BudgetBreachMeter,
+    BudgetBreachBudgetObservation
+  > = {
+    tokens: await budgetObservation({
+      client,
+      run,
+      row,
+      scope,
+      dimension: "tokens",
+      limit: effectiveBudgetLimitOrNull(
+        snapshotBudget,
+        ceilingOverride,
+        scope,
+        "maxTokens",
+      ),
+      now,
+    }),
+    failures: await budgetObservation({
+      client,
+      run,
+      row,
+      scope,
+      dimension: "failures",
+      limit: effectiveBudgetLimitOrNull(
+        snapshotBudget,
+        ceilingOverride,
+        scope,
+        "consecutiveFailures",
+      ),
+      now,
+    }),
+    wallclock: await budgetObservation({
+      client,
+      run,
+      row,
+      scope,
+      dimension: "wallclock",
+      limit: effectiveBudgetLimitOrNull(
+        snapshotBudget,
+        ceilingOverride,
+        scope,
+        "wallClockMinutes",
+      ),
+      now,
+    }),
+  };
+
+  budgetByDimension[schemaView.meter] = {
+    limit: schemaView.limit,
+    spent: schemaView.current,
+    source: "value",
+  };
+
+  return budgetBreachProgressFromInput({
+    schema: row.schema,
+    budgetByDimension,
+    nodes: {
+      completed: progress?.done ?? null,
+      total: progress?.total ?? null,
+      currentNodeId: run.currentStepId,
+    },
+    diff:
+      diff === null
+        ? null
+        : {
+            filesChanged: diff.files,
+            insertions: diff.additions,
+            deletions: diff.deletions,
+          },
+    gates: summarizeGates(gates),
+    wallclockMinutes: minutes,
+    resumeCount: row.resumeStartedAt === null ? 0 : 1,
+  });
+}
+
 // The run is loaded + authorized (`readBoard`) by the caller. Each field is read
 // independently and degrades to null/[] on a missing or unreadable source — the
 // route never 500s for a missing peek (M17/inbox-card-redesign).
@@ -297,6 +700,47 @@ export async function getInboxCardContext(
     loadProgress(client, run),
     loadDiffSummary(client, run),
   ]);
+  const budgetRow = await loadPendingBudgetBreach(client, run.id);
 
-  return { lastAgentMessage, gates, diff, progress };
+  if (budgetRow === null) {
+    return {
+      lastAgentMessage,
+      gates,
+      diff,
+      progress,
+      budgetProgress: null,
+      availableOptions: [],
+      claimStage: null,
+    };
+  }
+
+  return {
+    lastAgentMessage,
+    gates,
+    diff,
+    progress,
+    budgetProgress: await buildBudgetProgress(
+      client,
+      run,
+      budgetRow,
+      gates,
+      progress,
+      diff,
+    ),
+    availableOptions: isActiveBudgetBreachClaim(budgetRow.response)
+      ? []
+      : getBudgetBreachAvailableOptions({
+          runKind: budgetRow.runKind,
+          status: budgetRow.status,
+          taskId: budgetRow.taskId,
+          flowId: budgetRow.flowId,
+          agentId: budgetRow.agentId,
+          parentRunId: budgetRow.parentRunId,
+          agentWorkspace: budgetRow.agentWorkspace,
+          hasOwnedWorkspace:
+            budgetRow.workspaceId !== null &&
+            budgetRow.workspaceRemovedAt === null,
+        }),
+    claimStage: budgetBreachClaimStage(budgetRow.response),
+  };
 }

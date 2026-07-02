@@ -157,7 +157,8 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [runners, defaultRunnerId, presets, adapters, sidecars]
+                required:
+                  [runners, defaultRunnerId, presets, adapters, sidecars]
                 properties:
                   runners:
                     type: array
@@ -231,7 +232,11 @@ paths:
               additionalProperties: false
               properties:
                 id: { type: string }
-                adapter: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
+                adapter:
+                  {
+                    type: string,
+                    enum: [claude, codex, gemini, opencode, mimo],
+                  }
                 model: { type: string }
                 env:
                   type: object
@@ -306,7 +311,10 @@ paths:
                     values resolve from the supervisor host environment.
                 provider: { type: object }
                 permissionPolicy:
-                  { type: string, enum: [default, dangerously_skip_permissions] }
+                  {
+                    type: string,
+                    enum: [default, dangerously_skip_permissions],
+                  }
                 sidecarId: { type: string, nullable: true }
                 enabled: { type: boolean }
       responses:
@@ -435,13 +443,7 @@ paths:
                 jobKind:
                   {
                     type: string,
-                    enum:
-                      [
-                        system_sweep,
-                        command,
-                        flow_run,
-                        webhook_delivery,
-                      ],
+                    enum: [system_sweep, command, flow_run, webhook_delivery],
                   }
                 target:
                   $ref: "#/components/schemas/SchedulerJobTarget"
@@ -664,7 +666,8 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       responses:
         "200":
           description: Agent + prompt.
@@ -696,7 +699,8 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       requestBody:
         required: true
         content:
@@ -881,7 +885,8 @@ paths:
           description: Start initiated; supervisor process state echoed.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/RouterSidecarStateResponse" }
+              schema:
+                { $ref: "#/components/schemas/RouterSidecarStateResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -913,7 +918,8 @@ paths:
           description: Stop completed; supervisor process state echoed.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/RouterSidecarStateResponse" }
+              schema:
+                { $ref: "#/components/schemas/RouterSidecarStateResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -954,7 +960,8 @@ paths:
           description: Launch options visible to the caller for the task.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TaskRunLaunchOptionsResponse" }
+              schema:
+                { $ref: "#/components/schemas/TaskRunLaunchOptionsResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -1099,7 +1106,11 @@ paths:
               required: [flowRevisionId, slotKey]
               properties:
                 flowRevisionId: { type: string }
-                slotKey: { type: string, description: Must be one of the revision-declared slots. }
+                slotKey:
+                  {
+                    type: string,
+                    description: Must be one of the revision-declared slots.,
+                  }
                 mappedRunnerId:
                   type: string
                   nullable: true
@@ -1646,7 +1657,11 @@ paths:
               required: [agentId]
               additionalProperties: false
               properties:
-                agentId: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+                agentId:
+                  {
+                    type: string,
+                    pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$",
+                  }
                 enabled: { type: boolean, default: true }
                 runnerOverrideId: { type: string, nullable: true }
       responses:
@@ -1693,7 +1708,8 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       requestBody:
         required: true
         content:
@@ -1725,9 +1741,15 @@ paths:
             example:
               enabled: true
               branchBase: develop
-              executionPolicyOverride: { autoApply: full, onBudgetBreach: terminate_restorable }
+              executionPolicyOverride:
+                { autoApply: full, onBudgetBreach: terminate_restorable }
               schedules:
-                - { triggerType: cron, cronExpr: "0 9 * * 1", timezone: "Europe/Amsterdam", enabled: true }
+                - {
+                    triggerType: cron,
+                    cronExpr: "0 9 * * 1",
+                    timezone: "Europe/Amsterdam",
+                    enabled: true,
+                  }
       responses:
         "200":
           description: Updated.
@@ -1766,7 +1788,8 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       responses:
         "204": { description: Detached. }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -1799,7 +1822,8 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       requestBody:
         required: false
         content:
@@ -1851,7 +1875,8 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
         - name: X-Maister-Trigger-Event-Id
           in: header
           required: false
@@ -2171,7 +2196,16 @@ paths:
               type: object
               additionalProperties: false
               required:
-                [title, prompt, flowId, runnerId, baseBranch, targetBranch, promotionMode, executionPolicy]
+                [
+                  title,
+                  prompt,
+                  flowId,
+                  runnerId,
+                  baseBranch,
+                  targetBranch,
+                  promotionMode,
+                  executionPolicy,
+                ]
               properties:
                 title: { type: string, minLength: 1 }
                 prompt: { type: string, minLength: 1 }
@@ -3852,9 +3886,12 @@ paths:
       description: |
         Read-only context for an expanded inbox HITL card: the last agent
         message, the current node attempt's gates, a diff summary, and stage
-        progress. Gated `readBoard` on the run's project (project derived from
-        the run row; `runId` is the only input). Every field degrades to `null`
-        when its source cannot be read — the route never 500s for a missing peek.
+        progress. For `budget_breach` cards the same DTO also carries the
+        computed `budgetProgress`, server-derived `availableOptions`, and
+        `claimStage` read by the unified decision controls. Gated `readBoard` on
+        the run's project (project derived from the run row; `runId` is the only
+        input). Every field degrades to `null` when its source cannot be read —
+        the route never 500s for a missing peek.
       operationId: getRunInboxContext
       parameters:
         - name: runId
@@ -3914,8 +3951,10 @@ paths:
                     scope: run
                     scopes:
                       run: { available: true }
-                      since-last-review: { available: false, reason: last-review-missing }
-                      last-node: { available: false, reason: current-node-missing }
+                      since-last-review:
+                        { available: false, reason: last-review-missing }
+                      last-node:
+                        { available: false, reason: current-node-missing }
                       uncommitted: { available: true }
                     baseCommit: abc123
                     sourceBranch: maister/task-1
@@ -3934,8 +3973,10 @@ paths:
                     scope: run
                     scopes:
                       run: { available: true }
-                      since-last-review: { available: false, reason: last-review-missing }
-                      last-node: { available: false, reason: current-node-missing }
+                      since-last-review:
+                        { available: false, reason: last-review-missing }
+                      last-node:
+                        { available: false, reason: current-node-missing }
                       uncommitted: { available: true }
                     baseCommit: abc123
                     sourceBranch: maister/task-1
@@ -3964,8 +4005,10 @@ paths:
                     scope: uncommitted
                     scopes:
                       run: { available: true }
-                      since-last-review: { available: false, reason: last-review-missing }
-                      last-node: { available: false, reason: current-node-missing }
+                      since-last-review:
+                        { available: false, reason: last-review-missing }
+                      last-node:
+                        { available: false, reason: current-node-missing }
                       uncommitted: { available: true }
                     baseCommit: HEAD
                     sourceBranch: maister/task-1
@@ -4479,7 +4522,8 @@ paths:
                 properties:
                   ok: { type: boolean, enum: [true] }
                   runId: { type: string, format: uuid }
-                  deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
+                  deliveryPolicy:
+                    { $ref: "#/components/schemas/DeliveryPolicy" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -4748,7 +4792,7 @@ paths:
   /api/runs/{runId}/hitl/{hitlRequestId}/respond:
     post:
       tags: [hitl]
-      summary: Deliver an HITL response (permission / form / human)
+      summary: Deliver an HITL response (permission / form / human / decision)
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). The `projectId` is derived
@@ -4785,6 +4829,18 @@ paths:
           `NeedsInput → Running` and respawns), returning 202
           `{ runStatus: "NeedsInput", state: "resume-in-progress" }`. Idempotent:
           a same-payload retry whose prior resume handoff was lost re-drives it.
+        - **budget_breach** (ADR-125): a human-only four-way fork with
+          `optionId: "raise" | "restart" | "park" | "abandon"`. Legacy
+          `{optionId:"raise", raiseTo:N}` and bare `{optionId:"abandon"}`
+          remain valid. Canonical raise uses
+          `{response:{dimension?, newLimit}}`; restart uses an empty object;
+          park uses `{response:{mode:"snapshot"|"export", branchName?}}`;
+          discard/drop uses `{response:{dropWorkspace:true}}` or top-level
+          `dropWorkspace`. The server validates availability from run state
+          before claim and exposes the same `availableOptions` in pending-HITL
+          read models. Restart and park use staged claims (`response.stage`)
+          until the composite reaches durable success or a final post-terminal
+          failure.
 
         **(M11a — Designed) graph `human_review` decisions.** For a graph
         review HITL the reviewer's `decision` / `comments` / `workspacePolicy`
@@ -4890,12 +4946,46 @@ paths:
                 summary: (ADR-108) Resume a guardrail-tripped run
                 value:
                   optionId: "resume"
+              budget-raise-legacy:
+                summary: (ADR-125) Legacy raise payload, still accepted
+                value:
+                  optionId: "raise"
+                  raiseTo: 20000
+              budget-raise-canonical:
+                summary: (ADR-125) Raise breached token ceiling
+                value:
+                  optionId: "raise"
+                  response:
+                    dimension: "tokens"
+                    newLimit: 20000
+              budget-restart:
+                summary: (ADR-125) Restart from a fresh policy snapshot
+                value:
+                  optionId: "restart"
+                  response: {}
+              budget-park-export:
+                summary: (ADR-125) Export preserved work and stop
+                value:
+                  optionId: "park"
+                  response:
+                    mode: "export"
+                    branchName: "maister/budget-parked-task-42"
+              budget-abandon-drop:
+                summary: (ADR-125) Discard and remove owned workspace now
+                value:
+                  optionId: "abandon"
+                  response:
+                    dropWorkspace: true
       responses:
         "200":
           description: |
             Response durably recorded. For permission, the supervisor
             deferred was resolved. For form/human, the input artifact
-            was written and `runFlow` was queued.
+            was written and `runFlow` was queued. For `budget_breach`, the
+            chosen fork reached its durable result: raise scheduled resume,
+            restart terminalized the old run and launched or queued a new one,
+            park preserved work and abandoned the run, or discard failed the run
+            (and optionally dropped the workspace).
           content:
             application/json:
               schema:
@@ -4905,11 +4995,20 @@ paths:
                   ok: { type: boolean, enum: [true] }
                   runStatus:
                     type: string
-                    enum: [NeedsInput]
+                    enum:
+                      [
+                        NeedsInput,
+                        NeedsInputIdle,
+                        Pending,
+                        Running,
+                        Failed,
+                        Abandoned,
+                      ]
                     description: |
                       Row state at response time. The runner promotes
-                      the run to `Running` as soon as it picks up the
-                      work.
+                      a resumed run to `Running` as soon as it picks up the
+                      work. Budget restart may additionally return a new run id
+                      in the implementation DTO.
         "401":
           description: No valid session (`UNAUTHENTICATED`).
           content:
@@ -4936,8 +5035,9 @@ paths:
             One of: HITL row already delivered with a different payload
             (`CONFLICT`), run is in a terminal status (`CONFLICT`), or
             an `optionId` claim conflicts with a prior claim
-            (`CONFLICT`). Identifies a retry contract violation, not a
-            server bug.
+            (`CONFLICT`). For budget composites, also used when a different
+            option arrives after a non-failed staged claim. Identifies a retry
+            contract violation, not a server bug.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -4984,7 +5084,10 @@ paths:
             returned when a `rework` decision is submitted past the loop
             boundary (`schema.gateAttempt > schema.maxLoops`; total visits =
             `maxLoops + 1`) — rejected at validate time instead of letting
-            the engine `CONFIG`-fail the whole run.
+            the engine `CONFIG`-fail the whole run. Budget branch-name
+            validation, unavailable option cells, and invalid raise limits fail
+            before the row is consumed (`PRECONDITION`/`NEEDS_INPUT` by route
+            mapping).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5030,7 +5133,8 @@ paths:
           description: Review-comment threads with computed placement.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ReviewCommentThreadsResponse" }
+              schema:
+                { $ref: "#/components/schemas/ReviewCommentThreadsResponse" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -5825,7 +5929,15 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, runId, archived, archivedBranch, snapshotted, supervisorStopped]
+                required:
+                  [
+                    ok,
+                    runId,
+                    archived,
+                    archivedBranch,
+                    snapshotted,
+                    supervisorStopped,
+                  ]
                 properties:
                   ok: { type: boolean, enum: [true] }
                   runId: { type: string }
@@ -5874,7 +5986,15 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, runId, runStatus, workspaceRemoved, archivedBranch, supervisorStopped]
+                required:
+                  [
+                    ok,
+                    runId,
+                    runStatus,
+                    workspaceRemoved,
+                    archivedBranch,
+                    supervisorStopped,
+                  ]
                 properties:
                   ok: { type: boolean, enum: [true] }
                   runId: { type: string }
@@ -6338,7 +6458,8 @@ paths:
             not stored server-side. All list responses omit the secret.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/CreateAccountTokenResponse" }
+              schema:
+                { $ref: "#/components/schemas/CreateAccountTokenResponse" }
               examples:
                 default:
                   value:
@@ -8255,7 +8376,8 @@ paths:
                 properties:
                   installs:
                     type: array
-                    items: { $ref: "#/components/schemas/PackageInstallSummary" }
+                    items:
+                      { $ref: "#/components/schemas/PackageInstallSummary" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -8337,7 +8459,8 @@ paths:
                 properties:
                   attachments:
                     type: array
-                    items: { $ref: "#/components/schemas/ProjectPackageAttachment" }
+                    items:
+                      { $ref: "#/components/schemas/ProjectPackageAttachment" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -8826,17 +8949,20 @@ paths:
                     properties:
                       nodes:
                         type: array
-                        items: { $ref: "#/components/schemas/GraphTopologyNode" }
+                        items:
+                          { $ref: "#/components/schemas/GraphTopologyNode" }
                       edges:
                         type: array
-                        items: { $ref: "#/components/schemas/GraphTopologyEdge" }
+                        items:
+                          { $ref: "#/components/schemas/GraphTopologyEdge" }
                   layout:
                     type: object
                     description: |
                       Authored layout from the manifest `presentation` section
                       (ADR-064), keyed by node id; absent nodes are dagre-seeded
                       client-side. Empty object when no presentation is stored.
-                    additionalProperties: { $ref: "#/components/schemas/GraphNodePosition" }
+                    additionalProperties:
+                      { $ref: "#/components/schemas/GraphNodePosition" }
                   draftVersion:
                     type: integer
                     minimum: 1
@@ -9087,7 +9213,12 @@ paths:
                       - id: filesystem
                         transport: stdio
                         command: npx
-                        args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+                        args:
+                          [
+                            "-y",
+                            "@modelcontextprotocol/server-filesystem",
+                            "/workspace",
+                          ]
                         envKeys: []
                         url: null
                         headerKeys: []
@@ -9127,7 +9258,12 @@ paths:
                   id: filesystem
                   transport: stdio
                   command: npx
-                  args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+                  args:
+                    [
+                      "-y",
+                      "@modelcontextprotocol/server-filesystem",
+                      "/workspace",
+                    ]
                   envKeys: ["env:SOME_KEY"]
                   supportedAgents: [claude]
                   enabled: true
@@ -9224,7 +9360,11 @@ paths:
                     pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
                 supportedAgents:
                   type: array
-                  items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
+                  items:
+                    {
+                      type: string,
+                      enum: [claude, codex, gemini, opencode, mimo],
+                    }
                 enabled: { type: boolean }
       responses:
         "200":
@@ -9414,7 +9554,11 @@ paths:
                     pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
                 supportedAgents:
                   type: array
-                  items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
+                  items:
+                    {
+                      type: string,
+                      enum: [claude, codex, gemini, opencode, mimo],
+                    }
       responses:
         "200":
           description: Project MCP server updated.
@@ -9979,7 +10123,8 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/WebhookId" }
       responses:
-        "204": { description: Subscription deleted (no delivery history existed). }
+        "204":
+          { description: Subscription deleted (no delivery history existed). }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10081,7 +10226,13 @@ paths:
                   value: { ok: true, httpStatus: 200, durationMs: 118 }
                 refused:
                   summary: Endpoint returned an error status
-                  value: { ok: false, httpStatus: 500, durationMs: 95, errorKind: http }
+                  value:
+                    {
+                      ok: false,
+                      httpStatus: 500,
+                      durationMs: 95,
+                      errorKind: http,
+                    }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10365,7 +10516,8 @@ paths:
         - { $ref: "#/components/parameters/ProjectSlug" }
         - { $ref: "#/components/parameters/WebhookId" }
       responses:
-        "204": { description: Subscription deleted (no delivery history existed). }
+        "204":
+          { description: Subscription deleted (no delivery history existed). }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10581,7 +10733,9 @@ components:
         Designed (inbox card redesign). Lazy per-card decision context loaded when
         an inbox HITL card is expanded. Explicit DTO — no DB rows or server-only
         handles. Every field is nullable: a source that cannot be read degrades to
-        `null` rather than failing the request.
+        `null` rather than failing the request. ADR-125 budget cards additionally
+        carry budget progress, server-computed options, and a claim stage; null
+        means the current HITL row is not `budget_breach`.
       additionalProperties: false
       required: [lastAgentMessage, gates, diff, progress]
       properties:
@@ -10604,11 +10758,20 @@ components:
               gateId: { type: string }
               kind:
                 type: string
-                enum: [command_check, skill_check, ai_judgment, artifact_required, external_check, human_review]
+                enum:
+                  [
+                    command_check,
+                    skill_check,
+                    ai_judgment,
+                    artifact_required,
+                    external_check,
+                    human_review,
+                  ]
               mode: { type: string, enum: [blocking, advisory] }
               status:
                 type: string
-                enum: [pending, running, passed, failed, stale, skipped, overridden]
+                enum:
+                  [pending, running, passed, failed, stale, skipped, overridden]
           description: Gates of the run's current node attempt (`getRunNodeStatuses`).
         diff:
           nullable: true
@@ -10629,6 +10792,156 @@ components:
             done: { type: integer }
             total: { type: integer }
           description: Node progress (graph runs; legacy runs derive from the board spine).
+        budgetProgress:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/BudgetBreachProgressDto"
+          description: ADR-125 budget-breach progress aggregate; null for non-budget HITL.
+        availableOptions:
+          type: array
+          description: |
+            ADR-125 server-computed budget options. Empty for non-budget HITL and
+            for actively claimed rows whose controls are disabled by `claimStage`.
+          items:
+            $ref: "#/components/schemas/BudgetBreachAvailableOption"
+        claimStage:
+          type: string
+          nullable: true
+          enum: [claimed, preserving, terminalized, failed, relaunch_failed]
+          description: |
+            ADR-125 staged budget-claim state exposed so the UI can disable
+            active composites and re-enable `failed` rows.
+    BudgetBreachAvailableOption:
+      type: object
+      additionalProperties: false
+      required: [optionId, label, helperText]
+      properties:
+        optionId:
+          type: string
+          enum: [raise, restart, park, abandon]
+        label: { type: string }
+        helperText: { type: string }
+        destructive: { type: boolean, default: false }
+        dropAllowed:
+          type: boolean
+          default: false
+          description: True only when the run has an owned workspace that can be dropped now.
+        requiresBranchName:
+          type: boolean
+          default: false
+          description: True when the `park` option exposes export mode.
+        modes:
+          type: array
+          items:
+            type: string
+            enum: [snapshot, export]
+          description: Present for `park`; `snapshot` is the default mode.
+    BudgetBreachBudgetObservation:
+      type: object
+      additionalProperties: false
+      required: [limit, spent, source]
+      properties:
+        limit:
+          type: integer
+          nullable: true
+        spent:
+          type: integer
+          nullable: true
+        source:
+          type: string
+          enum: [value, no-data]
+    BudgetBreachProgressDto:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          breach,
+          budgetByDimension,
+          nodes,
+          diff,
+          gates,
+          wallclockMinutes,
+          resumeCount,
+        ]
+      properties:
+        breach:
+          type: object
+          additionalProperties: false
+          required: [dimension, limit, spent, overshootPct]
+          properties:
+            dimension: { type: string, enum: [tokens, failures, wallclock] }
+            limit: { type: integer }
+            spent: { type: integer, nullable: true }
+            overshootPct:
+              type: number
+              format: double
+              nullable: true
+        budgetByDimension:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/BudgetBreachBudgetObservation"
+          description: Keys are any subset of `tokens`, `failures`, `wallclock`.
+        nodes:
+          type: object
+          additionalProperties: false
+          required: [completed, total, currentNodeId]
+          properties:
+            completed: { type: integer, minimum: 0, nullable: true }
+            total: { type: integer, minimum: 0, nullable: true }
+            currentNodeId: { type: string, nullable: true }
+        diff:
+          nullable: true
+          type: object
+          additionalProperties: false
+          required: [filesChanged, insertions, deletions]
+          properties:
+            filesChanged: { type: integer, minimum: 0 }
+            insertions: { type: integer, minimum: 0 }
+            deletions: { type: integer, minimum: 0 }
+        gates:
+          type: object
+          additionalProperties: false
+          required: [open, satisfied, failed, unknown]
+          properties:
+            open: { type: integer, minimum: 0 }
+            satisfied: { type: integer, minimum: 0 }
+            failed: { type: integer, minimum: 0 }
+            unknown: { type: integer, minimum: 0 }
+        wallclockMinutes:
+          type: integer
+          nullable: true
+        resumeCount:
+          type: integer
+          nullable: true
+    BudgetBreachResponsePayload:
+      type: object
+      description: |
+        ADR-125 option-specific payload for `kind="budget_breach"`.
+        The active branch is selected by `HitlResponseBody.optionId`; unknown
+        fields are rejected by the service parser even though this schema stays
+        permissive enough to preserve legacy clients.
+      properties:
+        dimension:
+          type: string
+          enum: [tokens, failures, wallclock]
+          description: Optional for `raise`; defaults to the breached meter.
+        newLimit:
+          type: integer
+          minimum: 1
+          description: Required for canonical `raise`; must exceed the breached limit.
+        mode:
+          type: string
+          enum: [snapshot, export]
+          description: "`park` mode; defaults to `snapshot` in the UI."
+        branchName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Required when `mode="export"`; validated as a safe git branch ref.
+        dropWorkspace:
+          type: boolean
+          description: "`abandon` modifier; removes the owned workspace/branch after default abandon."
     PostProjectBody:
       type: object
       description: |
@@ -10759,7 +11072,8 @@ components:
       additionalProperties: false
       properties:
         autoApply: { type: string, enum: [off, permissions, full] }
-        onBudgetBreach: { type: string, enum: [escalate, terminate, terminate_restorable] }
+        onBudgetBreach:
+          { type: string, enum: [escalate, terminate, terminate_restorable] }
     AgentSummary:
       type: object
       description: |
@@ -10769,10 +11083,26 @@ components:
         (ADR-106; was `<flowRefId>:<stem>`). Never includes token material or
         filesystem internals beyond `sourcePath`.
       required:
-        [id, packageName, versionLabel, origin, name, description, workspace, mode, triggers, riskTier, enabled]
+        [
+          id,
+          packageName,
+          versionLabel,
+          origin,
+          name,
+          description,
+          workspace,
+          mode,
+          triggers,
+          riskTier,
+          enabled,
+        ]
       properties:
         id: { type: string }
-        packageName: { type: string, description: "(ADR-106) Providing package = `package_installs.name` (was `flowRefId`)." }
+        packageName:
+          {
+            type: string,
+            description: "(ADR-106) Providing package = `package_installs.name` (was `flowRefId`).",
+          }
         versionLabel: { type: string }
         origin: { type: string, enum: [git, authored] }
         name: { type: string }
@@ -10797,7 +11127,11 @@ components:
           additionalProperties: false
           properties:
             runner: { type: string }
-            branchBase: { type: string, description: "(ADR-106) Recommended branch base." }
+            branchBase:
+              {
+                type: string,
+                description: "(ADR-106) Recommended branch base.",
+              }
             cron:
               type: object
               additionalProperties: false
@@ -10812,7 +11146,12 @@ components:
           type: string
           nullable: true
           description: "(ADR-106) Same-package flow the agent drives (a `flows[].id` of the providing package manifest); `null` → standalone."
-        branchBase: { type: string, nullable: true, description: "(ADR-106) Agent branch base; defaults to the project main branch." }
+        branchBase:
+          {
+            type: string,
+            nullable: true,
+            description: "(ADR-106) Agent branch base; defaults to the project main branch.",
+          }
         sourcePath: { type: string }
         enabled: { type: boolean }
         quarantinedAt: { type: string, format: date-time, nullable: true }
@@ -10829,7 +11168,12 @@ components:
         linkId: { type: string, format: uuid }
         enabled: { type: boolean }
         runnerOverrideId: { type: string, nullable: true }
-        branchBase: { type: string, nullable: true, description: "(ADR-106) Instance override of the branch base; `null` → fall back to the agent `recommended`/project main." }
+        branchBase:
+          {
+            type: string,
+            nullable: true,
+            description: "(ADR-106) Instance override of the branch base; `null` → fall back to the agent `recommended`/project main.",
+          }
         executionPolicyOverride:
           type: object
           nullable: true
@@ -10853,7 +11197,8 @@ components:
       required: [triggerType]
       properties:
         triggerType: { type: string, enum: [cron, event] }
-        cronExpr: { type: string, description: "5-field cron, croner-validated." }
+        cronExpr:
+          { type: string, description: "5-field cron, croner-validated." }
         timezone: { type: string, description: "IANA timezone." }
         eventKinds:
           type: array
@@ -12149,8 +12494,10 @@ components:
             properties:
               id: { type: string }
               displayLabel: { type: string }
-              adapter: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
-              capabilityAgent: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
+              adapter:
+                { type: string, enum: [claude, codex, gemini, opencode, mimo] }
+              capabilityAgent:
+                { type: string, enum: [claude, codex, gemini, opencode, mimo] }
               model: { type: string }
               providerKind: { type: string }
               permissionPolicy: { type: string }
@@ -12380,7 +12727,11 @@ components:
             Present for `resource_link`/`resource`; a worktree-confined path/URI
             (server validates confinement, reusing the artifacts payload
             confinement pattern).
-        name: { type: string, description: Optional display name for a resource link. }
+        name:
+          {
+            type: string,
+            description: Optional display name for a resource link.,
+          }
         mimeType: { type: string }
     AvailableCommand:
       description: |
@@ -12393,7 +12744,12 @@ components:
       properties:
         name: { type: string }
         description: { type: string, nullable: true }
-        hint: { type: string, nullable: true, description: From the ACP `input.hint`. }
+        hint:
+          {
+            type: string,
+            nullable: true,
+            description: From the ACP `input.hint`.,
+          }
     ProjectCapabilityCatalogEntry:
       description: |
         (Implemented — capability composer, FR-B2/B3) One entry of the unified
@@ -12895,7 +13251,8 @@ components:
           required: [run, since-last-review, last-node, uncommitted]
           additionalProperties: false
           properties:
-            run: { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+            run:
+              { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
             since-last-review:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
             last-node:
@@ -12960,7 +13317,16 @@ components:
     RunDiffResponse:
       type: object
       required:
-        [runId, scope, scopes, baseCommit, sourceBranch, targetBranch, diff, truncated]
+        [
+          runId,
+          scope,
+          scopes,
+          baseCommit,
+          sourceBranch,
+          targetBranch,
+          diff,
+          truncated,
+        ]
       properties:
         runId: { type: string, format: uuid }
         scope:
@@ -12974,7 +13340,8 @@ components:
           type: object
           required: [run]
           properties:
-            run: { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+            run:
+              { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
             since-last-review:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
             last-node:
@@ -13065,7 +13432,8 @@ components:
             (ADR-064) Authored layout from the manifest `presentation` section,
             keyed by node id; a node absent from the map is dagre-seeded
             client-side.
-          additionalProperties: { $ref: "#/components/schemas/GraphNodePosition" }
+          additionalProperties:
+            { $ref: "#/components/schemas/GraphNodePosition" }
     GraphTopology:
       type: object
       required: [nodes, edges]
@@ -13102,7 +13470,8 @@ components:
           description: Human-readable node type label; additive.
         nodeRole:
           type: string
-          enum: [agent, command, check, judge, consensus, human, terminal, other]
+          enum:
+            [agent, command, check, judge, consensus, human, terminal, other]
         declaredGateSummary:
           $ref: "#/components/schemas/DeclaredGateSummary"
     GraphTopologyEdge:
@@ -13151,7 +13520,8 @@ components:
       properties:
         status:
           type: string
-          enum: [Pending, Running, Succeeded, Failed, NeedsInput, Reworked, Stale]
+          enum:
+            [Pending, Running, Succeeded, Failed, NeedsInput, Reworked, Stale]
         attempt: { type: integer }
         autoRetry:
           type: boolean
@@ -13169,7 +13539,15 @@ components:
           $ref: "#/components/schemas/RuntimeGateSummary"
     RuntimeGateSummary:
       type: object
-      required: [total, blockingTotal, advisoryTotal, worstBlockingStatus, failedBlocking, staleBlocking]
+      required:
+        [
+          total,
+          blockingTotal,
+          advisoryTotal,
+          worstBlockingStatus,
+          failedBlocking,
+          staleBlocking,
+        ]
       properties:
         total: { type: integer, minimum: 0 }
         blockingTotal: { type: integer, minimum: 0 }
@@ -13177,7 +13555,8 @@ components:
         worstBlockingStatus:
           type: string
           nullable: true
-          enum: [pending, running, passed, failed, stale, skipped, overridden, null]
+          enum:
+            [pending, running, passed, failed, stale, skipped, overridden, null]
         failedBlocking: { type: integer, minimum: 0 }
         staleBlocking: { type: integer, minimum: 0 }
     GraphGateStatus:
@@ -13289,7 +13668,8 @@ components:
         ok: { type: boolean, enum: [true] }
         mode:
           type: string
-          enum: [local_merge, pull_request, merge, rebase_merge, ai_rebase_merge]
+          enum:
+            [local_merge, pull_request, merge, rebase_merge, ai_rebase_merge]
         deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
         commit: { type: string, nullable: true }
         pullRequestUrl:
@@ -13321,7 +13701,8 @@ components:
         Discriminated union keyed on the row's `kind`. `optionId` is present for
         `permission` and the resume-or-abort decision kinds (`hook_trip`,
         `infra_recovery`, `budget_breach`); `response` is present for
-        `form` | `human`. Exactly ONE of the two MUST match the row's `kind`.
+        `form` | `human` and may carry option-specific payload for
+        `budget_breach`. Exactly ONE shape MUST match the row's `kind`.
       properties:
         optionId:
           type: string
@@ -13332,17 +13713,32 @@ components:
 
             For the resume-or-abort decision kinds it names the chosen decision:
             `hook_trip` → `"resume" | "abort"` (ADR-108 guardrail trip).
-            (`infra_recovery` uses `"retry" | "abandon"` and `budget_breach`
-            uses `"raise" | "abandon"` here likewise.) These kinds are
-            human-actor-only; abort/abandon fails the run terminally → 200,
-            resume/retry returns 202
-            `{ runStatus: "NeedsInput", state: "resume-in-progress" }`.
+            `infra_recovery` uses `"retry" | "abandon"`. `budget_breach`
+            (ADR-125) uses `"raise" | "restart" | "park" | "abandon"`.
+            These kinds are human-actor-only; abort/abandon fails the run
+            terminally → 200, resume/retry returns 202
+            `{ runStatus: "NeedsInput", state: "resume-in-progress" }` where
+            applicable.
+        raiseTo:
+          type: integer
+          minimum: 1
+          description: |
+            ADR-125 legacy `budget_breach` raise limit. Still accepted for
+            compatibility; canonical clients should send
+            `response.newLimit`.
+        dropWorkspace:
+          type: boolean
+          description: |
+            ADR-125 tolerant top-level alias for
+            `response.dropWorkspace` on `optionId:"abandon"`.
         response:
           description: |
             Required iff the HITL row has `kind == "form" | "human"`.
             Validated against the row's `schema` field (MAIster form
             schema — see `docs/configuration.md`). Returns 422 on
-            failure.
+            failure. For `kind="budget_breach"`, carries the
+            option-specific payload described by
+            `BudgetBreachResponsePayload`.
 
             **`kind="human"` with `on_reject` (Implemented — M17):** the
             response is captured under the same atomic-claim + artifact-write
@@ -13373,6 +13769,7 @@ components:
               description: Structured form payload — keys match the row's form schema.
               additionalProperties: true
             - $ref: "#/components/schemas/ReviewDecisionResponse"
+            - $ref: "#/components/schemas/BudgetBreachResponsePayload"
         confidence:
           type: number
           minimum: 0
@@ -14095,7 +14492,8 @@ components:
           type: array
           items:
             type: object
-            required: [id, changes, droppedTriggers, attachedHere, scheduleCount]
+            required:
+              [id, changes, droppedTriggers, attachedHere, scheduleCount]
             properties:
               id: { type: string }
               changes:
@@ -14168,7 +14566,18 @@ components:
       description: |
         (0063 Implemented) Account-level personal token metadata. NEVER includes
         plaintext `token` or `token_hash`.
-      required: [id, name, kind, ownerUserId, ownerLabel, scopes, humanHitl, prefix, createdAt]
+      required:
+        [
+          id,
+          name,
+          kind,
+          ownerUserId,
+          ownerLabel,
+          scopes,
+          humanHitl,
+          prefix,
+          createdAt,
+        ]
       properties:
         id:
           type: string
@@ -14268,7 +14677,18 @@ components:
         (M16) Created token metadata plus the plaintext secret. The `token`
         field is shown ONCE — the server does not store it and cannot re-derive
         it. Subsequent list responses omit `token`.
-      required: [id, name, kind, ownerUserId, ownerLabel, scopes, prefix, token, createdAt]
+      required:
+        [
+          id,
+          name,
+          kind,
+          ownerUserId,
+          ownerLabel,
+          scopes,
+          prefix,
+          token,
+          createdAt,
+        ]
       properties:
         id:
           type: string
@@ -14311,7 +14731,8 @@ components:
       description: |
         (M16) Token metadata for the list endpoint. NEVER includes `token_hash`
         or the plaintext secret.
-      required: [id, name, kind, ownerUserId, ownerLabel, scopes, prefix, createdAt]
+      required:
+        [id, name, kind, ownerUserId, ownerLabel, scopes, prefix, createdAt]
       properties:
         id:
           type: string
@@ -14381,12 +14802,22 @@ components:
         name: { type: string }
         slug: { type: string }
         status: { type: string, enum: [active, archived] }
-        sourceInstallId: { type: string, nullable: true, description: "Fork lineage: the git-package install this was forked from." }
+        sourceInstallId:
+          {
+            type: string,
+            nullable: true,
+            description: "Fork lineage: the git-package install this was forked from.",
+          }
         sourceRepoUrl: { type: string, nullable: true }
         sourceRef: { type: string, nullable: true }
         branchName: { type: string, nullable: true }
         lastCutInstallId: { type: string, nullable: true }
-        lockedByUserId: { type: string, nullable: true, description: "Current lock holder; null when unlocked." }
+        lockedByUserId:
+          {
+            type: string,
+            nullable: true,
+            description: "Current lock holder; null when unlocked.",
+          }
         lockExpiresAt: { type: string, format: date-time, nullable: true }
         createdBy: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
@@ -14396,9 +14827,22 @@ components:
       description: "(ADR-096 — Designed) Session edit-lock state for a local package."
       required: [held, heldByMe]
       properties:
-        held: { type: boolean, description: "True if a live (non-expired) lock exists." }
-        heldByMe: { type: boolean, description: "True if the caller's session holds it." }
-        holderLabel: { type: string, nullable: true, description: "Display name of the holder (never the session id)." }
+        held:
+          {
+            type: boolean,
+            description: "True if a live (non-expired) lock exists.",
+          }
+        heldByMe:
+          {
+            type: boolean,
+            description: "True if the caller's session holds it.",
+          }
+        holderLabel:
+          {
+            type: string,
+            nullable: true,
+            description: "Display name of the holder (never the session id).",
+          }
         expiresAt: { type: string, format: date-time, nullable: true }
     LocalPackageFile:
       type: object
@@ -14406,15 +14850,34 @@ components:
       required: [path, kind]
       properties:
         path: { type: string, description: "Relative to the working dir." }
-        kind: { type: string, description: "Inferred kind (flow|skill|agent|mcp|rule|schema|script|asset|readme)." }
-        content: { type: string, nullable: true, description: "Present on single-file GET only." }
-        contentHash: { type: string, nullable: true, description: "sha256 of content (informational)." }
+        kind:
+          {
+            type: string,
+            description: "Inferred kind (flow|skill|agent|mcp|rule|schema|script|asset|readme).",
+          }
+        content:
+          {
+            type: string,
+            nullable: true,
+            description: "Present on single-file GET only.",
+          }
+        contentHash:
+          {
+            type: string,
+            nullable: true,
+            description: "sha256 of content (informational).",
+          }
     LocalPackageCreateBody:
       type: object
       required: [name]
       properties:
         name: { type: string }
-        sourceInstallId: { type: string, nullable: true, description: "Fork: seed the working dir from this git-package install." }
+        sourceInstallId:
+          {
+            type: string,
+            nullable: true,
+            description: "Fork: seed the working dir from this git-package install.",
+          }
     LocalPackagePatchBody:
       type: object
       properties:
@@ -14430,33 +14893,80 @@ components:
       required: [targetLocalPackageId]
       properties:
         targetLocalPackageId: { type: string }
-        targetPath: { type: string, nullable: true, description: "Defaults to the same relative path in the target." }
+        targetPath:
+          {
+            type: string,
+            nullable: true,
+            description: "Defaults to the same relative path in the target.",
+          }
     CutVersionBody:
       type: object
       properties:
-        attachToProjectId: { type: string, minLength: 1, description: "Attach the cut version to this project id (caller must be a member; manageLocalPackages). Validated server-side before any irreversible side-effect." }
+        attachToProjectId:
+          {
+            type: string,
+            minLength: 1,
+            description: "Attach the cut version to this project id (caller must be a member; manageLocalPackages). Validated server-side before any irreversible side-effect.",
+          }
     CutVersionResult:
       type: object
       required: [installId, versionLabel]
       properties:
-        installId: { type: string, description: "The immutable package_installs id the cut produced." }
+        installId:
+          {
+            type: string,
+            description: "The immutable package_installs id the cut produced.",
+          }
         versionLabel: { type: string, description: "e.g. local-<digest12>." }
-        attachmentId: { type: string, description: "Present only when attachToProjectId was supplied and the attach succeeded." }
+        attachmentId:
+          {
+            type: string,
+            description: "Present only when attachToProjectId was supplied and the attach succeeded.",
+          }
     PublishLocalPackageBody:
       type: object
       required: [targetSourceId, branchName]
       properties:
-        targetSourceId: { type: string, minLength: 1, description: "(ADR-113 — Implemented) Id of a registered `package_sources` row to push to. Server-validated against the allow-list; a value not in the set → `CONFLICT` (409). A body-supplied raw URL is never accepted." }
-        branchName: { type: string, minLength: 1, maxLength: 255, description: "(ADR-113 — Implemented) Branch to push (prefilled stable `maister/<pkg-slug>`, editable). Validated at the git sink (`branchNameSchema`); invalid → `PRECONDITION` (409). Re-publish updates the same branch + PR." }
+        targetSourceId:
+          {
+            type: string,
+            minLength: 1,
+            description: "(ADR-113 — Implemented) Id of a registered `package_sources` row to push to. Server-validated against the allow-list; a value not in the set → `CONFLICT` (409). A body-supplied raw URL is never accepted.",
+          }
+        branchName:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 255,
+            description: "(ADR-113 — Implemented) Branch to push (prefilled stable `maister/<pkg-slug>`, editable). Validated at the git sink (`branchNameSchema`); invalid → `PRECONDITION` (409). Re-publish updates the same branch + PR.",
+          }
     PublishLocalPackageResult:
       type: object
       required: [branch, pushed, crossRepo]
       properties:
-        branch: { type: string, description: "The branch pushed to the target source." }
+        branch:
+          {
+            type: string,
+            description: "The branch pushed to the target source.",
+          }
         pushed: { type: boolean, description: "True when the push succeeded." }
-        prUrl: { type: string, nullable: true, description: "The opened/updated PR URL when a provider + host token were detected; null on the push-only fallback." }
-        compareUrl: { type: string, nullable: true, description: "Best-effort compare / create-PR URL for the push-only fallback (provider-specific); null when a PR was opened." }
-        crossRepo: { type: boolean, description: "True when the target source differs from the package's fork origin (`source_repo_url`) — surfaced as a UI warning." }
+        prUrl:
+          {
+            type: string,
+            nullable: true,
+            description: "The opened/updated PR URL when a provider + host token were detected; null on the push-only fallback.",
+          }
+        compareUrl:
+          {
+            type: string,
+            nullable: true,
+            description: "Best-effort compare / create-PR URL for the push-only fallback (provider-specific); null when a PR was opened.",
+          }
+        crossRepo:
+          {
+            type: boolean,
+            description: "True when the target source differs from the package's fork origin (`source_repo_url`) — surfaced as a UI warning.",
+          }
     PublishLocalPackageOptions:
       type: object
       required: [sources, defaultBranch]
@@ -14480,23 +14990,57 @@ components:
       type: object
       required: [elementPath, elementName]
       properties:
-        elementPath: { type: string, minLength: 1, maxLength: 1024, description: "Working-dir-relative path of the ONE element to copy (flow dir / skill bundle / agent .md / rule file). Confined; `..`/abs/`.git` rejected." }
-        elementName: { type: string, minLength: 1, maxLength: 200, description: "(ADR-105) Display name for the new local package — created as `<elementName> (local)`." }
+        elementPath:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            description: "Working-dir-relative path of the ONE element to copy (flow dir / skill bundle / agent .md / rule file). Confined; `..`/abs/`.git` rejected.",
+          }
+        elementName:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 200,
+            description: "(ADR-105) Display name for the new local package — created as `<elementName> (local)`.",
+          }
     ForkResult:
       type: object
       required: [localPackageId]
       properties:
-        localPackageId: { type: string, description: "The local package the fork landed in (a new `<ref>-local` / `<ref> (custom)` for a package fork; a new `<elementName> (local)` for an element fork)." }
-        alreadyExists: { type: boolean, description: "(ADR-105 — Implemented) True when fork dedup returned a pre-existing fork of the same `source_install_id` (HTTP 200) instead of creating a new one (201). Absent/false on a fresh fork." }
+        localPackageId:
+          {
+            type: string,
+            description: "The local package the fork landed in (a new `<ref>-local` / `<ref> (custom)` for a package fork; a new `<elementName> (local)` for an element fork).",
+          }
+        alreadyExists:
+          {
+            type: boolean,
+            description: "(ADR-105 — Implemented) True when fork dedup returned a pre-existing fork of the same `source_install_id` (HTTP 200) instead of creating a new one (201). Absent/false on a fresh fork.",
+          }
     PackageSource:
       type: object
       description: |
         (ADR-088 — Implemented) A `package_sources` row with the cached
         discovery snapshot. Discovery failures keep the stale snapshot.
-      required: [id, url, enabled, discovered, lastCheckedAt, builtIn, createdAt, updatedAt]
+      required:
+        [
+          id,
+          url,
+          enabled,
+          discovered,
+          lastCheckedAt,
+          builtIn,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         id: { type: string }
-        url: { type: string, description: "Git monorepo URL (packages/<name>/ layout)." }
+        url:
+          {
+            type: string,
+            description: "Git monorepo URL (packages/<name>/ layout).",
+          }
         enabled: { type: boolean }
         note: { type: string, nullable: true }
         discovered:
@@ -14536,7 +15080,17 @@ components:
       description: |
         (ADR-088 — Implemented) An immutable installed package revision.
         `installed_path` is NEVER projected to clients.
-      required: [id, sourceUrl, name, versionLabel, resolvedRevision, packageStatus, trustStatus, flows]
+      required:
+        [
+          id,
+          sourceUrl,
+          name,
+          versionLabel,
+          resolvedRevision,
+          packageStatus,
+          trustStatus,
+          flows,
+        ]
       properties:
         id: { type: string }
         sourceUrl: { type: string }
@@ -14544,7 +15098,8 @@ components:
         versionLabel:
           type: string
           description: "Raw tag (e.g. aif/v2.0.0) or local-<digest12> for local versions."
-        resolvedRevision: { type: string, description: "Tag SHA or package content digest." }
+        resolvedRevision:
+          { type: string, description: "Tag SHA or package content digest." }
         packageStatus:
           type: string
           enum: [Installing, Installed, Failed, Removed]
@@ -14559,7 +15114,16 @@ components:
     ProjectPackageAttachment:
       type: object
       description: (ADR-088 — Implemented) A project's enablement of one package install.
-      required: [id, packageInstallId, packageName, versionLabel, attachedAt, updateAvailable, flows]
+      required:
+        [
+          id,
+          packageInstallId,
+          packageName,
+          versionLabel,
+          attachedAt,
+          updateAvailable,
+          flows,
+        ]
       properties:
         id: { type: string }
         packageInstallId: { type: string }

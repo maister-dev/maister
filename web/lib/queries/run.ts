@@ -50,6 +50,7 @@ import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
+import { getInboxCardContext } from "@/lib/queries/inbox-context";
 import {
   lifecycleActionsForWorkspace,
   type WorkbenchLifecycleAction,
@@ -63,6 +64,11 @@ import {
   budgetFromSnapshot,
   budgetWarnStatus,
 } from "@/lib/runs/execution-policy";
+import type {
+  BudgetBreachAvailableOption,
+  BudgetBreachClaimStage,
+  BudgetBreachProgressDto,
+} from "@/lib/runs/budget-breach-fork";
 
 const {
   actorIdentities,
@@ -106,6 +112,9 @@ export interface RunPendingHitl {
   assigneeUserId: string | null;
   prompt: string;
   options: HitlOption[];
+  availableOptions?: BudgetBreachAvailableOption[];
+  budgetProgress?: BudgetBreachProgressDto | null;
+  claimStage?: BudgetBreachClaimStage | null;
   schema: unknown;
   criticality: "low" | "medium" | "high" | "critical" | null;
   // M30 (ADR-082): the reviewer's recorded dirty-worktree resolution for this
@@ -334,6 +343,16 @@ export const getRunDetail = cache(async function getRunDetail(
           .where(eq(actorIdentities.id, pendingAssignment.assigneeActorId))
       : [];
   const pendingAssignee = pendingAssigneeRows[0] ?? null;
+  const pendingBudgetContext =
+    pending?.kind === "budget_breach"
+      ? await getInboxCardContext({
+          id: row.runId,
+          projectId: requireRunProjectId(row.projectId, row.runId),
+          currentStepId: row.currentStepId,
+          flowRevisionId: row.flowRevisionId,
+          flowId: row.flowId,
+        })
+      : null;
 
   // Derived run-scope budget warn signal (AC-BADGE-1). Fail-open fast path: only
   // query the live token sum when the run scope carries a positive maxTokens
@@ -419,7 +438,16 @@ export const getRunDetail = cache(async function getRunDetail(
           assigneeLabel: pendingAssignee?.label ?? null,
           assigneeUserId: pendingAssignee?.userId ?? null,
           prompt: pending.prompt,
-          options: extractOptions(pending.kind, pending.rawSchema),
+          options:
+            pendingBudgetContext?.availableOptions.map((option) => ({
+              optionId: option.optionId,
+              label: option.label,
+            })) ?? extractOptions(pending.kind, pending.rawSchema),
+          ...(pendingBudgetContext?.availableOptions
+            ? { availableOptions: pendingBudgetContext.availableOptions }
+            : {}),
+          budgetProgress: pendingBudgetContext?.budgetProgress ?? null,
+          claimStage: pendingBudgetContext?.claimStage ?? null,
           // Permission `schema` carries supervisor-internal handles (requestId,
           // supervisorSessionId, toolCall) — never serialize them to the browser.
           // Mirrors queries/board.ts and queries/hitl.ts; the permission UI

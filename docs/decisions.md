@@ -2,7 +2,7 @@
 
 > **Purpose.** This file is the single source of truth for every locked
 > architectural and technical decision in MAIster. Every entry is an ADR
-> — Architectural Decision Record — that captures *why* the project does
+> — Architectural Decision Record — that captures _why_ the project does
 > something a particular way, what was rejected, and at what cost.
 >
 > **When to add an ADR.** During feature discussion, modeling, or
@@ -148,6 +148,7 @@
 | [ADR-120](#adr-120-artifact-body-injection-into-prompts) | Artifact body injection into prompts (`{{ artifacts.X.content }}` + `input.requires.inline`) + engine 2.2.0 | Accepted | 2026-06-30 |
 | [ADR-121](#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate) | Priority-ordered dependency-draining task queue: unified admission gate, cycle-safe relations, cap-safe resume, advisory confidence, operator pause | Accepted | 2026-06-30 |
 | [ADR-122](#adr-122-project-brain-per-project-memory-substrate) | Project Brain (per-project memory substrate): build-thin pgvector, two migration lineages, immutable per-generation embeddings, harvest/decay owned tier, RecallRanker seam, 4-layer enablement (Sub-project A) | Accepted | 2026-07-02 |
+| [ADR-125](#adr-125-budget-breach-four-way-fork-with-staged-claims) | Budget-breach four-way fork with staged claims | Accepted | 2026-07-02 |
 
 ---
 
@@ -161,8 +162,9 @@ server actions and route handlers. The audience is one solo-technical
 operator on the current target; later, small teams.
 
 **Decision:** Next.js 16 (App Router) + React 19 + HeroUI v3 (Tailwind 4)
-+ `next-themes`. TypeScript strict end-to-end. No other component
-libraries.
+
+- `next-themes`. TypeScript strict end-to-end. No other component
+  libraries.
 
 **Consequences:**
 
@@ -259,11 +261,12 @@ over stdio JSONL.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+
 > **Partially superseded by [ADR-050](#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars):** the project-scoped executor-identity mechanism was replaced by the platform ACP runner catalog (`platform_acp_runners`, `runs.runner_id`); the two-runner (claude + codex) decision itself stands.
-**Context:** Validating MAIster's portfolio thesis requires more than
-one runner to prove the abstraction is real. M0 confirmed both ACP
-adapters work and the supervisor's spawn dispatch on
-runner adapter identity covers both.
+> **Context:** Validating MAIster's portfolio thesis requires more than
+> one runner to prove the abstraction is real. M0 confirmed both ACP
+> adapters work and the supervisor's spawn dispatch on
+> runner adapter identity covers both.
 
 **Decision:** Current target ships with **both** Claude Code AND Codex runners.
 Both are required to pass success criteria. Cursor, opencode,
@@ -289,12 +292,13 @@ Aider, and OpenHands are Phase 2 runner candidates.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+
 > **Partially superseded by [ADR-050](#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars):** the env-router-default / CCR-optional decision stands, but the config surface moved — `maister.yaml` no longer carries `executors[]`/`router: ccr` (now `z.never()` in config.schema.ts); CCR is a platform router sidecar.
-**Context:** Users want to route their Claude session through
-third-party Anthropic-API-compatible providers (z.ai GLM, OpenRouter,
-anyscale). M0 verified that setting `ANTHROPIC_BASE_URL` +
-`ANTHROPIC_AUTH_TOKEN` in the spawned process env is sufficient for
-single-provider routing.
+> **Context:** Users want to route their Claude session through
+> third-party Anthropic-API-compatible providers (z.ai GLM, OpenRouter,
+> anyscale). M0 verified that setting `ANTHROPIC_BASE_URL` +
+> `ANTHROPIC_AUTH_TOKEN` in the spawned process env is sufficient for
+> single-provider routing.
 
 **Decision:** Two modes:
 
@@ -323,11 +327,12 @@ single-provider routing.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+
 > **Amended by [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) (2026-06-11):** rework `session_policy: resume` and idle gate-chat resume ([ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)) reuse this keep-alive + `session/resume` path.
-**Context:** Human review is slow (minutes to hours). Holding a Claude
-process in memory for the entire review wastes RAM; killing it
-immediately wastes ~$0.28 of cache_creation tokens on respawn (M0).
-Neither extreme works.
+> **Context:** Human review is slow (minutes to hours). Holding a Claude
+> process in memory for the entire review wastes RAM; killing it
+> immediately wastes ~$0.28 of cache_creation tokens on respawn (M0).
+> Neither extreme works.
 
 **Decision:** Hybrid lifecycle in three phases:
 
@@ -396,7 +401,7 @@ HTTP clients. The supervisor also appends structured session events to
 **Date:** 2026-05-22
 **Status:** Accepted
 **Context:** UI components and the SSE bridge need to branch on
-*kinds* of failures, not on `err.message`. String-matching errors is a
+_kinds_ of failures, not on `err.message`. String-matching errors is a
 classic source of regressions.
 
 **Decision:** Every domain failure throws `MaisterError extends Error`
@@ -453,11 +458,12 @@ from `maister.yaml`.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+
 > **Extended by [ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump):** the linear `steps[]` DSL is superseded for execution by the graph `nodes[]` manifest; the plugin-packaging decision here stands.
-**Context:** Hard-coding Flows inside MAIster ties the product release
-to every Flow change. Hard-coded Flows also can't ship with their own
-skills, agents, or setup scripts. Users need to add a Flow without
-rebuilding MAIster.
+> **Context:** Hard-coding Flows inside MAIster ties the product release
+> to every Flow change. Hard-coded Flows also can't ship with their own
+> skills, agents, or setup scripts. Users need to add a Flow without
+> rebuilding MAIster.
 
 **Decision:** Flows are **plugin bundles** — git repos with a manifest
 (`flow.yaml` v1), shipped CLIs, optional `setup.sh`, skills, agents,
@@ -781,7 +787,7 @@ silently corrupt the manifest of any in-flight run (the run's bytes are already
 pinned on disk via the content-addressed cache, but its manifest is not).
 M10 needs Flow packages to be operable by a product user — installed, trusted,
 upgraded, rolled back, disabled — and safe for every later milestone (M11–M16)
-that ships capabilities/gates/artifacts *inside* a package.
+that ships capabilities/gates/artifacts _inside_ a package.
 
 **Decision:**
 
@@ -796,7 +802,7 @@ that ships capabilities/gates/artifacts *inside* a package.
    project-relative `enablement_state`
    `Installed|Enabled|UpdateAvailable|Deprecated|Disabled|Failed`,
    `trust_status`), keeping its `source/version/revision/installed_path/manifest/
-   schema_version` columns as a denormalized cache of the *currently enabled*
+schema_version` columns as a denormalized cache of the _currently enabled_
    revision while runner recommendations remain portable manifest data.
    `runs` gains
    `flow_revision_id` (nullable FK); the runner reads the manifest + install path
@@ -806,14 +812,14 @@ that ships capabilities/gates/artifacts *inside* a package.
    `package_status='Installing'` before any disk side-effect, then flips to
    `Installed` (the AFTER-side marker) or `Failed`. Install/upgrade failures
    surface as `FLOW_INSTALL` carrying `{source, version, stage, command,
-   exitStatus, output}`.
+exitStatus, output}`.
 3. **Trust policy.** `local`/`file://` sources and git sources whose URL matches
    `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` are `trusted_by_policy`; everything
    else is `untrusted` until an explicit per-(project, revision) trust
    confirmation. Launch and enablement refuse untrusted revisions.
 4. **Compatibility: enforce engine + schema only.** The package contract
    (declared capabilities, gates, artifacts, external ops, setup hooks) is
-   *recorded and displayed* as opaque metadata in M10; only
+   _recorded and displayed_ as opaque metadata in M10; only
    `SUPPORTED_FLOW_SCHEMA_VERSIONS` and the `MAISTER_ENGINE_VERSION` range
    (`compat.engine_min/max`) are enforced at enablement. Semantic validation of
    each contract element is deferred to the milestone that introduces it (M11
@@ -840,7 +846,7 @@ that ships capabilities/gates/artifacts *inside* a package.
   but large churn in `resolveExecutor`/queries/launch and a heavier migration
   for marginal benefit. Rejected for surgical scope.
 - **Adopt [microsoft/apm](https://github.com/microsoft/apm) (Agent Package
-  Manager) as the package backend:** APM manages static agent *context*
+  Manager) as the package backend:** APM manages static agent _context_
   primitives (skills/prompts/agents/MCP) via `apm.yml` + lockfile + trust
   policy, but has no flow/step/run concept, so it cannot replace `flow.yaml`,
   the loader, or the runner. It is a standalone Python CLI whose install model
@@ -857,15 +863,16 @@ that ships capabilities/gates/artifacts *inside* a package.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+
 > **Refined by [ADR-038](#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022):** the artifact projector (per-run cursor) is Implemented (M12).
-**Context:** The UI needs a live timeline of agent tool calls and file
-changes, reviewers need queryable evidence, and analytics needs cross-run
-facts. Today the supervisor's ACP `session.update` payloads (`tool_call`,
-`tool_call_update` carrying `diff` content) are persisted only as raw lines in
-`run.events.jsonl` (ADR-007) — there is no structured, queryable projection.
+> **Context:** The UI needs a live timeline of agent tool calls and file
+> changes, reviewers need queryable evidence, and analytics needs cross-run
+> facts. Today the supervisor's ACP `session.update` payloads (`tool_call`,
+> `tool_call_update` carrying `diff` content) are persisted only as raw lines in
+> `run.events.jsonl` (ADR-007) — there is no structured, queryable projection.
 
 **Decision:** `run.events.jsonl` is the durable, append-only,
-`monotonicId`-ordered event log and the single replay source — it *is* the
+`monotonicId`-ordered event log and the single replay source — it _is_ the
 "queue". A **web-side projector** consumes the supervisor event stream and
 derives Postgres read-models: the M11 run ledger (node attempts, decisions,
 checkpoints) and M12 typed artifacts (`diff`, `log`, …). Writes are idempotent —
@@ -933,12 +940,13 @@ the v1 topology ADR-022's projector relies on.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+
 > **Implemented across [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) (carve), [ADR-046](#adr-046-project-api-token-model) (tokens), [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package) (MCP facade), [ADR-054](#adr-054-hitl-assessment-taxonomy--flow-declared-criticality-vs-responder-human_confidence-annotate-not-re-gate) (HITL assessment):** the reserved HITL responder field shipped as `human_confidence` (renamed from `confidence` by ADR-054).
-**Context:** MAIster needs a machine-facing surface so external systems (CI,
-local scripts, autonomous assistant agents) can create tasks, read the board
-and run readiness, and route/answer pending HITL requests — without
-piggybacking on the human Auth.js session. This must not become a second
-orchestration backend or bypass the run ledger.
+> **Context:** MAIster needs a machine-facing surface so external systems (CI,
+> local scripts, autonomous assistant agents) can create tasks, read the board
+> and run readiness, and route/answer pending HITL requests — without
+> piggybacking on the human Auth.js session. This must not become a second
+> orchestration backend or bypass the run ledger.
 
 **Decision:** External clients integrate via **project-scoped API tokens** over
 a REST API, with a **thin MCP facade over the same service layer** (MCP is a
@@ -946,7 +954,7 @@ facade — it never bypasses authorization, readiness, or ledger rules). **Every
 token-attributed action is written to an audit trail**: token id, actor label,
 scope, project, endpoint/tool, and result. HITL requests carry a standard
 assessment — `confidence` + `criticality` (+ optional `category`, `reasons`);
-`criticality` drives delivery *urgency* only, never who answers. The escalation
+`criticality` drives delivery _urgency_ only, never who answers. The escalation
 decision — "does a human need to answer?" — is a **Flow gate by confidence**
 (M11 node settings / M15 gates), not the external actor's: an external actor is
 a conduit that delivers a request to a human and relays the human's answer.
@@ -967,7 +975,7 @@ verdicts and the typed taxonomy of ADR-008.
 
 **Alternatives Considered:**
 
-- **External actor auto-answers human review gates:** defeats the gate's purpose; only confidence-thresholded auto-proceed *inside the Flow* is allowed.
+- **External actor auto-answers human review gates:** defeats the gate's purpose; only confidence-thresholded auto-proceed _inside the Flow_ is allowed.
 - **MCP as a second orchestration backend:** must be a thin facade over the same services and audit, or it forks the control plane.
 - **Full-project-only tokens:** too coarse once external task/run/gate/HITL consumers exist; scoped tokens keep the default broad `*` compatibility path while allowing least-privilege automation.
 
@@ -1027,14 +1035,15 @@ independent of M11/M12.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+
 > **Amended by [ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture) (2026-06-11):** `MAISTER_ENGINE_VERSION` bumped `1.3.0 → 1.4.0`; the new DSL keys `retry_policy` ([ADR-080](#adr-080-node-level-retry-policy)) and `session_policy`/`defaults` ([ADR-081](#adr-081-rework-session-policy-with-resume-by-default)) require `compat.engine_min ≥ 1.4.0`.
-**Context:** [ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl)'s
-step DSL is **strictly linear** — the runner walks `steps[]` in order and
-`on_reject.goto_step` is parsed and validated but never executed, so
-review-driven rework does not work. M11 needs a validated Flow **graph** with
-node lifecycle, gates, and a rework loop, without orphaning every installed Flow
-package (a `schemaVersion` bump re-pins everything) or breaking simple linear
-Flows.
+> **Context:** [ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl)'s
+> step DSL is **strictly linear** — the runner walks `steps[]` in order and
+> `on_reject.goto_step` is parsed and validated but never executed, so
+> review-driven rework does not work. M11 needs a validated Flow **graph** with
+> node lifecycle, gates, and a rework loop, without orphaning every installed Flow
+> package (a `schemaVersion` bump re-pins everything) or breaking simple linear
+> Flows.
 
 **Decision:** Keep the manifest at `schemaVersion: 1`. Add an **optional
 top-level `nodes[]`**, mutually exclusive with `steps[]` (zod `.refine`: exactly
@@ -1073,12 +1082,13 @@ flows MUST declare `compat.engine_min: 1.1.0`. Bump the engine constant
 
 **Date:** 2026-05-30
 **Status:** Accepted
+
 > **Amended by [ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture) / [ADR-080](#adr-080-node-level-retry-policy) / [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) (2026-06-11):** adds ledger columns `checkpoint_ref`, `session_policy`, `session_fallback`, and `auto_retry` (migration 0041).
-**Context:** The current `step_runs` table reuses the same row on resume and
-hard-codes `attempt = 1`, so there is no append-only execution history. A rework
-loop re-runs nodes; templating must resolve `steps.<id>.output` to the **latest**
-attempt; an audit trail must never be mutated. None of this is expressible by
-overwriting one row per step.
+> **Context:** The current `step_runs` table reuses the same row on resume and
+> hard-codes `attempt = 1`, so there is no append-only execution history. A rework
+> loop re-runs nodes; templating must resolve `steps.<id>.output` to the **latest**
+> attempt; an audit trail must never be mutated. None of this is expressible by
+> overwriting one row per step.
 
 **Decision:** Introduce a new **append-only `node_attempts`** table. `attempt`
 auto-increments per `(run_id, node_id)` with `UNIQUE (run_id, node_id,
@@ -1117,12 +1127,13 @@ Reworked | Stale`).
 
 **Date:** 2026-05-30
 **Status:** Accepted
+
 > **Delivered:** the M15 re-scope landed in [ADR-048](#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15); `external_check` execution in [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve).
-**Context:** Review-driven rework is only demonstrable if gates actually
-execute, go **stale** on rework, and **rerun** — a status lifecycle plus
-structured verdicts, not metric-only guards. The roadmap originally assigned
-gate *execution* to M15. The user directed (this session) that M11a ship
-**real, full-featured** gates within its dependency limits.
+> **Context:** Review-driven rework is only demonstrable if gates actually
+> execute, go **stale** on rework, and **rerun** — a status lifecycle plus
+> structured verdicts, not metric-only guards. The roadmap originally assigned
+> gate _execution_ to M15. The user directed (this session) that M11a ship
+> **real, full-featured** gates within its dependency limits.
 
 **Decision:** A node's `pre_finish.gates` execute by kind, each recorded in a
 `gate_results` row. `command_check`, `ai_judgment`, and `human_review` **fully
@@ -1169,13 +1180,14 @@ move to M11a.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+
 > **Fully delivered:** M11a/M11b/M11c all shipped; surviving contracts live in ADR-026/027/028/030/031/032. Historical planning record.
-**Context:** Roadmap M11 ("Flow graph maturity") bundles the graph engine,
-ledger, rework, and gate execution together with manual human takeover, the rich
-run-detail timeline, typed node settings, and a runtime enforcement boundary —
-and its acceptance criteria reach into territory later milestones own (M12
-artifacts, M14 capabilities, M15 readiness policy, M18 promotion). Shipping it as
-one milestone is too large and entangles those dependencies.
+> **Context:** Roadmap M11 ("Flow graph maturity") bundles the graph engine,
+> ledger, rework, and gate execution together with manual human takeover, the rich
+> run-detail timeline, typed node settings, and a runtime enforcement boundary —
+> and its acceptance criteria reach into territory later milestones own (M12
+> artifacts, M14 capabilities, M15 readiness policy, M18 promotion). Shipping it as
+> one milestone is too large and entangles those dependencies.
 
 **Decision:** Split M11 into three sequential sub-milestones:
 
@@ -1220,23 +1232,24 @@ restriction** refs (#1) → M14; node-level **executor** refs (#1) → M11c.
 
 **Date:** 2026-05-31
 **Status:** Accepted
+
 > **Amended by [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) (2026-06-11):** `session_policy` resolution leaves the takeover-return path unaffected (no live session to resume); the interplay is documented in `manual-takeover.md`.
-**Context:** M11b ([ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c)) ships
-**manual takeover** — a reviewer parked at an M11a `human_review` node takes the
-run over to edit it by hand, then returns it for re-validation. The run already
-owns an isolated worktree (`workspaces.worktree_path`) on a run branch
-(`workspaces.branch`) cut from the project default branch
-([ADR-011](#adr-011-workspace-lifecycle-via-git-worktree)). The open questions
-are: is "claimed by a human" a real run status or a pointer move inside
-`Running`; does takeover create a new branch/target; how are the human's commits
-recorded; how do downstream gates re-validate the human's work; and does any of
-this need a new `MaisterError` code. M11a's review-driven rework is a
-node-pointer move *within* `Running`
-([ADR-027](#adr-027-append-only-node_attempts-run-ledger)) — but a human holding
-a worktree open for hours is operationally unlike an in-flight agent run and must
-not look like one on the board, must hold a concurrency slot
-([ADR-009](#adr-009-global-concurrency-cap--3)), and must survive a process
-restart without being swept to `Crashed`.
+> **Context:** M11b ([ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c)) ships
+> **manual takeover** — a reviewer parked at an M11a `human_review` node takes the
+> run over to edit it by hand, then returns it for re-validation. The run already
+> owns an isolated worktree (`workspaces.worktree_path`) on a run branch
+> (`workspaces.branch`) cut from the project default branch
+> ([ADR-011](#adr-011-workspace-lifecycle-via-git-worktree)). The open questions
+> are: is "claimed by a human" a real run status or a pointer move inside
+> `Running`; does takeover create a new branch/target; how are the human's commits
+> recorded; how do downstream gates re-validate the human's work; and does any of
+> this need a new `MaisterError` code. M11a's review-driven rework is a
+> node-pointer move _within_ `Running`
+> ([ADR-027](#adr-027-append-only-node_attempts-run-ledger)) — but a human holding
+> a worktree open for hours is operationally unlike an in-flight agent run and must
+> not look like one on the board, must hold a concurrency slot
+> ([ADR-009](#adr-009-global-concurrency-cap--3)), and must survive a process
+> restart without being swept to `Crashed`.
 
 **Decision:** Manual takeover is a **LOCAL worktree handoff** with five locked
 properties:
@@ -1264,7 +1277,7 @@ properties:
    UI can show checkout context; nothing is created.
 3. **Return records commits + diff MINIMALLY as raw text in the ledger.** The
    return route runs `git log <base>..<branch>` (oneline) and
-   `git diff <base>..<branch>` against the *existing* worktree (`<base>` is the
+   `git diff <base>..<branch>` against the _existing_ worktree (`<base>` is the
    `merge-base` of the run branch and the project default branch) and stores the
    raw output on the takeover `node_attempts` row (new columns
    `returned_commits`, `returned_diff`, `base_ref`, `owner_user_id`). The full
@@ -1282,7 +1295,7 @@ properties:
    The explicit `reentryNode` inclusion is REQUIRED: the as-built `downstreamOf`
    (module-private in `web/lib/flows/graph/runner-graph.ts` — M11b **exports** it)
    **excludes its start node**, but the takeover re-entry is a gate-bearing node
-   whose prior PASS validated *pre-takeover* code and MUST flip stale so the
+   whose prior PASS validated _pre-takeover_ code and MUST flip stale so the
    human's commits are re-validated. `markDownstreamStale(runId, nodeIds, db)` is
    the 2-arg M11a helper in `web/lib/flows/graph/ledger.ts`. The graph runner then
    resumes at the re-entry so those gates rerun over the human's commits — reusing
@@ -1360,7 +1373,7 @@ passthrough (`z.record(z.string(), z.unknown())` in `nodeCommon`) and
 criterion #6 ("AI node settings are visible in the UI and enforced by runtime
 boundaries: no undeclared MCP/tool/skill/restriction escape hatch is silently
 allowed") and the node-settings half of criterion #8 (docs) remain open. Real
-*positive* enforcement of #6 depends on **M14** (scoped capability
+_positive_ enforcement of #6 depends on **M14** (scoped capability
 materialization): the named-capability registry, import-from-git resolved SHA,
 agent-aware mapping (`tools:[shell]`→concrete names), and per-session
 materialization of `settings.json` / MCP config / skills. M11c cannot resolve
@@ -1384,7 +1397,7 @@ nodes carry none; absence never triggers a refusal). M11c validates settings
 attach or launch), `human.decisions[]` against the node's `transitions` (the M11a validator),
 and `enforcement` keys only on classes the node type owns. M11c **never** reads a
 capability registry, resolves an abstract capability id, validates an
-MCP/tool/skill/agent/restriction *reference*, or materializes a settings file —
+MCP/tool/skill/agent/restriction _reference_, or materializes a settings file —
 all of that is M14.
 
 **Consequences:**
@@ -1424,10 +1437,10 @@ all of that is M14.
 **Status:** Accepted
 **Context:** Carve (b) ([ADR-031](#adr-031-node-typed-settings-schema-carve-b))
 ships the typed settings now but defers materialized enforcement to M14.
-Criterion #6 forbids a "silent escape hatch": a flow that *declares* it needs
+Criterion #6 forbids a "silent escape hatch": a flow that _declares_ it needs
 strict enforcement of a capability class MAIster cannot yet strictly enforce
 must NOT launch as if it could. Until M14 owns the materializing registry,
-MAIster can only *gate* whether a node is allowed to launch.
+MAIster can only _gate_ whether a node is allowed to launch.
 
 **Decision:** Record an explicit per-class **`enforcement` intent**
 (`strict | instruct | off`, default `instruct`) on each capability-bearing
@@ -1477,7 +1490,7 @@ record-only.
   evaluator/asserter take the table as an injectable parameter (default
   `ENFORCEABILITY_BY_AGENT`).
 - The contract only ever tightens: M14 flips cells `instructed→enforced` and
-  adds registry-ref resolution; a flow that launched under M11c never *starts*
+  adds registry-ref resolution; a flow that launched under M11c never _starts_
   failing because a class became enforceable. Each `instructed` cell carries a
   `TODO(M14)`.
 - The refusal applies to `ai_coding` AND `judge` nodes (both spawn an agent
@@ -1544,16 +1557,16 @@ pinned `flow_revisions.manifest` compiled to the graph; legacy `steps[]` compile
 to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`), and
 `liveSession` (`acpSessionId` ∈ live `listSessions` map). It gates **exactly** as:
 
-| Run state | Condition | Action | Reason |
-|-----------|-----------|--------|--------|
-| status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
-| `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
-| `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
-| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge` — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
-| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover (accepted-risk re-dispatch). A future manifest `retry_safe: true` opt-in can widen this. |
-| `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
-| `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |
-| `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
+| Run state                      | Condition                                                                                                                                                                              | Action                                                                                      | Reason                                                                                                                                                                                                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| status ∉ `{Running}`           | any                                                                                                                                                                                    | **SKIP**                                                                                    | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps                                                                                                                                                                  |
+| `Running`                      | worktree MISSING                                                                                                                                                                       | **CRASH** (`crashRunningRun`, reason `worktree-gone`)                                       | the "runs vs `git worktree list`" check; cannot continue                                                                                                                                                                                                                                 |
+| `Running`                      | worktree present, `liveSession` present                                                                                                                                                | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow`                      | live agent session with no attached runner (post web restart) — not crashed                                                                                                                                                                                                              |
+| `Running`                      | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge` — read-only)                                                                            | **RE-DISPATCH** `runFlow` (CAS-guarded)                                                     | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions                                                                                                                                                                    |
+| `Running`                      | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe)                                                                                  | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`)                                  | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover (accepted-risk re-dispatch). A future manifest `retry_safe: true` opt-in can widen this. |
+| `Running`                      | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window)                                                                     | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session                                                                                                                                                                                                |
+| `Running`                      | worktree present, no live session, current node is **agent**, **past grace**                                                                                                           | **CRASH** (`crashRunningRun`, reason `agent-session-gone`)                                  | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover                                                                                                                                                    |
+| `Running`, `runKind='scratch'` | session gone, past grace                                                                                                                                                               | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity                                                                                                                                                                                                                                                                           |
 
 Locked properties of the engine:
 
@@ -1565,7 +1578,7 @@ Locked properties of the engine:
    `MAISTER_RECONCILE_GRACE_SECONDS` (default 90) → `skip`. This is REQUIRED so
    a periodic tick never crashes a run whose ACP session is still being created —
    by a fresh launch OR by an in-flight Recover, which flips `Crashed→Running` +
-   stamps `resume_started_at` *before* `createSession`
+   stamps `resume_started_at` _before_ `createSession`
    ([ADR-034](#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)).
    Only past the grace window does it `crash`.
 3. **Retry-safety split (Codex F4).** Only read-only gate evals (`check`/`judge`)
@@ -1586,7 +1599,7 @@ Locked properties of the engine:
 6. **Sanctioned recovery path, not a banned poll.** The periodic
    `listSessions`/`listWorktrees` poll is the heartbeat + reconcile **recovery**
    path, NOT a live-path state-transition poll. The house rule forbidding
-   `fs.watch`/`chokidar`/polling (root `CLAUDE.md` §1) governs the *live* path
+   `fs.watch`/`chokidar`/polling (root `CLAUDE.md` §1) governs the _live_ path
    — ACP notifications drive transitions while a runner is attached. Reconcile
    is the explicitly-sanctioned recovery channel for the restart/crash window,
    stated here so reviewers do not read it as a forbidden live poll.
@@ -1637,9 +1650,9 @@ resume plumbing already exists (`web/lib/runs/resume.ts`,
 `web/lib/runs/resume-driver.ts`, the scratch recover route — resume is the ACP
 `session/resume` call, not a CLI flag), and
 `crashRunningRun` ([ADR-033](#adr-033-crash-reconciliation-model-startup--periodic-sweeper-allow-list-running-only))
-produces the `Crashed` row. M19 must decide *how* a user recovers a `Crashed`
+produces the `Crashed` row. M19 must decide _how_ a user recovers a `Crashed`
 flow run: a mid-turn agent node and a session-less gate node need different
-mechanisms; the recovery must survive a crash *during* recovery without leaking
+mechanisms; the recovery must survive a crash _during_ recovery without leaking
 an ACP session or double-spawning; and because a `Crashed` run already released
 its concurrency slot (`crashRunningRun → promoteNextPending`), a Recover is a
 **re-launch** that MUST respect the global cap
@@ -1673,8 +1686,8 @@ phases under the scheduler advisory lock:
     **with** `acpSessionId` is resumed via the Phase-2 path (refreshing
     `resume_started_at` at promotion); **without** it (a fresh queued launch,
     `acpSessionId` null) it is fresh-launched — an unambiguous discriminator.
-  This tuple (`Running`/`Pending` + `resume_started_at` + `acpSessionId`) **IS**
-  the durable in-flight/queued marker, committed *before* any supervisor call.
+    This tuple (`Running`/`Pending` + `resume_started_at` + `acpSessionId`) **IS**
+    the durable in-flight/queued marker, committed _before_ any supervisor call.
 - **Phase 2 (side-effect, only when admitted):** the resume/redispatch above.
   The driver/runner clears `resume_started_at` on first progress.
 
@@ -1684,14 +1697,14 @@ reduces to a `Running` + `resume_started_at` + `acpSessionId` state the
 reconciler already owns (re-attach if the resumed session is live, re-crash past
 grace if not). The §3.2 failure mapping:
 
-| Window / failure | HTTP | Row state & who recovers |
-|------------------|------|--------------------------|
-| cap full at admission | 202 `{state:"queued"}` | `Crashed→Pending` (acpSessionId retained); scheduler resumes on slot free. No `createSession` → no over-spawn (Codex F2) |
-| concurrent 2nd Recover click | 409 | Phase-1 CAS on `status='Crashed'` fails (now `Running`/`Pending`) → duplicate `createSession` impossible |
-| crash **before** `createSession` | — | `Running` + `acpSessionId` not live + past grace → reconciler re-crashes to `Crashed` (clears `resume_started_at`); user retries. No session leaked |
-| crash **after** `createSession` success | — | `Running` + `acpSessionId` now live → reconciler re-attaches the driver |
-| supervisor 5xx / network / timeout (ambiguous) | 503 | leave `Running` (do NOT roll back — the ack may have been lost and a session may be live); reconciler reattaches if it came up, else re-crashes past grace. Retryable |
-| supervisor 4xx `CHECKPOINT` (unresumable acp session) | 410 | `crashRunningRun` → `Crashed` (clears `resume_started_at`); surface discard-only |
+| Window / failure                                      | HTTP                   | Row state & who recovers                                                                                                                                              |
+| ----------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cap full at admission                                 | 202 `{state:"queued"}` | `Crashed→Pending` (acpSessionId retained); scheduler resumes on slot free. No `createSession` → no over-spawn (Codex F2)                                              |
+| concurrent 2nd Recover click                          | 409                    | Phase-1 CAS on `status='Crashed'` fails (now `Running`/`Pending`) → duplicate `createSession` impossible                                                              |
+| crash **before** `createSession`                      | —                      | `Running` + `acpSessionId` not live + past grace → reconciler re-crashes to `Crashed` (clears `resume_started_at`); user retries. No session leaked                   |
+| crash **after** `createSession` success               | —                      | `Running` + `acpSessionId` now live → reconciler re-attaches the driver                                                                                               |
+| supervisor 5xx / network / timeout (ambiguous)        | 503                    | leave `Running` (do NOT roll back — the ack may have been lost and a session may be live); reconciler reattaches if it came up, else re-crashes past grace. Retryable |
+| supervisor 4xx `CHECKPOINT` (unresumable acp session) | 410                    | `crashRunningRun` → `Crashed` (clears `resume_started_at`); surface discard-only                                                                                      |
 
 **Discard** is a single terminal action, NOT a synchronous worktree delete
 (Codex #2/#3): one tx `markAbandoned` (allow-list incl. `Crashed`) stamps
@@ -1775,7 +1788,7 @@ target column:
   is a **third** resume mode alongside NeedsInput-resume and takeover-resume. The
   claim is single-winner via a CAS-clear of the in-flight marker
   (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND resume_started_at
-  IS NOT NULL`): the winner drives, the loser bails.
+IS NOT NULL`): the winner drives, the loser bails.
 
 ---
 
@@ -1863,7 +1876,7 @@ straight to removal. The migration 0015 adds three nullable `workspaces` columns
   effective-deadline fallback (Codex F3) covers them. Rejected — no backfill.
 - **A `gc_state` enum column:** more fan-out points; the UI derives TTL / pruned
   / archived state from `scheduled_removal_at` + `archived_at`/`archived_branch`
-  + existing `removed_at`. Rejected — three nullable columns, no enum.
+  - existing `removed_at`. Rejected — three nullable columns, no enum.
 
 ---
 
@@ -1915,18 +1928,19 @@ unchanged).
 - **Run `setup.sh`/plugin teardown hooks on revision removal:** introduces a
   fetch-then-execute path GC has no reason to open; M19 GC only reclaims disk.
   Rejected — remove-only, no hooks.
+
 ### ADR-037: Typed artifact model
 
 **Date:** 2026-06-01
 **Status:** Accepted
 **Context:** M12 introduces an evidence graph: review gates and the run-detail
-UI need to query *what evidence a run produced* (diffs, logs, test/lint
+UI need to query _what evidence a run produced_ (diffs, logs, test/lint
 reports, AI judgments, human notes, commit sets, checkpoints, previews) without
 re-parsing logs or re-running git on every read. Run artifacts already live in
 the run dir (`.maister/<projectSlug>/runs/<runId>/`), the worktree, and git;
 duplicating their bytes into Postgres would double-store, drift, and bloat the
 DB. M11 owns the runner-side `node_attempts` ledger; M12 must add a queryable
-evidence index over the *same* on-disk/in-git truth, not a parallel payload
+evidence index over the _same_ on-disk/in-git truth, not a parallel payload
 store.
 
 **Decision:** Add one new table, `artifact_instances`, that is the **queryable
@@ -2006,7 +2020,7 @@ Idempotency is by **deterministic PK**: re-execution / replay **upserts**
 artifacts THEN advances the cursor `last_monotonic_id`. There is **no watcher** —
 the projector is a **PULL** at runner sync points plus an **idempotent startup
 catch-up sweep**. This honors the no-`fs.watch`/`chokidar`/polling rule: the
-projector *derives data, never drives state*.
+projector _derives data, never drives state_.
 
 **Phase-0 re-confirmation correction (stated explicitly):** the supervisor event
 log is the **RUN-scoped** `.maister/<projectSlug>/runs/<runId>/run.events.jsonl`
@@ -2020,7 +2034,7 @@ Therefore:
 - the projector artifact PK is `proj:<runId>:<monotonicId>` (**NOT**
   `proj:<runId>:<stepId>:<monotonicId>`);
 - node-attempt attribution is by joining `event.sessionId ===
-  node_attempts.acp_session_id` (unmatched → run-level `NULL`).
+node_attempts.acp_session_id` (unmatched → run-level `NULL`).
 
 This corrects the plan's §11.1 ratified default, which assumed a per-step log.
 
@@ -2060,7 +2074,7 @@ This corrects the plan's §11.1 ratified default, which assumed a per-step log.
 **Context:** M12 ships a **read-only evidence-graph explorer** in the web UI:
 nodes (run nodes + their typed artifacts from
 [ADR-037](#adr-037-typed-artifact-model)) and edges (flow transitions,
-supersession, staleness). It must render HeroUI chips *inside* graph nodes,
+supersession, staleness). It must render HeroUI chips _inside_ graph nodes,
 auto-layout a directed graph left-to-right, and be read-only (no editing
 affordances). `web/CLAUDE.md` says "no other component lib" — that rule needs an
 explicit carve-out before adopting a graph renderer.
@@ -2181,34 +2195,36 @@ ingress is introduced.
 - **Add new run statuses or supervisor routes.** Rejected because assignment
   ownership is a web-tier durable read/write model over existing lifecycle
   states and does not require supervisor protocol changes.
+
 ---
 
 ### ADR-041: Capability registry refs + agent-aware mapping + runner-owned native materialization
 
 **Date:** 2026-06-02
 **Status:** Accepted
+
 > **Delivery half superseded by [ADR-044](#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven):** the CLI-flag/preArgs delivery mechanism was disproven; capability now ships via `.claude/settings.local.json` + ACP `newSession`. The registry/resolver/ledger half here stands.
 > **Amended by [ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L2 permission auto-deny is best-effort within this instructed-only model; the L3 mutation sensor is the hard neutrality guarantee.
-**Context:** [ADR-031](#adr-031-node-typed-settings-schema-carve-b) shipped typed
-node `settings` but deferred the **positive** half of roadmap criterion #6 to
-M14: resolving `mcps:[github]` / `skills:[…]` / `tools:[…]` /
-`restrictions:[…]` / `settingsProfile` references against a project capability
-registry, mapping abstract capability names to concrete per-agent artifacts, and
-**materializing** real adapter config (`settings.json`, `.mcp.json`, skill dirs)
-into the run so the boundary is genuinely enforced rather than merely declared.
-The scratch-run capability libraries (`web/lib/capabilities/{types,catalog,
+> **Context:** [ADR-031](#adr-031-node-typed-settings-schema-carve-b) shipped typed
+> node `settings` but deferred the **positive** half of roadmap criterion #6 to
+> M14: resolving `mcps:[github]` / `skills:[…]` / `tools:[…]` /
+> `restrictions:[…]` / `settingsProfile` references against a project capability
+> registry, mapping abstract capability names to concrete per-agent artifacts, and
+> **materializing** real adapter config (`settings.json`, `.mcp.json`, skill dirs)
+> into the run so the boundary is genuinely enforced rather than merely declared.
+> The scratch-run capability libraries (`web/lib/capabilities/{types,catalog,
 resolver,materialize}.ts`) already exist but are wired for scratch runs only and
-their materializer is a load-bearing stub (`provisioningBoundary: "…native
+> their materializer is a load-bearing stub (`provisioningBoundary: "…native
 adapter provisioning is future work."`). M14 must wire that path to Flow runs,
-record the result as run evidence, and provision natively — **without** reopening
-M12's closed artifact-kind catalog ([ADR-037](#adr-037-typed-artifact-model)),
-its projector / validity-FSM, or the supervisor wire contract. The supervisor
-already accepts `capabilityProfilePath` + `adapterLaunch.env/preArgs/postArgs`
-(`supervisor/src/types.ts`) and stays dumb. Two non-obvious hazards must be
-locked here: (1) secret leakage into the agent worktree, and (2) cleanup of
-scoped materialized files running OUTSIDE any live `runFlow` (the abandon route
-and the crash reconciler act on already-terminal rows, where throwing is
-incoherent).
+> record the result as run evidence, and provision natively — **without** reopening
+> M12's closed artifact-kind catalog ([ADR-037](#adr-037-typed-artifact-model)),
+> its projector / validity-FSM, or the supervisor wire contract. The supervisor
+> already accepts `capabilityProfilePath` + `adapterLaunch.env/preArgs/postArgs`
+> (`supervisor/src/types.ts`) and stays dumb. Two non-obvious hazards must be
+> locked here: (1) secret leakage into the agent worktree, and (2) cleanup of
+> scoped materialized files running OUTSIDE any live `runFlow` (the abandon route
+> and the crash reconciler act on already-terminal rows, where throwing is
+> incoherent).
 
 **Decision:**
 
@@ -2221,7 +2237,7 @@ incoherent).
    M12's closed artifact-kind catalog, projector, validity FSM, or evidence-graph
    fan-out. The jsonb shape is
    `{ profileDigest, resolvedRevisions:[{refId,kind,sha}], materializedFiles:[paths],
-   enforcedClasses, instructedClasses, refusedClasses, cleanup:{status,error?,at} }`.
+enforcedClasses, instructedClasses, refusedClasses, cleanup:{status,error?,at} }`.
 2. **AD-2 — No separate flow-run profile table.** `scratch_capability_profiles`
    stays scratch-only. Flow runs persist the resolved profile INSIDE
    `materialization_plan` (digest + per-capability resolved revisions +
@@ -2305,21 +2321,22 @@ cover the new failure modes. Imports reuse the flow-install pipeline per
 
 **Date:** 2026-06-02
 **Status:** Accepted
+
 > **Status note (2026-06):** the `instructed → enforced` flip authorized here is NOT yet executed — `ENFORCEABILITY_BY_AGENT` remains all-`instructed` (every cell `TODO(M14)`) as of M17, and the verdict table is unfilled. The gating policy is active; only the flip pends a live spike.
-**Context:** [ADR-032](#adr-032-settings-enforcement-refusal-boundary) froze
-`ENFORCEABILITY_BY_AGENT` (`web/lib/flows/enforcement.ts`) **all-`instructed`**
-across both agents and all six capability classes (`mcps`, `tools`, `skills`,
-`restrictions`, `permissionMode`, `workspaceAccess`), with a `TODO(M14)` on every
-cell and an explicit note that the `permissionMode` spike (M11c Phase 0.10) was
-**unverifiable** — no live adapter. ADR-032 also locked that the contract may
-only ever *tighten*: a cell may flip `instructed → enforced` but never the
-reverse, and flipping a cell activates the previously-dead `EXECUTOR_UNAVAILABLE`
-branch in `assertNodeLaunchable`. M14 now materializes real adapter config
-([ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)),
-so cells *can* become genuinely enforced — but native provisioning does not
-automatically mean the adapter honors it. A wrongly-`enforced` cell lets a
-`strict` declaration PASS the launch gate while nothing constrains the agent —
-the exact silent escape hatch criterion #6 forbids.
+> **Context:** [ADR-032](#adr-032-settings-enforcement-refusal-boundary) froze
+> `ENFORCEABILITY_BY_AGENT` (`web/lib/flows/enforcement.ts`) **all-`instructed`**
+> across both agents and all six capability classes (`mcps`, `tools`, `skills`,
+> `restrictions`, `permissionMode`, `workspaceAccess`), with a `TODO(M14)` on every
+> cell and an explicit note that the `permissionMode` spike (M11c Phase 0.10) was
+> **unverifiable** — no live adapter. ADR-032 also locked that the contract may
+> only ever _tighten_: a cell may flip `instructed → enforced` but never the
+> reverse, and flipping a cell activates the previously-dead `EXECUTOR_UNAVAILABLE`
+> branch in `assertNodeLaunchable`. M14 now materializes real adapter config
+> ([ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)),
+> so cells _can_ become genuinely enforced — but native provisioning does not
+> automatically mean the adapter honors it. A wrongly-`enforced` cell lets a
+> `strict` declaration PASS the launch gate while nothing constrains the agent —
+> the exact silent escape hatch criterion #6 forbids.
 
 **Decision:** An `ENFORCEABILITY_BY_AGENT` cell flips `instructed → enforced`
 ONLY after a **per-class, per-agent live-adapter spike** proves the materialized
@@ -2331,7 +2348,7 @@ candidates for flipping this milestone; **ALL six `codex` cells stay
 is unproven), and codex enforced mapping is **Phase 2**. The `permissionMode`
 cell MUST be **re-run live** before flipping — the M11c spike was unverifiable.
 Where no live adapter is available in CI, the flip is gated on a documented manual
-spike PLUS a CI mock asserting the *mechanism* (the correct flags/files are
+spike PLUS a CI mock asserting the _mechanism_ (the correct flags/files are
 emitted), stated explicitly — never a silent cap. Each `claude` cell NOT flipped
 keeps `instructed` and replaces its `TODO(M14)` with a rationale comment
 (`// M14: stays instructed — <reason from spike>`); each `codex` cell keeps
@@ -2343,14 +2360,14 @@ ADR-032's frozen all-`instructed` table; it never loosens it.
 `codex` is omitted (all cells stay `instructed`, Phase 2). To be completed from
 the Phase-5 spike evidence:
 
-| claude class | mechanism (materialized artifact / flag) | spike verdict | flipped? |
-| ------------ | ---------------------------------------- | ------------- | -------- |
-| `mcps` | `.mcp.json` (`--mcp-config`) | *(Phase 5)* | *(Phase 5)* |
-| `tools` | `settings.json` allow/deny + agent-aware map | *(Phase 5)* | *(Phase 5)* |
-| `skills` | materialized skill dirs | *(Phase 5)* | *(Phase 5)* |
-| `restrictions` | `settings.json` restriction policy | *(Phase 5)* | *(Phase 5)* |
-| `permissionMode` | `--permission-mode` (MUST re-run live) | *(Phase 5)* | *(Phase 5)* |
-| `workspaceAccess` | workspace-scoping flags | *(Phase 5)* | *(Phase 5)* |
+| claude class      | mechanism (materialized artifact / flag)     | spike verdict | flipped?    |
+| ----------------- | -------------------------------------------- | ------------- | ----------- |
+| `mcps`            | `.mcp.json` (`--mcp-config`)                 | _(Phase 5)_   | _(Phase 5)_ |
+| `tools`           | `settings.json` allow/deny + agent-aware map | _(Phase 5)_   | _(Phase 5)_ |
+| `skills`          | materialized skill dirs                      | _(Phase 5)_   | _(Phase 5)_ |
+| `restrictions`    | `settings.json` restriction policy           | _(Phase 5)_   | _(Phase 5)_ |
+| `permissionMode`  | `--permission-mode` (MUST re-run live)       | _(Phase 5)_   | _(Phase 5)_ |
+| `workspaceAccess` | workspace-scoping flags                      | _(Phase 5)_   | _(Phase 5)_ |
 
 `spike verdict ∈ {enforced, not-verifiable}`; a cell flips iff `enforced`.
 
@@ -2358,13 +2375,13 @@ the Phase-5 spike evidence:
 
 - Flipping any cell activates the previously-dead `EXECUTOR_UNAVAILABLE` branch
   in `assertNodeLaunchable`: a `strict` declaration on a class enforced for some
-  agent but `instructed`/`unsupported` for the *resolved* executor's agent now
+  agent but `instructed`/`unsupported` for the _resolved_ executor's agent now
   refuses with `503`, not `400`.
 - The M11c frozen-invariant test ("every cell is `instructed`") is **superseded**
   in this milestone — its assertion migrates to "cells {…flipped…} are
   `enforced`, the rest `instructed`"; this is the only milestone permitted to flip
   cells.
-- A flow that launched under M11c never *starts* failing because a class became
+- A flow that launched under M11c never _starts_ failing because a class became
   enforceable — the contract only tightens, so a previously-`instructed` strict
   declaration that was refused stays refused or becomes accepted, never the
   reverse.
@@ -2385,7 +2402,7 @@ the Phase-5 spike evidence:
   (`config.toml` / `--sandbox`) is a separate Phase-2 design. Rejected —
   claude-first.
 - **Trust the M11c `permissionMode` verdict and flip on materialization alone:**
-  that verdict was explicitly *unverifiable* (no live adapter). Rejected — re-run
+  that verdict was explicitly _unverifiable_ (no live adapter). Rejected — re-run
   live before flipping.
 - **A deny-list of unenforceable classes:** inverts the safe default; a new class
   would be silently enforceable. Rejected — allow-list of `enforced` cells only.
@@ -2413,11 +2430,12 @@ an import `id`/`version` reaches a filesystem path or git op.
 **Decision:** Capability imports **mirror** `installRevision`
 (`web/lib/flows.ts`): clone-by-tag → `gitRevParseHead` → record the resolved
 40-hex SHA + manifest digest + manifest jsonb + `trustStatus = resolveTrust(source)`
-+ `setupStatus`, in a new `installCapabilityRevision` (`web/lib/capabilities/
+
+- `setupStatus`, in a new `installCapabilityRevision` (`web/lib/capabilities/
 import.ts`). Cache at `~/.maister/capabilities/<id>@<sha[:12]>/`; the
-`capability_imports` row is keyed unique on `(projectId, capabilityRefId,
+  `capability_imports` row is keyed unique on `(projectId, capabilityRefId,
 resolvedRevision)`. Trust is resolved via `resolveTrust` plus a new
-`MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` env var.
+  `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` env var.
 
 1. **Fetch and execute are PHYSICALLY SEPARATE functions.** `installCapabilityRevision`
    MUST NOT run `setup.sh` ([ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
@@ -2486,19 +2504,21 @@ No new `MaisterError` code — `FLOW_INSTALL` carries import/path failures and
 - **Single-layer path validation (schema only):** a path built from a
   server-state id that bypassed the schema would be unchecked. Rejected —
   defence-in-depth at schema AND path builder.
+
 ### ADR-045: External_check enforcement via the Review chokepoint; M16/M15/M18 carve
 
 **Date:** 2026-06-02
 **Status:** Accepted
+
 > **Closed clause:** the "HITL `confidence`/`criticality` re-scoped to M17" pointer here is now resolved by [ADR-054](#adr-054-hitl-assessment-taxonomy--flow-declared-criticality-vs-responder-human_confidence-annotate-not-re-gate).
-**Context:** M11a ([ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)) stubbed
-`external_check` gates as `pending + TODO(M16)` — they are schema-valid and status-modelled but
-not executed. M16 must wire the stub to a real outcome without introducing new `runs.status` values
-or a suspend/resume cycle. The review chokepoint — `assertEvidenceReady(runId, phase, db)` in
-`web/lib/flows/graph/evidence-readiness.ts` — already blocks promotion for engine ≥ 1.2.0 (see
-[ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump)). ADR-024 deferred
-`confidence`/`criticality` on HITL requests to a later milestone; their exact milestone must be
-locked now to prevent double-engineering.
+> **Context:** M11a ([ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)) stubbed
+> `external_check` gates as `pending + TODO(M16)` — they are schema-valid and status-modelled but
+> not executed. M16 must wire the stub to a real outcome without introducing new `runs.status` values
+> or a suspend/resume cycle. The review chokepoint — `assertEvidenceReady(runId, phase, db)` in
+> `web/lib/flows/graph/evidence-readiness.ts` — already blocks promotion for engine ≥ 1.2.0 (see
+> [ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump)). ADR-024 deferred
+> `confidence`/`criticality` on HITL requests to a later milestone; their exact milestone must be
+> locked now to prevent double-engineering.
 
 **Decision:** Enforce `external_check` gates by **extending `assertEvidenceReady`** — no new
 `runs.status` value, no suspend/resume. A blocking `external_check` gate that is `pending | failed |
@@ -2901,7 +2921,7 @@ semantics:
   resolves the live target HEAD and embeds it in the promote form as `reviewedTargetCommit`; the
   claim tx re-resolves the live target HEAD and refuses `PRECONDITION` ("target advanced since
   review") on a mismatch, leaving the run in `Review`. An explicit "Promote anyway"
-  (`allowTargetDrift: true`) skips the equality assertion. `local_merge` still catches *textual*
+  (`allowTargetDrift: true`) skips the equality assertion. `local_merge` still catches _textual_
   conflicts independently; this guard adds the **semantic** protection (a clean merge into an
   unexpected target state) and keeps the readiness evidence honest. A non-UI caller that omits
   `reviewedTargetCommit` is refused `PRECONDITION` rather than promoted blind.
@@ -3070,14 +3090,15 @@ provider/config docs until that phase's HEAD.
 
 **Date:** 2026-06-03
 **Status:** Accepted
+
 > **Supersedes (in part) [ADR-004](#adr-004-multi-runner-claude--codex-on-current-target) and [ADR-005](#adr-005-model-routing-env-router-default-ccr-optional):** this ADR replaces the project-scoped executor-identity + model-routing config those defined.
-**Context:** MAIster is moving from project-scoped executor rows to operator-managed ACP launch
-configuration. The same platform must support Claude Code direct, Claude Code through Claude Code
-Router (CCR), Claude Code with explicit dangerous permission policy, Codex with OpenAI-compatible
-providers such as z.ai GLM/Qwen, and future adapters such as Gemini or OpenCode. Treating all of
-that as one `{agent, model, env, router}` object would blur three different responsibilities:
-selecting a named launch profile, translating MAIster restrictions into adapter-specific launch
-material, and operating long-lived router daemons such as CCR.
+> **Context:** MAIster is moving from project-scoped executor rows to operator-managed ACP launch
+> configuration. The same platform must support Claude Code direct, Claude Code through Claude Code
+> Router (CCR), Claude Code with explicit dangerous permission policy, Codex with OpenAI-compatible
+> providers such as z.ai GLM/Qwen, and future adapters such as Gemini or OpenCode. Treating all of
+> that as one `{agent, model, env, router}` object would blur three different responsibilities:
+> selecting a named launch profile, translating MAIster restrictions into adapter-specific launch
+> material, and operating long-lived router daemons such as CCR.
 
 **Decision:** ACP launch configuration has three separate layers.
 
@@ -3161,16 +3182,18 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
 - **Keying on `flows.id`** (the per-project flow binding) makes the layout **project-isolated by construction**: `flows` is per-project, so a write authorized against the run's project can only ever touch that project's `flow_id` rows. It is also **upgrade-stable** — it survives a `flow_revisions` bump (`runs.flow_revision_id` is nullable anyway).
 - **Round-trip** = dagre always computes a baseline; stored rows are **overrides merged on top**. No flag — a node with a row is pinned; a node with no row is dagre-seeded. **Stale** node-ids (a revision dropped a node) are **ignored at render** (the row is skipped; dagre seeds the rest).
 - **Write** = a single-store idempotent upsert `PUT /api/runs/{runId}/graph/layout {nodeId,x,y}` → `onConflictDoUpdate` on `(flow_id, node_id)`, last-writer-wins. `runId` = url-param; `flow_id` = server-state (resolved from the run, refuse a flow-less scratch run with `CONFIG`); `nodeId` = body, validated against the run's pinned-manifest node set (allow-list) before write (unknown id → `CONFIG`/400, no write); `x`/`y` bounded floats.
-- **RBAC** = a new `editFlowLayout` action (min role `member`), distinct from `readBoard`, tunable to `admin` later without touching call sites (layout is shared *within* the project).
+- **RBAC** = a new `editFlowLayout` action (min role `member`), distinct from `readBoard`, tunable to `admin` later without touching call sites (layout is shared _within_ the project).
 - **GC**: `flow_graph_layouts` rows are children of `flows` (CASCADE), NOT of `flow_revisions` — M19 revision-GC does NOT delete layout; only deleting the project/flow removes it.
 
 **Consequences:**
+
 - Manual positions persist and round-trip with no `flow.yaml`/engine change; the DSL stays logic-only.
 - Cross-project layout writes are structurally impossible (a project-A member can never touch project-B rows); proven by a two-project integration test (M22 T1.5).
 - A revision upgrade keeps positions for still-present nodes; dropped nodes' rows are inert (ignored at render), tolerated rather than eagerly GC'd.
 - One more table + one write route; no new `MaisterError` code (reuses `CONFIG` / `UNAUTHENTICATED` / `UNAUTHORIZED`).
 
 **Alternatives Considered:**
+
 - **Positions in `flow.yaml` (manifest "presentation section"):** violates the logic-only DSL invariant, forces an engine bump, and couples shared bundle bytes to per-project view state. Rejected.
 - **Key on `flow_revision_id`:** `flow_revisions` is shared across projects → cross-project write leak, and layout dies on every revision bump. Rejected.
 - **Key on `run_id` (per-run layout):** positions would not survive across a task's many runs (1:N retry loop), defeating "persist my layout". Rejected.
@@ -3192,12 +3215,14 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
 - **Color map:** `colorForNodeStatus(status, isCurrent)` mirrors the evidence-graph `colorForState` → HeroUI `<Chip color>`; the current node gets ring emphasis; a blocking-gate `failed`/`stale` rollup tints the node.
 
 **Consequences:**
+
 - Live status without polling and without a new SSE event type — reuses the existing run stream as a change-trigger only.
 - A debounce collapses event bursts into at most ~1 refetch/sec; the status route is a cheap read model that returns an explicit DTO (no secrets, no internal handles).
 - The "is this a poll?" review risk is closed in writing: SSE-triggered + terminal-freeze + an e2e traffic assertion.
 - No supervisor change (the stream already exists); the recolor adds one small read route.
 
 **Alternatives Considered:**
+
 - **`setInterval` polling of `…/graph-status`:** the banned poll; violates ADR #1. Rejected.
 - **Add a `node.status` delta to the SSE payload:** a larger supervisor + web change, and the status read model already exists server-side; the refetch-on-tick is far smaller. Deferred (a Phase-2 optimization if the refetch proves heavy).
 - **`router.refresh()` per SSE event:** re-runs the whole Server Component (re-compiles, re-lays-out, refetches everything) and flickers; the in-place recolor is cheaper. Rejected.
@@ -3220,12 +3245,14 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
 - **Untracked-file viewing is explicitly deferred** (it is the secret-disclosure surface we are excluding); a later opt-in member+ "show untracked" mode with an explicit secret denylist can be added if dogfood demands it.
 
 **Consequences:**
+
 - A low-privilege `viewer` cannot read source; even a `member` cannot reach `.git` / secrets / untracked output.
 - No raw `fs` read of arbitrary paths and no execute-path (no `setup.sh` / hook / `child_process` of repo content) — both the path-traversal risk and the fetch-then-execute separation rule are satisfied.
 - Listing is lazy-per-level and blob reads are capped — no full-tree walk, no unbounded read on big repos/files.
 - One new env var (`.env.example` + `docs/configuration.md`; `web` runs on the host, so no compose `web` block per [ADR-023](#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); no new `MaisterError` code (reuses `CONFIG` / `PRECONDITION` + HTTP 404/413/415).
 
 **Alternatives Considered:**
+
 - **Raw `fs` read of the worktree with a secret denylist:** denylists leak (new secret patterns, symlinks, `.git` internals); tracked-only excludes by construction. Rejected.
 - **Reuse `readBoard` (`viewer`) for file reads:** exposes source to view-only accounts; M22 raises the bar with `readRepoFiles = member`. Rejected.
 - **Show untracked / working-copy files now:** the highest secret-disclosure surface (uncommitted `.env`, agent scratch output); deferred behind an explicit future opt-in. Rejected for Wave-1.
@@ -3240,8 +3267,8 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
 reserved a "HITL assessment & Flow-owned escalation" clause but left the concrete fields unspecified,
 and [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) re-pointed
 that clause forward to M17 rather than implementing it. Two distinct quantities have been informally
-conflated under the word "confidence": (a) how *severe* a human decision is — declared by the Flow
-author when they place a `human` step/node — and (b) how *certain* the responding human felt when they
+conflated under the word "confidence": (a) how _severe_ a human decision is — declared by the Flow
+author when they place a `human` step/node — and (b) how _certain_ the responding human felt when they
 answered. A third, already-shipped quantity is the M15 AI-judge machine confidence parsed onto
 `GateVerdict.confidence` and stored in `gate_results.verdict`
 ([ADR-048](#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)), which
@@ -3266,7 +3293,7 @@ readiness — without re-deriving or re-litigating the M15 machine-confidence pa
   (the shared `respondToHitl` service, [ADR-055](#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates)),
   never UI-only.
 - **Distinct from `GateVerdict.confidence` (M15 AI-judge).** `criticality` and `human_confidence`
-  annotate the HITL *surface* (criticality badge / sort key on the inbox; confidence on the
+  annotate the HITL _surface_ (criticality badge / sort key on the inbox; confidence on the
   decision/evidence record). They are **NOT** the machine confidence on `gate_results.verdict`, which
   M15 calibration already resolves to a gate `status` at execution. The two families never mix.
 - **Annotate, do NOT re-gate.** Neither field feeds the readiness evaluator
@@ -3355,7 +3382,7 @@ tools, gated by actor-kind and an opt-in scope check:
   `actor.kind !== "user"` when `hitlRow.kind === "human"` → **403** (covers both the linear `on_reject`
   human step and graph `human_review`). Token and internal-agent actors may answer only
   `kind ∈ {permission, form}`. This makes ADR-024's "escalate-to-human is a Flow gate, never the external
-  actor's" *executable*: a machine token can never satisfy a human gate, even holding `hitl:respond`.
+  actor's" _executable_: a machine token can never satisfy a human gate, even holding `hitl:respond`.
   Supersedes the prior Open Question on MCP answering `human_review` (→ no).
 - **D8 — scoped external credentials.** `handleExt` enforces each route's `scopeLabel` by default:
   `actor.scopes` MUST contain that scope or `"*"`, else **403**. The two HITL routes use
@@ -3412,7 +3439,7 @@ not: `runHumanStep` (`runner-human.ts`) persists `on_reject` only into `needs-in
 `runs.currentStepId`, the per-pass `step_runs` rows, the on-disk `input-<stepId>.json` completion
 sentinels, and a comments side-channel. Two adversarial-review findings shaped it: (HIGH) the comments
 channel must not be a completion sentinel, and (the deeper bug behind it) stale completion sentinels in
-the re-execution window would auto-satisfy a re-reached human/form step with its *prior* reject so the
+the re-execution window would auto-satisfy a re-reached human/form step with its _prior_ reject so the
 loop never re-prompts. No shipped flow uses flat `human`+`on_reject` today (only test fixtures), so the
 risk is bounded to the linear path, but the atomicity must be correct before any flow relies on it.
 
@@ -3670,6 +3697,7 @@ response/status contract. A single-box fallback timer is allowed only when
 the preferred production clock.
 
 **Consequences:**
+
 - Scheduler logic can reuse Drizzle, run creation, recovery, and GC services
   without teaching the supervisor about DB state.
 - Operators get one cron secret and one clock target while `/api/cron/gc`
@@ -3683,6 +3711,7 @@ the preferred production clock.
 - Attempt leases and reaping make crash windows visible and retryable.
 
 **Alternatives Considered:**
+
 - **Supervisor-owned scheduler:** duplicates web DB/orchestration logic and
   violates the supervisor-owns-agents boundary. Rejected.
 - **Independent route per job class:** repeats auth, claim, budget, and
@@ -3726,6 +3755,7 @@ operator input and inert in M25: no authored draft runs `setup.sh`, hooks, or
 package code.
 
 **Consequences:**
+
 - The existing git-installed import path remains read-only and trust-gated.
 - Local authored rules/skills can be selected through the same
   `capability_records` read path as other project capabilities.
@@ -3736,6 +3766,7 @@ package code.
   renaming M25's project-local lifecycle.
 
 **Alternatives Considered:**
+
 - **Write authored caps back into `maister.yaml`:** blurs operator config with
   app-authored content and bypasses revision lifecycle. Rejected.
 - **Use a `LocalPublished` lifecycle value:** adds naming noise to the local data
@@ -3802,6 +3833,7 @@ so a project can never become inaccessible regardless of member roster state.
 No last-owner guard is implemented.
 
 **Consequences:**
+
 - User provisioning and lifecycle is fully admin-driven with no mail infrastructure
   dependency.
 - Hard-delete is safe because it is structurally gated on zero referencing rows;
@@ -3813,6 +3845,7 @@ No last-owner guard is implemented.
   is covered by global-admin implicit ownership.
 
 **Alternatives Considered:**
+
 - **SMTP email invites:** out of scope — no mail infrastructure on the current
   target. Rejected.
 - **Separate append-only audit-log table:** D3 lightweight stamps on the affected
@@ -3836,7 +3869,7 @@ No last-owner guard is implemented.
 **Context:** Today only `human`/HITL nodes write a structured result into
 `node_attempts.vars`; `ai_coding`, `cli`, `check`, and `judge` nodes emit only
 free `stdout` text and files-on-disk (`vars` is always `{}` for them). The flow
-engine therefore cannot pass a node's *structured* result to a later node, route
+engine therefore cannot pass a node's _structured_ result to a later node, route
 on a node's self-reported outcome, or feed first-class node signals to the
 Observatory. A cleared/resumed agent session also has no session-independent view
 of run-level state. M26 delivers the Wave-1 keystone pair (P1 + P7) with **no DB
@@ -3915,6 +3948,7 @@ no new `MaisterError` code. P1/P7 converge on the existing `node_attempts.vars`
 channel and the M17 `extraVars` rework-comment channel — never a parallel store.
 
 **Consequences:**
+
 - A downstream node resolves `{{steps.<id>.vars.<key>}}` from an upstream node's
   validated output via `reduceLedger` (highest-attempt-wins), with no new plumbing.
 - Richer Observatory (E2) signals and the unblock of Wave-2 (P2 prompt injection,
@@ -3922,11 +3956,12 @@ channel and the M17 `extraVars` rework-comment channel — never a parallel stor
 - Zero migration, zero new dependency.
 - Delivery is **phased**: Phase 1 (the shared validator, the `output.result`
   manifest field, and the engine 1.3.0 gate) is implemented; the runtime transport
-  + validate seam (Phase 2) and the `run.json` projection (Phase 3) follow. Until
-  Phase 2 lands, `output.result` parses and is engine-gated but is not yet read at
-  run time.
+  - validate seam (Phase 2) and the `run.json` projection (Phase 3) follow. Until
+    Phase 2 lands, `output.result` parses and is engine-gated but is not yet read at
+    run time.
 
 **Alternatives Considered:**
+
 - **`ajv` / JSON-Schema dependency:** rejected — the existing `formSchemaSchema`
   grammar (extended with a nested `object` type) covers the need with no new dep.
 - **Inline schema in the manifest:** rejected — a `./path` is consistent with
@@ -3971,6 +4006,7 @@ Layout **editing** is a flow-editor concern on the source `flow.yaml` (deferred)
 not a runtime write.
 
 **Consequences:**
+
 - No DB layout store, no layout write route, no `editFlowLayout` action; the view
   is read-only.
 - Layout is versioned with the flow it describes and shared identically across
@@ -3980,6 +4016,7 @@ not a runtime write.
   immutable and shared, so layout editing belongs on the source file.
 
 **Alternatives Considered:**
+
 - **Keep the ADR-051 DB store:** rejected — a per-project mutable layout against an
   immutable, shared bundle is a category error; the layout diverges from the flow.
 - **Inline positions in the `steps[]`/`nodes[]` DSL:** rejected — it pollutes the
@@ -4036,6 +4073,7 @@ separate route or menu item) and make the page reachable.
   stay narrow.
 
 **Consequences:**
+
 - The runner catalog is fully manageable from the UI; code now matches the
   OpenAPI contract (204 delete, 409 dup-id).
 - Delete and disable share one usage-guard, so a runner used by any past run can
@@ -4046,7 +4084,8 @@ separate route or menu item) and make the page reachable.
   plus one `DELETE` handler.
 
 **Alternatives Considered:**
-- **Block delete only on *live* references** (allow delete when only historical
+
+- **Block delete only on _live_ references** (allow delete when only historical
   snapshots remain): rejected — asymmetric with `assertCanDisable` and
   surprising; the conservative rule is simpler and snapshots are GC'd anyway.
 - **Soft-delete only (no hard delete):** rejected — `enabled=false` already is
@@ -4087,12 +4126,14 @@ The editor is `manageCatalog`-gated (write). The run-scoped flow-graph view stay
 read-only (`readBoard`), consistent with ADR-052.
 
 **Consequences:**
+
 - The installed flow bundle is never touched by editor operations; ADR-021 immutability holds.
 - Invalid manifests are structurally impossible to persist — the hard-gate is the only write path.
 - The `source_flow_ref_id` link enables publish→bridge to land in the correct `flows` lineage without a parallel catalog store.
 - `draft_version` CAS prevents lost-update races between concurrent editors (same guarantee as rules/skills, ADR-061).
 
 **Alternatives Considered:**
+
 - **Mutate the installed bundle in place:** rejected — the bundle is shared and
   immutable; editing it would corrupt other projects pinned to the same revision.
 - **Validate only on publish, not on save:** rejected — a stored invalid draft
@@ -4142,6 +4183,7 @@ to `flow_revisions.exec_trust === 'trusted'`. **Invariant:** logic-trust alone
 (`trusted_by_policy`) never executes setup.sh or an MCP stdio command.
 
 **Consequences:**
+
 - Authored flow revisions become runnable after publish + exec_trust flip — the M27 goal.
 - The two-axis model eliminates the "trusted_by_policy accidentally runs setup.sh" risk.
 - `installAuthoredFlowPackageBridge` is unchanged at the call site; parameterization is
@@ -4152,6 +4194,7 @@ to `flow_revisions.exec_trust === 'trusted'`. **Invariant:** logic-trust alone
   the `flow` kind publish boundary is superseded here.
 
 **Alternatives Considered:**
+
 - **Keep ADR-061 as-is, add a separate bridge table:** rejected — a parallel store
   for "runnable authored flows" with its own merge logic is more complex than routing
   the existing bridge.
@@ -4199,6 +4242,7 @@ queries the live catalog for a run already in flight (invariant from ADR-021).
 No new `runs.status` values are introduced.
 
 **Consequences:**
+
 - Catalog edits (publish, version-binding change, capability CRUD) during an active run
   do not affect that run — the snapshot is the only source of truth for runners.
 - `version_binding=latest` with authored-wins gives authors immediate "use my latest
@@ -4208,6 +4252,7 @@ No new `runs.status` values are introduced.
 - Migration `0033+` adds `version_binding` (DDL in SDD §3.1).
 
 **Alternatives Considered:**
+
 - **Two separate snapshots (M10 pointer + M14 caps) retained as-is:** rejected — they
   are written at different points in `launchRun` and can diverge on a retry; a single
   atomic snapshot eliminates the race.
@@ -4274,6 +4319,7 @@ supports it at integration time; otherwise explicitly documented as a gap (no si
 degrade). No parallel materialization path.
 
 **Consequences:**
+
 - Duplicate capability materialization is eliminated at the resolver layer — one winner
   per `(kind, refId)`, deterministic.
 - Platform MCP servers are first-class catalog rows with the same lifecycle guarantees as
@@ -4285,6 +4331,7 @@ degrade). No parallel materialization path.
   place env values are materialised.
 
 **Alternatives Considered:**
+
 - **Project < platform precedence (platform wins):** rejected — inconsistent with the
   local-first runner chain; operators would lose the ability to override platform-wide
   MCP settings at the project level.
@@ -4434,6 +4481,7 @@ env vars; the cap ([ADR-009](#adr-009-global-concurrency-cap--3)) is reused
 as-is.
 
 **Consequences:**
+
 - Schedules ride the proven M24 claim/ledger/budget machinery; the engine core
   is untouched and `cadence_interval_seconds` stays the only engine cadence
   model (ADR-060 invariant preserved).
@@ -4454,6 +4502,7 @@ as-is.
   bounded by the existing queue semantics, no cap bypass.
 
 **Alternatives Considered:**
+
 - **Extend `scheduler_jobs` with cron/tz/overlap columns (one engine job per
   schedule):** rejected — the claim CTE advances `next_run_at` with SQL
   interval math; cron-next cannot be computed there, so TS code would re-write
@@ -4461,7 +4510,7 @@ as-is.
   re-fires 60s later (double launch). Also invasive surgery on the
   battle-tested claim SQL and a violation of the ADR-060 cadence invariant.
 - **Activate `agent_schedules`:** rejected — wrong shape (`agent_ref NOT
-  NULL`, no task/cron/overlap columns) and it is the reserved E4
+NULL`, no task/cron/overlap columns) and it is the reserved E4
   agents-as-actors bridge; hijacking it blocks that epic.
 - **`cron-parser` + luxon:** rejected — equally capable parser but drags
   `luxon` in as a runtime dependency; the repo deliberately has no date
@@ -4479,21 +4528,23 @@ as-is.
   (bad button UX) and conflates manual fires with the cron rhythm; inline
   dispatch through the shared core respects policy/cap and reports the outcome
   synchronously.
+
 ### ADR-072: PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard
 
 **Date:** 2026-06-10
 **Status:** Accepted
+
 > **Amended by [ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** runner-side rework compose also folds `gate_chat_messages` history into `commentsVar`; gate-chat persists in a sibling table, not `review_comments`.
-**Context:** The M11a review gate offers one free-text `comments` box. That is
-too coarse to dogfood real PR-grade reviews (M20): a reviewer cannot anchor a
-remark to a diff line, track which remarks were addressed across rework
-iterations, or see how close the loop is to `rework.maxLoops` — today a rework
-submitted on the final allowed loop silently fails the whole run via the engine
-`CONFIG` throw. The diff substrate is already comment-ready (`@git-diff-view/react`,
-ADR-066), the rework engine (`rework.{allowedTargets,maxLoops,commentsVar}`,
-`node_attempts` ledger, `pendingInjectedVars` injection) is shipped, and the
-HITL respond route's two-phase commit + idempotency CAS are locked invariants
-that must not change.
+> **Context:** The M11a review gate offers one free-text `comments` box. That is
+> too coarse to dogfood real PR-grade reviews (M20): a reviewer cannot anchor a
+> remark to a diff line, track which remarks were addressed across rework
+> iterations, or see how close the loop is to `rework.maxLoops` — today a rework
+> submitted on the final allowed loop silently fails the whole run via the engine
+> `CONFIG` throw. The diff substrate is already comment-ready (`@git-diff-view/react`,
+> ADR-066), the rework engine (`rework.{allowedTargets,maxLoops,commentsVar}`,
+> `node_attempts` ledger, `pendingInjectedVars` injection) is shipped, and the
+> HITL respond route's two-phase commit + idempotency CAS are locked invariants
+> that must not change.
 
 **Decision:**
 
@@ -4502,7 +4553,7 @@ span multiple `hitl_requests` rows (gate visits) and rework iterations within
 one run; they need open/resolved queryability at compose time, RBAC-gated
 writes, survival across worktree GC, and evidence-graph linkage
 (`artifact_instances` is DB-side) — so they are DB rows, NOT a `.maister/`
-artifact. The `.maister/` artifact pattern remains the *delivery* channel:
+artifact. The `.maister/` artifact pattern remains the _delivery_ channel:
 comments reach the agent only as the composed `commentsVar` payload. Threads
 are 1-level: a root (`parent_id IS NULL`, carries anchor + status) and replies
 (`parent_id = root.id`, no anchor). Columns: `id` (text PK, `randomUUID`),
@@ -4523,7 +4574,7 @@ SHA.** POST validates the anchor against the server-recomputed current diff
 (the same `diffRunWorkspace` + `lib/diff/prepare.ts` source the view renders)
 and stores the server-extracted `line_content` — the client never supplies it.
 Cross-iteration validity = exact content match at the same position in the
-*current* diff, computed server-side in GET as `placement: "inline" |
+_current_ diff, computed server-side in GET as `placement: "inline" |
 "outdated"`. No fuzzy re-anchoring in v1 (GitHub-style "outdated" semantics —
 deterministic, and the agent always receives content snapshots, so staleness
 never corrupts the rework payload). Edges: diff `truncated`, or the anchored
@@ -4598,14 +4649,14 @@ taxonomy is preserved.
 
 **Identifiers (trust-boundary labels):**
 
-| Route | Identifier | Label | Handling |
-| --- | --- | --- | --- |
-| all four | `runId` | url-param | access-controlled via run row → project → `requireProjectAction` |
-| PATCH/DELETE | `commentId` | url-param | row loaded, `row.run_id === runId` compared (server-state) → 404 on mismatch |
-| POST (reply) | `parentId` | body-controlled | must resolve to a ROOT comment of the SAME run (server-state compare) → 409 `CONFLICT` otherwise |
-| POST (root) | `filePath`, `side`, `line` | body-controlled | validated against the server-computed diff (anchor must exist → else 409 `PRECONDITION`); `filePath` is opaque anchor DATA — **never used as a filesystem path component anywhere** |
-| POST/PATCH | `body` | body-controlled | content data; zod: non-empty, ≤ 10 000 chars |
-| all writes | author | auth-context | `author_user_id`/`author_label` from the session, never from the body |
+| Route        | Identifier                 | Label           | Handling                                                                                                                                                                            |
+| ------------ | -------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| all four     | `runId`                    | url-param       | access-controlled via run row → project → `requireProjectAction`                                                                                                                    |
+| PATCH/DELETE | `commentId`                | url-param       | row loaded, `row.run_id === runId` compared (server-state) → 404 on mismatch                                                                                                        |
+| POST (reply) | `parentId`                 | body-controlled | must resolve to a ROOT comment of the SAME run (server-state compare) → 409 `CONFLICT` otherwise                                                                                    |
+| POST (root)  | `filePath`, `side`, `line` | body-controlled | validated against the server-computed diff (anchor must exist → else 409 `PRECONDITION`); `filePath` is opaque anchor DATA — **never used as a filesystem path component anywhere** |
+| POST/PATCH   | `body`                     | body-controlled | content data; zod: non-empty, ≤ 10 000 chars                                                                                                                                        |
+| all writes   | author                     | auth-context    | `author_user_id`/`author_label` from the session, never from the body                                                                                                               |
 
 `projectId` is always derived from the run row (server-state). No body field
 names a cross-resource locator that has a server-state counterpart.
@@ -4640,6 +4691,7 @@ DSL grammar change; the diff stays committed-only `base..branch` and
 `readBoard`-gated.
 
 **Consequences:**
+
 - Reviewers leave line-anchored, threaded, resolvable comments on the review
   gate diff; the rework agent receives them as deterministic markdown inside
   the existing `{{ <commentsVar> }}` injection — no new delivery channel.
@@ -4667,6 +4719,7 @@ DSL grammar change; the diff stays committed-only `base..branch` and
   refetch-after-mutation or reload only.
 
 **Alternatives Considered:**
+
 - **Store comments as `.maister/` run artifacts:** rejected — comments span
   multiple gate visits and rework iterations, need open/resolved queryability
   at compose time, RBAC-gated writes, GC survival, and evidence linkage; a
@@ -4694,21 +4747,22 @@ DSL grammar change; the diff stays committed-only `base..branch` and
 
 **Date:** 2026-06-08
 **Status:** Accepted
+
 > **Amended by [ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) (2026-06-11):** the review-diff 4-mode `scope` switcher reuses this `prepareDiff` pipeline + byte-cap truncation guard.
-**Context:** Three code-content surfaces render with no syntax highlighting.
-(1) The M22 workbench (ADR-053) shows git-tracked repo files in a plain `<pre>`
-(`file-viewer.tsx`) — no highlighting, no line numbers, read-only. (2) The same
-workbench renders the base→branch diff as raw `git diff` text in a `<pre>`
-(`raw-diff.tsx`) — no side-by-side, no line numbers, no per-file `+`/`−` counts.
-(3) The M25 authored-Flow catalog (ADR-061) edits `flow.yaml` and typed package
-files (`skill`/`rule`/`agent_definition`/`schema`/…) in plain `<textarea>`s — no
-highlighting, no inline validation. We need: highlighted multi-format file
-viewing (first priority), a real diff (side-by-side + inline, line numbers,
-per-file `+`/`−` counts, collapsible hunks), and smart editing for authored Flow
-artifacts (highlighting + inline validation + context autocomplete). Stack
-constraints: Next 16 App Router (RSC + SSR), React 19, Tailwind 4 + HeroUI v3,
-`.light`/`.dark` class on `<html>`, MIT-only deps, a self-hosted (offline-capable)
-host, i18n EN/RU.
+> **Context:** Three code-content surfaces render with no syntax highlighting.
+> (1) The M22 workbench (ADR-053) shows git-tracked repo files in a plain `<pre>`
+> (`file-viewer.tsx`) — no highlighting, no line numbers, read-only. (2) The same
+> workbench renders the base→branch diff as raw `git diff` text in a `<pre>`
+> (`raw-diff.tsx`) — no side-by-side, no line numbers, no per-file `+`/`−` counts.
+> (3) The M25 authored-Flow catalog (ADR-061) edits `flow.yaml` and typed package
+> files (`skill`/`rule`/`agent_definition`/`schema`/…) in plain `<textarea>`s — no
+> highlighting, no inline validation. We need: highlighted multi-format file
+> viewing (first priority), a real diff (side-by-side + inline, line numbers,
+> per-file `+`/`−` counts, collapsible hunks), and smart editing for authored Flow
+> artifacts (highlighting + inline validation + context autocomplete). Stack
+> constraints: Next 16 App Router (RSC + SSR), React 19, Tailwind 4 + HeroUI v3,
+> `.light`/`.dark` class on `<html>`, MIT-only deps, a self-hosted (offline-capable)
+> host, i18n EN/RU.
 
 **Decision:** Adopt a best-of-breed **hybrid**, not a single all-in-one editor.
 Monaco is rejected for the current surfaces (see Alternatives).
@@ -4757,6 +4811,7 @@ lock, and validation gates. Only presentation and the `/diff` response shape
 change.
 
 **Consequences:**
+
 - Repo viewing adds ~0 KB to the client (server-rendered); the diff tab adds the
   `@git-diff-view/react` runtime (~30–60 KB) + a serialized syntax bundle (data,
   not a highlighter); CodeMirror loads only on the authored-editing route via
@@ -4779,6 +4834,7 @@ change.
   pointer to this ADR now and are rewritten to the shipped contract per slice.
 
 **Alternatives Considered:**
+
 - **Monaco everywhere:** rejected for current surfaces — 2–5 MB on the client on
   every surface incl. the read-first viewer, client-only (loses RSC/SSR), default
   worker load from the jsDelivr CDN (bad for a self-hosted/offline host;
@@ -4842,14 +4898,14 @@ normative here and are NOT restated elsewhere (R7).
    would add engine surface for no loop value. Revisit only if the flag proves
    noisy in practice.
 3. **Per-control effectiveness.**
-   (a) *Per gate:* over node attempts whose gate `g` reached a terminal verdict,
+   (a) _Per gate:_ over node attempts whose gate `g` reached a terminal verdict,
    `rework_followed(attempt)` = a later attempt exists for the same
    `(run_id, node_id)` OR the attempt's `node_attempts.status = 'Reworked'`.
    Report `P(rework_followed | g failed)` vs `P(rework_followed | g passed)`
    and `lift = P(rework | failed) / P(rework | passed)`. Lift far above 1 means
    the sensor's firings are consequential (corrections follow); lift near 1
    means firing changes nothing — a noise candidate.
-   (b) *Per capability:* for each capability `refId` appearing in
+   (b) _Per capability:_ for each capability `refId` appearing in
    `runs.resolved_capability_set.capabilities[]`, compute the existing
    correction-rate (`rollupCorrectionMetrics`, ADR-059) over runs WITH the
    capability vs runs WITHOUT it. Runs with a NULL `resolved_capability_set`
@@ -4876,6 +4932,7 @@ n executions); a group with `executions < 3` (`MIN_GROUP_EXECUTIONS`) renders
 as "—" (insufficient data), never as `0%`.
 
 **Consequences:**
+
 - Operators see, per flow and per project, which sensors fire, which are
   plausibly dead weight, which correlate with corrective action, and where
   flows instruct without verifying — the inputs a human (and later the loop)
@@ -4893,6 +4950,7 @@ as "—" (insufficient data), never as `0%`.
   precedent — `.env.example` + `configuration.md`, never compose files).
 
 **Alternatives Considered:**
+
 - **Persisted harness read-model table (nightly rollup):** rejected — premature
   caching; ADR-059's on-the-fly model is proven at current scale and a table
   adds migration + staleness surface for no present need.
@@ -4913,16 +4971,17 @@ as "—" (insufficient data), never as `0%`.
 
 **Date:** 2026-06-10
 **Status:** Accepted
+
 > **Amended by [ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L3 neutrality reuses this detect-after mutation-sensor stance with its own first-turn chat-checkpoint baseline.
-**Context:** The harness can verify that evidence EXISTS (`artifact_required`,
-M12) but not WHAT a node actually changed. Two recurring defect classes are
-invisible today: (1) a node that claims success without touching the files its
-contract implies (`must_touch`), and (2) a node that modifies paths an M14
-restriction forbids — M14 enforcement is `"instructed"` only (ADR-041 defers
-strict prevention), so violations currently go undetected. A deterministic
-post-condition sensor over `git diff --name-only` closes both gaps cheaply and
-feeds the Observatory adequacy layer (ADR-073) and the later self-correction
-loop. Detection beats attribution while prevention is blocked.
+> **Context:** The harness can verify that evidence EXISTS (`artifact_required`,
+> M12) but not WHAT a node actually changed. Two recurring defect classes are
+> invisible today: (1) a node that claims success without touching the files its
+> contract implies (`must_touch`), and (2) a node that modifies paths an M14
+> restriction forbids — M14 enforcement is `"instructed"` only (ADR-041 defers
+> strict prevention), so violations currently go undetected. A deterministic
+> post-condition sensor over `git diff --name-only` closes both gaps cheaply and
+> feeds the Observatory adequacy layer (ADR-073) and the later self-correction
+> loop. Detection beats attribution while prevention is blocked.
 
 **Decision:** Extend the `artifact_required` gate with two optional mutation
 assertions, evaluated by the existing gate executor against git diff path sets,
@@ -4936,8 +4995,8 @@ always emitting a `mutation_report` artifact when configured.
    - `must_not_touch?: "restrictions"` — v1 accepts only this literal: the
      check reads the node's resolved M14 restriction set, never an own path
      list (an explicit list would be new engine surface; future work).
-   Assertions evaluate under the gate's existing `mode`
-   (`blocking | advisory`) — no new default is invented.
+     Assertions evaluate under the gate's existing `mode`
+     (`blocking | advisory`) — no new default is invented.
 2. **Restriction `paths` contract.** `restrictionCapabilitySchema` gains an
    optional `paths: string[]` — the machine-readable subset of a restriction.
    The sensor checks `diff ∩ paths`; free-text-only restrictions (no `paths`)
@@ -4949,7 +5008,7 @@ always emitting a `mutation_report` artifact when configured.
    materialization site.
 3. **Range semantics.**
    - `must_touch` is **node-scoped**: range = `<HEAD at this node's FIRST
-     attempt start>..<HEAD at gate time>` — "did this node, across its
+attempt start>..<HEAD at gate time>` — "did this node, across its
      attempts, touch X since it first began". Capture: immediately after the
      `node_attempts` row creation, write `node-start-<nodeId>.json` `{head}`
      into the run dir via `atomicWriteJson`, **write-if-absent** — one file per
@@ -4962,7 +5021,7 @@ always emitting a `mutation_report` artifact when configured.
      fall back to the cumulative range with `basis: "cumulative-fallback"` in
      the report.
    - `must_not_touch` is **cumulative** (a safety net): range = `<merge-base vs
-     main>..<HEAD>` via a shared `resolveDiffRange(workspace)` helper extracted
+main>..<HEAD>` via a shared `resolveDiffRange(workspace)` helper extracted
      from the diff-artifact recording block (same `resolveBaseRef` /
      `resolveRefSha`). A restricted-path violation anywhere on the branch flags
      at every checking node.
@@ -4978,12 +5037,12 @@ always emitting a `mutation_report` artifact when configured.
    column with a TS-level enum — no migration), locator
    `{ kind: "inline", text: JSON.stringify(report) }`. Report shape:
    `{basis: "node" | "cumulative-fallback", nodeRange: {base, head},
-   cumulativeRange?: {base, head}, touched: string[] (node range, truncated at
-   500 with a truncated flag), mustTouch: {globs, matched: string[] (truncated
-   at 500 with a matchedTruncated flag; the pass/fail decision runs on the
-   full set), matchedTruncated: boolean},
-   restrictions: {checked: [{id, paths, violations: string[]}],
-   unmatchable: string[]}, violations: string[], evaluated: boolean}`.
+cumulativeRange?: {base, head}, touched: string[] (node range, truncated at
+500 with a truncated flag), mustTouch: {globs, matched: string[] (truncated
+at 500 with a matchedTruncated flag; the pass/fail decision runs on the
+full set), matchedTruncated: boolean},
+restrictions: {checked: [{id, paths, violations: string[]}],
+unmatchable: string[]}, violations: string[], evaluated: boolean}`.
    Touched paths are read with `core.quotePath=false` so non-ASCII paths
    match globs verbatim (a C-quoted path would silently never match — a
    false-negative on the `must_not_touch` direction).
@@ -5013,6 +5072,7 @@ always emitting a `mutation_report` artifact when configured.
    rework re-execution are inherited unchanged.
 
 **Consequences:**
+
 - Mutation defects become first-class, queryable evidence: every configured
   gate leaves a `mutation_report`, pass or fail, feeding the evidence graph and
   the ADR-073 firing-rate metrics.
@@ -5030,6 +5090,7 @@ always emitting a `mutation_report` artifact when configured.
   error code (`CONFIG`/`PRECONDITION` reused), no new HTTP surface.
 
 **Alternatives Considered:**
+
 - **Engine version bump to 1.4.0:** rejected — no installed base of older
   engines exists; bumping is ceremony. Widening the existing 1.3.0 check gives
   the same drift protection without a new floor.
@@ -5046,6 +5107,7 @@ always emitting a `mutation_report` artifact when configured.
 - **Recording the report only on failure:** rejected — a pass with an empty
   match set vs a pass with rich touches are different signals; ADR-073
   effectiveness metrics need both sides.
+
 ### ADR-077: Outbound webhooks: generic event-delivery primitive, transactional outbox + singleton drainer
 
 **Date:** 2026-06-10
@@ -5110,10 +5172,10 @@ board sync) subscribe to it later; none is built here.
   Per-subscription ordering is rejected (one delivery in a 24h backoff would dam
   every later event for that endpoint — head-of-line blocking). Every crash
   window converges to a duplicate send; `X-Maister-Idempotency-Key =
-  hex(sha256("<subscriptionId>:<eventId>"))` (stable across retries AND replays)
+hex(sha256("<subscriptionId>:<eventId>"))` (stable across retries AND replays)
   gives consumers exactly-once effect. `FOR UPDATE SKIP LOCKED` + a delivery
   lease prevents concurrent double-send. Retry curve `1m, 5m, 15m, 1h, 4h, 12h,
-  24h` (`±20%` jitter, floor = 60s tick), max 8 attempts → terminal `dead`; HTTP
+24h` (`±20%` jitter, floor = 60s tick), max 8 attempts → terminal `dead`; HTTP
   `410 Gone → dead` immediately, any 2xx → `delivered`, everything else (incl.
   3xx, `redirect:"manual"`) → retry.
 - **Signing = HMAC-SHA256 (Stripe-style), `env:`-ref secrets.** Signature base
@@ -5157,6 +5219,7 @@ board sync) subscribe to it later; none is built here.
   (`timeout|network|http|config`) is a LOCAL enum, not a `MaisterError`.
 
 **Consequences:**
+
 - One reusable primitive serves every current and future notifier; the E5 /
   Wave-4 agent-over-MCP, Telegram, CI, and board-sync bets become SUBSCRIBERS,
   not bespoke integrations.
@@ -5178,6 +5241,7 @@ board sync) subscribe to it later; none is built here.
   `MAISTER_WEBHOOK_MAX_ATTEMPTS`.
 
 **Alternatives Considered:**
+
 - **Projector hook (advance `artifact-projector` to drive webhooks):** rejected —
   the projector sees low-level `session.*` noise, not curated lifecycle
   transitions, and is barred from run-status semantics (ADR-022/038); it is the
@@ -5251,8 +5315,7 @@ branches.)
    `readAuthoredFlowPackageDirectory(revision.installedPath)` →
    `createAuthoredCapability({kind:"flow", …, sourceFlowRefId: flow.flowRefId})`
    in ONE transaction → 201 `{capId, projectSlug, slug}`. Slug defaults to
-   `flowRefId`; collision probes `-fork`/`-fork-N`; an EXPLICIT colliding slug →
-   409. All reads precede the single write; no idempotency marker. The fork reads
+   `flowRefId`; collision probes `-fork`/`-fork-N`; an EXPLICIT colliding slug → 409. All reads precede the single write; no idempotency marker. The fork reads
    `setup.sh`/scripts as draft TEXT and executes nothing.
 
 3. **Static read-only graph (D3).** `FlowGraphView` gains optional `runContext?`;
@@ -5302,6 +5365,7 @@ branches.)
    inline banner).
 
 **Consequences:**
+
 - No migration, no engine bump, no new `runs.status`, no new `MaisterError` code
   — every column relied on (`source_flow_ref_id`, `installed_path`, `exec_trust`,
   `version_binding`, `manifest`, `manifest_digest`, `enabled_revision_id`)
@@ -5323,6 +5387,7 @@ branches.)
   executes nothing.
 
 **Alternatives Considered:**
+
 - **New GET content API routes for file bodies:** rejected — ADR-066 retired the
   run/project `files/content` routes in favor of RSC disk reads; page query
   params are documented in system-analytics, not OpenAPI.
@@ -5340,7 +5405,6 @@ branches.)
 
 ---
 
-
 ### ADR-076: ACP runner model discovery (resolver-on-supervisor) + configured-model application
 
 **Date:** 2026-06-11
@@ -5351,9 +5415,9 @@ branches.)
 `acp-runner-modal.tsx`; the only guidance is seven hardcoded presets in
 `web/lib/acp-runners/presets.ts`. An operator must already know the exact model
 id for the selected adapter+provider. (2) **No application.** The configured
-model never reaches the agent. `spawn.ts` only *logs* `executor.model` — no env
+model never reaches the agent. `spawn.ts` only _logs_ `executor.model` — no env
 var, no settings write, no ACP call — so the adapter runs its own default and
-`cost.ts` scrapes the *actual* model from the wire after the fact. A dropdown
+`cost.ts` scrapes the _actual_ model from the wire after the fact. A dropdown
 without the application fix would be decorative. Both are control-plane
 correctness gaps, not new product surface; they ship together. ACP already
 carries model state we ignore: `NewSessionResponse.models` (`{ availableModels[],
@@ -5369,13 +5433,13 @@ surface. Seven locked sub-decisions:
    supervisor-side (the supervisor may run on another host and already owns
    `process.env`, the adapter binaries, and `CcrManager`). A new supervisor route
    `POST /model-catalog/resolve` takes a runner **draft** (`{ adapter, provider,
-   router?, sidecarId? }` + bare env-ref **names**) and returns
+router?, sidecarId? }` + bare env-ref **names**) and returns
    `{ models, sources, resolvedAt, ttlSeconds }`. The web proxies it through an
    admin-gated route; secrets never reach the browser, and raw secret values are
    never accepted (only `env:NAME` references, regex-validated, resolved
    server-side).
 2. **Pluggable `ModelSource` registry** keyed by `(adapter, provider.kind,
-   router)`. `resolveModelCatalog(draft)` runs every source whose `supports(draft)`
+router)`. `resolveModelCatalog(draft)` runs every source whose `supports(draft)`
    is true, **merges + dedupes by model `id`** (first-source-wins on a dup; the
    `origins` tags accumulate), and aggregates a per-source `status`
    (`ok | skipped | error`). A per-source failure NEVER fails the whole resolve.
@@ -5386,7 +5450,7 @@ surface. Seven locked sub-decisions:
    isolated tmp cwd, `initialize` → `session/new`, read `NewSessionResponse.models`,
    then **tear down** (`SIGTERM`, escalating to `SIGKILL` after a bounded grace).
    A promptless handshake spends ~0 tokens (no `session/prompt`
-   is sent). A **passive harvest** of the same `models` from *real* session spawns
+   is sent). A **passive harvest** of the same `models` from _real_ session spawns
    (and the previously-ignored `session/resume` response) also lands — free, same
    code path. Secondary sources: **provider-API** (`anthropic`/`openai`/
    `openai_compatible` `GET /v1/models`; OpenRouter is keyless; the plain
@@ -5399,7 +5463,7 @@ surface. Seven locked sub-decisions:
    flatten `Providers[].models`).
 4. **In-memory cache, no DB persistence.** A single supervisor host caches resolve
    results keyed by a stable hash of `(adapter, provider.kind, base_url, sorted
-   env-ref NAMES, router, sidecarId)` — **names, never secret values**. TTL is a
+env-ref NAMES, router, sidecarId)` — **names, never secret values**. TTL is a
    code constant (~3600 s); `force` bypasses and repopulates. The same cache
    singleton backs the route and the passive harvest. Harvest writes MERGE into a
    live entry (union by model id) and preserve its expiry window — they never
@@ -5429,8 +5493,8 @@ surface. Seven locked sub-decisions:
    required env-var** (the provider source optionally reads the conventional
    `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` host keys — see sub-decision 3 and
    `configuration.md`).
-   Consistent with sub-decision 2 (*a per-source failure NEVER fails the whole
-   resolve*), the supervisor resolve route throws exactly ONE status for request
+   Consistent with sub-decision 2 (_a per-source failure NEVER fails the whole
+   resolve_), the supervisor resolve route throws exactly ONE status for request
    problems — **`PRECONDITION`→409** on a malformed draft (unknown adapter, an
    `env:`-prefixed or raw-secret value in an env-ref field, a malformed provider
    union, `router` without `sidecarId`). Every **source-level** failure (a missing
@@ -5446,6 +5510,7 @@ surface. Seven locked sub-decisions:
    tolerate it because `session.update.update` is already opaque.
 
 **Consequences:**
+
 - The configured model now actually pins the agent for claude (settings) and codex
   (`setSessionModel`), closing the silent "ran the default model" gap; the runner
   modal gains a discovery-backed combobox instead of a blind text field.
@@ -5465,6 +5530,7 @@ surface. Seven locked sub-decisions:
   advisory event is observability only and never drives run state.
 
 **Alternatives Considered:**
+
 - **Resolver on the web tier:** rejected — the web tier does not (and must not)
   hold provider secrets or spawn adapter binaries, and the supervisor may run on a
   different host. Resolving web-side would either leak `env:NAME` values to the
@@ -5474,7 +5540,7 @@ surface. Seven locked sub-decisions:
   migration, a projection, and a staleness-vs-DB reconciliation problem for data
   that is cheap to re-fetch.
 - **`unstable_setSessionModel` for claude too (uniform channel):** rejected — it
-  pins *after* `session/new` and needs a read-back, whereas the adapter already
+  pins _after_ `session/new` and needs a read-back, whereas the adapter already
   consults `settings.json`'s `model` at startup; the settings channel is the
   M14-blessed, already-wired path and avoids an extra protocol round-trip. codex
   keeps `setSessionModel` because its settings surface differs.
@@ -5502,7 +5568,7 @@ resolving the gate or mutating the worktree under review. Today the only options
 are approve/reject or a full manual takeover
 ([ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)).
 There is no answer-only back-channel to the parked agent session. The chat must
-also be *workspace-neutral*: a Q&A turn must not silently change files. M14
+also be _workspace-neutral_: a Q&A turn must not silently change files. M14
 enforcement is `instructed`-only
 ([ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization))
 and the
@@ -5582,6 +5648,7 @@ NEVER flips the run to `Running`.
    user text.
 
 **Consequences:**
+
 - Reviewers get a grounded, answer-only conversation with the parked agent
   without taking over the worktree or resolving the gate; chat history feeds the
   rework compose.
@@ -5596,6 +5663,7 @@ NEVER flips the run to `Running`.
   compose folds chat).
 
 **Alternatives Considered:**
+
 - **Reuse `review_comments` for chat:** rejected — its anchor CHECK requires
   file/line and there is no agent-author role; chat is unanchored and
   bi-directional.
@@ -5681,6 +5749,7 @@ checkpoints, and a strict rewind/fresh-attempt/keep state machine.
    ([ADR-008](#adr-008-typed-error-taxonomy-maistererror) closed union).
 
 **Consequences:**
+
 - Rework can rewind to the exact pre-attempt state or start clean, executing the
   long-parsed `workspacePolicy` and closing the M11b deferral.
 - A reusable checkpoint engine (`captureCheckpoint`, `applyWorkspacePolicy`,
@@ -5694,6 +5763,7 @@ checkpoints, and a strict rewind/fresh-attempt/keep state machine.
   precondition asserted in code + docs.
 
 **Alternatives Considered:**
+
 - **`git stash` per attempt:** rejected — the stash stack is global/fragile,
   drops untracked nuance, and is not crash-durable per `(run, node)`.
 - **`git reset --hard <checkpoint>` (the checkpoint commit itself):** rejected —
@@ -5732,6 +5802,7 @@ signal when `attempts` is reached (then normal failure). The new DSL key require
 ([ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump) amendment).
 
 **Consequences:**
+
 - Transient failures self-heal without a human round-trip, each retry an
   immutable `auto_retry` ledger row with the workspace reset to the pre-attempt
   checkpoint.
@@ -5742,6 +5813,7 @@ signal when `attempts` is reached (then normal failure). The new DSL key require
 - Exhaustion is a distinct, observable signal, not a silent give-up.
 
 **Alternatives Considered:**
+
 - **Retry any `MaisterError`:** rejected — retrying `PRECONDITION`/`CONFIG`/
   `CONFLICT` masks real defects and can loop forever; an explicit allow-list is
   the safe default.
@@ -5782,6 +5854,7 @@ ADR-078 chat-time read-only restriction. The new DSL keys require
 `compat.engine_min ≥ 1.4.0`.
 
 **Consequences:**
+
 - Rework keeps the critique context by default, improving correction quality and
   avoiding a cold rebuild.
 - `resume` degrades safely to `new_session` with an observable `session_fallback`
@@ -5793,6 +5866,7 @@ ADR-078 chat-time read-only restriction. The new DSL keys require
   preamble forbade.
 
 **Alternatives Considered:**
+
 - **Keep new-session as the default:** rejected — discards the exact context (the
   critique conversation) that rework most needs; the deliberate flip to `resume`
   is the whole value.
@@ -5822,20 +5896,20 @@ protocol; the gate is never blocked by dirty state.
 1. **Pre-review dirty detection.** When a review gate opens, the runner runs
    `statusPorcelain` (incl. untracked) — **no auto-commit**. A dirty worktree
    does NOT block the gate; the gate payload carries a `dirtySummary` (file list
-   + staged/unstaged/untracked counts).
+   - staged/unstaged/untracked counts).
 2. **Reviewer's explicit dirty-resolution** (recorded on
    `hitl_requests.dirty_resolution` + audit):
    - **Commit as snapshot** — reuse `snapshotDirtyWorktree` (auto-message
      `"wip after node <id>"`); scopes recompute after the tip moves.
    - **Discard** — NEW primitive `git restore --staged --worktree . &&
-     git clean -fd` (`-fd` not `-fdx` per ADR-079, scoped `-C <worktree>`, hard
+git clean -fd` (`-fd` not `-fdx` per ADR-079, scoped `-C <worktree>`, hard
      `.maister/`-containment assert, followed by re-materialization per ADR-079);
      v1 is all-or-nothing.
    - **Proceed as-is** — review the committed state; a persistent dirty badge
      stays.
-   Every executed choice also deletes the ADR-078 chat-checkpoint ref (so the L3
-   sensor re-anchors — no false un-discard). The choice is part of review, not a
-   precondition.
+     Every executed choice also deletes the ADR-078 chat-checkpoint ref (so the L3
+     sensor re-anchors — no false un-discard). The choice is part of review, not a
+     precondition.
 3. **4-mode scope switcher** — a `scope` query param on
    `GET /api/runs/{runId}/diff` (enum allow-list, default `run`), all sharing the
    [ADR-066](#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)
@@ -5854,6 +5928,7 @@ protocol; the gate is never blocked by dirty state.
    first review visit) is hidden/disabled with a reason, never an error.
 
 **Consequences:**
+
 - Reviewers can scope the diff to the review delta, the last node, or uncommitted
   work, and dirty state is explicit with three recorded resolutions instead of
   silently missed.
@@ -5866,6 +5941,7 @@ protocol; the gate is never blocked by dirty state.
 - No engine bump (no new flow DSL).
 
 **Alternatives Considered:**
+
 - **Auto-commit the dirty worktree at gate open:** rejected — silently rewrites
   the reviewer's pending work into history; detection + explicit choice is safer.
 - **Block the gate until the worktree is clean:** rejected — turns a review into
@@ -5936,7 +6012,7 @@ migration, with these locked semantics:
 5. **Launchability** — `classifyTaskLaunchability` gains optional relation
    context and a new `"blocked"` classification with precedence
    `target_terminal > crashed > busy > blocked > launchable` (relations gate
-   *launching* only; they never mask an active run's state). Task T is
+   _launching_ only; they never mask an active run's state). Task T is
    blocked iff ∃ relation `(X blocks T)` or `(T depends_on Y)` where the
    counterpart task's status ∈ {`Backlog`, `InFlight`} — `Done` AND
    `Abandoned` both release, so a discarded blocker cannot deadlock its
@@ -5959,7 +6035,7 @@ migration, with these locked semantics:
    service write-sites (`createTask`, the `launchRun` task-flip tx); route
    handlers never insert directly. Event kinds (text + CHECK):
    `task_created | comment_added | task_mentioned | relation_added |
-   relation_removed | run_launched`. `task_status_changed` was cut — the
+relation_removed | run_launched`. `task_status_changed` was cut — the
    only real task-status writer today is the launch flip, already covered by
    `run_launched` in the same tx. `run_finished` is deferred until a
    `setRunStatus` choke point exists (run-terminal writes are scattered
@@ -5968,7 +6044,7 @@ migration, with these locked semantics:
 9. **Subscriptions + inbox** — `task_subscribers` reasons
    `creator | commenter | mentioned | manual` with
    `UNIQUE(task_id, subscriber_type, subscriber_id)`; `subscriber_type ∈
-   {user, agent}` (`system` never subscribes). Auto-subscribe: task creation
+{user, agent}` (`system` never subscribes). Auto-subscribe: task creation
    → creator; comment → commenter; mention of task B in a comment on task A
    → B's creator subscribed to A (`mentioned` — brings the owner of the
    referenced work into the discussion). Inbox fanout is one batch
@@ -5986,6 +6062,7 @@ migration, with these locked semantics:
     `comment_create` / `comment_list` over the same routes.
 
 **Consequences:**
+
 - Tasks get a stable human identity (`KEY-N`) usable in comments, UI chips,
   and later agent prompts; numbering survives deletion as documented holes.
 - Relations gate launching at every entry point (internal route, ext API,
@@ -6003,6 +6080,7 @@ migration, with these locked semantics:
   path.
 
 **Alternatives Considered:**
+
 - **`max(number)+1` at insert:** rejected — racy under concurrent creates.
 - **Per-project Postgres sequences:** rejected — DDL at runtime per project.
 - **One global sequence:** rejected — numbers must be per-project
@@ -6109,6 +6187,7 @@ converted to a typed `ACP_PROTOCOL`/checkpoint path. No raw 500 or string-match
 branching is allowed.
 
 **Consequences:**
+
 - Gemini/OpenCode appear as real platform runner families, but readiness stays
   honest: a missing binary, first-run state failure, missing auth env ref,
   protocol mismatch, unsupported checkpoint strategy, or unproven MCP/model
@@ -6124,6 +6203,7 @@ branching is allowed.
   must be updated in the same implementation slice.
 
 **Alternatives Considered:**
+
 - **Generic custom command runner:** rejected — it bypasses ACP contracts,
   makes capability/readiness truth unverifiable, and would create a shell
   execution surface broader than this feature needs.
@@ -6214,8 +6294,8 @@ the M24 clock.
   surrounding transition. No reads, no joins, no network on the write path.
 - **New table, NOT an in-place generalization of `webhook_events`.**
   `domain_events {id bigint identity PK, kind, project_id NOT NULL FK,
-  task_id? FK, run_id? FK, actor_type?, actor_id?, payload jsonb, occurred_at,
-  created_at, tx_id xid8 DEFAULT pg_current_xact_id()}`. The webhook outbox
+task_id? FK, run_id? FK, actor_type?, actor_id?, payload jsonb, occurred_at,
+created_at, tx_id xid8 DEFAULT pg_current_xact_id()}`. The webhook outbox
   stays as-is until the webhooks drainer is re-pointed at `domain_events` in a
   later stage (it becomes a registered consumer; `webhook_events` then
   retires). Until then run-terminal/gate sites emit BOTH rows in the same
@@ -6225,13 +6305,13 @@ the M24 clock.
   Stage-3 triager), `run.done`, `run.failed`, `run.crashed`, `run.abandoned`
   (the four terminal run statuses), `gate.failed`. Extension rule mirrors
   ADR-077: one taxonomy entry + emit site(s) in the owning domain transaction
-  + one doc row (+ CHECK update via migration).
+  - one doc row (+ CHECK update via migration).
 - **Per-consumer cursors with CAS lease + xid8 commit horizon.** Each consumer
   owns a `domain_event_consumers` row `{consumer_id PK, cursor_event_id,
-  lease_expires_at, consecutive_failures, last_error, …}`. A dispatch pass
+lease_expires_at, consecutive_failures, last_error, …}`. A dispatch pass
   claims the row by CAS on `lease_expires_at` (zero rows ⇒ another claimer is
   live ⇒ skip), reads `WHERE id > cursor AND tx_id <
-  pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch`, invokes
+pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch`, invokes
   the consumer, then advances the cursor with a CAS fenced on the cursor value
   read at claim. The horizon predicate closes the identity-out-of-order-commit
   hole: an open transaction holding a lower `id` holds back ALL later events
@@ -6241,7 +6321,7 @@ the M24 clock.
 - **Dispatcher = singleton M24 job.** New `job_kind: domain_event_dispatch`,
   one seeded `domain_event_dispatch.default` row (cadence 60s, budget
   `domainEventDispatch: 1`, `ensureDefaultSchedulerJobs` `ON CONFLICT DO
-  NOTHING`), deliberately **excluded** from `createSchedulerJobSchema`
+NOTHING`), deliberately **excluded** from `createSchedulerJobSchema`
   (`run_schedule` precedent — the seeded singleton is the only instance). The
   consumer registry is code-owned (`DOMAIN_EVENT_CONSUMERS`); v1 ships exactly
   one permanently-registered `noop` consumer (`startFrom: "now"`) as the
@@ -6259,11 +6339,12 @@ the M24 clock.
   consumer needs tuning.
 
 **Consequences:**
+
 - Future consumers (agent triggers, webhooks, notifiers) plug in by adding one
   registry entry + cursor row — no new capture machinery, no new clock.
 - Run-terminal/gate sites carry two adjacent emit calls during the coexistence
   period; the sweep is grep-gated (`every terminal emitWebhookEvent has a
-  paired emitDomainEvent`) and collapses when the webhooks drainer migrates.
+paired emitDomainEvent`) and collapses when the webhooks drainer migrates.
 - One long-running open transaction anywhere in the DB stalls dispatch past
   its first inserted event until it resolves (horizon head-of-line) — accepted:
   domain transactions are short, migrations run offline, and the stall is
@@ -6278,6 +6359,7 @@ the M24 clock.
   ADR-077 gap; its "deliberately NOT emitted" entry is superseded).
 
 **Alternatives Considered:**
+
 - **Generalize `webhook_events` in place (relax `run_id`, add task/actor
   columns):** rejected — entangles the fact log with webhook delivery columns,
   forces the webhook fanout/prune machinery to filter foreign kinds, and makes
@@ -6315,6 +6397,7 @@ operator needs a declarative policy that flows from project default to launch
 override to promote-time override.
 
 **Decision:**
+
 1. Manual task launchability is split from schedule launchability. Manual
    "Run again" is a positive allow-list over `Done`, `Review`, `Failed`,
    `Abandoned`, and `Crashed`; busy states and relation blockers remain visible
@@ -6351,6 +6434,7 @@ override to promote-time override.
    required.
 
 **Consequences:**
+
 - Every acceptance criterion has a UI surface, EN/RU strings,
   empty/disabled/error states, and Playwright coverage before the feature is
   done.
@@ -6437,6 +6521,7 @@ git monorepos and managed as a platform catalog with per-project attachments.
   existing post-trust setup path (ADR-021/ADR-042/ADR-069 unchanged).
 
 **Consequences:**
+
 - Migration `0048` adds the three tables + two FK columns; package installs
   join the M19 preserve-then-prune GC story.
 - Exactly one new env var (`MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`) wired
@@ -6451,6 +6536,7 @@ git monorepos and managed as a platform catalog with per-project attachments.
   later phases — see `docs/pv/package-management.md` §8.
 
 **Alternatives Considered:**
+
 - **Keep per-flow sources only:** rejected — six-entry lockstep per package
   ("config/version hell"), no grouping, no typed contents.
 - **`version` field inside `maister-package.yaml`:** rejected — duplicates
@@ -6464,6 +6550,7 @@ git monorepos and managed as a platform catalog with per-project attachments.
   ingestion is deliberately opaque (one `agent_definition` row) and its local
   revision hashes the source STRING, not content; packages need typed
   contents and content-addressed local versions.
+
 ### ADR-089: Platform agent catalog with per-agent runner and a five-source trigger model
 
 **Date:** 2026-06-12
@@ -6488,9 +6575,9 @@ body prompt) shipped INSIDE a flow package, projected into an `agents`
 catalog table, attachable to projects, executed as ACP sessions on the
 existing `runs` substrate, and triggered from five sources.
 
-*(Amended in-branch 2026-06-13 — the pre-merge rework per owner decisions
+_(Amended in-branch 2026-06-13 — the pre-merge rework per owner decisions
 1–8: the original host-catalog draft was replaced by the package-source
-model below before this ADR ever merged.)*
+model below before this ADR ever merged.)_
 
 > **Superseded in part by [ADR-105](#adr-105-first-class-authored-package-kinds-and-centralized-studio-package-model):** the
 > platform-agent definition directory converged from `agents/<stem>.md` to
@@ -6507,13 +6594,13 @@ model below before this ADR ever merged.)*
   `flow_revisions.installed_path/agents/*.md` after install finalize (git
   install, upgrade, and the authored bridge share the hook) and upserts the
   index with provenance (`flow_ref_id`, `version_label`, `origin:
-  git|authored`) under SET/CLEAR symmetry; `resync` re-projects from the
+git|authored`) under SET/CLEAR symmetry; `resync` re-projects from the
   NEWEST Installed revision per flow_ref and disables rows whose providing
   package (or file within it) vanished — never silently deletes.
   Frontmatter: `name`, `description`, `runner` (optional runner id),
   `workspace: none|repo_read|worktree` (ADR-090), `workspace_ref` (ADR-090
   amendment), `mode: session|subagent`, `triggers:
-  (manual|cron|domain_event|webhook|flow)[]`, `capability_profile` (M14
+(manual|cron|domain_event|webhook|flow)[]`, `capability_profile` (M14
   shape, optional), `risk_tier: read_only|standard|destructive`, and
   `recommended` (`{runner?, cron?{expr,timezone}, events?[]}` — pre-fills
   the attach panel; nothing auto-applies without Save). The pre-rework
@@ -6535,7 +6622,7 @@ model below before this ADR ever merged.)*
   resolve through the host run's project pin the same way. "Update the
   agents a project uses" IS the existing package upgrade flow.
 - **Attachment = `agent_project_links`.** `{agent_id, project_id, enabled,
-  runner_override_id?}` with `UNIQUE(agent_id, project_id)`. Attaching
+runner_override_id?}` with `UNIQUE(agent_id, project_id)`. Attaching
   requires the providing package configured+enabled in the project
   (`PRECONDITION` otherwise); the attach panel's available list filters by
   the same rule and opens pre-filled from the definition's `recommended`
@@ -6547,15 +6634,15 @@ model below before this ADR ever merged.)*
   here" warnings before enable.
 - **Per-agent runner, standalone resolution chain.** For standalone agent
   runs: `launch override → agent_project_links.runner_override_id → the
-  effective definition's runner → projects.default_runner_id → platform
-  default`, each tier validated by the existing `assertLaunchableRunner`
+effective definition's runner → projects.default_runner_id → platform
+default`, each tier validated by the existing `assertLaunchableRunner`
   (exists + enabled + ready; refusal = `EXECUTOR_UNAVAILABLE`, no silent
   fallback), snapshot into `runs.runner_snapshot` as today. Three
   compatibility refusals fire **before spawn** with `EXECUTOR_UNAVAILABLE`:
   `mode=subagent` on a runner whose `capability_agent ≠ claude`
   (`.claude/agents/*.md` is a Claude-SDK artifact); `workspace ∈ {none,
-  repo_read}` on a runner with `permission_policy =
-  dangerously_skip_permissions` (suppressed permission requests make ADR-090
+repo_read}` on a runner with `permission_policy =
+dangerously_skip_permissions` (suppressed permission requests make ADR-090
   L1 impossible); and `workspace ∈ {none, repo_read}` on a runner whose
   `capability_agent ≠ claude` (the L1 `readOnlySession` arbitration is
   Claude-adapter-specific, so a non-Claude read-only agent would run
@@ -6589,7 +6676,7 @@ model below before this ADR ever merged.)*
      real `agent_id` FK plus `cron_expr`/`timezone`/`next_fire_at`/
      `last_fired_at` added; rows claimed by the M28-proven atomic UPDATE
      (`SET next_fire_at = <next> WHERE id = ? AND next_fire_at <= now()
-     RETURNING`) from a seeded singleton **`agent_tick.dispatcher`** job
+RETURNING`) from a seeded singleton **`agent_tick.dispatcher`** job
      (60s) — the `agent_tick` stub handler finally gets its launcher.
      `agent_tick` leaves the user-creatable admin job kinds (seeded-singleton
      precedent: `run_schedule`, `domain_event_dispatch`). Missed ticks fire
@@ -6629,7 +6716,7 @@ model below before this ADR ever merged.)*
   `promotion_mode`, `triage_status` (single value `'triaged'`, NULL =
   untriaged — no `needs_human` state; missing fields prompt the human in the
   launch popover). New ext op `POST
-  /api/v1/ext/projects/{slug}/tasks/{taskId}/triage` (scope `tasks:triage`)
+/api/v1/ext/projects/{slug}/tasks/{taskId}/triage` (scope `tasks:triage`)
   sets any subset of the verdict fields and always stamps
   `triage_status='triaged'` in one transaction + `triage_set` activity. The
   triager asks questions as ordinary task comments (agent actor, M31 fanout
@@ -6653,6 +6740,7 @@ model below before this ADR ever merged.)*
   `agent:<id>`.
 
 **Consequences:**
+
 - Migrations: `0049_platform_agents.sql` (`agents`, `agent_project_links`,
   the `agent_schedules` rework, `runs`/`tasks`/`project_tokens` alters, the
   partial unique trigger-claim index, the `unconfigured`-enabling
@@ -6666,7 +6754,7 @@ model below before this ADR ever merged.)*
   `enabled`/`unquarantine`); create/definition-edit/delete endpoints and the
   settings-panel agent modal are GONE — definitions change only through
   their providing package. The catalog panel shows `pkg@version` provenance
-  + origin instead of scope.
+  - origin instead of scope.
 - Qualified-id fan-out: the agent-id regex allows exactly one `:`
   (admin/attach/launch routes, `settings.agent` flow bindings — no bare-stem
   same-package sugar in v1); webhook routes URL-encode the id; subagent
@@ -6685,6 +6773,7 @@ model below before this ADR ever merged.)*
   every test asserting the old default.
 
 **Alternatives Considered:**
+
 - **Host-local owner-editable catalog (`~/.maister/agents/`, the original
   Stage-3 draft):** rejected in the pre-merge rework (owner decisions 1–2,
   5–6) — a hidden host dir is not transferable between hosts, splits agent
@@ -6716,7 +6805,7 @@ model below before this ADR ever merged.)*
 **Date:** 2026-06-12
 **Status:** Accepted
 **Context:** Most standalone agents (triager, monitors, stats collectors)
-need project *context* but no delivery workspace — a git worktree + branch +
+need project _context_ but no delivery workspace — a git worktree + branch +
 promotion path per ADR-007 is waste, and a writable parent checkout is a
 hazard. ADR-041 keeps strict capability enforcement blocked (M14 is
 materialize-only), so "the agent must not write" cannot yet be enforced at
@@ -6746,10 +6835,10 @@ tracked materialization manifest, restored before the check).
   - Run artifacts (`*.log`, `run.events.jsonl`, `session.json`, `cost.jsonl`)
     live under `.maister/<slug>/runs/<run-id>/` for every axis value.
 - **`workspace_ref` — ephemeral checkout at a trigger-derived ref**
-  *(amended in-branch 2026-06-13, rework owner decisions 4+8).* A
+  _(amended in-branch 2026-06-13, rework owner decisions 4+8)._ A
   `repo_read` definition may add `workspace_ref: trigger | <branch>`: the
   run then gets an EPHEMERAL detached worktree (`git worktree add
-  --detach`) at the resolved ref under `worktreesRoot()/<slug>/<runId>-ro`
+--detach`) at the resolved ref under `worktreesRoot()/<slug>/<runId>-ro`
   — the user's checkout is never switched, and a tests-readiness agent
   checks out exactly the change that triggered it. Ref resolution (v1): a
   literal value is a branch/ref resolved against the local repo; `trigger`
@@ -6803,6 +6892,7 @@ tracked materialization manifest, restored before the check).
   on capability enforcement.
 
 **Consequences:**
+
 - The supervisor wire contract grows one field (`readOnlySession`) —
   `supervisor.openapi.yaml` + `docs/supervisor.md`; the mock ACP fixture
   must learn to emit `session.permission_request` so the auto-deny
@@ -6819,6 +6909,7 @@ tracked materialization manifest, restored before the check).
   restore idempotent and the files are deny-rule content, not user data.
 
 **Alternatives Considered:**
+
 - **OS-level sandboxing (containers/seccomp/read-only bind mounts):**
   rejected for this stage — adapter-portable sandboxing is the Phase-2
   plugin-trust track; the three layers are implementable today inside the
@@ -6846,7 +6937,7 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
   ADR-010's "trust all internal sources" caveat.
 - **Custom ACP extensions vs artifact-based structured HITL.** Stage 1
   is artifact-only; revisit if the standard ACP surface grows.
-- **Cost / time / regex guard *enforcement* (kill-on-cap).** Today it's
+- **Cost / time / regex guard _enforcement_ (kill-on-cap).** Today it's
   metric-only. Revisit when Phase 2 data shows guard breaches are real.
 
 ---
@@ -6878,6 +6969,7 @@ package-wide, so an installer flow that provisions a dependency can omit the
 requirement it satisfies — avoiding a chicken-and-egg block.
 
 **Consequences:**
+
 - External-CLI packages become first-class: a missing binary / wrong Node /
   absent project state fails fast and clearly, before any spend.
 - One general mechanism (a shell probe) covers binaries, version checks,
@@ -6892,6 +6984,7 @@ requirement it satisfies — avoiding a chicken-and-egg block.
   still adds launch latency proportional to the number of probes.
 
 **Alternatives Considered:**
+
 - **Structured `{ binary, minVersion }` schema:** less general (no
   project-state / network / composite checks) and needs per-tool version-output
   parsing. A shell probe subsumes it.
@@ -6915,25 +7008,25 @@ surfaces: the `/flows` landing (an unbalanced two-column drafts|installed grid),
 admin `/settings` (git sources + discovery + install), the project board
 `?tab=packages` (attach/detach/upgrade/trust), and the
 `/projects/{slug}/packages/{flowRefId}` viewer (ADR-075). The landing conflates
-*flows* with *packages* — "Installed packages (6)" actually lists five flows from
+_flows_ with _packages_ — "Installed packages (6)" actually lists five flows from
 one `aif` package plus one `bugfix` flow — and there is no unified home, no
 package-grouped view, and no instance-level place to author a standalone artifact.
 Only `kind=flow` has a create form + editor (ADR-067/068/069/070); skills, agents,
 and MCP-templates are editable solely as files bundled inside a flow. A
 local-source install already mints an immutable `local-<digest>` revision
-(ADR-088), but there is no *editable* layer above it.
+(ADR-088), but there is no _editable_ layer above it.
 
 **Decision:** Adopt a unified **Studio** section (`/studio/*`) as the single IA for
 sources → packages → artifacts → authoring, and adopt the **editable local
 package** as the editing spine. Sequence the work **A → B → C**, each its own plan:
 
 - **Phase A (Accepted, built now):** the Studio shell + surfacing over the
-  *existing* backend — overview, sources (the relocated `PackageSourcesPanel`,
+  _existing_ backend — overview, sources (the relocated `PackageSourcesPanel`,
   admin), a packages list **grouped by package**, and a merged package-detail (BoM
-  + read-only preview reusing the static `FlowGraphView`, ADR-075) with
-  attach/trust/versions/fork. No migration, no new HTTP/SSE route, no new
-  `MaisterError` code. The board `?tab=packages` config surface stays put
-  (config-vs-content split) and gains an "Open in Studio" deep-link.
+  - read-only preview reusing the static `FlowGraphView`, ADR-075) with
+    attach/trust/versions/fork. No migration, no new HTTP/SSE route, no new
+    `MaisterError` code. The board `?tab=packages` config surface stays put
+    (config-vs-content split) and gains an "Open in Studio" deep-link.
 - **Phase B (Designed):** the storage-agnostic big-canvas editor redesign behind a
   load/save seam — node visual scheme, named-outcome handles, properties panel,
   top-bar drawers, hideable rail; drag-move persists to `presentation` (ADR-064).
@@ -6948,6 +7041,7 @@ package** as the editing spine. Sequence the work **A → B → C**, each its ow
 Git write-back to an upstream source stays **Phase 2**.
 
 **Consequences:**
+
 - One IA replaces four scattered surfaces; packages are presented as packages
   (grouped), not flattened to flows — directly fixing the landing's conflation.
 - Phase A ships pure frontend value (no migration) and is the read-only twin the
@@ -6955,7 +7049,7 @@ Git write-back to an upstream source stays **Phase 2**.
   the package-detail preview is the read-only form of the Phase B canvas.
 - Config (board) and content (Studio) stay separated, joined only by a deep-link
   and a project filter — the board's attach/trust contract is untouched.
-- Variant B keeps platform scope clean: an editable local package *is* "a local
+- Variant B keeps platform scope clean: an editable local package _is_ "a local
   source dir you cut versions from", symmetric with the existing git-package →
   install → attach pipeline, instead of invasively re-scoping the project-keyed
   `authored_capabilities` drafts table.
@@ -6964,6 +7058,7 @@ Git write-back to an upstream source stays **Phase 2**.
   if collisions bite.
 
 **Alternatives Considered:**
+
 - **Extend `authored_capabilities` for editable local packages:** rejected —
   invasively re-scopes a project-keyed drafts table to a platform-level package
   concept; Variant B (a working dir + the existing installer) is symmetric with
@@ -7004,17 +7099,18 @@ no way to attach a git remote to a local-only project later, which blocks PR
 promotion.
 
 **Decision:**
+
 - **`maister.yaml` is OPTIONAL at manual registration.** Absent → register from
   DB defaults with the repo left untouched and `projects.maister_yaml_path = NULL`
   (the "config lives only in the DB" signal). A present-but-**invalid** manifest
-  still fails `CONFIG` 422 — only a *missing* file takes the DB-default branch.
+  still fails `CONFIG` 422 — only a _missing_ file takes the DB-default branch.
 - **Three onboarding modes:** clone-from-URL, existing-local-repo, and
   new-empty-project (`mkdir -p` + `git init`, created **only** on an explicit
   `mode="new"`, never on a typo).
 - **Live, editable URL→name+task-key prefill** (client), kept in sync until the
   user edits a field; explicit values win server-side (per ADR-078 D2).
 - **Clone failures are classified** (`SSH_AUTH | SSH_HOSTKEY | HTTPS_AUTH |
-  NOT_FOUND | NETWORK | UNKNOWN`) and carry the **real, redacted** git stderr as
+NOT_FOUND | NETWORK | UNKNOWN`) and carry the **real, redacted** git stderr as
   **advisory `{ reason, detail }` context on the unchanged `PRECONDITION` code**
   (the UI keeps branching on `code` and maps `reason` → a specific remediation),
   plus an optional one-off **HTTPS token** (askpass-injected, never persisted),
@@ -7030,6 +7126,7 @@ promotion.
   store is introduced now; push (persist / remotes) reuses host-ambient auth.
 
 **Consequences:**
+
 - The registration blocker is removed: greenfield, existing-local, and clone all
   register without a pre-existing manifest. `projects.maister_yaml_path` becomes
   nullable (one migration, no backfill — existing rows keep their path), and
@@ -7043,7 +7140,7 @@ promotion.
 - `gh` is an **optional** host tool; absent or unauthed degrades gracefully to the
   unified token / SSH path.
 - **Default commit author when host identity is unset.** Host-ambient auth covers
-  *credentials* but not the git *author* (`user.name`/`user.email`), which a
+  _credentials_ but not the git _author_ (`user.name`/`user.email`), which a
   freshly-provisioned host or CI runner may lack — a bare `git commit` then aborts
   with "empty ident name not allowed". Every MAIster-authored commit therefore
   supplies a per-field default identity (`maister` / `noreply@maister.local`) via
@@ -7058,6 +7155,7 @@ promotion.
   (remotes CRUD + persist with opt-in push).
 
 **Alternatives Considered:**
+
 - **Managed per-provider credential store now (Q2 = B):** rejected for this work —
   host-ambient auth covers the wedge without introducing new secret storage; a
   managed store is a cross-cutting future phase (clone + fetch + push + promotion)
@@ -7083,7 +7181,7 @@ seed (`web/lib/db/seed.ts` `ensurePlatformRuntimeDefaults`) inserted the **entir
 every install, so a fresh instance showed a large table of runners the operator
 never created — including a "Ready" z.ai/CCR/GLM runner whose readiness was a
 **hardcoded** preset field (`readinessStatus: "Ready"`), never verified against
-live diagnostics. The same preset list was *also* rendered as an always-on
+live diagnostics. The same preset list was _also_ rendered as an always-on
 "Provider presets" card grid (double exposure), the "Adapter support" cards
 were oversized with repeated textual badges, and platform agents (M34) lived on
 the same admin settings page as the runner catalog. Separately, the CCR router
@@ -7093,9 +7191,10 @@ lazily on a `router:ccr` launch, and its keyed manager's `shutdown()` stops
 per-instance stop to wire a UI button to.
 
 **Decision:**
+
 1. **Preset catalog = templates only.** `platformRunnerPresetRows()` is kept
    unchanged (still consumed by the Add-runner modal, the
-   `GET /api/admin/acp-runners` response, and a new *collapsed* reference list)
+   `GET /api/admin/acp-runners` response, and a new _collapsed_ reference list)
    but is **no longer seeded** into `platform_acp_runners`. Fresh installs start
    with an empty runner catalog.
 2. **Default runners are materialized from the adapter scan**, not seeded. A new
@@ -7109,7 +7208,7 @@ per-instance stop to wire a UI button to.
    singleton `platform_runtime_settings` row** pointing at a `Ready` default
    when none exists yet (deterministic adapter preference: claude > codex >
    gemini > opencode > mimo). `default_runner_id` is **NOT NULL** with an FK to
-   `platform_acp_runners`, so the pre-configuration state is an *absent*
+   `platform_acp_runners`, so the pre-configuration state is an _absent_
    singleton — not a null column — which every reader already tolerates (launch
    paths raise `EXECUTOR_UNAVAILABLE` "platform default ACP runner is not
    configured"; UI/launch-option reads fall back to no-default). It **never
@@ -7159,6 +7258,7 @@ per-instance stop to wire a UI button to.
    and no new bound port (CCR's 3456 is pre-existing).
 
 **Consequences:**
+
 - A fresh admin instance no longer shows fabricated "Ready" runners; the catalog
   reflects only adapters the host can actually launch, materialized on first
   `/settings` load.
@@ -7175,6 +7275,7 @@ per-instance stop to wire a UI button to.
   `/settings`; the runner catalog and agents are separate admin concerns again.
 
 **Alternatives Considered:**
+
 - **Keep seeding the catalog, just fix the readiness field:** rejected — the
   seeded rows are still runners the operator never made; honest readiness alone
   does not remove the "huge table of fake runners" complaint.
@@ -7199,12 +7300,12 @@ per-instance stop to wire a UI button to.
 
 **Date:** 2026-06-16
 **Status:** Accepted
-**Context:** ADR-092 accepted the unified Studio IA and named the **editable local package** as the editing spine, leaving the Phase C backend *Designed* (Variant B). Phase C needs the concrete contract — how a local package is stored, edited, version-controlled, made attachable, who may do it, and how concurrent edits are guarded — without re-scoping the project-keyed `authored_capabilities` table or pulling git write-back (Phase 2) into scope. The owner answered six open questions that refine the model (member RBAC, a session lock, MCP-from-catalog, git-backed forks, no auto-GC, read-only-preview-plus-fork for git packages).
+**Context:** ADR-092 accepted the unified Studio IA and named the **editable local package** as the editing spine, leaving the Phase C backend _Designed_ (Variant B). Phase C needs the concrete contract — how a local package is stored, edited, version-controlled, made attachable, who may do it, and how concurrent edits are guarded — without re-scoping the project-keyed `authored_capabilities` table or pulling git write-back (Phase 2) into scope. The owner answered six open questions that refine the model (member RBAC, a session lock, MCP-from-catalog, git-backed forks, no auto-GC, read-only-preview-plus-fork for git packages).
 
 **Decision:** Build the Phase C backend per Variant B (ADR-092) plus the owner's refinements:
 
 1. **Substrate (Variant B).** A platform-scoped `local_packages` table; each row points at a mutable, **git-backed working directory** under `localPackagesRoot()` (`MAISTER_LOCAL_PACKAGES_ROOT`, default `~/.maister/local`). `working_dir` is server-only (never sent to the client, mirroring `package_installs.installed_path`). Artifacts are **files** in the dir (`flows/ agents/ skills/ mcps/ rules/ schemas/`) — the authored kind enum (`rule|skill|flow`) is **NOT** extended; the file editors operate on files, not `authored_capabilities` rows.
-2. **Cut version.** "Cut version" exports a clean copy of the working dir (excluding VCS metadata) and calls the *existing* installer `installPackageRevision({ source, version: "local" })` → an immutable `local-<digest>` `package_installs` revision, then optionally `attachPackage(...)`. No new installer. Local sources are `trusted_by_policy` via `resolveTrust`, so `setup.sh` runs post-attach with no extra trust step (ADR-021 fetch-then-execute separation preserved — install never runs `setup.sh` inline).
+2. **Cut version.** "Cut version" exports a clean copy of the working dir (excluding VCS metadata) and calls the _existing_ installer `installPackageRevision({ source, version: "local" })` → an immutable `local-<digest>` `package_installs` revision, then optionally `attachPackage(...)`. No new installer. Local sources are `trusted_by_policy` via `resolveTrust`, so `setup.sh` runs post-attach with no extra trust step (ADR-021 fetch-then-execute separation preserved — install never runs `setup.sh` inline).
 3. **Editor route.** `/studio/edit/{localPackageId}/{artifactPath}` — local-only, keyed on `local_packages.id` (sidesteps the deferred `base64url(source::name)` ref). Git packages get a **read-only preview + "Fork to local"**; no in-place git-package editing. Reuses the Phase B `FlowEditorTabs` seam with a working-dir-targeting save action (no `authored_capabilities` `draft_version` CAS).
 4. **Concurrency = session-scoped working-dir lock.** `local_packages` carries `locked_by_user_id` / `locked_by_session` / `lock_expires_at` (mirroring `runs.keepalive_until`). Opening the editor acquires the lock iff free or expired (lazy stale-takeover — **no sweeper**); the editor refreshes it (mirroring `POST /api/runs/{id}/activity`); every write asserts a live lock or fails `CONFLICT`; a second session is read-only.
 5. **RBAC = member-level local loop.** Creating / forking / editing / cutting a local package = any authenticated user (`requireSession`; Studio is member-accessible). **Attaching a cut version to a project** = project `member` via a new `manageLocalPackages: "member"` action. The existing **git-package** install/attach/trust gates stay **admin** (`managePackages`/`manageCatalog`) — Phase C does not widen them (asymmetry by design).
@@ -7214,12 +7315,14 @@ per-instance stop to wire a UI button to.
 9. **No automatic GC** (owner decision): orphaned working dirs / abandoned `Installing` installs are cleaned manually; explicit `deleteLocalPackage` removes its own dir.
 
 **Consequences:**
+
 - Reuses the installer, attach pipeline, trust policy, the Phase B editor seam, the run keep-alive pattern, and `lib/worktree.ts` — the genuinely-new backend is the `local_packages` table + working-dir CRUD + the lock + the MCP-template editor.
 - A member can author and apply their own forks without admin rights, while platform git-package management stays admin-gated.
 - The git-backed working dir makes a fork a real branch, so the Phase-2 PR-back is additive (the schema already stores the source repo/ref/branch).
 - Migration `0057` adds `local_packages` (incl. lock + source columns). New env vars `MAISTER_LOCAL_PACKAGES_ROOT`, `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`; `.maister` stays host-only (no Docker mount, ADR-023) — documented, not wired.
 
 **Alternatives Considered:**
+
 - **Content-hash ETag instead of a lock:** rejected by owner in favor of a session-scoped working-dir lock — clearer multi-tab semantics, no silent overwrite.
 - **Admin-gated cut/attach:** rejected — members own the fork-and-apply loop for their own projects.
 - **Plain copied working dir (no git):** rejected — a fork should be a branch so the Phase-2 PR-back has clean history; `git init` is cheap and adds local version control.
@@ -7298,6 +7401,7 @@ working dir; base branch/commit are read from it.
    the record.
 
 **`run_kind` consumer checklist (every site grepped; how each is branched):**
+
 - `lib/reconcile.ts` — a project-less run has `project_id` NULL ⇒
   `loadCandidates` (which iterates `projects`) **never selects it** → never
   Crashed for a missing project worktree. The pure classifier already
@@ -7332,6 +7436,7 @@ working dir; base branch/commit are read from it.
   endpoints are never targeted at a project-less run.
 
 **Consequences:**
+
 - One internally-consistent model: the run is project-less, every automatic
   sweep/query excludes it or narrows safely, and the launch-time snapshot keeps
   terminal/read paths free of re-derivation.
@@ -7349,6 +7454,7 @@ working dir; base branch/commit are read from it.
   `workspaces` row stay project-only.
 
 **Alternatives Considered:**
+
 - **Keep `runs.project_id` NOT NULL, reuse a project:** rejected — a named
   local package has no project; there is nothing valid to reference.
 - **Restrict the assistant to per-project default packages (always a project):**
@@ -7370,8 +7476,8 @@ working dir; base branch/commit are read from it.
 **Status:** Accepted
 **Context:** A flow run's autonomy was implicit (always-supervised: every gate
 blocks, every permission asks, every promote is manual). Driving runs
-unattended needs explicit, composable control over *where the machine acts on
-its own* — across machine self-correction, human escalation, and output shaping —
+unattended needs explicit, composable control over _where the machine acts on
+its own_ — across machine self-correction, human escalation, and output shaping —
 without ever silently shipping unvalidated work.
 
 **Decision:** Introduce a per-run **execution policy** — a `preset`
@@ -7380,6 +7486,7 @@ each overridable, snapshotted onto `runs.execution_policy` at launch (immutable
 for the run's life; resume/recover/finalize read the snapshot, never a mutable
 catalog row — same discipline as `runner_snapshot` / `deliveryPolicySnapshot`).
 The axes, grouped:
+
 - **A (self-correction):** `reworkExhaustion` (escalate | ship_with_warning |
   fail) at the rework-cap; `crashRetry` (fail | ralph_loop | auto_retry) bounded
   auto-relaunch on Failed; `checks` (strict | advisory | skip) non-review
@@ -7395,6 +7502,7 @@ The axes, grouped:
   review gate (`discard` never automatic).
 
 Two cross-cutting invariants are load-bearing:
+
 1. **Fail closed.** Every axis is read back from the open jsonb snapshot through
    a `*FromSnapshot` resolver that defaults to the SAFE value on a null / absent /
    malformed policy (`checks→strict`, `crashRetry→fail`, `reworkExhaustion→escalate`,
@@ -7419,6 +7527,7 @@ any tree drift or git failure. See
 for the per-axis mechanisms and call sites.
 
 **Consequences:**
+
 - One snapshot column drives all autonomy; resume/recover are deterministic.
 - Every autonomy action funnels through `logExecPolicyAction` (a typed audit
   boundary) and, for on-stuck, a new `run.escalated` domain-event + webhook kind
@@ -7430,6 +7539,7 @@ for the per-axis mechanisms and call sites.
   operation — a botched history or a git error degrades to the safe default.
 
 **Alternatives Considered:**
+
 - **A single boolean "autonomous" flag:** rejected — autonomy is not one
   dimension; teams need to relax permissions without auto-shipping, or
   auto-promote while keeping human review.
@@ -7451,18 +7561,19 @@ for the per-axis mechanisms and call sites.
 **Status:** Accepted
 **Context:** MAIster executes **static** Flow graphs — a fixed `nodes[]`/`transitions`
 DAG authored ahead of time (`docs/flow-dsl.md`, `flow-graph.md`). A running agent
-cannot decide *at runtime* to decompose its work, dispatch sub-units, and
+cannot decide _at runtime_ to decompose its work, dispatch sub-units, and
 coordinate their results: there is no governed dynamic delegation. The
 constraints earned in prior review passes bound the design: every delegated unit
 must stay a **governed Run** (worktree, gates, promotion, board visibility,
-concurrency cap); dynamism lives only in *coordination*, never in bypassing
+concurrency cap); dynamism lives only in _coordination_, never in bypassing
 governance; children are **catalog-resolved** (M34 effective definition, ADR-089/090),
 never runtime-authored; and the agent pool is small (`MAISTER_MAX_CONCURRENT_AGENTS`,
 default 3), so a long-lived coordinator must not hold a scheduler slot while blocked.
 
 **Decision:**
+
 1. **The orchestrator is a long-lived SUPERVISORY flow node**, not a
-   run-to-terminal step. The flow *parks* on it: it spawns/coordinates children,
+   run-to-terminal step. The flow _parks_ on it: it spawns/coordinates children,
    idle-checkpoints while blocked, and reaches a terminal verdict only when the
    agent declares the goal met → normal downstream transitions
    (judge/readiness/promote). Governance is **structural**: every delegation hop
@@ -7535,6 +7646,7 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
     resume), `CHECKPOINT` (resume failure), `EXECUTOR_UNAVAILABLE` (cap/spawn).
 
 **Consequences:**
+
 - maister gains its first **dynamic-orchestration** capability while keeping every
   delegated unit governed (worktree/gates/promotion/cap/board) — the foundation for
   the parked dynamic-flow-synthesis milestone (~M38).
@@ -7547,6 +7659,7 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
   read-only perms are Layer 2 (**ADR-099**).
 
 **Alternatives Considered:**
+
 - **Run-to-terminal orchestrator that blocks on children:** rejected — it holds a
   scheduler slot the whole time and starves the cap-3 agent pool; the idle-checkpoint
   wait is the entire point.
@@ -7587,6 +7700,7 @@ routed through the orchestrator, shared vs own worktrees, and reviewer read-only
 roles. Migration 0060 (persistent/addressable_key + workspace_mode).
 
 **Decision:**
+
 1. **Persistent addressable child sessions.** Reuse the scratch-session lifecycle
    (`scratchRuns.acpSessionId`, `classifyScratchRecovery`) so an orchestrator child
    can receive a follow-up message after it parked. Migration 0060 adds a
@@ -7602,7 +7716,7 @@ roles. Migration 0060 (persistent/addressable_key + workspace_mode).
    input, snapshotted on the child run. `own` (default) = today's per-run worktree
    from the base branch. `shared` (N children → one pre-allocated tree) is **GATED
    at launch** (`MaisterError("CONFIG")`, Phase 2) pending the shared-tree
-   review/promote ownership design (Codex adversarial review): a *reuser* shared
+   review/promote ownership design (Codex adversarial review): a _reuser_ shared
    child has no `workspaces` row, so finalization lands it `Done` not `Review` (an
    unreviewable / strandable diff). The serialized-writer guard (one active writer
    per shared tree, enforced in BOTH `tryStartRun` and `promoteNextPending`) and the
@@ -7617,12 +7731,14 @@ roles. Migration 0060 (persistent/addressable_key + workspace_mode).
    deferred policy layer lands.
 
 **Consequences:**
+
 - The orchestrator can run a durable, addressable swarm with auditable star messaging.
 - Shared worktrees enable a coordinated team on one tree at the cost of serialized writers.
 - Path-scoped write enforcement remains genuinely blocked on the deferred policy layer
   — shipped honestly as instructed-only; do **not** claim enforcement.
 
 **Alternatives Considered:**
+
 - **Mesh (direct A→B) messaging:** rejected — unauditable; star-through-orchestrator
   keeps governance on one node.
 - **OS-sandbox `write_paths` for path-scope now:** deferred — couples to a sandbox
@@ -7646,6 +7762,7 @@ child, and (c) an unattended auto-promote for as-plan DAGs that have no live
 coordinator.
 
 **Decision:**
+
 1. **New domain-event kind `run.review`** (migration 0060 extends the
    `domain_events_kind` CHECK to 10 kinds). It is **settled but NOT terminal**
    (`Review → Done` via promote, `Review → Running` via rework). `finalizeAgentRun`
@@ -7694,6 +7811,7 @@ coordinator.
    `CONFLICT` (HTTP 409); promote/rework preconditions reuse `PRECONDITION` (409).
 
 **Consequences:**
+
 - A delegated `worktree` child's `Review` diff is now actionable by the coordinator
   (collect → promote/rework) and, for as-plan DAGs, advances unattended.
 - The completion model can no longer deadlock on a child stuck in `Review`: `Review`
@@ -7702,11 +7820,12 @@ coordinator.
   kind-registration site is updated.
 - The auto-launcher's exactly-once `hasAnyRun` check-then-act gains a DB backstop:
   the `runs_auto_task_uq` partial unique index (`runs(task_id) WHERE
-  launch_mode='auto'`, migration 0060) makes a concurrent second insert dedup via
+launch_mode='auto'`, migration 0060) makes a concurrent second insert dedup via
   `launchAgentRun`'s `onConflictDoNothing()`, so a released dependent can never
   double-launch even outside the singleton dispatcher.
 
 **Alternatives Considered:**
+
 - **Treat `Review` as terminal for the orchestrator:** rejected — the coordinator
   must still act on the diff (promote/rework), so a settled-not-terminal state is
   the correct shape; collapsing it to terminal loses the rework path.
@@ -7746,7 +7865,7 @@ USD, no price table**. Enforcement is **opt-in, fail-OPEN**: absent or `0` ⇒
 unlimited; `budgetFromSnapshot` resolves a null/absent/malformed snapshot to
 all-unset (the deliberate inversion of ADR-095's fail-closed-to-`strict`
 resolvers, because "no limit ⇒ don't constrain" and a corrupt snapshot must never
-*add* a constraint). There is **no launch refusal** — a convenience
+_add_ a constraint). There is **no launch refusal** — a convenience
 `applyDefaultBudgetForUnattended` may fill `tree.maxTokens` from
 `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` for an `unattended` launch, never a
 `PRECONDITION`. The ladder reuses existing machinery and introduces **no new
@@ -7761,11 +7880,12 @@ is `runs.status` (escalate/terminate) + `runs.budget_state.notified[scope]`
 (warn-once).
 
 **Consequences:**
+
 - One enforcing spend rail closes the unattended/swarm cost gap; the warn rung
   surfaces the approach ~a tick before the hard kill (≤60s overshoot bound by a
   forced, cursor-throttled `reconcileRunCostRollups`).
 - New audit kinds `budget_warned | budget_escalated | budget_terminated |
-  budget_raised` on `ExecPolicyActionKind`; new error `BUDGET_EXCEEDED`; new env
+budget_raised` on `ExecPolicyActionKind`; new error `BUDGET_EXCEEDED`; new env
   vars `MAISTER_BUDGET_HARD_MULTIPLIER` (default 1.25) +
   `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS`.
 - Migration 0061 adds only `runs.budget_state jsonb` —
@@ -7774,6 +7894,7 @@ is `runs.status` (escalate/terminate) + `runs.budget_state.notified[scope]`
   `→ NeedsInput` transition) — a tree breach terminates the tree.
 
 **Alternatives Considered:**
+
 - **Meter in USD with a model-price table:** rejected — prices drift and are
   costly to maintain; tokens are a stable proxy and already on disk.
 - **Fail-closed budget resolver (like the safety axes):** rejected — a malformed
@@ -7800,7 +7921,7 @@ is `runs.status` (escalate/terminate) + `runs.budget_state.notified[scope]`
 Phase 2) because the tree-level review/promote ownership model was unspecified.
 The open problem (Codex adversarial review): N children share **one** pre-allocated
 worktree = **one** branch = **one** cumulative diff, but only the FIRST ("allocator")
-child gets a `workspaces` row; a *reuser* shared child has no row, so with the M34
+child gets a `workspaces` row; a _reuser_ shared child has no row, so with the M34
 finalize path it would land `Done` (not `Review`) with an unreviewable / strandable
 diff, and per-child review of the same cumulative diff would be wrong. This ADR
 specifies that model and **re-enables** shared writable worktrees. It does NOT
@@ -7808,12 +7929,13 @@ re-open the serialized-writer guard (ADR-099 §4), `own` mode, `repo_read`, or t
 ADR-041/043 enforcement boundary — those stand. The serialized-writer guard
 (`sharedWriterSiblingActive`, one active writer per shared tree, wired into both
 `tryStartRun` and `promoteNextPending`) is RETAINED unchanged; this ADR governs
-the *review/promote* axis on top of it. **No migration** (reuses
+the _review/promote_ axis on top of it. **No migration** (reuses
 `runs.root_run_id`, `runs.workspace_mode`, `runs.agent_workspace`,
 `runs.parent_run_id`, and the allocator's existing `workspaces` row). **No new
 `MaisterError` code** (ADR-008 closed union).
 
 **Decision:**
+
 1. **Review granularity is per-tree.** A shared tree is ONE branch with ONE
    cumulative diff → exactly ONE Review and ONE promote for the whole tree. Per-child
    review of the same cumulative diff is rejected as wrong; every shared writable
@@ -7831,7 +7953,7 @@ the *review/promote* axis on top of it. **No migration** (reuses
    sibling (same `root_run_id`) is in a writable status before merging. Reuses
    `SETTLED_RUN_STATUSES` (terminal + `Review`) and the `sharedWriterSiblingActive`
    shape; a still-writable sibling (`Running | NeedsInput | NeedsInputIdle |
-   HumanWorking | Pending | WaitingOnChildren`) refuses the promote with
+HumanWorking | Pending | WaitingOnChildren`) refuses the promote with
    `PRECONDITION` (409) and merges nothing.
 4. **Promotable handle = uniform Review + idempotent tree-promote settling all
    siblings.** `run_promote` on ANY shared child resolves the tree workspace by
@@ -7848,6 +7970,7 @@ the *review/promote* axis on top of it. **No migration** (reuses
    the tree-settle flip) — never auto-resolved (§8).
 
 **Consequences:**
+
 - Shared writable worktrees are usable: a coordinated team on one tree produces one
   reviewable diff and one promote, with siblings settled atomically.
 - Opening ANY shared child's diff resolves the shared TREE workspace by `root_run_id`
@@ -7900,6 +8023,7 @@ reporting success). The shared path keeps its first read (the C1 finalize re-che
 it; re-reading would turn a concurrent-promote loser's `CONFLICT` into `PRECONDITION`).
 
 **Alternatives Considered:**
+
 - **Per-child Review + per-child promote of the shared tree:** rejected — N children
   share one cumulative diff, so N reviews of the same diff is redundant and N promotes
   of one branch race / double-merge; one tree-level Review + promote is correct.
@@ -7919,7 +8043,7 @@ it; re-reading would turn a concurrent-promote loser's `CONFLICT` into `PRECONDI
 **Context:** M26 (ADR-063) shipped P1 — a graph node may emit a schema-validated
 structured result into `node_attempts.vars` — but the engine still routes every
 non-`human` node on the hardcoded outcome `"success"` (`runner-graph.ts`, the
-single outcome site), so a node cannot branch on *its own* output or on a
+single outcome site), so a node cannot branch on _its own_ output or on a
 gate/judge **verdict**. Two consequences fall out: (1) a flow that wants
 triage/classification routing must encode it as separate human-decision nodes or
 as N parallel flows; and (2) a node whose structured output fails validation
@@ -7934,6 +8058,7 @@ transition + rework + ledger machinery with **no DB migration** and **no new
 `MaisterError` code** (ADR-008 closed union — every new refusal reuses `CONFIG`).
 
 **Decision:**
+
 1. **`decide` is a node-level routing table.** A node may declare
    `decide: { from, cases?, default? }`. `from` is either `verdict` (route on the
    node's verdict-producing gate — `ai_judgment | skill_check`) or
@@ -7951,7 +8076,7 @@ transition + rework + ledger machinery with **no DB migration** and **no new
    missing/`undefined` value yields no transition (terminal/Review), surfaced by
    the runtime allow-list guard, never a thrown getter.
 3. **`from: verdict` makes the verdict gate routing-input, engine-owned.** Today a
-   blocking verdict gate `markNodeFailed`s + `break`s *before* the outcome site,
+   blocking verdict gate `markNodeFailed`s + `break`s _before_ the outcome site,
    so the verdict never reaches routing. When `node.decide.from === "verdict"` the
    **engine itself** treats that gate as routing-input (not a hard-fail) — **no
    author-declared `mode: advisory` is required** (keeps the YAML clean). The
@@ -7986,13 +8111,13 @@ transition + rework + ledger machinery with **no DB migration** and **no new
      `transitions[outcome]` to another node, which MUST be ∈
      `rework.allowedTargets`.
 6. **ADR-080 auto-retry is rejected for `on_mismatch`.** `CONFIG ∉
-   RETRYABLE_ERROR_CODES` and `scheduleAutoRetry` injects no error feedback. The
+RETRYABLE_ERROR_CODES` and `scheduleAutoRetry` injects no error feedback. The
    rework machinery (feedback + `maxLoops` + workspace/session policy) is the only
    fit for both the `retry` self-target and the `<outcome>` redirect — a uniform
    path, no `scheduleAutoRetry` change.
 7. **Engine `1.6.0 → 1.7.0`.** A manifest declaring `decide` or
    `output.result.on_mismatch` on any node MUST declare `compat.engine_min >=
-   1.7.0`; `validateGraphManifest` rejects otherwise (`CONFIG`), mirroring the
+1.7.0`; `validateGraphManifest` rejects otherwise (`CONFIG`), mirroring the
    `OUTPUT_ENGINE_MIN` gate. Manifests declaring neither stay valid at their
    pinned floor.
 8. **P7 run-context blackboard lands.** `buildRunContext(...)` is a pure
@@ -8005,17 +8130,18 @@ transition + rework + ledger machinery with **no DB migration** and **no new
    run correctness never depends on it (ledger + worktree are the source of truth).
 
 **Consequences:**
+
 - A single node now expresses triage/classification/confidence routing inline;
   the transition fan-out (`resolveTransition`, review-readiness guard, loop-advance,
   `isRework`) is unchanged — it already maps any outcome string → target/terminal.
 - Defense in depth on outcome strings: a **runtime allow-list guard** asserts the
   `decide`-chosen outcome ∈ `node.transitions` keys (else `CONFIG`), on top of the
-  compile-time check that every *producible* outcome ⊆ transitions keys. `decide`
+  compile-time check that every _producible_ outcome ⊆ transitions keys. `decide`
   introduces arbitrary outcome strings, so the guard prevents a silent dead-end.
 - A malformed-output node can self-correct in-flow instead of dead-ending the run,
   but only when the author opts in with `on_mismatch` + a `rework` block; the
   default stays the M26 `CONFIG`-fail.
-- **Crash-window parity:** `on_mismatch` reuses the *existing* human-rework write
+- **Crash-window parity:** `on_mismatch` reuses the _existing_ human-rework write
   sequence (`markNodeReworked` → `markDownstreamStale` → `pendingInjectedVars`),
   which is not a single transaction today and is the established contract. This
   change does NOT refactor it into a transaction (surgical — untouched code,
@@ -8040,6 +8166,7 @@ transition + rework + ledger machinery with **no DB migration** and **no new
   already shipped with M26.
 
 **Alternatives Considered:**
+
 - **`route` field name / reuse the flow-level `route_when` hint:** rejected — the
   field is named **`decide`** (a node-level routing table); the flow-level
   `flowMetadataSchema.route_when` NL hint stays runner-ignored and untouched.
@@ -8087,6 +8214,7 @@ authority. Human-only HITL responses (`human`, `infra_recovery`,
 `project_id = NULL`.
 
 **Consequences:**
+
 - One token table remains the operational source of truth: prefix lookup,
   hashing, revocation, expiry, scope storage, owner attribution, and agent-token
   compatibility stay in the existing domain.
@@ -8104,6 +8232,7 @@ authority. Human-only HITL responses (`human`, `infra_recovery`,
   `MAISTER_ACCESS_TOKEN` as the personal-token fallback.
 
 **Alternatives Considered:**
+
 - **New `user_access_tokens` table:** rejected because it duplicates token
   issuance, prefix/hash verification, expiry, revocation, scope enforcement,
   and audit joins while adding no required isolation boundary.
@@ -8145,6 +8274,7 @@ half (ADR-106, migration 0068) landed alongside it; version-adopt launch +
 PR-to-source (ADR-107) remains a separate, unbuilt branch.
 
 **Decision:**
+
 1. **Centralized packages + per-project version pins.** Packages are
    instance-level and Studio-edited (serialized by the M36 session lock); a
    project consumes a package at a **cut version** (a pin). Editing in Studio
@@ -8182,12 +8312,12 @@ PR-to-source (ADR-107) remains a separate, unbuilt branch.
    shared `ChangeReviewDialog` (diff + editable, prefilled commit message) is
    introduced here and reused by Stream B for the PR flow.
 5. **Fork dedup.** `forkPackageToLocal` checks for an existing fork by
-   `source_install_id` and returns `{ localPackageId, alreadyExists: true }` (HTTP
-   200) instead of a duplicate INSERT (201 for a fresh fork); the element fork
+   `source_install_id` and returns `{ localPackageId, alreadyExists: true }` (HTTP 200) instead of a duplicate INSERT (201 for a fresh fork); the element fork
    stays idempotent on the project default. "Customize for this project" reuses
    this dedup path so a project's copy is not duplicated.
 
 **Consequences:**
+
 - The editor opens on a **package-home** landing (overview + manifest form + file
   tree) when no flow file is selected — eliminating the empty-canvas /
   invalid-YAML banner and the rework-empty symptom — with a real End-edit (lock
@@ -8205,6 +8335,7 @@ PR-to-source (ADR-107) remains a separate, unbuilt branch.
   authoring; project-member attach).
 
 **Alternatives Considered:**
+
 - **Project-scoped (project-owned) packages:** rejected — per-project editing
   fights reuse and creates cross-project merge conflicts; central editing +
   per-project version pins is both manageable and reuse-friendly (M36 ADR-096/097
@@ -8254,7 +8385,7 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
 
 1. **Package identity.** A platform agent is `maister-agents/<stem>.md` at the
    PACKAGE ROOT; its platform id is `<packageName>:<stem>` where `packageName =
-   package_installs.name` (the `maister-package.yaml` `name`, capabilityRefId-
+package_installs.name` (the `maister-package.yaml` `name`, capabilityRefId-
    shaped). `agents.flow_ref_id` is replaced by `agents.package_name` (text NOT
    NULL); the index `agents_flow_ref_idx` becomes `agents_package_name_idx`. The
    `AGENT_ID_PATTERN` `<x>:<stem>` grammar is unchanged; `qualifyAgentId` /
@@ -8283,9 +8414,9 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
    (`project_package_attachments` row for `(projectId, packageName)` — the
    attachment IS the enable; packages have no flow-style `enablementState`); (b)
    the attached install is TRUSTED (`package_installs.trust_status ∈ {trusted,
-   trusted_by_policy}`); (c) the agent is ENABLED (`agent_project_links.enabled`
+trusted_by_policy}`); (c) the agent is ENABLED (`agent_project_links.enabled`
    for the project AND catalog `agents.enabled`, and `agents.quarantined_at IS
-   NULL`). The gate is an allow-list — any state not on it is refused
+NULL`). The gate is an allow-list — any state not on it is refused
    `PRECONDITION` by default. The EFFECTIVE definition resolves through the
    attached install's pinned revision →
    `package_installs.installed_path/maister-agents/<stem>.md`, at launch (guards)
@@ -8293,6 +8424,7 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
 
 5. **Optional-flow enrichment — `run_kind` by discriminant.** Launch branches on
    has-flow BEFORE routing:
+
    - **WITHOUT `flow_ref` → `run_kind='agent'`** — the existing standalone
      ACP-session path (workspace axis `none|repo_read|worktree`, agent token,
      agent pool `MAISTER_MAX_CONCURRENT_AGENTS`).
@@ -8310,17 +8442,18 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
 
 6. **Per-agent runner policy on the existing `ExecutionPolicy` snapshot.** The
    agent definition carries `recommended.executionPolicy: { autoApply?,
-   onBudgetBreach? }`, a simplified projection over the rich `ExecutionPolicy`
+onBudgetBreach? }`, a simplified projection over the rich `ExecutionPolicy`
    (preset + axes, ADR-095/101) snapshotted onto `runs.execution_policy` at spawn:
+
    - **`autoApply: 'off' | 'permissions' | 'full'`** maps to axes B1 `permissions`
-     + B2 `humanGate`: `off`→`{permissions:'ask', humanGate:'stop'}`;
-     `permissions`→`{permissions:'auto_approve', humanGate:'stop'}` (the "с чел"
-     variant — auto-approve ACP tool permissions, but `human`/`form` still pause);
-     `full`→`{permissions:'auto_approve', humanGate:'auto_pass'}` (the "без чел"
-     variant). At the HITL boundary the run reads `permissionsFromSnapshot` /
-     `humanGateFromSnapshot`; `form` and `infra_recovery` HITL ALWAYS pause
-     regardless of mode; `budget_breach` is never auto-applied (the budget axis
-     owns it). Future per-kind toggles are a non-breaking superset of this enum.
+     - B2 `humanGate`: `off`→`{permissions:'ask', humanGate:'stop'}`;
+       `permissions`→`{permissions:'auto_approve', humanGate:'stop'}` (the "с чел"
+       variant — auto-approve ACP tool permissions, but `human`/`form` still pause);
+       `full`→`{permissions:'auto_approve', humanGate:'auto_pass'}` (the "без чел"
+       variant). At the HITL boundary the run reads `permissionsFromSnapshot` /
+       `humanGateFromSnapshot`; `form` and `infra_recovery` HITL ALWAYS pause
+       regardless of mode; `budget_breach` is never auto-applied (the budget axis
+       owns it). Future per-kind toggles are a non-breaking superset of this enum.
    - **`onBudgetBreach: 'escalate' | 'terminate' | 'terminate_restorable'`** is a
      NEW optional `ExecutionPolicy` axis read by the budget terminal path
      (`keepalive-sweeper.ts`). UNSET preserves the existing run_kind-based default
@@ -8356,7 +8489,7 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
    ephemeral per-launch tokens.
 
 10. **Migration data policy.** Pre-release: migration 0068 runs `DELETE FROM
-    agents` then re-projects via `resyncAgents`. The FK fan-out is verified:
+agents` then re-projects via `resyncAgents`. The FK fan-out is verified:
     `agent_project_links` and `agent_schedules` CASCADE-delete; `runs.agent_id` is
     `ON DELETE SET NULL`, so run history survives as NULL. A post-migration resync
     trigger (the startup reconcile path + the existing admin
@@ -8364,6 +8497,7 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
     catalog is not empty until the next package install.
 
 **Consequences:**
+
 - The package-root `maister-agents/<stem>.md` is registered exactly once per
   package (the F4 split closes); a multi-flow package no longer mis-registers or
   drops its package-scoped agents.
@@ -8385,6 +8519,7 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
   i18n for the new project-settings Agents surface.
 
 **Alternatives Considered:**
+
 - **Keep per-flow agent identity (`flow_ref_id`):** rejected — the canonical file
   is package-root (ADR-105); per-flow keying mis-registers package-scoped agents
   (the F4 bug) and makes "this agent belongs to package P" un-expressible.
@@ -8416,7 +8551,7 @@ taken by an unrelated migration; the ADR number stays 106).
 **Context:** ADR-105 locked the **centralized package model**: packages are
 instance-level and Studio-edited, and a project consumes a package at an immutable
 **cut version** (a per-project pin), never a live edit. ADR-105/106 built the
-authoring + agent halves but left the *consumption* side unbuilt — a project
+authoring + agent halves but left the _consumption_ side unbuilt — a project
 attaches a cut, but there is no path to pick up a **newer** cut, and no link from
 the attached `package_installs` row back to the `local_packages` package + commit
 it was cut from (only the forward `local_packages.last_cut_install_id` exists). A
@@ -8430,6 +8565,7 @@ override; and `runs.local_package_id` is **hard-blocked for non-scratch runs**
 `runs`. This is **Stream B** of M39 (the runtime half).
 
 **Decision:**
+
 1. **Source link on the cut.** `package_installs` gains `source_local_package_id`
    (FK → `local_packages`, `ON DELETE SET NULL`) + `source_commit_sha`, written when
    a local package is cut (the Studio `cut-version` path threads its
@@ -8468,10 +8604,11 @@ override; and `runs.local_package_id` is **hard-blocked for non-scratch runs**
    column.
 
 **Consequences:**
+
 - Reuses `launchRunStaged` + the scheduler + ~20 preconditions + `upgradeAttachment`
-  + the Studio cut gate. B1 adds only the source link, the version-availability
-  check (`web/lib/local-packages/versions.ts`), the adopt precondition + body field,
-  and the advance step.
+  - the Studio cut gate. B1 adds only the source link, the version-availability
+    check (`web/lib/local-packages/versions.ts`), the adopt precondition + body field,
+    and the advance step.
 - Adopt-at-launch is one logical decision per package, each its own tx before the
   run insert. **Adopt+launch is atomic by compensation:** the supervisor's
   readiness is gated BEFORE the advance (the dominant transient failure), and an
@@ -8499,6 +8636,7 @@ override; and `runs.local_package_id` is **hard-blocked for non-scratch runs**
   NO `runs` column.
 
 **Alternatives Considered:**
+
 - **Project-side "Update available → Update" button** (advance the pin outside
   launch): rejected for v1 (owner) — the pin advances only via the
   adopt/keep/cut_and_adopt choice at launch, keeping a single decision surface.
@@ -8525,9 +8663,10 @@ from 0071/0072 when this branch rebased onto main).
 
 **Date:** 2026-06-23
 **Status:** Accepted
-**Context:** MAIster's two existing safety primitives act at the wrong granularity for an unattended loop: Flow **gates** evaluate *after* a node finishes, and the ADR-101 budget meters *totals* (tokens / failures / wall-clock). Neither can stop a run that, mid-node, repeats the same tool call forever, writes outside its lane, or stalls without producing a diff. The one place a decision can be made *before* a tool executes is the supervisor's ACP `requestPermission` callback in `acp-client.ts`, which already does hardcoded pre-hoc enforcement: ADR-090 `readOnlySession` (L1, allow-set `{read, search, fetch, think}`) and ADR-078 `readOnlyTurn` (L2, mutating-set `{edit, write, create, delete, move}`) both run and resolve *before* the SDK runs the tool (the callback `await`s the decision). `readOnlySession` is a hardcoded special case of a more general idea: a declarative, vendor-neutral rule set evaluated at that seam. This ADR generalizes it into a **guardrail/hook engine** — the per-tool-call enforcement primitive that makes unattended overnight loops safe. A Phase-0 spike corrected the original "the file path is in an opaque, adapter-specific toolCall body" assumption: the ACP SDK standardizes the write path at `toolCall.locations[].path` (verified in `@agentclientprotocol/claude-agent-acp`; schema-backed for `codex-acp`), so path extraction is adapter-agnostic with a kind-only fallback for adapters that do not populate `locations`.
+**Context:** MAIster's two existing safety primitives act at the wrong granularity for an unattended loop: Flow **gates** evaluate _after_ a node finishes, and the ADR-101 budget meters _totals_ (tokens / failures / wall-clock). Neither can stop a run that, mid-node, repeats the same tool call forever, writes outside its lane, or stalls without producing a diff. The one place a decision can be made _before_ a tool executes is the supervisor's ACP `requestPermission` callback in `acp-client.ts`, which already does hardcoded pre-hoc enforcement: ADR-090 `readOnlySession` (L1, allow-set `{read, search, fetch, think}`) and ADR-078 `readOnlyTurn` (L2, mutating-set `{edit, write, create, delete, move}`) both run and resolve _before_ the SDK runs the tool (the callback `await`s the decision). `readOnlySession` is a hardcoded special case of a more general idea: a declarative, vendor-neutral rule set evaluated at that seam. This ADR generalizes it into a **guardrail/hook engine** — the per-tool-call enforcement primitive that makes unattended overnight loops safe. A Phase-0 spike corrected the original "the file path is in an opaque, adapter-specific toolCall body" assumption: the ACP SDK standardizes the write path at `toolCall.locations[].path` (verified in `@agentclientprotocol/claude-agent-acp`; schema-backed for `codex-acp`), so path extraction is adapter-agnostic with a kind-only fallback for adapters that do not populate `locations`.
 
 **Decision:**
+
 1. **Universal mechanism first, claude-native particular second — both in this milestone (M40).** The supervisor ACP-seam interceptor is the universal, vendor-neutral mechanism (all 5 adapter families, all 3 rules, complete on its own). No universal native-hook file exists across agents, so "native" is a per-adapter particular delivered through a clean `NativeHookMaterializer` seam: the seam interface ships with the universal core; the claude `PreToolUse` implementation ships after the core is proven, spike-gated (see §9).
 2. **The seam is `requestPermission` in `acp-client.ts`, after L1 (`readOnlySession`) / L2 (`readOnlyTurn`) and BEFORE B1 (`autoApprovePermissions`) + the HITL-deferred path.** The interceptor is pre-hoc for the two `pre_tool_call` rules (the callback `await`s; the SDK does not run the tool until it resolves) and post-hoc for the one `post_turn` rule (driven from `sessionUpdate`, which fires after a tool already ran). The before-B1 ordering (amended in Phase 2, 2026-06-23; the freeze said after-B1) is required: B1 returns inline on any allow-shaped option, and every `unattended` preset resolves to `permissions=auto_approve`, so after-B1 placement would silently no-op `path_guard` + `repetition` on the exact runs the two-tier default arms guardrails for (`repetition` would be dead code). Guardrails are deny/halt layers like L1/L2 and precede the B1 approve layer.
 3. **Exactly three MVP rules.** (a) **path_guard** — a write-class tool call whose `toolCall.locations[].path` falls outside the resolved `allowedPaths` (or a write-kind with no extractable path under the kind-only fallback) is **denied and the run continues** (deny-and-continue; the agent adapts). (b) **repetition** — a per-session signature (tool kind + normalized args) that recurs `>= max` times **halts**. (c) **no_progress** — `>= maxTurns` `sessionUpdate` turns since the last edit/diff-producing tool call **halts**. Secret-scan and other rules are explicit fast-follow.
@@ -8540,6 +8679,7 @@ from 0071/0072 when this branch rebased onto main).
 10. **No new `MaisterError` code; `hooks` enforceability is `instructed`.** A trip is recoverable (`NeedsInput`), never a `Failed`-terminate, so no new code is warranted (ADR-008 closed union; reuses `CONFIG` for an invalid hooks block at compile/load). `hooks` is `instructed` for every agent in `ENFORCEABILITY_BY_AGENT`; a `strict` hooks declaration is refused at launch by the existing M11c boundary. Supervisor enforcement is deterministic but is **not** modeled as `enforced` in the static table — the ADR-041 strict-capability flip stays frozen. Engine `1.7.0 → 1.8.0`; a node/agent declaring `hooks` requires `compat.engine_min >= 1.8.0` (`HOOKS_ENGINE_MIN`).
 
 **Consequences:**
+
 - MAIster gains the per-tool-call enforcement primitive that gates (post-node) and the budget (totals) structurally cannot provide — the safety floor for unattended autonomy.
 - Counters (`lastToolCallSig`, `repeatCount`, `turnsSinceProgress`) live on the in-memory `SessionRecord` only. A supervisor crash loses them; the run reconciles to `Crashed` via the existing sweep. A resumed run starts its counts fresh (documented; a resume resets the liveness breakers).
 - **Crash windows** reuse the budget escalate analysis: checkpoint pre-tx (bail on `EXECUTOR_UNAVAILABLE`, retry next signal), one `db.transaction` { `Running → NeedsInput` CAS, `markNodeNeedsInput`, `hitl_requests.insert(kind:"hook_trip")`, optional assignment, `run.needs_input` + `run.escalated{reason:"hook_trip", rule}` }, post-commit `logExecPolicyAction`. A web crash after checkpoint but before the escalate tx leaves the run `Running` + a valid checkpoint → the existing crash-reconcile sweep handles it.
@@ -8547,6 +8687,7 @@ from 0071/0072 when this branch rebased onto main).
 - Renumbered at the 2026-06-24 rebase onto main: this ADR is **ADR-108** and the schema change is **migration 0066** (main had taken ADR-104 + migrations 0063–0065; the Flow-Studio-package-authoring stream holds ADR-105–107 / M39). Milestone **M40** and engine **1.8.0** are uncontested.
 
 **Alternatives Considered:**
+
 - **Reuse `infra_recovery` / `budget_breach` for the trip HITL:** rejected — one kind per escalation cause keeps the inbox / timeline / Observatory read models legible; `hook_trip` follows the `budget_breach` precedent.
 - **Pure opt-in everywhere:** rejected — the unattended overnight loop is exactly the run where no human is present to arm a breaker; the liveness breakers default-on under `unattended` (per-node opt-out).
 - **Halt on the first out-of-path write:** rejected — deny-and-continue lets the agent re-plan; repeated denials feed the repetition / no-progress breakers, which then halt + escalate.
@@ -8593,6 +8734,7 @@ catalog rows. Consensus-specific verdicts live in a dedicated
 `(node_attempt_id, round, verifier_key, target_key)`, not in `gate_results`.
 
 **Consequences:**
+
 - Consensus is auditable as a control-plane protocol: the tally is pure,
   deterministic, persisted, and not delegated to an agent.
 - `WaitingOnChildren` wake-up must be generalized or given a consensus-specific
@@ -8609,6 +8751,7 @@ catalog rows. Consensus-specific verdicts live in a dedicated
   `MaisterError` code is introduced.
 
 **Alternatives Considered:**
+
 - **Orchestrator prompt convention:** rejected because the agent would decide
   whether consensus exists, and recovery/audit would depend on prompt discipline
   rather than a durable engine protocol.
@@ -8686,6 +8829,7 @@ source of truth and the existing diff/Discard path is the recovery surface.
 Recovery never auto-replays action JSONL.
 
 **Consequences:**
+
 - The model can no longer bypass MAIster validation by writing through ACP
   tools; every mutation crosses the same confinement and package validation
   boundary as manual Studio writes.
@@ -8703,6 +8847,7 @@ Recovery never auto-replays action JSONL.
   working dirs, and secrets.
 
 **Alternatives Considered:**
+
 - **Direct ACP file edits:** rejected because the model could mutate before
   MAIster validates Flow grammar, package shape, base hashes, or lock state.
 - **Persist proposals in a DB table:** rejected for V1. The working tree already
@@ -8749,21 +8894,22 @@ unchanged.
 the per-agent runner chain and the per-project attachment fields
 (`agent_project_links.runner_override_id`, `branch_base`,
 `execution_policy_override`). There is no way for an agent author to expose
-*behavioral* knobs — a boolean, an enum, a threshold — that a project operator
+_behavioral_ knobs — a boolean, an enum, a threshold — that a project operator
 sets per instance and the runtime feeds to the agent. The triager (ADR-112) is
 the first agent that needs this: it must be configurable per project for
 auto-enqueue behavior, duplicate detection, and intake mode without forking the
 definition or hard-coding a triager-specific column. The owner asked for a
-*generic* framework, not a triager-specific hack, so the model extension is
+_generic_ framework, not a triager-specific hack, so the model extension is
 authored once and the triager is merely its first consumer. The existing
 attachment plumbing, the `recommended`-binding SET/CLEAR resync symmetry, and
 the immutable launch-snapshot discipline (`runs.execution_policy`,
 `runs.runner_snapshot`) are the seams this reuses.
 
 **Decision:**
+
 1. **Agents declare a typed `config:` block in `.md` frontmatter.** It is an
    array of parameter declarations, each with `key`, `type ∈ {boolean, enum,
-   string, number}`, `default`, optional `label`/`description`, and (for `enum`)
+string, number}`, `default`, optional `label`/`description`, and (for `enum`)
    a `values` list. Parsing and strict validation happen in
    `web/lib/agents/definition.ts`: an unknown type, an `enum` without `values`,
    a `default` outside `values`, or a duplicate `key` is a hard
@@ -8800,6 +8946,7 @@ the immutable launch-snapshot discipline (`runs.execution_policy`,
    No new `MaisterError` code (reuses `CONFIG` for a bad schema).
 
 **Consequences:**
+
 - Agent authors gain a first-class, per-instance behavioral surface without
   forking definitions or adding bespoke columns; the triager (ADR-112) consumes
   it directly and any future agent inherits it for free.
@@ -8815,6 +8962,7 @@ the immutable launch-snapshot discipline (`runs.execution_policy`,
   row), so a broken declaration can never reach a launch.
 
 **Alternatives Considered:**
+
 - **A triager-specific config column / hard-coded knobs:** rejected — the owner
   asked for a generic framework; a per-agent column does not scale to the next
   configurable agent and couples the schema to one consumer.
@@ -8855,19 +9003,20 @@ each flow's self-describing `metadata.route_when`, and a PRD, in the limit, is a
 node inside an execution flow (M12 artifact), authored separately.
 
 **Decision:**
+
 1. **One triager platform agent, shipped as `maister-agents/triager.md` in a new
    "core" package in the `maister-plugins` repo.** Frontmatter: `workspace:
-   none`, `mode: session`, `risk_tier: read_only`, `triggers: [domain_event,
-   manual]`, `recommended.events: [task.created, task.triage_requeued,
-   task.comment_added]`, no `flow:` (so it runs as a standalone
+none`, `mode: session`, `risk_tier: read_only`, `triggers: [domain_event,
+manual]`, `recommended.events: [task.created, task.triage_requeued,
+task.comment_added]`, no `flow:` (so it runs as a standalone
    `run_kind='agent'` session on the agent budget). Config (ADR-111):
    `auto_enqueue (off | when_confident | always = off)`, `detect_duplicates
-   (boolean = true)`, `intake_mode (triage_only | clarify = clarify)`.
+(boolean = true)`, `intake_mode (triage_only | clarify = clarify)`.
 2. **Clarity is two thresholds, not one.** A **routing-floor** check is
    unconditional in both modes: a black box that cannot be matched to a flow is
    never triaged — `clarify` asks the creator via a comment (driving "Needs
    you"), `triage_only` flags it for a human. **Execution-clarity** (detail
-   questions) is mode-dependent: `clarify` refines the task statement *before*
+   questions) is mode-dependent: `clarify` refines the task statement _before_
    triaging; `triage_only` triages on the best obvious route and defers detail to
    the **flow's own HITL during the run**. So it is "routing always before;
    details by mode", with a max-rounds guard (3) falling back to `flagged`.
@@ -8890,17 +9039,17 @@ node inside an execution flow (M12 artifact), authored separately.
    (valid only with a verdict that yields a `flowId`). A new scheduler tick
    **`auto_launch_triaged`** on the M24 polymorphic clock (`systemManaged`,
    budget 1, 60s cadence) sweeps tasks that are `triaged` + `launch_mode='auto'`
-   + `flowId` present + `classifyTaskLaunchability` launchable + no live run + not
-   an orchestrator as-plan task, and launches a **standard flow run** through the
-   normal precondition choke point (cap → `Pending`). Reusing
-   `classifyTaskLaunchability` + `getOpenRelationBlockers` means a
-   dependency-blocked task self-launches once its blocker clears, handled by one
-   sweep with no extra wiring. The predicate is **disjoint** from
-   `auto_launch_run_plan` (ADR-098), which requires a `parent_of`-under-orchestrator
-   parent + `delegation_spec.agentId` and launches *agent* runs. The triager has
-   **no** `runs:launch` scope and never calls launch itself.
+   - `flowId` present + `classifyTaskLaunchability` launchable + no live run + not
+     an orchestrator as-plan task, and launches a **standard flow run** through the
+     normal precondition choke point (cap → `Pending`). Reusing
+     `classifyTaskLaunchability` + `getOpenRelationBlockers` means a
+     dependency-blocked task self-launches once its blocker clears, handled by one
+     sweep with no extra wiring. The predicate is **disjoint** from
+     `auto_launch_run_plan` (ADR-098), which requires a `parent_of`-under-orchestrator
+     parent + `delegation_spec.agentId` and launches _agent_ runs. The triager has
+     **no** `runs:launch` scope and never calls launch itself.
 6. **Discovery is two read-only ext routes plus two MCP tools.** `GET
-   /api/v1/ext/projects/{slug}/flows` (scope `flows:read`) and `…/runners` (scope
+/api/v1/ext/projects/{slug}/flows` (scope `flows:read`) and `…/runners` (scope
    `runners:read`), surfaced as MCP `flow_list` / `runner_list`. New token scopes
    `flows:read` / `runners:read` are added to the agent token scope set. `flow_list`
    returns per flow `id` + `metadata.{title, summary, route_when, labels}` — the
@@ -8927,6 +9076,7 @@ node inside an execution flow (M12 artifact), authored separately.
    `0071`.)
 
 **Consequences:**
+
 - A triager can route, dedup, form dependencies, and enqueue tasks end-to-end on
   the existing M34 substrate, with only `read_only`/`workspace:none` blast radius
   and no launch authority of its own.
@@ -8949,11 +9099,12 @@ node inside an execution flow (M12 artifact), authored separately.
   register/enable/trust path.
 
 **Alternatives Considered:**
+
 - **Two agents (a router and a clarifier), or a triager-specific config column:**
   rejected — one agent configured per instance via the generic ADR-111 framework
   is simpler and the owner's explicit call.
 - **The triager calls `run_launch` directly:** rejected — keeping the agent to an
-  enqueue *intent* (`launch_mode='auto'`) and launching under system authority
+  enqueue _intent_ (`launch_mode='auto'`) and launching under system authority
   through the same precondition choke point keeps its blast radius minimal and
   reuses every launch safety.
 - **Extending `auto_launch_run_plan` (ADR-098) to also launch flow tasks:**
@@ -8990,6 +9141,7 @@ credential helper / SSH key). This ADR adds the PR-to-source publish path — th
 Stream-B half of M39 paired with ADR-107.
 
 **Decision:**
+
 1. **`publishLocalPackage(id, { targetSourceId, branchName })`.** Resolve the target
    from the `package_sources` **allow-list** (server-state — a body-supplied raw URL
    is never accepted) → add/set a git remote in the package working dir →
@@ -9011,9 +9163,10 @@ Stream-B half of M39 paired with ADR-107.
    working-tree diff that would not be published.
 3. **Stable, reusable branch.** Re-publish updates `maister/<pkg-slug>` and the
    existing PR — never duplicates it. `local_packages.{last_pushed_branch,
-   last_pr_url}` persist the result, written **after** the push succeeds (two-phase).
+last_pr_url}` persist the result, written **after** the push succeeds (two-phase).
 
 **Consequences:**
+
 - Reuses `pushBranch` + `selectPrAdapter` / `createOrUpdatePr` + `detectProvider` +
   `branchNameSchema` / `assertSafeBranchRefs` at the sink. The adapters are
   idempotent (existing-PR detection), so re-publish updates rather than spams.
@@ -9029,6 +9182,7 @@ Stream-B half of M39 paired with ADR-107.
   `MaisterError` code (reuses `PRECONDITION | CONFLICT | CONFIG`).
 
 **Alternatives Considered:**
+
 - **Body-supplied raw target URL:** rejected — the registered `package_sources`
   allow-list is the only valid target set (a body URL is a cross-resource injection
   vector).
@@ -9075,6 +9229,7 @@ runner intent bound to concrete host runners **per project at connect-time** —
 never baked into the git artifact.
 
 **Decision:**
+
 1. **One unified runner config** (`flowRunnerConfigSchema`): `runner_type`,
    `capability_agent`, `adapter?`, `model?`, `model_family?`, `provider?`,
    `permission_policy`, `sidecar?`, **plus new `effort?`** (reusing the
@@ -9103,8 +9258,8 @@ never baked into the git artifact.
    Bind **every** runner slot whose config has no unique host auto-match — covering
    all sessions **and** all consensus slots, not just `default`. The binding table
    is keyed `(project_id, flow_revision_id, slot_key)` where `slot_key ∈
-   {session:<name>, consensus:<nodeId>:<participantId>,
-   consensus:<nodeId>:synthesizer}`. **`slot_key` is REQUIRED, not a
+{session:<name>, consensus:<nodeId>:<participantId>,
+consensus:<nodeId>:synthesizer}`. **`slot_key` is REQUIRED, not a
    dedup-by-intent convenience:** a consensus node may legitimately declare N
    participants with identical runner intent (LLMs are non-deterministic, so two
    `claude+opus` participants can and should yield different drafts) — intent-dedup
@@ -9115,10 +9270,10 @@ never baked into the git artifact.
    runner or a secret.
 4. **`run_sessions` is the SOLE source of truth for run runner state.** Columns:
    `id, run_id, session_name, runner_id, runner_resolution_tier, capability_agent,
-   runner_snapshot, acp_session_id, resolution_source, timestamps`, with
+runner_snapshot, acp_session_id, resolution_source, timestamps`, with
    `UNIQUE(run_id, session_name)`. The run-level columns
    `runs.{runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
-   acp_session_id}` are **DROPPED** in `0082` — which first backfills the same
+acp_session_id}` are **DROPPED** in `0082` — which first backfills the same
    state into each run's `default` `run_sessions` row, so live runs are
    preserved — and the FK `runs.runner_id → platform_acp_runners` + index
    `runs_runner_idx` are recreated on `run_sessions.runner_id`. Non-flow runs
@@ -9149,6 +9304,7 @@ never baked into the git artifact.
    discarding them.)
 
 **Consequences:**
+
 - Flow packages become **portable**: runner intent travels as agent+model+provider
   in the git artifact, and the concrete host runner is bound per project at
   connect-time — a package installs and runs on any host without editing
@@ -9158,7 +9314,7 @@ never baked into the git artifact.
   creates `run_sessions`; `0081` re-keys `flow_runner_remaps` to `slot_key`;
   and `0082` backfills each existing run's runner/resume state into a `default`
   `run_sessions` row **before** dropping the `runs.{runner_id,
-  runner_resolution_tier, capability_agent, runner_snapshot, acp_session_id}`
+runner_resolution_tier, capability_agent, runner_snapshot, acp_session_id}`
   mirror columns (plus `runs_runner_idx` and the runner FK). Because `0082`
   preserves the resume handle + runner snapshot, **in-flight runs survive the
   deploy** — recovery, resume, stop, gate-chat, and diagnostics still target the
@@ -9184,6 +9340,7 @@ never baked into the git artifact.
   `main` (`git show main:docs/decisions.md`, `_journal.json`).
 
 **Alternatives Considered:**
+
 - **Keep the per-run single runner + per-step `flow_runner_remaps`:** rejected —
   three divergent runner shapes, no session axis, and a host runner id baked into
   the consensus git artifact (not portable).
@@ -9229,6 +9386,7 @@ literal is rendered and no `CONFIG` error is thrown. The editor inserts bare
 implemented in `web/lib/flows/templating.ts` and documented in `docs/flow-dsl.md`.
 
 **Consequences:**
+
 - Prompt authors get safe autocomplete for optional context, optional schema
   fields, and conditional predecessors without weakening typo protection.
 - Existing prompts are byte-identical: no prompt currently uses `??`, and bare
@@ -9240,6 +9398,7 @@ implemented in `web/lib/flows/templating.ts` and documented in `docs/flow-dsl.md
   throw, while the bare form keeps throwing `CONFIG`.
 
 **Alternatives Considered:**
+
 - **Omit optional variables from suggestions:** rejected because values such as
   `executor.router`, optional schema fields, and artifact URIs are legitimate
   authoring needs.
@@ -9272,9 +9431,10 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
 `"asset"` for `mcps/` so MCP descriptors are invisible to any kind-grouped view.
 
 **Decision:**
+
 1. **Decouple the BOM from install.** Introduce a `PackageSource` abstraction
    (`{ logLabel, spec: { flows, mcps }, inventory, listFiles(), readFile(),
-   loadFlow() }` — `spec` is a narrowed projection, NOT the full
+loadFlow() }` — `spec` is a narrowed projection, NOT the full
    `MaisterPackageManifest`, so a local source can synthesize `mcps` from files;
    `loadFlow()` is the single confinement chokepoint for compiling a flow's
    `flow.yaml`) and a pure
@@ -9290,7 +9450,7 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
 2. **Tabbed-by-kind composition landing.** Replace `PackageHome` with a
    `PackageComposition` view reusing `PackageTabs`/`ElementCard`/`FlowPreviewCard`.
    Seven tabs with live counts — `Flows · Skills · Subagents · Agents · MCP ·
-   Rules · Files` — where empty kinds hide their tab and Files is always shown.
+Rules · Files` — where empty kinds hide their tab and Files is always shown.
    **Open model per kind:** flows route to the existing canvas
    (`FlowEditorTabs`); skills route to a dedicated skill screen (own nested
    file-navigator, because skills have nested folders); subagents / platform
@@ -9304,7 +9464,7 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
    `Rename <Kind>` renames the artifact **identity** (file / folder; the id derives
    from the filename/folder), distinct from editing **metadata** (frontmatter) in
    the editor. Both reduce to the existing lock-guarded save-diff (`PUT`/`DELETE
-   /api/studio/local-packages/{id}/files/{path}`) — **no new HTTP route, no new
+/api/studio/local-packages/{id}/files/{path}`) — **no new HTTP route, no new
    `MaisterError` code, no DB migration**. Collisions → `CONFLICT`; path escape /
    missing → `PRECONDITION` via the existing `resolveWithinWorkingDir` confinement.
 4. **BOM is server-computed, last-saved-disk truth.** The composition `PackageBom`
@@ -9323,6 +9483,7 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
    needed, is a cut-version concern, out of scope.
 
 **Consequences:**
+
 - Installed and local packages share one BOM parser; the installed output is
   pinned by a byte-identical characterization test, so the refactor cannot
   regress the existing viewer.
@@ -9335,6 +9496,7 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
   appears only after the save round-trip — an accepted, documented invariant.
 
 **Alternatives Considered:**
+
 - **Broaden `classifyPackageFilePath` to recognize `mcps/`:** rejected — it is
   shared with the installed reader and would change installed-package file
   classification; a local predicate keeps the blast radius contained.
@@ -9342,7 +9504,7 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
   the compiler into the browser and duplicates server logic; save-then-refresh is
   simpler and already the editor's pattern.
 - **A `move` HTTP route (the OpenAPI `POST .../files/{path}/move`, Designed):**
-  rejected for this plan — this Designed route is a *cross-package* relocation
+  rejected for this plan — this Designed route is a _cross-package_ relocation
   (move a file into another local package's working dir), orthogonal to the
   in-package identity rename/move this ADR ships, which reduces to the existing
   save-diff (PUT new + DELETE old). The Designed route stays Designed and
@@ -9370,7 +9532,7 @@ Two defects in the Observatory cost dimension (see
    (`web/lib/queries/observatory.ts`) sums `run_cost_rollups` with no
    `run_kind` filter — a run is counted **iff a rollup row exists**. Rollup rows
    are written only by `reconcileRunCostRollups`, triggered lazily: run-detail
-   open, task-detail open, and the budget watchdog (runs with a *set* budget
+   open, task-detail open, and the budget watchdog (runs with a _set_ budget
    limit only). A scratch run has no task and usually no budget, so its **only**
    trigger is a human opening the run. An un-opened scratch run never gets a
    rollup row and is structurally absent from project/portfolio cost totals.
@@ -9391,17 +9553,18 @@ fix cannot be "reconcile on read".
 **Decision:**
 
 1. **Two reconcile triggers with split roles, both on write paths.**
+
    - The **`system_sweep` backstop is the completeness guarantee.** It keys on
-     `runs.ended_at` (set on *every* terminal transition, NULL for active runs)
+     `runs.ended_at` (set on _every_ terminal transition, NULL for active runs)
      — **not** on a terminal-status allow-list and **not** on a domain event.
      `ended_at` catches every finished run regardless of which terminal status
      it reached or whether any event fired, so it is what guarantees
      scratch-success inclusion, pre-existing history, and late cost-flush races.
      Progress is tracked by a **durable per-run marker** `runs.cost_reconciled_at`
-     (migration `0084`), stamped on *every* sweep attempt — reconciled,
+     (migration `0084`), stamped on _every_ sweep attempt — reconciled,
      missing-cost, OR error. Candidate predicate: `ended_at IS NOT NULL AND
-     ended_at > now − lookback AND (cost_reconciled_at IS NULL OR
-     cost_reconciled_at < ended_at + SETTLE_GRACE)`. Keying progress on the marker
+ended_at > now − lookback AND (cost_reconciled_at IS NULL OR
+cost_reconciled_at < ended_at + SETTLE_GRACE)`. Keying progress on the marker
      (NOT `run_cost_rollups` row state) is what makes the backstop actually
      complete + non-starving: a run with no `cost.jsonl` is attempted ONCE then
      settled — instead of staying eligible every tick and monopolizing the
@@ -9418,7 +9581,7 @@ fix cannot be "reconcile on read".
      fast-path**, not the completeness guarantee. It subscribes to the existing
      terminal kinds (`run.done | run.failed | run.crashed | run.abandoned`) —
      **no new event kind** — so the rollup appears seconds after a terminal that
-     *does* emit, instead of waiting for the next sweep tick. `startFrom: "now"`
+     _does_ emit, instead of waiting for the next sweep tick. `startFrom: "now"`
      (forward-only — the sweep owns historical backfill; a `"beginning"` replay
      would be wasteful). It is **poison-safe**: `handle(events[])` filters to
      terminal kinds, dedupes `runId`, and reconciles each **inside a per-run
@@ -9431,7 +9594,7 @@ fix cannot be "reconcile on read".
 2. **Per-runner attribution via a new `by_runner` jsonb column on
    `run_cost_rollups`**, symmetric to `by_model`, populated at reconcile by
    bucketing cost records by `sessionName` and joining `(run_id, session_name) →
-   run_sessions`. Each cost record carries `sessionName` (M42,
+run_sessions`. Each cost record carries `sessionName` (M42,
    [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth));
    `run_sessions` carries `runner_snapshot` keyed by `(run_id, session_name)`
    for every run kind. The group key is a **snapshot-derived stable label**
@@ -9441,7 +9604,7 @@ fix cannot be "reconcile on read".
    whose `sessionName` has no matching `run_sessions` row (legacy pre-M42 /
    missing `sessionName`) buckets under `runnerKey = "unknown"`.
 
-3. **Conditional precision.** The multi-runner split is *exact* only when a flow
+3. **Conditional precision.** The multi-runner split is _exact_ only when a flow
    declares multiple logical sessions (distinct `sessionName` per node → distinct
    `run_sessions` rows with distinct snapshots). A single-session flow, and every
    scratch/agent run, maps all cost to one runner via `sessionName = "default"`
@@ -9469,7 +9632,7 @@ fix cannot be "reconcile on read".
   stalls the whole consumer cursor.
 - `run_cost_rollups` gains one column (`by_runner jsonb not null default '{}'`)
   and `runs` gains one partial index (`runs_ended_at_idx on runs(ended_at) where
-  ended_at is not null`) to support the sweep's bounded `order by ended_at`
+ended_at is not null`) to support the sweep's bounded `order by ended_at`
   scan (migration `0083`). `runs` also gains the durable `cost_reconciled_at`
   timestamp marker (migration `0084`). Both schema-only — no env/port change for
   the columns.
@@ -9486,7 +9649,7 @@ fix cannot be "reconcile on read".
   every terminal; the consumer is a cheap fast-path over events that already
   fire.
 - **Status-allow-list sweep predicate** (sweep on terminal `status`): rejected —
-  `ended_at` is the single field set on *every* terminal transition; a status
+  `ended_at` is the single field set on _every_ terminal transition; a status
   list would have to enumerate and track the full terminal set and would still
   miss nothing `ended_at` does not.
 - **Catalog-FK runner key** (`runner_id`): rejected as the primary key — a
@@ -9505,12 +9668,12 @@ exactly one terminal behavior on attempt exhaustion: the execution-policy **A1
 `reworkExhaustion`** action (`fail | escalate | ship_with_warning`,
 [ADR-095](#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship)/[ADR-101](#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open)).
 Two capabilities are missing for an autonomous loop that wants a human in the
-exhaustion path *without* discarding its accumulated worktree:
+exhaustion path _without_ discarding its accumulated worktree:
 
 1. There is no way for the loop author to route exhaustion to a **specific**
    node (e.g. a `human_review` that renders "the loop spent its budget —
    decide") instead of the policy-driven A1 action. A1 is run-policy-scoped, not
-   author-scoped, so a flow cannot express "on this loop, hand off to *this*
+   author-scoped, so a flow cannot express "on this loop, hand off to _this_
    reviewer node".
 2. Even when a human is reached, there is no way for that human to **restart the
    loop with a fresh budget**. A node's `node_attempts` counter is monotonic;
@@ -9522,11 +9685,12 @@ exhaustion path *without* discarding its accumulated worktree:
 `on_mismatch` exhaustion carries the same fail-closed limitation (noted there as
 tech debt). This ADR adds the two missing primitives as additive, opt-in
 `rework` fields, reusing the existing transition fan-out + `node_attempts` ledger
-+ `commentsVar` injection machinery, gated behind an engine bump.
-[ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
-(capability enforcement) is untouched; **no migration of `runs`**, **no new
-`MaisterError` code** (ADR-008 closed union → every refusal reuses `CONFIG`),
-**no HITL wire change**.
+
+- `commentsVar` injection machinery, gated behind an engine bump.
+  [ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
+  (capability enforcement) is untouched; **no migration of `runs`**, **no new
+  `MaisterError` code** (ADR-008 closed union → every refusal reuses `CONFIG`),
+  **no HITL wire change**.
 
 **Decision:**
 
@@ -9559,7 +9723,7 @@ tech debt). This ADR adds the two missing primitives as additive, opt-in
    so it is normalized, carries forward with each attempt, and needs no cross-row
    coordination. **Semantics:** `NULL ⇒ baseline 0` (byte-identical to today's
    ledger). The value is the attempt number at which the node's current rework
-   *epoch* began. **Carry-forward (write):** `appendNodeAttempt` stamps the new
+   _epoch_ began. **Carry-forward (write):** `appendNodeAttempt` stamps the new
    row's `rework_baseline` = the node's prior attempt's `rework_baseline` (or
    `NULL`/0 if none). **Reset (write):** `UPDATE` the node's latest attempt row's
    `rework_baseline` to that node's current persisted attempt count; the next
@@ -9604,11 +9768,12 @@ tech debt). This ADR adds the two missing primitives as additive, opt-in
    self-heals because the next `appendNodeAttempt` reads the persisted baseline. A
    target with zero prior attempts is a no-op (its epoch already starts at 0). The
    human node's HITL already carries `{allowedDecisions, transitions,
-   reworkTargets, workspacePolicies, maxLoops, gateAttempt}`; `resetTargets` is a
+reworkTargets, workspacePolicies, maxLoops, gateAttempt}`; `resetTargets` is a
    server-side rework effect, not a reviewer-selectable field → **no new HITL wire
    field**.
 
 **Consequences:**
+
 - An authored autonomous loop can deterministically escalate exhaustion to a
   named human node and let that human grant a fresh budget — closing the
   ADR-103 "fail-closed, discards the worktree" gap for human-supervised loops,
@@ -9630,6 +9795,7 @@ tech debt). This ADR adds the two missing primitives as additive, opt-in
   understand both bounds (captured in `flow-dsl.md` + `flow-graph.md`).
 
 **Alternatives Considered:**
+
 - **jsonb baseline map on `runs`:** rejected — the baseline is per-node and the
   `node_attempts` row already owns attempt counting; a normalized column carries
   forward per attempt with no cross-row coordination, whereas a `runs` jsonb
@@ -9662,7 +9828,7 @@ launch entry point gates on `classifyManualTaskLaunchability`, whose
 status (`Pending/Running/NeedsInput/NeedsInputIdle/HumanWorking/WaitingOnChildren`).
 So a new run cannot start while a prior run for the same task is still active.
 Operators running supervised loops want to fire **another** run from the task
-runs-history view *while one is still running* — without cancelling or
+runs-history view _while one is still running_ — without cancelling or
 superseding the active attempt. The board flight-card and all scheduled /
 auto-launch paths must keep the `busy` gate (the one-way latch + auto-launch
 tick must never fan out concurrent runs on their own).
@@ -9674,7 +9840,7 @@ main launch transaction. Today the `busy` gate makes two concurrent launches of
 one task impossible, so the race is unreachable. Force-relaunch makes it
 reachable: two simultaneous launches both compute `attempt-2`, the first
 `git worktree add -b` creates the branch, the second collides and fails
-`CONFLICT`. (Worktree *paths* are `runId`-keyed, so they never collide — only
+`CONFLICT`. (Worktree _paths_ are `runId`-keyed, so they never collide — only
 branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
 (global concurrency cap) are untouched; **no migration**, **no new error code**,
 **no deployment change**.
@@ -9688,7 +9854,7 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
    helpers (DRY). It NEVER produces the `busy` run-status verdict — run status is
    deliberately not consulted. Precedence, highest refusal first:
    `flagged (task.triageStatus==="flagged") > blocked (open blocking relation) >
-   launchable`. The allow-list (only `flagged`/`blocked` refuse) is documented so
+launchable`. The allow-list (only `flagged`/`blocked` refuse) is documented so
    a future `RunStatus` cannot silently change force behaviour.
 
 2. **`allowConcurrent` body flag selects the classifier.** `POST /api/runs`
@@ -9721,7 +9887,7 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
 
 4. **Atomic attempt-number allocation.**
    `UPDATE tasks SET attempt_number = attempt_number + 1 WHERE id = $taskId
-   RETURNING attempt_number` reserves a distinct value per launch. This becomes
+RETURNING attempt_number` reserves a distinct value per launch. This becomes
    the **sole** writer of `attempt_number`: the `attemptNumber` write is removed
    from the main launch transaction (the tx still writes `tasks.status="InFlight"`).
    Leaving it would let a slower concurrent launch clobber a higher value. The
@@ -9749,6 +9915,7 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
    activity/event kind, and **no** `domain_events` outbox row is involved.
 
 **Consequences:**
+
 - Operators can fan out additional runs from the task runs-history view while a
   prior run is live, bounded by the global cap; the running attempt is never
   cancelled or superseded.
@@ -9773,6 +9940,7 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
   allocation timing and gate selection change.
 
 **Alternatives Considered:**
+
 - **A `mode=manual|force` query param on launch-options** instead of an additive
   `relaunch` field: rejected — the page renders both buttons, so a single
   response carrying both verdicts avoids a second fetch and removes the risk of
@@ -9895,13 +10063,14 @@ Locked sub-decisions:
   prompt. Gate `prompt`s render in separate agent sessions, so a content ref there
   is not a double-injection of the action prompt and does not suppress the append;
   the gate-field + `cli.command` scan in `collectContentArtifactIds` drives content
-  *resolution* and the engine *floor*, not this per-action-prompt dedup.
+  _resolution_ and the engine _floor_, not this per-action-prompt dedup.
 - **D4 — Graph `nodes[]` only.** `.content` lives in the shared
   `buildContext`/`reduceArtifacts` seam; the linear `runner.ts` path never populates
   it (no shipped flow uses linear `steps[]`). A linear flow referencing
   `{{ artifacts.X.content }}` gets a clean strict `CONFIG`.
 
 **Consequences:**
+
 - Forward-handoff needs zero prompt edits with `inline: true`; authors who want
   precise placement use the manual tag. No re-derivation of prior output.
 - `compat.engine_min` stays honest across hosts — a `.content`-using package is
@@ -9914,6 +10083,7 @@ Locked sub-decisions:
 - **Zero migration / zero new error code / zero new HTTP route / zero new event.**
 
 **Alternatives Considered:**
+
 - **Markdown ` ``` ` fence delimiter:** rejected (D1) — collides with fenced
   content in artifact bodies.
 - **`.content` rides the existing 1.2.0 artifact floor:** rejected (D5) — leaves a
@@ -9944,6 +10114,7 @@ ADR-120 is owned by a parallel plan-only branch that merges first, so this work 
 reassigned to 121 to avoid the clash.
 
 **Decision:**
+
 - **Cycle-safe relations:** a gating-kind (`blocks`/`depends_on`/`requires`) relation
   create that would close a cycle is refused with `MaisterError("CONFLICT")` (HTTP 409),
   evaluated **inside the insert transaction** over a project-scoped reachability walk that
@@ -9961,7 +10132,7 @@ reassigned to 121 to avoid the clash.
   high-criticality fresh task preempts a freed slot ahead of a lower-criticality long-running
   resume. `classRank` (`C3 < C1 < C2`, resume-first) is **only an equal-weight tiebreak** — at
   the same criticality an answered-idle resume wins, then queued runs, then fresh tasks. Final
-  tiebreak `fifo` ASC. Accepted caveat: a *low*-criticality answered-idle resume can be starved
+  tiebreak `fifo` ASC. Accepted caveat: a _low_-criticality answered-idle resume can be starved
   by higher-criticality fresh tasks (v1; priority aging is the future fix, out of scope here).
 - **Reverses decision D2** (resume cap-bypass, `resume.ts:58-59` and agent `hitl.ts`): every
   answered-idle resume is routed through the admission gate so a pool never exceeds its cap.
@@ -9998,14 +10169,15 @@ even with the queue feature "off". Requirements, acceptance criteria, invariants
 the test matrix live in the SDD plan `.ai-factory/plans/dependency-ordered-task-queue.md`.
 
 **Alternatives Considered:**
-- *Resume-first strict ordering* (classRank as primary key): rejected — a long-running
+
+- _Resume-first strict ordering_ (classRank as primary key): rejected — a long-running
   low-criticality resume would hold a slot ahead of a critical blocker bugfix. classRank is
   demoted to an equal-weight tiebreak (D-A).
-- *Gating resume cap-safety behind `edgeDrain`*: rejected — reintroduces the D2 over-cap bug
+- _Gating resume cap-safety behind `edgeDrain`_: rejected — reintroduces the D2 over-cap bug
   whenever the queue feature is toggled off. Cap-safety is a correctness property, not a feature.
-- *Per-`run` priority snapshot*: rejected — re-prioritization must take effect for not-yet-admitted
+- _Per-`run` priority snapshot_: rejected — re-prioritization must take effect for not-yet-admitted
   work, so the gate reads `tasks.priority` LIVE at selection.
-- *Confidence-based auto/human routing*: rejected for v1 (owner: advisory only).
+- _Confidence-based auto/human routing_: rejected for v1 (owner: advisory only).
 
 ---
 
@@ -10136,6 +10308,127 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
 
 ---
 
+### ADR-125: Budget-breach four-way fork with staged claims
+
+**Date:** 2026-07-02
+**Status:** Accepted
+
+**Context:** ADR-101 and ADR-106 introduced the budget watchdog ladder and the
+raise-resume path, but the `budget_breach` HITL card remained a two-way fork:
+raise the breached ceiling or abandon the run as `Failed`. That made a budget
+breach near-terminal even when the right answer was to restart from a fresh
+policy snapshot, preserve useful work and stop, or discard the workspace
+immediately. The card also lacked enough context for the operator to choose
+well: spend vs limit, completed nodes, diff size, gate state, wall-clock, and
+resume count were scattered across other surfaces.
+
+**Decision:**
+
+- `budget_breach` keeps the existing HITL kind and JSONB payload columns. There
+  is **no DB migration** for this feature: no new enum value, status, domain
+  event kind, SSE event kind, or stored DTO column is added.
+- The session-auth respond contract becomes additive:
+  `optionId in {"raise","restart","park","abandon"}`. Legacy
+  `{optionId:"raise", raiseTo:N}` and bare `{optionId:"abandon"}` remain
+  byte-compatible. New payloads are:
+  `{response:{dimension?, newLimit}}` for `raise`,
+  `{response:{}}` for `restart`,
+  `{response:{mode:"snapshot"|"export", branchName?}}` for `park`, and
+  `{response:{dropWorkspace?: boolean}}` (or top-level `dropWorkspace`) for
+  `abandon`.
+- One availability helper owns the matrix for server guard and UI rendering.
+  Raise is available for all valid budget rows. Restart is available only for
+  top-level task-bound flow runs and top-level task-bound `agent` worktree runs.
+  Park is available only when a server-owned worktree row exists. Orchestrator
+  children, scratch restart, and `agent` `none`/`repo_read` restart/park remain
+  out of scope. Unavailable options return `MaisterError("PRECONDITION")`
+  before any claim and leave the HITL row answerable.
+- A shared claim gate covers all four options. Already-delivered rows compare
+  stored option+payload with the incoming one: same payload is idempotent,
+  different payload is `CONFLICT`. Claimed composite rows with
+  `respondedAt IS NULL` can be re-driven only by the same payload, except
+  `stage:"failed"`, which is pre-boundary and re-answerable with any option.
+  `stage:"relaunch_failed"` is final because the old run is already terminal.
+- Raise reuses ADR-101 budget math exactly: only
+  `runs.budget_state.ceilingOverride[scope][field]` changes, with
+  `tokens -> maxTokens`, `failures -> consecutiveFailures`, and
+  `wallclock -> wallClockMinutes`. Token hard-ceiling derivation stays in the
+  watchdog helpers.
+- Restart is a composite: pre-flight standard launchability, claim, defensive
+  checkpoint of any active session, terminalize the old run as `Failed` with
+  `reason:"budget_restart"` and `errorCode:"BUDGET_EXCEEDED"`, then relaunch
+  through `launchRun` or `launchAgentRun` without carrying the old execution
+  policy snapshot. The new attempt therefore resolves the current policy and
+  starts with zero spend. If relaunch fails after terminalization, the old run
+  stays terminal, the task is launchable in Backlog, the HITL row records final
+  `stage:"relaunch_failed"`, and no background retry is scheduled.
+- Park is a preserve-before-terminal composite. `snapshot` commits dirty work
+  on the run branch when needed; a clean worktree archives with an explicit
+  "nothing to commit" note. `export` validates and publishes the named branch
+  through the existing workbench branch primitives. After preservation it marks
+  the run `Abandoned`, emits `run.abandoned` with
+  `{reason:"budget_parked", ref}`, closes assignments, and promotes the
+  appropriate pool. Generic `stopThenArchive` is not used because it parks flow
+  runs in `Review`.
+- `abandon` without `dropWorkspace` remains today's behavior: run `Failed`,
+  `BUDGET_EXCEEDED`, and TTL cleanup. `dropWorkspace:true` performs that
+  terminal update first, then removes the owned worktree and run branch when
+  present; no-workspace rows accept the flag as a no-op and the UI hides it.
+- The pending HITL read model embeds computed budget context:
+  breach dimension/limit/spend/overshoot, per-dimension budget observations
+  with `source:"value"|"no-data"`, node progress, diff numstat or `null`,
+  gate counts, wall-clock minutes, resume count, server-computed
+  `availableOptions`, and `claimStage`. It is computed on read, never stores
+  file contents, and degrades per field.
+- Ext/MCP budget responses stay closed in this change. The external OpenAPI
+  wording is corrected to match the implemented route: only `human` rows are
+  upgraded to a user actor via exact `hitl:respond:human`; `infra_recovery` and
+  `budget_breach` remain session-auth-only for now.
+- Structured implementation logs use the fields `runId`, `hitlRequestId`,
+  `taskId`, `oldRunId`, `newRunId`, `optionId`, `mode`, `branchName`, `scope`,
+  `meter`, `previousLimit`, `newLimit`, `compositeStage`, `workspaceId`, and
+  `ref`. Arbitrary response text, file contents, secrets, and raw supervisor
+  handles are never logged.
+- Observatory budget terminations count `run.failed` reasons
+  `budget_exceeded`, `BUDGET_EXCEEDED`, `budget_breach`,
+  `budget_restart`, and `budget_abandoned`. Park uses `run.abandoned` with
+  `budget_parked` and is intentionally excluded from the termination metric.
+
+**Consequences:**
+
+- Existing two-option clients continue working unchanged while the UI gains a
+  four-option decision surface.
+- Slot accounting stays on existing state transitions: live `NeedsInput` holds
+  the slot, `NeedsInputIdle` has released it, restart/park/drop terminalization
+  promotes through the existing per-pool scheduler, and raise uses the existing
+  cap-guarded resume paths.
+- Crash windows are explicit. Before the first irreversible side effect a
+  composite can fail to `stage:"failed"` and be answered again. After
+  preservation or old-run terminalization, only same-payload completion is
+  allowed; a post-terminal relaunch failure is final but leaves the task
+  launchable.
+- The UI renders the server's `availableOptions`; it has no independent matrix
+  logic. Claimed rows are excluded from needs-you counts while active and render
+  disabled controls until completion or `stage:"failed"`.
+
+**Alternatives Considered:**
+
+- _New run statuses or HITL kinds_: rejected. The existing `Failed`,
+  `Abandoned`, `NeedsInput`, `NeedsInputIdle`, and `budget_breach` kind already
+  express the behavior, and widening the FSM would fan out to every read model
+  without adding clarity.
+- _Use generic `stopThenArchive` for park_: rejected because generic flow stop
+  lands `Review`; the budget park contract needs `Abandoned` so the task
+  returns to Backlog and the run is terminal.
+- _Open the four-way schema to ext/MCP tokens_: rejected for this slice because
+  the implemented external route only upgrades exact human-token scope for
+  `kind=="human"`. Correcting stale docs is safer than widening actor semantics
+  while adding multi-step composites.
+- _Store the progress DTO_: rejected. It is a volatile read aggregate derived
+  from budget state, rollups, node attempts, diff metadata, gates, and sessions.
+
+---
+
 ## Template for New Decisions
 
 ```markdown
@@ -10150,17 +10443,19 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
 **Decision:** [What was decided?]
 
 **Consequences:**
+
 - [Positive/negative outcomes]
 - [Trade-offs accepted]
 
 **Alternatives Considered:**
+
 - [Alternative 1]: [Why rejected]
 - [Alternative 2]: [Why rejected]
 ```
 
 ---
 
-*Decisions are numbered sequentially. Do not reuse numbers.*
+_Decisions are numbered sequentially. Do not reuse numbers._
 
 ---
 

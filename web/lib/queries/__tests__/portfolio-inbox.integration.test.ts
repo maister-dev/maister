@@ -33,6 +33,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 let getCrossProjectHitlInbox: typeof import("@/lib/queries/portfolio").getCrossProjectHitlInbox;
 let getHitlInbox: typeof import("@/lib/queries/hitl").getHitlInbox;
+let getInboxCardContext: typeof import("@/lib/queries/inbox-context").getInboxCardContext;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -48,6 +49,7 @@ beforeAll(async () => {
 
   ({ getCrossProjectHitlInbox } = await import("@/lib/queries/portfolio"));
   ({ getHitlInbox } = await import("@/lib/queries/hitl"));
+  ({ getInboxCardContext } = await import("@/lib/queries/inbox-context"));
 }, 180_000);
 
 afterAll(async () => {
@@ -257,7 +259,7 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
   async function createHitlRequest(
     id: string,
     runId: string,
-    kind: "permission" | "form" | "human",
+    kind: "permission" | "form" | "human" | "budget_breach",
     criticality: "low" | "medium" | "high" | "critical" | null = null,
     schema_val: unknown | null = null,
     respondedAt: Date | null = null,
@@ -286,6 +288,8 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
     await db.delete(schema.assignments);
     await db.delete(schema.hitlRequests);
     await db.delete(schema.workspaces);
+    await db.delete(schema.runCostRollups);
+    await db.delete(schema.nodeAttempts);
     await db.delete(schema.runs);
     await db.delete(schema.tasks);
     await db.delete(schema.flows);
@@ -603,6 +607,190 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
       hitlRequestId: "hitl-scratch",
       projectId: proj,
       flowRef: "scratch",
+    });
+  });
+
+  it("excludes actively claimed budget-breach rows from needs-you inboxes", async () => {
+    const admin = await createAdminUser("admin-budget-claim@test.com");
+    const proj = await createProject("Budget Claim Project");
+    const flow = await createFlow(proj);
+    const exec = await createExecutor();
+    const task = await createTask(proj, flow, "Budget claim");
+    const run = await createRun(proj, task, flow, exec, "NeedsInput");
+
+    await createWorkspace(run, proj);
+    await pool.query(
+      `
+        INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, response, responded_at, created_at)
+        VALUES ($1, $2, $3, 'budget_breach', $4, $5, $6, NULL, $7)
+      `,
+      [
+        "hitl-budget-claimed",
+        run,
+        "budget",
+        JSON.stringify({
+          kind: "budget_breach",
+          scope: "run",
+          meter: "tokens",
+          current: 1200,
+          limit: 1000,
+        }),
+        "Budget breach",
+        JSON.stringify({
+          optionId: "park",
+          mode: "snapshot",
+          branchName: null,
+          stage: "preserving",
+        }),
+        new Date(),
+      ],
+    );
+
+    await expect(getHitlInbox(proj)).resolves.toMatchObject({
+      items: [],
+      count: 0,
+    });
+    await expect(
+      getCrossProjectHitlInbox(admin, "admin"),
+    ).resolves.toMatchObject({
+      items: [],
+      count: 0,
+    });
+
+    await pool.query("UPDATE hitl_requests SET response = $1 WHERE id = $2", [
+      JSON.stringify({
+        optionId: "park",
+        mode: "snapshot",
+        branchName: null,
+        stage: "failed",
+      }),
+      "hitl-budget-claimed",
+    ]);
+
+    const projectInbox = await getHitlInbox(proj);
+    const crossProjectInbox = await getCrossProjectHitlInbox(admin, "admin");
+
+    expect(projectInbox.items).toHaveLength(1);
+    expect(projectInbox.items[0].claimStage).toBe("failed");
+    expect(crossProjectInbox.items).toHaveLength(1);
+    expect(crossProjectInbox.items[0].claimStage).toBe("failed");
+  });
+
+  it("builds budget progress from scoped token spend and consecutive failure streaks", async () => {
+    const proj = await createProject("Budget Progress Project");
+    const flow = await createFlow(proj);
+    const exec = await createExecutor();
+    const task = await createTask(proj, flow, "Budget progress");
+    const currentRun = await createRun(proj, task, flow, exec, "NeedsInput");
+    const newestFailedRun = randomUUID();
+    const priorDoneRun = randomUUID();
+    const olderFailedRun = randomUUID();
+
+    await pool.query(
+      "UPDATE runs SET current_step_id = 'budget', execution_policy = $1::jsonb WHERE id = $2",
+      [
+        JSON.stringify({
+          preset: "supervised",
+          overrides: {
+            budget: {
+              task: {
+                maxTokens: 200,
+                consecutiveFailures: 3,
+                wallClockMinutes: 10,
+              },
+            },
+          },
+        }),
+        currentRun,
+      ],
+    );
+    await pool.query(
+      `
+        INSERT INTO runs (id, project_id, task_id, flow_id, run_kind, status, flow_version, started_at)
+        VALUES
+          ($1, $4, $5, $6, 'flow', 'Failed', 'v1.0.0', $7),
+          ($2, $4, $5, $6, 'flow', 'Done', 'v1.0.0', $8),
+          ($3, $4, $5, $6, 'flow', 'Failed', 'v1.0.0', $9)
+      `,
+      [
+        newestFailedRun,
+        priorDoneRun,
+        olderFailedRun,
+        proj,
+        task,
+        flow,
+        new Date("2026-07-02T10:03:00.000Z"),
+        new Date("2026-07-02T10:02:00.000Z"),
+        new Date("2026-07-02T10:01:00.000Z"),
+      ],
+    );
+    await pool.query(
+      `
+        INSERT INTO run_cost_rollups (
+          run_id, project_id, task_id, flow_id,
+          input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+        )
+        VALUES
+          ($1, $5, $6, $7, 40, 10, 0, 0),
+          ($2, $5, $6, $7, 20, 5, 0, 0),
+          ($3, $5, $6, $7, 70, 15, 0, 0),
+          ($4, $5, $6, $7, 30, 7, 0, 0)
+      `,
+      [
+        currentRun,
+        newestFailedRun,
+        priorDoneRun,
+        olderFailedRun,
+        proj,
+        task,
+        flow,
+      ],
+    );
+    await pool.query(
+      `
+        INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+        VALUES
+          ($1, $3, 'budget', 'ai_coding', 1, 'Failed', now()),
+          ($2, $3, 'budget', 'ai_coding', 2, 'Failed', now())
+      `,
+      [randomUUID(), randomUUID(), currentRun],
+    );
+    await createHitlRequest(
+      "hitl-budget-progress",
+      currentRun,
+      "budget_breach",
+      "high",
+      {
+        kind: "budget_breach",
+        scope: "task",
+        meter: "wallclock",
+        current: 12,
+        limit: 10,
+      },
+    );
+
+    const context = await getInboxCardContext({
+      id: currentRun,
+      projectId: proj,
+      currentStepId: "budget",
+      flowRevisionId: null,
+      flowId: flow,
+    });
+
+    expect(context.budgetProgress?.budgetByDimension.tokens).toEqual({
+      limit: 200,
+      spent: 197,
+      source: "value",
+    });
+    expect(context.budgetProgress?.budgetByDimension.failures).toEqual({
+      limit: 3,
+      spent: 1,
+      source: "value",
+    });
+    expect(context.budgetProgress?.breach).toMatchObject({
+      dimension: "wallclock",
+      limit: 10,
+      spent: 12,
     });
   });
 });

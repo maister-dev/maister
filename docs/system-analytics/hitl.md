@@ -37,18 +37,23 @@ artifact protocol used when the worker is checkpointed.
     re-runs the node) or `"abandon"` (run → `Failed`). Human-actor-only
     (a machine token can never answer it, like `human`); honors the run's
     `onStuck` axis (notify_only ⇒ HITL row but no assignment).
-  - `budget_breach` — **(ADR-101 — Implemented)** opened by the execution-policy
+  - `budget_breach` — **(ADR-101 / ADR-125 — Implemented)** opened by the execution-policy
     `budget` axis watchdog when a run/task-scope token spend reaches 100%
     `maxTokens` (the ESCALATE rung, see [`execution-policy.md`](execution-policy.md)).
     The live session is halted (idle-checkpoint, so spend stops) and the run is
     parked `NeedsInput` with the **worktree KEPT**; the card shows the breached
-    *scope* (Run/Task/Tree), *meter*, and *current vs limit*. The human answers
-    **Raise & resume** (writes `runs.budget_state.ceilingOverride` for the breached
-    scope, clears `notified[scope]`, and resumes) or **Abandon** (run → `Failed`
-    with `BUDGET_EXCEEDED`). Human-actor-only (like `human`/`infra_recovery`); the
-    `runId` is derived server-side from the HITL row, never a body field. A
-    `tree`-scope breach has NO escalate rung — it terminates without a
-    `budget_breach` HITL.
+    _scope_ (Run/Task/Tree), _meter_, current vs limit, node progress, diff
+    counts, gate summary, wall-clock, and resume count. The human answers one
+    of four server-guarded options: **Raise & continue** (writes
+    `runs.budget_state.ceilingOverride` for the breached scope, clears
+    `notified[scope]`, and resumes), **Restart fresh** (old run → `Failed`,
+    new attempt through the standard launcher with a fresh policy snapshot),
+    **Park the result** (snapshot/export the worktree, archive the preserved ref,
+    run → `Abandoned`), or **Discard** (run → `Failed` with `BUDGET_EXCEEDED`,
+    optionally dropping the owned worktree/branch immediately). Human-actor-only
+    (like `human`/`infra_recovery`); the `runId` is derived server-side from the
+    HITL row, never a body field. A `tree`-scope breach has NO escalate rung —
+    it terminates without a `budget_breach` HITL.
   - `hook_trip` — **(ADR-108 — Implemented)** opened by `escalateHookTrip` when
     a halting guardrail breaker (`repetition` / `no_progress`) trips on an
     unattended run (see [`guardrail-hooks.md`](guardrail-hooks.md)). The live
@@ -105,11 +110,11 @@ enum | array`.
 
 ## Three kinds — when to use which
 
-| Kind | Trigger | Form? | Loop on reject? | Wire |
-| ---- | ------- | ----- | --------------- | ---- |
-| `permission` | Agent emits `session/request_permission` mid-step | No (binary) | No | Live ACP request/response |
-| `form` | Agent writes `needs-input.json` mid-step, OR a graph `form` (intake) node is reached (`runFormCollect` writes it) | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
-| `human` | Flow step `type: human` (linear) or `human_review` node finish (graph) | Yes (`form_schema`) | Linear: **Implemented — M17** (`on_reject.goto_step` atomic repark, bounded by `maxLoops=5`). Graph (M11a): **declared decisions** drive the rework loop | Artifact only |
+| Kind         | Trigger                                                                                                           | Form?               | Loop on reject?                                                                                                                                          | Wire                             |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `permission` | Agent emits `session/request_permission` mid-step                                                                 | No (binary)         | No                                                                                                                                                       | Live ACP request/response        |
+| `form`       | Agent writes `needs-input.json` mid-step, OR a graph `form` (intake) node is reached (`runFormCollect` writes it) | Yes (`form_schema`) | No                                                                                                                                                       | Artifact + ACP message OR resume |
+| `human`      | Flow step `type: human` (linear) or `human_review` node finish (graph)                                            | Yes (`form_schema`) | Linear: **Implemented — M17** (`on_reject.goto_step` atomic repark, bounded by `maxLoops=5`). Graph (M11a): **declared decisions** drive the rework loop | Artifact only                    |
 
 The decision tree:
 
@@ -477,12 +482,12 @@ sharing the
 [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)
 `prepareDiff` pipeline + byte-cap guard:
 
-| scope | base → head | base source |
-| --- | --- | --- |
-| `run` (default) | `workspace.baseCommit..branch` | current behavior |
-| `since-last-review` | `<prev-review-visit-sha>..branch` | `hitl_requests.review_tip_sha` (stamped per review visit) |
-| `last-node` | `<pre-attempt-checkpoint-sha>..branch` | ADR-079 checkpoint ref of the latest completed agent node |
-| `uncommitted` | `HEAD` vs working tree + untracked as additions | temp `GIT_INDEX_FILE` intent-to-add; the real index is never mutated |
+| scope               | base → head                                     | base source                                                          |
+| ------------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
+| `run` (default)     | `workspace.baseCommit..branch`                  | current behavior                                                     |
+| `since-last-review` | `<prev-review-visit-sha>..branch`               | `hitl_requests.review_tip_sha` (stamped per review visit)            |
+| `last-node`         | `<pre-attempt-checkpoint-sha>..branch`          | ADR-079 checkpoint ref of the latest completed agent node            |
+| `uncommitted`       | `HEAD` vs working tree + untracked as additions | temp `GIT_INDEX_FILE` intent-to-add; the real index is never mutated |
 
 A scope whose base ref is missing (pre-feature run, first review visit) is
 hidden/disabled with a reason, never an error. Consumer-project review gates list
@@ -506,7 +511,7 @@ the project-grouped `HitlInboxList` of unified `HitlCard`s (respond controls
 reuse `components/board/run-hitl-response.tsx`) above the social inbox, while the
 portfolio home collapses both blocks into one compact "Needs you (N)" summary
 card that links to `/inbox`. The card's three disclosure tiers and lazy
-`inbox-context` load are detailed in the *Inbox card redesign* section below. The
+`inbox-context` load are detailed in the _Inbox card redesign_ section below. The
 numeric badge follows the canonical `needsYou` formula owned by
 [`social-board.md`](social-board.md).
 
@@ -686,7 +691,7 @@ fields:
 ## Expectations
 
 - HITL kind is exactly `permission | form | human | infra_recovery |
-  budget_breach | hook_trip` (on `hitl_requests.kind`); the three core kinds map
+budget_breach | hook_trip` (on `hitl_requests.kind`); the three core kinds map
   to wire per the three-kinds table verbatim, and the three engine-opened kinds
   (`infra_recovery`, `budget_breach` — ADR-101; `hook_trip` — ADR-108) park
   `NeedsInput` with the worktree kept and are Human-actor-only (a token actor
@@ -713,7 +718,7 @@ fields:
   branch tip (`headCommit`) at each review-gate visit; it is the base for the
   `since-last-review` scope.
 - **(M30 — Implemented, ADR-078)** Gate-chat is available iff `runs.status ∈
-  {NeedsInput, NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND the
+{NeedsInput, NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND the
   run's active `run_sessions.acp_session_id ≠ null`; `permission`-kind and
   `HumanWorking` are excluded.
 - **(M30 — Implemented, ADR-078)** A gate-chat turn NEVER resolves the HITL, NEVER
@@ -722,7 +727,7 @@ fields:
 - **(M30 — Implemented, ADR-078)** The L3 mutation sensor captures ONE baseline at the
   first chat turn, runs unconditionally + fail-closed on every turn, reverts any
   detected mutation to that baseline, sets `gate_chat_messages.mutation_reverted =
-  true`, and emits an audit signal — even under permissive runners where L2 is a
+true`, and emits an audit signal — even under permissive runners where L2 is a
   no-op; the baseline ref is GC'd on HITL resolve and deleted by any dirty-resolution.
 - **(M30 — Implemented, ADR-078)** Chat input is NEVER Mustache-evaluated; the L1
   preamble is server-side; the chat-prompt `stepId` marker uses a dash
@@ -742,13 +747,13 @@ fields:
   the Flow's declared version raises `CONFIG` with both versions
   named.
 - Form-schema field types are exactly `string | number |
-  boolean | enum | array`; unknown type refused with `CONFIG` at Flow
+boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   load.
 - **(Implemented)** Operator responses go through
   `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond`. Permission
   responses are routed through the supervisor's
   `POST /sessions/:id/input` (permission-only, discriminated `action:
-  "select" | "cancel"`). Form / `human` responses are written via
+"select" | "cancel"`). Form / `human` responses are written via
   `atomicWriteJson` (tmp + rename) to
   `.maister/<slug>/runs/<runId>/input-<stepId>.json` by the web tier
   AFTER the row-level CAS claim succeeds — concurrent double-submits
@@ -769,7 +774,28 @@ fields:
   A same-payload retry on a delivered row (`respondedAt IS NOT NULL`)
   MUST be idempotent (200 + re-queue resume). The respond route MUST
   reject any `runs.status` outside `PENDING_FORM_RUN_STATUS =
-  {NeedsInput, NeedsInputIdle}` with 422.
+{NeedsInput, NeedsInputIdle}` with 422.
+- **(Implemented — ADR-125)** `budget_breach` uses the same row-lock discipline
+  but with a four-option decision claim gate. Incoming payloads are canonicalized
+  before comparison: legacy `{optionId:"raise", raiseTo:N}` and new
+  `{optionId:"raise", response:{dimension?, newLimit:N}}` compare as the same
+  raise decision, and bare `{optionId:"abandon"}` remains valid. Already
+  delivered rows compare stored option+payload: same → idempotent; different →
+  `CONFLICT`. Restart claims write `response.stage="claimed"` with
+  `respondedAt IS NULL`; park claims write `response.stage="preserving"`
+  because preservation is its first resumable phase. Same-payload retries
+  re-drive the recorded stage.
+  `stage:"failed"` is pre-boundary and can be overwritten by any new option.
+  `stage:"relaunch_failed"` is final because the old run is already terminal.
+  Unavailable options fail with `PRECONDITION` before claim.
+- **(Implemented — ADR-125)** The budget option matrix is server-owned and
+  exposed on pending HITL DTOs as `availableOptions`; the UI MUST render that
+  array instead of reimplementing predicates. Active non-failed claimed rows
+  expose `claimStage` and are excluded from needs-you counts until completion or
+  `stage:"failed"`. The progress DTO is read-only and field-degraded:
+  missing diff/worktree → `diff:null`, missing cost rollup →
+  `source:"no-data"` instead of fake zero, missing gate/ledger data →
+  `unknown`/zero counts.
 - **(Implemented — M17)** `hitl_requests.criticality` MUST be written
   once at creation from the flow-author-declared `human` node/step
   `criticality` field (`low | medium | high | critical`) and MUST NOT
@@ -791,14 +817,18 @@ fields:
 - **(Implemented — M17)** Both HITL ext routes (`GET …/hitl` scope
   `hitl:read`, `POST …/hitl/{id}/respond` scope `hitl:respond`) MUST
   enforce `handleExt({requireScope:true})`: the route's `scopeLabel`
-  MUST be in `actor.scopes` or equal `"*"`; absent scope MUST return
-  403. A token actor MUST NOT create or skip a gate; gate placement
+  MUST be in `actor.scopes` or equal `"*"`; absent scope MUST return 403. A token actor MUST NOT create or skip a gate; gate placement
   stays the Flow's.
 - **(Implemented)** `GET /api/v1/ext/hitl` MUST require a global personal user
   token and `hitl:inbox:read`, derive visible projects from the owner user, and
   write a `token_audit_log` row with `project_id IS NULL`.
-- **(Implemented)** Human, infra-recovery, and budget-breach HITL through REST or
-  MCP MUST require exact `hitl:respond:human`; `*` alone MUST return 403.
+- **(Implemented)** Human HITL through REST
+  can be answered by a global personal user token with exact
+  `hitl:respond:human`. Infra-recovery and budget-breach remain
+  session-auth-only in ADR-125; external/MCP token actors still answer only
+  `permission` and `form` unless a later ADR opens those kinds explicitly.
+  For `human`, MCP/REST MUST require exact `hitl:respond:human`; `*` alone
+  MUST return 403.
 - **(Implemented — M17)** The flat `steps[]` `on_reject` loop MUST be
   bounded by `maxLoops` (default 5). Exceeding `maxLoops` MUST raise
   `MaisterError("CONFIG")` (parity with the graph runner's `rework.maxLoops`
@@ -820,22 +850,22 @@ fields:
   `runs.currentStepId` to the goto target in a single CAS transaction.
 - **(Implemented)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
-  * **Phase 1 (atomic claim).** `response` is stored under a row-level
+  - **Phase 1 (atomic claim).** `response` is stored under a row-level
     `SELECT ... FOR UPDATE` only if the row is unclaimed, or claimed
     with the same payload (idempotent retry). Different payload on
     retry → 409.
-  * **Phase 2 (durable side-effect).** For permission, the supervisor
+  - **Phase 2 (durable side-effect).** For permission, the supervisor
     deferred is resolved; for form/human, `input-<stepId>.json` is
     written from the STORED response.
-  * **Phase 3 (delivered marker).** `responded_at` is set ONLY after
+  - **Phase 3 (delivered marker).** `responded_at` is set ONLY after
     the side-effect succeeds. The route does NOT flip `runs.status`
     back to `Running` — the runner owns that transition on resume so
     its `isResume` gate can match.
-  * Retry classification: supervisor 410 → `HITL_TIMEOUT` terminal
+  - Retry classification: supervisor 410 → `HITL_TIMEOUT` terminal
     (run → `Failed`); supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
     retryable (row stays claimed, `responded_at` NULL); artifact
     write I/O failure → 503 retryable.
-  * Same-payload retry on an already-delivered row re-queues
+  - Same-payload retry on an already-delivered row re-queues
     `runFlow` so a process crash between Phase 3 commit and the
     original microtask cannot strand the run in `NeedsInput`.
 - **(Designed)** HITL request lost during supervisor shutdown is
@@ -861,7 +891,7 @@ fields:
   permission.
 - **(Implemented M8 — Codex review fix #2)** Claimed-but-undelivered
   HITL intents (`hitl_requests.response IS NOT NULL AND respondedAt
-  IS NULL` joined to `runs.status='NeedsInput'`) are recovered on web
+IS NULL` joined to `runs.status='NeedsInput'`) are recovered on web
   boot via `web/lib/runs/resume-recovery.ts:runResumeRecoverySweep`.
   The sweep runs in `web/instrumentation.ts` BEFORE the keep-alive
   sweeper and either re-schedules `scheduleResumedSessionDrive`
@@ -882,7 +912,7 @@ fields:
   [`social-board.md`](social-board.md) (`pendingHitlCount` = the
   `getCrossProjectHitlInbox(userId, role)` count), with RBAC scoping preserved.
 - **(Implemented)** Every `HitlItem` MUST carry `taskTitle` and `stage {label,
-  type}`; the stage `type` MUST be resolved by compiling each distinct flow
+type}`; the stage `type` MUST be resolved by compiling each distinct flow
   revision's manifest at most ONCE per list query (never per item), and an
   unresolved `step_id` MUST degrade to the raw label rather than throw.
 - **(Implemented)** `GET /api/runs/{runId}/inbox-context` MUST be read-only, gated by
@@ -1002,11 +1032,11 @@ on the locked `runs.status` read inside the M7 atomic-claim transaction:
 
 ### Two-phase commit on the idle branch
 
-| Phase | Layer | DB write | Side-effect |
-|-------|-------|----------|-------------|
-| 1 | web route | M7 atomic-claim: `UPDATE hitl_requests SET response=:intent WHERE id=:id AND respondedAt IS NULL` (FOR UPDATE) | none |
-| 2 | web route → `resumeRun(runId)` | inside `markResumed`: `UPDATE runs SET status='NeedsInput', keepalive_until=now+N, checkpoint_at=null WHERE id=:id AND status='NeedsInputIdle'` | `POST /sessions` to supervisor with `resumeSessionId` |
-| 3 | runner-agent permission_request handler | `UPDATE hitl_requests SET respondedAt=now(), response=<merged>` | `POST /sessions/:id/input` to supervisor with the new `requestId` |
+| Phase | Layer                                   | DB write                                                                                                                                        | Side-effect                                                       |
+| ----- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1     | web route                               | M7 atomic-claim: `UPDATE hitl_requests SET response=:intent WHERE id=:id AND respondedAt IS NULL` (FOR UPDATE)                                  | none                                                              |
+| 2     | web route → `resumeRun(runId)`          | inside `markResumed`: `UPDATE runs SET status='NeedsInput', keepalive_until=now+N, checkpoint_at=null WHERE id=:id AND status='NeedsInputIdle'` | `POST /sessions` to supervisor with `resumeSessionId`             |
+| 3     | runner-agent permission_request handler | `UPDATE hitl_requests SET respondedAt=now(), response=<merged>`                                                                                 | `POST /sessions/:id/input` to supervisor with the new `requestId` |
 
 The route NEVER awaits Phase 3 — it returns 202 immediately after
 Phase 2's 201 from the supervisor. Phase 3 happens asynchronously
@@ -1027,12 +1057,12 @@ within the runner-agent's event loop over the next 5-60 s.
 
 The classification table mirrors `resumeRun(runId)` results:
 
-| Supervisor status | MaisterError | HTTP | Run status |
-|---|---|---|---|
-| 5xx / network | EXECUTOR_UNAVAILABLE | 503 `{terminal:false}` | unchanged (NeedsInputIdle) |
-| 400 spawn refused | CHECKPOINT | 410 `{terminal:true}` | Failed (via failResumedRun) |
-| 201 empty acpSessionId | CHECKPOINT | 410 `{terminal:true}` | Failed |
-| 404 unknown checkpoint | CHECKPOINT | 410 `{terminal:true}` | Failed |
+| Supervisor status      | MaisterError         | HTTP                   | Run status                  |
+| ---------------------- | -------------------- | ---------------------- | --------------------------- |
+| 5xx / network          | EXECUTOR_UNAVAILABLE | 503 `{terminal:false}` | unchanged (NeedsInputIdle)  |
+| 400 spawn refused      | CHECKPOINT           | 410 `{terminal:true}`  | Failed (via failResumedRun) |
+| 201 empty acpSessionId | CHECKPOINT           | 410 `{terminal:true}`  | Failed                      |
+| 404 unknown checkpoint | CHECKPOINT           | 410 `{terminal:true}`  | Failed                      |
 
 ### Resume-prompt watchdog (deferred enforcement)
 

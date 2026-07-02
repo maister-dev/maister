@@ -8,7 +8,7 @@ import type {
 
 import path from "node:path";
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
@@ -34,19 +34,66 @@ import {
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { runFlow } from "@/lib/flows/runner";
 import { runtimeRoot } from "@/lib/runtime-root";
+import {
+  classifyManualTaskLaunchability,
+  getLatestFlowRun,
+} from "@/lib/runs/launchability";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import {
+  assertBudgetBreachOptionAvailable,
+  budgetBreachClaimRef,
+  budgetMeterToPolicyField,
+  evaluateBudgetBreachClaim,
+  parseBudgetBreachResponse,
+  type BudgetBreachAvailabilityContext,
+  type BudgetBreachDecision,
+  type BudgetBreachMeter,
+  type BudgetBreachScope,
+  type BudgetBreachStagedDecision,
+} from "@/lib/runs/budget-breach-fork";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
-import { cancelPermission, deliverPermission } from "@/lib/supervisor-client";
+import { launchRun } from "@/lib/services/runs";
+import { actorForUserId } from "@/lib/social/activity";
+import { addTaskComment } from "@/lib/social/comments";
+import { getOpenRelationBlockers } from "@/lib/social/relations";
+import {
+  cancelPermission,
+  checkpointSession,
+  deliverPermission,
+} from "@/lib/supervisor-client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import {
+  archiveWorkbench,
+  createWorkbenchHandoffBranch,
+  getWorkbenchHandoffMetadata,
+  isCleanWorkbenchPrecondition,
+  snapshotWorkbenchCommit,
+  dropWorkbench,
+} from "@/lib/workbench-lifecycle/service";
+import { headCommit, localBranchHead, remoteBranchHead } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { assignments, hitlRequests, projects, runs, scratchRuns } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  assignments,
+  hitlRequests,
+  projects,
+  runs,
+  scratchRuns,
+  tasks,
+  workspaces,
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "hitl-service",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+type BudgetRestartLaunchResult = {
+  runId: string;
+  status: string;
+  queuePosition?: number;
+};
 
 const TERMINAL_RUN_STATUS = new Set([
   "Failed",
@@ -359,6 +406,8 @@ export type RespondInput = {
     // Cost-budget governance: the raised token ceiling for a budget_breach
     // raise (validated fail-closed at the sink). May also ride `response`.
     raiseTo?: unknown;
+    // ADR-125: tolerant top-level alias for response.dropWorkspace on abandon.
+    dropWorkspace?: unknown;
   };
 };
 
@@ -1734,24 +1783,732 @@ async function handleInfraRecoveryResponse(args: {
   );
 }
 
-// Maps the breached meter to the BudgetLimits field a raise writes. tokens →
-// maxTokens (escalate ceiling), failures → consecutiveFailures, wallclock →
-// wallClockMinutes (tree only). hardMaxTokens is left untouched — the watchdog's
-// tokenCeilings() re-derives the terminate band from the RAISED maxTokens
-// (× MAISTER_BUDGET_HARD_MULTIPLIER) whenever a raise lifted maxTokens without
-// also setting an explicit hard, so a raised run is not hard-terminated at the
-// stale snapshot hard ceiling.
-const BUDGET_METER_FIELD = {
-  tokens: "maxTokens",
-  failures: "consecutiveFailures",
-  wallclock: "wallClockMinutes",
-} as const;
-
 type BudgetBreachSchema = {
-  scope: BudgetScope;
-  meter: keyof typeof BUDGET_METER_FIELD;
+  scope: BudgetBreachScope;
+  meter: BudgetBreachMeter;
   limit: number;
 };
+
+async function loadBudgetBreachAvailabilityContext(args: {
+  db: any;
+  runRow: any;
+  runId: string;
+}): Promise<BudgetBreachAvailabilityContext> {
+  const workspaceRows = await args.db
+    .select({
+      id: workspaces.id,
+      removedAt: workspaces.removedAt,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.runId, args.runId));
+  const workspace = workspaceRows[0] ?? null;
+
+  return {
+    runKind: args.runRow.runKind,
+    status: args.runRow.status,
+    taskId: args.runRow.taskId ?? null,
+    flowId: args.runRow.flowId ?? null,
+    agentId: args.runRow.agentId ?? null,
+    parentRunId: args.runRow.parentRunId ?? null,
+    agentWorkspace: args.runRow.agentWorkspace ?? null,
+    hasOwnedWorkspace: workspace !== null && workspace.removedAt === null,
+  };
+}
+
+function parseBudgetBreachSchema(schemaValue: unknown): BudgetBreachSchema {
+  const value =
+    schemaValue !== null && typeof schemaValue === "object"
+      ? (schemaValue as Partial<BudgetBreachSchema>)
+      : {};
+
+  if (
+    (value.scope !== "run" &&
+      value.scope !== "task" &&
+      value.scope !== "tree") ||
+    (value.meter !== "tokens" &&
+      value.meter !== "failures" &&
+      value.meter !== "wallclock") ||
+    typeof value.limit !== "number" ||
+    !Number.isInteger(value.limit)
+  ) {
+    throw new MaisterError("CONFIG", "invalid budget_breach schema");
+  }
+
+  return {
+    scope: value.scope,
+    meter: value.meter,
+    limit: value.limit,
+  };
+}
+
+function stagedBudgetDecision(
+  decision: BudgetBreachDecision,
+  stage: BudgetBreachStagedDecision["stage"],
+  extra: Partial<Pick<BudgetBreachStagedDecision, "ref" | "error">> = {},
+): BudgetBreachStagedDecision {
+  return { ...decision, stage, ...extra } as BudgetBreachStagedDecision;
+}
+
+async function setBudgetBreachStage(args: {
+  db: any;
+  hitlRequestId: string;
+  decision: BudgetBreachDecision;
+  stage: BudgetBreachStagedDecision["stage"];
+  ref?: string;
+  error?: string;
+  respondedAt?: Date | null;
+}): Promise<void> {
+  await args.db
+    .update(hitlRequests)
+    .set({
+      response: stagedBudgetDecision(args.decision, args.stage, {
+        ...(args.ref ? { ref: args.ref } : {}),
+        ...(args.error ? { error: args.error } : {}),
+      }),
+      respondedAt: args.respondedAt ?? null,
+    })
+    .where(eq(hitlRequests.id, args.hitlRequestId));
+}
+
+async function terminalizeBudgetRun(args: {
+  tx: any;
+  runId: string;
+  reason: "budget_abandoned" | "budget_restart";
+  assignmentReason: string;
+}): Promise<{
+  projectId: string | null;
+  taskId: string | null;
+  flowId: string | null;
+  runKind: string;
+  parentRunId: string | null;
+} | null> {
+  const terminal = await args.tx
+    .update(runs)
+    .set({ status: "Failed", endedAt: new Date() })
+    .where(
+      and(
+        eq(runs.id, args.runId),
+        inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+      ),
+    )
+    .returning({
+      projectId: runs.projectId,
+      taskId: runs.taskId,
+      flowId: runs.flowId,
+      runKind: runs.runKind,
+      parentRunId: runs.parentRunId,
+    });
+  const row = terminal[0] ?? null;
+
+  if (row?.projectId) {
+    await emitWebhookEvent({
+      db: args.tx,
+      type: "run.failed",
+      projectId: row.projectId,
+      runId: args.runId,
+      data: { errorCode: "BUDGET_EXCEEDED", reason: args.reason },
+    });
+    await emitDomainEvent({
+      db: args.tx,
+      kind: "run.failed",
+      projectId: row.projectId,
+      runId: args.runId,
+      taskId: row.taskId,
+      actor: { type: "system", id: null },
+      parentRunId: row.parentRunId,
+      payload: {
+        runId: args.runId,
+        taskId: row.taskId,
+        flowId: row.flowId,
+        runKind: row.runKind,
+        errorCode: "BUDGET_EXCEEDED",
+        reason: args.reason,
+      },
+    });
+  }
+
+  await systemCloseActiveAssignmentsForRun({
+    db: args.tx,
+    runId: args.runId,
+    reason: args.assignmentReason,
+  });
+
+  return row;
+}
+
+async function markBudgetParkedRun(args: {
+  db: any;
+  runId: string;
+  ref: string | null;
+}): Promise<"Abandoned"> {
+  await args.db.transaction(async (tx: any) => {
+    const endedAt = new Date();
+    const updated = await tx
+      .update(runs)
+      .set({
+        status: "Abandoned",
+        currentStepId: null,
+        endedAt,
+      })
+      .where(
+        and(
+          eq(runs.id, args.runId),
+          inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+        ),
+      )
+      .returning({
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
+      });
+    const row = updated[0] ?? null;
+
+    if (!row) {
+      const existing = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, args.runId));
+
+      if (existing[0]?.status === "Abandoned") return;
+
+      throw new MaisterError(
+        "CONFLICT",
+        `run ${args.runId} was not park-terminalizable after preservation`,
+      );
+    }
+
+    if (row.projectId) {
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.abandoned",
+        projectId: row.projectId,
+        runId: args.runId,
+        data: {
+          source: "budget_breach",
+          reason: "budget_parked",
+          ref: args.ref,
+        },
+      });
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.abandoned",
+        projectId: row.projectId,
+        runId: args.runId,
+        taskId: row.taskId,
+        actor: { type: "system", id: null },
+        parentRunId: row.parentRunId,
+        payload: {
+          runId: args.runId,
+          taskId: row.taskId,
+          flowId: row.flowId,
+          runKind: row.runKind,
+          reason: "budget_parked",
+          ref: args.ref,
+        },
+      });
+    }
+
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId: args.runId,
+      reason: "budget breach parked",
+    });
+  });
+
+  return "Abandoned";
+}
+
+async function loadBudgetRestartOptions(args: {
+  db: any;
+  runId: string;
+  runRow: any;
+}): Promise<{
+  taskId: string;
+  projectId: string;
+  flowId?: string;
+  runnerId?: string;
+  baseBranch?: string;
+  targetBranch?: string;
+}> {
+  if (!args.runRow.taskId || !args.runRow.projectId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `budget restart requires a task-bound project run: ${args.runId}`,
+    );
+  }
+
+  const workspaceRows = await args.db
+    .select({
+      baseBranch: workspaces.baseBranch,
+      targetBranch: workspaces.targetBranch,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.runId, args.runId));
+  const activeSession = await loadActiveRunSession(args.db, args.runId);
+  const runnerId = activeSession?.runnerId ?? undefined;
+  const workspace = workspaceRows[0] ?? null;
+
+  return {
+    taskId: args.runRow.taskId,
+    projectId: args.runRow.projectId,
+    ...(args.runRow.flowId ? { flowId: args.runRow.flowId } : {}),
+    ...(runnerId ? { runnerId } : {}),
+    ...(workspace?.baseBranch ? { baseBranch: workspace.baseBranch } : {}),
+    ...(workspace?.targetBranch
+      ? { targetBranch: workspace.targetBranch }
+      : {}),
+  };
+}
+
+async function preflightParkExportBranch(args: {
+  db: any;
+  runId: string;
+  branchName: string;
+}): Promise<void> {
+  const rows = await args.db
+    .select({
+      worktreePath: workspaces.worktreePath,
+      parentRepoPath: workspaces.parentRepoPath,
+      removedAt: workspaces.removedAt,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.runId, args.runId));
+  const workspace = rows[0] ?? null;
+
+  if (!workspace || workspace.removedAt) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `workspace unavailable for budget park export: ${args.runId}`,
+    );
+  }
+
+  const [head, localHead, metadata] = await Promise.all([
+    headCommit({ worktreePath: workspace.worktreePath }),
+    localBranchHead({
+      projectRepoPath: workspace.parentRepoPath,
+      branch: args.branchName,
+    }),
+    getWorkbenchHandoffMetadata(args.runId, { allowPausedBudgetRun: true }),
+  ]);
+
+  if (localHead !== null && localHead !== head) {
+    throw new MaisterError(
+      "CONFLICT",
+      `local branch already exists at a different commit: ${args.branchName}`,
+    );
+  }
+
+  if (!metadata.defaultRemote) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `no git remote configured for budget park export: ${args.runId}`,
+    );
+  }
+
+  const remoteHead = await remoteBranchHead({
+    projectRepoPath: workspace.parentRepoPath,
+    remote: metadata.defaultRemote,
+    branch: args.branchName,
+  });
+
+  if (remoteHead !== null && remoteHead !== head) {
+    throw new MaisterError(
+      "CONFLICT",
+      `remote branch already exists at a different commit: ${metadata.defaultRemote}/${args.branchName}`,
+    );
+  }
+}
+
+async function addBudgetSystemComment(args: {
+  taskId: string | null;
+  body: string;
+}): Promise<void> {
+  if (!args.taskId) return;
+
+  await addTaskComment({
+    taskId: args.taskId,
+    body: args.body,
+    actor: actorForUserId(null),
+    activityPayloadExtra: { source: "budget_breach" },
+  });
+}
+
+async function addBudgetSystemCommentBestEffort(args: {
+  taskId: string | null;
+  body: string;
+  runId: string;
+  hitlRequestId: string;
+  phase: string;
+}): Promise<void> {
+  try {
+    await addBudgetSystemComment(args);
+  } catch (err) {
+    log.warn(
+      {
+        runId: args.runId,
+        hitlRequestId: args.hitlRequestId,
+        phase: args.phase,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "budget_breach system comment failed after decision side effect",
+    );
+  }
+}
+
+async function checkpointBudgetLiveSession(args: {
+  db: any;
+  runId: string;
+  hitlRequestId: string;
+  phase: "restart" | "park";
+}): Promise<boolean> {
+  const active = await loadActiveRunSession(args.db, args.runId);
+
+  if (!active?.acpSessionId) {
+    return false;
+  }
+
+  const sessionId = active.acpSessionId;
+
+  await checkpointSession(sessionId);
+  log.info(
+    {
+      runId: args.runId,
+      hitlRequestId: args.hitlRequestId,
+      sessionName: active.sessionName,
+      sessionId,
+      phase: args.phase,
+    },
+    "budget_breach checkpointed live session before composite side effects",
+  );
+
+  return true;
+}
+
+async function preflightBudgetRestartLaunchability(args: {
+  db: any;
+  runId: string;
+  runRow: any;
+}): Promise<void> {
+  const taskId = args.runRow.taskId as string | null;
+
+  if (!taskId || !args.runRow.projectId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `budget restart requires a task-bound project run: ${args.runId}`,
+    );
+  }
+
+  const [task] = await args.db
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      status: tasks.status,
+      triageStatus: tasks.triageStatus,
+    })
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+
+  if (!task) {
+    throw new MaisterError("PRECONDITION", `task not found: ${taskId}`);
+  }
+
+  await requireProjectAction(task.projectId, "launchRun");
+
+  const activeTaskRuns = await args.db
+    .select({ id: runs.id, status: runs.status })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.taskId, taskId),
+        ne(runs.id, args.runId),
+        inArray(runs.status, [
+          "Pending",
+          "Running",
+          "NeedsInput",
+          "NeedsInputIdle",
+          "HumanWorking",
+          "WaitingOnChildren",
+          "Review",
+        ]),
+      ),
+    )
+    .limit(1);
+  const otherActive = activeTaskRuns.filter(
+    (run: { id: string }) => run.id !== args.runId,
+  );
+
+  if (otherActive.length > 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `task is not launchable (classification: busy)`,
+    );
+  }
+
+  const latestFlowRun = await getLatestFlowRun(taskId, args.db);
+  const latestForRestart =
+    latestFlowRun === null || latestFlowRun.id === args.runId
+      ? ({ status: "Failed" } as const)
+      : latestFlowRun;
+  const openBlockers =
+    (await getOpenRelationBlockers([taskId], args.db)).get(taskId) ?? [];
+  const launchability = classifyManualTaskLaunchability(
+    task,
+    latestForRestart,
+    { openBlockers },
+  );
+
+  if (launchability !== "launchable") {
+    const blockerSuffix =
+      launchability === "blocked"
+        ? ` — blocked by ${openBlockers.map((b) => `${b.key}-${b.number}`).join(", ")}`
+        : "";
+
+    throw new MaisterError(
+      "PRECONDITION",
+      `task is not launchable (classification: ${launchability})${blockerSuffix}`,
+    );
+  }
+}
+
+function budgetRestartTriggerPayload(
+  runId: string,
+  hitlRequestId: string,
+): Record<string, unknown> {
+  return {
+    kind: "budget_restart",
+    oldRunId: runId,
+    hitlRequestId,
+  };
+}
+
+async function findExistingBudgetRestartRun(args: {
+  db: any;
+  runId: string;
+  hitlRequestId: string;
+  runRow: any;
+}): Promise<BudgetRestartLaunchResult | null> {
+  const predicates = [ne(runs.id, args.runId)];
+
+  if (isPostgres()) {
+    predicates.push(
+      sql`${runs.triggerPayload}->>'kind' = 'budget_restart'`,
+      sql`${runs.triggerPayload}->>'oldRunId' = ${args.runId}`,
+      sql`${runs.triggerPayload}->>'hitlRequestId' = ${args.hitlRequestId}`,
+    );
+  }
+
+  if (args.runRow.taskId) {
+    predicates.push(eq(runs.taskId, args.runRow.taskId));
+  }
+
+  if (args.runRow.agentId) {
+    predicates.push(eq(runs.agentId, args.runRow.agentId));
+  }
+
+  const rows = await args.db
+    .select({
+      id: runs.id,
+      status: runs.status,
+      taskId: runs.taskId,
+      agentId: runs.agentId,
+      triggerPayload: runs.triggerPayload,
+    })
+    .from(runs)
+    .where(and(...predicates))
+    .orderBy(desc(runs.startedAt))
+    .limit(20);
+  const existing =
+    rows.find((row: Record<string, unknown>) => {
+      const payload = row.triggerPayload;
+
+      return (
+        row.id !== args.runId &&
+        (args.runRow.taskId ? row.taskId === args.runRow.taskId : true) &&
+        (args.runRow.agentId ? row.agentId === args.runRow.agentId : true) &&
+        payload !== null &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        (payload as Record<string, unknown>).kind === "budget_restart" &&
+        (payload as Record<string, unknown>).oldRunId === args.runId &&
+        (payload as Record<string, unknown>).hitlRequestId ===
+          args.hitlRequestId
+      );
+    }) ?? null;
+
+  if (!existing) return null;
+
+  log.info(
+    {
+      runId: args.runId,
+      hitlRequestId: args.hitlRequestId,
+      newRunId: existing.id,
+      status: existing.status,
+    },
+    "[FIX:budget-breach-restart] recovered existing restart run from trigger payload",
+  );
+
+  return { runId: String(existing.id), status: String(existing.status) };
+}
+
+async function launchBudgetRestart(args: {
+  db: any;
+  actor: HitlActor;
+  runId: string;
+  runRow: any;
+  hitlRequestId: string;
+}): Promise<BudgetRestartLaunchResult> {
+  const existing = await findExistingBudgetRestartRun(args);
+
+  if (existing !== null) return existing;
+
+  const triggerPayload = budgetRestartTriggerPayload(
+    args.runId,
+    args.hitlRequestId,
+  );
+
+  if (args.runRow.runKind === "agent") {
+    if (!args.runRow.agentId || !args.runRow.projectId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `agent budget restart requires agent/project ids: ${args.runId}`,
+      );
+    }
+    await requireProjectAction(args.runRow.projectId, "launchRun");
+    const { launchAgentRun } = await import("@/lib/agents/launch");
+    const result = await launchAgentRun({
+      agentId: args.runRow.agentId,
+      projectId: args.runRow.projectId,
+      taskId: args.runRow.taskId ?? null,
+      launchOverrideRunnerId: null,
+      trigger: {
+        source: "manual",
+        payload: triggerPayload,
+      },
+      workspace: args.runRow.agentWorkspace ?? null,
+      db: args.db,
+    });
+
+    if ("deduped" in result) {
+      throw new MaisterError(
+        "CONFLICT",
+        `agent restart deduped by trigger event for run ${args.runId}`,
+      );
+    }
+
+    return result;
+  }
+
+  const restartOptions = await loadBudgetRestartOptions({
+    db: args.db,
+    runId: args.runId,
+    runRow: args.runRow,
+  });
+
+  return launchRun(
+    {
+      taskId: restartOptions.taskId,
+      ...(restartOptions.flowId ? { flowId: restartOptions.flowId } : {}),
+      ...(restartOptions.runnerId ? { runnerId: restartOptions.runnerId } : {}),
+      ...(restartOptions.baseBranch
+        ? { baseBranch: restartOptions.baseBranch }
+        : {}),
+      ...(restartOptions.targetBranch
+        ? { targetBranch: restartOptions.targetBranch }
+        : {}),
+      triggerSource: "manual",
+      triggerPayload,
+      allowConcurrent: false,
+    },
+    {
+      actorUserId: args.actor.kind === "user" ? args.actor.userId : null,
+      authorize: async (projectId, action = "launchRun") => {
+        await requireProjectAction(projectId, action);
+      },
+    },
+    args.db,
+  );
+}
+
+async function performBudgetPark(args: {
+  db: any;
+  decision: Extract<BudgetBreachDecision, { optionId: "park" }>;
+  runId: string;
+  hitlRequestId: string;
+}): Promise<{ runStatus: string; ref: string | null }> {
+  await checkpointBudgetLiveSession({
+    db: args.db,
+    runId: args.runId,
+    hitlRequestId: args.hitlRequestId,
+    phase: "park",
+  });
+
+  if (args.decision.mode === "snapshot") {
+    let snapshotRef: string | null = null;
+
+    try {
+      const snapshot = await snapshotWorkbenchCommit(args.runId, {
+        commitMessage: `Budget park snapshot for ${args.runId}`,
+        allowPausedBudgetRun: true,
+      });
+
+      snapshotRef = snapshot.commit;
+    } catch (err) {
+      if (!isCleanWorkbenchPrecondition(err)) {
+        throw err;
+      }
+    }
+
+    const archive = await archiveWorkbench(args.runId, {
+      allowPausedBudgetRun: true,
+    });
+
+    return {
+      runStatus: "Abandoned",
+      ref: snapshotRef ?? archive.archivedBranch,
+    };
+  }
+
+  if (!args.decision.branchName) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "budget park export requires branchName",
+    );
+  }
+
+  try {
+    await snapshotWorkbenchCommit(args.runId, {
+      commitMessage: `Budget park snapshot for ${args.runId}`,
+      allowPausedBudgetRun: true,
+    });
+  } catch (err) {
+    if (!isCleanWorkbenchPrecondition(err)) {
+      throw err;
+    }
+  }
+
+  const metadata = await getWorkbenchHandoffMetadata(args.runId, {
+    allowPausedBudgetRun: true,
+  });
+
+  if (!metadata.defaultRemote) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `no git remote configured for budget park export: ${args.runId}`,
+    );
+  }
+
+  const handoff = await createWorkbenchHandoffBranch(args.runId, {
+    remote: metadata.defaultRemote,
+    handoffBranch: args.decision.branchName,
+    allowPausedBudgetRun: true,
+  });
+
+  await archiveWorkbench(args.runId, { allowPausedBudgetRun: true });
+
+  return { runStatus: "Abandoned", ref: handoff.pushedRef };
+}
 
 // budget_breach (cost-budget governance ESCALATE rung): a human chooses
 // `raise` or `abandon` on a run paused at a token/failure/wall-clock ceiling.
@@ -1767,10 +2524,16 @@ async function handleBudgetBreachResponse(args: {
   db: any;
   hitlRow: any;
   runRow: any;
-  body: { optionId?: string; raiseTo?: unknown; response?: unknown };
+  body: {
+    optionId?: string;
+    raiseTo?: unknown;
+    response?: unknown;
+    dropWorkspace?: unknown;
+  };
   runId: string;
   hitlRequestId: string;
   startedAt: number;
+  actor: HitlActor;
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
 }): Promise<NextResponse> {
   const {
@@ -1781,41 +2544,47 @@ async function handleBudgetBreachResponse(args: {
     runId,
     hitlRequestId,
     startedAt,
+    actor,
     recordSuccessAudit,
   } = args;
-  const decision = body.optionId;
+  const breach = parseBudgetBreachSchema(hitlRow.schema);
+  const scope = breach.scope as BudgetScope;
+  const meter = breach.meter;
+  const decision = parseBudgetBreachResponse(body, {
+    breachedMeter: meter,
+    breachedLimit: breach.limit,
+  });
+  const availabilityContext = await loadBudgetBreachAvailabilityContext({
+    db,
+    runRow,
+    runId,
+  });
+  const initialClaim = evaluateBudgetBreachClaim({
+    storedResponse: hitlRow.response,
+    respondedAt: hitlRow.respondedAt,
+    incoming: decision,
+  });
+  const needsPreClaimChecks =
+    initialClaim.kind === "fresh" || initialClaim.kind === "re-claimable";
 
-  if (decision !== "raise" && decision !== "abandon") {
-    throw new MaisterError(
-      "PRECONDITION",
-      'budget_breach response requires optionId "raise" or "abandon"',
-    );
+  if (needsPreClaimChecks) {
+    assertBudgetBreachOptionAvailable(decision.optionId, availabilityContext);
   }
 
-  const breach = (hitlRow.schema ?? {}) as BudgetBreachSchema;
-  const scope = breach.scope;
-  const meter = breach.meter;
+  if (needsPreClaimChecks && decision.optionId === "restart") {
+    await preflightBudgetRestartLaunchability({ db, runId, runRow });
+  }
 
-  // Validate the raise amount at the sink BEFORE opening the transaction.
-  // Out-of-range ≠ missing: a present-but-invalid raise is fail-closed
-  // (PRECONDITION), never silently dropped. raiseTo OR response carries it.
-  let raiseTo = 0;
-
-  if (decision === "raise") {
-    const raw = body.raiseTo ?? body.response;
-    const candidate = typeof raw === "number" ? raw : Number(raw);
-
-    if (
-      !Number.isInteger(candidate) ||
-      candidate <= 0 ||
-      candidate <= breach.limit
-    ) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `budget_breach raise requires a positive integer greater than the breached limit (${breach.limit})`,
-      );
-    }
-    raiseTo = candidate;
+  if (
+    needsPreClaimChecks &&
+    decision.optionId === "park" &&
+    decision.mode === "export"
+  ) {
+    await preflightParkExportBranch({
+      db,
+      runId,
+      branchName: decision.branchName ?? "",
+    });
   }
 
   const outcome = await db.transaction(async (tx: any) => {
@@ -1828,6 +2597,18 @@ async function handleBudgetBreachResponse(args: {
       );
     }
     if (locked.respondedAt) {
+      const claim = evaluateBudgetBreachClaim({
+        storedResponse: locked.response,
+        respondedAt: locked.respondedAt,
+        incoming: decision,
+      });
+
+      if (claim.kind !== "idempotent") {
+        throw new MaisterError(
+          "CONFLICT",
+          "budget_breach response already delivered with a different payload",
+        );
+      }
       const [r] = await tx
         .select({ status: runs.status })
         .from(runs)
@@ -1839,59 +2620,83 @@ async function handleBudgetBreachResponse(args: {
       } as const;
     }
 
+    const claim = evaluateBudgetBreachClaim({
+      storedResponse: locked.response,
+      respondedAt: null,
+      incoming: decision,
+    });
+
+    if (claim.kind === "conflict") {
+      throw new MaisterError(
+        "CONFLICT",
+        "budget_breach response conflicts with the stored claim",
+      );
+    }
+
+    if (claim.kind === "re-drive") {
+      if (decision.optionId === "restart") {
+        return {
+          transition: "restart-claimed",
+          reDrive: true,
+          stage: claim.stage,
+          ref: budgetBreachClaimRef(locked.response),
+        } as const;
+      }
+      if (decision.optionId === "park") {
+        return {
+          transition: "park-claimed",
+          reDrive: true,
+          stage: claim.stage,
+          ref: budgetBreachClaimRef(locked.response),
+        } as const;
+      }
+    }
+
+    if (decision.optionId === "restart") {
+      await tx
+        .update(hitlRequests)
+        .set({
+          response: stagedBudgetDecision(decision, "claimed"),
+          respondedAt: null,
+        })
+        .where(eq(hitlRequests.id, hitlRequestId));
+
+      return {
+        transition: "restart-claimed",
+        reDrive: false,
+        stage: "claimed",
+        ref: null,
+      } as const;
+    }
+
+    if (decision.optionId === "park") {
+      await tx
+        .update(hitlRequests)
+        .set({
+          response: stagedBudgetDecision(decision, "preserving"),
+          respondedAt: null,
+        })
+        .where(eq(hitlRequests.id, hitlRequestId));
+
+      return {
+        transition: "park-claimed",
+        reDrive: false,
+        stage: "preserving",
+        ref: null,
+      } as const;
+    }
+
     await tx
       .update(hitlRequests)
-      .set({ respondedAt: new Date() })
+      .set({ response: decision, respondedAt: new Date() })
       .where(eq(hitlRequests.id, hitlRequestId));
 
-    if (decision === "abandon") {
-      const terminal = await tx
-        .update(runs)
-        .set({ status: "Failed", endedAt: new Date() })
-        .where(
-          and(
-            eq(runs.id, runId),
-            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
-          ),
-        )
-        .returning({
-          projectId: runs.projectId,
-          taskId: runs.taskId,
-          flowId: runs.flowId,
-          runKind: runs.runKind,
-          parentRunId: runs.parentRunId,
-        });
-
-      if (terminal.length > 0) {
-        await emitWebhookEvent({
-          db: tx,
-          type: "run.failed",
-          projectId: terminal[0].projectId,
-          runId,
-          data: { errorCode: "BUDGET_EXCEEDED", reason: "budget_abandoned" },
-        });
-        await emitDomainEvent({
-          db: tx,
-          kind: "run.failed",
-          projectId: terminal[0].projectId,
-          runId,
-          taskId: terminal[0].taskId,
-          actor: { type: "system", id: null },
-          parentRunId: terminal[0].parentRunId,
-          payload: {
-            runId,
-            taskId: terminal[0].taskId,
-            flowId: terminal[0].flowId,
-            runKind: terminal[0].runKind,
-            errorCode: "BUDGET_EXCEEDED",
-            reason: "budget_abandoned",
-          },
-        });
-      }
-      await systemCloseActiveAssignmentsForRun({
-        db: tx,
+    if (decision.optionId === "abandon") {
+      await terminalizeBudgetRun({
+        tx,
         runId,
-        reason: "budget breach abandoned",
+        reason: "budget_abandoned",
+        assignmentReason: "budget breach abandoned",
       });
       await recordSuccessAudit?.(tx, 200);
 
@@ -1908,10 +2713,10 @@ async function handleBudgetBreachResponse(args: {
       .where(eq(runs.id, runId));
     const prior = (current?.budgetState ?? null) as BudgetState | null;
     const priorOverride: BudgetAxis = prior?.ceilingOverride ?? {};
-    const field = BUDGET_METER_FIELD[meter];
+    const field = budgetMeterToPolicyField(meter);
     const nextOverride: BudgetAxis = {
       ...priorOverride,
-      [scope]: { ...(priorOverride[scope] ?? {}), [field]: raiseTo },
+      [scope]: { ...(priorOverride[scope] ?? {}), [field]: decision.newLimit },
     };
     const nextNotified = { ...(prior?.notified ?? {}) };
 
@@ -1948,7 +2753,7 @@ async function handleBudgetBreachResponse(args: {
     logExecPolicyAction({
       runId,
       kind: "budget_raised",
-      detail: { scope, meter, raiseTo },
+      detail: { scope, meter, raiseTo: decision.newLimit },
     });
     await recordSuccessAudit?.(tx, 200);
 
@@ -1979,9 +2784,289 @@ async function handleBudgetBreachResponse(args: {
     return NextResponse.json({ ok: true, idempotent: true }, { status: 200 });
   }
 
+  if (outcome.transition === "restart-claimed") {
+    let terminalRow: Awaited<ReturnType<typeof terminalizeBudgetRun>> | null =
+      null;
+    let oldRunTerminalized = false;
+
+    try {
+      const oldRunAlreadyTerminal =
+        outcome.reDrive &&
+        (outcome.stage === "terminalized" ||
+          outcome.stage === "relaunch_failed");
+
+      oldRunTerminalized = oldRunAlreadyTerminal;
+
+      if (!oldRunAlreadyTerminal) {
+        await checkpointBudgetLiveSession({
+          db,
+          runId,
+          hitlRequestId,
+          phase: "restart",
+        });
+
+        terminalRow = await db.transaction(async (tx: any) => {
+          const row = await terminalizeBudgetRun({
+            tx,
+            runId,
+            reason: "budget_restart",
+            assignmentReason: "budget breach restart",
+          });
+
+          if (row === null) {
+            throw new MaisterError(
+              "CONFLICT",
+              `run ${runId} is no longer awaiting a budget restart`,
+            );
+          }
+
+          await setBudgetBreachStage({
+            db: tx,
+            hitlRequestId,
+            decision,
+            stage: "terminalized",
+          });
+
+          return row;
+        });
+        oldRunTerminalized = true;
+      }
+
+      const launched = await launchBudgetRestart({
+        db,
+        actor,
+        runId,
+        runRow,
+        hitlRequestId,
+      });
+
+      await setBudgetBreachStage({
+        db,
+        hitlRequestId,
+        decision,
+        stage: "terminalized",
+        ref: launched.runId,
+        respondedAt: new Date(),
+      });
+      await addBudgetSystemCommentBestEffort({
+        taskId: terminalRow?.taskId ?? runRow.taskId ?? null,
+        body: `Budget breach restart: old run ${runId} was terminalized and relaunched as ${launched.runId}.`,
+        runId,
+        hitlRequestId,
+        phase: "restart-launched",
+      });
+
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          newRunId: launched.runId,
+          status: launched.status,
+          queuePosition: launched.queuePosition,
+          latencyMs: Date.now() - startedAt,
+        },
+        "budget_breach restarted — new run launched",
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: "Failed",
+          newRunId: launched.runId,
+          newRunStatus: launched.status,
+          queuePosition: launched.queuePosition,
+        },
+        { status: 202 },
+      );
+    } catch (err) {
+      if (oldRunTerminalized) {
+        const existingRestart = await findExistingBudgetRestartRun({
+          db,
+          runId,
+          hitlRequestId,
+          runRow,
+        });
+
+        if (existingRestart !== null) {
+          await setBudgetBreachStage({
+            db,
+            hitlRequestId,
+            decision,
+            stage: "terminalized",
+            ref: existingRestart.runId,
+            respondedAt: new Date(),
+          });
+          await addBudgetSystemCommentBestEffort({
+            taskId: terminalRow?.taskId ?? runRow.taskId ?? null,
+            body: `Budget breach restart: old run ${runId} was terminalized and relaunched as ${existingRestart.runId}.`,
+            runId,
+            hitlRequestId,
+            phase: "restart-redrive-existing",
+          });
+
+          return NextResponse.json(
+            {
+              ok: true,
+              runStatus: "Failed",
+              newRunId: existingRestart.runId,
+              newRunStatus: existingRestart.status,
+              queuePosition: existingRestart.queuePosition,
+            },
+            { status: 202 },
+          );
+        }
+      }
+
+      await setBudgetBreachStage({
+        db,
+        hitlRequestId,
+        decision,
+        stage: oldRunTerminalized ? "relaunch_failed" : "failed",
+        error: err instanceof Error ? err.message : String(err),
+        respondedAt: oldRunTerminalized ? new Date() : null,
+      });
+
+      if (oldRunTerminalized) {
+        await addBudgetSystemCommentBestEffort({
+          taskId: terminalRow?.taskId ?? runRow.taskId ?? null,
+          body: `Budget breach restart failed after terminalizing run ${runId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          runId,
+          hitlRequestId,
+          phase: "restart-failed",
+        });
+      }
+
+      throw err;
+    }
+  }
+
+  if (outcome.transition === "park-claimed") {
+    let preservationRecorded = false;
+
+    try {
+      if (decision.optionId !== "park") {
+        throw new MaisterError("CONFIG", "budget park decision lost narrowing");
+      }
+
+      const parked =
+        outcome.reDrive && outcome.stage === "terminalized"
+          ? { runStatus: "Abandoned", ref: outcome.ref ?? null }
+          : await performBudgetPark({
+              db,
+              decision,
+              runId,
+              hitlRequestId,
+            });
+
+      if (!(outcome.reDrive && outcome.stage === "terminalized")) {
+        await setBudgetBreachStage({
+          db,
+          hitlRequestId,
+          decision,
+          stage: "terminalized",
+          ...(parked.ref ? { ref: parked.ref } : {}),
+        });
+      }
+
+      preservationRecorded = true;
+
+      const runStatus = await markBudgetParkedRun({
+        db,
+        runId,
+        ref: parked.ref,
+      });
+
+      await setBudgetBreachStage({
+        db,
+        hitlRequestId,
+        decision,
+        stage: "terminalized",
+        ...(parked.ref ? { ref: parked.ref } : {}),
+        respondedAt: new Date(),
+      });
+      await addBudgetSystemCommentBestEffort({
+        taskId: runRow.taskId ?? null,
+        body: `Budget breach parked run ${runId}${
+          parked.ref ? ` at ${parked.ref}` : ""
+        }.`,
+        runId,
+        hitlRequestId,
+        phase: "parked",
+      });
+
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          mode: decision.mode,
+          ref: parked.ref,
+          runStatus,
+          latencyMs: Date.now() - startedAt,
+        },
+        "budget_breach parked — work preserved",
+      );
+
+      return NextResponse.json(
+        { ok: true, runStatus, ref: parked.ref },
+        { status: 200 },
+      );
+    } catch (err) {
+      if (preservationRecorded) {
+        log.warn(
+          {
+            runId,
+            hitlRequestId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "[FIX:budget-breach-park] preservation recorded; leaving staged marker retryable",
+        );
+
+        throw err;
+      }
+
+      await setBudgetBreachStage({
+        db,
+        hitlRequestId,
+        decision,
+        stage: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+
+      throw err;
+    }
+  }
+
   if (outcome.transition === "abandoned") {
+    if (
+      decision.optionId === "abandon" &&
+      decision.dropWorkspace &&
+      availabilityContext.hasOwnedWorkspace
+    ) {
+      try {
+        await dropWorkbench(runId);
+      } catch (err) {
+        log.warn(
+          {
+            runId,
+            hitlRequestId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "budget_breach dropWorkspace failed after abandon; TTL cleanup remains available",
+        );
+      }
+    }
+
     log.info(
-      { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
+      {
+        runId,
+        hitlRequestId,
+        optionId: decision.optionId,
+        dropRequested:
+          decision.optionId === "abandon" ? decision.dropWorkspace : false,
+        latencyMs: Date.now() - startedAt,
+      },
       "budget_breach abandoned — run Failed",
     );
 
@@ -2005,10 +3090,11 @@ async function handleBudgetBreachResponse(args: {
     {
       runId,
       hitlRequestId,
-      decision,
+      optionId: decision.optionId,
       scope,
       meter,
-      raiseTo,
+      previousLimit: breach.limit,
+      newLimit: decision.optionId === "raise" ? decision.newLimit : null,
       runKind: runRow.runKind,
       latencyMs: Date.now() - startedAt,
     },
@@ -2340,6 +3426,7 @@ export async function respondToHitl(
       runId,
       hitlRequestId,
       startedAt,
+      actor,
       recordSuccessAudit,
     });
   }

@@ -11,7 +11,7 @@
 ## JTBD
 
 When several things across my projects are waiting on me, I want one full-width,
-project-grouped surface where each card explains *what the question is about* —
+project-grouped surface where each card explains _what the question is about_ —
 not only its answer options — so I can clear most of my queue without opening a
 run, and dive into the run only when I need the full task context.
 
@@ -22,10 +22,10 @@ artifacts first.
 
 ## Roles & capabilities
 
-| Role | Sees |
-| --- | --- |
-| Global admin | Pending HITL and unread mentions across **all** non-archived projects |
-| Global member / viewer | Pending HITL and unread mentions for projects they are a member of |
+| Role                   | Sees                                                                  |
+| ---------------------- | --------------------------------------------------------------------- |
+| Global admin           | Pending HITL and unread mentions across **all** non-archived projects |
+| Global member / viewer | Pending HITL and unread mentions for projects they are a member of    |
 
 Scoping is inherited from `getCrossProjectHitlInbox` / `getInboxItems` /
 `getUnreadInboxCount` (admin = all, member = own); a foreign run or inbox item is
@@ -71,6 +71,16 @@ the project-group header) with three disclosure tiers:
   chip** · **Last agent message** · **stage progress** (`done/total`) · an optional
   **Changes** line (`N files · +X −Y`) · the respond controls
   (`hitl-decision-controls`) · `View run`.
+- **Budget breach HITL (expanded):** renders the ADR-125 progress block before
+  the controls: breached dimension, spent vs limit, overshoot, per-dimension
+  budget observations, node progress, diff numstat when available, gate counts,
+  wall-clock, and resume count. Decision buttons are rendered only from the
+  server-provided `availableOptions`: **Raise & continue**, **Restart fresh**,
+  **Park the result**, and **Discard**. Park exposes snapshot/export mode with a
+  branch-name input only for export; discard exposes the destructive
+  drop-workspace confirmation only when the server marks drop available.
+  `claimStage` disables controls for an active composite and re-enables failed
+  pre-boundary claims.
 - **Consensus HITL (expanded):** the same card chrome renders a `consensus`
   stage chip, draft count, current round, material-axis disagreement summary,
   and capped draft/debate excerpts from `inbox-context`. Decision controls are
@@ -102,13 +112,14 @@ stateDiagram-v2
   fields.
 - `getInboxItems(userId, role)` → unread mentions/comments.
 - `getUnreadInboxCount(userId, role)` → unread count; `needsYou = HITL count +
-  unread` (the canonical fan-out — see
+unread` (the canonical fan-out — see
   [`../system-analytics/social-board.md`](../system-analytics/social-board.md)).
 - `GET /api/runs/{runId}/inbox-context` — the lazy per-card
-  expand payload `{ lastAgentMessage, gates[], diff, progress }` plus bounded
-  consensus draft/debate refs when the HITL schema discriminator is
-  `consensus_resolution`; `readBoard` on the run's project; read-only,
-  partial-null on a missing peek. Behavior in
+  expand payload `{ lastAgentMessage, gates[], diff, progress }` plus
+  `budgetProgress`, `availableOptions`, and `claimStage` for budget-breach
+  cards, and bounded consensus draft/debate refs when the HITL schema
+  discriminator is `consensus_resolution`; `readBoard` on the run's project;
+  read-only, partial-null on a missing peek. Behavior in
   [`../system-analytics/hitl.md`](../system-analytics/hitl.md).
 - Mutations: `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (inline
   respond), `PATCH /api/inbox/[itemId]/read`, `POST /api/inbox/read-all`.
@@ -118,7 +129,8 @@ stateDiagram-v2
 `inbox` (page eyebrow/title/subtitle/empty + the new card keys: `needsActionTitle`,
 `waiting`, `respond`, `viewRun`, `contextLoading`, `contextError`, `retry`,
 `gatesEvidence`, `lastAgentMessage`, `stageProgress`, `changes`, `changesSummary`,
-`moreGates`, `staleEvidence`) and `portfolio` (reused notification block labels).
+`moreGates`, `staleEvidence`, plus budget progress/decision labels) and
+`portfolio` (reused notification block labels).
 The card reuses `run.*` (criticality / HITL decision) and `board.*` (assignment)
 labels; node-type and gate-status are shown by icon, not text, so no `stage.*` /
 `gate.*` keys exist.
@@ -140,6 +152,17 @@ resolution. EN + RU parity is required.
 - Clearing the last consensus HITL updates `needsYou` through the existing inbox
   count path.
 
+## Budget-breach acceptance criteria
+
+- The card shows the progress block in both full-source and degraded states
+  without surfacing file contents.
+- The option set exactly matches the server `availableOptions`; the UI has no
+  independent availability matrix.
+- A destructive workspace drop requires confirmation and is hidden when the run
+  has no owned workspace.
+- Active staged claims are not counted in needs-you and render disabled
+  controls; `stage:"failed"` rows are answerable again.
+
 ## Linked artifacts
 
 - Behavior: [`../system-analytics/hitl.md`](../system-analytics/hitl.md)
@@ -150,7 +173,8 @@ resolution. EN + RU parity is required.
   [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
   (canonical `needsYou`, inbox fanout).
 - ADRs: [ADR-057](../decisions.md#adr-057) (HITL hybrid surface),
-  [ADR-083](../decisions.md#adr-083) (social board / inbox).
+  [ADR-083](../decisions.md#adr-083) (social board / inbox),
+  [ADR-125](../decisions.md#adr-125-budget-breach-four-way-fork-with-staged-claims).
 - Plan: `.ai-factory/plans/feature-inbox-card-redesign.md`.
 - Source: `web/app/(app)/inbox/page.tsx`, `web/lib/queries/needs-you.ts`,
   `web/lib/queries/portfolio.ts` (`getCrossProjectHitlInbox`),

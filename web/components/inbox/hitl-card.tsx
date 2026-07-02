@@ -265,6 +265,8 @@ export function HitlCard({
             compact
             canAct={canAct}
             criticality={item.criticality}
+            availableOptions={item.availableOptions}
+            claimStage={item.claimStage}
             hitlRequestId={item.hitlRequestId}
             kind={item.kind}
             options={item.options}
@@ -336,6 +338,13 @@ export function HitlCard({
                 compact
                 canAct={canAct}
                 criticality={item.criticality}
+                availableOptions={
+                  item.kind === "budget_breach"
+                    ? (context?.availableOptions ?? item.availableOptions)
+                    : item.availableOptions
+                }
+                budgetProgress={context?.budgetProgress ?? null}
+                claimStage={context?.claimStage ?? item.claimStage}
                 hitlRequestId={item.hitlRequestId}
                 kind={item.kind}
                 options={item.options}

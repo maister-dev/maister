@@ -27,6 +27,9 @@ const bodySchema = z.object({
   // Raise fails PRECONDITION. (budget_breach is human-actor-only, so the ext
   // route never reaches this branch and needs no equivalent field.)
   raiseTo: z.number().int().positive().optional(),
+  // ADR-125 budget discard/drop compatibility alias. The service canonicalizes
+  // this with response.dropWorkspace after deriving the HITL kind from DB state.
+  dropWorkspace: z.boolean().optional(),
 });
 
 function errorResponse(

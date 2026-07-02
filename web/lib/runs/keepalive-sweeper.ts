@@ -833,7 +833,7 @@ async function resolveProjectSlug(
 }
 
 // effective(scope, meter) = ceilingOverride?.[scope]?.[meter] ?? snapshot[scope]?.[meter].
-function effectiveLimit(
+export function effectiveLimit(
   snapshotBudget: BudgetAxis,
   override: BudgetAxis | undefined,
   scope: BudgetScope,
@@ -848,7 +848,7 @@ function effectiveLimit(
 }
 
 // A positive, finite limit is "set". 0 / null / negative = unlimited (fail-open).
-function isSetLimit(value: number | null): value is number {
+export function isSetLimit(value: number | null): value is number {
   return value !== null && Number.isFinite(value) && value > 0;
 }
 
