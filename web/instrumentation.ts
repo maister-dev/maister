@@ -24,18 +24,34 @@ export async function register(): Promise<void> {
   // =1 enforces in any env. Runs before the sweeps, which would fail anyway on a
   // behind DB. See lib/db/check-migrations.ts + `pnpm db:check`.
   try {
-    const { findPendingMigrations } = await import("@/lib/db/check-migrations");
+    const { findPendingMigrations, findPendingBrainMigrations } = await import(
+      "@/lib/db/check-migrations"
+    );
     const { getDb } = await import("@/lib/db/client");
     const db = getDb();
     // The drift check is Postgres-only; the SQLite getDb() branch has no
-    // `execute`, so narrow to the Postgres client before checking.
+    // `execute`, so narrow to the Postgres client before checking. ADR-122: the
+    // brain lineage has its OWN journal + ledger table, so it is checked
+    // separately and reported with its own `db:migrate:brain` command.
     const pending = "execute" in db ? await findPendingMigrations(db) : [];
+    const pendingBrain =
+      "execute" in db ? await findPendingBrainMigrations(db) : [];
 
-    if (pending.length > 0) {
-      const msg =
-        `[migrations] ${pending.length} migration(s) recorded in the journal ` +
-        `are NOT applied to the database: ${pending.join(", ")}. ` +
-        "Run `pnpm db:migrate`.";
+    if (pending.length > 0 || pendingBrain.length > 0) {
+      const parts: string[] = [];
+
+      if (pending.length > 0)
+        parts.push(
+          `${pending.length} main migration(s) NOT applied: ` +
+            `${pending.join(", ")} — run \`pnpm db:migrate\``,
+        );
+      if (pendingBrain.length > 0)
+        parts.push(
+          `${pendingBrain.length} brain migration(s) NOT applied: ` +
+            `${pendingBrain.join(", ")} — run \`pnpm db:migrate:brain\``,
+        );
+
+      const msg = `[migrations] ${parts.join("; ")}.`;
       const strict =
         process.env.MAISTER_STRICT_MIGRATIONS === "1" ||
         (process.env.NODE_ENV === "development" &&

@@ -589,6 +589,13 @@
       "when": 1782846934269,
       "tag": "0087_shocking_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1782982938394,
+      "tag": "0088_mixed_hercules",
+      "breakpoints": true
     }
   ]
 }

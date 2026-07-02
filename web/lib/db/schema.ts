@@ -142,6 +142,10 @@ export const projects = pgTable("projects", {
   // ADR-121: per-project queue settings (`{ edgeDrain?, maxInFlightAuto? }`).
   // NULL ⇒ env defaults apply (resolved live at admission, never snapshotted).
   taskQueueSettings: jsonb("task_queue_settings").$type<TaskQueueSettings | null>(),
+  // ADR-122 (Project Brain): Brain on for this repo. Enable-gate refuses CONFIG
+  // unless platform embedding + distill config are set (a project can never be
+  // enabled into an unharvest-able state).
+  brainEnabled: boolean("brain_enabled").notNull().default(false),
   taskKey: text("task_key").notNull().unique(),
   nextTaskNumber: integer("next_task_number").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -269,6 +273,15 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
     .notNull()
     .references(() => platformAcpRunners.id),
   webhooksEnabled: boolean("webhooks_enabled").notNull().default(true),
+  // ADR-122 (Project Brain): embedding-provider + distillation config. All
+  // nullable. The API key is an `env:NAME` reference only — never the raw
+  // secret. Changing embedding_model/embedding_dimensions is a reindex
+  // generation, never a schema migration.
+  embeddingBaseUrl: text("embedding_base_url"),
+  embeddingModel: text("embedding_model"),
+  embeddingDimensions: integer("embedding_dimensions"),
+  embeddingApiKeyRef: text("embedding_api_key_ref"),
+  distillModel: text("distill_model"),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),
@@ -876,6 +889,11 @@ export const agentProjectLinks = pgTable(
     // null → all declared defaults. Sparse: only keys the operator set. The
     // resolved (defaults ← instance) map is snapshotted onto runs.agent_config.
     config: jsonb("config").$type<Record<string, unknown>>(),
+    // ADR-122 (Project Brain): per-link access axes. can_read_brain gates
+    // recall; can_write_brain gates retain (separate axis — a read grant NEVER
+    // opens retain, the memory-poisoning guard). can_propose_brain = Sub-project C.
+    canReadBrain: boolean("can_read_brain").notNull().default(false),
+    canWriteBrain: boolean("can_write_brain").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -1328,6 +1346,12 @@ export const runs = pgTable(
       () => localPackages.id,
       { onDelete: "cascade" },
     ),
+    // ADR-122 (Project Brain): the launch-time decision to include ambient Brain
+    // context for this run. NULL = inherit flow/agent config. Snapshots are
+    // written at consumption (T4.2/T4.3), NEVER here (no recall/embedding at
+    // launch). A dedicated column is required — runs.runner_snapshot no longer
+    // exists post-M42 (moved to run_sessions).
+    brainContext: boolean("brain_context"),
     flowId: text("flow_id").references(() => flows.id, {
       onDelete: "cascade",
     }),
