@@ -41,6 +41,10 @@ const postBodySchema = z
     // (every run status launchable; task gates flagged/blocked still refuse) for
     // an additive concurrent run. Defaults false ⇒ the manual busy gate.
     allowConcurrent: z.boolean().optional().default(false),
+    // ADR-122 (T5.3): opt this run into ambient Project Brain context. Persisted
+    // to runs.brain_context; null/absent = inherit the flow default at
+    // ambient-inject time (T4.3). No recall/embedding runs at launch.
+    brainContext: z.boolean().nullable().optional(),
   })
   .strict();
 
@@ -132,6 +136,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     executionPolicy: body.executionPolicy,
     packageVersions: body.packageVersions,
     allowConcurrent: body.allowConcurrent,
+    brainContext: body.brainContext,
   };
   const ctx = {
     actorUserId: user.id,

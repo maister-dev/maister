@@ -49,6 +49,10 @@ const patchBodySchema = z
     // (ADR-111) Per-instance config values keyed by declared param key. SET =
     // an object; CLEAR = explicit null → falls back to the declared defaults.
     configValues: z.record(z.unknown()).nullable().optional(),
+    // ADR-122 (T5.3): per-link Project Brain axes — read gates memory_recall,
+    // write gates memory_retain (separate axis). Both default false.
+    canReadBrain: z.boolean().optional(),
+    canWriteBrain: z.boolean().optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
   })
   .strict()

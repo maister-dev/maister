@@ -200,6 +200,12 @@ export type LaunchRunInput = {
   // admission funnel (the auto-launch poll / slot-free gate), never by a manual or
   // ADR-119 force-relaunch launch.
   queueAdmitted?: boolean;
+  // ADR-122 (T5.3): the launch-time "include ambient Project Brain context"
+  // decision, persisted to runs.brain_context. null/absent = inherit the
+  // flow/agent default at ambient-inject time. The launch persists ONLY this
+  // boolean — no recall/embedding call, no snapshot insert happens here
+  // (snapshots are consumption-time: T4.3 ambient / T4.2 explicit).
+  brainContext?: boolean | null;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -1080,6 +1086,9 @@ export async function* launchRunStaged(
             // ADR-121 (INV-9): auto-drain origin marker, set ONLY for runs minted
             // by the unified admission funnel.
             queueAdmittedAt: input.queueAdmitted ? new Date() : null,
+            // ADR-122 (T5.3): persist the launch-time ambient-brain decision.
+            // null = inherit the flow default at ambient-inject time (T4.3).
+            brainContext: input.brainContext ?? null,
             status: "Pending",
             // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
             // the authoritative pin the runner resolves the manifest + bundle

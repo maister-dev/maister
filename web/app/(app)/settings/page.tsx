@@ -6,8 +6,10 @@ import { getTranslations } from "next-intl/server";
 import { getSessionUser } from "@/lib/authz";
 import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
+import { BrainSettingsPanel } from "@/components/settings/brain-settings-panel";
 import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
+import { getBrainSettings } from "@/lib/brain/settings";
 import { reconcilePlatformRunners } from "@/lib/acp-runners/native-defaults";
 import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
 import { getAdapterSupport } from "@/lib/acp-runners/schema";
@@ -142,6 +144,7 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 sidecars={runtime.sidecars}
               />
               <WebhooksPanel />
+              <BrainSettingsPanel settings={runtime.brainSettings} />
             </div>
           ) : null}
         </>
@@ -169,10 +172,11 @@ async function loadPlatformRuntimeView(
     diagnostics: diagnostics?.kind === "ready" ? diagnostics.diagnostics : null,
   });
 
-  const [runners, sidecars, settingsRows] = await Promise.all([
+  const [runners, sidecars, settingsRows, brainSettings] = await Promise.all([
     db.select().from(platformAcpRunners),
     db.select().from(platformRouterSidecars),
     db.select().from(platformRuntimeSettings),
+    getBrainSettings(db),
   ]);
 
   return {
@@ -181,5 +185,6 @@ async function loadPlatformRuntimeView(
     presets: platformRunnerPresetRows(),
     runners,
     sidecars,
+    brainSettings,
   };
 }

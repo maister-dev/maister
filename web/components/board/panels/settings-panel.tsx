@@ -10,8 +10,10 @@ import {
   ProjectGitSettingsControl,
   type RemoteItem,
 } from "@/components/board/panels/project-git-settings-control";
+import { ProjectBrainSettingsControl } from "@/components/board/panels/project-brain-settings-control";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
+import { getBrainSettings, isBrainFullyConfigured } from "@/lib/brain/settings";
 import { getDb } from "@/lib/db/client";
 import { listProjectRemotes, reconcileOriginRepoUrl } from "@/lib/git-remotes";
 import { resolveEdgeDrain } from "@/lib/tasks/queue-settings";
@@ -47,6 +49,10 @@ export async function SettingsPanel({
   // origin's repo_url/provider cache is healed best-effort on this read
   // (invariant B). A non-git repo / git error degrades to an empty table.
   let gitRemotes: RemoteItem[] = [];
+  // ADR-122: the project Brain toggle is enable-gated on the platform embedding
+  // provider + distillation model being configured (else the PATCH returns
+  // CONFIG). Read here so the control can hint when enabling would refuse.
+  let brainPlatformConfigured = false;
 
   if (isAdmin) {
     try {
@@ -63,6 +69,14 @@ export async function SettingsPanel({
       gitRemotes = await listProjectRemotes(project.repoPath);
     } catch {
       gitRemotes = [];
+    }
+
+    try {
+      brainPlatformConfigured = isBrainFullyConfigured(
+        await getBrainSettings(),
+      );
+    } catch {
+      brainPlatformConfigured = false;
     }
   }
 
@@ -143,6 +157,13 @@ export async function SettingsPanel({
           needsPersist={project.maisterYamlPath === null}
           projectSlug={project.slug}
           remotes={gitRemotes}
+        />
+      ) : null}
+      {isAdmin ? (
+        <ProjectBrainSettingsControl
+          brainEnabled={project.brainEnabled ?? false}
+          platformConfigured={brainPlatformConfigured}
+          projectSlug={project.slug}
         />
       ) : null}
       <div className="flex flex-col gap-px overflow-hidden rounded-xl border border-line bg-line">

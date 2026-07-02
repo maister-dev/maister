@@ -6,6 +6,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { getBrainSettings, isBrainFullyConfigured } from "@/lib/brain/settings";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -29,6 +30,9 @@ const patchBodySchema = z
     // ADR-121 §4.3: per-project queue settings. `null` clears the override (env
     // defaults apply). `.strict()` + `maxInFlightAuto.min(1)` reject bad input → 422.
     taskQueueSettings: taskQueueSettingsSchema.nullable().optional(),
+    // ADR-122: toggle the Project Brain for this repo. Enabling refuses CONFIG
+    // unless the platform embedding config AND distill_model are set (enable-gate).
+    brainEnabled: z.boolean().optional(),
   })
   .strict();
 
@@ -134,6 +138,19 @@ export async function PATCH(
       }
     }
 
+    // ADR-122 enable-gate: a project can never be enabled into an
+    // unharvest-able state — platform embedding config + distill_model first.
+    if (body.brainEnabled === true) {
+      const brainSettings = await getBrainSettings(db);
+
+      if (!isBrainFullyConfigured(brainSettings)) {
+        throw new MaisterError(
+          "CONFIG",
+          "Project Brain cannot be enabled until the platform embedding provider and distill model are configured",
+        );
+      }
+    }
+
     const update: Record<string, unknown> = {};
 
     if (body.runnerId !== undefined) {
@@ -144,6 +161,9 @@ export async function PATCH(
     }
     if (body.taskQueueSettings !== undefined) {
       update.taskQueueSettings = body.taskQueueSettings;
+    }
+    if (body.brainEnabled !== undefined) {
+      update.brainEnabled = body.brainEnabled;
     }
 
     if (Object.keys(update).length === 0) {

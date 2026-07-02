@@ -101,6 +101,24 @@ export async function seedBrainProject(
   return id;
 }
 
+// Seed the platform_runtime_settings singleton (needed by settings/reindex
+// tests) — a minimal runner + the singleton row. Idempotent.
+export async function seedPlatformSettings(db: NodePgDatabase): Promise<void> {
+  const runnerId = `r-${randomUUID().slice(0, 8)}`;
+
+  await db.insert(schema.platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "test-model",
+    provider: { kind: "anthropic" },
+  });
+  await db
+    .insert(schema.platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoNothing();
+}
+
 // A deterministic, network-free embedding client for retain/harvest/recall
 // integration tests. `vectorFor` controls similarity (default: a one-hot vector
 // keyed by a hash of the text, so distinct texts are orthogonal); tests that

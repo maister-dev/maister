@@ -168,6 +168,12 @@ export type LaunchAgentRunInput = {
   // child (exits Done, no Review round-trip) or a `worktree` child (produces a
   // diff to promote/rework). Absent/null ⇒ the agent-def default (unchanged).
   workspace?: "none" | "repo_read" | "worktree" | null;
+  // ADR-122 (T5.3): the launch-time "include ambient Project Brain context"
+  // decision persisted to runs.brain_context. null/absent = inherit. A standalone
+  // agent run recalls via the explicit MCP tools (gated by can_read_brain), so
+  // this is recorded for parity — the value only drives ambient inject on flow
+  // runs (writeRunContext is flow-only).
+  brainContext?: boolean | null;
   db?: Db;
 };
 
@@ -1094,6 +1100,9 @@ export async function launchAgentRun(
     // M37 Phase 10 (ADR-099): worktree allocation mode — read by the scheduler
     // serialization guard and by startAgentSession's shared-cwd resolution.
     workspaceMode: input.workspaceMode ?? null,
+    // ADR-122 (T5.3): persist the launch-time ambient-brain decision (recorded
+    // for parity; standalone agent runs recall via the explicit MCP tools).
+    brainContext: input.brainContext ?? null,
   };
 
   assertRunKindInvariant({

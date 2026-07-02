@@ -54,6 +54,11 @@ export type AttachedAgentView = {
   executionPolicyOverride: AgentExecutionPolicyRecommendation | null;
   // (ADR-111) Per-instance config values; null → all declared defaults.
   config: Record<string, unknown> | null;
+  // ADR-122 (T5.3): per-link Project Brain axes. `can_read_brain` gates
+  // memory_recall, `can_write_brain` gates memory_retain (separate axis — read
+  // never grants write; memory-poisoning guard). Both default false.
+  canReadBrain: boolean;
+  canWriteBrain: boolean;
   schedules: Array<{
     triggerType: "cron" | "event";
     cronExpr?: string;
@@ -192,6 +197,8 @@ export async function getProjectAgentsView(
     executionPolicyOverride: (link.executionPolicyOverride ??
       null) as AgentExecutionPolicyRecommendation | null,
     config: (link.config ?? null) as Record<string, unknown> | null,
+    canReadBrain: Boolean(link.canReadBrain),
+    canWriteBrain: Boolean(link.canWriteBrain),
     schedules: scheduleRows
       .filter((s) => s.agentId === agent.id)
       .map(scheduleToView),
@@ -292,6 +299,10 @@ export async function updateAgentLink(
       // (ADR-111) Per-instance config values; explicit null clears → fall back
       // to the declared defaults at resolve time.
       config?: Record<string, unknown> | null;
+      // ADR-122 (T5.3): per-link Project Brain axes — read gates recall, write
+      // gates retain (separate axis). Absent = untouched.
+      canReadBrain?: boolean;
+      canWriteBrain?: boolean;
       schedules?: AgentScheduleInput[];
     };
   },
@@ -371,6 +382,14 @@ export async function updateAgentLink(
     // explicit null clears it → resolve falls back to the declared defaults.
     if (input.patch.config !== undefined) {
       set.config = input.patch.config;
+    }
+    // ADR-122 (T5.3): brain axes are not-null booleans (no clear) — only an
+    // explicit true/false writes.
+    if (input.patch.canReadBrain !== undefined) {
+      set.canReadBrain = input.patch.canReadBrain;
+    }
+    if (input.patch.canWriteBrain !== undefined) {
+      set.canWriteBrain = input.patch.canWriteBrain;
     }
 
     await tx

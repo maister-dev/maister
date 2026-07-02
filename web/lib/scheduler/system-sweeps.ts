@@ -7,6 +7,7 @@ import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 import pino from "pino";
 
 import { runBrainDecaySweep } from "@/lib/brain/decay";
+import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
@@ -33,6 +34,10 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // ADR-122: the Project Brain decay sweep (self-throttled hourly; expires items
   // past expires_at). null when it never ran this process.
   brain: Awaited<ReturnType<typeof runBrainDecaySweep>> | null;
+  // ADR-122: the Project Brain reindex worker (drains brain_index_jobs after a
+  // model/dimension switch — re-embeds active items into the new generation).
+  // null when it threw before returning a summary.
+  brainReindex: Awaited<ReturnType<typeof runBrainReindexSweep>> | null;
 };
 
 const log = pino({
@@ -146,6 +151,18 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     log.error({ err: message }, "system_sweep brain decay threw");
   }
 
+  let brainReindex: SystemSweepSummary["brainReindex"] = null;
+
+  try {
+    brainReindex = await runBrainReindexSweep();
+    errors.push(...brainReindex.errors);
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`brain reindex sweep failed: ${message}`);
+    log.error({ err: message }, "system_sweep brain reindex threw");
+  }
+
   const gc = await runGcBundle();
 
   errors.push(...gc.errors);
@@ -155,6 +172,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     reconcile,
     cost,
     brain,
+    brainReindex,
     workspace: gc.workspace,
     revision: gc.revision,
     capabilities: gc.capabilities,
