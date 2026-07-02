@@ -107,7 +107,7 @@ const labels: TokenLabels = {
   errorGeneric: "Something went wrong",
 };
 
-const NOW = Date.UTC(2026, 5, 2);
+const NOW = Date.now();
 const DAY = 24 * 60 * 60 * 1000;
 
 const activeToken: TokenListItem = {
