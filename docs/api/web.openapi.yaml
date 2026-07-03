@@ -4536,6 +4536,111 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/promotion-hold:
+    put:
+      tags: [runs]
+      summary: (ADR-126) Hold a run's auto-promotion
+      description: |
+        Requires the `promoteRun` project action. Sets a `user`-sourced
+        `promotion_hold` so the auto-promotion sweep never considers the run.
+        Idempotent: a re-PUT overwrites the reason, keeps `source: user`.
+      operationId: putRunPromotionHold
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "200":
+          description: Hold set.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [hold]
+                properties:
+                  hold: { $ref: "#/components/schemas/PromotionHold" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [runs]
+      summary: (ADR-126) Clear a run's auto-promotion hold
+      description: |
+        Requires the `promoteRun` project action. Clears a hold of ANY source;
+        the run re-enters normal auto-promotion evaluation.
+      operationId: deleteRunPromotionHold
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Hold cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok, cleared]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  cleared: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/auto-promotion:
+    get:
+      tags: [runs]
+      summary: (ADR-126) Auto-promotion verdict for the run-detail panel
+      description: |
+        Requires `readBoard`. Returns the auto-promotion evaluation (non-null
+        only for a Review flow run) + the promoted lane
+        (`workspaces.promotion_lane`). The run-detail RSC embeds the SAME object
+        server-side for first paint.
+      operationId: getRunAutoPromotion
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Auto-promotion panel data.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunAutoPromotionPanel" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/hitl/{hitlRequestId}/chat:
     get:
       tags: [hitl]
@@ -11604,6 +11709,73 @@ components:
             Enabling refuses `422 CONFIG` unless platform embedding config AND
             `distill_model` are set (a project can never be enabled into an
             unharvest-able state). Disabling makes harvest + recall no-op.
+        autoPromotion:
+          type: object
+          allOf: [{ $ref: "#/components/schemas/AutoPromotionConfig" }]
+          nullable: true
+          description: |
+            (ADR-126) Per-project auto-promotion lane config
+            (`projects.auto_promotion`). Null clears to the shipped defaults with
+            the master toggle OFF. `.strict()` — an unknown key is `422 CONFIG`.
+    AutoPromotionConfig:
+      type: object
+      additionalProperties: false
+      required: [enabled, lanes]
+      description: (ADR-126) Auto-promotion lane config.
+      properties:
+        enabled:
+          type: boolean
+          description: Master toggle (shipped false).
+        lanes:
+          type: array
+          maxItems: 4
+          items: { $ref: "#/components/schemas/AutoPromotionLane" }
+    AutoPromotionLane:
+      type: object
+      additionalProperties: false
+      required: [class, enabled]
+      properties:
+        class: { type: string, enum: [docs, tests, deps, config] }
+        enabled: { type: boolean }
+        mode:
+          type: string
+          enum: [local_merge, rebase_merge, pull_request]
+          description: Omitted ⇒ promoteRun resolves its own policy.
+        delayMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+          default: 10
+        requireExternalCheckId: { type: string, minLength: 1 }
+        excludeGlobs:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1 }
+    PromotionHold:
+      type: object
+      additionalProperties: false
+      required: [source, createdAt]
+      description: (ADR-126) `runs.promotion_hold`.
+      properties:
+        source: { type: string, enum: [user, system, launch] }
+        reason: { type: string }
+        createdAt: { type: string, format: date-time }
+    RunAutoPromotionPanel:
+      type: object
+      additionalProperties: false
+      required: [evaluation, promotedLane]
+      description: |
+        (ADR-126) Run-detail auto-promotion panel data. `evaluation` is the verdict
+        discriminated union (`eligible` | `held` | `ineligible` | `disabled` |
+        `not_applicable`), non-null only for a Review flow run.
+      properties:
+        evaluation:
+          type: object
+          nullable: true
+        promotedLane:
+          type: string
+          nullable: true
+          enum: [docs, tests, deps, config]
     TaskQueueSettings:
       type: object
       additionalProperties: false
@@ -11725,6 +11897,13 @@ components:
           description: |
             (ADR-122 — Implemented) Opt this run into ambient Project-Brain
             context (persisted on `runs.brain_context`). `null`/absent = off.
+        autoPromote:
+          type: boolean
+          default: true
+          description: |
+            (ADR-126) Opt this run OUT of auto-promotion when `false` — a
+            `launch`-sourced `promotion_hold` is written at run INSERT so the
+            auto-promotion sweep never considers it. Default `true`.
     PostRunResponse:
       type: object
       required: [runId, status]

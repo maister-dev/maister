@@ -28,6 +28,7 @@ erDiagram
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
         jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
         jsonb task_queue_settings "ADR-121 (0087): {edgeDrain?,maxInFlightAuto?}, nullable (NULL = env defaults)"
+        jsonb auto_promotion "ADR-126 (0089): lane config {enabled,lanes[]}, nullable (NULL = defaults+master OFF)"
         timestamp created_at
         timestamp archived_at "soft archive"
     }

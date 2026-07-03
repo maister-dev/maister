@@ -119,6 +119,8 @@ erDiagram
         jsonb agent_config "Implemented ADR-111 0071: immutable resolved agent-config snapshot at spawn, nullable"
         timestamp cost_reconciled_at "Implemented ADR-117 0084: durable system_sweep cost-reconcile attempt marker, nullable"
         boolean brain_context "Implemented ADR-122 0088: ambient Project-Brain launch axis, nullable — null = off"
+        jsonb promotion_hold "ADR-126 0089: {source,reason?,createdAt} auto-promotion hold, nullable (NULL = no hold)"
+        timestamptz review_entered_at "ADR-126 0089: auto-promotion grace anchor stamped at Review-flip, nullable"
         timestamp started_at
         timestamp ended_at
     }
@@ -177,6 +179,7 @@ erDiagram
         integer pr_number "M18 0021"
         timestamp promoted_at "M18 0021"
         text promotion_state "M18 0021 none|claiming|done|failed (NOT NULL DEFAULT none)"
+        text promotion_lane "ADR-126 0089: auto lane class docs|tests|deps|config, nullable (NULL = manual)"
         timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
         text promotion_owner_user_id FK "M18 0021 users.id, nullable"
         text promotion_attempt_id "M18 0021 per-attempt CAS-identity token"
