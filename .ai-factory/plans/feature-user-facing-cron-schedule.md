@@ -86,7 +86,7 @@ Out of scope (unchanged): `agent_tick` scheduling/E4, webhooks/event triggers, s
 | --- | --- |
 | (a) Extend `scheduler_jobs` with cron/tz/overlap cols; one engine job per schedule | Genuinely reuses claim/ledger per schedule, BUT the engine reschedules in SQL interval math (`jobs.ts:279-299`) — cron-next can't be computed there. The claim would advance `next_run_at` by a bogus interval, then TS code would re-write it post-handler; a crash between those two writes re-fires a daily schedule 60s later (double-launch window). Requires invasive surgery on the battle-tested claim CTE; violates the M24 expectation "`cadence_interval_seconds` MUST be the only M24 cadence model" (scheduler.md). |
 | (b) Activate `agent_schedules` | Wrong shape (`agent_ref NOT NULL`, no task/cron-expr/overlap columns) and it is the reserved bridge for the E4 agents-as-actors epic — explicitly out of scope. Hijacking it blocks E4. |
-| **(c) CHOSEN: new `run_schedules` table + one seeded dispatcher job** (`job_kind='run_schedule'`, id `run_schedule.dispatcher`, cadence 60s) whose handler claims due schedule ROWS with the same `FOR UPDATE SKIP LOCKED` idiom and computes cron-next in TS | Engine core untouched (claim CTE, budgets SQL, lease/reap all stay byte-identical); cron math lives in one TS module; `scheduler_jobs` stays interval-only so ADR-060's cadence invariant remains TRUE; mirrors the hg-sdlc `RunScheduleDispatchJob` reference design. Cost: a second (row-level) claim layer inside the handler — covered by its own no-double-fire integration test. |
+| **(c) CHOSEN: new `run_schedules` table + one seeded dispatcher job** (`job_kind='run_schedule'`, id `run_schedule.dispatcher`, cadence 60s) whose handler claims due schedule ROWS with the same `FOR UPDATE SKIP LOCKED` idiom and computes cron-next in TS | Engine core untouched (claim CTE, budgets SQL, lease/reap all stay byte-identical); cron math lives in one TS module; `scheduler_jobs` stays interval-only so ADR-060's cadence invariant remains TRUE. Cost: a second (row-level) claim layer inside the handler — covered by its own no-double-fire integration test. |
 
 Fire precision under (c) = dispatcher cadence (60s) = the tick's own fixed
 cadence (`timer.ts:62-66`) — identical to what per-schedule engine jobs would
@@ -130,7 +130,7 @@ schema).
 Each fire relaunches the schedule's **existing task** through `launchRun` —
 exactly what the `flow_run` handler already does, what the 1:N task↔run
 ("ralph-loop") model was built for, and what keeps the board clean (no task
-minted per fire). The schedule freezes the launch config hg-sdlc-style:
+minted per fire). The schedule freezes the launch config:
 `{project (via task), task (carries flow + prompt), optional runnerId
 override}`. `baseBranch`/`targetBranch` follow the task/project defaults
 exactly like a plain Launch click; per-schedule branch overrides are Phase 2.
