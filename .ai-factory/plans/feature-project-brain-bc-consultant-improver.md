@@ -381,7 +381,7 @@ implementation starts and the owner chooses the milestone slot.
 
 ### Phase 2 - Sources, Index Jobs, and Event-Driven Reindexing
 
-- [ ] **T3.1 - RED: source registration and git HEAD reading tests.**
+- [x] **T3.1 - RED: source registration and git HEAD reading tests.**
   - Add integration tests for per-project source registration, suggested
     defaults, kind autodetect, and server-derived repo/default-branch reads.
   - Assert file reads use the project row's `repo_path` and `main_branch`, never
@@ -394,8 +394,11 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/__tests__/sources.integration.test.ts`,
     route tests under `web/app/api/projects/[slug]/brain/sources/__tests__/`.
   - Verify RED: targeted integration command recorded in task notes.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/sources.integration.test.ts`
+    failed because `@/lib/brain/sources` did not exist; `CI=true pnpm --filter maister-web exec vitest run --project unit 'app/api/projects/[slug]/brain/sources/__tests__/routes.test.ts'`
+    failed because the source route module did not exist.
 
-- [ ] **T3.2 - GREEN: sources service, routes, and defaults.**
+- [x] **T3.2 - GREEN: sources service, routes, and defaults.**
   - Implement `web/lib/brain/sources.ts` and any git reader wrapper needed over
     `web/lib/worktree.ts` to read tracked blobs from the default branch.
   - Implement project routes for listing/adding/updating/removing sources and
@@ -419,8 +422,11 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/sources.ts`,
     `web/app/api/projects/[slug]/brain/sources/*`, OpenAPI docs.
   - Verify GREEN: targeted tests; `pnpm --filter maister-web typecheck`.
+  - GREEN evidence: `CI=true pnpm --filter maister-web exec vitest run --project unit 'app/api/projects/[slug]/brain/sources/__tests__/routes.test.ts'`
+    passed; `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/sources.integration.test.ts`
+    passed; `CI=true pnpm --filter maister-web typecheck` passed.
 
-- [ ] **T4.1 - RED: indexer, source_hash no-op, and recovery tests.**
+- [x] **T4.1 - RED: indexer, source_hash no-op, and recovery tests.**
   - Add integration tests for:
     - first index inserts chunks and chunk embeddings.
     - unchanged `source_hash` reindex is a no-op.
@@ -437,8 +443,10 @@ implementation starts and the owner chooses the milestone slot.
     jobId, stage, errorCode}` for deterministic per-source errors.
   - Files: `web/lib/brain/__tests__/indexer.integration.test.ts`.
   - Verify RED: targeted integration command recorded in task notes.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/indexer.integration.test.ts`
+    failed because source-scoped jobs did not write chunks, source hashes, source errors, or retryable embedding outage state.
 
-- [ ] **T4.2 - GREEN: resumable source indexer and domain-event trigger consumer.**
+- [x] **T4.2 - GREEN: resumable source indexer and domain-event trigger consumer.**
   - Implement `web/lib/brain/indexer.ts` with source_hash gating,
     chunker-version gating, per-source error isolation, resumable worklist, and
     chunk embedding insertion into immutable current generation rows.
@@ -455,6 +463,10 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/indexer.ts`, `web/lib/brain/reindex.ts`,
     domain-event registration files, scheduler/tick integration where needed.
   - Verify GREEN: targeted tests; `pnpm --filter maister-web typecheck`.
+  - GREEN evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/indexer.integration.test.ts`
+    passed; `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/sources.integration.test.ts`
+    passed; `CI=true pnpm --filter maister-web exec vitest run --project unit 'app/api/projects/[slug]/brain/sources/__tests__/routes.test.ts'`
+    passed; `CI=true pnpm --filter maister-web typecheck` passed.
 
 ### Phase 3 - Cross-tier Recall, Pointers, Home Resolution, and Edges
 

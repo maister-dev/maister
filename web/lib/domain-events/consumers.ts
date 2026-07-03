@@ -8,6 +8,7 @@ import { agentTriggersConsumer } from "@/lib/agents/triggers";
 import { autoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
 import { costRollupReconcileConsumer } from "@/lib/domain-events/cost-rollup-reconcile";
 import { memoryHarvestConsumer } from "@/lib/domain-events/memory-harvest";
+import { sourceReindexConsumer } from "@/lib/brain/index-triggers";
 import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
 
@@ -76,4 +77,7 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   // gate.failed events into lessons (guarded by projects.brain_enabled),
   // transient failures hold the cursor, schema-invalid distill skips+advances.
   memoryHarvestConsumer,
+  // ADR-127: source-indexed Brain tier reindexes enabled project sources after
+  // run-terminal domain events. External repo edits remain manual reindex.
+  sourceReindexConsumer,
 ];

@@ -9,6 +9,10 @@ import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
 import { ensureEmbeddingIndex } from "./embedding-index";
 import {
+  processSourceIndexJob,
+  type SourceIndexerDb,
+} from "./indexer";
+import {
   brainSchemaMissingWarnOnce,
   isBrainProvisioned,
   isBrainSchemaApplied,
@@ -62,7 +66,12 @@ type ReindexDb = ReindexTx & {
   transaction<T>(fn: (tx: ReindexTx) => Promise<T>): Promise<T>;
 };
 
-type JobRow = { id: string; project_id: string; status: string };
+type JobRow = {
+  id: string;
+  project_id: string;
+  source_id: string | null;
+  status: string;
+};
 
 // Re-embed one item's content into the active generation, all segments in ONE
 // transaction. Returns false when the item already has active-generation rows
@@ -245,7 +254,7 @@ export async function runBrainReindexSweep(
   // side too — no paid re-embedding for a project whose Brain is off). The rows
   // stay queued/running and resume when the project is re-enabled.
   const jobsResult = await db.execute(sql`
-    SELECT j.id, j.project_id, j.status FROM brain_index_jobs j
+    SELECT j.id, j.project_id, j.source_id, j.status FROM brain_index_jobs j
     JOIN projects p ON p.id = j.project_id AND p.brain_enabled = true
     WHERE j.status IN ('queued', 'running')
     ORDER BY j.created_at ASC
@@ -301,7 +310,21 @@ export async function runBrainReindexSweep(
 
   for (const job of jobs) {
     try {
-      const embedded = await processJob(db, client, job, maxItems);
+      const embedded =
+        job.source_id === null
+          ? await processJob(db, client, job, maxItems)
+          : (
+              await processSourceIndexJob(
+                db as unknown as SourceIndexerDb,
+                client,
+                job as {
+                  id: string;
+                  project_id: string;
+                  source_id: string;
+                  status: string;
+                },
+              )
+            ).chunksEmbedded;
 
       itemsEmbedded += embedded;
       jobsProcessed += 1;

@@ -61,7 +61,7 @@ export interface ChunkerRegistry {
 export function createBuiltInChunkerRegistry(): ChunkerRegistry {
   return {
     chunk(input: ChunkerInput): ChunkerResult {
-      const kind = input.kind ?? detectKind(input.path);
+      const kind = input.kind ?? detectSourceKind(input.path);
 
       switch (kind) {
         case "html":
@@ -96,7 +96,7 @@ export function createBuiltInChunkerRegistry(): ChunkerRegistry {
   };
 }
 
-function detectKind(path: string): BuiltInSourceKind {
+export function detectSourceKind(path: string): BuiltInSourceKind {
   const lower = path.toLowerCase();
   const ext = extension(lower);
 
@@ -119,6 +119,31 @@ function detectKind(path: string): BuiltInSourceKind {
   }
 
   return "text";
+}
+
+export function defaultChunkerIdForKind(kind: BuiltInSourceKind): string {
+  switch (kind) {
+    case "html":
+    case "markdown":
+      return "markdown";
+    case "openapi":
+      return "openapi";
+    case "asyncapi":
+      return "asyncapi";
+    case "sql":
+      return "sql";
+    case "flow_yaml":
+      return "flow_yaml";
+    case "package_yaml":
+      return "package_yaml";
+    case "agent_md":
+      return "agent_md";
+    case "code":
+      return "code";
+    case "repo_file":
+    case "text":
+      return "fallback_text";
+  }
 }
 
 function extension(path: string): string {
