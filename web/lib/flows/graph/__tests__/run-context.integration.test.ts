@@ -413,8 +413,11 @@ describe("runGraph — P7 run-context (ADR-103)", () => {
     );
     const expectedPath = join(seeded.worktreePath, ".maister", "run.json");
 
+    // Match the pointer prefix only: the run-context line gained a trailing
+    // brain-provenance note in ADR-122 (`… Any \`brain\` entries …]`), so assert
+    // the `[Run context: <path>` prefix rather than the exact closing bracket.
     expect(judge?.resolvedPrompt ?? "").toContain(
-      `[Run context: ${expectedPath}]`,
+      `[Run context: ${expectedPath}`,
     );
   }, 60_000);
 });
