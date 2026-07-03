@@ -118,9 +118,11 @@ const DEFAULT_AGENT_TICK_CADENCE_SECONDS = 60;
 // flow tasks whose relation blockers have cleared (budget 1, singleton).
 const DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID = "auto_launch_triaged.default";
 const DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS = 60;
+
 // ADR-126: the ONE seeded auto_promote sweep (budget 1, singleton) — promotes
-// lane-bounded Review flow runs through promoteRun.
-const DEFAULT_AUTO_PROMOTE_JOB_ID = "auto_promote.default";
+// lane-bounded Review flow runs through promoteRun. Exported so the sweep handler
+// keys its rotation cursor on the same singleton id (one source of truth).
+export const DEFAULT_AUTO_PROMOTE_JOB_ID = "auto_promote.default";
 const DEFAULT_AUTO_PROMOTE_CADENCE_SECONDS = 60;
 
 export function isSchedulerJobKind(value: string): value is SchedulerJobKind {

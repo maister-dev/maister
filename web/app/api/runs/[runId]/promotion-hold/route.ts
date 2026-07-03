@@ -85,6 +85,16 @@ export async function PUT(
   const { runId } = await params;
 
   try {
+    // Auth-first: authenticate + resolve + authorize BEFORE touching the request
+    // body, so an unauthenticated caller gets 401/403 and can never probe the body
+    // schema or force body parsing via a validation error (mirrors settings PATCH).
+    await requireActiveSession();
+
+    const db = getDb() as any;
+    const projectId = await loadRunProjectId(db, runId);
+
+    await requireProjectAction(projectId, "promoteRun");
+
     let body: z.infer<typeof putBodySchema>;
 
     try {
@@ -95,13 +105,6 @@ export async function PUT(
         `invalid PUT body: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-
-    await requireActiveSession();
-
-    const db = getDb() as any;
-    const projectId = await loadRunProjectId(db, runId);
-
-    await requireProjectAction(projectId, "promoteRun");
 
     // Idempotent: a re-PUT overwrites the reason but keeps source:'user'.
     const hold: PromotionHold = {

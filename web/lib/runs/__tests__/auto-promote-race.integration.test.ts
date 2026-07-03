@@ -23,6 +23,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
 import type { MaisterError } from "@/lib/errors";
 
 const promoteLocalMergeSpy = vi.fn(async () => undefined);
@@ -114,6 +115,7 @@ beforeEach(async () => {
     repoPath: `/repos/${projectId}`,
     maisterYamlPath: "/tmp/m.yaml",
     taskKey: `T${projectId.replace(/[^0-9A-Za-z]/g, "").slice(0, 7).toUpperCase()}`,
+    autoPromotion: { enabled: true, lanes: BUILT_IN_LANES },
   });
   await db
     .insert(schema.platformAcpRunners)
@@ -245,6 +247,70 @@ describe("AC-7 / INV-5 — exactly one promotion wins under concurrency", () => 
     );
     expect((await readRun(runId)).status).toBe("Done");
     // The merge git side-effect ran exactly once (the loser never merged).
+    expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("promoteRun supersede gate (ADR-126 — Codex F2)", () => {
+  it("aborts an attributed promote when a hold landed under the claim; never merges", async () => {
+    const runId = await seedPromotableRun();
+
+    await db
+      .update(runs)
+      .set({
+        promotionHold: { source: "user", createdAt: new Date().toISOString() },
+      })
+      .where(eq(runs.id, runId));
+
+    await expect(
+      promoteRun(runId, autoPromoteInput(), systemCtx(), db),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { autoPromotionSuperseded: "held" },
+    });
+
+    expect((await readRun(runId)).status).toBe("Review");
+    expect(await readLane(runId)).toBeNull();
+    expect(promoteLocalMergeSpy).not.toHaveBeenCalled();
+  });
+
+  it("aborts an attributed promote when the project lane config was disabled", async () => {
+    const runId = await seedPromotableRun();
+
+    await db
+      .update(schema.projects)
+      .set({ autoPromotion: { enabled: false, lanes: BUILT_IN_LANES } })
+      .where(eq(schema.projects.id, projectId));
+
+    await expect(
+      promoteRun(runId, autoPromoteInput(), systemCtx(), db),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { autoPromotionSuperseded: "disabled" },
+    });
+
+    expect((await readRun(runId)).status).toBe("Review");
+    expect(promoteLocalMergeSpy).not.toHaveBeenCalled();
+  });
+
+  it("a human promote (no attribution) is NOT blocked by a hold — explicit override merges", async () => {
+    const runId = await seedPromotableRun();
+
+    await db
+      .update(runs)
+      .set({
+        promotionHold: { source: "user", createdAt: new Date().toISOString() },
+      })
+      .where(eq(runs.id, runId));
+
+    await promoteRun(
+      runId,
+      { mode: "local_merge", targetBranch: "main", autoOnReady: true },
+      userCtx(),
+      db,
+    );
+
+    expect((await readRun(runId)).status).toBe("Done");
     expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
   });
 });

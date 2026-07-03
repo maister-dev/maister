@@ -15,6 +15,7 @@ import { getDb } from "@/lib/db/client";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { promoteRun, type PromoteRunContext } from "@/lib/runs/promote";
+import { DEFAULT_AUTO_PROMOTE_JOB_ID } from "@/lib/scheduler/jobs";
 import { addTaskComment } from "@/lib/social/comments";
 import { diffChangeStats, type DiffChangeStatEntry } from "@/lib/worktree";
 
@@ -29,7 +30,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const CANDIDATE_LIMIT = 20;
+export const CANDIDATE_LIMIT = 20;
 
 export type AutoPromoteSummary = {
   candidates: number;
@@ -37,6 +38,11 @@ export type AutoPromoteSummary = {
   skipped: number;
   gaveUp: number;
 };
+
+// Rotation cursor: the (coalesced review anchor, run id) key of the last row the
+// previous tick processed. `sortKey` is an ISO timestamp, or the literal
+// "infinity" for a null review anchor (matching the ORDER BY's coalesce).
+type AutoPromoteCursor = { sortKey: string; id: string };
 
 // Non-user promote ctx (ADR-126 §4.6), mirroring promoteChildRunForToken: a
 // placeholder sessionUser that is never dereferenced for a system actor, a no-op
@@ -74,9 +80,17 @@ export async function runAutoPromoteJob(
   const promote = opts.promote ?? promoteRun;
   const now = opts.now ?? new Date();
 
-  // Cheap SQL prefilter; full config/enabled + all predicate terms re-checked in
-  // evaluateAutoPromotion per candidate (a lane disabled between ticks is re-read
-  // here — edge E4).
+  // Durable rotating keyset cursor (ADR-126 / Codex F1): process a bounded
+  // CANDIDATE_LIMIT window per tick, ordered by a stable key, resuming after the
+  // previous tick's last row and wrapping at the tail. Without it, an unordered
+  // LIMIT plus never-mutated permanent-skip rows (deny_list / no_lane / ambiguous
+  // / checks_not_strict / disabled-project, …) could wedge the window and starve
+  // an eligible run indefinitely. Persisted in this singleton job's `target`
+  // jsonb; an absent row (unit tests) reads as null ⇒ start from the head.
+  const cursor = await readAutoPromoteCursor(db);
+
+  // Full config/enabled + all predicate terms are re-checked in
+  // evaluateAutoPromotion per candidate; the SQL here only prefilters + orders.
   const candidates = await db
     .select({
       runId: runs.id,
@@ -106,10 +120,20 @@ export async function runAutoPromoteJob(
         isNull(runs.parentRunId),
         ne(workspaces.promotionState, "done"),
         isNull(runs.promotionHold),
-        isNotNull(projects.autoPromotion),
+        // Master toggle pushed into SQL so a configured-but-disabled project never
+        // occupies a candidate slot (evaluateAutoPromotion still re-checks it).
+        sql`(${projects.autoPromotion} ->> 'enabled')::boolean IS TRUE`,
         // A shared-tree run has workspace_mode='shared'; exclude fail-closed.
         sql`${runs.workspaceMode} IS DISTINCT FROM 'shared'`,
+        // Keyset resume: rows strictly after the previous tick's last key, in the
+        // ORDER BY's (coalesced review anchor, id) space.
+        cursor
+          ? sql`(coalesce(${runs.reviewEnteredAt}, 'infinity'::timestamptz), ${runs.id}) > (${cursor.sortKey}::timestamptz, ${cursor.id})`
+          : undefined,
       ),
+    )
+    .orderBy(
+      sql`coalesce(${runs.reviewEnteredAt}, 'infinity'::timestamptz) asc, ${runs.id} asc`,
     )
     .limit(CANDIDATE_LIMIT);
 
@@ -186,9 +210,52 @@ export async function runAutoPromoteJob(
     });
   }
 
+  // Advance past the processed window, or reset to wrap when a short (tail) window
+  // is reached — guarantees every candidate is visited within
+  // ceil(N / CANDIDATE_LIMIT) ticks regardless of never-mutated permanent skips.
+  const last = candidates[candidates.length - 1];
+  const nextCursor: AutoPromoteCursor | null =
+    last && candidates.length === CANDIDATE_LIMIT
+      ? {
+          sortKey: last.reviewEnteredAt
+            ? last.reviewEnteredAt.toISOString()
+            : "infinity",
+          id: last.runId,
+        }
+      : null;
+
+  await writeAutoPromoteCursor(db, nextCursor);
+
   log.info(summary, "auto-promotion sweep complete");
 
   return summary;
+}
+
+// Cursor read/write target the seeded singleton row by its known id; an absent
+// row (the direct-call unit tests DELETE scheduler_jobs) reads null / no-ops the
+// write, so the sweep degrades to head-start with no persistence.
+async function readAutoPromoteCursor(db: Db): Promise<AutoPromoteCursor | null> {
+  const res = await db.execute(
+    sql`SELECT target -> 'cursor' AS cursor FROM scheduler_jobs WHERE id = ${DEFAULT_AUTO_PROMOTE_JOB_ID}`,
+  );
+  const raw = (res.rows?.[0]?.cursor ?? null) as Partial<AutoPromoteCursor> | null;
+
+  return raw && typeof raw.sortKey === "string" && typeof raw.id === "string"
+    ? { sortKey: raw.sortKey, id: raw.id }
+    : null;
+}
+
+async function writeAutoPromoteCursor(
+  db: Db,
+  cursor: AutoPromoteCursor | null,
+): Promise<void> {
+  await db.execute(sql`
+    UPDATE scheduler_jobs
+    SET target = jsonb_set(coalesce(target, '{}'::jsonb), '{cursor}', ${JSON.stringify(
+      cursor,
+    )}::jsonb, true)
+    WHERE id = ${DEFAULT_AUTO_PROMOTE_JOB_ID}
+  `);
 }
 
 async function promoteCandidate(args: {
@@ -231,6 +298,21 @@ async function promoteCandidate(args: {
       );
     }
   } catch (err) {
+    // Superseded (a user hold or project lane-disable landed under the promote
+    // claim, ADR-126): benign — the run is intentionally no longer
+    // auto-promotable. No system hold, no give-up comment; next tick's prefilter
+    // excludes it. Keyed on `details`, NOT code, so a real git merge CONFLICT
+    // still routes to the give-up path below.
+    if (isMaisterError(err) && err.details?.autoPromotionSuperseded) {
+      summary.skipped += 1;
+      log.info(
+        { runId, supersededBy: err.details.autoPromotionSuperseded },
+        "auto-promotion superseded — skip",
+      );
+
+      return;
+    }
+
     const code = isMaisterError(err) ? err.code : "CRASH";
 
     // Transient: leave the run in Review, retry next tick (no hold, no comment).

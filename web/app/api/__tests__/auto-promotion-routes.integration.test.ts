@@ -25,10 +25,12 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
+import { MaisterError } from "@/lib/errors";
 
 const mocks = vi.hoisted(() => ({
   diffChangeStats: vi.fn(),
   assertEvidenceReady: vi.fn(),
+  requireActiveSession: vi.fn(),
 }));
 
 let db: NodePgDatabase;
@@ -39,12 +41,7 @@ vi.mock("@/lib/db/client", async (orig) => ({
 }));
 vi.mock("@/lib/authz", async (orig) => ({
   ...(await orig<typeof import("@/lib/authz")>()),
-  requireActiveSession: async () => ({
-    id: "u1",
-    role: "admin",
-    accountStatus: "active",
-    mustChangePassword: false,
-  }),
+  requireActiveSession: mocks.requireActiveSession,
   requireProjectAction: async () => ({ user: { id: "u1" }, role: "owner" }),
 }));
 vi.mock("@/lib/worktree", async (orig) => ({
@@ -104,6 +101,12 @@ beforeEach(async () => {
     { path: "README.md", status: "M", additions: 1, deletions: 0, binary: false },
   ]);
   mocks.assertEvidenceReady.mockResolvedValue({ ready: true });
+  mocks.requireActiveSession.mockResolvedValue({
+    id: "u1",
+    role: "admin",
+    accountStatus: "active",
+    mustChangePassword: false,
+  });
 
   projectId = randomUUID();
   slug = `p-${projectId.slice(0, 8)}`;
@@ -263,6 +266,24 @@ describe("PUT/DELETE promotion-hold", () => {
     );
 
     expect(res.status).toBe(409);
+  });
+
+  it("unauthenticated PUT with an invalid body → 401, never 422 (auth precedes body parse)", async () => {
+    const runId = await seedRun();
+
+    mocks.requireActiveSession.mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "no active session"),
+    );
+
+    const res = await holdRoute.PUT(
+      new NextRequest("http://x", {
+        method: "PUT",
+        body: JSON.stringify({ reason: 123 }),
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(res.status).toBe(401);
   });
 });
 

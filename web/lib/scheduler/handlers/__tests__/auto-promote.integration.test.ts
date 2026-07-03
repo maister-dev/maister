@@ -46,7 +46,7 @@ vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
 }));
 
 // Imported AFTER the mocks so the module graph binds the stubs.
-const { runAutoPromoteJob } = await import(
+const { runAutoPromoteJob, CANDIDATE_LIMIT } = await import(
   "@/lib/scheduler/handlers/auto-promote"
 );
 const { runSchedulerTick } = await import("@/lib/scheduler/tick-service");
@@ -330,5 +330,96 @@ describe("runSchedulerTick × auto_promote — through-dispatch (codex F2)", () 
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe("runAutoPromoteJob — F2 supersede is a benign skip, not a give-up", () => {
+  it("a details-tagged supersede abort skips without a system hold or comment", async () => {
+    mocks.promoteRun.mockRejectedValue(
+      new MaisterError("CONFLICT", "superseded", {
+        details: { autoPromotionSuperseded: "held" },
+      }),
+    );
+    const { runId, taskId } = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(summary.skipped).toBe(1);
+    expect(summary.gaveUp).toBe(0);
+
+    const [row] = await db
+      .select({ hold: runs.promotionHold })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    expect(row.hold).toBeNull();
+    expect(await commentCount(taskId)).toBe(0);
+  });
+});
+
+describe("runAutoPromoteJob — F1 rotation defeats starvation", () => {
+  it("promotes an eligible run stranded behind a full window of permanent-skip runs", async () => {
+    const srcFile = {
+      path: "src/app.ts",
+      status: "M",
+      additions: 1,
+      deletions: 0,
+      binary: false,
+    };
+
+    // A full CANDIDATE_LIMIT window of OLDER no-lane runs (permanent skips that
+    // never mutate) sorts ahead of ONE newer eligible docs run.
+    for (let i = 0; i < CANDIDATE_LIMIT; i += 1) {
+      await seedReviewRun({ reviewMinutesAgo: 60 });
+    }
+    const { runId: eligibleRunId } = (await seedReviewRun({
+      reviewMinutesAgo: 20,
+    })) as unknown as { runId: string; taskId: string };
+
+    const eligibleWt = `/tmp/wt/${eligibleRunId}`;
+
+    mocks.diffChangeStats.mockImplementation(
+      async ({ worktreePath }: { worktreePath: string }) =>
+        worktreePath === eligibleWt ? [docsFile] : [srcFile],
+    );
+
+    // Seed the singleton job row so the rotation cursor persists across ticks.
+    await pool.query(`
+      INSERT INTO scheduler_jobs
+        (id, project_id, job_kind, target, cadence_interval_seconds, next_run_at, max_failures, created_at, updated_at)
+      VALUES ('auto_promote.default', NULL, 'auto_promote', '{}'::jsonb, 60, now(), 3, now(), now())
+      ON CONFLICT (id) DO NOTHING
+    `);
+
+    // Tick 1: the window is entirely older no-lane runs — the eligible run is
+    // never evaluated. The old unordered+capped sweep could starve here forever.
+    const tick1 = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(tick1.candidates).toBe(CANDIDATE_LIMIT);
+    expect(tick1.promoted).toBe(0);
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
+
+    // Tick 2: the cursor resumes past the processed window and reaches the run.
+    const tick2 = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(tick2.promoted).toBe(1);
+    expect(mocks.promoteRun).toHaveBeenCalledWith(
+      eligibleRunId,
+      expect.objectContaining({
+        attribution: { source: "auto_promotion", laneClass: "docs" },
+      }),
+      expect.anything(),
+      db,
+    );
+
+    // Short tail window ⇒ cursor reset, so the next tick re-scans from the head.
+    const { rows } = await pool.query(
+      `SELECT target FROM scheduler_jobs WHERE id = 'auto_promote.default'`,
+    );
+
+    expect(rows[0].target.cursor).toBeNull();
   });
 });

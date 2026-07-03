@@ -47,7 +47,10 @@ import {
 } from "@/lib/worktree";
 import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import type { LaneClass } from "@/lib/auto-promotion/config";
+import {
+  resolveAutoPromotionConfig,
+  type LaneClass,
+} from "@/lib/auto-promotion/config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, scratchRuns, workspaces, projects } =
@@ -482,15 +485,42 @@ async function promoteWorkspaceRun(
     // CONFLICT (canReclaim) into PRECONDITION. Immutable run fields keep the first read.
     const isSharedTreeClaim =
       run.workspaceMode === "shared" && run.agentWorkspace === "worktree";
-    const liveStatus = isSharedTreeClaim
-      ? run.status
-      : (await loadRun(tx, runId)).status;
+    const liveRun = isSharedTreeClaim ? run : await loadRun(tx, runId);
+    const liveStatus = liveRun.status;
 
     if (liveStatus !== "Review") {
       throw new MaisterError(
         "PRECONDITION",
         `${run.runKind} run must be Review before promotion: ${liveStatus}`,
       );
+    }
+
+    // ADR-126: auto-promotion-only supersede gate. A user promotion hold or a
+    // project lane-disable committed AFTER the sweep evaluated eligible but before
+    // this claim must abort the merge — the Hold UI and master toggle mean "stop
+    // new auto-promotions". Re-reading under the claim tx shrinks the exposure to
+    // the claim interior. Human / scratch / orchestrator promotes never set
+    // attribution, so they are unaffected.
+    if (input.attribution?.source === "auto_promotion") {
+      if (liveRun.promotionHold) {
+        throw new MaisterError(
+          "CONFLICT",
+          "auto-promotion superseded — a promotion hold was set",
+          { details: { autoPromotionSuperseded: "held" } },
+        );
+      }
+
+      const resolved = resolveAutoPromotionConfig(
+        (await loadProject(tx, run.projectId)) ?? { id: run.projectId },
+      );
+
+      if (resolved.source === "invalid" || !resolved.config.enabled) {
+        throw new MaisterError(
+          "CONFLICT",
+          "auto-promotion superseded — project lane config disabled",
+          { details: { autoPromotionSuperseded: "disabled" } },
+        );
+      }
     }
 
     await ctx.authorize(run.projectId);
