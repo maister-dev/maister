@@ -2,13 +2,22 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { and, eq, isNull } from "drizzle-orm";
+import pino from "pino";
 
 import type {
   AutoPromotionReaders,
   ExternalCheckState,
 } from "@/lib/auto-promotion/evaluate";
 import type { DepsFile } from "@/lib/auto-promotion/deps-check";
-import { gateResults, hitlRequests } from "@/lib/db/schema";
+import type { FlowYamlV1 } from "@/lib/config.schema";
+import {
+  flowRevisions,
+  flows,
+  gateResults,
+  hitlRequests,
+  runs,
+} from "@/lib/db/schema";
+import { compileManifest } from "@/lib/flows/graph/compile";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import type { DiffChangeStatEntry } from "@/lib/worktree";
 
@@ -16,6 +25,73 @@ import type { DiffChangeStatEntry } from "@/lib/worktree";
 type Db = any;
 
 const execFileAsync = promisify(execFile);
+
+const log = pino({
+  name: "auto-promote.readers",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+// The set of external_check gate ids DECLARED in the run's compiled flow graph
+// (ADR-126 F3). The manifest lives in the DB — the pinned flow_revisions.manifest
+// wins over the flow's current manifest (per-run immutability), the same
+// precedence runner-core's loadRun uses. Fail-closed: any load/compile failure ⇒
+// empty set (the lane's check reads as not_declared → ineligible), NEVER a throw
+// into the sweep (evaluateAutoPromotion runs outside the candidate try — a bad
+// manifest must not crash the tick).
+async function declaredExternalCheckGateIds(
+  db: Db,
+  runId: string,
+): Promise<Set<string>> {
+  try {
+    const [run] = await db
+      .select({ flowId: runs.flowId, flowRevisionId: runs.flowRevisionId })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .limit(1);
+
+    if (!run) return new Set();
+
+    let manifest: FlowYamlV1 | null = null;
+
+    if (run.flowRevisionId) {
+      const [rev] = await db
+        .select({ manifest: flowRevisions.manifest })
+        .from(flowRevisions)
+        .where(eq(flowRevisions.id, run.flowRevisionId))
+        .limit(1);
+
+      manifest = (rev?.manifest ?? null) as FlowYamlV1 | null;
+    } else if (run.flowId) {
+      const [f] = await db
+        .select({ manifest: flows.manifest })
+        .from(flows)
+        .where(eq(flows.id, run.flowId))
+        .limit(1);
+
+      manifest = (f?.manifest ?? null) as FlowYamlV1 | null;
+    }
+
+    if (!manifest) return new Set();
+
+    const graph = compileManifest(manifest);
+    const ids = new Set<string>();
+
+    for (const node of graph.nodes.values()) {
+      for (const gate of node.gates) {
+        if (gate.kind === "external_check") ids.add(gate.id);
+      }
+    }
+
+    return ids;
+  } catch (err) {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "auto-promotion: failed to resolve declared external_check gates — fail-closed",
+    );
+
+    return new Set();
+  }
+}
 
 // Best-effort git file-at-ref read (deps lane only). Absent at a ref ⇒ null;
 // never throws.
@@ -68,10 +144,13 @@ export function buildAutoPromotionReaders(args: {
       }
     },
     async externalCheck(gateId: string): Promise<ExternalCheckState> {
-      // Fail-closed: a passing/overridden external_check row ⇒ passed, else
-      // declared_not_passed (the not_declared distinction needs the compiled
-      // FlowGraph; both are ineligible, so the sweep/panel report
-      // declared_not_passed).
+      // A gateId absent from the run's compiled flow graph is a misconfiguration
+      // (typo / wrong flow) ⇒ not_declared (external_check_missing). A declared
+      // gate falls through to the gate_results passed/overridden check.
+      const declared = await declaredExternalCheckGateIds(db, runId);
+
+      if (!declared.has(gateId)) return "not_declared";
+
       const rows = await db
         .select({ status: gateResults.status })
         .from(gateResults)

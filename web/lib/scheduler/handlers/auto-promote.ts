@@ -122,7 +122,11 @@ export async function runAutoPromoteJob(
         isNull(runs.promotionHold),
         // Master toggle pushed into SQL so a configured-but-disabled project never
         // occupies a candidate slot (evaluateAutoPromotion still re-checks it).
-        sql`(${projects.autoPromotion} ->> 'enabled')::boolean IS TRUE`,
+        // JSONB containment, NOT a `->> ::boolean` cast: a malformed stored value
+        // (e.g. {"enabled":"x"}) must not throw a Postgres cast error and crash the
+        // singleton sweep — resolveAutoPromotionConfig (→ config_invalid) is the
+        // fail-closed authority.
+        sql`${projects.autoPromotion} @> '{"enabled": true}'::jsonb`,
         // A shared-tree run has workspace_mode='shared'; exclude fail-closed.
         sql`${runs.workspaceMode} IS DISTINCT FROM 'shared'`,
         // Keyset resume: rows strictly after the previous tick's last key, in the
@@ -283,20 +287,6 @@ async function promoteCandidate(args: {
       systemPromoteCtx(projectId),
       db,
     );
-
-    summary.promoted += 1;
-    log.info({ runId, lane, fileCount }, "auto-promoted");
-
-    if (taskId) {
-      await addTaskComment(
-        {
-          taskId,
-          body: `Auto-promoted via the \`${lane}\` lane — ${fileCount} file(s), readiness ✓ · /runs/${runId}`,
-          actor: { type: "system", id: null },
-        },
-        db,
-      );
-    }
   } catch (err) {
     // Superseded (a user hold or project lane-disable landed under the promote
     // claim, ADR-126): benign — the run is intentionally no longer
@@ -323,15 +313,52 @@ async function promoteCandidate(args: {
       return;
     }
 
-    // Terminal give-up (CONFLICT / PRECONDITION / CONFIG): one-tx CAS hold +
-    // exactly-one comment (the CAS proves at-most-one).
+    // Terminal failure. Only stamp a give-up hold when the run is STILL Review: a
+    // sweep-vs-human race loser fails CONFLICT/PRECONDITION AFTER the human winner
+    // moved the run to Done, and must NOT get a false give-up hold/comment.
+    // holdAndComment CASes on (promotion_hold IS NULL AND status='Review') and
+    // reports whether it actually held (Codex R2-F2).
     const reason = `auto-promotion gave up (${code}): ${
       err instanceof Error ? err.message : String(err)
     }`;
+    const held = await holdAndComment({ db, runId, taskId, reason });
 
-    summary.gaveUp += 1;
-    await holdAndComment({ db, runId, taskId, reason });
-    log.info({ runId, code }, "auto-promotion gave up — held");
+    if (held) {
+      summary.gaveUp += 1;
+      log.info({ runId, code }, "auto-promotion gave up — held");
+    } else {
+      summary.skipped += 1;
+      log.warn(
+        { runId, code },
+        "auto-promotion failed but run no longer Review — skip (race loss)",
+      );
+    }
+
+    return;
+  }
+
+  // Success. The audit comment is best-effort and lives OUTSIDE the promote try so
+  // a comment failure on an already-promoted (Done) run can never route to the
+  // give-up path above (Codex R2-F2).
+  summary.promoted += 1;
+  log.info({ runId, lane, fileCount }, "auto-promoted");
+
+  if (taskId) {
+    try {
+      await addTaskComment(
+        {
+          taskId,
+          body: `Auto-promoted via the \`${lane}\` lane — ${fileCount} file(s), readiness ✓ · /runs/${runId}`,
+          actor: { type: "system", id: null },
+        },
+        db,
+      );
+    } catch (err) {
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "auto-promotion succeeded but the audit comment failed",
+      );
+    }
   }
 }
 
@@ -340,7 +367,7 @@ async function holdAndComment(args: {
   runId: string;
   taskId: string | null;
   reason: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const { db, runId, taskId, reason } = args;
   const hold: PromotionHold = {
     source: "system",
@@ -348,19 +375,29 @@ async function holdAndComment(args: {
     createdAt: new Date().toISOString(),
   };
 
-  await db.transaction(async (tx: Db) => {
+  return db.transaction(async (tx: Db) => {
+    // CAS on status='Review' too (Codex R2-F2): a run a human/other winner already
+    // moved past Review must not receive a false give-up hold. The status+hold CAS
+    // also proves at-most-one comment across retries.
     const held = await tx
       .update(runs)
       .set({ promotionHold: hold })
-      .where(and(eq(runs.id, runId), isNull(runs.promotionHold)))
+      .where(
+        and(
+          eq(runs.id, runId),
+          isNull(runs.promotionHold),
+          eq(runs.status, "Review"),
+        ),
+      )
       .returning({ id: runs.id });
 
-    // Only the CAS winner posts the comment ⇒ exactly-one comment across retries.
     if (held.length > 0 && taskId) {
       await addTaskComment(
         { taskId, body: reason, actor: { type: "system", id: null } },
         tx,
       );
     }
+
+    return held.length > 0;
   });
 }

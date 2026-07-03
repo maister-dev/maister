@@ -26,6 +26,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
 import { MaisterError } from "@/lib/errors";
+import { addTaskComment } from "@/lib/social/comments";
 
 const mocks = vi.hoisted(() => ({
   promoteRun: vi.fn(),
@@ -44,6 +45,13 @@ vi.mock("@/lib/worktree", async (orig) => ({
 vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
   assertEvidenceReady: mocks.assertEvidenceReady,
 }));
+// Wrap the REAL addTaskComment so AC-1/AC-6 keep writing real comments, but the
+// R2-F2 comment-failure test can override a single call with mockRejectedValueOnce.
+vi.mock("@/lib/social/comments", async (orig) => {
+  const real = await orig<typeof import("@/lib/social/comments")>();
+
+  return { ...real, addTaskComment: vi.fn(real.addTaskComment) };
+});
 
 // Imported AFTER the mocks so the module graph binds the stubs.
 const { runAutoPromoteJob, CANDIDATE_LIMIT } = await import(
@@ -421,5 +429,76 @@ describe("runAutoPromoteJob — F1 rotation defeats starvation", () => {
     );
 
     expect(rows[0].target.cursor).toBeNull();
+  });
+});
+
+describe("runAutoPromoteJob — R2-F1 malformed config must not crash the sweep", () => {
+  it("a project whose autoPromotion.enabled is non-boolean does not throw the tick", async () => {
+    // The old `(auto_promotion->>'enabled')::boolean` cast threw a Postgres error
+    // on this row and failed the singleton job; @> containment excludes it safely.
+    await db
+      .update(schema.projects)
+      .set({ autoPromotion: { enabled: "x" } })
+      .where(eq(schema.projects.id, projectId));
+    await seedReviewRun();
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(summary.candidates).toBe(0);
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("runAutoPromoteJob — R2-F2 give-up path is race- and comment-safe", () => {
+  it("a race loser (run moved to Done under the promote) gets no false hold/comment", async () => {
+    const { runId, taskId } = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+
+    // Simulate the human winner finishing during our promote attempt: the run is
+    // Done by the time promoteRun throws its claim CONFLICT.
+    mocks.promoteRun.mockImplementation(async () => {
+      await db.update(runs).set({ status: "Done" }).where(eq(runs.id, runId));
+
+      throw new MaisterError("CONFLICT", "lost the race");
+    });
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(summary.gaveUp).toBe(0);
+    expect(summary.skipped).toBe(1);
+
+    const [row] = await db
+      .select({ hold: runs.promotionHold, status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    expect(row.hold).toBeNull();
+    expect(row.status).toBe("Done");
+    expect(await commentCount(taskId)).toBe(0);
+  });
+
+  it("a comment failure after a successful promote does not trigger give-up", async () => {
+    const { runId, taskId } = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+
+    mocks.promoteRun.mockResolvedValue({});
+    vi.mocked(addTaskComment).mockRejectedValueOnce(new Error("comment boom"));
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(summary.promoted).toBe(1);
+    expect(summary.gaveUp).toBe(0);
+
+    const [row] = await db
+      .select({ hold: runs.promotionHold })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    expect(row.hold).toBeNull();
+    expect(await commentCount(taskId)).toBe(0);
   });
 });
