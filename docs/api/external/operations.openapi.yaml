@@ -784,14 +784,17 @@ paths:
           $ref: "#/components/responses/EmbeddingUnavailable"
     post:
       tags: [memory]
-      summary: (ADR-122, Implemented) Retain a project-brain memory (dedup-or-reinforce)
+      summary: (ADR-122/127, Implemented) Retain a project-brain memory
       description: |
-        Scope `memory:write`. Embeds the content and, within one transaction under a
-        per-project advisory lock, either **reinforces** a semantically-near active
-        item (cosine > τ=0.85 → confidence +0.1, push `expires_at`) or **inserts** a
-        new item at confidence₀=0.3 + TTL. Identical `content_hash` is an idempotent
-        no-op. Provenance actor is derived from the token — the body carries NO
-        project id.
+        Scope `memory:write`. Retains owned-tier memory only. Identical active
+        `content_hash` is an idempotent no-op. For `lesson`/`observation`,
+        semantically-near active items of the same kind reinforce in place
+        (cosine > τ=0.85 → confidence +0.1, push `expires_at`). For changed
+        near `state_fact`, the newer fact is inserted active and the prior active
+        fact becomes `superseded`. `decision`/`direction` are accepted only when
+        project home-resolution has no canonical source; a covering source
+        returns 422 `CONFIG` naming the source and proposal path. Provenance actor
+        is derived from the token — the body carries NO project id.
 
         For an **agent** token, `agent_project_links.can_write_brain` must be true
         (else 403) — `can_read_brain`/`memory:read` alone NEVER grant write. The
@@ -814,7 +817,7 @@ paths:
             schema: { $ref: "#/components/schemas/ExtMemoryRetainBody" }
       responses:
         "200":
-          description: The retained (inserted or reinforced) item.
+          description: The retained, reinforced, or superseding item.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtMemoryRetainResult" }
@@ -2205,12 +2208,12 @@ components:
 
     ExtMemoryRetainResult:
       type: object
-      description: (ADR-122, Implemented) Outcome of a retain call.
+      description: (ADR-122/127, Implemented) Outcome of a retain call.
       required: [item, reinforced]
       properties:
         reinforced:
           type: boolean
-          description: true = an existing near item was reinforced; false = a new item was inserted.
+          description: true = an existing near lesson/observation was reinforced; false = exact no-op, insert, or state_fact supersede-on-change.
         item:
           type: object
           required: [id, kind, status]

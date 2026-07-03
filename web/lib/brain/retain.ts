@@ -1,14 +1,17 @@
 import "server-only";
 
-import type { BrainItemKind } from "./schema";
+import type { BrainItemKind, BrainSourceRef } from "./schema";
 
 import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
+import pino from "pino";
 
 import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
+import { createRetainSourceEdges } from "./edges";
 import { assertBrainProvisioned, assertProjectBrainEnabled } from "./guard";
+import { assertRetainHomeAllowsOwned } from "./home-resolution";
 import {
   getBrainEmbeddingClient,
   type OpenAiCompatibleClient,
@@ -17,6 +20,11 @@ import { BRAIN_POLICY } from "./policy";
 
 import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
+
+const log = pino({
+  name: "brain:retain",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 // Project Brain (ADR-122) retain: the self-improving write. embed OUTSIDE the
 // transaction, then within ONE transaction take a per-project advisory lock and
@@ -30,6 +38,7 @@ export interface RetainInput {
   content: string;
   title?: string;
   tags?: string[];
+  sourceRef?: BrainSourceRef;
 }
 
 export interface RetainProvenance {
@@ -77,20 +86,23 @@ export async function retain(
   // caller inherits the kill switch, and it runs before the paid embed call.
   await assertProjectBrainEnabled(db, projectId);
 
+  const content = input.content.trim();
+
+  if (!content) throw new MaisterError("CONFIG", "retain content is empty");
+
+  const kind = input.kind;
+
+  await assertRetainHomeAllowsOwned(db, projectId, kind);
+
   const client =
     opts.client ??
     (await getBrainEmbeddingClient(
       db as unknown as Parameters<typeof getBrainEmbeddingClient>[0],
     ));
 
-  const content = input.content.trim();
-
-  if (!content) throw new MaisterError("CONFIG", "retain content is empty");
-
   const contentHash = sha256(content);
   const title = (input.title?.trim() || deriveTitle(content)).slice(0, 512);
   const tags = input.tags ?? [];
-  const kind = input.kind;
 
   // Embed OUTSIDE the transaction (network) — the tx does DB work only.
   const segments = splitForEmbedding(content);
@@ -148,6 +160,8 @@ export async function retain(
         return { itemId: String(dup.rows[0].id), reinforced: false };
       }
 
+      let supersededStateFactId: string | null = null;
+
       // Near-dup over the ACTIVE generation of this project's active items,
       // SAME kind only — a state_fact must never be absorbed into a decaying
       // lesson (their TTL semantics differ), and the response kind must be
@@ -170,26 +184,30 @@ export async function retain(
         | undefined;
 
       if (best && 1 - Number(best.dist) > BRAIN_POLICY.dedupCosineThreshold) {
-        // Re-check `status` in the UPDATE predicate: the decay sweep runs on
-        // its own connection WITHOUT the advisory lock, so the match seen
-        // active above may be `expired` by now (READ COMMITTED re-evaluates
-        // the WHERE against the new row version). Reinforcing an expired row
-        // would consume the event (ledger row committed in this tx) while the
-        // lesson stays invisible to recall — fall through and INSERT instead.
-        const reinforcedRow = await tx.execute(sql`
-          UPDATE brain_items
-          SET confidence = LEAST(confidence + ${BRAIN_POLICY.reinforceConfidenceStep}, 1),
-              reinforcement_count = reinforcement_count + 1,
-              last_reinforced_at = now(),
-              expires_at = CASE WHEN expires_at IS NULL THEN NULL
-                                ELSE now() + ${sql.raw(String(BRAIN_POLICY.reinforceTtlDays))} * INTERVAL '1 day' END,
-              updated_at = now()
-          WHERE id = ${best.item_id} AND status = 'active'
-          RETURNING id
-        `);
+        if (kind === "state_fact") {
+          supersededStateFactId = String(best.item_id);
+        } else {
+          // Re-check `status` in the UPDATE predicate: the decay sweep runs on
+          // its own connection WITHOUT the advisory lock, so the match seen
+          // active above may be `expired` by now (READ COMMITTED re-evaluates
+          // the WHERE against the new row version). Reinforcing an expired row
+          // would consume the event (ledger row committed in this tx) while the
+          // lesson stays invisible to recall — fall through and INSERT instead.
+          const reinforcedRow = await tx.execute(sql`
+            UPDATE brain_items
+            SET confidence = LEAST(confidence + ${BRAIN_POLICY.reinforceConfidenceStep}, 1),
+                reinforcement_count = reinforcement_count + 1,
+                last_reinforced_at = now(),
+                expires_at = CASE WHEN expires_at IS NULL THEN NULL
+                                  ELSE now() + ${sql.raw(String(BRAIN_POLICY.reinforceTtlDays))} * INTERVAL '1 day' END,
+                updated_at = now()
+            WHERE id = ${best.item_id} AND status = 'active'
+            RETURNING id
+          `);
 
-        if (reinforcedRow.rows.length > 0) {
-          return { itemId: String(best.item_id), reinforced: true };
+          if (reinforcedRow.rows.length > 0) {
+            return { itemId: String(best.item_id), reinforced: true };
+          }
         }
       }
 
@@ -204,13 +222,14 @@ export async function retain(
         INSERT INTO brain_items
           (id, project_id, kind, title, content, status, confidence, content_hash,
            tags, source_run_id, source_node_attempt_id, source_domain_event_id,
-           source_gate_kind, expires_at)
+           source_gate_kind, source_ref, expires_at)
         VALUES
           (${itemId}, ${projectId}, ${kind}, ${title}, ${content}, 'active',
            ${BRAIN_POLICY.initialConfidence}, ${contentHash},
            ${JSON.stringify(tags)}::jsonb,
            ${provenance.sourceRunId ?? null}, ${provenance.sourceNodeAttemptId ?? null},
            ${provenance.sourceDomainEventId ?? null}, ${provenance.sourceGateKind ?? null},
+           ${JSON.stringify(input.sourceRef ?? null)}::jsonb,
            ${expiresClause})
       `);
 
@@ -227,6 +246,32 @@ export async function retain(
           DO NOTHING
         `);
       }
+
+      if (supersededStateFactId) {
+        const superseded = await tx.execute(sql`
+          UPDATE brain_items
+          SET status = 'superseded',
+              updated_at = now()
+          WHERE id = ${supersededStateFactId}
+            AND project_id = ${projectId}
+            AND kind = 'state_fact'
+            AND status = 'active'
+          RETURNING id
+        `);
+
+        if (superseded.rows.length > 0) {
+          log.debug(
+            { projectId, oldItemId: supersededStateFactId, newItemId: itemId },
+            "brain state_fact superseded",
+          );
+        }
+      }
+
+      await createRetainSourceEdges(tx, {
+        projectId,
+        itemId,
+        sourceRef: input.sourceRef,
+      });
 
       return { itemId, reinforced: false };
     });

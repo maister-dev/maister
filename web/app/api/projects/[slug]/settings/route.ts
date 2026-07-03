@@ -15,6 +15,10 @@ import {
   isBrainFullyConfigured,
   reconcileBrainIndexJobs,
 } from "@/lib/brain/settings";
+import {
+  saveBrainHomeResolution,
+  type BrainHomeResolution,
+} from "@/lib/brain/home-resolution";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -45,6 +49,13 @@ const patchBodySchema = z
     // ADR-126: auto-promotion lane config. `null` clears to shipped defaults +
     // master OFF. `.strict()` rejects unknown keys → 422.
     autoPromotion: autoPromotionConfigSchema.nullable().optional(),
+    homeResolution: z
+      .object({
+        decision: z.enum(["owned", "indexed"]).optional(),
+        direction: z.enum(["owned", "indexed"]).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -152,13 +163,15 @@ export async function PATCH(
 
     // ADR-122 enable-gate: a project can never be enabled into an
     // unharvest-able state — platform embedding config + distill_model first.
-    if (body.brainEnabled === true) {
+    if (body.brainEnabled === true || body.homeResolution !== undefined) {
       // SQLite → 409 PRECONDITION (E-11) before the settings query; a Postgres
       // that never ran `db:migrate:brain` refuses with the exact command
       // instead of letting harvest/recall hit raw 42P01s post-enable.
       assertBrainProvisioned();
       await assertBrainSchemaApplied(db);
+    }
 
+    if (body.brainEnabled === true) {
       const brainSettings = await getBrainSettings(db);
 
       if (!isBrainFullyConfigured(brainSettings)) {
@@ -188,11 +201,23 @@ export async function PATCH(
       update.autoPromotion = body.autoPromotion;
     }
 
-    if (Object.keys(update).length === 0) {
+    if (Object.keys(update).length === 0 && body.homeResolution === undefined) {
       throw new MaisterError("CONFIG", "PATCH body contains no settings");
     }
 
-    await db.update(projects).set(update).where(eq(projects.id, project.id));
+    await db.transaction(async (tx: any) => {
+      if (Object.keys(update).length > 0) {
+        await tx.update(projects).set(update).where(eq(projects.id, project.id));
+      }
+
+      if (body.homeResolution !== undefined) {
+        await saveBrainHomeResolution(
+          tx,
+          project.id,
+          body.homeResolution as BrainHomeResolution,
+        );
+      }
+    });
 
     // ADR-122: a project re-enabled AFTER a generation switch has old-generation
     // embeddings only — reconcile-enqueue a reindex job so its vector leg
@@ -220,6 +245,7 @@ export async function PATCH(
         projectId: project.id,
         runnerId: body.runnerId,
         deliveryPolicyDefault: body.deliveryPolicyDefault,
+        homeResolutionChanged: body.homeResolution !== undefined,
       },
       "project settings updated",
     );
@@ -241,6 +267,7 @@ export async function PATCH(
         body.autoPromotion === undefined
           ? project.autoPromotion
           : body.autoPromotion,
+      homeResolution: body.homeResolution,
     });
   } catch (err) {
     return errorResponse(err, slug);

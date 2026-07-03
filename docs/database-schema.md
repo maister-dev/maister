@@ -2625,17 +2625,18 @@ missing-generation worklist (`resumable_cursor` records progress, plus
 }
 ```
 
-### `brain_edges` (Designed — migration `0003`)
+### `brain_edges` (Implemented — migration `0003`)
 
-Lightweight references between owned items, chunks, and proposals. Re-chunking
-best-effort re-anchors by stable id, symbol, path, and content hash; unmappable
-edges are kept with `degraded=true`.
+Lightweight references between owned items, chunks, and proposals. Chunk refs
+store the chunk id plus source id, source path, stable id, symbol, and
+content hash so re-chunking can best-effort re-anchor by stable id,
+symbol/path, then content hash. Unmappable edges are kept with `degraded=true`.
 
 ```ts
 {
   id,
   projectId,                       // FK projects(id) ON DELETE CASCADE
-  fromRef, toRef,                  // jsonb item/chunk/proposal refs
+  fromRef, toRef,                  // jsonb item/chunk/proposal refs; chunk refs carry source/chunk metadata
   relation,                        // supports | contradicts | derived_from | refines | references
   confidence,
   degraded,

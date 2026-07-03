@@ -76,6 +76,61 @@ function makeClient(
   };
 }
 
+async function seedIndexedRouteChunk(args: {
+  projectId: string;
+  path: string;
+  content: string;
+}): Promise<{ chunkId: string; stableId: string }> {
+  const sourceId = randomUUID();
+  const chunkId = randomUUID();
+  const stableId = `${args.path}#route:test`;
+
+  await dbRef.execute(sql`
+    INSERT INTO brain_sources
+      (id, project_id, kind, path, chunker_id, chunker_version)
+    VALUES
+      (${sourceId}, ${args.projectId}, 'markdown', ${args.path}, 'markdown', '1')
+  `);
+  await dbRef.execute(sql`
+    INSERT INTO brain_chunks
+      (id, source_id, project_id, stable_id, kind, title, path, symbol,
+       content, metadata, source_range, content_hash)
+    VALUES
+      (${chunkId}, ${sourceId}, ${args.projectId}, ${stableId}, 'markdown_section',
+       'Route Chunk', ${args.path}, 'Route Chunk', ${args.content}, '{}'::jsonb,
+       '{"startLine":2,"endLine":6}'::jsonb, md5(${args.content}))
+  `);
+  await dbRef.execute(sql`
+    INSERT INTO brain_embeddings
+      (id, chunk_id, split_ordinal, vector, embedding_provider,
+       embedding_model, embedding_dimensions, embedding_version, source_hash,
+       content_hash, chunker_id, chunker_version)
+    VALUES
+      (${randomUUID()}, ${chunkId}, 0, ${`[${embedVector().join(",")}]`}::vector,
+       'openai_compatible', ${TEST_EMBEDDING_MODEL}, ${DIMS},
+       ${`${TEST_EMBEDDING_MODEL}@${DIMS}`}, md5(${args.content}),
+       md5(${args.content}), 'markdown', '1')
+  `);
+
+  return { chunkId, stableId };
+}
+
+async function seedRouteCanonicalSource(args: {
+  projectId: string;
+  path: string;
+}): Promise<string> {
+  const sourceId = randomUUID();
+
+  await dbRef.execute(sql`
+    INSERT INTO brain_sources
+      (id, project_id, kind, path, chunker_id, chunker_version, enabled)
+    VALUES
+      (${sourceId}, ${args.projectId}, 'markdown', ${args.path}, 'markdown', '1', true)
+  `);
+
+  return sourceId;
+}
+
 async function seedAgentLink(
   projectId: string,
   axes: { canReadBrain: boolean; canWriteBrain: boolean },
@@ -193,6 +248,60 @@ describe("ext memory routes (T4.2)", () => {
     expect(snap.rows[0]?.actor_type).toBe("system");
   });
 
+  it("recall serializes indexed hits with pointers and snapshots chunk entries", async () => {
+    const projectId = await seedBrainProject(dbRef);
+    const slug = String(
+      (
+        await dbRef.execute(
+          sql`SELECT slug FROM projects WHERE id = ${projectId}`,
+        )
+      ).rows[0]?.slug,
+    );
+    const indexed = await seedIndexedRouteChunk({
+      projectId,
+      path: "docs/brain.md",
+      content: "indexed route recall content",
+    });
+    const token = await issueToken(
+      { projectId, name: "reader-indexed", scopes: ["memory:read"] },
+      dbRef,
+    );
+
+    const res = await GET(getReq(slug, "q=indexed", token.secret), {
+      params: Promise.resolve({ slug }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tier: "indexed",
+          chunkId: indexed.chunkId,
+          pointer: {
+            sourcePath: "docs/brain.md",
+            stableId: indexed.stableId,
+            sourceRange: { startLine: 2, endLine: 6 },
+          },
+        }),
+      ]),
+    );
+
+    const snap = await dbRef.execute(sql`
+      SELECT returned_items FROM brain_snapshots WHERE project_id = ${projectId}
+    `);
+
+    expect(snap.rows[0]?.returned_items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tier: "indexed",
+          chunkId: indexed.chunkId,
+          pointer: expect.objectContaining({ sourcePath: "docs/brain.md" }),
+        }),
+      ]),
+    );
+  });
+
   it("retain writes an item", async () => {
     const projectId = await seedBrainProject(dbRef);
     const slug = String(
@@ -222,6 +331,77 @@ describe("ext memory routes (T4.2)", () => {
     );
 
     expect(Number(count.rows[0]?.n)).toBe(1);
+  });
+
+  it("retain accepts decision for no-docs projects", async () => {
+    const projectId = await seedBrainProject(dbRef);
+    const slug = String(
+      (
+        await dbRef.execute(
+          sql`SELECT slug FROM projects WHERE id = ${projectId}`,
+        )
+      ).rows[0]?.slug,
+    );
+    const token = await issueToken(
+      { projectId, name: "writer-decision", scopes: ["memory:write"] },
+      dbRef,
+    );
+
+    const res = await POST(
+      postReq(
+        slug,
+        { content: "ADR decision owned until docs source exists", kind: "decision" },
+        token.secret,
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(res.status).toBe(200);
+    const row = await dbRef.execute(
+      sql`SELECT kind FROM brain_items WHERE project_id = ${projectId}`,
+    );
+
+    expect(row.rows.map((r) => r.kind)).toEqual(["decision"]);
+  });
+
+  it("retain refuses decision with canonical source before embedding", async () => {
+    const projectId = await seedBrainProject(dbRef);
+    const slug = String(
+      (
+        await dbRef.execute(
+          sql`SELECT slug FROM projects WHERE id = ${projectId}`,
+        )
+      ).rows[0]?.slug,
+    );
+    await seedRouteCanonicalSource({
+      projectId,
+      path: "docs/decisions.md",
+    });
+    const token = await issueToken(
+      { projectId, name: "writer-canonical", scopes: ["memory:write"] },
+      dbRef,
+    );
+    const embed = vi.fn(async (texts: string[]) =>
+      texts.map(() => embedVector()),
+    );
+
+    fakeClient = makeClient({ embed });
+
+    const res = await POST(
+      postReq(
+        slug,
+        { content: "ADR decision belongs in docs", kind: "decision" },
+        token.secret,
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(body).toMatchObject({ code: "CONFIG" });
+    expect(body.message).toContain("docs/decisions.md");
+    expect(body.message).toContain("memory_propose");
+    expect(embed).not.toHaveBeenCalled();
   });
 
   it("422s on input past the caps: content, q, tags (paid-embedding abuse guard)", async () => {

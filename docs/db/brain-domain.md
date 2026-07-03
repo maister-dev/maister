@@ -229,7 +229,7 @@ erDiagram
 | `brain_sources` | `brain_sources_project_idx` | btree `(project_id, enabled)` | Source list and enabled-source scans. |
 | `brain_chunks` | `brain_chunks_tsv_gin` | GIN `(tsv)` | Lexical leg for indexed recall. |
 | `brain_chunks` | `brain_chunks_project_idx` | btree `(project_id, path)` | Pointer/source filters. |
-| `brain_edges` | `brain_edges_project_idx` | btree `(project_id, degraded)` | Brain page edge reads and degraded filters. |
+| `brain_edges` | `brain_edges_project_idx` | btree `(project_id, degraded)` | Brain page edge reads, derived-from source edges, and degraded filters. |
 | `brain_proposals` | `brain_proposals_project_status_idx` | btree `(project_id, status, created_at)` | Proposal review tabs and improver idempotency. |
 | `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **Per-generation expression HNSW** — created by `ensureEmbeddingIndex(model, N)` at configure/reindex time, NOT in the migration. A model/dimension switch adds a new one; old ones persist. |
 | `brain_snapshots` | `brain_snapshots_run_idx` | btree `(run_id)` | Run-scoped snapshot reads. |
@@ -271,10 +271,11 @@ harvested lesson survives the deletion of the run/event it was distilled from.
   (a new set of rows + a new expression index; `embedding_version` is recorded
   metadata only); old generation rows and their indexes stay intact. Index/row GC
   across dead generations is out of scope for Sub-project A.
-- **Items decay.** `lesson`/`observation` carry `expires_at`; the throttled decay
-  sweep sets `status='expired'` past `expires_at` (excluded from recall). `state_fact`
-  is not decayed — supersede-on-change is (Designed — Sub-project B; the `superseded`
-  enum value has no writer in A). Reinforcement pushes `expires_at` out.
+- **Items decay or supersede.** `lesson`/`observation` carry `expires_at`; the
+  throttled decay sweep sets `status='expired'` past `expires_at` (excluded from
+  recall). `state_fact` is not decayed; changed near-duplicates mark the prior
+  active fact `superseded` and insert a fresh active fact. Reinforcement pushes
+  `expires_at` out only for decayed kinds.
 - **Snapshots are audit records** — never mutated; pruned by the decay sweep after
   30 days (`BRAIN_POLICY.snapshotTtlDays`) and via project/run cascade.
 - **Indexed sources are pointers.** `brain_chunks.content` is a recall/indexing

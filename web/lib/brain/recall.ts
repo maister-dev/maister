@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { BrainItemKind } from "./schema";
+import type { BrainItemKind, BrainSnapshotReturnedItem } from "./schema";
 
 import { randomUUID } from "node:crypto";
 
@@ -90,7 +90,7 @@ export interface SnapshotInput {
   trigger: "ambient" | "explicit";
   query: string;
   embeddingModel: string;
-  returnedItems: Array<{ itemId: string; score: number }>;
+  returnedItems: BrainSnapshotReturnedItem[];
   rankerVersion: string;
 }
 

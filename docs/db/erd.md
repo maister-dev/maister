@@ -1381,7 +1381,7 @@ external-operation events) is not drawn until its migrations exist. See
 | `brain_sources` | `brain_sources_project_idx` | `(project_id, enabled)` | **(Designed, ADR-127)** Enabled source scans and source list. |
 | `brain_chunks` | `brain_chunks_source_stable_uq` | `(source_id, stable_id)` UNIQUE | **(Designed, ADR-127)** Stable chunk identity. |
 | `brain_chunks` | `brain_chunks_tsv_gin` | GIN `(tsv)` | **(Designed, ADR-127)** Indexed lexical recall leg. |
-| `brain_edges` | `brain_edges_project_idx` | `(project_id, degraded)` | **(Designed, ADR-127)** Edge and degraded-edge reads. |
+| `brain_edges` | `brain_edges_project_idx` | `(project_id, degraded)` | **(Implemented, ADR-127)** Edge and degraded-edge reads. |
 | `brain_proposals` | `brain_proposals_project_status_idx` | `(project_id, status, created_at)` | **(Designed, ADR-128)** Proposal review tabs. |
 | `brain_proposals` | `brain_proposals_cluster_hash_uq` | `(project_id, cluster_hash)` PARTIAL `WHERE cluster_hash IS NOT NULL` | **(Designed, ADR-128)** Idempotent improver/propose path. |
 

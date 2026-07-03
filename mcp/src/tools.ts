@@ -77,7 +77,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           type: "array",
           items: {
             type: "string",
-            enum: ["lesson", "observation", "state_fact"],
+            enum: [
+              "lesson",
+              "observation",
+              "state_fact",
+              "decision",
+              "direction",
+            ],
           },
         },
         minConfidence: { type: "number", minimum: 0, maximum: 1 },
@@ -95,7 +101,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         content: { type: "string", minLength: 1, maxLength: 32000 },
         kind: {
           type: "string",
-          enum: ["lesson", "observation", "state_fact"],
+          enum: [
+            "lesson",
+            "observation",
+            "state_fact",
+            "decision",
+            "direction",
+          ],
         },
         title: { type: "string", minLength: 1, maxLength: 512 },
         tags: {

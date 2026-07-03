@@ -289,7 +289,15 @@ export interface BrainSourceRef {
 
 export type BrainGraphRef =
   | { type: "item"; id: string }
-  | { type: "chunk"; id: string }
+  | {
+      type: "chunk";
+      id: string;
+      sourceId?: string;
+      sourcePath?: string;
+      stableId?: string;
+      symbol?: string | null;
+      contentHash?: string;
+    }
   | { type: "source"; id: string }
   | { type: "proposal"; id: string };
 

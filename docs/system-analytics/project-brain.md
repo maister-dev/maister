@@ -72,11 +72,11 @@ or board tasks.
   (bool, default false); `agent_project_links.can_read_brain` /
   `can_write_brain` (bool, default false); `runs.brain_context` (bool, nullable —
   null = off (default) in A; a flow/agent-level default is reserved).
-- **Kinds (owned tier, A subset)** (Implemented) — `lesson` (decay TTL, promoted by
+- **Kinds (owned tier)** (Implemented) — `lesson` (decay TTL, promoted by
   recurrence), `observation` (slower decay), `state_fact` (not decayed;
-  supersede-on-change is **(Designed — Sub-project B)** — the `superseded` status
-  exists in the enum only, with no writer in A). `decision`/`direction` (indexed
-  tier) are **(Phase 2 — Sub-project B)**.
+  near changed facts supersede the prior active fact). `decision`/`direction`
+  are owned fallback kinds only when home resolution has no canonical source;
+  otherwise they are indexed-tier pointers.
 - **`brain_sources`** (Designed — brain migration `0003`) — one canonical source
   registration per project: `{ id, project_id (FK CASCADE), kind, path/glob,
   source_hash, chunker_id, chunker_version, enabled, last_indexed_at,
@@ -88,10 +88,12 @@ or board tasks.
   title, path, symbol?, content, metadata, source_range, content_hash, tsv }`.
   Chunks are not authoritative; recall returns capped previews plus canonical
   pointers.
-- **`brain_edges`** (Designed — `0003`) — lightweight graph references:
+- **`brain_edges`** (Implemented — `0003`) — lightweight graph references:
   `{ id, project_id, from_ref, to_ref, relation, confidence, degraded,
-  created_at, updated_at }`. Re-chunking remaps best-effort; unmappable edges
-  become `degraded=true`.
+  created_at, updated_at }`. Retain can create `derived_from` edges from
+  `brain_items.source_ref` to indexed chunks. Re-chunking remaps chunk refs
+  best-effort by stable id, symbol/path, then content hash; unmappable edges
+  remain visible with `degraded=true`.
 - **`brain_project_config`** (Designed — `0003`) — per-project Brain policy:
   `{ project_id PK, home_resolution, projection_flow_id, autonomy_policy? }`.
   Home resolution decides whether `decision`/`direction` are indexed canonical
@@ -114,17 +116,16 @@ or board tasks.
 ### `brain_items` lifecycle (Implemented)
 
 An item is inserted `active` at confidence₀; a semantically-near retain of the SAME
-kind **reinforces** it in place (self-loop, no new row); the decay sweep expires it
-past `expires_at`. `state_fact` supersede-on-change (a newer fact about the same
-subject superseding the prior one) is **(Designed — Sub-project B)** — the
-`superseded` status exists in the enum only, with no writer in A.
+kind reinforces `lesson`/`observation` in place (self-loop, no new row), while a
+changed near `state_fact` inserts the newer fact and marks the prior active fact
+`superseded`. The decay sweep expires decayed kinds past `expires_at`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> active: retain insert (confidence0 0.3, expires_at now+TTL)
-    active --> active: reinforce (same kind, cosine > tau) — confidence +0.1, reinforcement_count++, expires_at +30d
+    active --> active: lesson/observation reinforce (same kind, cosine > tau) — confidence +0.1, reinforcement_count++, expires_at +30d
     active --> expired: decay sweep — now > expires_at AND not reinforced
-    active --> superseded: state_fact supersede-on-change (Designed — Sub-project B, no writer in A)
+    active --> superseded: state_fact changed near-duplicate retained
     expired --> [*]: excluded from recall (terminal)
     superseded --> [*]: excluded from recall (terminal)
 ```
@@ -188,10 +189,13 @@ rework chain) is FENCED between explicit `BEGIN/END UNTRUSTED RUN DATA` markers 
 a data-not-instructions instruction, and the distill completion request carries
 `max_tokens` (bounds respend on a runaway provider).
 
-### (b) `retain` — atomic dedup-or-reinforce (Implemented)
+### (b) `retain` — atomic retain, reinforce, or supersede (Implemented)
 
 `retain` embeds OUTSIDE the transaction, then serializes per-project writes with an
-advisory lock and either reinforces a near active item or inserts a new one.
+advisory lock. Exact active `content_hash` duplicates no-op. Near
+`lesson`/`observation` retains reinforce the active item. Near changed
+`state_fact` retains insert a new active fact and mark the prior active fact
+`superseded`; only active rows participate in recall.
 
 ```mermaid
 flowchart TD
@@ -206,13 +210,15 @@ flowchart TD
     LED -- no / not harvest --> HASH{exact content_hash active dup?}
     HASH -- yes --> NOOP[idempotent no-op]
     HASH -- no --> NEAR{cosine-sim > tau to an active item of the SAME kind?}
-    NEAR -- yes --> REIN[reinforce UPDATE re-checks status=active RETURNING]
+    NEAR -- yes, lesson/observation --> REIN[reinforce UPDATE re-checks status=active RETURNING]
+    NEAR -- yes, state_fact --> SUP[insert new active fact + mark prior fact superseded]
     REIN -- row returned --> OK[confidence +0.1, count++, expires_at +30d]
     REIN -- no row: racing decay expired it --> INS
     NEAR -- no --> INS[insert item confidence0 0.3 + TTL + embedding generations]
     RED --> COMMIT[(commit)]
     NOOP --> COMMIT
     OK --> COMMIT
+    SUP --> COMMIT
     INS --> COMMIT
 ```
 
@@ -381,9 +387,10 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   MUST create a new embedding generation, NEVER mutate a row — and `(item_id,
   split_ordinal, embedding_model, embedding_dimensions)` is UNIQUE, so an
   overlapping reindex sweep never writes a duplicate generation row. (Implemented)
-- **E-3** — `retain` MUST be idempotent on identical `content_hash` and MUST
-  reinforce (not duplicate) a semantically-near active item of the SAME kind above
-  threshold τ=0.85. (Implemented)
+- **E-3** — `retain` MUST be idempotent on identical `content_hash`;
+  semantically-near active `lesson`/`observation` items of the SAME kind above
+  threshold τ=0.85 reinforce in place, while changed near `state_fact` items
+  supersede the prior active fact and insert a fresh active fact. (Implemented)
 - **E-4** — Harvested `lesson`/`observation` items MUST start at confidence₀=0.3
   (below any auto-apply threshold) and MUST become `expired` at `expires_at` unless
   reinforced. (Implemented)
@@ -399,10 +406,10 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   and sandbox implementation. (Designed)
 - **E-13** — Cross-tier recall of an indexed chunk MUST return a canonical
   pointer and capped preview, never a forked authoritative copy. Snapshot and MCP
-  DTOs MUST use the same owned/indexed union. (Designed)
-- **E-14** — Edge/proposal re-anchoring on re-chunk MUST be best-effort by
-  stable id, symbol, path, and content hash; unmappable edges MUST be marked
-  degraded and kept visible. (Designed)
+  DTOs MUST use the same owned/indexed union. (Implemented)
+- **E-14** — Edge re-anchoring on re-chunk MUST be best-effort by stable id,
+  symbol, path, and content hash; unmappable edges MUST be marked degraded and
+  kept visible. (Implemented for edges; proposal re-anchor remains Designed)
 - **E-8** — An interrupted reindex job MUST stay `running` and be re-claimed on a
   later tick; resume MUST derive from the missing-generation worklist —
   `brain_index_jobs.resumable_cursor` records progress/observability metadata only,
@@ -467,12 +474,16 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   `MaisterError("CONFIG")` (misconfiguration, not an outage).
 - **Exact-dup / near-dup retain race** → the DB partial UNIQUEs collapse the race:
   exact `content_hash` → `MaisterError("CONFLICT")`-mapped constraint (idempotent
-  no-op); the per-project advisory lock serializes near-dup reinforcement.
+  no-op); the per-project advisory lock serializes near-dup reinforcement and
+  `state_fact` supersede-on-change.
 - **Near-dup across kinds** → dedup is KIND-SCOPED: a `state_fact` never reinforces
   a `lesson` — a cross-kind near-duplicate inserts a separate item.
 - **Reinforce vs decay race** → the reinforce UPDATE re-checks `status='active'`
   (`RETURNING`); if a racing decay sweep expired the item mid-transaction, retain
   falls through and INSERTS a fresh item instead of reinforcing an invisible one.
+- **State fact updates** → changed near-duplicate `state_fact` retains insert a
+  new active row and mark exactly one prior active fact `superseded`; superseded
+  rows stay excluded from recall.
 - **Ambient recall failure** → the enable-check runs INSIDE the best-effort try:
   any DB/provider error degrades to no-injection (the run NEVER fails) and is
   negative-cached for 60s per process; items below `confidence` 0.4

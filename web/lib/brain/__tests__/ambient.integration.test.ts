@@ -17,6 +17,7 @@ import {
 import {
   getAmbientBrainProjection,
   resetAmbientCache,
+  selectAmbientItems,
 } from "@/lib/brain/ambient";
 import { retain } from "@/lib/brain/retain";
 import { writeRunContext } from "@/lib/flows/graph/run-context";
@@ -192,6 +193,80 @@ describe("getAmbientBrainProjection (T4.3)", () => {
     });
 
     expect(brain).toBeUndefined();
+  });
+
+  it("keeps ambient owned-first when five owned memories are relevant", () => {
+    const owned = Array.from({ length: 5 }, (_, i) => ({
+      tier: "owned" as const,
+      id: `item-${i}`,
+      itemId: `item-${i}`,
+      kind: "lesson" as const,
+      title: `Owned ${i}`,
+      content: `owned ${i}`,
+      confidence: 0.5,
+      score: 1 - i * 0.01,
+      tags: [],
+      createdAt: new Date(),
+      expiresAt: null,
+      provenance: { runId: null, gateKind: null },
+    }));
+    const indexed = [
+      {
+        tier: "indexed" as const,
+        id: "chunk-1",
+        chunkId: "chunk-1",
+        kind: "markdown_section",
+        title: "Indexed",
+        content: "indexed",
+        preview: "indexed",
+        confidence: 1,
+        score: 0.99,
+        pointer: { sourcePath: "docs/a.md" },
+      },
+    ];
+
+    const selected = selectAmbientItems([...owned, ...indexed]);
+
+    expect(selected).toHaveLength(5);
+    expect(selected.every((entry) => entry.tier === "owned")).toBe(true);
+  });
+
+  it("fills ambient leftovers with at most two indexed chunks", () => {
+    const owned = Array.from({ length: 4 }, (_, i) => ({
+      tier: "owned" as const,
+      id: `item-${i}`,
+      itemId: `item-${i}`,
+      kind: "lesson" as const,
+      title: `Owned ${i}`,
+      content: `owned ${i}`,
+      confidence: 0.5,
+      score: 1 - i * 0.01,
+      tags: [],
+      createdAt: new Date(),
+      expiresAt: null,
+      provenance: { runId: null, gateKind: null },
+    }));
+    const indexed = Array.from({ length: 3 }, (_, i) => ({
+      tier: "indexed" as const,
+      id: `chunk-${i}`,
+      chunkId: `chunk-${i}`,
+      kind: "markdown_section",
+      title: `Indexed ${i}`,
+      content: `indexed ${i}`,
+      preview: `indexed ${i}`,
+      confidence: 1,
+      score: 0.9 - i * 0.01,
+      pointer: { sourcePath: `docs/${i}.md` },
+    }));
+
+    const selected = selectAmbientItems([...owned, ...indexed]);
+    const indexedCount = selected.filter(
+      (entry) => entry.tier === "indexed",
+    ).length;
+
+    expect(selected).toHaveLength(5);
+    expect(indexedCount).toBeGreaterThan(0);
+    expect(indexedCount).toBeLessThanOrEqual(2);
   });
 
   it("NEVER throws: a failing db (even on the enablement check) degrades to undefined and negative-caches", async () => {

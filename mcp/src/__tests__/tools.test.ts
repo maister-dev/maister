@@ -98,6 +98,36 @@ describe("TOOL_SPECS registry", () => {
       "global personal token",
     );
   });
+
+  it("mirrors the Brain kind enum for decision/direction retain and recall", () => {
+    const recallKinds = (
+      TOOL_SPECS.memory_recall.inputSchema.properties as Record<
+        string,
+        { items?: { enum?: string[] } }
+      >
+    ).kinds.items?.enum;
+    const retainKind = (
+      TOOL_SPECS.memory_retain.inputSchema.properties as Record<
+        string,
+        { enum?: string[] }
+      >
+    ).kind.enum;
+
+    expect(recallKinds).toEqual([
+      "lesson",
+      "observation",
+      "state_fact",
+      "decision",
+      "direction",
+    ]);
+    expect(retainKind).toEqual([
+      "lesson",
+      "observation",
+      "state_fact",
+      "decision",
+      "direction",
+    ]);
+  });
 });
 
 describe("dispatchTool — per-tool outbound request mapping", () => {
@@ -187,6 +217,36 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     const { url } = lastRequest();
 
     expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/memory?q=x`);
+  });
+
+  it("memory_recall preserves indexed-hit pointer fields from the REST response", async () => {
+    const payload = {
+      items: [
+        {
+          tier: "indexed",
+          chunkId: "chunk-1",
+          preview: "indexed preview",
+          confidence: 1,
+          score: 0.91,
+          pointer: {
+            sourcePath: "docs/brain.md",
+            stableId: "docs/brain.md#section:test",
+            sourceRange: { startLine: 1, endLine: 4 },
+          },
+        },
+      ],
+    };
+
+    mockOnce(payload, 200);
+
+    const result = await dispatchTool({
+      name: "memory_recall",
+      args: { slug: "demo", q: "indexed" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    expect(result).toEqual(payload);
   });
 
   it("memory_retain → POST /api/v1/ext/projects/{slug}/memory with only-defined body keys", async () => {

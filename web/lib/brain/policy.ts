@@ -19,6 +19,9 @@ export const BRAIN_POLICY = {
   reinforceTtlDays: 30,
   // ambient recall top-K injected into the P7 run-context.
   ambientK: 5,
+  // Sub-project B: indexed chunks fill only leftover ambient slots.
+  ambientIndexedMax: 2,
+  ambientIndexedMinScore: 0.25,
   // Ambient injection floor: confidence₀ (0.3) + one reinforce step — an item
   // must have recurred at least once before it is auto-injected into runs.
   // Explicit recall (ext route / MCP) is NOT floored; callers pass their own.

@@ -470,7 +470,7 @@ implementation starts and the owner chooses the milestone slot.
 
 ### Phase 3 - Cross-tier Recall, Pointers, Home Resolution, and Edges
 
-- [ ] **T5.1 - RED: cross-tier recall DTO and contract tests.**
+- [x] **T5.1 - RED: cross-tier recall DTO and contract tests.**
   - Add tests proving `recall` returns a shared union shape:
     - owned hit: `{tier:"owned", itemId, content, confidence, score, provenance}`
     - indexed hit: `{tier:"indexed", chunkId, pointer:{sourcePath,
@@ -487,8 +487,12 @@ implementation starts and the owner chooses the milestone slot.
     `mcp/src/__tests__/tool-contract.test.ts`,
     `mcp/src/__tests__/tools.test.ts`.
   - Verify RED: targeted unit/integration/MCP test commands.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/recall.integration.test.ts`
+    failed because recall returned only owned items and no `tier`/indexed pointer; `CI=true pnpm --filter maister-web exec vitest run --project integration 'app/api/v1/ext/projects/[slug]/memory/__tests__/route.integration.test.ts'`
+    failed because ext recall returned no indexed hit; `CI=true pnpm --filter @maister/mcp exec vitest run src/__tests__/tools.test.ts`
+    passed, proving MCP passthrough already preserves enriched REST fields.
 
-- [ ] **T5.2 - GREEN: cross-tier RecallRanker and ambient tier-mix.**
+- [x] **T5.2 - GREEN: cross-tier RecallRanker and ambient tier-mix.**
   - Extend `web/lib/brain/recall-ranker.ts`, `recall.ts`, and DTO types to rank
     items union chunks over active embedding generation plus lexical fallback.
   - Add `web/lib/brain/policy.ts` constants for ambient tier mix: owned priority
@@ -509,8 +513,13 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/recall*.ts`, `web/lib/brain/ambient.ts`,
     `web/lib/brain/policy.ts`, ext route, MCP tools, run-context types, docs.
   - Verify GREEN: targeted tests; `pnpm --filter maister-web typecheck`.
+  - GREEN evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/recall.integration.test.ts`
+    passed; `CI=true pnpm --filter maister-web exec vitest run --project integration 'app/api/v1/ext/projects/[slug]/memory/__tests__/route.integration.test.ts'`
+    passed; `CI=true pnpm --filter @maister/mcp exec vitest run src/__tests__/tools.test.ts`
+    passed; `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/ambient.integration.test.ts`
+    passed; `CI=true pnpm --filter maister-web typecheck` passed.
 
-- [ ] **T6.1 - RED/GREEN: decision/direction home-resolution and retain refusal.**
+- [x] **T6.1 - RED/GREEN: decision/direction home-resolution and retain refusal.**
   - RED: add integration tests for docs-as-code and no-docs projects:
     - registered ADR/roadmap sources make `decision`/`direction` indexed-tier.
     - project without a covering source allows owned-tier retain.
@@ -526,8 +535,19 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/home-resolution.ts`, `web/lib/brain/retain.ts`,
     ext route, MCP tools, project settings route/UI docs.
   - Verify: targeted integration tests; `pnpm --filter maister-web typecheck`.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/retain.integration.test.ts`
+    failed because canonical `decision`/`direction` retained as owned items;
+    `CI=true pnpm --filter maister-web exec vitest run --project integration 'app/api/v1/ext/projects/[slug]/memory/__tests__/route.integration.test.ts'`
+    failed because the ext schema rejected `decision` before home resolution;
+    `CI=true pnpm --filter @maister/mcp exec vitest run src/__tests__/tools.test.ts`
+    failed because MCP kind enums omitted `decision`/`direction`;
+    `CI=true pnpm --filter maister-web exec vitest run --project integration 'app/api/projects/[slug]/settings/__tests__/brain-enable-gate.integration.test.ts'`
+    failed because project settings could not save `homeResolution`.
+  - GREEN evidence: the same four targeted commands passed after adding
+    `web/lib/brain/home-resolution.ts`, retain pre-embedding refusal, ext/MCP
+    enum parity, and project-settings `homeResolution` upsert/clear support.
 
-- [ ] **T6.2 - RED/GREEN: state_fact supersede-on-change writer.**
+- [x] **T6.2 - RED/GREEN: state_fact supersede-on-change writer.**
   - RED: extend retain integration tests:
     - identical `state_fact` content_hash is no-op.
     - near-duplicate changed hash supersedes exactly one active prior row and
@@ -543,8 +563,17 @@ implementation starts and the owner chooses the milestone slot.
     newItemId}`; no content.
   - Files: `web/lib/brain/retain.ts`, tests, docs.
   - Verify: targeted retain integration test.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/retain.integration.test.ts`
+    failed because changed near `state_fact` retained as a reinforcement and
+    left the prior fact active.
+  - GREEN evidence: the same retain integration command passed after changing
+    the same-kind near path so `state_fact` inserts a fresh active row and marks
+    the prior active row `superseded`, while lesson/observation reinforcement
+    behavior stayed green. Docs drift was fixed in
+    `docs/system-analytics/project-brain.md`, `docs/db/brain-domain.md`, and
+    `docs/api/external/operations.openapi.yaml`.
 
-- [ ] **T7.1 - RED/GREEN: edges and re-anchor.**
+- [x] **T7.1 - RED/GREEN: edges and re-anchor.**
   - RED: add tests for derived_from/references edge creation from retain
     provenance to source chunks, chunker-version bump re-chunk, symbol/path
     re-map, removed-symbol degraded edge, and count preservation.
@@ -558,6 +587,14 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/edges.ts`, `web/lib/brain/indexer.ts`, Brain page data
     queries, docs.
   - Verify: targeted integration tests.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/edges.integration.test.ts`
+    failed because `@/lib/brain/edges` did not exist.
+  - GREEN evidence: the new edge suite passed after adding
+    `web/lib/brain/edges.ts`, retain-derived `source_ref`/`derived_from` edge
+    creation, chunk ref metadata, and source re-anchor/remap/degrade behavior.
+    `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/indexer.integration.test.ts`
+    and the retain integration suite also passed after wiring re-anchor into
+    the source indexer. Docs drift was fixed in system analytics and DB docs.
 
 ### Phase 4 - Proposal Bridge, Improver, and Projection (Sub-project C)
 

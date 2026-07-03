@@ -12,6 +12,7 @@ import {
 import type { BrainChunkDraft } from "./chunkers/types";
 import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
+import { reanchorBrainEdgesForSource } from "./edges";
 import type { OpenAiCompatibleClient } from "./openai-compatible";
 import { readBrainSourceContent } from "./sources";
 
@@ -199,6 +200,10 @@ async function recordSourceError(
 
   if (opts.retireChunks) {
     await db.execute(sql`DELETE FROM brain_chunks WHERE source_id = ${job.source_id}`);
+    await reanchorBrainEdgesForSource(db, {
+      projectId: job.project_id,
+      sourceId: job.source_id,
+    });
   }
 
   await db.execute(sql`
@@ -341,6 +346,10 @@ async function persistChunkPlans(
         updated_at = now()
     WHERE id = ${source.id}
   `);
+  await reanchorBrainEdgesForSource(tx, {
+    projectId: source.project_id,
+    sourceId: source.id,
+  });
   await completeJob(tx, job.id, chunksEmbedded);
 
   return chunksEmbedded;

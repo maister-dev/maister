@@ -78,6 +78,18 @@ async function brainEnabledOf(projectId: string): Promise<boolean> {
   return Boolean(r.rows[0]?.brain_enabled);
 }
 
+async function homeResolutionOf(
+  projectId: string,
+): Promise<Record<string, string>> {
+  const r = await dbRef.execute(sql`
+    SELECT home_resolution
+    FROM brain_project_config
+    WHERE project_id = ${projectId}
+  `);
+
+  return (r.rows[0]?.home_resolution ?? {}) as Record<string, string>;
+}
+
 function patchReq(slug: string, body: unknown): NextRequest {
   return new NextRequest(`http://localhost/api/projects/${slug}/settings`, {
     method: "PATCH",
@@ -159,5 +171,31 @@ describe("project settings brain enable-gate (T5.2)", () => {
 
     expect(res.status).toBe(200);
     expect(await brainEnabledOf(projectId)).toBe(false);
+  });
+
+  it("saves and clears decision/direction home resolution without touching brainEnabled", async () => {
+    const projectId = await seedBrainProject(ctx.db, { brainEnabled: true });
+    const slug = await slugOf(projectId);
+
+    const save = await PATCH(
+      patchReq(slug, {
+        homeResolution: { decision: "indexed", direction: "owned" },
+      }),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(save.status).toBe(200);
+    expect(await brainEnabledOf(projectId)).toBe(true);
+    expect(await homeResolutionOf(projectId)).toEqual({
+      decision: "indexed",
+      direction: "owned",
+    });
+
+    const clear = await PATCH(patchReq(slug, { homeResolution: {} }), {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(clear.status).toBe(200);
+    expect(await homeResolutionOf(projectId)).toEqual({});
   });
 });

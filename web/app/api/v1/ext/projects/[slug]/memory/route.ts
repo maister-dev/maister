@@ -25,7 +25,13 @@ const ENDPOINT_POST = "POST /api/v1/ext/projects/[slug]/memory";
 
 type RouteParams = { params: Promise<{ slug: string }> };
 
-const KINDS = ["lesson", "observation", "state_fact"] as const;
+const KINDS = [
+  "lesson",
+  "observation",
+  "state_fact",
+  "decision",
+  "direction",
+] as const;
 
 // Input caps — every byte of `content`/`q` is a paid embedding token and a
 // stored vector row (content is split into one embedding per 8k chars). Caps
@@ -195,27 +201,51 @@ export async function GET(
           trigger: "explicit",
           query: q,
           embeddingModel: client.model,
-          returnedItems: items.map((i) => ({ itemId: i.id, score: i.score })),
+          returnedItems: items.map((i) =>
+            i.tier === "owned"
+              ? { tier: "owned", itemId: i.itemId, score: i.score }
+              : {
+                  tier: "indexed",
+                  chunkId: i.chunkId,
+                  score: i.score,
+                  pointer: i.pointer,
+                },
+          ),
           rankerVersion: RANKER_VERSION,
         });
 
         return NextResponse.json(
           {
-            items: items.map((i) => ({
-              id: i.id,
-              kind: i.kind,
-              title: i.title,
-              content: i.content,
-              confidence: i.confidence,
-              score: i.score,
-              tags: i.tags,
-              createdAt: i.createdAt,
-              expiresAt: i.expiresAt,
-              provenance: {
-                runId: i.provenance.runId,
-                gateKind: i.provenance.gateKind,
-              },
-            })),
+            items: items.map((i) =>
+              i.tier === "owned"
+                ? {
+                    tier: "owned",
+                    id: i.id,
+                    itemId: i.itemId,
+                    kind: i.kind,
+                    title: i.title,
+                    content: i.content,
+                    confidence: i.confidence,
+                    score: i.score,
+                    tags: i.tags,
+                    createdAt: i.createdAt,
+                    expiresAt: i.expiresAt,
+                    provenance: {
+                      runId: i.provenance.runId,
+                      gateKind: i.provenance.gateKind,
+                    },
+                  }
+                : {
+                    tier: "indexed",
+                    chunkId: i.chunkId,
+                    kind: i.kind,
+                    title: i.title,
+                    preview: i.preview,
+                    confidence: i.confidence,
+                    score: i.score,
+                    pointer: i.pointer,
+                  },
+            ),
           },
           { status: 200 },
         );

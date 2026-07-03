@@ -89,6 +89,120 @@ beforeEach(async () => {
   completeCalls = 0;
 });
 
+async function seedIndexedChunk(args: {
+  projectId: string;
+  path: string;
+  title: string;
+  content: string;
+  vector: number[];
+}): Promise<{ chunkId: string; stableId: string }> {
+  const sourceId = randomUUID();
+  const chunkId = randomUUID();
+  const stableId = `${args.path}#section:test`;
+
+  await ctx.db.execute(sql`
+    INSERT INTO brain_sources
+      (id, project_id, kind, path, chunker_id, chunker_version)
+    VALUES
+      (${sourceId}, ${args.projectId}, 'markdown', ${args.path}, 'markdown', '1')
+  `);
+  await ctx.db.execute(sql`
+    INSERT INTO brain_chunks
+      (id, source_id, project_id, stable_id, kind, title, path, symbol,
+       content, metadata, source_range, content_hash)
+    VALUES
+      (${chunkId}, ${sourceId}, ${args.projectId}, ${stableId}, 'markdown_section',
+       ${args.title}, ${args.path}, ${args.title}, ${args.content}, '{}'::jsonb,
+       '{"startLine":1,"endLine":4}'::jsonb, md5(${args.content}))
+  `);
+  await ctx.db.execute(sql`
+    INSERT INTO brain_embeddings
+      (id, chunk_id, split_ordinal, vector, embedding_provider,
+       embedding_model, embedding_dimensions, embedding_version, source_hash,
+       content_hash, chunker_id, chunker_version)
+    VALUES
+      (${randomUUID()}, ${chunkId}, 0, ${`[${args.vector.join(",")}]`}::vector,
+       'openai_compatible', ${TEST_EMBEDDING_MODEL}, ${DIMS},
+       ${`${TEST_EMBEDDING_MODEL}@${DIMS}`}, md5(${args.content}),
+       md5(${args.content}), 'markdown', '1')
+  `);
+
+  return { chunkId, stableId };
+}
+
+describe("recall — cross-tier indexed chunks (ADR-127)", () => {
+  it("returns owned and indexed hits through a shared union shape with pointers", async () => {
+    await retain(
+      projectId,
+      { kind: "lesson", content: NEAR },
+      {},
+      { db: ctx.db, client },
+    );
+    const indexed = await seedIndexedChunk({
+      projectId,
+      path: "docs/brain.md",
+      title: "Indexed Brain",
+      content: "indexed consultant memory for the recall query zzqzz",
+      vector: vec([[0, 1]]),
+    });
+
+    const hits = await recall(projectId, QUERY, {
+      db: ctx.db,
+      client,
+      limit: 10,
+    });
+
+    expect(hits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tier: "owned",
+          itemId: expect.any(String),
+          content: NEAR,
+        }),
+        expect.objectContaining({
+          tier: "indexed",
+          chunkId: indexed.chunkId,
+          preview: expect.stringContaining("indexed consultant memory"),
+          pointer: {
+            sourcePath: "docs/brain.md",
+            stableId: indexed.stableId,
+            sourceRange: { startLine: 1, endLine: 4 },
+          },
+        }),
+      ]),
+    );
+  });
+
+  it("uses an indexed chunk vector plan under enable_seqscan=off", async () => {
+    await seedIndexedChunk({
+      projectId,
+      path: "docs/chunk-vector.md",
+      title: "Chunk Vector",
+      content: "chunk vector plan",
+      vector: vec([[0, 1]]),
+    });
+
+    const qv = `[${vec([[0, 1]]).join(",")}]`;
+    const idxName = embeddingIndexName(TEST_EMBEDDING_MODEL, DIMS);
+    const plan = await ctx.db.transaction(async (tx) => {
+      await tx.execute(sql.raw("SET LOCAL enable_seqscan = off"));
+
+      const r = await tx.execute(
+        sql.raw(
+          `EXPLAIN (FORMAT TEXT) SELECT chunk_id, (vector::vector(${DIMS})) <=> '${qv}'::vector(${DIMS}) AS dist ` +
+            `FROM brain_embeddings WHERE chunk_id IS NOT NULL AND embedding_model = '${TEST_EMBEDDING_MODEL}' AND embedding_dimensions = ${DIMS} ` +
+            `ORDER BY (vector::vector(${DIMS})) <=> '${qv}'::vector(${DIMS}) LIMIT 20`,
+        ),
+      );
+
+      return r.rows.map((row) => String(row["QUERY PLAN"])).join("\n");
+    });
+
+    expect(plan.toLowerCase()).toContain("hnsw");
+    expect(plan).toContain(idxName);
+  });
+});
+
 describe("recall — hybrid ranking (T4.1)", () => {
   it("returns the project's active items ranked by similarity, and makes NO completion call", async () => {
     await retain(

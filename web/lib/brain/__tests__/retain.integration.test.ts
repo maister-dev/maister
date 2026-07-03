@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   fakeEmbeddingClient,
@@ -60,6 +68,22 @@ async function count(where: string): Promise<number> {
   );
 
   return Number(r.rows[0]?.n);
+}
+
+async function seedCanonicalSource(args: {
+  projectId: string;
+  path: string;
+}): Promise<string> {
+  const sourceId = randomUUID();
+
+  await ctx.db.execute(sql`
+    INSERT INTO brain_sources
+      (id, project_id, kind, path, chunker_id, chunker_version, enabled)
+    VALUES
+      (${sourceId}, ${args.projectId}, 'markdown', ${args.path}, 'markdown', '1', true)
+  `);
+
+  return sourceId;
 }
 
 beforeAll(async () => {
@@ -349,5 +373,223 @@ describe("retain — review-fix hardening (kind scope, decay race, kill switch, 
     ).rejects.toMatchObject({ code: "CONFIG" });
 
     expect(await count(`project_id = '${disabled}'`)).toBe(0);
+  });
+});
+
+describe("retain — decision/direction home resolution (T6.1)", () => {
+  it("allows owned decision and direction retain when the project has no covering canonical source", async () => {
+    const decision = await retain(
+      projectId,
+      { kind: "decision", content: "ADR-129 chooses pgvector for Brain" },
+      {},
+      { db: ctx.db, client },
+    );
+    const direction = await retain(
+      projectId,
+      { kind: "direction", content: "Roadmap direction: ship Brain B first" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    expect(decision.reinforced).toBe(false);
+    expect(direction.reinforced).toBe(false);
+
+    const rows = await ctx.db.execute(sql`
+      SELECT kind FROM brain_items
+      WHERE id IN (${decision.itemId}, ${direction.itemId})
+      ORDER BY kind
+    `);
+
+    expect(rows.rows.map((row) => row.kind)).toEqual([
+      "decision",
+      "direction",
+    ]);
+  });
+
+  it("refuses decision retain before embedding when docs/decisions.md is the canonical home", async () => {
+    const sourceId = await seedCanonicalSource({
+      projectId,
+      path: "docs/decisions.md",
+    });
+    const embed = vi.fn(async (texts: string[]) => texts.map(orthoVector));
+
+    let err: unknown;
+
+    try {
+      await retain(
+        projectId,
+        { kind: "decision", content: "ADR-130 changes the Brain contract" },
+        {},
+        { db: ctx.db, client: { ...client, embed } },
+      );
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err).toMatchObject({ code: "CONFIG" });
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("docs/decisions.md");
+    expect((err as Error).message).toContain("memory_propose");
+    expect(embed).not.toHaveBeenCalled();
+    expect(await count(`project_id = '${projectId}' AND kind = 'decision'`)).toBe(
+      0,
+    );
+
+    const source = await ctx.db.execute(
+      sql`SELECT id FROM brain_sources WHERE id = ${sourceId}`,
+    );
+
+    expect(source.rows).toHaveLength(1);
+  });
+
+  it("refuses direction retain when a roadmap source is the canonical home", async () => {
+    await seedCanonicalSource({
+      projectId,
+      path: ".ai-factory/ROADMAP.md",
+    });
+
+    await expect(
+      retain(
+        projectId,
+        { kind: "direction", content: "Next direction: projection through tasks" },
+        {},
+        { db: ctx.db, client },
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    expect(await count(`project_id = '${projectId}' AND kind = 'direction'`)).toBe(
+      0,
+    );
+  });
+});
+
+describe("retain — state_fact supersede-on-change (T6.2)", () => {
+  it("keeps identical state_fact content idempotent without reinforcement", async () => {
+    const first = await retain(
+      projectId,
+      { kind: "state_fact", content: "project default branch is main" },
+      {},
+      { db: ctx.db, client },
+    );
+    const second = await retain(
+      projectId,
+      { kind: "state_fact", content: "project default branch is main" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    expect(second).toEqual({ itemId: first.itemId, reinforced: false });
+
+    const row = await ctx.db.execute(sql`
+      SELECT status, reinforcement_count
+      FROM brain_items
+      WHERE id = ${first.itemId}
+    `);
+
+    expect(row.rows[0]).toMatchObject({
+      status: "active",
+      reinforcement_count: 0,
+    });
+  });
+
+  it("supersedes one active state_fact and inserts the changed near-duplicate", async () => {
+    const oldFact = await retain(
+      projectId,
+      { kind: "state_fact", content: "SIM: active runtime is node 22" },
+      {},
+      { db: ctx.db, client },
+    );
+    const newFact = await retain(
+      projectId,
+      { kind: "state_fact", content: "SIM: active runtime is node 24" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    expect(newFact.reinforced).toBe(false);
+    expect(newFact.itemId).not.toBe(oldFact.itemId);
+
+    const rows = await ctx.db.execute(sql`
+      SELECT id, status, reinforcement_count
+      FROM brain_items
+      WHERE id IN (${oldFact.itemId}, ${newFact.itemId})
+      ORDER BY id
+    `);
+    const byId = new Map(rows.rows.map((row) => [String(row.id), row]));
+
+    expect(byId.get(String(oldFact.itemId))).toMatchObject({
+      status: "superseded",
+      reinforcement_count: 0,
+    });
+    expect(byId.get(String(newFact.itemId))).toMatchObject({
+      status: "active",
+      reinforcement_count: 0,
+    });
+    expect(
+      await count(`project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`),
+    ).toBe(1);
+  });
+
+  it("compares repeated state_fact changes against the latest active fact", async () => {
+    const first = await retain(
+      projectId,
+      { kind: "state_fact", content: "SIM: deployment host is blue" },
+      {},
+      { db: ctx.db, client },
+    );
+    const second = await retain(
+      projectId,
+      { kind: "state_fact", content: "SIM: deployment host is green" },
+      {},
+      { db: ctx.db, client },
+    );
+    const third = await retain(
+      projectId,
+      { kind: "state_fact", content: "SIM: deployment host is black" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    const rows = await ctx.db.execute(sql`
+      SELECT id, status
+      FROM brain_items
+      WHERE id IN (${first.itemId}, ${second.itemId}, ${third.itemId})
+    `);
+    const byId = new Map(rows.rows.map((row) => [String(row.id), row.status]));
+
+    expect(byId.get(String(first.itemId))).toBe("superseded");
+    expect(byId.get(String(second.itemId))).toBe("superseded");
+    expect(byId.get(String(third.itemId))).toBe("active");
+    expect(
+      await count(`project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`),
+    ).toBe(1);
+  });
+
+  it("still reinforces lesson near-duplicates", async () => {
+    const first = await retain(
+      projectId,
+      { kind: "lesson", content: "SIM: keep PRs small" },
+      {},
+      { db: ctx.db, client },
+    );
+    const second = await retain(
+      projectId,
+      { kind: "lesson", content: "SIM: prefer small PRs" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    expect(second).toEqual({ itemId: first.itemId, reinforced: true });
+
+    const row = await ctx.db.execute(sql`
+      SELECT status, reinforcement_count
+      FROM brain_items
+      WHERE id = ${first.itemId}
+    `);
+
+    expect(row.rows[0]).toMatchObject({
+      status: "active",
+      reinforcement_count: 1,
+    });
   });
 });

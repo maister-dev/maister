@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { BrainItemKind } from "./schema";
+import type { BrainItemKind, BrainSourceRef } from "./schema";
 
 import { sql, type SQL } from "drizzle-orm";
 
@@ -18,6 +18,7 @@ export const RANKER_VERSION = "hybrid-v1";
 // lexical leg breaks ties and covers items not yet re-embedded mid-reindex; a
 // small confidence term rewards reinforced memories.
 const RANK_WEIGHTS = { vector: 1.0, lexical: 0.25, confidence: 0.1 } as const;
+const INDEXED_CONFIDENCE = 1;
 
 export type RecallRankerDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -36,8 +37,10 @@ export interface RecallQuery {
   minConfidence?: number;
 }
 
-export interface RankedBrainItem {
+export interface RankedOwnedBrainItem {
+  tier: "owned";
   id: string;
+  itemId: string;
   kind: BrainItemKind;
   title: string;
   content: string;
@@ -48,6 +51,21 @@ export interface RankedBrainItem {
   expiresAt: Date | null;
   provenance: { runId: string | null; gateKind: string | null };
 }
+
+export interface RankedIndexedBrainChunk {
+  tier: "indexed";
+  id: string;
+  chunkId: string;
+  kind: string;
+  title: string;
+  content: string;
+  preview: string;
+  confidence: number;
+  score: number;
+  pointer: BrainSourceRef;
+}
+
+export type RankedBrainItem = RankedOwnedBrainItem | RankedIndexedBrainChunk;
 
 export interface RecallRanker {
   readonly version: string;
@@ -130,8 +148,10 @@ export const pgVectorRecallRanker: RecallRanker = {
       LIMIT ${limit}
     `);
 
-    return res.rows.map((r) => ({
+    const owned: RankedOwnedBrainItem[] = res.rows.map((r) => ({
+      tier: "owned",
       id: String(r.id),
+      itemId: String(r.id),
       kind: r.kind as BrainItemKind,
       title: String(r.title),
       content: String(r.content),
@@ -145,8 +165,100 @@ export const pgVectorRecallRanker: RecallRanker = {
         gateKind: (r.source_gate_kind as string | null) ?? null,
       },
     }));
+    const indexed =
+      q.kinds && q.kinds.length > 0
+        ? []
+        : await rankIndexedChunks(db, {
+            ...q,
+            limit,
+            knnLimit,
+            queryVec,
+            nRaw,
+            modelLit,
+            vecW,
+            lexW,
+            confW,
+          });
+
+    return [...owned, ...indexed]
+      .sort((a, b) => b.score - a.score || tierOrder(a) - tierOrder(b))
+      .slice(0, limit);
   },
 };
+
+function tierOrder(hit: RankedBrainItem): number {
+  return hit.tier === "owned" ? 0 : 1;
+}
+
+function previewOf(content: string): string {
+  return content.length <= 400 ? content : `${content.slice(0, 397)}...`;
+}
+
+async function rankIndexedChunks(
+  db: RecallRankerDb,
+  q: RecallQuery & {
+    limit: number;
+    knnLimit: number;
+    queryVec: string;
+    nRaw: SQL;
+    modelLit: SQL;
+    vecW: SQL;
+    lexW: SQL;
+    confW: SQL;
+  },
+): Promise<RankedIndexedBrainChunk[]> {
+  const res = await db.execute(sql`
+    WITH knn AS (
+      SELECT chunk_id,
+             (vector::vector(${q.nRaw})) <=> ${q.queryVec}::vector(${q.nRaw}) AS dist
+      FROM brain_embeddings
+      WHERE chunk_id IS NOT NULL
+        AND embedding_model = ${q.modelLit}
+        AND embedding_dimensions = ${q.nRaw}
+        AND EXISTS (
+          SELECT 1 FROM brain_chunks bc
+          JOIN brain_sources bs ON bs.id = bc.source_id AND bs.enabled = true
+          WHERE bc.id = brain_embeddings.chunk_id
+            AND bc.project_id = ${q.projectId}
+        )
+      ORDER BY (vector::vector(${q.nRaw})) <=> ${q.queryVec}::vector(${q.nRaw})
+      LIMIT ${q.knnLimit}
+    ),
+    vec AS (
+      SELECT chunk_id, MIN(dist) AS dist FROM knn GROUP BY chunk_id
+    )
+    SELECT c.id, c.kind, c.title, c.content, c.path, c.stable_id,
+           c.source_range,
+           ( (1 - COALESCE(v.dist, 1)) * ${q.vecW}
+             + LEAST(COALESCE(ts_rank(c.tsv, plainto_tsquery('english', ${q.queryText})), 0), 1) * ${q.lexW}
+             + ${INDEXED_CONFIDENCE} * ${q.confW} )::float8 AS score
+    FROM brain_chunks c
+    JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true
+    LEFT JOIN vec v ON v.chunk_id = c.id
+    WHERE c.project_id = ${q.projectId}
+      AND (v.chunk_id IS NOT NULL
+           OR c.tsv @@ plainto_tsquery('english', ${q.queryText}))
+    ORDER BY score DESC, c.updated_at DESC
+    LIMIT ${q.limit}
+  `);
+
+  return res.rows.map((r) => ({
+    tier: "indexed",
+    id: String(r.id),
+    chunkId: String(r.id),
+    kind: String(r.kind),
+    title: String(r.title),
+    content: String(r.content),
+    preview: previewOf(String(r.content)),
+    confidence: INDEXED_CONFIDENCE,
+    score: Number(r.score),
+    pointer: {
+      sourcePath: String(r.path),
+      stableId: String(r.stable_id),
+      sourceRange: (r.source_range as BrainSourceRef["sourceRange"]) ?? null,
+    },
+  }));
+}
 
 // Injection point (SOLID/DIP): callers pass an override for tests or an
 // alternate reranker; otherwise the default pgvector ranker is used.

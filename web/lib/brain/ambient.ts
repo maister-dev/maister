@@ -157,18 +157,37 @@ export async function getAmbientBrainProjection(
         trigger: "ambient",
         query,
         embeddingModel: client.model,
-        returnedItems: items.map((i) => ({ itemId: i.id, score: i.score })),
+          returnedItems: items.map((i) =>
+            i.tier === "owned"
+              ? { tier: "owned", itemId: i.itemId, score: i.score }
+              : {
+                  tier: "indexed",
+                  chunkId: i.chunkId,
+                  score: i.score,
+                  pointer: i.pointer,
+                },
+          ),
         rankerVersion: RANKER_VERSION,
       });
     }
 
-    return items.map((i) => ({
-      kind: i.kind,
-      title: i.title,
-      content: i.content,
-      confidence: i.confidence,
-      tags: i.tags,
-    }));
+    return selectAmbientItems(items).map((i) =>
+      i.tier === "owned"
+        ? {
+            kind: i.kind,
+            title: i.title,
+            content: i.content,
+            confidence: i.confidence,
+            tags: i.tags,
+          }
+        : {
+            kind: i.kind,
+            title: i.title,
+            content: i.preview,
+            confidence: i.confidence,
+            tags: ["indexed"],
+          },
+    );
   } catch (err) {
     lastFailureAtMs = nowMs;
     log.warn(
@@ -181,4 +200,26 @@ export async function getAmbientBrainProjection(
 
     return undefined;
   }
+}
+
+export function selectAmbientItems<
+  T extends Awaited<ReturnType<typeof recall>>[number],
+>(
+  items: T[],
+): T[] {
+  const owned = items.filter((item) => item.tier === "owned");
+
+  if (owned.length >= BRAIN_POLICY.ambientK) {
+    return owned.slice(0, BRAIN_POLICY.ambientK);
+  }
+
+  const indexed = items
+    .filter(
+      (item) =>
+        item.tier === "indexed" &&
+        item.score >= BRAIN_POLICY.ambientIndexedMinScore,
+    )
+    .slice(0, BRAIN_POLICY.ambientIndexedMax);
+
+  return [...owned, ...indexed].slice(0, BRAIN_POLICY.ambientK);
 }
