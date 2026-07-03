@@ -126,6 +126,11 @@ export interface PortfolioWorkspace {
   // getRunReadiness, no N+1. Done/Abandoned runs aren't active here so always
   // read "ready" (mirrors board.ts done-zeroing).
   readiness: ReadinessState;
+  // ADR-126: the lane class an auto-promotion promoted this run through
+  // (workspaces.promotion_lane), driving the "auto" glyph. Non-null only once
+  // the sweep promotes (the run then leaves the active set), so this is null on
+  // the typical active-workspace row — present for parity with the board card.
+  autoPromotedLane: string | null;
 }
 
 export interface PortfolioRecentMerge {
@@ -355,6 +360,7 @@ export async function getPortfolio(
         branch: workspaces.branch,
         archivedBranch: workspaces.archivedBranch,
         removedAt: workspaces.removedAt,
+        promotionLane: workspaces.promotionLane,
         startedAt: runs.startedAt,
         scratchDialogStatus: scratchRuns.dialogStatus,
       })
@@ -552,6 +558,7 @@ export async function getPortfolio(
       // ACTIVE_RUN_STATUSES excludes Done/Abandoned, so every workspace here is
       // non-terminal; a run with no gates/artifacts rolls up to "ready".
       readiness: readinessByRun.get(row.runId) ?? "ready",
+      autoPromotedLane: row.promotionLane ?? null,
     });
     workspacesByProject.set(projectId, list);
   }

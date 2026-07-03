@@ -36,6 +36,7 @@ const labels: FlightCardLabels = {
   },
   // M18 Phase 4: ready-to-promote / PR badge label.
   readyToPromote: "Ready to promote",
+  autoPromoted: (lane: string) => `Auto-promoted via ${lane}`,
   runsCount: (count: number) => `${count} runs`,
   launch: "Run again",
   launchUnavailable: "Unavailable",
@@ -95,6 +96,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readiness: "ready",
     readyToPromote: false,
     prNumber: null,
+    autoPromotedLane: null,
     blockedBy: [],
     childTasks: [],
     activeNode: null,

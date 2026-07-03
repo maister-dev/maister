@@ -128,6 +128,7 @@ import { RUN_STATUS_KEYS, type RunStatusKey } from "@/lib/runs/run-status-tone";
 import { DirtyResolutionBanner } from "@/components/runs/dirty-resolution-banner";
 import { DeliveryPolicyCancelButton } from "@/components/runs/delivery-policy-cancel-button";
 import { GateChatPanel } from "@/components/runs/gate-chat-panel";
+import { AutoPromotionPanel } from "@/components/runs/auto-promotion-panel";
 
 type LayoutProps = {
   children: ReactNode;
@@ -1625,6 +1626,15 @@ export default async function RunDetailLayout({
               targetBranch={reviewData.targetBranch}
             />
           ) : null}
+
+          {/* ADR-126: auto-promotion verdict + Hold/Release (Review flow runs) or
+              the "promoted automatically via lane X" note (Done runs). Self-hides
+              when neither applies. */}
+          <AutoPromotionPanel
+            canHold={canAct}
+            panel={detail.autoPromotion}
+            runId={detail.runId}
+          />
         </div>
       </RunShell>
     </>

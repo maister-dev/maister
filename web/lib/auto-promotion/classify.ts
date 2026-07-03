@@ -1,7 +1,11 @@
-import picomatch from "picomatch";
-
-import type { AutoPromotionConfig, AutoPromotionLane, LaneClass } from "./config";
+import type {
+  AutoPromotionConfig,
+  AutoPromotionLane,
+  LaneClass,
+} from "./config";
 import type { DiffChangeStatEntry } from "@/lib/worktree";
+
+import picomatch from "picomatch";
 
 // ADR-126 §4.3: pure path classifier. Deny-list is evaluated BEFORE lane
 // matching, is non-configurable, and defeats every lane. The built-in lane
@@ -14,7 +18,8 @@ const NAMED_FILE_CAP = 5;
 
 // Non-configurable security boundary (prompt-injection / secret / CI surfaces).
 // Root-anchored agent dirs; `.env`/manifest/agent-instruction files at any depth.
-const HARD_DENY_GLOBS = [
+// Exported read-only so the settings UI (T18) can render the deny-list.
+export const HARD_DENY_GLOBS = [
   ".github/workflows/**",
   ".env*",
   "**/.env*",
@@ -125,10 +130,15 @@ export function classifyDiff(
   files: DiffChangeStatEntry[],
   config: AutoPromotionConfig,
 ): ClassifyVerdict {
-  const denied = files.filter((f) => endpoints(f).some((ep) => DENY_MATCHER(ep)));
+  const denied = files.filter((f) =>
+    endpoints(f).some((ep) => DENY_MATCHER(ep)),
+  );
 
   if (denied.length > 0) {
-    return { kind: "denied", files: denied.map((f) => f.path).slice(0, NAMED_FILE_CAP) };
+    return {
+      kind: "denied",
+      files: denied.map((f) => f.path).slice(0, NAMED_FILE_CAP),
+    };
   }
 
   if (files.length === 0) return { kind: "empty_diff" };
@@ -164,7 +174,10 @@ export function classifyDiff(
   // A single overlapping file is a stronger "operator globs collide" signal than
   // an unmatched file — surface it first. Both fail to manual.
   if (ambiguous.length > 0) {
-    return { kind: "ambiguous_lane", files: ambiguous.slice(0, NAMED_FILE_CAP) };
+    return {
+      kind: "ambiguous_lane",
+      files: ambiguous.slice(0, NAMED_FILE_CAP),
+    };
   }
 
   if (unmatched.length > 0) {

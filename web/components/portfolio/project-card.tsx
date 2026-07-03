@@ -233,8 +233,22 @@ export async function ProjectCard({
                       wsDotByStatus[ws.status],
                     )}
                   />
-                  <span className="truncate font-semibold tracking-[-0.005em] text-ink">
-                    {ws.branch}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate font-semibold tracking-[-0.005em] text-ink">
+                      {ws.branch}
+                    </span>
+                    {ws.autoPromotedLane ? (
+                      <span
+                        aria-label={t("autoPromoted", {
+                          lane: ws.autoPromotedLane,
+                        })}
+                        className="shrink-0 rounded-[3px] border border-good bg-good-soft px-1 py-px text-[9px] font-bold uppercase tracking-[0.04em] text-good"
+                        data-testid="workspace-auto-promoted"
+                        title={t("autoPromoted", { lane: ws.autoPromotedLane })}
+                      >
+                        ⚡ auto
+                      </span>
+                    ) : null}
                   </span>
                   {ws.runKind === "scratch" &&
                   ws.scratchAction &&

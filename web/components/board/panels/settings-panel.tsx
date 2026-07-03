@@ -13,6 +13,7 @@ import {
 import { ProjectBrainSettingsControl } from "@/components/board/panels/project-brain-settings-control";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
+import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
 import { getBrainSettings, isBrainFullyConfigured } from "@/lib/brain/settings";
 import { getDb } from "@/lib/db/client";
 import { listProjectRemotes, reconcileOriginRepoUrl } from "@/lib/git-remotes";
@@ -149,6 +150,12 @@ export async function SettingsPanel({
           envEdgeDrainDefault={resolveEdgeDrain({ taskQueueSettings: null })}
           projectSlug={project.slug}
           taskQueueSettings={project.taskQueueSettings ?? null}
+        />
+      ) : null}
+      {isAdmin ? (
+        <AutoPromotionSettingsControl
+          config={project.autoPromotion ?? null}
+          projectSlug={project.slug}
         />
       ) : null}
       {isAdmin ? (

@@ -111,6 +111,7 @@ export async function Board({
     },
     // M18 (T4.4): ready-to-promote / PR badge label.
     readyToPromote: t("readyToPromote"),
+    autoPromoted: (lane: string) => t("autoPromoted", { lane }),
     runsCount: (count: number) => t("runsCount", { count }),
     launch: t("runAgain"),
     launchUnavailable: t("launchUnavailable"),

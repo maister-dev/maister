@@ -322,6 +322,7 @@ export async function getProjectPageData(
           branch: workspaces.branch,
           archivedBranch: workspaces.archivedBranch,
           removedAt: workspaces.removedAt,
+          promotionLane: workspaces.promotionLane,
           startedAt: runs.startedAt,
           scratchDialogStatus: scratchRuns.dialogStatus,
         })
@@ -441,6 +442,7 @@ export async function getProjectPageData(
     }),
     // ACTIVE_RUN_STATUSES excludes Done/Abandoned; a gate-less run → "ready".
     readiness: readinessByRun.get(row.runId) ?? "ready",
+    autoPromotedLane: row.promotionLane ?? null,
   }));
 
   const platformDefaultRunnerId =

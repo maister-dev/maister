@@ -31,6 +31,8 @@ export interface FlightCardLabels {
   readiness: Record<ReadinessState, string>;
   // M18 (T4.4): ready-to-promote / PR badge hint.
   readyToPromote: string;
+  // ADR-126: the "auto" glyph tooltip on an auto-promoted Done card ({lane}).
+  autoPromoted: (lane: string) => string;
   runsCount: (count: number) => string;
   launch: string;
   launchUnavailable: string;
@@ -312,6 +314,16 @@ export function FlightCard({
             title={labels.readyToPromote}
           >
             {card.prNumber !== null ? `PR #${card.prNumber}` : "↗"}
+          </span>
+        ) : null}
+        {card.autoPromotedLane ? (
+          <span
+            aria-label={labels.autoPromoted(card.autoPromotedLane)}
+            className={clsx(BADGE, "border-good bg-good-soft text-good")}
+            data-testid="flight-card-auto-promoted"
+            title={labels.autoPromoted(card.autoPromotedLane)}
+          >
+            ⚡ auto
           </span>
         ) : null}
         {card.runCount > 0 ? (

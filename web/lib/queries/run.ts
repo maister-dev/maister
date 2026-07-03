@@ -36,6 +36,10 @@ import { cache } from "react";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import {
+  computeRunAutoPromotion,
+  type RunAutoPromotionPanel,
+} from "@/lib/auto-promotion/panel";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import {
   activeSessionAcpSessionId,
@@ -180,6 +184,10 @@ export interface RunDetail {
   archived: boolean;
   pruned: boolean;
   lifecycleActions: WorkbenchLifecycleAction[];
+  // ADR-126 §4.8: the auto-promotion verdict panel object, embedded server-side
+  // for first paint. `evaluation` is non-null only for Review flow runs; the GET
+  // route computes the SAME object so the panel is byte-identical (INV-10).
+  autoPromotion: RunAutoPromotionPanel;
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
@@ -372,6 +380,26 @@ export const getRunDetail = cache(async function getRunDetail(
         })
       : null;
 
+  // ADR-126: the auto-promotion panel object for first paint. Best-effort — a
+  // git/diff failure inside computeRunAutoPromotion degrades to a null evaluation
+  // (the run-detail page must never crash on the auto-promotion surface).
+  let autoPromotion: RunAutoPromotionPanel = {
+    evaluation: null,
+    promotedLane: null,
+  };
+
+  try {
+    autoPromotion = await computeRunAutoPromotion(client, row.runId);
+  } catch (err) {
+    log.warn(
+      {
+        runId: row.runId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "auto-promotion panel computation failed",
+    );
+  }
+
   return {
     runId: row.runId,
     // The inner join on projects guarantees a project here; a project-less
@@ -425,6 +453,7 @@ export const getRunDetail = cache(async function getRunDetail(
       removedAt: row.removedAt,
       archivedBranch: row.archivedBranch,
     }),
+    autoPromotion,
     pendingHitl: pending
       ? {
           hitlRequestId: pending.id,
