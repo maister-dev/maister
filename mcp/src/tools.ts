@@ -113,7 +113,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   memory_propose: {
     description:
-      "Create a pending Project Brain improvement proposal from evidence and a draft. Never accepts, applies, publishes, or writes repo files. Requires memory:write and can_write_brain for agent tokens.",
+      "Create a Project Brain improvement proposal from evidence and a draft. Project autonomy may auto-draft allowed low-risk catalog proposals, but this never publishes or writes repo files. Requires memory:write and can_write_brain for agent tokens.",
     inputSchema: {
       type: "object",
       properties: {

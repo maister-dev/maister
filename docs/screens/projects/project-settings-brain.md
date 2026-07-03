@@ -1,9 +1,9 @@
 # Project Settings Brain
 
 Route: `/projects/{slug}?tab=settings`
-Status: Designed (ADR-127/ADR-128)
-Source components: `web/components/projects/*`,
-`web/components/brain/*`
+Status: Implemented (ADR-127/ADR-128)
+Source components: `web/components/board/panels/settings-panel.tsx`,
+`web/components/board/panels/project-brain-settings-control.tsx`
 
 ## JTBD
 
@@ -15,7 +15,7 @@ Brain's behavior matches the repository's documentation model.
 
 | Role | Can see | Can act |
 | --- | --- | --- |
-| Project viewer/member | Current Brain settings summary | No edits |
+| Project viewer/member | Project metadata rows only | No edits |
 | Project admin/owner | Current Brain settings | Toggle Brain, edit home resolution, choose projection flow, configure source defaults |
 | Global admin | Same as project owner | Same as project owner |
 
@@ -38,7 +38,7 @@ flowchart TD
 
 - Enablement row: project Brain toggle and status.
 - Home resolution: per-kind segmented controls for `owned` versus `indexed`.
-- Sources shortcut: link to Project Brain sources tab.
+- Sources: managed from the Project Brain tab, not duplicated in Settings.
 - Projection: flow picker for docs/state projection tasks.
 - Autonomy overrides: compact selectors limited to `manual` and `auto_draft`.
 
@@ -58,14 +58,15 @@ stateDiagram-v2
 
 ## Data & APIs
 
-- `GET /api/projects/{slug}/settings/brain`
-- `PATCH /api/projects/{slug}/settings/brain`
-- Existing project settings route may continue to carry `brainEnabled` during
-  migration; this dedicated contract is the B/C target.
+- Server-side read: `settings-panel.tsx` reads `brain_project_config`.
+- Implemented write: `PATCH /api/projects/{slug}/settings` with `brainEnabled`,
+  `homeResolution`, `projectionFlowId`, and `autonomyDefaults`.
+- Dedicated `/api/projects/{slug}/settings/brain` remains a designed split
+  route in the OpenAPI document, not the current UI path.
 
 ## i18n
 
-Namespace: `projectSettings.brain.*` and shared `brain.*`.
+Namespace: `settings.*`.
 
 ## Linked artifacts
 

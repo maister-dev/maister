@@ -1274,6 +1274,15 @@ erDiagram
         timestamptz resolved_at
         timestamptz applied_at
     }
+
+    BRAIN_PROPOSAL_DECISION_STATS {
+        text project_id PK "FK -> projects(id) CASCADE"
+        text kind PK "rule|skill|flow|adr|roadmap|state"
+        text blast_radius PK "low|medium|high"
+        integer accepted_count "NOT NULL DEFAULT 0"
+        integer rejected_count "NOT NULL DEFAULT 0"
+        integer auto_drafted_count "NOT NULL DEFAULT 0"
+    }
 ```
 
 ## Planned roadmap extensions
@@ -1388,5 +1397,6 @@ external-operation events) is not drawn until its migrations exist. See
 | `brain_edges` | `brain_edges_project_idx` | `(project_id, degraded)` | **(Implemented, ADR-127)** Edge and degraded-edge reads. |
 | `brain_proposals` | `brain_proposals_project_status_idx` | `(project_id, status, created_at)` | **(Implemented, ADR-128)** Proposal review tabs. |
 | `brain_proposals` | `brain_proposals_cluster_hash_uq` | `(project_id, cluster_hash)` PARTIAL `WHERE cluster_hash IS NOT NULL` | **(Implemented, ADR-128)** Idempotent improver/propose path. |
+| `brain_proposal_decision_stats` | `brain_proposal_decision_stats_pk` | `(project_id, kind, blast_radius)` PRIMARY KEY | **(Implemented, ADR-128)** Autonomy-graduation counters by proposal class. |
 
 Source: `web/lib/db/schema.ts`.

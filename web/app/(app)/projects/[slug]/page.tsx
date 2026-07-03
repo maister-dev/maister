@@ -9,6 +9,7 @@ import { notFound } from "next/navigation";
 
 import { Board } from "@/components/board/board";
 import { BoardTools } from "@/components/board/board-tools";
+import { ProjectBrainPanel } from "@/components/brain/project-brain-panel";
 import { HitlInboxGrid } from "@/components/inbox/hitl-inbox-list";
 import { NewTaskModal } from "@/components/board/new-task-modal";
 import { ProjectTabs } from "@/components/board/project-tabs";
@@ -30,7 +31,17 @@ import {
 } from "@/components/board/panels/agents-attach-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
-import { getProjectRole, getSessionUser } from "@/lib/authz";
+import {
+  getProjectRole,
+  getSessionUser,
+  requireProjectAction,
+} from "@/lib/authz";
+import {
+  isBrainProvisioned,
+  isBrainSchemaApplied,
+} from "@/lib/brain/guard";
+import { loadProjectBrainPanelData } from "@/lib/brain/ui-queries";
+import { getDb } from "@/lib/db/client";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
 import { getProjectPackageContents } from "@/lib/queries/project-package-contents";
@@ -63,6 +74,7 @@ import { listBranches } from "@/lib/worktree";
 const VALID_TABS: readonly ProjectTab[] = [
   "board",
   "activity",
+  "brain",
   "prs",
   "repo",
   "packages",
@@ -96,6 +108,7 @@ interface PageProps {
     audit_token?: string | string[];
     audit_result?: string | string[];
     audit_page?: string | string[];
+    brain_query?: string | string[];
   }>;
 }
 
@@ -121,6 +134,7 @@ export default async function ProjectBoardPage({
     audit_token: rawAuditToken,
     audit_result: rawAuditResult,
     audit_page: rawAuditPage,
+    brain_query: rawBrainQuery,
   } = await searchParams;
   const tab = parseTab(rawTab);
   const one = (v: string | string[] | undefined): string | undefined =>
@@ -139,6 +153,7 @@ export default async function ProjectBoardPage({
       : undefined) as "ok" | "error" | undefined,
     page: Number.parseInt(one(rawAuditPage) ?? "1", 10) || 1,
   };
+  const brainQuery = one(rawBrainQuery) ?? "";
   const file = parseFile(rawFile);
 
   const user = await getSessionUser();
@@ -169,6 +184,7 @@ export default async function ProjectBoardPage({
   const tScratch = await getTranslations("scratch");
   const tWorkbench = await getTranslations("workbench");
   const tLog = await getTranslations("projectLog");
+  const tBrain = await getTranslations("brain");
   const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
 
   const filesLabels = {
@@ -223,6 +239,20 @@ export default async function ProjectBoardPage({
   const branchOptions = repoBranches.includes(currentRef)
     ? repoBranches
     : [currentRef, ...repoBranches];
+  const brainPanelData =
+    tab === "brain" && isBrainProvisioned()
+      ? await (async () => {
+          const db = getDb() as any;
+
+          if (!(await isBrainSchemaApplied(db))) {
+            return { memory: [], proposals: [], sources: [] };
+          }
+
+          await requireProjectAction(project.id, "readBrain");
+
+          return loadProjectBrainPanelData(db, project.id, brainQuery);
+        })()
+      : { memory: [], proposals: [], sources: [] };
 
   return (
     <>
@@ -427,6 +457,48 @@ export default async function ProjectBoardPage({
       ) : null}
 
       {tab === "prs" ? <DeferredPanel kind="prs" /> : null}
+      {tab === "brain" ? (
+        <ProjectBrainPanel
+          canManageSources={isAdmin}
+          canReviewProposals={canAct}
+          labels={{
+            title: tBrain("title"),
+            memoryTitle: tBrain("memoryTitle"),
+            searchPlaceholder: tBrain("searchPlaceholder"),
+            searchAction: tBrain("searchAction"),
+            emptyMemory: tBrain("emptyMemory"),
+            tierOwned: tBrain("tierOwned"),
+            tierIndexed: tBrain("tierIndexed"),
+            confidence: tBrain("confidence"),
+            sourcesTitle: tBrain("sourcesTitle"),
+            sourcePath: tBrain("sourcePath"),
+            sourceKind: tBrain("sourceKind"),
+            sourceChunker: tBrain("sourceChunker"),
+            sourceStatus: tBrain("sourceStatus"),
+            sourceLastIndexed: tBrain("sourceLastIndexed"),
+            sourceError: tBrain("sourceError"),
+            sourceChunks: tBrain("sourceChunks"),
+            sourceEnabled: tBrain("sourceEnabled"),
+            sourceDisabled: tBrain("sourceDisabled"),
+            sourceNeverIndexed: tBrain("sourceNeverIndexed"),
+            reindex: tBrain("reindex"),
+            reindexAll: tBrain("reindexAll"),
+            proposalsTitle: tBrain("proposalsTitle"),
+            pendingBadge: tBrain("pendingBadge"),
+            proposalEvidence: tBrain("proposalEvidence"),
+            proposalDraft: tBrain("proposalDraft"),
+            accept: tBrain("accept"),
+            reject: tBrain("reject"),
+            rejectReason: tBrain("rejectReason"),
+            emptyProposals: tBrain("emptyProposals"),
+          }}
+          memory={brainPanelData.memory}
+          proposals={brainPanelData.proposals}
+          query={brainQuery}
+          slug={slug}
+          sources={brainPanelData.sources}
+        />
+      ) : null}
       {tab === "mcps" ? (
         <McpPanel
           isAdmin={isAdmin}

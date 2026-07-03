@@ -12,7 +12,7 @@ import {
   assertBrainProvisioned,
   assertProjectBrainEnabled,
 } from "@/lib/brain/guard";
-import { createBrainProposal } from "@/lib/brain/proposals";
+import { createBrainProposalWithAutonomy } from "@/lib/brain/proposals";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
@@ -145,13 +145,13 @@ export async function POST(
         }
 
         const proposal = await db.transaction(async (tx: Db) => {
-          const created = await createBrainProposal(tx, {
+          const created = await createBrainProposalWithAutonomy(tx, {
             projectId: ctx.projectId,
+            projectSlug: slug,
             kind: parsed.data.kind,
             evidenceItemIds: parsed.data.evidenceItemIds,
             draft: proposalDraft(parsed.data),
             blastRadius: parsed.data.blastRadius,
-            autonomyDecision: "manual",
             clusterHash: parsed.data.clusterHash ?? null,
             actor: proposalActor(ctx.actor),
           });
@@ -177,8 +177,9 @@ export async function POST(
         return NextResponse.json(
           {
             proposalId: proposal.id,
-            status: "pending",
+            status: proposal.status,
             idempotent: proposal.idempotent,
+            authoredDraftId: proposal.authoredDraftId,
           },
           { status: proposal.idempotent ? 200 : 201 },
         );

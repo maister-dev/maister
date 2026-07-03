@@ -256,6 +256,31 @@ export const brainProjectConfig = pgTable("brain_project_config", {
     .defaultNow(),
 });
 
+export const brainProposalDecisionStats = pgTable(
+  "brain_proposal_decision_stats",
+  {
+    projectId: text("project_id").notNull(),
+    kind: text("kind", {
+      enum: ["rule", "skill", "flow", "adr", "roadmap", "state"],
+    }).notNull(),
+    blastRadius: text("blast_radius", {
+      enum: ["low", "medium", "high"],
+    }).notNull(),
+    acceptedCount: integer("accepted_count").notNull().default(0),
+    rejectedCount: integer("rejected_count").notNull().default(0),
+    autoDraftedCount: integer("auto_drafted_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.projectId, t.kind, t.blastRadius] }),
+  }),
+);
+
 export const brainProposals = pgTable("brain_proposals", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),

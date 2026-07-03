@@ -159,6 +159,14 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
       "projection_flow_id",
       "autonomy_policy",
     ]);
+    expectColumns(await tableColumns("brain_proposal_decision_stats"), [
+      "project_id",
+      "kind",
+      "blast_radius",
+      "accepted_count",
+      "rejected_count",
+      "auto_drafted_count",
+    ]);
 
     const itemKindCheck = await constraintDefinition("brain_items_kind_check");
     const indexReasonCheck = await constraintDefinition(
@@ -258,6 +266,11 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
       VALUES (${projectId}, '{"decision":"indexed"}'::jsonb)
     `);
     await ctx.db.execute(sql`
+      INSERT INTO brain_proposal_decision_stats
+        (project_id, kind, blast_radius, accepted_count)
+      VALUES (${projectId}, 'rule', 'low', 1)
+    `);
+    await ctx.db.execute(sql`
       INSERT INTO brain_index_jobs (id, project_id, source_id, reason, status)
       VALUES (${randomUUID()}, ${projectId}, ${sourceId}, 'event', 'queued')
     `);
@@ -269,6 +282,9 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
     await expect(countRows("brain_edges", projectId)).resolves.toBe(0);
     await expect(countRows("brain_index_jobs", projectId)).resolves.toBe(0);
     await expect(countRows("brain_project_config", projectId)).resolves.toBe(0);
+    await expect(
+      countRows("brain_proposal_decision_stats", projectId),
+    ).resolves.toBe(0);
   });
 
   it("still fails closed under SQLite before any brain-table access", () => {

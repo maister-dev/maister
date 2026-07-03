@@ -90,6 +90,24 @@ async function homeResolutionOf(
   return (r.rows[0]?.home_resolution ?? {}) as Record<string, string>;
 }
 
+async function brainProjectConfigOf(projectId: string): Promise<{
+  homeResolution: Record<string, string>;
+  projectionFlowId: string | null;
+  autonomyPolicy: Record<string, string>;
+}> {
+  const r = await dbRef.execute(sql`
+    SELECT home_resolution, projection_flow_id, autonomy_policy
+    FROM brain_project_config
+    WHERE project_id = ${projectId}
+  `);
+
+  return {
+    homeResolution: (r.rows[0]?.home_resolution ?? {}) as Record<string, string>,
+    projectionFlowId: (r.rows[0]?.projection_flow_id as string | null) ?? null,
+    autonomyPolicy: (r.rows[0]?.autonomy_policy ?? {}) as Record<string, string>,
+  };
+}
+
 function patchReq(slug: string, body: unknown): NextRequest {
   return new NextRequest(`http://localhost/api/projects/${slug}/settings`, {
     method: "PATCH",
@@ -197,5 +215,44 @@ describe("project settings brain enable-gate (T5.2)", () => {
 
     expect(clear.status).toBe(200);
     expect(await homeResolutionOf(projectId)).toEqual({});
+  });
+
+  it("saves projection flow and autonomy policy without enabling Brain", async () => {
+    const projectId = await seedBrainProject(ctx.db, { brainEnabled: false });
+    const slug = await slugOf(projectId);
+
+    const save = await PATCH(
+      patchReq(slug, {
+        projectionFlowId: null,
+        autonomyDefaults: { "rule.low": "auto_draft" },
+      }),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(save.status).toBe(200);
+    expect(await brainEnabledOf(projectId)).toBe(false);
+    await expect(brainProjectConfigOf(projectId)).resolves.toMatchObject({
+      projectionFlowId: null,
+      autonomyPolicy: { "rule.low": "auto_draft" },
+    });
+  });
+
+  it("rejects auto_publish in project autonomy policy", async () => {
+    const projectId = await seedBrainProject(ctx.db, { brainEnabled: false });
+    const slug = await slugOf(projectId);
+
+    const res = await PATCH(
+      patchReq(slug, {
+        autonomyDefaults: { "rule.low": "auto_publish" },
+      }),
+      { params: Promise.resolve({ slug }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+    await expect(brainProjectConfigOf(projectId)).resolves.toMatchObject({
+      autonomyPolicy: {},
+    });
   });
 });

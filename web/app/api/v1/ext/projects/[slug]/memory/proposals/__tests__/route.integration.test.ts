@@ -140,6 +140,7 @@ describe("ext memory proposals route (T10.1)", () => {
     expect(duplicateBody).toEqual({
       proposalId: createdBody.proposalId,
       status: "pending",
+      authoredDraftId: null,
       idempotent: true,
     });
     expect(await proposalCount(projectId)).toBe(1);
@@ -171,6 +172,67 @@ describe("ext memory proposals route (T10.1)", () => {
     expect(second.status).toBe(201);
     expect(secondBody.proposalId).not.toBe(firstBody.proposalId);
     expect(await proposalCount(projectId)).toBe(2);
+  });
+
+  it("applies low-radius auto_draft policy after an agent proposal without publishing", async () => {
+    const projectId = await seedBrainProject(dbRef);
+    const slug = await slugOf(projectId);
+
+    await dbRef.execute(sql`
+      INSERT INTO brain_project_config (project_id, home_resolution, autonomy_policy)
+      VALUES (${projectId}, '{}'::jsonb, '{"rule.low":"auto_draft"}'::jsonb)
+      ON CONFLICT (project_id)
+      DO UPDATE SET autonomy_policy = EXCLUDED.autonomy_policy
+    `);
+
+    const agentId = await seedAgentLink(projectId, {
+      canReadBrain: true,
+      canWriteBrain: true,
+    });
+    const secret = await agentToken(projectId, agentId);
+    const created = await POST(
+      postReq(
+        slug,
+        {
+          kind: "rule",
+          draft: {
+            slug: "auto-route-rule",
+            title: "Auto Route Rule",
+            body: { markdown: "Prefer verified contracts." },
+          },
+          blastRadius: "low",
+        },
+        secret,
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+    const body = (await created.json()) as {
+      proposalId: string;
+      status: string;
+      authoredDraftId: string | null;
+      idempotent: boolean;
+    };
+
+    expect(created.status).toBe(201);
+    expect(body).toMatchObject({
+      proposalId: expect.any(String),
+      status: "applied",
+      authoredDraftId: expect.any(String),
+      idempotent: false,
+    });
+
+    const rows = await dbRef.execute(sql`
+      SELECT cap.lifecycle, cap.current_published_revision_id
+      FROM authored_capabilities cap
+      WHERE cap.id = ${body.authoredDraftId}
+        AND cap.project_id = ${projectId}
+      LIMIT 1
+    `);
+
+    expect(rows.rows[0]).toMatchObject({
+      lifecycle: "DRAFT",
+      current_published_revision_id: null,
+    });
   });
 
   it("rejects invalid kinds and fails closed on missing write scope, agent axis, disabled Brain, and SQLite", async () => {

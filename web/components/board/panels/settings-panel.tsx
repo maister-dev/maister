@@ -11,6 +11,11 @@ import {
   type RemoteItem,
 } from "@/components/board/panels/project-git-settings-control";
 import { ProjectBrainSettingsControl } from "@/components/board/panels/project-brain-settings-control";
+import {
+  getBrainProjectConfig,
+  type BrainAutonomyPolicy,
+} from "@/lib/brain/autonomy";
+import type { BrainHomeResolution } from "@/lib/brain/home-resolution";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
 import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
@@ -54,6 +59,9 @@ export async function SettingsPanel({
   // provider + distillation model being configured (else the PATCH returns
   // CONFIG). Read here so the control can hint when enabling would refuse.
   let brainPlatformConfigured = false;
+  let brainAutonomyDefaults: BrainAutonomyPolicy = {};
+  let brainHomeResolution: BrainHomeResolution = {};
+  let brainProjectionFlowId: string | null = null;
 
   if (isAdmin) {
     try {
@@ -76,8 +84,19 @@ export async function SettingsPanel({
       brainPlatformConfigured = isBrainFullyConfigured(
         await getBrainSettings(),
       );
+      const brainProjectConfig = await getBrainProjectConfig(
+        getDb() as any,
+        project.id,
+      );
+
+      brainAutonomyDefaults = brainProjectConfig.autonomyDefaults;
+      brainHomeResolution = brainProjectConfig.homeResolution;
+      brainProjectionFlowId = brainProjectConfig.projectionFlowId;
     } catch {
       brainPlatformConfigured = false;
+      brainAutonomyDefaults = {};
+      brainHomeResolution = {};
+      brainProjectionFlowId = null;
     }
   }
 
@@ -168,8 +187,12 @@ export async function SettingsPanel({
       ) : null}
       {isAdmin ? (
         <ProjectBrainSettingsControl
+          autonomyDefaults={brainAutonomyDefaults}
           brainEnabled={project.brainEnabled ?? false}
+          flows={flows}
+          homeResolution={brainHomeResolution}
           platformConfigured={brainPlatformConfigured}
+          projectionFlowId={brainProjectionFlowId}
           projectSlug={project.slug}
         />
       ) : null}

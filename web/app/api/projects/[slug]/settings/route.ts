@@ -10,6 +10,7 @@ import {
   assertBrainProvisioned,
   assertBrainSchemaApplied,
 } from "@/lib/brain/guard";
+import { saveBrainAutonomyConfig } from "@/lib/brain/autonomy";
 import {
   getBrainSettings,
   isBrainFullyConfigured,
@@ -56,6 +57,8 @@ const patchBodySchema = z
       })
       .strict()
       .optional(),
+    projectionFlowId: z.string().min(1).nullable().optional(),
+    autonomyDefaults: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -163,7 +166,12 @@ export async function PATCH(
 
     // ADR-122 enable-gate: a project can never be enabled into an
     // unharvest-able state — platform embedding config + distill_model first.
-    if (body.brainEnabled === true || body.homeResolution !== undefined) {
+    if (
+      body.brainEnabled === true ||
+      body.homeResolution !== undefined ||
+      body.projectionFlowId !== undefined ||
+      body.autonomyDefaults !== undefined
+    ) {
       // SQLite → 409 PRECONDITION (E-11) before the settings query; a Postgres
       // that never ran `db:migrate:brain` refuses with the exact command
       // instead of letting harvest/recall hit raw 42P01s post-enable.
@@ -201,7 +209,12 @@ export async function PATCH(
       update.autoPromotion = body.autoPromotion;
     }
 
-    if (Object.keys(update).length === 0 && body.homeResolution === undefined) {
+    if (
+      Object.keys(update).length === 0 &&
+      body.homeResolution === undefined &&
+      body.projectionFlowId === undefined &&
+      body.autonomyDefaults === undefined
+    ) {
       throw new MaisterError("CONFIG", "PATCH body contains no settings");
     }
 
@@ -216,6 +229,16 @@ export async function PATCH(
           project.id,
           body.homeResolution as BrainHomeResolution,
         );
+      }
+
+      if (
+        body.projectionFlowId !== undefined ||
+        body.autonomyDefaults !== undefined
+      ) {
+        await saveBrainAutonomyConfig(tx, project.id, {
+          projectionFlowId: body.projectionFlowId,
+          autonomyDefaults: body.autonomyDefaults,
+        });
       }
     });
 
@@ -246,6 +269,8 @@ export async function PATCH(
         runnerId: body.runnerId,
         deliveryPolicyDefault: body.deliveryPolicyDefault,
         homeResolutionChanged: body.homeResolution !== undefined,
+        projectionFlowChanged: body.projectionFlowId !== undefined,
+        autonomyPolicyChanged: body.autonomyDefaults !== undefined,
       },
       "project settings updated",
     );
@@ -268,6 +293,8 @@ export async function PATCH(
           ? project.autoPromotion
           : body.autoPromotion,
       homeResolution: body.homeResolution,
+      projectionFlowId: body.projectionFlowId,
+      autonomyDefaults: body.autonomyDefaults,
     });
   } catch (err) {
     return errorResponse(err, slug);

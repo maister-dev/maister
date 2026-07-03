@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   createBrainSource,
+  enqueueAllBrainSourcesReindex,
   listBrainSources,
 } from "@/lib/brain/sources";
 import { MaisterError } from "@/lib/errors";
@@ -51,6 +52,7 @@ vi.mock("@/lib/queries/project", () => ({
 vi.mock("@/lib/brain/sources", () => ({
   listBrainSources: vi.fn(),
   createBrainSource: vi.fn(),
+  enqueueAllBrainSourcesReindex: vi.fn(),
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -88,6 +90,7 @@ beforeEach(() => {
     lastError: null,
     chunkCount: 0,
   });
+  vi.mocked(enqueueAllBrainSourcesReindex).mockResolvedValue(["job-1"]);
 });
 
 async function invokeGet(slug = SLUG) {
@@ -105,6 +108,17 @@ async function invokePost(body: unknown, slug = SLUG) {
     new Request(`http://localhost/api/projects/${slug}/brain/sources`, {
       method: "POST",
       body: typeof body === "string" ? body : JSON.stringify(body),
+    }),
+  );
+
+  return POST(req, { params: Promise.resolve({ slug }) });
+}
+
+async function invokeReindexAll(slug = SLUG) {
+  const { POST } = await import("../reindex/route");
+  const req = new NextRequest(
+    new Request(`http://localhost/api/projects/${slug}/brain/sources/reindex`, {
+      method: "POST",
     }),
   );
 
@@ -149,6 +163,25 @@ describe("Project Brain source routes", () => {
 
     expect(res.status).toBe(401);
     expect(createBrainSource).not.toHaveBeenCalled();
+  });
+
+  it("enqueues all enabled sources behind editSettings", async () => {
+    const res = await invokeReindexAll();
+    const body = await res.json();
+
+    expect(res.status).toBe(202);
+    expect(body.jobIds).toEqual(["job-1"]);
+    expect(requireProjectAction).toHaveBeenCalledWith(
+      PROJECT_ID,
+      "editSettings",
+    );
+    expect(enqueueAllBrainSourcesReindex).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        projectId: PROJECT_ID,
+        reason: "manual",
+      },
+    );
   });
 
   it("returns 404 for an archived project before source service calls", async () => {

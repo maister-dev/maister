@@ -36,12 +36,14 @@ export type CanonicalHashInput = {
   schemaVersion?: number;
 };
 
-type CatalogDb = {
+export type AuthoredCatalogDb = {
   execute(query: SQL): Promise<QueryResult>;
 };
 
-type TransactionalCatalogDb = CatalogDb & {
-  transaction<T>(fn: (tx: CatalogDb) => Promise<T>): Promise<T>;
+type CatalogDb = AuthoredCatalogDb;
+
+type TransactionalCatalogDb = AuthoredCatalogDb & {
+  transaction<T>(fn: (tx: AuthoredCatalogDb) => Promise<T>): Promise<T>;
 };
 
 type QueryResult = {
@@ -166,23 +168,43 @@ export async function createAuthoredCapability(args: {
   const db = args.db ?? (getDb() as unknown as TransactionalCatalogDb);
 
   try {
-    return await db.transaction(async (tx) => {
-      const projectId = await resolveProjectId(tx, args.projectSlug);
-      const capId = randomUUID();
-      const revisionId = randomUUID();
-      const draftVersion = 1;
-      const body = args.input.body ?? {};
-      const manifest = args.input.manifest ?? null;
-      const schemaVersion = args.input.schemaVersion ?? 1;
-      const now = new Date();
-      const contentHash = canonicalAuthoredContentHash({
-        kind: args.input.kind,
-        body,
-        manifest,
-        schemaVersion,
-      });
+    return await db.transaction((tx) =>
+      createAuthoredCapabilityDraftInTransaction({
+        projectSlug: args.projectSlug,
+        input: args.input,
+        db: tx,
+      }),
+    );
+  } catch (err) {
+    throw mapAuthoredCapabilityCreateError(err, args);
+  }
+}
 
-      await tx.execute(sql`
+export async function createAuthoredCapabilityDraftInTransaction(args: {
+  projectSlug: string;
+  input: CreateAuthoredCapabilityInput;
+  db: AuthoredCatalogDb;
+}): Promise<{
+  capability: AuthoredCapability;
+  draft: AuthoredCapabilityRevision;
+}> {
+  try {
+    const projectId = await resolveProjectId(args.db, args.projectSlug);
+    const capId = randomUUID();
+    const revisionId = randomUUID();
+    const draftVersion = 1;
+    const body = args.input.body ?? {};
+    const manifest = args.input.manifest ?? null;
+    const schemaVersion = args.input.schemaVersion ?? 1;
+    const now = new Date();
+    const contentHash = canonicalAuthoredContentHash({
+      kind: args.input.kind,
+      body,
+      manifest,
+      schemaVersion,
+    });
+
+    await args.db.execute(sql`
       INSERT INTO authored_capabilities (
         id,
         project_id,
@@ -210,7 +232,7 @@ export async function createAuthoredCapability(args: {
         now()
       )
     `);
-      await tx.execute(sql`
+    await args.db.execute(sql`
       INSERT INTO authored_capability_revisions (
         id,
         capability_id,
@@ -243,47 +265,49 @@ export async function createAuthoredCapability(args: {
       )
     `);
 
-      log.info(
-        { projectId, capId, kind: args.input.kind, revisionId },
-        "authored capability draft created",
-      );
+    log.info(
+      { projectId, capId, kind: args.input.kind, revisionId },
+      "authored capability draft created",
+    );
 
-      return {
-        capability: {
-          id: capId,
-          projectId,
-          kind: args.input.kind,
-          slug: args.input.slug,
-          title: args.input.title,
-          lifecycle: "DRAFT",
-          draftVersion,
-          currentDraftRevisionId: revisionId,
-          currentPublishedRevisionId: null,
-          archivedAt: null,
-          createdAt: now,
-          updatedAt: now,
-        },
-        draft: {
-          id: revisionId,
-          capabilityId: capId,
-          projectId,
-          kind: args.input.kind,
-          revisionNumber: 1,
-          lifecycle: "DRAFT",
-          draftVersion,
-          title: args.input.title,
-          body,
-          manifest,
-          schemaVersion,
-          contentHash,
-          publishedAt: null,
-          archivedAt: null,
-          createdAt: now,
-        },
-      };
-    });
+    return {
+      capability: {
+        id: capId,
+        projectId,
+        kind: args.input.kind,
+        slug: args.input.slug,
+        title: args.input.title,
+        lifecycle: "DRAFT",
+        draftVersion,
+        currentDraftRevisionId: revisionId,
+        currentPublishedRevisionId: null,
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      draft: {
+        id: revisionId,
+        capabilityId: capId,
+        projectId,
+        kind: args.input.kind,
+        revisionNumber: 1,
+        lifecycle: "DRAFT",
+        draftVersion,
+        title: args.input.title,
+        body,
+        manifest,
+        schemaVersion,
+        contentHash,
+        publishedAt: null,
+        archivedAt: null,
+        createdAt: now,
+      },
+    };
   } catch (err) {
-    throw mapAuthoredCapabilityCreateError(err, args);
+    throw mapAuthoredCapabilityCreateError(err, {
+      projectSlug: args.projectSlug,
+      input: args.input,
+    });
   }
 }
 

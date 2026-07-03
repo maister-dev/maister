@@ -193,6 +193,17 @@ erDiagram
         timestamptz resolved_at
         timestamptz applied_at
     }
+
+    BRAIN_PROPOSAL_DECISION_STATS {
+        text project_id PK "FK -> projects(id) CASCADE"
+        text kind PK "rule|skill|flow|adr|roadmap|state"
+        text blast_radius PK "low|medium|high"
+        integer accepted_count "NOT NULL DEFAULT 0"
+        integer rejected_count "NOT NULL DEFAULT 0"
+        integer auto_drafted_count "NOT NULL DEFAULT 0"
+        timestamptz created_at
+        timestamptz updated_at
+    }
 ```
 
 ## Sibling-table alters (main lineage, migration `0088`)
@@ -217,6 +228,7 @@ erDiagram
 | `brain_sources` | `UNIQUE` | `(project_id, path, kind)` | One source registration per canonical source/kind. |
 | `brain_chunks` | `UNIQUE` | `(source_id, stable_id)` | Stable chunk identity across reindex. |
 | `brain_proposals` | partial `UNIQUE` | `(project_id, cluster_hash) WHERE cluster_hash IS NOT NULL` | Idempotent improver/propose path for recurring clusters. |
+| `brain_proposal_decision_stats` | `PRIMARY KEY` | `(project_id, kind, blast_radius)` | Autonomy-graduation counters by proposal class. |
 | `brain_harvested_events` | `PRIMARY KEY` (migration `0002`) | `(project_id, domain_event_id)` | Harvest idempotency across ALL retain outcomes (insert / reinforce / exact-dup) — a redelivered event that reinforced a near-dup (which leaves no `source_domain_event_id` row) is a no-op, so confidence/TTL are never double-counted. Written in `retain`'s transaction; no FK on `domain_event_id` (outlives `domain_events` GC). |
 
 ## Indexes
@@ -249,6 +261,7 @@ projects
   ├── brain_edges          (FK project_id, ON DELETE CASCADE)
   ├── brain_project_config (FK project_id, ON DELETE CASCADE)
   ├── brain_proposals      (FK project_id, ON DELETE CASCADE)
+  ├── brain_proposal_decision_stats (FK project_id, ON DELETE CASCADE)
   ├── brain_snapshots      (FK project_id, ON DELETE CASCADE)
   ├── brain_index_jobs     (FK project_id, ON DELETE CASCADE)
   └── brain_harvested_events (FK project_id, ON DELETE CASCADE)  -- migration 0002

@@ -371,6 +371,31 @@ export async function enqueueBrainSourceReindex(
   return jobId;
 }
 
+export async function enqueueAllBrainSourcesReindex(
+  db: SourcesDb,
+  args: {
+    projectId: string;
+    reason?: "manual" | "event" | "chunker_upgrade";
+  },
+): Promise<string[]> {
+  const sources = await listBrainSources(db, args.projectId);
+  const jobIds: string[] = [];
+
+  for (const source of sources) {
+    if (!source.enabled) continue;
+
+    jobIds.push(
+      await enqueueBrainSourceReindex(db, {
+        projectId: args.projectId,
+        sourceId: source.id,
+        reason: args.reason ?? "manual",
+      }),
+    );
+  }
+
+  return jobIds;
+}
+
 export async function seedDefaultBrainSources(
   db: SourcesDb,
   projectId: string,

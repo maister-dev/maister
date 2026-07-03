@@ -11,6 +11,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { buildCreateBody, validateMcpServerDraft } from "@/lib/mcp/mcp-form";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
+import { ensureSerenaPlatformMcpSeed } from "@/lib/mcp/serena-seed";
 import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
@@ -104,6 +105,7 @@ export async function GET(): Promise<NextResponse> {
     await requireGlobalRole("admin");
 
     const db = getDb() as any;
+    await ensureSerenaPlatformMcpSeed({ db });
     const servers = await db.select().from(platformMcpServers);
 
     return NextResponse.json({ servers });

@@ -6,6 +6,11 @@ import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import type {
+  AuthoredCapabilityBody,
+  AuthoredCapabilityKind,
+  CreateAuthoredCapabilityInput,
+} from "@/lib/catalog/authored-types";
+import type {
   BrainProposalActor,
   BrainProposalAutonomyDecision,
   BrainProposalBlastRadius,
@@ -14,6 +19,12 @@ import type {
   BrainProposalStatus,
 } from "./schema";
 
+import {
+  getBrainAutonomyPolicy,
+  resolveBrainAutonomyDecision,
+} from "@/lib/brain/autonomy";
+import { projectBrainProposalToTask } from "@/lib/brain/projection";
+import { createAuthoredCapabilityDraftInTransaction } from "@/lib/catalog/authored-service";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -46,6 +57,9 @@ type ProposalDb = {
 type ProposalTxDb = ProposalDb & {
   transaction<T>(fn: (tx: ProposalDb) => Promise<T>): Promise<T>;
 };
+
+export type BrainProposalDb = ProposalDb;
+export type BrainProposalTransactionalDb = ProposalTxDb;
 
 export interface BrainProposalDto {
   id: string;
@@ -80,6 +94,17 @@ export interface CreateBrainProposalInput {
   actor: BrainProposalActor;
 }
 
+export interface CreateBrainProposalWithAutonomyInput {
+  projectId: string;
+  projectSlug: string;
+  kind: BrainProposalKind;
+  evidenceItemIds: string[];
+  draft: Record<string, unknown>;
+  blastRadius: BrainProposalBlastRadius;
+  clusterHash?: string | null;
+  actor: BrainProposalActor;
+}
+
 export interface TransitionBrainProposalInput {
   projectId: string;
   proposalId: string;
@@ -93,11 +118,23 @@ export interface TransitionBrainProposalInput {
   };
 }
 
+export interface ConcludeBrainProposalInput {
+  projectId: string;
+  projectSlug: string;
+  proposalId: string;
+  action: "accept" | "reject";
+  actor: BrainProposalActor;
+  reason?: string;
+}
+
 function isOneOf<T extends string>(
   value: unknown,
   values: readonly T[],
 ): value is T {
-  return typeof value === "string" && (values as readonly string[]).includes(value);
+  return (
+    typeof value === "string" &&
+    (values as readonly string[]).includes(value)
+  );
 }
 
 function assertActor(actor: BrainProposalActor): void {
@@ -107,6 +144,15 @@ function assertActor(actor: BrainProposalActor): void {
 
   if (actor.id.trim().length === 0) {
     throw new MaisterError("CONFIG", "proposal actor id is required");
+  }
+}
+
+function assertHumanConclusionActor(actor: BrainProposalActor): void {
+  if (actor.type !== "user") {
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Brain proposal conclusions require a human user actor",
+    );
   }
 }
 
@@ -175,6 +221,25 @@ async function loadProposalForUpdate(
   return toProposal(rows.rows[0]);
 }
 
+export async function getBrainProposal(
+  db: ProposalDb,
+  projectId: string,
+  proposalId: string,
+): Promise<BrainProposalDto> {
+  const rows = await db.execute(sql`
+    SELECT *, false AS idempotent
+    FROM brain_proposals
+    WHERE id = ${proposalId} AND project_id = ${projectId}
+    LIMIT 1
+  `);
+
+  if (!rows.rows[0]) {
+    throw new MaisterError("PRECONDITION", "Brain proposal not found");
+  }
+
+  return toProposal(rows.rows[0]);
+}
+
 function resolution(actor: BrainProposalActor, reason?: string): BrainProposalResolution {
   return reason ? { actor, reason } : { actor };
 }
@@ -191,6 +256,15 @@ function assertTransition(
     "CONFLICT",
     `invalid Brain proposal transition ${current} -> ${transition}`,
   );
+}
+
+function assertTransitionActor(
+  transition: TransitionBrainProposalInput["transition"],
+  actor: BrainProposalActor,
+): void {
+  if (transition === "accept" || transition === "reject") {
+    assertHumanConclusionActor(actor);
+  }
 }
 
 export async function createBrainProposal(
@@ -240,25 +314,93 @@ export async function createBrainProposal(
   return proposal;
 }
 
+export async function createBrainProposalWithAutonomy(
+  db: ProposalDb | ProposalTxDb,
+  input: CreateBrainProposalWithAutonomyInput,
+): Promise<BrainProposalDto> {
+  assertActor(input.actor);
+
+  const apply = async (tx: ProposalDb): Promise<BrainProposalDto> => {
+    const policy = await getBrainAutonomyPolicy(tx, input.projectId);
+    const decision = resolveBrainAutonomyDecision(
+      policy,
+      input.kind,
+      input.blastRadius,
+    );
+    const created = await createBrainProposal(tx, {
+      projectId: input.projectId,
+      kind: input.kind,
+      evidenceItemIds: input.evidenceItemIds,
+      draft: input.draft,
+      blastRadius: input.blastRadius,
+      autonomyDecision: decision,
+      clusterHash: input.clusterHash,
+      actor: input.actor,
+    });
+
+    log.info(
+      {
+        projectId: input.projectId,
+        kind: input.kind,
+        blastRadius: input.blastRadius,
+        decision,
+      },
+      "brain proposal autonomy decision resolved",
+    );
+
+    if (created.idempotent || decision !== "auto_draft") return created;
+    if (!isCatalogProposalKind(created.kind)) return created;
+
+    return autoDraftBrainProposalInTransaction(tx, {
+      projectId: input.projectId,
+      projectSlug: input.projectSlug,
+      proposalId: created.id,
+    });
+  };
+
+  return "transaction" in db && typeof db.transaction === "function"
+    ? db.transaction(apply)
+    : apply(db);
+}
+
 export async function transitionBrainProposal(
   db: ProposalTxDb,
   input: TransitionBrainProposalInput,
 ): Promise<BrainProposalDto> {
   assertActor(input.actor);
+  assertTransitionActor(input.transition, input.actor);
 
-  return db.transaction(async (tx) => {
-    const current = await loadProposalForUpdate(
-      tx,
-      input.projectId,
-      input.proposalId,
-    );
-    const nextStatus = assertTransition(current.status, input.transition);
-    const resolved =
-      input.transition === "apply"
-        ? (current.resolution ?? resolution(input.actor, input.reason))
-        : resolution(input.actor, input.reason);
-    const links = input.links ?? {};
-    const rows = await tx.execute(sql`
+  return db.transaction((tx) => transitionBrainProposalInTransaction(tx, input));
+}
+
+async function transitionBrainProposalInTransaction(
+  db: ProposalDb,
+  input: TransitionBrainProposalInput,
+): Promise<BrainProposalDto> {
+  assertActor(input.actor);
+  assertTransitionActor(input.transition, input.actor);
+
+  const current = await loadProposalForUpdate(
+    db,
+    input.projectId,
+    input.proposalId,
+  );
+
+  return transitionLoadedBrainProposal(db, current, input);
+}
+
+async function transitionLoadedBrainProposal(
+  db: ProposalDb,
+  current: BrainProposalDto,
+  input: TransitionBrainProposalInput,
+): Promise<BrainProposalDto> {
+  const nextStatus = assertTransition(current.status, input.transition);
+  const resolved =
+    input.transition === "apply"
+      ? (current.resolution ?? resolution(input.actor, input.reason))
+      : resolution(input.actor, input.reason);
+  const links = input.links ?? {};
+  const rows = await db.execute(sql`
       UPDATE brain_proposals
       SET status = ${nextStatus},
           resolution = ${JSON.stringify(resolved)}::jsonb,
@@ -277,19 +419,339 @@ export async function transitionBrainProposal(
       WHERE id = ${input.proposalId} AND project_id = ${input.projectId}
       RETURNING *
     `);
-    const proposal = toProposal(rows.rows[0]);
+  const proposal = toProposal(rows.rows[0]);
+
+  await incrementProposalDecisionStats(db, current, input);
+
+  log.info(
+    {
+      projectId: input.projectId,
+      proposalId: input.proposalId,
+      kind: proposal.kind,
+      status: proposal.status,
+      actorType: input.actor.type,
+    },
+    "brain proposal transitioned",
+  );
+
+  return proposal;
+}
+
+async function incrementProposalDecisionStats(
+  db: ProposalDb,
+  current: BrainProposalDto,
+  input: TransitionBrainProposalInput,
+): Promise<void> {
+  if (input.transition !== "accept" && input.transition !== "reject") return;
+
+  const acceptedCount = input.transition === "accept" ? 1 : 0;
+  const rejectedCount = input.transition === "reject" ? 1 : 0;
+  const autoDraftedCount =
+    input.transition === "accept" &&
+    current.autonomyDecision === "auto_draft" &&
+    input.actor.type === "system" &&
+    input.reason === "auto_draft"
+      ? 1
+      : 0;
+
+  await db.execute(sql`
+    INSERT INTO brain_proposal_decision_stats (
+      project_id,
+      kind,
+      blast_radius,
+      accepted_count,
+      rejected_count,
+      auto_drafted_count
+    )
+    VALUES (
+      ${current.projectId},
+      ${current.kind},
+      ${current.blastRadius},
+      ${acceptedCount},
+      ${rejectedCount},
+      ${autoDraftedCount}
+    )
+    ON CONFLICT (project_id, kind, blast_radius)
+    DO UPDATE SET
+      accepted_count =
+        brain_proposal_decision_stats.accepted_count +
+        EXCLUDED.accepted_count,
+      rejected_count =
+        brain_proposal_decision_stats.rejected_count +
+        EXCLUDED.rejected_count,
+      auto_drafted_count =
+        brain_proposal_decision_stats.auto_drafted_count +
+        EXCLUDED.auto_drafted_count,
+      updated_at = now()
+  `);
+}
+
+export async function concludeBrainProposal(
+  db: ProposalTxDb,
+  input: ConcludeBrainProposalInput,
+): Promise<BrainProposalDto> {
+  assertActor(input.actor);
+  assertHumanConclusionActor(input.actor);
+
+  return db.transaction(async (tx) => {
+    const current = await loadProposalForUpdate(
+      tx,
+      input.projectId,
+      input.proposalId,
+    );
+
+    if (current.status !== "pending") {
+      throw new MaisterError(
+        "CONFLICT",
+        `Brain proposal ${input.proposalId} is ${current.status} and cannot be concluded`,
+      );
+    }
+
+    if (input.action === "reject") {
+      const rejected = await transitionLoadedBrainProposal(tx, current, {
+        projectId: input.projectId,
+        proposalId: input.proposalId,
+        transition: "reject",
+        actor: input.actor,
+        reason: input.reason,
+      });
+
+      log.info(
+        {
+          projectId: input.projectId,
+          proposalId: input.proposalId,
+          kind: rejected.kind,
+          resolvedBy: input.actor.id,
+        },
+        "brain proposal rejected",
+      );
+
+      return rejected;
+    }
+
+    const accepted = await transitionLoadedBrainProposal(tx, current, {
+      projectId: input.projectId,
+      proposalId: input.proposalId,
+      transition: "accept",
+      actor: input.actor,
+      reason: input.reason,
+    });
+
+    if (!isCatalogProposalKind(current.kind)) {
+      const projected = await projectBrainProposalToTask(tx as any, {
+        projectId: input.projectId,
+        proposalId: input.proposalId,
+        kind: current.kind,
+        draft: accepted.draft,
+        actor: input.actor,
+      });
+      const applied = await transitionLoadedBrainProposal(tx, accepted, {
+        projectId: input.projectId,
+        proposalId: input.proposalId,
+        transition: "apply",
+        actor: input.actor,
+        links: { taskId: projected.taskId },
+      });
+
+      log.info(
+        {
+          projectId: input.projectId,
+          proposalId: input.proposalId,
+          kind: applied.kind,
+          taskId: applied.taskId,
+          launchMode: projected.launchMode,
+          resolvedBy: input.actor.id,
+        },
+        "brain proposal accepted into projection task",
+      );
+
+      return applied;
+    }
+
+    const authored = await createAuthoredCapabilityDraftInTransaction({
+      projectSlug: input.projectSlug,
+      input: authoredInputFromProposal({ ...accepted, kind: current.kind }),
+      db: tx,
+    });
+    const applied = await transitionLoadedBrainProposal(tx, accepted, {
+      projectId: input.projectId,
+      proposalId: input.proposalId,
+      transition: "apply",
+      actor: input.actor,
+      links: { authoredDraftId: authored.capability.id },
+    });
 
     log.info(
       {
         projectId: input.projectId,
         proposalId: input.proposalId,
-        kind: proposal.kind,
-        status: proposal.status,
-        actorType: input.actor.type,
+        kind: applied.kind,
+        resolvedBy: input.actor.id,
       },
-      "brain proposal transitioned",
+      "brain proposal accepted into authored draft",
     );
 
-    return proposal;
+    return applied;
   });
+}
+
+async function autoDraftBrainProposalInTransaction(
+  db: ProposalDb,
+  input: {
+    projectId: string;
+    projectSlug: string;
+    proposalId: string;
+  },
+): Promise<BrainProposalDto> {
+  const actor: BrainProposalActor = { type: "system", id: "brain-autonomy" };
+  const current = await loadProposalForUpdate(
+    db,
+    input.projectId,
+    input.proposalId,
+  );
+
+  if (current.status !== "pending") {
+    throw new MaisterError(
+      "CONFLICT",
+      `Brain proposal ${input.proposalId} is ${current.status} and cannot auto-draft`,
+    );
+  }
+
+  if (!isCatalogProposalKind(current.kind)) {
+    return current;
+  }
+
+  const accepted = await transitionLoadedBrainProposal(db, current, {
+    projectId: input.projectId,
+    proposalId: input.proposalId,
+    transition: "accept",
+    actor,
+    reason: "auto_draft",
+  });
+  const authored = await createAuthoredCapabilityDraftInTransaction({
+    projectSlug: input.projectSlug,
+    input: authoredInputFromProposal({ ...accepted, kind: current.kind }),
+    db,
+  });
+  const applied = await transitionLoadedBrainProposal(db, accepted, {
+    projectId: input.projectId,
+    proposalId: input.proposalId,
+    transition: "apply",
+    actor,
+    links: { authoredDraftId: authored.capability.id },
+  });
+
+  log.info(
+    {
+      projectId: input.projectId,
+      proposalId: input.proposalId,
+      kind: applied.kind,
+      blastRadius: applied.blastRadius,
+      decision: "auto_draft",
+    },
+    "brain proposal auto-drafted",
+  );
+
+  return applied;
+}
+
+function isCatalogProposalKind(
+  kind: BrainProposalKind,
+): kind is AuthoredCapabilityKind {
+  return kind === "rule" || kind === "skill" || kind === "flow";
+}
+
+function authoredInputFromProposal(
+  proposal: BrainProposalDto & { kind: AuthoredCapabilityKind },
+): CreateAuthoredCapabilityInput {
+  const draft = proposal.draft;
+  const input: CreateAuthoredCapabilityInput = {
+    kind: proposal.kind,
+    slug: requiredDraftString(draft, "slug"),
+    title: requiredDraftString(draft, "title"),
+    body: optionalDraftBody(draft, "body") ?? {},
+    manifest: optionalDraftBody(draft, "manifest") ?? null,
+    schemaVersion: optionalDraftInteger(draft, "schemaVersion") ?? 1,
+  };
+  const sourceFlowRefId = optionalDraftString(draft, "sourceFlowRefId");
+
+  if (sourceFlowRefId !== undefined) {
+    input.sourceFlowRefId = sourceFlowRefId;
+  }
+
+  return input;
+}
+
+function requiredDraftString(
+  draft: Record<string, unknown>,
+  key: string,
+): string {
+  const value = optionalDraftString(draft, key);
+
+  if (value === undefined) {
+    throw new MaisterError(
+      "CONFIG",
+      `Brain proposal draft requires string field "${key}"`,
+    );
+  }
+
+  return value;
+}
+
+function optionalDraftString(
+  draft: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = draft[key];
+
+  if (value === undefined || value === null) return undefined;
+
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `Brain proposal draft field "${key}" must be a non-empty string`,
+    );
+  }
+
+  return value.trim();
+}
+
+function optionalDraftBody(
+  draft: Record<string, unknown>,
+  key: string,
+): AuthoredCapabilityBody | null | undefined {
+  const value = draft[key];
+
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as AuthoredCapabilityBody;
+  }
+
+  throw new MaisterError(
+    "CONFIG",
+    `Brain proposal draft field "${key}" must be an object or null`,
+  );
+}
+
+function optionalDraftInteger(
+  draft: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = draft[key];
+
+  if (value === undefined || value === null) return undefined;
+
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `Brain proposal draft field "${key}" must be a positive integer`,
+    );
+  }
+
+  return value;
 }

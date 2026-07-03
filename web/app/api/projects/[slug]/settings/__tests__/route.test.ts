@@ -6,6 +6,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MaisterError } from "@/lib/errors";
 
 type Row = Record<string, unknown>;
+type FakeDb = {
+  transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
+  select: () => {
+    from: (table: unknown) => {
+      where: () => Promise<Row[]>;
+    };
+  };
+  update: (table: unknown) => {
+    set: (values: Row) => {
+      where: () => Promise<void>;
+    };
+  };
+};
 
 const mocks = vi.hoisted(() => ({
   requireActiveSession: vi.fn(),
@@ -31,7 +44,8 @@ function rowsForTable(table: unknown): Row[] {
   return [];
 }
 
-const fakeDb = {
+const fakeDb: FakeDb = {
+  transaction: async <T>(fn: (tx: typeof fakeDb) => Promise<T>) => fn(fakeDb),
   select: () => ({
     from: (table: unknown) => ({
       where: async () => rowsForTable(table),

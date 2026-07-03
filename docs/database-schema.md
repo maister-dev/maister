@@ -2644,7 +2644,7 @@ symbol/path, then content hash. Unmappable edges are kept with `degraded=true`.
 }
 ```
 
-### `brain_project_config` (Designed — migration `0003`)
+### `brain_project_config` (Implemented — migration `0003`)
 
 Per-project home-resolution and projection policy.
 
@@ -2684,6 +2684,24 @@ Closed status FSM: `pending -> accepted -> applied` or `pending -> rejected`.
 
 Partial unique `(project_id, cluster_hash) WHERE cluster_hash IS NOT NULL`
 makes `memory_propose` and the improver idempotent for recurring clusters.
+
+### `brain_proposal_decision_stats` (Implemented — migration `0005`)
+
+Durable autonomy-graduation counters. Counts review decisions by project,
+proposal kind, and blast radius; `auto_draft` increments both accepted and
+auto-drafted counts. The table is analytics only and never drives publish.
+
+```ts
+{
+  projectId,                       // PK part, FK projects(id) ON DELETE CASCADE
+  kind,                            // rule | skill | flow | adr | roadmap | state
+  blastRadius,                     // low | medium | high
+  acceptedCount,
+  rejectedCount,
+  autoDraftedCount,
+  createdAt, updatedAt
+}
+```
 
 ### `brain_harvested_events`
 

@@ -1,9 +1,9 @@
 # Project Brain
 
-Route: `/projects/{slug}/brain`
-Status: Designed (ADR-127/ADR-128)
-Source components: `web/app/(app)/projects/[slug]/brain/*`,
-`web/components/brain/*`
+Route: `/projects/{slug}?tab=brain`
+Status: Implemented (ADR-127/ADR-128)
+Source components: `web/app/(app)/projects/[slug]/page.tsx`,
+`web/components/brain/*`, `web/lib/brain/ui-queries.ts`
 
 ## JTBD
 
@@ -44,14 +44,13 @@ flowchart TD
 
 The page uses the existing app shell and project chrome. Primary regions:
 
-- Memory search: compact search input, kind filter, tier badges (`owned` /
-  `indexed`), confidence, score, provenance, and canonical pointer link.
-- Sources tab: table with path/glob, kind, chunker, enabled state, chunk count,
-  last indexed time, last error, per-source reindex, and index-all action.
-- Proposals tab: pending/applied/rejected grouping, evidence links, draft diff
-  or summary, accept action, reject with reason, and linked authored draft/task.
-- Edges/degraded indicator: only visible when edges exist or degradation needs
-  attention.
+- Memory search: compact search input, tier badges (`owned` / `indexed`),
+  confidence, preview, and canonical pointer link.
+- Sources: table with path/glob, kind, chunker, enabled state, chunk count, last
+  indexed time, last error, per-source reindex, and index-all action.
+- Proposals: pending count, evidence links, draft JSON preview, accept action,
+  and reject with reason. Accepted catalog proposals link to authored drafts;
+  accepted docs/state proposals link to board tasks.
 
 No Brain API returns source file content. Pointer links open the existing file
 viewer and therefore reuse its member gate and `readRepoFiles` checks.
@@ -72,9 +71,10 @@ stateDiagram-v2
 
 ## Data & APIs
 
-- `GET /api/projects/{slug}/brain`
+- Server data loader: `web/lib/brain/ui-queries.ts`
 - `GET/POST /api/projects/{slug}/brain/sources`
 - `PATCH/DELETE /api/projects/{slug}/brain/sources/{sourceId}`
+- `POST /api/projects/{slug}/brain/sources/reindex`
 - `POST /api/projects/{slug}/brain/sources/{sourceId}/reindex`
 - `POST /api/projects/{slug}/brain/proposals/{proposalId}/conclusion`
 - Existing project file viewer/API for pointer opening

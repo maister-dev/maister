@@ -77,13 +77,13 @@ or board tasks.
   near changed facts supersede the prior active fact). `decision`/`direction`
   are owned fallback kinds only when home resolution has no canonical source;
   otherwise they are indexed-tier pointers.
-- **`brain_sources`** (Designed — brain migration `0003`) — one canonical source
+- **`brain_sources`** (Implemented — brain migration `0003`) — one canonical source
   registration per project: `{ id, project_id (FK CASCADE), kind, path/glob,
   source_hash, chunker_id, chunker_version, enabled, last_indexed_at,
   last_error, created_at, updated_at }`. Source content is read from the
   project row's `repo_path` and `main_branch`; Brain source APIs return metadata
   and pointers only.
-- **`brain_chunks`** (Designed — `0003`) — indexed-tier chunk store:
+- **`brain_chunks`** (Implemented — `0003`) — indexed-tier chunk store:
   `{ id, source_id (FK CASCADE), project_id (FK CASCADE), stable_id, kind,
   title, path, symbol?, content, metadata, source_range, content_hash, tsv }`.
   Chunks are not authoritative; recall returns capped previews plus canonical
@@ -94,7 +94,7 @@ or board tasks.
   `brain_items.source_ref` to indexed chunks. Re-chunking remaps chunk refs
   best-effort by stable id, symbol/path, then content hash; unmappable edges
   remain visible with `degraded=true`.
-- **`brain_project_config`** (Designed — `0003`) — per-project Brain policy:
+- **`brain_project_config`** (Implemented — `0003`) — per-project Brain policy:
   `{ project_id PK, home_resolution, projection_flow_id, autonomy_policy? }`.
   Home resolution decides whether `decision`/`direction` are indexed canonical
   sources or owned items.
@@ -349,7 +349,7 @@ Owned hits return full owned content and provenance. Indexed hits return
 canonical `{sourcePath, sourceRange, stableId}`. Ambient injection keeps owned
 priority for K=5; indexed hits fill only remaining slots and are capped at two.
 
-### (i) Proposal bridge and docs projection (Partially Implemented — Sub-project C)
+### (i) Proposal bridge and docs projection (Implemented — Sub-project C)
 
 ```mermaid
 stateDiagram-v2
@@ -364,23 +364,27 @@ stateDiagram-v2
 `memory_clusters`, `memory_propose`, the `brain_proposals` pending FSM, and the
 core Brain Improver platform-agent definition are implemented.
 `memory_clusters` computes recurring evidence server-side and is read-only.
-`memory_propose` creates a pending proposal only. The improver runs from the
-external core package with workspace `none`, mode `session`, risk tier
-`read_only`, cron/manual triggers, and ADR-111 config defaults for
+`memory_propose` creates a proposal and may auto-draft only when project
+autonomy allows a low-risk catalog proposal; it never publishes or writes repo
+files. The improver runs from the external core package with workspace `none`,
+mode `session`, risk tier `read_only`, cron/manual triggers, and ADR-111 config defaults for
 `min_recurrence`, `kinds`, and `max_proposals_per_run`. Rule/skill/flow
-acceptance creates M25 authored catalog drafts and requires catalog permission
-(designed; T11). ADR, roadmap, and state projection creates board tasks with
-drafted path/content and optional auto-launch metadata, then follows the normal
-task/run/promotion machine (designed; T12). Brain services never write repo
-files directly.
+acceptance creates unpublished M25 authored catalog drafts, links the proposal,
+and requires catalog permission. Rejection records a human-authored reason. ADR,
+roadmap, and state projection require the project task-creation gate, create a
+Backlog task with drafted target path/content, link `brain_proposals.task_id`,
+and, when `brain_project_config.projection_flow_id` is set, apply the normal
+triage verdict with `launch_mode='auto'` so the existing scheduler can launch
+it. Brain services never write repo files directly.
 
-### (j) Serena catalog seed (Designed — Sub-project C)
+### (j) Serena catalog seed (Implemented — Sub-project C)
 
 Serena is seeded as an optional platform MCP catalog row with `enabled=false`
 and `trust_status='untrusted'`. Current MCP projection materializes only enabled
-rows, so the seed is visible for admin/catalog configuration but non-executable
-by default. If a later product slice needs `enabled=true` visibility, projection
-must first gain a trust gate and its tests/docs must move with it.
+rows, so the seed is visible from the admin MCP catalog ensure path but
+non-executable by default. If a later product slice needs `enabled=true`
+visibility, projection must first gain a trust gate and its tests/docs must move
+with it.
 
 ## Expectations
 
@@ -442,6 +446,10 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   tokens recall MUST additionally be gated by `agent_project_links.can_read_brain`
   and retain by `can_write_brain` (a separate axis — a read grant MUST NOT open
   retain; user/project tokens pass these link axes by design). (Implemented)
+- Proposal accept/reject transitions MUST increment durable
+  `brain_proposal_decision_stats` counters per `(project, kind, blast_radius)`;
+  `auto_draft` increments both accepted and auto-drafted counts. The counters are
+  graduation evidence for expanding or shrinking autonomy zones. (Implemented)
 
 ## Edge cases
 
@@ -528,7 +536,11 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   existing proposal; without `cluster_hash`, duplicate policy remains explicit in
   route validation/tests and does not silently merge unrelated drafts.
 - **Machine actor accept/reject** → refused; agents propose, human session RBAC or
-  configured `auto_draft` concludes.
+  configured project-level `auto_draft` concludes.
+- **Proposal decision stats** → counted only on the decision transition
+  (`pending -> accepted` or `pending -> rejected`), never on the later
+  `accepted -> applied` transition, so applying a draft/task cannot double-count
+  graduation evidence.
 - **`auto_publish`** → not accepted by config/schema/API/UI. A grep for the term
   may only match non-goal docs.
 - **Serena default seed** → repeated boot/admin ensure is insert-only idempotent;
@@ -544,7 +556,7 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   Acceptance §14.
 - **DB:** [`db/brain-domain.md`](../db/brain-domain.md) (domain ERD) +
   [`database-schema.md`](../database-schema.md) (narrative) — migrations main `0088`
-  + brain lineage `0001`–`0002`.
+  + brain lineage `0001`–`0005`.
 - **Harvest feed:** [`domain-events.md`](domain-events.md) — the `memory_harvest`
   consumer on the `domain_events` bus (ADR-086).
 - **Background clock:** [`scheduler.md`](scheduler.md) — the decay + reindex sweeps

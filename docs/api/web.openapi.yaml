@@ -10485,7 +10485,7 @@ paths:
   /api/projects/{slug}/brain/sources:
     get:
       tags: [brain]
-      summary: (ADR-127, Designed) List Project Brain indexed sources
+      summary: (ADR-127, Implemented) List Project Brain indexed sources
       description: Requires `readBrain`; returns source metadata only.
       operationId: listProjectBrainSources
       parameters:
@@ -10507,7 +10507,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [brain]
-      summary: (ADR-127, Designed) Add a Project Brain source
+      summary: (ADR-127, Implemented) Add a Project Brain source
       description: |
         Requires `editSettings`. The slug resolves the project server-side;
         body paths/globs are repo-relative and validated before any git read.
@@ -10537,7 +10537,7 @@ paths:
   /api/projects/{slug}/brain/sources/{sourceId}:
     patch:
       tags: [brain]
-      summary: (ADR-127, Designed) Update a Project Brain source
+      summary: (ADR-127, Implemented) Update a Project Brain source
       description: Requires `editSettings`; enables/disables or edits source metadata.
       operationId: patchProjectBrainSource
       parameters:
@@ -10567,7 +10567,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [brain]
-      summary: (ADR-127, Designed) Remove a Project Brain source
+      summary: (ADR-127, Implemented) Remove a Project Brain source
       description: Requires `editSettings`; deletes source, chunks, chunk embeddings, and edges by cascade.
       operationId: deleteProjectBrainSource
       parameters:
@@ -10582,10 +10582,36 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/projects/{slug}/brain/sources/reindex:
+    post:
+      tags: [brain]
+      summary: (ADR-127, Implemented) Reindex all enabled Project Brain sources
+      description: |
+        Requires `editSettings`; enqueues one source-scoped manual index job for
+        each enabled Project Brain source.
+      operationId: postProjectBrainSourcesReindex
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      responses:
+        "202":
+          description: Reindex jobs enqueued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobIds]
+                properties:
+                  jobIds:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/projects/{slug}/brain/sources/{sourceId}/reindex:
     post:
       tags: [brain]
-      summary: (ADR-127, Designed) Reindex a Project Brain source
+      summary: (ADR-127, Implemented) Reindex a Project Brain source
       description: Requires `editSettings`; enqueues a source-scoped manual index job.
       operationId: postProjectBrainSourceReindex
       parameters:
@@ -10611,13 +10637,16 @@ paths:
   /api/projects/{slug}/brain/proposals/{proposalId}/conclusion:
     post:
       tags: [brain]
-      summary: (ADR-128, Designed) Accept or reject a Brain proposal
+      summary: (ADR-128, Implemented) Accept or reject a Brain proposal
       description: |
-        Human/session route. `accept` for rule/skill/flow requires the same
-        catalog permission as authored draft creation (`manageCatalog`).
-        `accept` for adr/roadmap/state projection requires the task action
-        chosen by policy (`createTask` or `editTask`). `reject` records a human
-        reason. Agent tokens cannot conclude proposals.
+        Human/session route. Implemented for `reject` and for `accept` of
+        rule/skill/flow proposals: the route requires the same catalog
+        permission as authored draft creation (`manageCatalog`), creates an M25
+        authored DRAFT, links it to the Brain proposal, and does not publish.
+        `accept` for adr/roadmap/state projection requires `createTask`, creates
+        a Backlog task carrying the drafted target path/content, links it to the
+        proposal, and optionally stamps the configured projection Flow with
+        `launch_mode='auto'`. Agent tokens cannot conclude proposals.
       operationId: postProjectBrainProposalConclusion
       parameters:
         - { $ref: "#/components/parameters/ProjectSlug" }
@@ -10650,7 +10679,10 @@ paths:
     get:
       tags: [brain]
       summary: (ADR-127/128, Designed) Read project Brain settings
-      description: Requires `readBrain`; returns enablement, home resolution, projection flow, and autonomy overrides.
+      description: |
+        Dedicated Brain-settings read route. Designed shape; the current
+        implemented UI reads the project page data plus `brain_project_config`
+        server-side.
       operationId: getProjectBrainSettings
       parameters:
         - { $ref: "#/components/parameters/ProjectSlug" }
@@ -10667,9 +10699,11 @@ paths:
       tags: [brain]
       summary: (ADR-127/128, Designed) Update project Brain settings
       description: |
-        Requires `editSettings`. Enabling still requires platform embedding and
-        distill settings. Saves home-resolution and projection/autonomy config;
-        `auto_publish` is not an allowed value.
+        Dedicated Brain-settings write route. Designed shape; the current
+        implemented write path is `PATCH /api/projects/{slug}/settings`.
+        Enabling still requires platform embedding and distill settings. Saves
+        home-resolution and projection/autonomy config; `auto_publish` is not an
+        allowed value.
       operationId: patchProjectBrainSettings
       parameters:
         - { $ref: "#/components/parameters/ProjectSlug" }
@@ -11946,7 +11980,7 @@ components:
       additionalProperties: false
       minProperties: 1
       properties:
-        defaultRunnerId:
+        runnerId:
           type: string
           nullable: true
           description: Platform runner override; null inherits platform default.
@@ -11974,6 +12008,32 @@ components:
             (ADR-126) Per-project auto-promotion lane config
             (`projects.auto_promotion`). Null clears to the shipped defaults with
             the master toggle OFF. `.strict()` — an unknown key is `422 CONFIG`.
+        homeResolution:
+          type: object
+          additionalProperties: false
+          properties:
+            decision:
+              type: string
+              enum: [owned, indexed]
+            direction:
+              type: string
+              enum: [owned, indexed]
+          description: |
+            Project Brain canonical-home override for decision/direction facts.
+        projectionFlowId:
+          type: string
+          nullable: true
+          description: |
+            Optional Flow id used by future docs-as-code projection tasks; null
+            clears the override.
+        autonomyDefaults:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [manual, auto_draft]
+          description: |
+            Project-level Brain proposal policy by `kind.blastRadius`
+            (`rule.low`, `skill.low`, etc.). `auto_publish` is not accepted.
     AutoPromotionConfig:
       type: object
       additionalProperties: false
@@ -12053,21 +12113,38 @@ components:
     ProjectSettingsResponse:
       type: object
       additionalProperties: false
-      required: [project]
+      required: [ok, projectId]
       properties:
-        project:
+        ok:
+          type: boolean
+        projectId:
+          type: string
+        defaultRunnerId:
+          type: string
+          nullable: true
+        deliveryPolicyDefault:
           type: object
-          additionalProperties: false
-          required: [slug, defaultRunnerId, deliveryPolicyDefault]
-          properties:
-            slug: { type: string }
-            defaultRunnerId: { type: string, nullable: true }
-            deliveryPolicyDefault:
-              type: object
-              allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
-              nullable: true
-            taskQueueSettings:
-              $ref: "#/components/schemas/TaskQueueSettings"
+          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+          nullable: true
+        taskQueueSettings:
+          $ref: "#/components/schemas/TaskQueueSettings"
+        autoPromotion:
+          type: object
+          allOf: [{ $ref: "#/components/schemas/AutoPromotionConfig" }]
+          nullable: true
+        homeResolution:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [owned, indexed]
+        projectionFlowId:
+          type: string
+          nullable: true
+        autonomyDefaults:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [manual, auto_draft]
     PostRunBody:
       type: object
       required: [taskId]
@@ -16392,9 +16469,10 @@ components:
       description: |
         (ADR-122/128) Platform Project-Brain embedding + distillation config on the
         singleton `platform_runtime_settings` row. All fields nullable; the API key
-        is an `env:NAME` reference only (never the secret). B/C also store admin
-        autonomy defaults; allowed values stop at `auto_draft`. GET returns the
-        current values; PATCH sets them (a `null` value clears nullable fields).
+        is an `env:NAME` reference only (never the secret). Project autonomy
+        policy is stored per project, not on this platform singleton. GET returns
+        the current values; PATCH sets them (a `null` value clears nullable
+        fields).
       additionalProperties: false
       properties:
         embeddingBaseUrl:
@@ -16424,12 +16502,6 @@ components:
           type: string
           nullable: true
           description: Completion model for harvest distillation (required to enable any project).
-        autonomyDefaults:
-          type: object
-          additionalProperties:
-            type: string
-            enum: [manual, auto_draft]
-          description: ADR-128 admin defaults by proposal kind/blast radius; `auto_publish` is not allowed.
 
     WebhookSettings:
       type: object

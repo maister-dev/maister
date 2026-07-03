@@ -13,6 +13,12 @@ function render(brainEnabled: boolean, platformConfigured: boolean): string {
     createElement(ProjectBrainSettingsControl, {
       projectSlug: "demo",
       brainEnabled,
+      flows: [
+        { id: "flow-1", ref: "maister.project-brain-projection" },
+      ],
+      homeResolution: { decision: "indexed" },
+      projectionFlowId: "flow-1",
+      autonomyDefaults: { "rule.low": "auto_draft" },
       platformConfigured,
     }),
   );
@@ -31,8 +37,20 @@ describe("ProjectBrainSettingsControl", () => {
 
     expect(html).toContain("settings.brainProjectTitle");
     expect(html).toContain("settings.brainEnabledLabel");
+    expect(html).toContain("settings.brainAutonomyRuleLow");
+    expect(html).toContain("settings.brainAutonomySkillLow");
+    expect(html).toContain("settings.brainAutonomyFlowLow");
+    expect(html).toContain("settings.brainHomeDecision");
+    expect(html).toContain("settings.brainHomeDirection");
+    expect(html).toContain("settings.brainHomeOwned");
+    expect(html).toContain("settings.brainHomeIndexed");
+    expect(html).toContain("settings.brainProjectionFlow");
+    expect(html).toContain("maister.project-brain-projection");
+    expect(html).toContain("settings.brainAutonomyAutoDraft");
+    expect(html).toContain("settings.brainAutonomyManual");
     expect(html).toContain('data-slot="select"');
     expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain("auto_publish");
     expect(selectedLabel(html)).toBe("settings.brainEnabledOn");
   });
 

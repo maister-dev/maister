@@ -140,9 +140,11 @@ surface exists.
     evidence clusters for the improver. It is read-only and returns evidence ids,
     recurrence, summary, and `clusterHash`.
   - `memory_propose` (scope `memory:write`, `POST
-    /api/v1/ext/projects/{slug}/memory/proposals`): creates a pending
-    `brain_proposals` row only. It never accepts, applies, publishes, or writes
-    repo files. Duplicate `clusterHash` values are idempotent.
+    /api/v1/ext/projects/{slug}/memory/proposals`): creates a
+    `brain_proposals` row. Project autonomy may immediately auto-draft allowed
+    low-risk catalog proposals into unpublished authored drafts, but the route
+    never publishes or writes repo files. Duplicate `clusterHash` values are
+    idempotent and return the existing proposal status.
   All memory tools are gated by `brain_enabled` + the `can_read_brain`/`can_write_brain` link
   axis. In SQLite mode the tools stay **listed** (static `TOOL_SPECS`) but fail
   closed with `PRECONDITION`; a transient embedding outage returns

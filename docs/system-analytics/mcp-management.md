@@ -29,7 +29,7 @@ reputation / malware scanning / sandboxing / org policy (Phase 2).
   readiness_status ∈ {Unknown,Ready,NotReady}, readiness_reasons,
   enabled, created_at, updated_at }`. Mirrors `platform_acp_runners`.
   See [db/projects-domain.md](../db/projects-domain.md).
-- **Serena default seed** (Designed, ADR-128) — boot/admin ensure inserts a
+- **Serena default seed** (Implemented, ADR-128) — admin MCP list ensure inserts a
   platform MCP catalog row `id='serena'` for the optional Serena/LSP MCP server.
   The row is visible in the catalog but **not executable by default**:
   `enabled=false` and `trust_status='untrusted'`. Current projection
@@ -201,7 +201,7 @@ recorded but never computed before WI-2):
   from supervisor `/diagnostics` `envRefs` MUST yield `NotReady` with a
   per-cause reason; diagnostics unavailable MUST yield `Unknown` with a reason;
   the evaluator MUST NOT read or store any secret value (only `env:NAME` names).
-- **(ADR-128 — Designed)** The Serena seed MUST be insert-only idempotent and
+- **(ADR-128 — Implemented)** The Serena seed MUST be insert-only idempotent and
   MUST remain non-executable by default (`enabled=false`,
   `trust_status='untrusted'`). Projection tests MUST prove the seeded row is not
   returned as an executable capability until an explicit trust/enabling path is
@@ -233,4 +233,4 @@ recorded but never computed before WI-2):
 - **Instance config / settings page:** [instance-config.md](instance-config.md) §Platform MCP server admin — the `/settings` page hosts the platform-scoped MCP admin panel.
 - **OpenAPI:** [`../api/web.openapi.yaml`](../api/web.openapi.yaml) — `GET/POST /api/admin/mcp-servers`, `PATCH/DELETE /api/admin/mcp-servers/{id}`, `GET/POST /api/projects/{slug}/mcp`, `PATCH/DELETE /api/projects/{slug}/mcp/{mcpId}`, `POST /api/projects/{slug}/mcp/resolve`.
 - **ERD:** [`../db/capabilities-domain.md`](../db/capabilities-domain.md) — `capability_records` + `capability_imports` + new `platform_mcp_servers`.
-- **Source (Implemented):** `web/lib/capabilities/resolver.ts`, `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/agent-map.ts`, `supervisor/src/acp-client.ts`, `web/app/api/admin/mcp-servers/route.ts`, `web/app/api/admin/mcp-servers/[id]/route.ts`, `web/app/api/projects/[slug]/mcp/route.ts`, `web/app/api/projects/[slug]/mcp/[mcpId]/route.ts`, `web/app/api/projects/[slug]/mcp/resolve/route.ts`, `web/components/settings/mcp-servers-panel.tsx`, `web/components/settings/mcp-server-modal.tsx`.
+- **Source (Implemented):** `web/lib/capabilities/resolver.ts`, `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/agent-map.ts`, `supervisor/src/acp-client.ts`, `web/lib/mcp/serena-seed.ts`, `web/app/api/admin/mcp-servers/route.ts`, `web/app/api/admin/mcp-servers/[id]/route.ts`, `web/app/api/projects/[slug]/mcp/route.ts`, `web/app/api/projects/[slug]/mcp/[mcpId]/route.ts`, `web/app/api/projects/[slug]/mcp/resolve/route.ts`, `web/components/settings/mcp-servers-panel.tsx`, `web/components/settings/mcp-server-modal.tsx`.

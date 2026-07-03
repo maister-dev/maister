@@ -17,6 +17,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
 import * as schemaModule from "@/lib/db/schema";
 import { loadPlatformMcpCapabilitiesFromDb } from "@/lib/mcp/projection";
+import {
+  ensureSerenaPlatformMcpSeed,
+  SERENA_MCP_SEED,
+} from "@/lib/mcp/serena-seed";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { platformMcpServers, projects, capabilityRecords } = schema;
@@ -53,6 +57,62 @@ afterAll(async () => {
 });
 
 describe("platform MCP → capability_records projection (real postgres)", () => {
+  it("ensures Serena as a disabled untrusted seed and never projects it by default", async () => {
+    await db.delete(platformMcpServers).where(eq(platformMcpServers.id, "serena"));
+
+    const first = await ensureSerenaPlatformMcpSeed({ db });
+    const second = await ensureSerenaPlatformMcpSeed({ db });
+
+    expect(first).toEqual({ id: "serena", created: true, skipped: false });
+    expect(second).toEqual({ id: "serena", created: false, skipped: true });
+
+    const [row] = await db
+      .select()
+      .from(platformMcpServers)
+      .where(eq(platformMcpServers.id, "serena"));
+
+    expect(row).toMatchObject({
+      id: "serena",
+      transport: "stdio",
+      command: SERENA_MCP_SEED.command,
+      args: SERENA_MCP_SEED.args,
+      enabled: false,
+      trustStatus: "untrusted",
+    });
+
+    const platformMcps = await loadPlatformMcpCapabilitiesFromDb(db);
+
+    expect(platformMcps.some((m) => m.id === "serena")).toBe(false);
+  });
+
+  it("does not overwrite an admin-edited Serena catalog row", async () => {
+    await db.delete(platformMcpServers).where(eq(platformMcpServers.id, "serena"));
+    await db.insert(platformMcpServers).values({
+      id: "serena",
+      transport: "stdio",
+      command: "custom-serena",
+      args: ["mcp"],
+      enabled: true,
+      trustStatus: "trusted",
+    });
+
+    const ensured = await ensureSerenaPlatformMcpSeed({ db });
+    const [row] = await db
+      .select()
+      .from(platformMcpServers)
+      .where(eq(platformMcpServers.id, "serena"));
+
+    expect(ensured).toEqual({ id: "serena", created: false, skipped: true });
+    expect(row).toMatchObject({
+      command: "custom-serena",
+      args: ["mcp"],
+      enabled: true,
+      trustStatus: "trusted",
+    });
+
+    await db.delete(platformMcpServers).where(eq(platformMcpServers.id, "serena"));
+  });
+
   it("projects an enabled platform_mcp_servers row as a source=platform capability record", async () => {
     const projectId = `prj_${randomUUID().slice(0, 8)}`;
 
