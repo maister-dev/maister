@@ -246,7 +246,7 @@ describe("scheduler job SQL integration", () => {
     expect(jobs[0].consecutiveFailures).toBe(1);
   });
 
-  it("bootstraps the default system_sweep, run_schedule, webhook_delivery, domain_event_dispatch, agent_tick, and auto_launch_triaged jobs idempotently", async () => {
+  it("bootstraps the default system_sweep, run_schedule, webhook_delivery, domain_event_dispatch, agent_tick, auto_launch_triaged, and auto_promote jobs idempotently", async () => {
     const now = new Date("2026-06-05T10:00:00.000Z");
 
     await ensureDefaultSchedulerJobs({ now, db: schedulerDb });
@@ -257,7 +257,7 @@ describe("scheduler job SQL integration", () => {
       .from(schema.schedulerJobs)
       .where(isNotNull(schema.schedulerJobs.id));
 
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(7);
     expect(rows.find((row) => row.id === "system_sweep.default")).toMatchObject(
       {
         jobKind: "system_sweep",
@@ -301,6 +301,14 @@ describe("scheduler job SQL integration", () => {
       rows.find((row) => row.id === "auto_launch_triaged.default"),
     ).toMatchObject({
       jobKind: "auto_launch_triaged",
+      cadenceIntervalSeconds: 60,
+      maxFailures: 3,
+      nextRunAt: now,
+    });
+    expect(
+      rows.find((row) => row.id === "auto_promote.default"),
+    ).toMatchObject({
+      jobKind: "auto_promote",
       cadenceIntervalSeconds: 60,
       maxFailures: 3,
       nextRunAt: now,
