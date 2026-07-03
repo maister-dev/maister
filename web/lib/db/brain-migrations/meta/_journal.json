@@ -15,6 +15,13 @@
       "when": 1782995000000,
       "tag": "0002_brain_review_fixes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783076400000,
+      "tag": "0003_brain_indexed_tier",
+      "breakpoints": true
     }
   ]
 }

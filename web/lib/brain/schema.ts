@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   bigint,
+  boolean,
   customType,
   integer,
   jsonb,
@@ -12,7 +13,7 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
-// Project Brain (ADR-122, Sub-project A) runtime types. The brain lineage is
+// Project Brain (ADR-122/127, Sub-projects A+B) runtime types. The brain lineage is
 // HAND-AUTHORED SQL (`web/lib/db/brain-migrations/`), NOT generated from this
 // module — drizzle-kit never sees it. The pgTable definitions below are a
 // REFERENCE mirror of that SQL (row/kind types are derived from them; the
@@ -48,7 +49,7 @@ export const brainItems = pgTable("brain_items", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),
   kind: text("kind", {
-    enum: ["lesson", "observation", "state_fact"],
+    enum: ["lesson", "observation", "state_fact", "decision", "direction"],
   }).notNull(),
   tier: text("tier").notNull().default("owned"),
   title: text("title").notNull(),
@@ -71,6 +72,7 @@ export const brainItems = pgTable("brain_items", {
   sourceNodeAttemptId: text("source_node_attempt_id"),
   sourceDomainEventId: bigint("source_domain_event_id", { mode: "number" }),
   sourceGateKind: text("source_gate_kind"),
+  sourceRef: jsonb("source_ref").$type<BrainSourceRef | null>(),
   // `tsv` (GENERATED tsvector) is DB-owned and queried via raw SQL — omitted
   // here on purpose (a generated column must never appear in an INSERT).
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -81,9 +83,67 @@ export const brainItems = pgTable("brain_items", {
     .defaultNow(),
 });
 
+export const brainSources = pgTable("brain_sources", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  kind: text("kind", {
+    enum: [
+      "repo_file",
+      "markdown",
+      "html",
+      "openapi",
+      "asyncapi",
+      "sql",
+      "flow_yaml",
+      "package_yaml",
+      "agent_md",
+      "code",
+      "text",
+    ],
+  }).notNull(),
+  path: text("path").notNull(),
+  sourceHash: text("source_hash"),
+  chunkerId: text("chunker_id").notNull(),
+  chunkerVersion: text("chunker_version").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  lastIndexedAt: timestamp("last_indexed_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  lastError: jsonb("last_error").$type<Record<string, unknown> | null>(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export const brainChunks = pgTable("brain_chunks", {
+  id: text("id").primaryKey(),
+  sourceId: text("source_id").notNull(),
+  projectId: text("project_id").notNull(),
+  stableId: text("stable_id").notNull(),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  path: text("path").notNull(),
+  symbol: text("symbol"),
+  content: text("content").notNull(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull(),
+  sourceRange: jsonb("source_range").$type<BrainSourceRange | null>(),
+  contentHash: text("content_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
 export const brainEmbeddings = pgTable("brain_embeddings", {
   id: text("id").primaryKey(),
-  itemId: text("item_id").notNull(),
+  itemId: text("item_id"),
+  chunkId: text("chunk_id"),
   splitOrdinal: integer("split_ordinal").notNull().default(0),
   vector: vector("vector").notNull(),
   embeddingProvider: text("embedding_provider").notNull(),
@@ -92,6 +152,8 @@ export const brainEmbeddings = pgTable("brain_embeddings", {
   embeddingVersion: text("embedding_version").notNull(),
   sourceHash: text("source_hash").notNull(),
   contentHash: text("content_hash").notNull(),
+  chunkerId: text("chunker_id"),
+  chunkerVersion: text("chunker_version"),
   embeddedAt: timestamp("embedded_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),
@@ -111,7 +173,7 @@ export const brainSnapshots = pgTable("brain_snapshots", {
   queryHash: text("query_hash").notNull(),
   embeddingModel: text("embedding_model").notNull(),
   returnedItems: jsonb("returned_items")
-    .$type<Array<{ itemId: string; score: number }>>()
+    .$type<BrainSnapshotReturnedItem[]>()
     .notNull(),
   rankerVersion: text("ranker_version").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -122,8 +184,9 @@ export const brainSnapshots = pgTable("brain_snapshots", {
 export const brainIndexJobs = pgTable("brain_index_jobs", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),
+  sourceId: text("source_id"),
   reason: text("reason", {
-    enum: ["model_switch", "manual"],
+    enum: ["model_switch", "manual", "event", "chunker_upgrade"],
   }).notNull(),
   status: text("status", {
     enum: ["queued", "running", "completed", "failed"],
@@ -158,8 +221,47 @@ export const brainHarvestedEvents = pgTable(
   }),
 );
 
+export const brainEdges = pgTable("brain_edges", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  fromRef: jsonb("from_ref").$type<BrainGraphRef>().notNull(),
+  toRef: jsonb("to_ref").$type<BrainGraphRef>().notNull(),
+  relation: text("relation", {
+    enum: ["supports", "contradicts", "derived_from", "refines", "references"],
+  }).notNull(),
+  confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
+  degraded: boolean("degraded").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export const brainProjectConfig = pgTable("brain_project_config", {
+  projectId: text("project_id").primaryKey(),
+  homeResolution: jsonb("home_resolution")
+    .$type<Record<string, unknown>>()
+    .notNull(),
+  projectionFlowId: text("projection_flow_id"),
+  autonomyPolicy: jsonb("autonomy_policy")
+    .$type<Record<string, unknown>>()
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
 export type BrainItemRow = typeof brainItems.$inferSelect;
 export type BrainItemInsert = typeof brainItems.$inferInsert;
+export type BrainSourceRow = typeof brainSources.$inferSelect;
+export type BrainSourceInsert = typeof brainSources.$inferInsert;
+export type BrainChunkRow = typeof brainChunks.$inferSelect;
+export type BrainChunkInsert = typeof brainChunks.$inferInsert;
 export type BrainEmbeddingRow = typeof brainEmbeddings.$inferSelect;
 export type BrainEmbeddingInsert = typeof brainEmbeddings.$inferInsert;
 export type BrainSnapshotRow = typeof brainSnapshots.$inferSelect;
@@ -169,3 +271,37 @@ export type BrainIndexJobInsert = typeof brainIndexJobs.$inferInsert;
 
 export type BrainItemKind = BrainItemRow["kind"];
 export type BrainItemStatus = BrainItemRow["status"];
+export type BrainSourceKind = BrainSourceRow["kind"];
+export type BrainIndexJobReason = BrainIndexJobRow["reason"];
+
+export interface BrainSourceRange {
+  startLine?: number;
+  endLine?: number;
+  startColumn?: number;
+  endColumn?: number;
+}
+
+export interface BrainSourceRef {
+  sourcePath: string;
+  stableId?: string;
+  sourceRange?: BrainSourceRange | null;
+}
+
+export type BrainGraphRef =
+  | { type: "item"; id: string }
+  | { type: "chunk"; id: string }
+  | { type: "source"; id: string }
+  | { type: "proposal"; id: string };
+
+export type BrainSnapshotReturnedItem =
+  | {
+      tier: "owned";
+      itemId: string;
+      score: number;
+    }
+  | {
+      tier: "indexed";
+      chunkId: string;
+      score: number;
+      pointer: BrainSourceRef;
+    };

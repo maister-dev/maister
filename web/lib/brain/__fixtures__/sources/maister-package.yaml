@@ -1,0 +1,6 @@
+name: demo-package
+version: 1.0.0
+flows:
+  - id: demo-flow
+agents:
+  - id: triager

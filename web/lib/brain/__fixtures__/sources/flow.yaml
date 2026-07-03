@@ -1,0 +1,6 @@
+id: demo-flow
+version: 1
+nodes:
+  - id: plan
+    type: agent
+    prompt: Make a plan.

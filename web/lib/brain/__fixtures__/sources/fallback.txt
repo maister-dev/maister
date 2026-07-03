@@ -1,0 +1,1 @@
+Plain text without a specialized source kind still needs deterministic chunks.

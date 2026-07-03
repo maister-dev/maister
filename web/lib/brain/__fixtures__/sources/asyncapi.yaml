@@ -1,0 +1,10 @@
+asyncapi: 2.6.0
+info:
+  title: Demo Events
+  version: "1.0.0"
+channels:
+  run.done:
+    publish:
+      operationId: publishRunDone
+      message:
+        name: RunDone

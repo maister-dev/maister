@@ -285,7 +285,7 @@ implementation starts and the owner chooses the milestone slot.
 
 ### Phase 1 - Indexed-Tier Schema and Chunkers (Sub-project B Foundation)
 
-- [ ] **T1.1 - RED: indexed schema integration tests.**
+- [x] **T1.1 - RED: indexed schema integration tests.**
   - Add failing testcontainer coverage for brain migration `0003`.
   - Assert `brain_sources`, `brain_chunks`, `brain_edges`,
     `brain_project_config`, and the altered `brain_embeddings`/`brain_items`/
@@ -301,8 +301,12 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/__tests__/indexed-schema.integration.test.ts`,
     `web/lib/db/__tests__/check-brain-migrations.test.ts`.
   - Verify RED: `pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/indexed-schema.integration.test.ts`.
+  - RED evidence: sandboxed run failed before test execution because
+    Testcontainers could not see a container runtime; escalated rerun reached the
+    schema and failed on missing `brain_sources` / `brain_chunks` / 0003 columns:
+    `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/indexed-schema.integration.test.ts`.
 
-- [ ] **T1.2 - GREEN: brain migration 0003 and schema mirror.**
+- [x] **T1.2 - GREEN: brain migration 0003 and schema mirror.**
   - Add hand-authored `web/lib/db/brain-migrations/0003_brain_indexed_tier.sql`
     and update `web/lib/db/brain-migrations/meta/_journal.json`.
   - Create `brain_sources` with source kind, path/glob metadata, `source_hash`,
@@ -331,8 +335,12 @@ implementation starts and the owner chooses the milestone slot.
   - Logging requirements: migration/schema mirror, no runtime logging.
   - Files: brain migration SQL, brain journal, `web/lib/brain/schema.ts`.
   - Verify GREEN: T1.1 command; `pnpm --filter maister-web typecheck`.
+  - GREEN evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/indexed-schema.integration.test.ts`
+    passed; `CI=true pnpm --filter maister-web typecheck` passed;
+    `CI=true pnpm --filter maister-web exec vitest run --project unit lib/db/__tests__/check-brain-migrations.test.ts`
+    passed.
 
-- [ ] **T2.1 - RED: ChunkerRegistry and fixture corpus tests.**
+- [x] **T2.1 - RED: ChunkerRegistry and fixture corpus tests.**
   - Add fixture corpus with one real file per source kind:
     TS code, Python code, markdown, HTML, OpenAPI, AsyncAPI, SQL, `flow.yaml`,
     `maister-package.yaml`, `agent.md`, plus malformed/oversized/binary samples.
@@ -349,8 +357,10 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/__fixtures__/sources/*`,
     `web/lib/brain/__tests__/chunker-registry.test.ts`.
   - Verify RED: `pnpm --filter maister-web exec vitest run --project unit lib/brain/__tests__/chunker-registry.test.ts`.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project unit lib/brain/__tests__/chunker-registry.test.ts`
+    failed because `@/lib/brain/chunkers/registry` did not exist.
 
-- [ ] **T2.2 - GREEN: built-in ChunkerRegistry and parser dependencies.**
+- [x] **T2.2 - GREEN: built-in ChunkerRegistry and parser dependencies.**
   - Add project-local npm dependencies after verifying ESM/Node 24 compatibility
     by inspecting installed package docs/source. Candidate libraries:
     `code-chunk`, unified/remark/rehype pipeline, OpenAPI parser,
@@ -366,6 +376,8 @@ implementation starts and the owner chooses the milestone slot.
   - Logging requirements: no logging in chunkers; return typed errors to caller.
   - Files: `web/lib/brain/chunkers/*`, `web/package.json`, `pnpm-lock.yaml`.
   - Verify GREEN: T2.1 command; `pnpm --filter maister-web typecheck`.
+  - GREEN evidence: `CI=true pnpm --filter maister-web exec vitest run --project unit lib/brain/__tests__/chunker-registry.test.ts`
+    passed; `CI=true pnpm --filter maister-web typecheck` passed.
 
 ### Phase 2 - Sources, Index Jobs, and Event-Driven Reindexing
 
