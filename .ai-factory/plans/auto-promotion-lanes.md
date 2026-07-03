@@ -258,7 +258,7 @@ Hold routes are pure DB (no downstream side-effect) ⇒ the two-phase-commit rul
 - [x] **T19: board/rail "auto" glyph** — Done cards (board query `web/lib/queries/board.ts`) + `PortfolioWorkspace` (`web/lib/queries/portfolio.ts:106`) gain `autoPromotedLane: string | null` from the workspaces join; card chip renders a small "auto" glyph with tooltip (lane). Tests: query unit (field threading) + card render unit. LOG: none.
 
 ### Phase 5 — E2E, traceability, merge gate
-- [ ] **T20: e2e** (`web/e2e/auto-promotion.spec.ts`, seeded stub-supervisor pattern; ⚠ shared-infra trap — ports 3100/7788 + `maister_e2e` DB shared across worktrees, kill both ports first, baseline-prove before blaming the branch): settings block CRUD incl. read-only deny-list; run panel verdict + hold button round-trip; BOTH locales (EN+RU) — AC-11 e2e half.
+- [x] **T20: e2e** (`web/e2e/auto-promotion.spec.ts`, seeded stub-supervisor pattern; ⚠ shared-infra trap — ports 3100/7788 + `maister_e2e` DB shared across worktrees, kill both ports first, baseline-prove before blaming the branch): settings block CRUD incl. read-only deny-list; run panel verdict + hold button round-trip; BOTH locales (EN+RU) — AC-11 e2e half.
 - [x] **T21: gates + as-built + renumber pass** (owner-gated at merge): rebase onto main → renumber ADR-126/migration-0089 to true next-free (§3) → `pnpm validate:docs` + ADR anchor script + redocly lint (touched artifacts clean vs the enumerated Phase-0 baseline per MO-2) → full `typecheck + test:unit + test:integration + test:e2e` green → flip R6 tags `(Designed)`→`(Implemented)` → record MO-1..MO-3 status. Traceability matrix (§7) re-verified against the final diff.
 
 ## 6. Commit plan

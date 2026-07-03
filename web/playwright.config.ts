@@ -23,7 +23,7 @@ const MAISTER_CRON_TOKEN =
 const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|orchestrator-loop|m38-decide-routing|m40-guardrail-hooks|inbox|budget-breach-fork|mcps|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio)\.spec\.ts$/;
+  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|orchestrator-loop|m38-decide-routing|m40-guardrail-hooks|inbox|budget-breach-fork|mcps|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -68,6 +68,11 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     env: {
       DB_URL: E2E_DB_URL,
+      // globalSetup owns migration application for the e2e DB (reset → migrate →
+      // migrate:brain → seed), so the webServer must not fail-fast on the boot-
+      // time migration check — downgrade the strict throw to a warning (ADR-122
+      // added the strict hook; without this the e2e webServer can't boot).
+      MAISTER_STRICT_MIGRATIONS: "0",
       AUTH_SECRET,
       MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime"),
       MAISTER_WORKTREES_ROOT: path.resolve("e2e/.runtime/worktrees"),
