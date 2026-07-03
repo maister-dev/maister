@@ -152,7 +152,10 @@ async function seedRun(manifest: unknown): Promise<string> {
   return runId;
 }
 
-async function seedGate(runId: string, status: string): Promise<void> {
+async function seedGate(
+  runId: string,
+  opts: { attempt: number; status: string; at: string },
+): Promise<void> {
   const nodeAttemptId = randomUUID();
 
   await db.insert(schema.nodeAttempts).values({
@@ -160,9 +163,9 @@ async function seedGate(runId: string, status: string): Promise<void> {
     runId,
     nodeId: "review",
     nodeType: "check",
-    attempt: 1,
+    attempt: opts.attempt,
     status: "Succeeded",
-    startedAt: new Date("2026-07-03T10:00:00.000Z"),
+    startedAt: new Date(opts.at),
   });
   await db.insert(schema.gateResults).values({
     id: randomUUID(),
@@ -171,7 +174,8 @@ async function seedGate(runId: string, status: string): Promise<void> {
     gateId: "ci",
     kind: "external_check",
     mode: "blocking",
-    status,
+    status: opts.status,
+    createdAt: new Date(opts.at),
   });
 }
 
@@ -197,9 +201,35 @@ describe("externalCheck reader — graph declaration lookup (ADR-126 F3)", () =>
   it("a declared gate with a passed row ⇒ passed", async () => {
     const runId = await seedRun(MANIFEST);
 
-    await seedGate(runId, "passed");
+    await seedGate(runId, {
+      attempt: 1,
+      status: "passed",
+      at: "2026-07-03T10:00:00.000Z",
+    });
 
     expect(await readers(runId).externalCheck("ci")).toBe("passed");
+  });
+
+  it("a stale passed row on a superseded attempt does not satisfy a newer pending live report", async () => {
+    const runId = await seedRun(MANIFEST);
+
+    // Older attempt reported passed; a newer LIVE attempt is pending. The
+    // live/latest filter must ignore the historical pass (Codex R3) — otherwise
+    // the sweep auto-promotes over a failing/pending required CI check.
+    await seedGate(runId, {
+      attempt: 1,
+      status: "passed",
+      at: "2026-07-03T09:00:00.000Z",
+    });
+    await seedGate(runId, {
+      attempt: 2,
+      status: "pending",
+      at: "2026-07-03T10:00:00.000Z",
+    });
+
+    expect(await readers(runId).externalCheck("ci")).toBe(
+      "declared_not_passed",
+    );
   });
 
   it("a gateId absent from the compiled flow graph ⇒ not_declared", async () => {

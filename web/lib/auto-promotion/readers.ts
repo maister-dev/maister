@@ -19,6 +19,12 @@ import {
 } from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
+import { getNodeAttemptsForRun } from "@/lib/flows/graph/ledger";
+import {
+  collapseLatestExternalPerGate,
+  isExternalGateReady,
+  latestAttemptIdsByNode,
+} from "@/lib/flows/graph/readiness-core";
 import type { DiffChangeStatEntry } from "@/lib/worktree";
 
 // FIXME(any): tests pass a Testcontainers pg client; both expose select.
@@ -145,14 +151,32 @@ export function buildAutoPromotionReaders(args: {
     },
     async externalCheck(gateId: string): Promise<ExternalCheckState> {
       // A gateId absent from the run's compiled flow graph is a misconfiguration
-      // (typo / wrong flow) ⇒ not_declared (external_check_missing). A declared
-      // gate falls through to the gate_results passed/overridden check.
+      // (typo / wrong flow) ⇒ not_declared (external_check_missing).
       const declared = await declaredExternalCheckGateIds(db, runId);
 
       if (!declared.has(gateId)) return "not_declared";
 
-      const rows = await db
-        .select({ status: gateResults.status })
+      // Latest-live semantics, shared with readiness-core (Codex R3): drop rows on
+      // superseded attempts, collapse to the newest report per gate, and inspect
+      // that ONE status. A historical `passed` must never satisfy the lane after a
+      // newer pending/failed/stale report on the live attempt.
+      const liveAttemptIds = latestAttemptIdsByNode(
+        await getNodeAttemptsForRun(runId, db),
+      );
+      const rows: Array<{
+        id: string;
+        nodeAttemptId: string;
+        gateId: string;
+        status: string;
+        createdAt: Date;
+      }> = await db
+        .select({
+          id: gateResults.id,
+          nodeAttemptId: gateResults.nodeAttemptId,
+          gateId: gateResults.gateId,
+          status: gateResults.status,
+          createdAt: gateResults.createdAt,
+        })
         .from(gateResults)
         .where(
           and(
@@ -162,12 +186,14 @@ export function buildAutoPromotionReaders(args: {
           ),
         );
 
-      const passed = rows.some(
-        (r: { status: string }) =>
-          r.status === "passed" || r.status === "overridden",
-      );
+      const live = rows.filter((r) => liveAttemptIds.has(r.nodeAttemptId));
+      const [latest] = collapseLatestExternalPerGate(live, (r) => r.gateId);
 
-      return passed ? "passed" : "declared_not_passed";
+      if (!latest) return "declared_not_passed";
+
+      return isExternalGateReady(latest.status)
+        ? "passed"
+        : "declared_not_passed";
     },
     async readDepsFiles(files: DiffChangeStatEntry[]): Promise<DepsFile[]> {
       return Promise.all(
