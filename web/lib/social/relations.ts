@@ -66,6 +66,22 @@ function dbIsPostgres(): boolean {
   return url.startsWith("postgres://") || url.startsWith("postgresql://");
 }
 
+function dbIsSqlite(): boolean {
+  const url = process.env.DB_URL ?? "";
+
+  return url.startsWith("file:");
+}
+
+function isUnsupportedAdvisoryLockError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return (
+    message.includes("pg_advisory_xact_lock") ||
+    message.includes("no such function") ||
+    message.includes("SQLITE_ERROR")
+  );
+}
+
 // Per-project advisory lock so two transactions racing to insert inverse gating
 // edges are serialized — the second waits, re-reads the now-committed first edge,
 // and its cycle check rejects (INV-6, no TOCTOU). Held until the top-level tx ends.
@@ -77,11 +93,22 @@ async function takeProjectRelationLock(
   tx: any,
   projectId: string,
 ): Promise<void> {
-  if (!dbIsPostgres()) return;
+  if (dbIsSqlite() || typeof tx.execute !== "function") return;
 
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(${RELATION_LOCK_NAMESPACE}, hashtext(${projectId}))`,
-  );
+  try {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${RELATION_LOCK_NAMESPACE}::int, hashtext(${projectId})::int)`,
+    );
+  } catch (error) {
+    if (dbIsPostgres() || !isUnsupportedAdvisoryLockError(error)) {
+      throw error;
+    }
+
+    log.debug(
+      { projectId },
+      "relation advisory lock unavailable — skipping",
+    );
+  }
 }
 
 // Does adding the precedence edge `pred → succ` close a cycle? It does iff `succ`

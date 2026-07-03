@@ -489,6 +489,7 @@ describe("respondToHitl budget_breach integration — restart and park composite
           kind: "budget_restart",
           oldRunId: runId,
           hitlRequestId,
+          idempotencyKey: `budget_restart:${runId}:${hitlRequestId}`,
         },
         allowConcurrent: false,
       },

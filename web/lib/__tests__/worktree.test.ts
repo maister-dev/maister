@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MaisterError } from "@/lib/errors";
 import {
   addWorktree,
+  assertBaseCommitReachable,
   branchExists,
   diffRunWorkspace,
   listBranches,
@@ -62,11 +63,16 @@ describe("worktree git helpers", () => {
       baseRef: "main",
     });
 
+    await assertBaseCommitReachable({
+      projectRepoPath: repo,
+      baseRef: "main",
+      baseCommit,
+    });
     await addWorktree({
       projectRepoPath: repo,
       branch: "scratch/test",
       worktreePath: wt,
-      startPoint: "main",
+      startPoint: baseCommit,
     });
 
     const { stdout } = await git(wt, ["rev-parse", "HEAD"]);
@@ -78,6 +84,36 @@ describe("worktree git helpers", () => {
     ).toBe(true);
     expect(branches).toContain("main");
     expect(branches).toContain("scratch/test");
+  });
+
+  it("rejects a missing pinned base commit as PRECONDITION", async () => {
+    await expect(
+      assertBaseCommitReachable({
+        projectRepoPath: repo,
+        baseRef: "main",
+        baseCommit: "f".repeat(40),
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
+  it("rejects a pinned base commit reachable only from a different branch", async () => {
+    await git(repo, ["checkout", "-b", "side"]);
+    await writeFile(join(repo, "side.txt"), "side\n");
+    await git(repo, ["add", "side.txt"]);
+    await git(repo, ["commit", "-m", "side commit"]);
+
+    const { stdout } = await git(repo, ["rev-parse", "HEAD"]);
+    const sideCommit = stdout.trim();
+
+    await git(repo, ["checkout", "main"]);
+
+    await expect(
+      assertBaseCommitReachable({
+        projectRepoPath: repo,
+        baseRef: "main",
+        baseCommit: sideCommit,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
   it("returns diff from base commit to scratch branch", async () => {

@@ -56,6 +56,9 @@ export const PROJECT_ACTION_MIN = {
   editTask: "member",
   commentTask: "member",
   manageTaskRelations: "member",
+  readExperiments: "viewer",
+  manageExperiments: "member",
+  concludeExperiments: "member",
   answerHitl: "member",
   // ADR-122 (Project Brain): recall / retain over the project-memory substrate.
   // brain_enabled + the can_read_brain/can_write_brain link axes gate further.

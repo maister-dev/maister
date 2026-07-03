@@ -25,12 +25,20 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+const baseCommitSchema = z
+  .string()
+  .min(7)
+  .max(64)
+  .regex(/^[0-9a-fA-F]+$/, "baseCommit must be a hex commit SHA");
+
 const postBodySchema = z
   .object({
     taskId: z.string().min(1),
     flowId: z.string().min(1).optional(),
     runnerId: z.string().min(1).optional(),
     baseBranch: z.string().min(1).optional(),
+    baseCommit: baseCommitSchema.optional(),
+    relaunchOfRunId: z.string().min(1).optional(),
     targetBranch: z.string().min(1).optional(),
     deliveryPolicy: storedDeliveryPolicySchema.optional(),
     executionPolicy: executionPolicySchema.optional(),
@@ -135,6 +143,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     flowId: body.flowId,
     runnerId: body.runnerId,
     baseBranch: body.baseBranch,
+    baseCommit: body.baseCommit,
+    relaunchOfRunId: body.relaunchOfRunId,
     targetBranch: body.targetBranch,
     deliveryPolicy: body.deliveryPolicy,
     executionPolicy: body.executionPolicy,

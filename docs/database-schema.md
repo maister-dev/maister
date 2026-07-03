@@ -10,7 +10,7 @@ ultra-light dev only — never as a production target.
 ## Tables
 
 The implemented schema contains auth, platform runner, project, capability, run, workspace,
-graph-runner, scratch-run, HITL, and outbound-webhook tables. Scratch-run persistence landed as
+graph-runner, scratch-run, experiment-comparison, HITL, and outbound-webhook tables. Scratch-run persistence landed as
 additive migrations: `runs.run_kind`, nullable scratch launch FKs,
 `scratch_runs`, `run_messages` (generalized from `scratch_messages`,
 migration `0083`), `scratch_attachments`, and
@@ -42,6 +42,8 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
 | `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
+| `experiments`                 | **(ADR-124 — Designed, migration `0090`)** Task-bound Experiment Comparison Studio container: pinned `base_commit`, immutable variants/rubric snapshots, five-state FSM, and optional human/advisory verdict envelope.                                                                                                       | `projects.id`, `tasks.id`, optional `users.id`                             |
+| `experiment_runs`             | **(ADR-124 — Designed, migration `0090`)** Membership rows linking ordinary runs to an experiment variant/replicate, with launch lineage, capped diff snapshot, structured truncation fields, full-file summary, and materialization delta.                                                                                    | `experiments.id`, `runs.id`                                                |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
 | `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0059`, ADR-097)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
 | `run_messages`                | Run-kind-agnostic transcript ledger (generalized from `scratch_messages`, migration `0085`). Append/upsert message rows with monotonic `sequence`; nullable `node_attempt_id` attributes a flow node session's transcript (NULL for scratch / single-session). Unique `(run_id, node_attempt_id, sequence)` `NULLS NOT DISTINCT` keeps scratch's `(run_id, sequence)` invariant. | `runs.id`, optional `node_attempts.id`                                     |
@@ -1283,6 +1285,70 @@ The old per-step rows are NOT auto-migrated: `0081` **aborts** when
 mappable to `slot_key`), so operators export/record and clear the table
 **before** running migrations, then re-map per slot via the project Flow runner
 UI **after** the upgrade succeeds.
+
+## Experiment comparison tables (Designed — ADR-124, migration `0090`)
+
+Experiment comparison stores only the comparison envelope and membership
+evidence. Runs remain ordinary rows in `runs`; the feature adds no columns to
+`runs` and no variant table.
+
+```ts
+experiments {
+  id,
+  projectId,                      // FK -> projects.id CASCADE
+  taskId,                         // FK -> tasks.id CASCADE
+  title,
+  description?,
+  baseBranch,
+  baseCommit,                     // NOT NULL from create; pinned immutable SHA
+  status: 'draft' | 'running' | 'comparable' | 'concluded' | 'abandoned',
+  variants,                       // jsonb immutable [{key,label,config}]
+  rubric,                         // jsonb immutable rubric criteria snapshot
+  verdict?,                       // jsonb {human?, judgeAdvisories?}
+  createdByUserId?,               // FK -> users.id SET NULL
+  concludedByUserId?,             // FK -> users.id SET NULL
+  createdAt,
+  updatedAt,
+  launchedAt?,
+  comparableAt?,
+  concludedAt?,
+  abandonedAt?
+}
+
+experiment_runs {
+  id,
+  experimentId,                   // FK -> experiments.id CASCADE
+  runId,                          // FK -> runs.id CASCADE, UNIQUE
+  variantKey,
+  replicateOrdinal,               // UNIQUE with (experimentId, variantKey)
+  launchReason: 'initial' | 'manual_relaunch' | 'budget_restart',
+  diffSnapshot?,                  // capped at 512 KB by service
+  diffSnapshotTruncated,          // structured flag, never in-band marker
+  diffSnapshotBytes?,
+  diffSnapshotCapturedAt?,
+  diffFilesSummary?,              // jsonb [{path,status,additions,deletions,patchHash}]
+  materializationDelta?,          // jsonb actual applied overlay delta
+  createdAt,
+  updatedAt
+}
+```
+
+`experiments.status` is derived from member-run statuses. `comparable` means
+every member run is `Review` or terminal and at least two distinct variants
+have at least one member run. `concluded` and `abandoned` are terminal and are
+never overwritten by status recompute. Variants, rubric, and `baseCommit` are
+write-once at creation; post-create edits are service-level
+`PRECONDITION` failures.
+
+`experiment_runs.runId` is unique so a run belongs to at most one experiment.
+`UNIQUE (experimentId, variantKey, replicateOrdinal)` is the duplicate-click /
+racing-replicate backstop. `launchReason` explains lineage: initial fan-out,
+manual `relaunchOfRunId`, or ADR-125 budget restart. `diffFilesSummary` is
+captured from the full diff before the text cap, so the Files tab works even
+when `diffSnapshot` is truncated or the worktree is later removed.
+
+Indexes: `experiments(projectId, status)`, `experiments(taskId)`,
+`experiment_runs(experimentId)`, and `experiment_runs(runId)`.
 
 ## Cost rollup tables (Designed — ADR-085, migration `0047`)
 
@@ -2802,10 +2868,12 @@ projects
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
   │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083
   │     ├── task_activity    (FK taskId,   cascade)                ← ADR-083
+  │     ├── experiments      (FK taskId,   cascade)                ← ADR-124
   │     ├── task_subscribers (FK taskId,   cascade)                ← ADR-083
   │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-083
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
+  │           ├── experiment_runs (FK runId,        cascade)       ← ADR-124
   │           ├── run_sessions    (FK runId,        cascade)       ← M42 ADR-114
   │           ├── step_runs       (FK runId,        cascade)
   │           ├── run_cost_rollups (FK runId,       cascade)       ← ADR-085
@@ -2834,6 +2902,8 @@ projects
   ├── project_tokens     (nullable FK projectId, cascade; NULL personal tokens)  ← M16, 0063 Implemented
   │     └── token_audit_log  (FK tokenId, cascade)
   ├── token_audit_log    (nullable FK projectId, SET NULL)  ← M16, 0063 Implemented (also direct)
+  ├── experiments        (FK projectId, cascade)  ← also direct, ADR-124
+  │     └── experiment_runs (FK experimentId, cascade)
   ├── runs               (FK projectId, cascade)  ← also direct
   ├── run_cost_rollups   (FK projectId, cascade)  ← also direct, ADR-085
   ├── node_attempt_cost_rollups (FK projectId, cascade)  ← also direct, ADR-085
@@ -2878,6 +2948,11 @@ Created via Drizzle:
 | `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(M37, Implemented, migration 0060)** one persistent child per `addressableKey` within a run-tree (star-routing). |
 | `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(M37, Implemented, migration 0060, ADR-100)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
 | `runs`                | `runs_ended_at_idx`                     | `(endedAt)` PARTIAL WHERE `ended_at IS NOT NULL` | **(ADR-117, Implemented, migration 0083)** bounded `order by ended_at limit n` scan for the `system_sweep` cost-rollup backstop reconcile. |
+| `experiments`         | `experiments_project_status_idx`        | `(projectId, status)`              | **(ADR-124, Designed)** Project experiment list + active retention holds |
+| `experiments`         | `experiments_task_idx`                  | `(taskId)`                         | **(ADR-124, Designed)** Task-bound lab/detail lookup |
+| `experiment_runs`     | `experiment_runs_run_uq`                | `(runId)` UNIQUE                   | **(ADR-124, Designed)** A run belongs to at most one experiment |
+| `experiment_runs`     | `experiment_runs_variant_replicate_uq`  | `(experimentId, variantKey, replicateOrdinal)` UNIQUE | **(ADR-124, Designed)** Duplicate-click/racing replicate backstop |
+| `experiment_runs`     | `experiment_runs_experiment_idx`        | `(experimentId)`                   | **(ADR-124, Designed)** Comparison member-run listing |
 | `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
 | `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
 | `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |

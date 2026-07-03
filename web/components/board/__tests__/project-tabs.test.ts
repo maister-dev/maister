@@ -16,4 +16,15 @@ describe("ProjectTabs", () => {
     expect(html).toContain("nav.brain");
     expect(html).toContain("/projects/demo?tab=brain");
   });
+
+  it("renders a nested experiments tab with active state", async () => {
+    const html = renderToStaticMarkup(
+      await ProjectTabs({ slug: "proj", active: "experiments", boardCount: 7 }),
+    );
+
+    expect(html).toContain("nav.experiments");
+    expect(html).toContain("/projects/proj/experiments");
+    expect(html).toContain('aria-selected="true"');
+    expect(html).not.toContain("?tab=experiments");
+  });
 });

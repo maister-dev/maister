@@ -288,6 +288,14 @@ export type ResolveBaseCommitArgs = {
   preferRemote?: string;
 };
 
+function baseRefCandidates(baseRef: string, preferRemote?: string): string[] {
+  if (preferRemote === undefined) return [baseRef];
+
+  const remote = validate(remoteNameSchema, preferRemote, "preferRemote");
+
+  return [`${remote}/${baseRef}`, baseRef];
+}
+
 export async function resolveBaseCommit(
   args: ResolveBaseCommitArgs,
 ): Promise<string> {
@@ -298,10 +306,7 @@ export async function resolveBaseCommit(
   );
   const baseRef = validate(gitRefSchema, args.baseRef, "baseRef");
 
-  const candidates =
-    args.preferRemote === undefined
-      ? [baseRef]
-      : [`${args.preferRemote}/${baseRef}`, baseRef];
+  const candidates = baseRefCandidates(baseRef, args.preferRemote);
   let lastErr: unknown;
 
   for (const ref of candidates) {
@@ -327,6 +332,81 @@ export async function resolveBaseCommit(
     "PRECONDITION",
     `base ref does not resolve to a commit: ${baseRef}`,
     { cause: asError(lastErr) },
+  );
+}
+
+export type AssertBaseCommitReachableArgs = {
+  projectRepoPath: string;
+  baseRef: string;
+  baseCommit: string;
+  // Same resolution rule as `resolveBaseCommit`: check against the remote
+  // tracking ref when present, then fall back to the local branch.
+  preferRemote?: string;
+};
+
+export async function assertBaseCommitReachable(
+  args: AssertBaseCommitReachableArgs,
+): Promise<string> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const baseRef = validate(gitRefSchema, args.baseRef, "baseRef");
+  const baseCommit = validate(
+    gitCommitSchema,
+    args.baseCommit,
+    "baseCommit",
+  ).toLowerCase();
+  const candidates = baseRefCandidates(baseRef, args.preferRemote);
+  let lastResolveErr: unknown;
+
+  for (const ref of candidates) {
+    try {
+      await runGit(repo, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--end-of-options",
+        `${ref}^{commit}`,
+      ]);
+    } catch (err) {
+      lastResolveErr = err;
+      continue;
+    }
+
+    try {
+      await runGit(repo, ["merge-base", "--is-ancestor", baseCommit, ref]);
+
+      return baseCommit;
+    } catch (err) {
+      const stderrText = errorText(err);
+
+      log.warn(
+        {
+          projectRepoPath: repo,
+          baseRef,
+          resolvedBaseRef: ref,
+          baseCommit,
+          gitExitCode: (err as { code?: unknown }).code,
+          gitSignal: (err as { signal?: unknown }).signal,
+          stderrText,
+        },
+        "pinned base commit reachability check failed",
+      );
+
+      throw new MaisterError(
+        "PRECONDITION",
+        `base commit ${baseCommit} is not reachable from base ref ${ref}`,
+        { cause: asError(err) },
+      );
+    }
+  }
+
+  throw new MaisterError(
+    "PRECONDITION",
+    `base ref does not resolve to a commit: ${baseRef}`,
+    { cause: asError(lastResolveErr) },
   );
 }
 

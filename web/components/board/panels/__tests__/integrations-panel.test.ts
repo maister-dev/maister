@@ -106,6 +106,8 @@ const labels: TokenLabels = {
   scopeRunsPromote: "Promote child runs",
   scopeMemoryRead: "Read project memory",
   scopeMemoryWrite: "Write project memory",
+  scopeExperimentsRead: "Read experiments",
+  scopeExperimentsAdvise: "Advise experiments",
   errorGeneric: "Something went wrong",
 };
 
@@ -155,7 +157,26 @@ const expiredToken: TokenListItem = {
   revokedAt: null,
 };
 
-const fixtures: TokenListItem[] = [activeToken, revokedToken, expiredToken];
+const experimentToken: TokenListItem = {
+  id: "tok-experiment",
+  name: "experiment-judge",
+  kind: "project",
+  ownerUserId: null,
+  ownerLabel: null,
+  scopes: ["experiments:read", "experiments:advise"],
+  prefix: "mai_DDDD",
+  createdAt: new Date(NOW - 2 * DAY),
+  lastUsedAt: null,
+  expiresAt: null,
+  revokedAt: null,
+};
+
+const fixtures: TokenListItem[] = [
+  activeToken,
+  revokedToken,
+  expiredToken,
+  experimentToken,
+];
 
 function renderTable(tokens: TokenListItem[], isAdmin: boolean): string {
   return renderToStaticMarkup(
@@ -217,6 +238,8 @@ describe("TokensTable — renders data for an admin (M16)", () => {
     expect(html).toContain(labels.scopeTasksCreate);
     expect(html).toContain(labels.scopeRunsLaunch);
     expect(html).toContain(labels.scopeGatesReport);
+    expect(html).toContain(labels.scopeExperimentsRead);
+    expect(html).toContain(labels.scopeExperimentsAdvise);
   });
 
   it("renders the create affordance label and a revoke affordance for an admin", () => {

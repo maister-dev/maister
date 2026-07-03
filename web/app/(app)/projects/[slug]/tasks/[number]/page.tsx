@@ -336,6 +336,7 @@ export default async function TaskDetailPage({
       relation_added: t("event.relationAdded"),
       relation_removed: t("event.relationRemoved"),
       run_launched: t("event.runLaunched"),
+      experiment_concluded: t("event.experimentConcluded"),
     },
   };
   const editableTask: TaskEditableTarget = {

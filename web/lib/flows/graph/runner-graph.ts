@@ -180,6 +180,15 @@ import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import {
+  buildExperimentMaterializationSelection,
+  hasCapabilityOverlayChanges,
+  loadExperimentOverlayForRun,
+  persistExperimentMaterializationDelta,
+} from "@/lib/experiments/materialization-delta";
+import type { CapabilitySelection } from "@/lib/experiments/variant-config";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, runSessions, hitlRequests, reviewComments, gateChatMessages } =
@@ -528,6 +537,7 @@ async function escalateAutoRetryExhaustion(args: {
         .update(runs)
         .set({ status: "NeedsInput", currentStepId: node.id })
         .where(eq(runs.id, runId));
+      await syncExperimentStatusForRun({ db: tx, runId });
       await emitWebhookEvent({
         db: tx,
         type: "run.needs_input",
@@ -1589,6 +1599,7 @@ async function materializeNodeCapabilities(
   worktreePath: string,
   nodeAttemptId: string,
   catalog: CapabilityCatalogRecord[],
+  db: Db,
   logger: pino.Logger,
 ): Promise<
   | {
@@ -1604,6 +1615,13 @@ async function materializeNodeCapabilities(
 > {
   const agent = executor.agent;
   const settings = capabilityBearingSettings(node.nodeType, node.settings);
+  const experimentOverlay = await loadExperimentOverlayForRun({
+    db,
+    runId: loaded.run.id,
+  });
+  const hasExperimentOverlay = hasCapabilityOverlayChanges(
+    experimentOverlay?.overlay,
+  );
   const declares =
     !!settings &&
     !!(
@@ -1620,9 +1638,60 @@ async function materializeNodeCapabilities(
   // (ADR-076). So claude with a configured model still materializes a model-only
   // profile. codex pins supervisor-side via setSessionModel, so a settings-less
   // codex node needs no materialization.
-  const pinModelOnly = !declares && agent === "claude" && !!executor.model;
+  const pinModelOnly =
+    !declares && !hasExperimentOverlay && agent === "claude" && !!executor.model;
 
-  if (!declares && !pinModelOnly) return undefined;
+  if (!declares && !pinModelOnly && !hasExperimentOverlay) return undefined;
+
+  const selectedMcpIdsFromSettings =
+    declares && settings
+      ? settings.mcps === undefined
+        ? undefined
+        : allNodeMcpRefs(settings.mcps)
+      : [];
+  const defaultMcpIds = [
+    ...new Set(
+      catalog
+        .filter(
+          (record) =>
+            record.projectId === loaded.run.projectId &&
+            record.selectable &&
+            record.kind === "mcp" &&
+            record.selectedByDefault,
+        )
+        .map((record) => record.capabilityRefId),
+    ),
+  ].sort();
+  const baseSelection: CapabilitySelection = {
+    selectedMcpIds: selectedMcpIdsFromSettings ?? defaultMcpIds,
+    selectedSkillIds: declares && settings ? (settings.skills ?? []) : [],
+    selectedRuleIds: [],
+    selectedAgentDefinitionIds: [],
+  };
+  const materializationSelection =
+    experimentOverlay && hasExperimentOverlay
+      ? buildExperimentMaterializationSelection({
+          experimentId: experimentOverlay.experimentId,
+          variantKey: experimentOverlay.variantKey,
+          base: baseSelection,
+          overlay: experimentOverlay.overlay,
+        })
+      : null;
+  const overlayTouchesMcps =
+    ((experimentOverlay?.overlay?.mcps?.add?.length ?? 0) > 0 ||
+      (experimentOverlay?.overlay?.mcps?.remove?.length ?? 0) > 0) &&
+    hasExperimentOverlay;
+  const selectedMcpIds =
+    materializationSelection && overlayTouchesMcps
+      ? materializationSelection.selection.selectedMcpIds
+      : selectedMcpIdsFromSettings;
+  const selectedSkillIds =
+    materializationSelection?.selection.selectedSkillIds ??
+    (declares && settings ? settings.skills : []);
+  const selectedRuleIds =
+    materializationSelection?.selection.selectedRuleIds ?? [];
+  const selectedAgentDefinitionIds =
+    materializationSelection?.selection.selectedAgentDefinitionIds ?? [];
 
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
@@ -1630,13 +1699,10 @@ async function materializeNodeCapabilities(
     // declares: undefined mcps → resolver default set; explicit list → that set
     // (required ∪ additional, T-C6). model-only pin → explicit [] so NO default
     // MCPs are pulled in (idsForKind treats undefined as "the default set").
-    selectedMcpIds:
-      declares && settings
-        ? settings.mcps === undefined
-          ? undefined
-          : allNodeMcpRefs(settings.mcps)
-        : [],
-    selectedSkillIds: declares && settings ? settings.skills : [],
+    selectedMcpIds,
+    selectedSkillIds,
+    selectedRuleIds,
+    selectedAgentDefinitionIds,
     selectedRestrictionIds: declares && settings ? settings.restrictions : [],
     planMode: "off",
     catalog,
@@ -1692,6 +1758,15 @@ async function materializeNodeCapabilities(
   // reach the agent via createSession).
   const mcpServers = gateStdioMcpsByExecTrust(m.mcpServers, loaded.execTrust);
   const withheldStdio = m.mcpServers.length - mcpServers.length;
+
+  if (materializationSelection) {
+    await persistExperimentMaterializationDelta({
+      db,
+      runId: loaded.run.id,
+      nodeAttemptId,
+      delta: materializationSelection.delta,
+    });
+  }
 
   if (withheldStdio > 0) {
     logger.warn(
@@ -2653,6 +2728,7 @@ export async function runGraph(
             worktreePath,
             nodeAttemptId,
             catalog,
+            db,
             log2,
           );
 
@@ -2800,6 +2876,7 @@ export async function runGraph(
             .returning({ projectId: runs.projectId });
 
           if (flipped.length > 0 && !isCoordinatorNode) {
+            await syncExperimentStatusForRun({ db: tx, runId });
             await emitWebhookEvent({
               db: tx,
               type: "run.needs_input",
@@ -3721,6 +3798,7 @@ export async function runGraph(
               .returning({ projectId: runs.projectId });
 
             if (flipped.length > 0) {
+              await syncExperimentStatusForRun({ db: tx, runId });
               await emitWebhookEvent({
                 db: tx,
                 type: "run.needs_input",
@@ -4140,6 +4218,7 @@ export async function runGraph(
         });
 
       if (rows.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
         await emitWebhookEvent({
           db: tx,
           type: "run.crashed",
@@ -4165,6 +4244,7 @@ export async function runGraph(
         });
       }
     });
+    await captureExperimentDiffSnapshotForRun({ db, runId });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -4186,6 +4266,7 @@ export async function runGraph(
         });
 
       if (rows.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
         await emitWebhookEvent({
           db: tx,
           type: "run.failed",
@@ -4211,6 +4292,7 @@ export async function runGraph(
         });
       }
     });
+    await captureExperimentDiffSnapshotForRun({ db, runId });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -4228,6 +4310,7 @@ export async function runGraph(
         .returning({ projectId: runs.projectId });
 
       if (rows.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
         await emitWebhookEvent({
           db: tx,
           type: "run.review",
@@ -4237,6 +4320,7 @@ export async function runGraph(
         });
       }
     });
+    await captureExperimentDiffSnapshotForRun({ db, runId });
     log2.info({}, "runGraph ended Review");
     await deliverRunIfAutoReady(runId, db);
   }

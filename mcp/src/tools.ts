@@ -64,6 +64,34 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug"],
     },
   },
+  experiment_get: {
+    description:
+      "Get an Experiment Comparison Studio detail DTO for judge advisory work. Requires experiments:read; returns pinned-base variants, rubric, member-run snapshots, and existing advisory history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        experimentId: { type: "string" },
+      },
+      required: ["slug", "experimentId"],
+    },
+  },
+  experiment_advise: {
+    description:
+      "Append an advisory-only judge result to an experiment. Requires experiments:advise; cannot conclude, abandon, pick a winner, launch runs, or mutate human verdict fields.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        experimentId: { type: "string" },
+        scores: { type: "object" },
+        summary: { type: "string", minLength: 1, maxLength: 8000 },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+        agentRunId: { type: "string", minLength: 1 },
+      },
+      required: ["slug", "experimentId", "scores", "summary"],
+    },
+  },
   memory_recall: {
     description:
       "Recall relevant project-memory items (ADR-122) via hybrid vector + lexical ranking. No LLM at read. Requires the project's Brain to be enabled and (for agent tokens) can_read_brain.",
@@ -590,6 +618,38 @@ function resolveRouting(
       const { slug } = args as { slug: string };
 
       return { method: "GET", path: `/api/v1/ext/projects/${slug}/runners` };
+    }
+    case "experiment_get": {
+      const { slug, experimentId } = args as {
+        slug: string;
+        experimentId: string;
+      };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/experiments/${experimentId}`,
+      };
+    }
+    case "experiment_advise": {
+      const { slug, experimentId, scores, summary, confidence, agentRunId } =
+        args as {
+          slug: string;
+          experimentId: string;
+          scores: Record<string, Record<string, number>>;
+          summary: string;
+          confidence?: number;
+          agentRunId?: string;
+        };
+      const body: Record<string, unknown> = { scores, summary };
+
+      if (confidence !== undefined) body.confidence = confidence;
+      if (agentRunId !== undefined) body.agentRunId = agentRunId;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/experiments/${experimentId}/advisory`,
+        body,
+      };
     }
     case "memory_recall": {
       const { slug, q, limit, kinds, minConfidence } = args as {

@@ -30,10 +30,8 @@ import { removeOwnedWorktree } from "@/lib/worktree";
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projects, runs, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { experimentRuns, experiments, projects, runs, workspaces } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -167,8 +165,20 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
             eq(sibling.agentWorkspace, "worktree"),
             notInArray(sibling.status, [...TERMINAL_RUN_STATUSES]),
           ),
-        ),
+      ),
     ),
+  );
+  const experimentNotBlocked = notExists(
+    db
+      .select({ one: experimentRuns.id })
+      .from(experimentRuns)
+      .innerJoin(experiments, eq(experiments.id, experimentRuns.experimentId))
+      .where(
+        and(
+          eq(experimentRuns.runId, runs.id),
+          notInArray(experiments.status, ["concluded", "abandoned"]),
+        ),
+      ),
   );
 
   const rows = await db
@@ -198,6 +208,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
           ),
         ),
         treeNotBlocked,
+        experimentNotBlocked,
       ),
     )
     .limit(PER_TICK_LIMIT);

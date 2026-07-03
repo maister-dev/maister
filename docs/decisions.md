@@ -148,6 +148,7 @@
 | [ADR-120](#adr-120-artifact-body-injection-into-prompts) | Artifact body injection into prompts (`{{ artifacts.X.content }}` + `input.requires.inline`) + engine 2.2.0 | Accepted | 2026-06-30 |
 | [ADR-121](#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate) | Priority-ordered dependency-draining task queue: unified admission gate, cycle-safe relations, cap-safe resume, advisory confidence, operator pause | Accepted | 2026-06-30 |
 | [ADR-122](#adr-122-project-brain-per-project-memory-substrate) | Project Brain (per-project memory substrate): build-thin pgvector, two migration lineages, immutable per-generation embeddings, harvest/decay owned tier, RecallRanker seam, 4-layer enablement (Sub-project A) | Accepted | 2026-07-02 |
+| [ADR-124](#adr-124-experiment-comparison-studio-for-pinned-base-comparison-runs) | Experiment Comparison Studio for pinned-base comparison runs | Accepted | 2026-07-03 |
 | [ADR-125](#adr-125-budget-breach-four-way-fork-with-staged-claims) | Budget-breach four-way fork with staged claims | Accepted | 2026-07-02 |
 | [ADR-126](#adr-126-auto-promotion-lanes) | Auto-promotion lanes: project-scoped path/content-bounded diff classes (docs/tests/deps/config) promoted through the same `promoteRun` choke point, non-configurable hard deny-list security boundary, `runs.review_entered_at` grace anchor, CAS hold give-up, deps supply-chain hardening | Proposed | 2026-07-03 |
 | [ADR-127](#adr-127-project-brain-consultant-indexed-tier) | Project Brain Consultant indexed tier | Accepted | 2026-07-03 |
@@ -10308,6 +10309,138 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   integration test onto a pgvector image. Kept in the brain lineage only.
 - *Prompt-prepend fallback for ambient context*: rejected — P7 run-context is live; ambient
   rides `.maister/run.json` with no interim fallback (flow runs only; agent runs use MCP tools).
+
+---
+
+### ADR-124: Experiment Comparison Studio for pinned-base comparison runs
+
+**Date:** 2026-07-03
+**Status:** Accepted
+
+**Context:** MAIster already has task-bound runs, isolated worktrees, capability
+materialization, gate results, cost rollups, diff rendering, manual force
+relaunch, and budget-restart forks. Operators now need a first-class way to run
+the same task several ways from the same base commit, compare the evidence, and
+record a human verdict without creating a parallel execution substrate.
+
+
+**Decision:**
+
+- Add exactly two main-lineage tables: `experiments` and `experiment_runs`.
+  Variants and rubric stay JSON snapshots on `experiments`; member-run
+  evidence and launch lineage live on `experiment_runs`. There is no variant
+  table and no column added to `runs`.
+- Pin `experiments.base_commit` at create time, not first launch. The user may
+  provide an explicit ref, but it must be ancestor-reachable from
+  `base_branch`; create-time failures are `MaisterError("CONFIG")`. Generic
+  `POST /api/runs` also accepts optional `baseCommit`, but missing or
+  unreachable commits are `PRECONDITION`.
+- Use the board naming convention `experiments.title` rather than the request
+  sketch's `name`. `variants`, `rubric`, and `base_commit` are immutable from
+  creation; post-create mutation attempts fail with `PRECONDITION`.
+- Model experiment status as `draft | running | comparable | concluded |
+  abandoned`. `comparable` means every member run is `Review` or terminal and
+  at least two distinct variants have one member run. Failures do not
+  terminalize the experiment; "A crashed, B wins" is a valid human verdict.
+- Launch variants only through the existing `launchRun` path. The fan-out route
+  validates the whole batch before the first side effect, passes the pinned
+  `baseCommit`, and inserts `experiment_runs` membership rows in the same
+  launch transaction as the run row. Cap overflow uses the existing `Pending`
+  queue and queue-position UI.
+- Derive membership only from server-known sources: the experiment launch
+  route, ADR-125 budget restarts whose trigger payload names a member source
+  run, and generic `POST /api/runs` with `relaunchOfRunId`. Request bodies never
+  carry an experiment id for membership. Budget restarts of member runs use the
+  force-relaunch gate so live sibling variants do not make the restart refuse
+  as a busy task.
+- Keep variant config as a closed registry:
+  `runnerId?`, `executionPolicy?`, and `capabilityOverlay?` for
+  rules/skills/MCPs/subagents. The overlay merges into the existing capability
+  resolver/materializer before `resolveCapabilityProfile`; there is no parallel
+  `.maister` writer. Rules, skills, and MCP overlays are supported on all
+  adapters; subagents are claude-only. Unsupported class x adapter combinations
+  fail with `CONFIG` before any launch side effect.
+- Capture comparison evidence on member Review/terminal transitions: capped
+  `diff_snapshot`, structured truncation fields, and `diff_files_summary`
+  computed from the full diff before the text cap. Diff-of-diffs and
+  All/Different/Same files matrices are computed from stored DTOs, not from a
+  new runtime.
+- Recompute experiment status at run-status choke points and verify it on
+  comparison/detail reads. The sync is event-driven; there is no timer,
+  watcher, new SSE event family, or new domain-event outbox kind in Phase 1.
+- Record verdicts in `experiments.verdict`. Only a human session may write
+  `verdict.human` and flip status to `concluded`; verdicts never mutate
+  member-run gates or statuses. Winner promotion goes through the normal run
+  promote path, and loser abandonment is an explicit standard stop action.
+- Add an advisory judge path rather than granting machine conclusion rights.
+  The external route
+  `POST /api/v1/ext/projects/{slug}/experiments/{id}/advisory`, token scope
+  `experiments:advise`, and MCP tool `experiment_advise` append advisory
+  scores to `verdict.judgeAdvisories[]` under the experiment row lock. This is
+  the `triage_set` precedent narrowed to append-only advisory data.
+- Use one rubric schema for the create wizard, verdict form, judge prompt
+  contract, advisory sink, and DTO. The platform default criteria are exactly
+  `correctness`, `completeness`, `consistency`, `code_quality`,
+  `cost_efficiency`, and optional `specs_traceability`.
+- Automated retention protects workspaces referenced by non-terminal
+  experiments. Manual workbench drop/archive/export remains allowed; the lab
+  degrades to stored snapshots after manual removal.
+- The feature functions on both Postgres and the existing SQLite dev dialect.
+  Postgres remains the integration-test engine; JSON columns follow the
+  current Drizzle `jsonb(...).$type<...>()` pattern.
+
+Structured implementation logs must use stable fields at the domain boundaries:
+`requestId`, `projectId`, `experimentId`, `taskId`, `runId`, `sourceRunId`,
+`variantKey`, `replicateOrdinal`, `launchReason`, `baseBranch`,
+`baseCommit`, `actorType`, `actorId`, `scopeUsed`, `tokenId`, `fromStatus`,
+`toStatus`, `queueState`, `fileCount`, `truncated`, `advisoryOrdinal`,
+`workspaceId`, and `skipReason`. Logs must not include prompt text, verdict
+comments, diff contents, secrets, adapter argv/env, supervisor session ids, or
+worktree paths.
+
+#### Non-goals
+
+- No new domain-event outbox kind, SSE channel, browser polling loop, or
+  long-lived sidecar.
+- No aggregate experiment budget or new cost accounting model; the Cost tab is
+  a read-only sum of existing rollups and token classes, not dollars.
+- No automatic gate approval, auto-promotion, or machine-authored conclusion.
+- No second capability materializer, direct `.maister` writer, or experiment
+  runner runtime.
+- No separate review-comment table for experiment diffs.
+- No variant table, separate benchmark-case table, or extra migrations beyond
+  `experiments` and `experiment_runs`.
+- No pagination for the Phase 1 experiment list.
+
+**Consequences:**
+
+- The comparison surface composes existing MAIster primitives, so run history,
+  HITL, gates, cost, promotion, and workbench lifecycle remain ordinary and
+  auditable.
+- Pinning at creation removes the first-launch race and makes draft experiments
+  inspectable, at the cost of a stronger invariant than the initial request's
+  "NOT NULL after start" sketch.
+- The advisory MCP tool is mutating, so it requires the same success-audit
+  discipline as other external write routes. It is intentionally narrower than
+  conclude.
+- Active experiment membership becomes a retention and auto-promotion guard;
+  this branch owns the auto-promotion exclusion when it rebases after ADR-126.
+- Keeping line comments on the member-run review surface avoids a second anchor
+  model, but the lab must link users clearly to the owning run.
+
+**Alternatives Considered:**
+
+- *Store variants in a normalized table*: rejected for Phase 1. Variants are
+  immutable snapshots with no independent lifecycle; JSON keeps the schema to
+  the requested two tables.
+- *Make the judge write comments only*: rejected. Advisory scores must render
+  beside human rubric scores and remain queryable through the comparison DTO;
+  append-only verdict advisories give the judge a narrow, auditable sink.
+- *Resolve the base commit at first launch*: rejected. It leaves draft
+  experiments ambiguous and races branch movement between create and launch.
+- *Protect manual workbench operations from deleting experiment worktrees*:
+  rejected. Manual workbench actions are explicit operator sovereignty; stored
+  snapshots are the degradation boundary.
 
 ---
 

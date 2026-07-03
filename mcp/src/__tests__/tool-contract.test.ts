@@ -96,6 +96,14 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   },
   flow_list: { method: "get", path: "/api/v1/ext/projects/{slug}/flows" },
   runner_list: { method: "get", path: "/api/v1/ext/projects/{slug}/runners" },
+  experiment_get: {
+    method: "get",
+    path: "/api/v1/ext/projects/{slug}/experiments/{experimentId}",
+  },
+  experiment_advise: {
+    method: "post",
+    path: "/api/v1/ext/projects/{slug}/experiments/{experimentId}/advisory",
+  },
   run_launch: { method: "post", path: "/api/v1/ext/runs" },
   run_get: { method: "get", path: "/api/v1/ext/runs/{runId}" },
   run_delegate: { method: "post", path: "/api/v1/ext/runs/delegate" },

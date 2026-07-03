@@ -1,0 +1,241 @@
+# Experiments domain
+
+## Purpose
+
+This domain (**Designed, Phase 1; ADR-124**) covers task-bound experiment
+comparison: an operator creates one experiment for one task, pins a base commit,
+launches N variants through the normal run pipeline, compares run evidence, and
+records a human verdict. The boundary includes experiment membership,
+variant capability overlays, comparison snapshots, advisory judge writes, and
+automated-retention holds. It excludes new execution runtimes, new SSE/domain
+events, automatic gate approval, automatic promotion, aggregate experiment
+budgets, and a second review-comment surface.
+
+## Domain entities
+
+- **Experiment** (`experiments`, Designed) — durable task-bound comparison
+  container: `project_id`, `task_id`, `title`, `base_branch`, pinned
+  `base_commit`, immutable `variants`, immutable `rubric`, five-state `status`,
+  optional verdict envelope, actor/timestamp columns, and lifecycle timestamps.
+  ERD: [`../db/erd.md`](../db/erd.md).
+- **Experiment member run** (`experiment_runs`, Designed) — membership row
+  joining one `runs.id` to one experiment with `variant_key`,
+  `replicate_ordinal`, `launch_reason`, capped `diff_snapshot`, structured
+  truncation fields, `diff_files_summary`, and applied `materialization_delta`.
+- **Variant** — immutable JSON entry `{key, label, config}`. Phase 1 config is
+  a closed registry: `runnerId?`, `executionPolicy?`, and
+  `capabilityOverlay?` over rules, skills, MCPs, and subagents.
+- **Rubric** — immutable JSON criteria snapshot. The default template contains
+  exactly `correctness`, `completeness`, `consistency`, `code_quality`,
+  `cost_efficiency`, and optional `specs_traceability`.
+- **Verdict envelope** — nullable `experiments.verdict` JSON. `human` records
+  the conclusive operator decision; `judgeAdvisories[]` records append-only
+  advisory suggestions from the experiment judge.
+- **Experiment judge** — package-sourced platform agent that reads the
+  comparison DTO via `experiment_get` and appends advisory scores via
+  `experiment_advise`; it never concludes.
+- **Comparison DTO** — explicit public projection combining experiment fields,
+  member run statuses, gate results, cost rollups, diff snapshots, files
+  summaries, materialization deltas, and verdict/advisory state.
+
+## State machine
+
+Experiment state is persisted on `experiments.status`. Run states remain on
+`runs.status`; the verdict never mutates member-run status or gate rows.
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: create and pin base_commit
+    draft --> running: first member launch
+    running --> comparable: all members Review or terminal<br/>and at least two variants have runs
+    comparable --> running: launch another replicate<br/>or member returns to active state
+    draft --> abandoned: abandon
+    running --> abandoned: abandon
+    comparable --> abandoned: abandon
+    comparable --> concluded: human conclude
+    concluded --> [*]
+    abandoned --> [*]
+```
+
+`Review`, `Done`, `Failed`, `Abandoned`, and `Crashed` member runs count as
+settled for comparability. `Pending`, `Running`, `NeedsInput`,
+`NeedsInputIdle`, and `HumanWorking` keep the experiment `running`.
+
+## Process flows
+
+### Create experiment and pin base
+
+```mermaid
+sequenceDiagram
+    participant U as Member
+    participant R as POST /api/projects/{slug}/experiments
+    participant S as Experiment service
+    participant G as Git
+    participant DB as Postgres
+    U->>R: title, taskId, baseBranch, variants, rubric
+    R->>S: auth first, then validate body
+    S->>DB: load project and task by slug-derived projectId
+    S->>G: resolve base ref to commit
+    alt explicit ref not reachable from baseBranch
+        S-->>R: MaisterError CONFIG
+    else valid
+        S->>DB: insert experiment draft with immutable variants/rubric/base_commit
+        R-->>U: explicit ExperimentDTO
+    end
+```
+
+### Launch variants through the normal run path
+
+```mermaid
+sequenceDiagram
+    participant U as Member
+    participant R as POST /experiments/{experimentId}/launch
+    participant E as Experiment launch service
+    participant L as launchRun
+    participant DB as Postgres
+    U->>R: variants all or list, replicates
+    R->>E: manageExperiments guard
+    E->>DB: lock experiment row and validate status
+    E->>E: validate full batch overlays and base_commit exists
+    loop each variant x replicate
+        E->>L: standard launch with pinned baseCommit and variant overrides
+        L->>DB: insert run, workspace, run_session, and membership in one tx
+    end
+    E->>DB: draft to running if first launch
+    R-->>U: per-run launch outcomes and queue positions
+```
+
+### Status sync and snapshot capture
+
+```mermaid
+flowchart TD
+    Writer["run-status writer<br/>Review or terminal transition"] --> Member{"run has experiment_runs row?"}
+    Member -- no --> Done["no-op"]
+    Member -- yes --> Snap["capture diff snapshot and full files summary<br/>best effort, idempotent"]
+    Snap --> Lock["lock experiment row"]
+    Lock --> Read["read all member run statuses under lock"]
+    Read --> Derive{"canonical comparable rule"}
+    Derive -- comparable --> UpdateC["running to comparable"]
+    Derive -- active member exists --> UpdateR["comparable to running"]
+    Derive -- terminal experiment --> Keep["leave terminal unchanged"]
+```
+
+Snapshot failure never blocks the run transition. On detail/comparison reads,
+the service recomputes the derived status; if persisted status drifted, it heals
+the row with a WARN log.
+
+### Human verdict and advisory judge
+
+```mermaid
+sequenceDiagram
+    participant U as Human member
+    participant C as POST /experiments/{experimentId}/conclude
+    participant A as experiment-judge agent
+    participant X as Ext API
+    participant DB as Postgres
+    A->>X: GET experiment comparison (experiments:read)
+    A->>X: POST advisory scores (experiments:advise)
+    X->>DB: append judgeAdvisories[] under row lock
+    U->>C: outcome, scores, comment, abandonLosers?
+    C->>DB: lock experiment and require comparable
+    C->>DB: write verdict.human + concluded status + task_activity
+    C-->>U: concluded ExperimentDTO
+```
+
+Machine/token actors cannot call conclude. `abandonLosers` stops selected member
+runs after the verdict transaction through the standard dispatcher.
+
+## Expectations
+
+- `experiments.base_commit`, `variants`, and `rubric` MUST be immutable after
+  creation; mutation attempts return `MaisterError("PRECONDITION")`.
+- Experiment create MUST validate explicit base refs as reachable from
+  `base_branch` and return `MaisterError("CONFIG")` before persisting invalid
+  experiment data.
+- `POST /api/runs` `baseCommit` MUST exist and be reachable from the selected
+  server-derived base ref or fail with `MaisterError("PRECONDITION")` before a
+  worktree side effect.
+- Experiment membership MUST be written only from server-derived launch
+  contexts and in the same transaction as the new run row; request bodies MUST
+  never carry an experiment id for membership.
+- The launch route MUST validate the whole variant batch, including overlay
+  refs and class-adapter compatibility, before the first side effect.
+- The comparable rule MUST be recomputed at every member run status
+  choke-point and verified on experiment read; no timer, watcher, or polling
+  may drive experiment status.
+- Diff snapshots MUST carry structured truncation fields, and
+  `diff_files_summary` MUST be computed from the full diff before truncation so
+  the Files matrix remains complete after truncation or GC.
+- Human conclude MUST write `verdict.human`, `status = concluded`,
+  `concluded_by_user_id`, `concluded_at`, and `experiment_concluded`
+  `task_activity` in one transaction; it MUST NOT mutate member-run gates or
+  statuses.
+- Advisory writes MUST append only `judgeAdvisories[]` under row lock, require
+  `experiments:advise`, re-validate rubric scores at the untrusted sink, and
+  fail after terminal states.
+- Automated GC/reconcile sweeps MUST skip workspaces referenced by
+  non-terminal experiments; manual workbench lifecycle actions remain allowed.
+- Public responses MUST be explicit DTO projections and MUST NOT expose
+  worktree paths, supervisor session ids, adapter argv/env, materialization
+  paths, internal cost handles, or raw DB rows.
+- Structured logs MUST use bounded identifiers such as `projectId`,
+  `experimentId`, `taskId`, `runId`, `variantKey`, `replicateOrdinal`,
+  `launchReason`, `fromStatus`, `toStatus`, `actorType`, `scopeUsed`,
+  `tokenId`, `fileCount`, `truncated`, `workspaceId`, and `skipReason`; they
+  MUST NOT log prompt text, verdict comments, diff contents, secrets, adapter
+  argv/env, supervisor session ids, or worktree paths.
+
+## Edge cases
+
+- **Human-launched non-member run on the same task** — a bare `POST /api/runs`
+  without `relaunchOfRunId` never inherits membership; incorrect inheritance is
+  `MaisterError("PRECONDITION")`/test failure depending on boundary.
+- **Duplicate launch click / replicate ordinal race** — unique
+  `(experiment_id, variant_key, replicate_ordinal)` maps a racer to
+  `MaisterError("CONFLICT")` or retry-next-ordinal behavior, never raw
+  Postgres `23505`.
+- **Conclude racing replicate launch** — both lock the experiment row;
+  conclude requires freshly-read `comparable`, while a post-conclusion launch
+  returns `MaisterError("PRECONDITION")`.
+- **Budget restart racing conclusion** — restart after `concluded` or
+  `abandoned` creates a plain non-member run; stale membership attempts return
+  `MaisterError("PRECONDITION")`.
+- **Base branch deleted after pin** — new launch fails with
+  `MaisterError("PRECONDITION")` if the stored pin cannot be verified; already
+  created runs and snapshots remain readable.
+- **Mid-run human form** — member runs in `NeedsInput`, `NeedsInputIdle`, or
+  `HumanWorking` keep the experiment `running`; no comparison timer advances
+  it.
+- **Winner promotion target moved past the pin** — promotion uses the existing
+  merge semantics; conflicts return `MaisterError("CONFLICT")` and leave the
+  run in `Review`.
+- **Overlay ref vanished between create and launch** — launch-time resolution
+  fails with `MaisterError("CONFIG")` naming the missing ref.
+- **Unsupported overlay class for adapter** — class x adapter refusal returns
+  `MaisterError("CONFIG")` before any launch side effect.
+- **SQLite dialect** — schema boots with the same two tables and JSON columns;
+  parity bugs are `MaisterError("CONFIG")` or migration-test failures.
+- **Experiment abandon with live runs** — abandon flips the experiment terminal
+  under row lock, then stops live member runs through the standard dispatcher;
+  stop failures are logged per run and do not resurrect the experiment.
+- **External scope denial** — `experiments:read` and `experiments:advise` are
+  separate token scopes; missing scopes return `MaisterError("UNAUTHORIZED")`.
+
+## Linked artifacts
+
+- ADR: [`ADR-124`](../decisions.md#adr-124-experiment-comparison-studio-for-pinned-base-comparison-runs).
+- Database narrative: [`../database-schema.md`](../database-schema.md).
+- ERD: [`../db/erd.md`](../db/erd.md).
+- Web API contract: [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
+- External API contract: [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml).
+- Async/API deferral: Phase 1 adds no `docs/api/async/*` event family.
+- Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
+  [`flow-settings.md`](flow-settings.md), [`readiness.md`](readiness.md),
+  [`agents.md`](agents.md), [`external-operations.md`](external-operations.md),
+  [`reconciliation-gc.md`](reconciliation-gc.md).
+- Planned source boundaries: `web/lib/experiments/*`,
+  `web/app/api/projects/[slug]/experiments/*`,
+  `web/app/api/v1/ext/projects/[slug]/experiments/*`,
+  `web/lib/db/schema.ts`, `web/lib/services/runs.ts`,
+  `web/lib/runs/resume-driver.ts`, `web/lib/gc/workspace-gc.ts`, and
+  `mcp/src/tools.ts`.

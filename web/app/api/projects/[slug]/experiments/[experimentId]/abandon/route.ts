@@ -1,0 +1,63 @@
+import "server-only";
+
+import { NextRequest, NextResponse } from "next/server";
+import pino from "pino";
+
+import { errorResponse, resolveProject } from "@/lib/api/project-route-helpers";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { MaisterError } from "@/lib/errors";
+import { abandonExperimentInputSchema } from "@/lib/experiments/http-schemas";
+import { abandonExperiment } from "@/lib/experiments/service";
+
+const log = pino({
+  name: "api-project-experiment-abandon",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+type RouteParams = {
+  params: Promise<{ slug: string; experimentId: string }>;
+};
+
+function bodyErrorResponse(err: unknown): NextResponse {
+  return NextResponse.json(
+    {
+      code: "CONFIG",
+      message: `invalid POST body: ${(err as Error).message}`,
+    },
+    { status: 422 },
+  );
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  const { slug, experimentId } = await params;
+
+  try {
+    const user = await requireActiveSession();
+    const project = await resolveProject(slug);
+
+    await requireProjectAction(project.id, "manageExperiments");
+
+    const parsed = abandonExperimentInputSchema.safeParse(await req.json());
+
+    if (!parsed.success) return bodyErrorResponse(parsed.error);
+
+    const result = await abandonExperiment({
+      projectId: project.id,
+      experimentId,
+      actorUserId: user.id,
+      input: parsed.data,
+    });
+
+    return NextResponse.json(result);
+  } catch (err) {
+    if (err instanceof SyntaxError) return bodyErrorResponse(err);
+    if (err instanceof MaisterError && err.code === "CONFIG") {
+      return errorResponse(err, log, slug);
+    }
+
+    return errorResponse(err, log, slug);
+  }
+}

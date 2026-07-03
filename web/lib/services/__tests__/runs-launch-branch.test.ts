@@ -19,12 +19,15 @@ const mocks = vi.hoisted(() => ({
   addWorktree: vi.fn(),
   removeWorktree: vi.fn(),
   listBranches: vi.fn(),
+  listRemoteUrls: vi.fn().mockResolvedValue([]),
   resolveBaseCommit: vi.fn(),
+  assertBaseCommitReachable: vi.fn(),
   checkSupervisorHealth: vi.fn(),
   tryStartRun: vi.fn(),
   runFlow: vi.fn(),
   worktreesRoot: vi.fn(),
   compileManifest: vi.fn(),
+  deriveExperimentMembershipFromSource: vi.fn(),
 }));
 
 // `from()` is both awaitable (for selects with no `.where()`, e.g.
@@ -80,10 +83,14 @@ const state: {
   selectResults: Record<string, unknown>[][];
   selectCalls: number;
   inserts: InsertCall[];
+  experiments: Record<string, unknown>[];
+  latestFlowRun: Record<string, unknown> | null;
 } = {
   selectResults: [],
   selectCalls: 0,
   inserts: [],
+  experiments: [],
+  latestFlowRun: null,
 };
 
 function nextSelectResult(): Record<string, unknown>[] {
@@ -105,8 +112,18 @@ const fakeDb: FakeDb = {
       if (getTableName(table as never) === "runs") {
         return {
           where: () => ({
-            orderBy: () => ({ limit: async () => [] }),
+            orderBy: () => ({
+              limit: async () =>
+                state.latestFlowRun === null ? [] : [state.latestFlowRun],
+            }),
           }),
+        };
+      }
+      if (getTableName(table as never) === "experiments") {
+        return {
+          then: (onFulfilled) =>
+            Promise.resolve(state.experiments).then(onFulfilled),
+          where: async () => state.experiments,
         };
       }
       if (getTableName(table as never) === "task_relations") {
@@ -164,7 +181,9 @@ vi.mock("@/lib/worktree", () => ({
   addWorktree: mocks.addWorktree,
   removeWorktree: mocks.removeWorktree,
   listBranches: mocks.listBranches,
+  listRemoteUrls: mocks.listRemoteUrls,
   resolveBaseCommit: mocks.resolveBaseCommit,
+  assertBaseCommitReachable: mocks.assertBaseCommitReachable,
 }));
 vi.mock("@/lib/supervisor-client", () => ({
   checkSupervisorHealth: mocks.checkSupervisorHealth,
@@ -176,6 +195,10 @@ vi.mock("@/lib/instance-config", () => ({
 }));
 vi.mock("@/lib/flows/graph/compile", () => ({
   compileManifest: mocks.compileManifest,
+}));
+vi.mock("@/lib/experiments/membership", () => ({
+  deriveExperimentMembershipFromSource:
+    mocks.deriveExperimentMembershipFromSource,
 }));
 
 // Mock only the two version-adopt entry points runs.ts calls; the rest of the
@@ -290,6 +313,8 @@ beforeEach(async () => {
   state.selectResults = [];
   state.selectCalls = 0;
   state.inserts = [];
+  state.experiments = [{ id: "exp-1", status: "running" }];
+  state.latestFlowRun = null;
 
   ({ MaisterError } = await import("@/lib/errors"));
 
@@ -298,6 +323,9 @@ beforeEach(async () => {
   mocks.removeWorktree.mockResolvedValue(undefined);
   mocks.listBranches.mockResolvedValue(["main", "develop", "release"]);
   mocks.resolveBaseCommit.mockResolvedValue("deadbeefdeadbeefdeadbeef");
+  mocks.assertBaseCommitReachable.mockImplementation(
+    async ({ baseCommit }: { baseCommit: string }) => baseCommit.toLowerCase(),
+  );
   mocks.checkSupervisorHealth.mockResolvedValue({
     kind: "ready",
     health: {
@@ -310,6 +338,7 @@ beforeEach(async () => {
   });
   mocks.tryStartRun.mockResolvedValue({ started: false, queuePosition: 1 });
   mocks.runFlow.mockResolvedValue(undefined);
+  mocks.deriveExperimentMembershipFromSource.mockResolvedValue(null);
   // A trivial compiled graph with no capability-bearing nodes — sidesteps the
   // M11c/M13/M14 enforcement gates so the test isolates branch resolution.
   mocks.compileManifest.mockReturnValue({
@@ -347,6 +376,12 @@ function runInsert(): Record<string, unknown> | undefined {
   // The runs insert is the one carrying the execution-policy snapshot.
   return state.inserts.find(
     (call) => call.values && "executionPolicy" in call.values,
+  )?.values;
+}
+
+function experimentRunInsert(): Record<string, unknown> | undefined {
+  return state.inserts.find(
+    (call) => getTableName(call.table as never) === "experiment_runs",
   )?.values;
 }
 
@@ -523,6 +558,33 @@ describe("launchRun — branch targeting defaults (M18)", () => {
       targetBranch: "release",
     });
   });
+
+  it("uses a reachable pinned baseCommit as the worktree start point and workspace snapshot", async () => {
+    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
+
+    await launchRun(
+      { taskId: TASK_ID, baseBranch: "develop", baseCommit: pinnedCommit },
+      ctx(),
+      fakeDb,
+    );
+
+    expect(mocks.assertBaseCommitReachable).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      baseRef: "develop",
+      baseCommit: pinnedCommit,
+      preferRemote: "origin",
+    });
+    expect(mocks.addWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRepoPath: "/repos/demo",
+        startPoint: pinnedCommit,
+      }),
+    );
+    expect(workspaceInsert()).toMatchObject({
+      baseBranch: "develop",
+      baseCommit: pinnedCommit,
+    });
+  });
 });
 
 describe("launchRun — branch allow-list validation precedes the worktree side-effect (M18 §3.1)", () => {
@@ -553,6 +615,222 @@ describe("launchRun — branch allow-list validation precedes the worktree side-
     await expect(
       launchRun({ taskId: TASK_ID, baseBranch: "ghost" }, ctx(), fakeDb),
     ).rejects.toBeInstanceOf(MaisterError);
+  });
+
+  it("rejects an unreachable pinned baseCommit with PRECONDITION before addWorktree", async () => {
+    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
+
+    mocks.assertBaseCommitReachable.mockRejectedValueOnce(
+      new MaisterError(
+        "PRECONDITION",
+        "base commit is not reachable from base ref",
+      ),
+    );
+
+    await expect(
+      launchRun({ taskId: TASK_ID, baseCommit: pinnedCommit }, ctx(), fakeDb),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    expect(mocks.assertBaseCommitReachable).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      baseRef: "main",
+      baseCommit: pinnedCommit,
+      preferRemote: "origin",
+    });
+    expect(mocks.addWorktree).not.toHaveBeenCalled();
+    expect(workspaceInsert()).toBeUndefined();
+  });
+});
+
+describe("launchRun — experiment membership transaction (ADR-124)", () => {
+  it("inserts experiment_runs membership in the same launch transaction", async () => {
+    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
+
+    await launchRun(
+      {
+        taskId: TASK_ID,
+        baseCommit: pinnedCommit,
+        experimentMembership: {
+          experimentId: "exp-1",
+          variantKey: "claude",
+          replicateOrdinal: 1,
+          launchReason: "initial",
+          baseCommit: pinnedCommit,
+        },
+      } as Parameters<typeof launchRun>[0],
+      ctx(),
+      fakeDb,
+    );
+
+    expect(experimentRunInsert()).toMatchObject({
+      experimentId: "exp-1",
+      variantKey: "claude",
+      replicateOrdinal: 1,
+      launchReason: "initial",
+      baseCommit: pinnedCommit,
+    });
+    expect(experimentRunInsert()?.runId).toBe(runInsert()?.id);
+  });
+
+  it("refuses membership when a concurrent conclusion made the experiment terminal", async () => {
+    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
+
+    state.experiments = [{ id: "exp-1", status: "concluded" }];
+
+    await expect(
+      launchRun(
+        {
+          taskId: TASK_ID,
+          baseCommit: pinnedCommit,
+          experimentMembership: {
+            experimentId: "exp-1",
+            variantKey: "claude",
+            replicateOrdinal: 1,
+            launchReason: "initial",
+            baseCommit: pinnedCommit,
+          },
+        } as Parameters<typeof launchRun>[0],
+        ctx(),
+        fakeDb,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    expect(experimentRunInsert()).toBeUndefined();
+  });
+
+  it("inherits experiment membership for manual relaunchOfRunId sources", async () => {
+    const inherited = {
+      experimentId: "exp-1",
+      variantKey: "codex",
+      replicateOrdinal: 3,
+      launchReason: "manual_relaunch" as const,
+      baseCommit: "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e",
+    };
+
+    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(
+      inherited,
+    );
+
+    await launchRun(
+      {
+        taskId: TASK_ID,
+        relaunchOfRunId: "source-run-1",
+      } as Parameters<typeof launchRun>[0],
+      ctx(),
+      fakeDb,
+    );
+
+    expect(mocks.deriveExperimentMembershipFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceRunId: "source-run-1",
+        taskId: TASK_ID,
+        launchReason: "manual_relaunch",
+      }),
+    );
+    expect(experimentRunInsert()).toMatchObject(inherited);
+    expect(experimentRunInsert()?.runId).toBe(runInsert()?.id);
+  });
+
+  it("keeps a relaunch plain when the source run is not an experiment member", async () => {
+    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(null);
+
+    await launchRun(
+      {
+        taskId: TASK_ID,
+        relaunchOfRunId: "source-run-1",
+      } as Parameters<typeof launchRun>[0],
+      ctx(),
+      fakeDb,
+    );
+
+    expect(mocks.deriveExperimentMembershipFromSource).toHaveBeenCalled();
+    expect(experimentRunInsert()).toBeUndefined();
+  });
+
+  it("rejects cross-task relaunchOfRunId sources before worktree creation", async () => {
+    mocks.deriveExperimentMembershipFromSource.mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "source run belongs to another task"),
+    );
+
+    await expect(
+      launchRun(
+        {
+          taskId: TASK_ID,
+          relaunchOfRunId: "other-task-run",
+        } as Parameters<typeof launchRun>[0],
+        ctx(),
+        fakeDb,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(mocks.addWorktree).not.toHaveBeenCalled();
+    expect(runInsert()).toBeUndefined();
+  });
+
+  it("uses the force launchability gate for budget restarts of active experiment members", async () => {
+    state.latestFlowRun = { id: "busy-run", status: "Running" };
+    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce({
+      experimentId: "exp-1",
+      variantKey: "claude",
+      replicateOrdinal: 2,
+      launchReason: "budget_restart",
+      baseCommit: "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e",
+    });
+
+    await launchRun(
+      {
+        taskId: TASK_ID,
+        triggerSource: "manual",
+        triggerPayload: {
+          kind: "budget_restart",
+          oldRunId: "source-run-1",
+          hitlRequestId: "hitl-1",
+          idempotencyKey: "budget_restart:source-run-1:hitl-1",
+        },
+        allowConcurrent: false,
+      } as Parameters<typeof launchRun>[0],
+      ctx(),
+      fakeDb,
+    );
+
+    expect(mocks.deriveExperimentMembershipFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceRunId: "source-run-1",
+        launchReason: "budget_restart",
+      }),
+    );
+    expect(experimentRunInsert()).toMatchObject({
+      experimentId: "exp-1",
+      variantKey: "claude",
+      replicateOrdinal: 2,
+      launchReason: "budget_restart",
+    });
+  });
+
+  it("does not force a busy non-member budget restart", async () => {
+    state.latestFlowRun = { id: "busy-run", status: "Running" };
+    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(null);
+
+    await expect(
+      launchRun(
+        {
+          taskId: TASK_ID,
+          triggerSource: "manual",
+          triggerPayload: {
+            kind: "budget_restart",
+            oldRunId: "source-run-1",
+            hitlRequestId: "hitl-1",
+            idempotencyKey: "budget_restart:source-run-1:hitl-1",
+          },
+          allowConcurrent: false,
+        } as Parameters<typeof launchRun>[0],
+        ctx(),
+        fakeDb,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    expect(mocks.addWorktree).not.toHaveBeenCalled();
+    expect(experimentRunInsert()).toBeUndefined();
   });
 });
 

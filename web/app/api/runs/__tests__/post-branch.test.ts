@@ -105,8 +105,70 @@ describe("POST /api/runs — branch-targeting body schema (M18)", () => {
     expect(input.targetBranch).toBeUndefined();
   });
 
+  it("accepts an optional baseCommit and forwards it to launchRun", async () => {
+    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
+
+    const res = await POST(
+      request({
+        taskId: "task-1",
+        baseCommit: pinnedCommit,
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    expect(mocks.launchRun).toHaveBeenCalledTimes(1);
+
+    const input = mocks.launchRun.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    expect(input).toMatchObject({
+      taskId: "task-1",
+      baseCommit: pinnedCommit,
+    });
+  });
+
+  it("accepts an optional relaunchOfRunId and forwards it to launchRun", async () => {
+    const res = await POST(
+      request({
+        taskId: "task-1",
+        relaunchOfRunId: "run-source-1",
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    expect(mocks.launchRun).toHaveBeenCalledTimes(1);
+
+    const input = mocks.launchRun.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    expect(input).toMatchObject({
+      taskId: "task-1",
+      relaunchOfRunId: "run-source-1",
+    });
+  });
+
   it("rejects an empty-string baseBranch (z.string().min(1)) with 400 CONFIG before launch", async () => {
     const res = await POST(request({ taskId: "task-1", baseBranch: "" }));
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("CONFIG");
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-hex baseCommit with 400 CONFIG before launch", async () => {
+    const res = await POST(
+      request({ taskId: "task-1", baseCommit: "not-a-sha" }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("CONFIG");
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty relaunchOfRunId with 400 CONFIG before launch", async () => {
+    const res = await POST(
+      request({ taskId: "task-1", relaunchOfRunId: "" }),
+    );
     const body = (await res.json()) as { code?: string };
 
     expect(res.status).toBe(400);

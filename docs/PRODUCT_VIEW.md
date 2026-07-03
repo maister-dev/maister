@@ -18,7 +18,7 @@ This expands the canonical [product spine](VISION.md#core-product-spine) with
 the runtime objects a single delivery passes through.
 
 ```text
-Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Branch target -> Workspace -> Flow node / Dialog turn -> Capability profile -> Artifact graph -> Gate readiness -> Assignment -> HITL / Manual takeover -> Review -> Promote
+Project -> Flow package -> Task / Experiment / Scratch run -> External operation -> Run -> Branch target -> Workspace -> Flow node / Dialog turn -> Capability profile -> Artifact graph -> Gate readiness -> Assignment -> HITL / Manual takeover -> Review -> Compare -> Promote
 ```
 
 - **Project** — a registered repo with `maister.yaml` v2.
@@ -41,6 +41,9 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
   claude and codex adapters are current, and multiple profiles may share the
   same adapter with different model/router/env settings.
 - **Task** — backlog intent. One task may spawn many Flow runs.
+- **Experiment** — task-bound comparison container that pins a base commit,
+  launches several ordinary runs as variants/replicates, compares their diff,
+  files, gates, and token rollups, and records a human rubric verdict.
 - **Scratch run** — manual coding-agent workspace started from a project,
   base branch, optional scratch branch/name, executor profile, work mode,
   reasoning effort, prompt, optional issue/files, and capability profile. It is
@@ -91,6 +94,7 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
 | See portfolio state | Know which projects have running, blocked, crashed, and review-ready work. |
 | Manage delivery packages | Install, trust, enable, upgrade, rollback, disable, and inspect Flow packages without guessing which version a run used. |
 | Launch a controlled run | Turn a backlog task into an isolated worktree and Flow execution. |
+| Compare implementation variants | Run the same task several ways from one pinned base commit, inspect evidence side by side, and record a human rubric verdict without losing ordinary run history. |
 | Start a scratch workspace | Open a conversation-like coding-agent session for exploratory work without creating a task board card. |
 | Pick the right branch | Choose the base branch and target branch so work can happen on `main`, `develop`, release branches, or any engineer-selected branch. |
 | Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, skills, roles, restrictions, and rework paths. |
@@ -164,6 +168,12 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
   work on a MAIster run branch, and promote to a selected target branch by PR or
   local merge after readiness passes. Deploy/release management stays manual and
   outside MAIster.
+- Experiment Comparison Studio (ADR-124) is required for Phase 1 benchmarking:
+  a project member can create a task-bound experiment, pin the base commit at
+  creation, launch variants through the normal run pipeline, compare diff/files/
+  gates/tokens, ask an advisory judge, and record a human verdict. It adds no
+  new execution runtime, no new SSE/domain event family, and no auto-approval or
+  auto-promotion.
 
 ## Phase 2
 

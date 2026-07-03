@@ -2280,6 +2280,7 @@ function budgetRestartTriggerPayload(
     kind: "budget_restart",
     oldRunId: runId,
     hitlRequestId,
+    idempotencyKey: `budget_restart:${runId}:${hitlRequestId}`,
   };
 }
 

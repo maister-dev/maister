@@ -89,6 +89,8 @@ export interface TokenLabels {
   scopeRunsPromote: string;
   scopeMemoryRead: string;
   scopeMemoryWrite: string;
+  scopeExperimentsRead: string;
+  scopeExperimentsAdvise: string;
   errorGeneric: string;
 }
 
@@ -171,6 +173,10 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeMemoryRead;
     case "memory:write":
       return labels.scopeMemoryWrite;
+    case "experiments:read":
+      return labels.scopeExperimentsRead;
+    case "experiments:advise":
+      return labels.scopeExperimentsAdvise;
     default:
       return scope;
   }
@@ -397,6 +403,8 @@ export async function IntegrationsPanel({
     scopeRunsPromote: t("scopeRunsPromote"),
     scopeMemoryRead: t("scopeMemoryRead"),
     scopeMemoryWrite: t("scopeMemoryWrite"),
+    scopeExperimentsRead: t("scopeExperimentsRead"),
+    scopeExperimentsAdvise: t("scopeExperimentsAdvise"),
     errorGeneric: t("errorGeneric"),
   };
 

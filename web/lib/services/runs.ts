@@ -29,7 +29,12 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  deriveExperimentMembershipFromSource,
+  type InheritedExperimentMembership,
+} from "@/lib/experiments/membership";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import {
   assertNodeLaunchable,
   capabilityBearingSettings,
@@ -79,6 +84,7 @@ import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
 import {
   addWorktree,
+  assertBaseCommitReachable,
   listBranches,
   removeWorktree,
   resolveBaseCommit,
@@ -87,6 +93,8 @@ import {
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
   capabilityRecords,
+  experiments,
+  experimentRuns,
   flowRevisions,
   flows,
   platformAcpRunners,
@@ -100,6 +108,62 @@ const {
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
+
+const EXPERIMENT_MEMBER_LAUNCHABLE_STATUSES = new Set([
+  "draft",
+  "running",
+  "comparable",
+]);
+
+async function selectForUpdate(query: any): Promise<Record<string, any>[]> {
+  if (typeof query.for !== "function") {
+    return (await query) as Record<string, any>[];
+  }
+
+  try {
+    return (await query.for("update")) as Record<string, any>[];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    if (message.includes("not supported") || message.includes("FOR UPDATE")) {
+      return (await query) as Record<string, any>[];
+    }
+
+    throw err;
+  }
+}
+
+async function assertExperimentMembershipLaunchable(args: {
+  tx: any;
+  membership: NonNullable<LaunchRunInput["experimentMembership"]>;
+}): Promise<void> {
+  const rows = await selectForUpdate(
+    args.tx
+      .select()
+      .from(experiments)
+      .where(eq(experiments.id, args.membership.experimentId)),
+  );
+  const experiment = rows.find(
+    (row: Record<string, unknown>) =>
+      row.id === args.membership.experimentId,
+  );
+
+  if (!experiment) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `experiment not found for member launch: ${args.membership.experimentId}`,
+    );
+  }
+
+  const status = String(experiment.status);
+
+  if (!EXPERIMENT_MEMBER_LAUNCHABLE_STATUSES.has(status)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `experiment ${args.membership.experimentId} is not launchable from ${status}`,
+    );
+  }
+}
 
 // M13: a launch is refused (CONFIG → 400) when any compiled node's
 // finish.human.role or settings.roles references a Flow role not in the
@@ -162,6 +226,8 @@ export type LaunchRunInput = {
   flowId?: string;
   runnerId?: string;
   baseBranch?: string;
+  baseCommit?: string;
+  relaunchOfRunId?: string;
   targetBranch?: string;
   deliveryPolicy?: StoredDeliveryPolicy;
   executionPolicy?: ExecutionPolicy;
@@ -209,7 +275,71 @@ export type LaunchRunInput = {
   // boolean — no recall/embedding call, no snapshot insert happens here
   // (snapshots are consumption-time: T4.3 ambient / T4.2 explicit).
   brainContext?: boolean | null;
+  experimentMembership?: {
+    experimentId: string;
+    variantKey: string;
+    replicateOrdinal: number;
+    launchReason: "initial" | "manual_relaunch" | "budget_restart";
+    baseCommit: string;
+    markExperimentRunning?: boolean;
+  };
 };
+
+type LaunchRunExperimentMembership = NonNullable<
+  LaunchRunInput["experimentMembership"]
+>;
+
+function budgetRestartSourceRunId(
+  triggerPayload: Record<string, unknown> | null | undefined,
+): string | null {
+  if (
+    triggerPayload === null ||
+    triggerPayload === undefined ||
+    triggerPayload.kind !== "budget_restart"
+  ) {
+    return null;
+  }
+  if (typeof triggerPayload.oldRunId !== "string") {
+    throw new MaisterError(
+      "PRECONDITION",
+      "budget restart trigger payload is missing oldRunId",
+    );
+  }
+
+  return triggerPayload.oldRunId;
+}
+
+function membershipSourceForLaunch(
+  input: LaunchRunInput,
+): {
+  sourceRunId: string;
+  launchReason: "manual_relaunch" | "budget_restart";
+} | null {
+  if (input.experimentMembership) return null;
+  if (input.relaunchOfRunId) {
+    return {
+      sourceRunId: input.relaunchOfRunId,
+      launchReason: "manual_relaunch",
+    };
+  }
+
+  const budgetSourceRunId = budgetRestartSourceRunId(input.triggerPayload);
+
+  if (budgetSourceRunId === null) return null;
+
+  return {
+    sourceRunId: budgetSourceRunId,
+    launchReason: "budget_restart",
+  };
+}
+
+function toLaunchMembership(
+  inherited: InheritedExperimentMembership | null,
+): LaunchRunExperimentMembership | undefined {
+  if (inherited === null) return undefined;
+
+  return inherited;
+}
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
 
@@ -233,6 +363,41 @@ export function resolvePromotionMode(args: {
   }
 
   return "local_merge";
+}
+
+async function assertPinnedBaseCommitReachable(args: {
+  projectId: string;
+  taskId: string;
+  projectRepoPath: string;
+  baseRef: string;
+  baseCommit: string;
+}): Promise<string> {
+  try {
+    return await assertBaseCommitReachable({
+      projectRepoPath: args.projectRepoPath,
+      baseRef: args.baseRef,
+      baseCommit: args.baseCommit,
+      preferRemote: "origin",
+    });
+  } catch (err) {
+    const cause = err instanceof Error ? err.cause : undefined;
+
+    log.warn(
+      {
+        projectId: args.projectId,
+        taskId: args.taskId,
+        baseRef: args.baseRef,
+        baseCommit: args.baseCommit,
+        code: isMaisterError(err) ? err.code : undefined,
+        err: err instanceof Error ? err.message : String(err),
+        gitExitCode: (cause as { code?: unknown } | undefined)?.code,
+        gitSignal: (cause as { signal?: unknown } | undefined)?.signal,
+      },
+      "POST /api/runs pinned base commit rejected",
+    );
+
+    throw err;
+  }
 }
 
 function runnerProviderKind(provider: unknown): string {
@@ -372,6 +537,39 @@ export async function* launchRunStaged(
     throw new MaisterError("PRECONDITION", "project is archived");
   }
 
+  const inheritanceSource = membershipSourceForLaunch(input);
+  const inheritedExperimentMembership =
+    inheritanceSource === null
+      ? null
+      : await deriveExperimentMembershipFromSource({
+          db: _db,
+          taskId: task.id,
+          sourceRunId: inheritanceSource.sourceRunId,
+          launchReason: inheritanceSource.launchReason,
+        });
+  const effectiveExperimentMembership =
+    input.experimentMembership ??
+    toLaunchMembership(inheritedExperimentMembership);
+  const forceByBudgetMembership =
+    inheritedExperimentMembership?.launchReason === "budget_restart";
+  const allowConcurrentForLaunch = Boolean(
+    input.allowConcurrent || forceByBudgetMembership,
+  );
+
+  if (inheritedExperimentMembership) {
+    log.info(
+      {
+        sourceRunId: inheritanceSource?.sourceRunId,
+        experimentId: inheritedExperimentMembership.experimentId,
+        variantKey: inheritedExperimentMembership.variantKey,
+        replicateOrdinal: inheritedExperimentMembership.replicateOrdinal,
+        launchReason: inheritedExperimentMembership.launchReason,
+        forceByBudgetMembership,
+      },
+      "POST /api/runs inherited experiment membership",
+    );
+  }
+
   // tasks.status is a one-way latch (nothing writes Backlog back after
   // launch), so the latest flow run — not the task row — decides
   // relaunchability (board retry rule, attempt N+1).
@@ -381,7 +579,7 @@ export async function* launchRunStaged(
     [];
   // ADR-119: the force flag widens ONLY the run-status gate (busy → launchable)
   // for an additive concurrent run; the task gates flagged/blocked still refuse.
-  const classifyLaunchability = input.allowConcurrent
+  const classifyLaunchability = allowConcurrentForLaunch
     ? classifyForceRelaunchLaunchability
     : classifyManualTaskLaunchability;
   const launchability = classifyLaunchability(task, latestFlowRun, {
@@ -391,8 +589,9 @@ export async function* launchRunStaged(
   log.debug(
     {
       taskId: input.taskId,
-      mode: input.allowConcurrent ? "force" : "manual",
-      allowConcurrent: Boolean(input.allowConcurrent),
+      mode: allowConcurrentForLaunch ? "force" : "manual",
+      allowConcurrent: allowConcurrentForLaunch,
+      forceByBudgetMembership,
       verdict: launchability,
     },
     "[launchability.force] launch gate classifier selected",
@@ -922,14 +1121,23 @@ export async function* launchRunStaged(
       );
     }
 
-    const baseCommit = await resolveBaseCommit({
-      projectRepoPath: project.repoPath,
-      baseRef: base,
-      // Fork from origin/<base> when present (just fetched) so runs start from
-      // the freshest remote state, not a stale local checkout; falls back to the
-      // local <base>.
-      preferRemote: "origin",
-    });
+    const baseCommit =
+      input.baseCommit === undefined
+        ? await resolveBaseCommit({
+            projectRepoPath: project.repoPath,
+            baseRef: base,
+            // Fork from origin/<base> when present (just fetched) so runs start from
+            // the freshest remote state, not a stale local checkout; falls back to the
+            // local <base>.
+            preferRemote: "origin",
+          })
+        : await assertPinnedBaseCommitReachable({
+            projectId: project.id,
+            taskId: task.id,
+            projectRepoPath: project.repoPath,
+            baseRef: base,
+            baseCommit: input.baseCommit,
+          });
     const promotionMode: PromotionMode =
       deliveryPolicy.strategy === "ai_rebase_merge"
         ? "rebase_merge"
@@ -1119,6 +1327,41 @@ export async function* launchRunStaged(
             "CONFLICT",
             `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
           );
+        }
+
+        if (effectiveExperimentMembership) {
+          await assertExperimentMembershipLaunchable({
+            tx,
+            membership: effectiveExperimentMembership,
+          });
+          await tx.insert(experimentRuns).values({
+            id: randomUUID(),
+            experimentId: effectiveExperimentMembership.experimentId,
+            runId,
+            variantKey: effectiveExperimentMembership.variantKey,
+            replicateOrdinal: effectiveExperimentMembership.replicateOrdinal,
+            launchReason: effectiveExperimentMembership.launchReason,
+            baseCommit: effectiveExperimentMembership.baseCommit,
+          });
+          await syncExperimentStatusForRun({ db: tx, runId });
+
+          if (effectiveExperimentMembership.markExperimentRunning) {
+            const now = new Date();
+
+            await tx
+              .update(experiments)
+              .set({
+                status: "running",
+                launchedAt: now,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(experiments.id, effectiveExperimentMembership.experimentId),
+                  eq(experiments.status, "draft"),
+                ),
+              );
+          }
         }
 
         // M42 (ADR-114): one `run_sessions` row per resolved session — the SOLE

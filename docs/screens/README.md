@@ -132,6 +132,7 @@ flowchart TD
 
     Portfolio --> Board["projects/project-board /projects/SLUG"]
     Portfolio --> AddProject["projects/add-project /projects/new — admin"]
+    Board --> Experiments["projects/project-experiments /projects/SLUG/experiments"]
     Board --> SettingsGit["projects/project-settings-git /projects/SLUG?tab=settings — admin/owner"]
     Board --> SettingsAgents["projects/project-settings-agents /projects/SLUG?tab=settings — Implemented (M39, ADR-106)"]
     Board --> ProjectBrain["projects/project-brain /projects/SLUG?tab=brain — Implemented (ADR-127/128)"]
@@ -165,6 +166,7 @@ flowchart TD
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
+| [`projects/project-experiments.md`](projects/project-experiments.md) | Experiment Comparison Studio (list, create flow, lab) | `/projects/{slug}/experiments` and `/projects/{slug}/experiments/{experimentId}` | Designed (ADR-124) |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
 | [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Implemented (M39, ADR-106) |

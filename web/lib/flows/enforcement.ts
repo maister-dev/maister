@@ -21,6 +21,13 @@ export type EnforceabilityTable = Record<
   Record<CapabilityClass, Capability>
 >;
 
+export type OverlayCapabilityClass = "rules" | "skills" | "mcps" | "subagents";
+
+export type OverlayClassSupportTable = Record<
+  AgentName,
+  Record<OverlayCapabilityClass, boolean>
+>;
+
 // FROZEN M11c table (docs/system-analytics/flow-settings.md + ADR-032): every
 // cell is `instructed`. Nothing is hard-enforced per session yet, so a `strict`
 // intent on any class cannot be honored and MUST refuse the launch rather than
@@ -70,6 +77,39 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
     permissionMode: "instructed",
     workspaceAccess: "instructed",
     hooks: "instructed",
+  },
+};
+
+export const OVERLAY_CLASS_SUPPORT_BY_AGENT: OverlayClassSupportTable = {
+  claude: {
+    rules: true,
+    skills: true,
+    mcps: true,
+    subagents: true,
+  },
+  codex: {
+    rules: true,
+    skills: true,
+    mcps: true,
+    subagents: false,
+  },
+  gemini: {
+    rules: true,
+    skills: true,
+    mcps: true,
+    subagents: false,
+  },
+  opencode: {
+    rules: true,
+    skills: true,
+    mcps: true,
+    subagents: false,
+  },
+  mimo: {
+    rules: true,
+    skills: true,
+    mcps: true,
+    subagents: false,
   },
 };
 

@@ -46,8 +46,17 @@ import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { gcAgeDays } from "@/lib/instance-config";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { flowRevisions, flows, projects, runs, tasks, users, workspaces } =
-  schema;
+const {
+  experimentRuns,
+  experiments,
+  flowRevisions,
+  flows,
+  projects,
+  runs,
+  tasks,
+  users,
+  workspaces,
+} = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -146,6 +155,7 @@ type SeedOpts = {
 // Seed a terminal run + its workspace. Returns { runId, workspaceId }.
 async function seed(opts: SeedOpts = {}): Promise<{
   runId: string;
+  taskId: string;
   workspaceId: string;
   worktreePath: string;
 }> {
@@ -191,7 +201,38 @@ async function seed(opts: SeedOpts = {}): Promise<{
       opts.scheduledRemovalAt === undefined ? null : opts.scheduledRemovalAt,
   });
 
-  return { runId, workspaceId, worktreePath };
+  return { runId, taskId, workspaceId, worktreePath };
+}
+
+async function seedExperimentMembership(args: {
+  runId: string;
+  taskId: string;
+  status: "running" | "comparable" | "concluded" | "abandoned";
+}): Promise<string> {
+  const experimentId = randomUUID();
+
+  await db.insert(experiments).values({
+    id: experimentId,
+    projectId,
+    taskId: args.taskId,
+    title: "GC hold",
+    baseBranch: "main",
+    baseCommit: "a".repeat(40),
+    status: args.status,
+    variants: [{ key: "a", label: "A", config: {} }],
+    rubric: { criteria: [] },
+  });
+  await db.insert(experimentRuns).values({
+    id: randomUUID(),
+    experimentId,
+    runId: args.runId,
+    variantKey: "a",
+    replicateOrdinal: 1,
+    launchReason: "initial",
+    baseCommit: "a".repeat(40),
+  });
+
+  return experimentId;
 }
 
 async function readWorkspace(workspaceId: string): Promise<any> {
@@ -441,6 +482,36 @@ describe("runWorkspaceGcSweep (integration)", () => {
     expect(summary.scanned).toBe(0);
     expect(removeOwnedWorktree).not.toHaveBeenCalled();
     expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
+  }, 60_000);
+
+  it("holds experiment-member workspaces while the experiment is non-terminal and releases them after conclusion", async () => {
+    const { runId, taskId, workspaceId } = await seed({
+      scheduledRemovalAt: new Date(Date.now() - 86_400_000),
+    });
+    const experimentId = await seedExperimentMembership({
+      runId,
+      taskId,
+      status: "running",
+    });
+
+    const first = makeOpts();
+    const firstSummary = await runWorkspaceGcSweep(first.opts);
+
+    expect(firstSummary.scanned).toBe(0);
+    expect(first.removeOwnedWorktree).not.toHaveBeenCalled();
+    expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
+
+    await db
+      .update(experiments)
+      .set({ status: "concluded" })
+      .where(eq(experiments.id, experimentId));
+
+    const second = makeOpts();
+    const secondSummary = await runWorkspaceGcSweep(second.opts);
+
+    expect(secondSummary.pruned).toBeGreaterThanOrEqual(1);
+    expect(second.removeOwnedWorktree).toHaveBeenCalledTimes(1);
+    expect((await readWorkspace(workspaceId)).removedAt).not.toBeNull();
   }, 60_000);
 
   it("§3.3 pruned-not-marked recovery: a due workspace whose worktree path is already gone is marked removed_at without preserve/remove", async () => {

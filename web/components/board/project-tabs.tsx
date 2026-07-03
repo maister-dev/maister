@@ -9,6 +9,7 @@ export type ProjectTab =
   | "activity"
   | "observatory"
   | "brain"
+  | "experiments"
   | "prs"
   | "repo"
   | "packages"
@@ -31,6 +32,7 @@ const TABS: readonly ProjectTab[] = [
   "activity",
   "observatory",
   "brain",
+  "experiments",
   "prs",
   "repo",
   "packages",
@@ -55,6 +57,7 @@ export async function ProjectTabs({
     activity: t("activity"),
     observatory: t("observatory"),
     brain: t("brain"),
+    experiments: t("experiments"),
     prs: t("prs"),
     repo: t("repo"),
     packages: t("packages"),
@@ -72,7 +75,9 @@ export async function ProjectTabs({
       ? `/projects/${slug}`
       : tab === "observatory"
         ? `/projects/${slug}/observatory`
-        : `/projects/${slug}?tab=${tab}`;
+        : tab === "experiments"
+          ? `/projects/${slug}/experiments`
+          : `/projects/${slug}?tab=${tab}`;
 
   const items: TabItem[] = TABS.map((tab) => ({
     key: tab,

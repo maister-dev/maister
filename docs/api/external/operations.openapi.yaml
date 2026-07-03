@@ -87,6 +87,11 @@ tags:
       tokens and mirrored by the MCP facade. Recall returns the implemented
       owned/indexed union; clusters and proposals are implemented Sub-project C
       contracts.
+  - name: experiments
+    description: |
+      (ADR-124, Designed) Experiment Comparison Studio token surface. Agents may
+      read experiment detail with `experiments:read` and append judge advisories
+      with `experiments:advise`; conclusions remain human/session-auth only.
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -690,6 +695,111 @@ paths:
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/projects/{slug}/experiments/{experimentId}:
+    get:
+      tags: [experiments]
+      summary: (ADR-124, Designed) Get experiment detail for judge advisories
+      description: |
+        Scope `experiments:read`. Returns an experiment detail DTO for the
+        project identified by `slug`. The `projectId` is derived server-side
+        from the URL slug and re-validated against the token project; the
+        addressed experiment must belong to that project or the route returns
+        404.
+
+        The DTO exposes pinned-base comparison inputs and run snapshots needed
+        by an external judge. It never includes absolute worktree paths,
+        supervisor handles, token hashes, or hidden session identifiers.
+
+        Writes a `token_audit_log` row with scope `experiments:read` after
+        success.
+      operationId: extGetExperiment
+      security:
+        - projectToken: [experiments:read]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: experimentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Experiment detail for advisory scoring.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtExperimentDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/projects/{slug}/experiments/{experimentId}/advisory:
+    post:
+      tags: [experiments]
+      summary: (ADR-124, Designed) Append an experiment judge advisory
+      description: |
+        Scope `experiments:advise`. Appends one advisory object to
+        `experiments.verdict.judgeAdvisories[]` under the experiment row lock.
+        This route is advisory-only: it cannot conclude, abandon, pick a
+        winner, mutate human verdict fields, launch runs, or change experiment
+        status.
+
+        `projectId` is derived server-side from `slug`, then the experiment is
+        loaded through that project. Cross-project or inaccessible experiments
+        are hidden as 404. Advisory scores are re-validated against the stored
+        rubric criterion ids; an unknown criterion returns 422 `CONFIG`.
+        Status must be `running` or `comparable`, otherwise the route returns
+        409 `PRECONDITION`.
+
+        Writes the success `token_audit_log` row in the same transaction as the
+        advisory append (`successAuditInWork: true`), so the mutation and audit
+        cannot diverge.
+      operationId: extAdviseExperiment
+      security:
+        - projectToken: [experiments:advise]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: experimentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtExperimentAdvisoryBody" }
+      responses:
+        "200":
+          description: Advisory appended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtExperimentAdvisoryResponse" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /api/v1/ext/projects/{slug}/memory:
     get:
@@ -2385,6 +2495,266 @@ components:
           type: string
           enum: [Unknown, Ready, NotReady]
           description: Cached runner readiness from supervisor diagnostics.
+
+    ExtExperimentStatus:
+      type: string
+      enum: [draft, running, comparable, concluded, abandoned]
+
+    ExtExperimentVariant:
+      type: object
+      description: (ADR-124, Designed) Immutable variant config projected for a judge.
+      required: [key, title, prompt, config]
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          minLength: 1
+        title:
+          type: string
+          minLength: 1
+        prompt:
+          type: string
+          minLength: 1
+        config:
+          type: object
+          description: Closed-registry capability overlay after validation.
+          additionalProperties: true
+
+    ExtExperimentRubricCriterion:
+      type: object
+      description: (ADR-124, Designed) One criterion the advisory scores must address.
+      required: [id, label, weight]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+        label:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        weight:
+          type: number
+          minimum: 0
+
+    ExtExperimentRubric:
+      type: object
+      required: [criteria]
+      additionalProperties: false
+      properties:
+        criteria:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ExtExperimentRubricCriterion" }
+
+    ExtExperimentRunSummary:
+      type: object
+      description: (ADR-124, Designed) Redacted member-run snapshot for comparison.
+      required: [runId, variantKey, replicateIndex, status]
+      additionalProperties: false
+      properties:
+        runId:
+          type: string
+          format: uuid
+        variantKey:
+          type: string
+          minLength: 1
+        replicateIndex:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - Review
+            - Crashed
+            - Done
+            - Abandoned
+            - Failed
+        baseCommit:
+          type: string
+          minLength: 7
+        resultBranch:
+          type: string
+          nullable: true
+        diffStat:
+          type: object
+          additionalProperties: true
+        diffFilesSummary:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        costUsd:
+          type: number
+          nullable: true
+          minimum: 0
+
+    ExtExperimentHumanVerdict:
+      type: object
+      description: Human-only conclusion projection. External agents cannot set this.
+      required: [outcome, decidedAt]
+      additionalProperties: false
+      properties:
+        outcome:
+          type: string
+          enum: [winner, tie, inconclusive]
+        winnerVariantKey:
+          type: string
+          nullable: true
+        comment:
+          type: string
+          nullable: true
+        scores:
+          type: object
+          additionalProperties:
+            type: number
+            minimum: 0
+            maximum: 1
+        decidedAt:
+          type: string
+          format: date-time
+
+    ExtExperimentJudgeAdvisory:
+      type: object
+      description: (ADR-124, Designed) Advisory-only judge result.
+      required: [id, summary, scores, createdAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        summary:
+          type: string
+        scores:
+          type: object
+          additionalProperties:
+            type: number
+            minimum: 0
+            maximum: 1
+        confidence:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+        agentRunId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    ExtExperimentVerdict:
+      type: object
+      description: Human verdict plus append-only advisory history.
+      required: [judgeAdvisories]
+      additionalProperties: false
+      properties:
+        human:
+          $ref: "#/components/schemas/ExtExperimentHumanVerdict"
+        judgeAdvisories:
+          type: array
+          items: { $ref: "#/components/schemas/ExtExperimentJudgeAdvisory" }
+
+    ExtExperimentDTO:
+      type: object
+      description: |
+        (ADR-124, Designed) Token-safe experiment detail for MCP judges. It
+        contains pinned base information, immutable variants, rubric, member-run
+        snapshots, and advisory history; no worktree paths or hidden session ids.
+      required:
+        - id
+        - projectId
+        - taskId
+        - title
+        - status
+        - baseBranch
+        - baseCommit
+        - variants
+        - rubric
+        - runs
+        - verdict
+        - createdAt
+        - updatedAt
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          $ref: "#/components/schemas/ExtExperimentStatus"
+        baseBranch:
+          type: string
+          minLength: 1
+        baseCommit:
+          type: string
+          minLength: 7
+        variants:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ExtExperimentVariant" }
+        rubric:
+          $ref: "#/components/schemas/ExtExperimentRubric"
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/ExtExperimentRunSummary" }
+        verdict:
+          $ref: "#/components/schemas/ExtExperimentVerdict"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ExtExperimentAdvisoryBody:
+      type: object
+      description: |
+        (ADR-124, Designed) Append-only advisory payload. `scores` keys must be
+        existing rubric criterion ids; an unknown key returns 422 `CONFIG`.
+      required: [scores, summary]
+      additionalProperties: false
+      properties:
+        scores:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: number
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        agentRunId:
+          type: string
+          minLength: 1
+
+    ExtExperimentAdvisoryResponse:
+      type: object
+      required: [experimentId, advisory]
+      additionalProperties: false
+      properties:
+        experimentId:
+          type: string
+          format: uuid
+        advisory:
+          $ref: "#/components/schemas/ExtExperimentJudgeAdvisory"
 
     ExtRelationOpBody:
       type: object

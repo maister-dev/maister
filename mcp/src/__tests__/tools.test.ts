@@ -51,11 +51,13 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 30 external tools (incl. personal HITL inbox + discovery + memory)", () => {
+  it("registers all 32 external tools (incl. personal HITL inbox + discovery + memory + experiments)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
         "comment_list",
+        "experiment_advise",
+        "experiment_get",
         "flow_list",
         "gate_report",
         "hitl_inbox",
@@ -389,6 +391,56 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/runners`);
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("experiment_get → GET /api/v1/ext/projects/{slug}/experiments/{experimentId} (no body)", async () => {
+    mockOnce({ id: "exp-1" }, 200);
+
+    await dispatchTool({
+      name: "experiment_get",
+      args: { slug: "demo", experimentId: "exp-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/experiments/exp-1`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("experiment_advise → POST /api/v1/ext/projects/{slug}/experiments/{experimentId}/advisory with only defined body keys", async () => {
+    mockOnce({ experimentId: "exp-1", advisory: { id: "adv-1" } }, 200);
+
+    await dispatchTool({
+      name: "experiment_advise",
+      args: {
+        slug: "demo",
+        experimentId: "exp-1",
+        scores: { correctness: { claude: 5, codex: 4 } },
+        summary: "Variant A has better evidence.",
+        confidence: 0.8,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/experiments/exp-1/advisory`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({
+      scores: { correctness: { claude: 5, codex: 4 } },
+      summary: "Variant A has better evidence.",
+      confidence: 0.8,
+    });
   });
 
   it("task_update → PATCH /api/v1/ext/projects/{slug}/tasks/{taskId} (strips executorOverrideId — the strict route refuses it)", async () => {

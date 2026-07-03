@@ -96,6 +96,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
   console.log("global-setup: applying migrations…");
   execSync("pnpm exec tsx lib/db/migrate.ts", { stdio: "inherit", env });
+  console.log("global-setup: applying brain migrations…");
+  execSync("pnpm exec tsx lib/db/migrate-brain.ts", {
+    stdio: "inherit",
+    env,
+  });
 
   // The webServer's strict instrumentation hook (lib/db/check.ts) also requires
   // the brain lineage; resetSchema drops it, so re-apply after the main migrate

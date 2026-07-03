@@ -105,6 +105,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/consensus.md`](system-analytics/consensus.md) | Consensus node (ADR-109, Implemented — M41): first-class `consensus` graph node with governed read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, human resolution, and synthesized `plan` artifact output. |
 | [`system-analytics/sessions.md`](system-analytics/sessions.md) | Flow runner & session model (ADR-114, Implemented — M42): unified `flowRunnerConfigSchema`, `default`/solo/named sessions, `run_sessions` as the sole run-runner source of truth, per-project connect-time slot bindings, checkpoint→`session/resume` session switch, supervisor `sessionName` attribution. |
 | [`system-analytics/project-brain.md`](system-analytics/project-brain.md) | Project Brain A/B/C (ADR-122/127/128, Implemented): owned-tier memory, Consultant indexed sources/chunks, cross-tier recall and snapshots, source reindex consumer, clusters/proposals, autonomy counters, docs-as-code projection, `memory_recall`/`memory_retain`/`memory_clusters`/`memory_propose` MCP tools, P7 ambient, and 4-layer enablement. |
+| [`system-analytics/experiments.md`](system-analytics/experiments.md) | Experiment Comparison Studio (ADR-124, Designed): task-bound pinned-base variant runs, membership, overlays, comparison evidence, human verdicts, advisory judge, and retention holds. |
 
 ### Screen reference (`screens/`)
 
@@ -127,6 +128,7 @@ per-doc template, and the classification rule.
 | [`screens/projects/add-project.md`](screens/projects/add-project.md) | Add-project form `/projects/new`: onboarding mode selector, live name/task-key prefill, classified clone-error remediation (ADR-093). |
 | [`screens/projects/project-settings-git.md`](screens/projects/project-settings-git.md) | Project Settings → Git (block): remotes table + add/edit/remove + push/fetch, persist-config action + banner (ADR-093). |
 | [`screens/projects/project-settings-agents.md`](screens/projects/project-settings-agents.md) | Project Settings → Agents (block): attach/enable agents from attached packages, cron/event triggers, runner override, autoApply/onBudgetBreach, branch base (M39, ADR-106). |
+| [`screens/projects/project-experiments.md`](screens/projects/project-experiments.md) | Experiment Comparison Studio: list/create/lab screens under `/projects/{slug}/experiments` (ADR-124). |
 | [`screens/studio/README.md`](screens/studio/README.md) | Flow Studio redesign area (overview · sources · packages · package detail · editor · local workspace), `/studio/*`. |
 | [`screens/studio/editor.md`](screens/studio/editor.md) | Flow editor surface (Phase B): 3-pane canvas + properties panel + top-bar drawers, node visual scheme, hideable rail. |
 
