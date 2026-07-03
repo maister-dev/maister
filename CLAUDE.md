@@ -325,7 +325,7 @@ stays `Review`, UI surfaces "Conflict — resolve manually" with parent repo
 path, run branch, target branch, and failing command. No auto-resolve.
 
 Promotion is manual by default, but **lane-bounded auto-promotion** exists
-(ADR-126, Designed): project-scoped diff classes (`docs | tests | deps |
+(ADR-126, Implemented): project-scoped diff classes (`docs | tests | deps |
 config`) may auto-promote through the SAME `promoteRun` choke point when
 readiness is green, gated by a non-configurable hard deny-list. `docs/PRODUCT_VIEW.md`
 is canonical for the product framing; this note only mirrors it.

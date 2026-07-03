@@ -574,7 +574,7 @@ flowchart LR
   `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.
   Full Flow reconciliation remains designed.
 
-## Auto-promotion lanes (ADR-126, Designed)
+## Auto-promotion lanes (ADR-126, Implemented)
 
 ### Purpose
 
@@ -768,7 +768,7 @@ flowchart TD
   that OR-combines with lanes — such runs are `not_applicable`),
   [`readiness.md`](readiness.md) (the readiness gate lanes read, never relax),
   [`scheduler.md`](scheduler.md) (the `auto_promote` job kind).
-- Source (all Designed): `web/lib/auto-promotion/config.ts` (schemas +
+- Source (all Implemented): `web/lib/auto-promotion/config.ts` (schemas +
   `BUILT_IN_LANES` + `resolveAutoPromotionConfig` + `autoPromotionEnabledFromEnv`),
   `web/lib/auto-promotion/classify.ts` (deny-list + lane classifier),
   `web/lib/auto-promotion/deps-check.ts` (manifest + lockfile content check),

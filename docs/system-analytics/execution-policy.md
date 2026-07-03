@@ -220,7 +220,7 @@ field-by-field instead of returning 5xx.
   human gate OR auto-promote) MUST be rejected with `MaisterError("PRECONDITION")`
   by `assertNoBlindShip`, server-side, before the run row is created.
 - The C1 `auto_on_ready` autopilot is distinct from lane-bounded auto-promotion
-  (ADR-126, Designed): a run already governed by `promotionFromSnapshot ===
+  (ADR-126, Implemented): a run already governed by `promotionFromSnapshot ===
   'auto_on_ready'` (or the delivery trigger) is `not_applicable` to the lanes
   sweep — see [`workspaces.md`](workspaces.md#auto-promotion-lanes-adr-126-designed).
 - Any non-`supervised`-floor policy (auto_pass / auto_on_ready / relaxed checks /

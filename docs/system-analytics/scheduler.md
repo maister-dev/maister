@@ -51,7 +51,7 @@ without turning recovery sweeps into live-path polling.
   per-consumer cursors over the `domain_events` outbox each tick. Not
   user-creatable — `createSchedulerJobSchema` rejects it (`run_schedule`
   precedent). See [domain-events.md](domain-events.md).
-- **`auto_promote` job kind** (Designed, ADR-126) — singleton auto-promotion
+- **`auto_promote` job kind** (Implemented, ADR-126) — singleton auto-promotion
   sweep (one `auto_promote.default` job, 60s cadence, budget `autoPromote: 1`)
   whose handler each tick evaluates lane-bounded `Review` flow runs and promotes
   the eligible ones through the SAME `promoteRun` choke point (system
@@ -221,7 +221,7 @@ flowchart TD
   (60-second cadence; Implemented, ADR-086), `agent_tick.dispatcher`
   (60-second cadence; M34 — Implemented, ADR-089), and
   `auto_launch_triaged.default` (60-second cadence; Implemented, ADR-112), and
-  `auto_promote.default` (60-second cadence; Designed, ADR-126).
+  `auto_promote.default` (60-second cadence; Implemented, ADR-126).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
   budget of 1 (singleton dispatcher; M34 — Implemented — its former
