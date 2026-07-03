@@ -22,6 +22,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 
 const ACTOR = { type: "user" as const, id: "tester" };
 
@@ -32,6 +33,12 @@ beforeAll(async () => {
     .withPassword("test")
     .start();
 
+  // relations.ts gates its pg_advisory_xact_lock on DB_URL looking like
+  // Postgres; vitest workers don't inherit .env.local, so without this the
+  // lock is silently skipped and AC-G1e rests on connection-timing luck.
+  originalDbUrl = process.env.DB_URL;
+  process.env.DB_URL = container.getConnectionUri();
+
   pool = new Pool({ connectionString: container.getConnectionUri(), max: 4 });
   db = drizzle(pool);
 
@@ -39,6 +46,9 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  if (originalDbUrl === undefined) delete process.env.DB_URL;
+  else process.env.DB_URL = originalDbUrl;
+
   await pool?.end();
   await container?.stop();
 });
@@ -171,6 +181,10 @@ describe("gating-relation cycle safety (ADR-121 §4.6)", () => {
   it("AC-G1e: two transactions racing to close a cycle → at most one commits", async () => {
     const { projectId, taskIds } = await seedProjectWithTasks(2);
     const [a, b] = taskIds;
+
+    // Warm every pool slot first: a cold second connection (~5ms setup) would
+    // serialize the racers by accident and let a skipped lock pass undetected.
+    await Promise.all(Array.from({ length: 4 }, () => pool.query("select 1")));
 
     // Both directions race from an empty graph; the per-project advisory lock
     // serializes them so the second sees the first's committed edge and rejects.
