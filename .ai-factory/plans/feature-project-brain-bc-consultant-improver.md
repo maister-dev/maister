@@ -598,7 +598,7 @@ implementation starts and the owner chooses the milestone slot.
 
 ### Phase 4 - Proposal Bridge, Improver, and Projection (Sub-project C)
 
-- [ ] **T9.1 - RED/GREEN: brain_proposals schema and FSM.**
+- [x] **T9.1 - RED/GREEN: brain_proposals schema and FSM.**
   - RED: integration tests for brain migration `0004` and proposal FSM:
     `pending -> accepted -> applied`, `pending -> rejected`; invalid
     transitions rejected; project delete cascades; evidence ids remain allowed
@@ -615,8 +615,14 @@ implementation starts and the owner chooses the milestone slot.
   - Files: brain migration `0004`, journal, `web/lib/brain/schema.ts`,
     `web/lib/brain/proposals.ts`, docs.
   - Verify: targeted integration test; `pnpm --filter maister-web typecheck`.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/proposals.integration.test.ts`
+    failed because `@/lib/brain/proposals` and `brain_proposals` were absent.
+  - GREEN evidence: the same proposal integration command passed after adding
+    brain migration `0004`, schema mirror, `web/lib/brain/proposals.ts`, FSM
+    guards for `pending -> accepted -> applied` and `pending -> rejected`,
+    project cascade, evidence-id snapshot behavior, and docs updates.
 
-- [ ] **T10.1 - RED/GREEN: memory_clusters and memory_propose operations.**
+- [x] **T10.1 - RED/GREEN: memory_clusters and memory_propose operations.**
   - RED: tests for `memory_clusters` returning recurring lesson clusters
     computed server-side from embedding proximity plus shared provenance, gated
     by `memory:read` and `can_read_brain`.
@@ -643,8 +649,22 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `web/lib/brain/clusters.ts`, ext routes, `mcp/src/tools.ts`,
     tests, OpenAPI docs.
   - Verify: targeted route/MCP tests; `pnpm --filter maister-web typecheck`.
+  - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration 'app/api/v1/ext/projects/[slug]/memory/clusters/__tests__/route.integration.test.ts'`
+    failed because the clusters route module was absent;
+    `CI=true pnpm --filter maister-web exec vitest run --project integration 'app/api/v1/ext/projects/[slug]/memory/proposals/__tests__/route.integration.test.ts'`
+    failed because the proposals route module was absent; `CI=true pnpm --filter
+    @maister/mcp exec vitest run src/__tests__/tools.test.ts
+    src/__tests__/tool-contract.test.ts` failed because `memory_clusters` and
+    `memory_propose` were not registered in `TOOL_SPECS`/dispatch.
+  - GREEN evidence: the cluster route suite passed after adding
+    `web/lib/brain/clusters.ts` and the ext route; the proposal route suite
+    passed after adding pending-proposal creation/idempotency and write-axis
+    gates; the MCP tools/contract suites passed after adding `TOOL_SPECS`,
+    dispatch routing, and the OpenAPI mirror. `CI=true pnpm --filter
+    maister-web typecheck`, `CI=true pnpm validate:docs`, and `CI=true pnpm
+    validate:contracts` passed.
 
-- [ ] **T10.2 - RED/GREEN: improver platform agent package.**
+- [x] **T10.2 - RED/GREEN: improver platform agent package.**
   - In the external `maister-plugins` repo, add the core-package improver agent
     definition following the triager precedent.
   - Config must match ADR-111 exactly: `min_recurrence` default 3, `kinds`,
@@ -660,6 +680,27 @@ implementation starts and the owner chooses the milestone slot.
   - Files: external `maister-plugins` package files, package version/tag notes,
     MAIster tests/docs that reference the package.
   - Verify: maister-plugins package validation; MAIster scripted integration.
+  - RED evidence: the core-package fixture and external `maister-plugins`
+    checkout had no `maister-agents/improver.md`; the scripted
+    cluster-to-proposal package path had no package agent to register.
+  - GREEN evidence: external `maister-plugins` commit `b95d8e7` added
+    `packages/core/maister-agents/improver.md` with workspace `none`, mode
+    `session`, risk tier `read_only`, triggers `[cron, manual]`, weekly cron
+    recommendation, and ADR-111 config defaults `min_recurrence=3`, `kinds`,
+    `max_proposals_per_run=3`. Direct external validation passed:
+    manifest `core`, zero flows, parsed agents
+    `["experiment-judge","improver","triager"]`. MAIster scripted integration
+    passed in `lib/brain/__tests__/improver-agent.integration.test.ts`, proving
+    package registration/config projection and the seeded recurring lessons ->
+    `memory_clusters` -> `memory_propose` path with second run idempotent by
+    `clusterHash`.
+  - Version/tag note: the external repo had no existing `core/*` tags at
+    validation time. The package change is committed locally but not tagged here
+    because the checkout still contains unrelated owner edits
+    (`triager.md`, `maister-package.yaml`, `experiment-judge.md`). Cut the first
+    clean core package release tag (expected `core/v1.0.0`, unless the owner
+    chooses a different core baseline) from a clean commit that includes
+    `b95d8e7`.
 
 - [ ] **T11.1 - RED/GREEN: proposal review surface and authored draft accept path.**
   - RED: route/service tests:

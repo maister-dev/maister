@@ -189,7 +189,9 @@ erDiagram
         text task_id "NULL -> tasks(id) SET NULL"
         text run_id "NULL -> runs(id) SET NULL"
         timestamptz created_at
+        timestamptz updated_at
         timestamptz resolved_at
+        timestamptz applied_at
     }
 ```
 

@@ -98,11 +98,12 @@ or board tasks.
   `{ project_id PK, home_resolution, projection_flow_id, autonomy_policy? }`.
   Home resolution decides whether `decision`/`direction` are indexed canonical
   sources or owned items.
-- **`brain_proposals`** (Designed — brain migration `0004`) — C bridge:
+- **`brain_proposals`** (Implemented — brain migration `0004`) — C bridge:
   `{ id, project_id, kind, evidence_item_ids, draft, status, blast_radius,
   autonomy_decision, cluster_hash, actor fields, resolution fields,
-  authored_draft_id?, task_id?, run_id?, created_at, resolved_at }`. Proposal
-  status is a closed FSM; publishing is not part of Brain.
+  authored_draft_id?, task_id?, run_id?, created_at, updated_at, resolved_at,
+  applied_at }`. Proposal status is a closed FSM; publishing is not part of
+  Brain.
 - **Policy constants** (Implemented) — `web/lib/brain/policy.ts`: τ=0.85 (dedup cosine),
   confidence₀=0.3, TTL=30d, reinforce=+0.1 confidence / +30d `expires_at`, ambient
   K=5, `ambientMinConfidence`=0.4 (ambient-inject floor — one reinforce above
@@ -348,7 +349,7 @@ Owned hits return full owned content and provenance. Indexed hits return
 canonical `{sourcePath, sourceRange, stableId}`. Ambient injection keeps owned
 priority for K=5; indexed hits fill only remaining slots and are capped at two.
 
-### (i) Proposal bridge and docs projection (Designed — Sub-project C)
+### (i) Proposal bridge and docs projection (Partially Implemented — Sub-project C)
 
 ```mermaid
 stateDiagram-v2
@@ -360,12 +361,18 @@ stateDiagram-v2
     applied --> [*]
 ```
 
+`memory_clusters`, `memory_propose`, the `brain_proposals` pending FSM, and the
+core Brain Improver platform-agent definition are implemented.
 `memory_clusters` computes recurring evidence server-side and is read-only.
-`memory_propose` creates a pending proposal only. Rule/skill/flow acceptance
-creates M25 authored catalog drafts and requires catalog permission. ADR,
-roadmap, and state projection creates board tasks with drafted path/content and
-optional auto-launch metadata, then follows the normal task/run/promotion
-machine. Brain services never write repo files directly.
+`memory_propose` creates a pending proposal only. The improver runs from the
+external core package with workspace `none`, mode `session`, risk tier
+`read_only`, cron/manual triggers, and ADR-111 config defaults for
+`min_recurrence`, `kinds`, and `max_proposals_per_run`. Rule/skill/flow
+acceptance creates M25 authored catalog drafts and requires catalog permission
+(designed; T11). ADR, roadmap, and state projection creates board tasks with
+drafted path/content and optional auto-launch metadata, then follows the normal
+task/run/promotion machine (designed; T12). Brain services never write repo
+files directly.
 
 ### (j) Serena catalog seed (Designed — Sub-project C)
 

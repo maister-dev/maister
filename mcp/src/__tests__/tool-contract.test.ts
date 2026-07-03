@@ -117,6 +117,14 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "get",
     path: "/api/v1/ext/projects/{slug}/memory",
   },
+  memory_clusters: {
+    method: "get",
+    path: "/api/v1/ext/projects/{slug}/memory/clusters",
+  },
+  memory_propose: {
+    method: "post",
+    path: "/api/v1/ext/projects/{slug}/memory/proposals",
+  },
   memory_retain: {
     method: "post",
     path: "/api/v1/ext/projects/{slug}/memory",

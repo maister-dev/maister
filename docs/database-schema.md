@@ -2658,7 +2658,7 @@ Per-project home-resolution and projection policy.
 }
 ```
 
-### `brain_proposals` (Designed — migration `0004`)
+### `brain_proposals` (Implemented — migration `0004`)
 
 Self-improvement bridge from recurring evidence to reviewable drafts/tasks.
 Closed status FSM: `pending -> accepted -> applied` or `pending -> rejected`.
@@ -2675,10 +2675,10 @@ Closed status FSM: `pending -> accepted -> applied` or `pending -> rejected`.
   autonomyDecision,                // manual | auto_draft
   clusterHash?,
   actor, resolution,               // jsonb polymorphic audit fields
-  authoredDraftId?,
+  authoredDraftId?,                // linked authored revision id, nullable
   taskId?,                         // FK tasks(id) SET NULL
   runId?,                          // FK runs(id) SET NULL
-  createdAt, resolvedAt?
+  createdAt, updatedAt, resolvedAt?, appliedAt?
 }
 ```
 

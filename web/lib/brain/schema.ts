@@ -256,6 +256,39 @@ export const brainProjectConfig = pgTable("brain_project_config", {
     .defaultNow(),
 });
 
+export const brainProposals = pgTable("brain_proposals", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  kind: text("kind", {
+    enum: ["rule", "skill", "flow", "adr", "roadmap", "state"],
+  }).notNull(),
+  evidenceItemIds: jsonb("evidence_item_ids").$type<string[]>().notNull(),
+  draft: jsonb("draft").$type<Record<string, unknown>>().notNull(),
+  status: text("status", {
+    enum: ["pending", "accepted", "rejected", "applied"],
+  }).notNull(),
+  blastRadius: text("blast_radius", {
+    enum: ["low", "medium", "high"],
+  }).notNull(),
+  autonomyDecision: text("autonomy_decision", {
+    enum: ["manual", "auto_draft"],
+  }).notNull(),
+  clusterHash: text("cluster_hash"),
+  actor: jsonb("actor").$type<BrainProposalActor>().notNull(),
+  resolution: jsonb("resolution").$type<BrainProposalResolution | null>(),
+  authoredDraftId: text("authored_draft_id"),
+  taskId: text("task_id"),
+  runId: text("run_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+  appliedAt: timestamp("applied_at", { withTimezone: true, mode: "date" }),
+});
+
 export type BrainItemRow = typeof brainItems.$inferSelect;
 export type BrainItemInsert = typeof brainItems.$inferInsert;
 export type BrainSourceRow = typeof brainSources.$inferSelect;
@@ -268,11 +301,18 @@ export type BrainSnapshotRow = typeof brainSnapshots.$inferSelect;
 export type BrainSnapshotInsert = typeof brainSnapshots.$inferInsert;
 export type BrainIndexJobRow = typeof brainIndexJobs.$inferSelect;
 export type BrainIndexJobInsert = typeof brainIndexJobs.$inferInsert;
+export type BrainProposalRow = typeof brainProposals.$inferSelect;
+export type BrainProposalInsert = typeof brainProposals.$inferInsert;
 
 export type BrainItemKind = BrainItemRow["kind"];
 export type BrainItemStatus = BrainItemRow["status"];
 export type BrainSourceKind = BrainSourceRow["kind"];
 export type BrainIndexJobReason = BrainIndexJobRow["reason"];
+export type BrainProposalKind = BrainProposalRow["kind"];
+export type BrainProposalStatus = BrainProposalRow["status"];
+export type BrainProposalBlastRadius = BrainProposalRow["blastRadius"];
+export type BrainProposalAutonomyDecision =
+  BrainProposalRow["autonomyDecision"];
 
 export interface BrainSourceRange {
   startLine?: number;
@@ -285,6 +325,16 @@ export interface BrainSourceRef {
   sourcePath: string;
   stableId?: string;
   sourceRange?: BrainSourceRange | null;
+}
+
+export interface BrainProposalActor {
+  type: "user" | "agent" | "system";
+  id: string;
+}
+
+export interface BrainProposalResolution {
+  actor: BrainProposalActor;
+  reason?: string;
 }
 
 export type BrainGraphRef =

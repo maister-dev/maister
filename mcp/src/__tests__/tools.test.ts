@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 28 external tools (incl. personal HITL inbox + discovery + memory)", () => {
+  it("registers all 30 external tools (incl. personal HITL inbox + discovery + memory)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -62,6 +62,8 @@ describe("TOOL_SPECS registry", () => {
         "hitl_list",
         "hitl_respond",
         "memory_recall",
+        "memory_clusters",
+        "memory_propose",
         "memory_retain",
         "readiness_get",
         "relation_add",
@@ -274,6 +276,64 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       content: "use pnpm, never npm",
       kind: "state_fact",
       tags: ["tooling"],
+    });
+  });
+
+  it("memory_clusters → GET /api/v1/ext/projects/{slug}/memory/clusters with filters", async () => {
+    mockOnce({ clusters: [] }, 200);
+
+    await dispatchTool({
+      name: "memory_clusters",
+      args: {
+        slug: "demo",
+        kinds: ["lesson"],
+        minRecurrence: 3,
+        limit: 5,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/memory/clusters?kinds=lesson&minRecurrence=3&limit=5`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("memory_propose → POST /api/v1/ext/projects/{slug}/memory/proposals", async () => {
+    mockOnce({ proposalId: "p1", status: "pending", idempotent: false }, 201);
+
+    await dispatchTool({
+      name: "memory_propose",
+      args: {
+        slug: "demo",
+        kind: "rule",
+        evidenceItemIds: ["e1"],
+        draft: { title: "Rule draft" },
+        blastRadius: "low",
+        clusterHash: "cluster-1",
+        rationale: "recurs",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/memory/proposals`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({
+      kind: "rule",
+      evidenceItemIds: ["e1"],
+      draft: { title: "Rule draft" },
+      blastRadius: "low",
+      clusterHash: "cluster-1",
+      rationale: "recurs",
     });
   });
 

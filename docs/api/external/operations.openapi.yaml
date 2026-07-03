@@ -837,7 +837,7 @@ paths:
   /api/v1/ext/projects/{slug}/memory/clusters:
     get:
       tags: [memory]
-      summary: (ADR-128, Designed) List recurring Project Brain evidence clusters
+      summary: (ADR-128, Implemented) List recurring Project Brain evidence clusters
       description: |
         Scope `memory:read`. Computes recurring lesson/observation clusters
         server-side from embedding proximity and shared provenance. The route is
@@ -907,7 +907,7 @@ paths:
   /api/v1/ext/projects/{slug}/memory/proposals:
     post:
       tags: [memory]
-      summary: (ADR-128, Designed) Propose a Project Brain improvement
+      summary: (ADR-128, Implemented) Propose a Project Brain improvement
       description: |
         Scope `memory:write`. Creates a pending `brain_proposals` row from
         evidence and a draft payload. This route never accepts, applies,
@@ -2113,7 +2113,7 @@ components:
 
     ExtMemoryCluster:
       type: object
-      description: (ADR-128, Designed) Recurring evidence cluster for the improver.
+      description: (ADR-128, Implemented) Recurring evidence cluster for the improver.
       required: [clusterHash, kind, recurrence, evidenceItemIds, summary]
       properties:
         clusterHash: { type: string }
@@ -2136,7 +2136,7 @@ components:
 
     ExtMemoryProposalBody:
       type: object
-      description: (ADR-128, Designed) Submit a pending improvement proposal.
+      description: (ADR-128, Implemented) Submit a pending improvement proposal.
       required: [kind, draft]
       additionalProperties: false
       properties:
@@ -2164,7 +2164,7 @@ components:
 
     ExtMemoryProposalResult:
       type: object
-      description: (ADR-128, Designed) Pending proposal result.
+      description: (ADR-128, Implemented) Pending proposal result.
       required: [proposalId, status, idempotent]
       properties:
         proposalId: { type: string }

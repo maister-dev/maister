@@ -91,6 +91,55 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "q"],
     },
   },
+  memory_clusters: {
+    description:
+      "List recurring Project Brain evidence clusters for an improver agent. Server-computed from embedding proximity and shared provenance. Requires memory:read and can_read_brain for agent tokens.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        kinds: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["lesson", "observation", "state_fact"],
+          },
+        },
+        minRecurrence: { type: "integer", minimum: 2, maximum: 20 },
+        limit: { type: "integer", minimum: 1, maximum: 50 },
+      },
+      required: ["slug"],
+    },
+  },
+  memory_propose: {
+    description:
+      "Create a pending Project Brain improvement proposal from evidence and a draft. Never accepts, applies, publishes, or writes repo files. Requires memory:write and can_write_brain for agent tokens.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        kind: {
+          type: "string",
+          enum: ["rule", "skill", "flow", "adr", "roadmap", "state"],
+        },
+        evidenceItemIds: {
+          type: "array",
+          items: { type: "string" },
+        },
+        draft: {
+          type: "object",
+          additionalProperties: true,
+        },
+        blastRadius: {
+          type: "string",
+          enum: ["low", "medium", "high"],
+        },
+        clusterHash: { type: ["string", "null"] },
+        rationale: { type: "string" },
+      },
+      required: ["slug", "kind", "draft"],
+    },
+  },
   memory_retain: {
     description:
       "Retain a project-memory item (ADR-122). Embeds and dedup-or-reinforces. Requires the project's Brain to be enabled and (for agent tokens) can_write_brain. The body carries no project id.",
@@ -561,6 +610,58 @@ function resolveRouting(
       return {
         method: "GET",
         path: `/api/v1/ext/projects/${slug}/memory?${sp.toString()}`,
+      };
+    }
+    case "memory_clusters": {
+      const { slug, kinds, minRecurrence, limit } = args as {
+        slug: string;
+        kinds?: string[];
+        minRecurrence?: number;
+        limit?: number;
+      };
+      const sp = new URLSearchParams();
+
+      for (const k of kinds ?? []) sp.append("kinds", k);
+      if (minRecurrence !== undefined)
+        sp.set("minRecurrence", String(minRecurrence));
+      if (limit !== undefined) sp.set("limit", String(limit));
+
+      const suffix = sp.size > 0 ? `?${sp.toString()}` : "";
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/memory/clusters${suffix}`,
+      };
+    }
+    case "memory_propose": {
+      const {
+        slug,
+        kind,
+        evidenceItemIds,
+        draft,
+        blastRadius,
+        clusterHash,
+        rationale,
+      } = args as {
+        slug: string;
+        kind: string;
+        evidenceItemIds?: string[];
+        draft: Record<string, unknown>;
+        blastRadius?: string;
+        clusterHash?: string | null;
+        rationale?: string;
+      };
+      const body: Record<string, unknown> = { kind, draft };
+
+      if (evidenceItemIds !== undefined) body.evidenceItemIds = evidenceItemIds;
+      if (blastRadius !== undefined) body.blastRadius = blastRadius;
+      if (clusterHash !== undefined) body.clusterHash = clusterHash;
+      if (rationale !== undefined) body.rationale = rationale;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/memory/proposals`,
+        body,
       };
     }
     case "memory_retain": {
