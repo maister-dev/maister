@@ -194,6 +194,9 @@ export type LaunchRunInput = {
   // (the busy gate). Never bypasses the task gates. Manual-only — scheduled /
   // auto-launch / run-schedule paths never set it.
   allowConcurrent?: boolean;
+  // ADR-126 T10: launch-time auto-promotion opt-out. `false` ⇒ a `launch`-sourced
+  // promotion_hold is written at run INSERT; unset/true ⇒ no hold.
+  autoPromote?: boolean;
   // ADR-121 (INV-9): mark this run as auto-DRAINED — stamps runs.queue_admitted_at
   // at insert so it counts toward the per-project `maxInFlightAuto` share and is
   // distinguishable from manual/scratch/resume runs. Set ONLY by the unified
@@ -1069,6 +1072,12 @@ export async function* launchRunStaged(
             resolvedCapabilitySet,
             deliveryPolicySnapshot: deliveryPolicy,
             executionPolicy,
+            // ADR-126 T10: launch opt-out persists as a `launch`-sourced hold so
+            // the sweep never considers this run (survives rework like any hold).
+            promotionHold:
+              input.autoPromote === false
+                ? { source: "launch" as const, createdAt: new Date().toISOString() }
+                : null,
             // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
             // a normal board launch). The graph runner reads it to inject the
             // agent's persona on every ai_coding node.

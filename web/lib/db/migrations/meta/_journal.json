@@ -596,6 +596,13 @@
       "when": 1782982938394,
       "tag": "0088_mixed_hercules",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1783067286029,
+      "tag": "0089_auto_promotion_lanes",
+      "breakpoints": true
     }
   ]
 }

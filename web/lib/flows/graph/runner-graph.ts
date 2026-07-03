@@ -4221,7 +4221,9 @@ export async function runGraph(
     await db.transaction(async (tx: Db) => {
       const rows = await tx
         .update(runs)
-        .set({ status: "Review", endedAt, currentStepId: null })
+        // ADR-126 T8: stamp the auto-promotion grace anchor alongside the flip
+        // (a column, NOT a run.review domain emit — D-3).
+        .set({ status: "Review", endedAt, reviewEnteredAt: endedAt, currentStepId: null })
         .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
         .returning({ projectId: runs.projectId });
 

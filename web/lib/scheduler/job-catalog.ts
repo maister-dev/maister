@@ -9,6 +9,7 @@ export const ALL_SCHEDULER_JOB_KINDS = [
   "webhook_delivery",
   "domain_event_dispatch",
   "auto_launch_triaged",
+  "auto_promote",
 ] as const satisfies readonly SchedulerJobKind[];
 
 export const CREATABLE_SCHEDULER_JOB_KINDS = [
@@ -70,11 +71,17 @@ export const SCHEDULER_JOB_KIND_CATALOG: Record<
     filterable: true,
     systemManaged: true,
   },
+  auto_promote: {
+    creatable: false,
+    filterable: true,
+    systemManaged: true,
+  },
 };
 
 const SEEDED_SINGLETON_IDS: Partial<Record<SchedulerJobKind, string>> = {
   agent_tick: "agent_tick.dispatcher",
   auto_launch_triaged: "auto_launch_triaged.default",
+  auto_promote: "auto_promote.default",
   domain_event_dispatch: "domain_event_dispatch.default",
   run_schedule: "run_schedule.dispatcher",
   system_sweep: "system_sweep.default",

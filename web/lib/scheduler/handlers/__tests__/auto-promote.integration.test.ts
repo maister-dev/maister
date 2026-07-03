@@ -1,0 +1,334 @@
+import { randomUUID } from "node:crypto";
+
+import {
+  PostgreSqlContainer,
+  type StartedPostgreSqlContainer,
+} from "@testcontainers/postgresql";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { eq } from "drizzle-orm";
+import { Pool } from "pg";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import * as fullSchema from "@/lib/db/schema";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
+import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
+import { MaisterError } from "@/lib/errors";
+
+const mocks = vi.hoisted(() => ({
+  promoteRun: vi.fn(),
+  diffChangeStats: vi.fn(),
+  assertEvidenceReady: vi.fn(),
+}));
+
+let db: NodePgDatabase;
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/runs/promote", () => ({ promoteRun: mocks.promoteRun }));
+vi.mock("@/lib/worktree", async (orig) => ({
+  ...(await orig<typeof import("@/lib/worktree")>()),
+  diffChangeStats: mocks.diffChangeStats,
+}));
+vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
+  assertEvidenceReady: mocks.assertEvidenceReady,
+}));
+
+// Imported AFTER the mocks so the module graph binds the stubs.
+const { runAutoPromoteJob } = await import(
+  "@/lib/scheduler/handlers/auto-promote"
+);
+const { runSchedulerTick } = await import("@/lib/scheduler/tick-service");
+
+const schema = fullSchema as unknown as Record<string, any>;
+const { runs, workspaces, tasks, taskComments } = schema;
+
+let container: StartedPostgreSqlContainer;
+let pool: Pool;
+let projectId: string;
+let userId: string;
+let runnerId: string;
+let flowId: string;
+
+const docsFile = {
+  path: "README.md",
+  status: "M",
+  additions: 1,
+  deletions: 0,
+  binary: false,
+};
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer("postgres:16-alpine")
+    .withDatabase("maister_test")
+    .withUsername("test")
+    .withPassword("test")
+    .start();
+  pool = new Pool({ connectionString: container.getConnectionUri() });
+  db = drizzle(pool);
+  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+}, 180_000);
+
+afterAll(async () => {
+  await pool?.end();
+  await container?.stop();
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+  delete process.env.MAISTER_AUTO_PROMOTION;
+});
+
+beforeEach(async () => {
+  await pool.query(`DELETE FROM "task_comments"`);
+  await pool.query(`DELETE FROM "workspaces"`);
+  await pool.query(`DELETE FROM "runs"`);
+  await pool.query(`DELETE FROM "tasks"`);
+  await pool.query(`DELETE FROM "flows"`);
+  await pool.query(`DELETE FROM "platform_acp_runners"`);
+  await pool.query(`DELETE FROM "projects"`);
+  await pool.query(`DELETE FROM "users"`);
+  await pool.query(`DELETE FROM "scheduler_job_runs"`);
+  await pool.query(`DELETE FROM "scheduler_jobs"`);
+
+  delete process.env.MAISTER_AUTO_PROMOTION;
+  vi.clearAllMocks();
+  mocks.diffChangeStats.mockResolvedValue([docsFile]);
+  mocks.assertEvidenceReady.mockResolvedValue({ ready: true });
+  mocks.promoteRun.mockResolvedValue({});
+
+  projectId = randomUUID();
+  userId = randomUUID();
+  runnerId = randomUUID();
+  flowId = randomUUID();
+
+  await db
+    .insert(schema.users)
+    .values({ id: userId, email: `u-${userId.slice(0, 8)}@t.test` });
+  await db.insert(schema.projects).values({
+    id: projectId,
+    slug: `p-${projectId.slice(0, 8)}`,
+    name: "P",
+    repoPath: `/repos/${projectId}`,
+    maisterYamlPath: "/tmp/m.yaml",
+    taskKey: `T${projectId.replace(/[^0-9A-Za-z]/g, "").slice(0, 7).toUpperCase()}`,
+    autoPromotion: { enabled: true, lanes: BUILT_IN_LANES },
+  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(runnerId, "claude"));
+  await db.insert(schema.flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "g",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/g",
+    manifest: {},
+    schemaVersion: 1,
+  });
+});
+
+let taskCounter = 0;
+
+async function seedReviewRun(
+  overrides: {
+    reviewMinutesAgo?: number | null;
+    promotionHold?: unknown;
+    workspaceMode?: string | null;
+    status?: string;
+  } = {},
+): Promise<string> {
+  const runId = randomUUID();
+  const taskId = randomUUID();
+  taskCounter += 1;
+
+  await db.insert(tasks).values({
+    id: taskId,
+    projectId,
+    number: taskCounter,
+    title: "t",
+    prompt: "p",
+    status: "InFlight",
+  });
+
+  const reviewMinutesAgo =
+    overrides.reviewMinutesAgo === undefined ? 30 : overrides.reviewMinutesAgo;
+
+  await db.insert(runs).values({
+    id: runId,
+    projectId,
+    taskId,
+    flowId,
+    runnerId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(runnerId),
+    flowVersion: "v1.0.0",
+    status: overrides.status ?? "Review",
+    runKind: "flow",
+    createdByUserId: userId,
+    workspaceMode: overrides.workspaceMode ?? null,
+    promotionHold: overrides.promotionHold ?? null,
+    reviewEnteredAt:
+      reviewMinutesAgo === null
+        ? null
+        : new Date(Date.now() - reviewMinutesAgo * 60_000),
+  });
+
+  await db.insert(workspaces).values({
+    id: randomUUID(),
+    runId,
+    projectId,
+    branch: `maister/${runId.slice(0, 8)}`,
+    worktreePath: `/tmp/wt/${runId}`,
+    parentRepoPath: `/repos/${projectId}`,
+    baseCommit: "abc123",
+    promotionState: "none",
+  });
+
+  return { runId, taskId } as unknown as string;
+}
+
+async function commentCount(taskId: string): Promise<number> {
+  const rows = await db
+    .select({ id: taskComments.id })
+    .from(taskComments)
+    .where(eq(taskComments.taskId, taskId));
+
+  return rows.length;
+}
+
+describe("runAutoPromoteJob — AC-1 happy path", () => {
+  it("promotes an eligible docs run via promoteRun with system attribution + posts one comment", async () => {
+    const { runId, taskId } = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(summary.promoted).toBe(1);
+    expect(mocks.promoteRun).toHaveBeenCalledTimes(1);
+    expect(mocks.promoteRun).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({
+        autoOnReady: true,
+        attribution: { source: "auto_promotion", laneClass: "docs" },
+      }),
+      expect.objectContaining({ actor: { kind: "system" } }),
+      db,
+    );
+    expect(await commentCount(taskId)).toBe(1);
+  });
+});
+
+describe("runAutoPromoteJob — AC-5 readiness gate", () => {
+  it("skips (no promote) when readiness is not green", async () => {
+    mocks.assertEvidenceReady.mockRejectedValue(
+      new MaisterError("PRECONDITION", "not ready"),
+    );
+    await seedReviewRun();
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
+    expect(summary.promoted).toBe(0);
+  });
+});
+
+describe("runAutoPromoteJob — AC-6 conflict give-up", () => {
+  it("on CONFLICT sets a system hold + exactly one comment; a second tick does nothing", async () => {
+    mocks.promoteRun.mockRejectedValue(new MaisterError("CONFLICT", "conflict"));
+    const { runId, taskId } = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+
+    const first = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(first.gaveUp).toBe(1);
+
+    const [row] = await db
+      .select({ hold: runs.promotionHold })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    expect(row.hold?.source).toBe("system");
+    expect(await commentCount(taskId)).toBe(1);
+
+    // Second tick: the held run is excluded by the prefilter → no dup.
+    mocks.promoteRun.mockClear();
+    const second = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
+    expect(second.candidates).toBe(0);
+    expect(await commentCount(taskId)).toBe(1);
+  });
+});
+
+describe("runAutoPromoteJob — AC-8 holds, toggles, kill switch", () => {
+  it("a launch-held run is never a candidate", async () => {
+    await seedReviewRun({
+      promotionHold: { source: "launch", createdAt: new Date().toISOString() },
+    });
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(summary.candidates).toBe(0);
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
+  });
+
+  it("the platform env kill switch stops the tick", async () => {
+    process.env.MAISTER_AUTO_PROMOTION = "off";
+    await seedReviewRun();
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(summary.candidates).toBe(0);
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
+  });
+
+  it("the project master toggle off makes the run ineligible", async () => {
+    await db
+      .update(schema.projects)
+      .set({ autoPromotion: { enabled: false, lanes: BUILT_IN_LANES } })
+      .where(eq(schema.projects.id, projectId));
+    await seedReviewRun();
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
+    expect(summary.promoted).toBe(0);
+  });
+});
+
+describe("runSchedulerTick × auto_promote — through-dispatch (codex F2)", () => {
+  it("the real claim→dispatch path runs the sweep handler (a missing case would leave promote uncalled)", async () => {
+    const { runId } = (await seedReviewRun()) as unknown as { runId: string };
+
+    // runSchedulerTick seeds the auto_promote.default singleton, claims it, and
+    // dispatches through runClaimedJob → case "auto_promote" → the handler (which
+    // uses the module-mocked promoteRun).
+    await runSchedulerTick({ jobKind: "auto_promote" });
+
+    expect(mocks.promoteRun).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({
+        attribution: { source: "auto_promotion", laneClass: "docs" },
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+});

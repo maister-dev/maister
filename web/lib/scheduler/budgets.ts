@@ -8,7 +8,8 @@ export type SchedulerBudgetKey =
   | "run_schedule"
   | "webhook_delivery"
   | "domain_event_dispatch"
-  | "auto_launch_triaged";
+  | "auto_launch_triaged"
+  | "auto_promote";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
@@ -19,6 +20,7 @@ export type SchedulerBudgetLimits = {
   webhookDelivery: number;
   domainEventDispatch: number;
   autoLaunchTriaged: number;
+  autoPromote: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -38,6 +40,9 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     // ADR-112: the seeded singleton tick — one attempt at a time (run_schedule
     // precedent). Idempotency rides the per-task live-flow-run guard.
     autoLaunchTriaged: 1,
+    // ADR-126: the seeded singleton auto-promotion sweep — one attempt at a
+    // time. The singleton lease prevents overlapping ticks during a long merge.
+    autoPromote: 1,
   };
 }
 

@@ -47,6 +47,7 @@ import {
 } from "@/lib/worktree";
 import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import type { LaneClass } from "@/lib/auto-promotion/config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, scratchRuns, workspaces, projects } =
@@ -68,6 +69,10 @@ export type PromoteRunInput = {
   reviewedTargetCommit?: string;
   allowTargetDrift?: boolean;
   autoOnReady?: boolean;
+  // ADR-126 T11: auto-promotion attribution. When present, finalize writes
+  // `workspaces.promotion_lane = laneClass` (the "auto" glyph datum). Omitted by
+  // every human/scratch/child caller — no behavior change for them.
+  attribution?: { source: "auto_promotion"; laneClass: LaneClass };
 };
 
 export type PromoteRunContext = {
@@ -696,6 +701,7 @@ async function promoteWorkspaceRun(
       // after a transient push failure still force-updates the already-rewritten
       // branch onto a remote that may hold the old history (no non-fast-forward).
       forcePush: squashesRunHistory(claim),
+      promotionLane: input.attribution?.laneClass ?? null,
     });
   }
 
@@ -945,6 +951,8 @@ async function promoteWorkspaceRun(
         promotionState: "done",
         promotedAt: now,
         scheduledRemovalAt,
+        // ADR-126 T11: the "auto" glyph datum (null for human/scratch callers).
+        promotionLane: input.attribution?.laneClass ?? null,
       })
       .where(
         and(
@@ -1079,6 +1087,8 @@ async function promotePullRequestSideEffect(args: {
   // C2: the run branch was squash-rewritten pre-push, so an existing PR branch
   // must be force-updated (--force-with-lease). False when no squash ran.
   forcePush?: boolean;
+  // ADR-126 T11: threaded to finalize for the workspaces.promotion_lane write.
+  promotionLane: LaneClass | null;
 }): Promise<PromoteRunResult> {
   const { runId, ctx, db, claim } = args;
   const project = await loadProject(db, claim.run.projectId);
@@ -1115,7 +1125,14 @@ async function promotePullRequestSideEffect(args: {
       body: prBody(claim),
     });
 
-    return finalizePullRequest({ runId, ctx, db, claim, pr });
+    return finalizePullRequest({
+      runId,
+      ctx,
+      db,
+      claim,
+      pr,
+      promotionLane: args.promotionLane,
+    });
   } catch (err) {
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
       // Transient: leave the claim `claiming`; do NOT mark failed, do NOT write
@@ -1143,8 +1160,9 @@ async function finalizePullRequest(args: {
   db: Db;
   claim: FlowClaim;
   pr: { url: string; number: number };
+  promotionLane: LaneClass | null;
 }): Promise<PromoteRunResult> {
-  const { runId, db, claim, pr } = args;
+  const { runId, db, claim, pr, promotionLane } = args;
 
   const result = await db.transaction(async (tx: Db) => {
     const ws = await loadWorkspaceForUpdate(tx, runId);
@@ -1189,6 +1207,8 @@ async function finalizePullRequest(args: {
         scheduledRemovalAt,
         prUrl: pr.url,
         prNumber: pr.number,
+        // ADR-126 T11: the "auto" glyph datum (null for human/scratch callers).
+        promotionLane,
       })
       .where(
         and(

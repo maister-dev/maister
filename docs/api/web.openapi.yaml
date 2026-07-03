@@ -6968,6 +6968,7 @@ paths:
                 webhook_delivery,
                 domain_event_dispatch,
                 auto_launch_triaged,
+                auto_promote,
               ]
       responses:
         "200":
@@ -7006,6 +7007,7 @@ paths:
                 webhook_delivery,
                 domain_event_dispatch,
                 auto_launch_triaged,
+                auto_promote,
               ]
       responses:
         "200":

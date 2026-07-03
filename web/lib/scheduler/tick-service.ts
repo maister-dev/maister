@@ -14,6 +14,7 @@ import {
 import { dispatchDueSchedules } from "@/lib/run-schedules/dispatch";
 import { runAgentTickJob } from "@/lib/scheduler/handlers/agent-tick";
 import { runAutoLaunchTriagedJob } from "@/lib/scheduler/handlers/auto-launch-triaged";
+import { runAutoPromoteJob } from "@/lib/scheduler/handlers/auto-promote";
 import { runCommandJob } from "@/lib/scheduler/handlers/command";
 import { runDomainEventDispatchJob } from "@/lib/scheduler/handlers/domain-event-dispatch";
 import { runScheduledFlowJob } from "@/lib/scheduler/handlers/flow-run";
@@ -173,6 +174,15 @@ async function runClaimedJob(
           attemptId: job.attemptId,
           status: "Succeeded",
           summary: await runAutoLaunchTriagedJob(),
+        });
+
+        return succeeded(job);
+      case "auto_promote":
+        await recordJobAttemptResult({
+          jobId: job.id,
+          attemptId: job.attemptId,
+          status: "Succeeded",
+          summary: await runAutoPromoteJob(),
         });
 
         return succeeded(job);

@@ -45,6 +45,10 @@ const postBodySchema = z
     // to runs.brain_context; null/absent = inherit the flow default at
     // ambient-inject time (T4.3). No recall/embedding runs at launch.
     brainContext: z.boolean().nullable().optional(),
+    // ADR-126 T10: opt this run OUT of auto-promotion. Default true; `false`
+    // persists a `launch`-sourced promotion_hold at run INSERT so the sweep
+    // never considers it.
+    autoPromote: z.boolean().optional(),
   })
   .strict();
 
@@ -137,6 +141,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     packageVersions: body.packageVersions,
     allowConcurrent: body.allowConcurrent,
     brainContext: body.brainContext,
+    autoPromote: body.autoPromote,
   };
   const ctx = {
     actorUserId: user.id,

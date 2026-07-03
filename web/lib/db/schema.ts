@@ -4,6 +4,8 @@ import type {
 } from "@/lib/runs/delivery-policy";
 import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskQueueSettings } from "@/lib/tasks/queue-settings";
+import type { AutoPromotionConfig, LaneClass } from "@/lib/auto-promotion/config";
+import type { PromotionHold } from "@/lib/auto-promotion/types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -142,6 +144,10 @@ export const projects = pgTable("projects", {
   // ADR-121: per-project queue settings (`{ edgeDrain?, maxInFlightAuto? }`).
   // NULL ⇒ env defaults apply (resolved live at admission, never snapshotted).
   taskQueueSettings: jsonb("task_queue_settings").$type<TaskQueueSettings | null>(),
+  // ADR-126: auto-promotion lane config. NULL ⇒ shipped defaults with master OFF
+  // (resolved live via resolveAutoPromotionConfig, never snapshotted — the sweep
+  // enforces current operator intent, D-8).
+  autoPromotion: jsonb("auto_promotion").$type<AutoPromotionConfig | null>(),
   // ADR-122 (Project Brain): Brain on for this repo. Enable-gate refuses CONFIG
   // unless platform embedding + distill config are set (a project can never be
   // enabled into an unharvest-able state).
@@ -625,7 +631,8 @@ export type SchedulerJobKind =
   | "run_schedule"
   | "webhook_delivery"
   | "domain_event_dispatch"
-  | "auto_launch_triaged";
+  | "auto_launch_triaged"
+  | "auto_promote";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -650,6 +657,7 @@ export const schedulerJobs = pgTable(
         "webhook_delivery",
         "domain_event_dispatch",
         "auto_launch_triaged",
+        "auto_promote",
       ],
     }).notNull(),
     target: jsonb("target")
@@ -709,6 +717,7 @@ export const schedulerJobRuns = pgTable(
         "webhook_delivery",
         "domain_event_dispatch",
         "auto_launch_triaged",
+        "auto_promote",
       ],
     }).notNull(),
     status: text("status", {
@@ -1466,6 +1475,18 @@ export const runs = pgTable(
       .$type<ExecutionPolicy>()
       .notNull()
       .default({ preset: "supervised" }),
+    // ADR-126: auto-promotion hold. NULL ⇒ no hold. Survives rework by
+    // construction (never cleared by state transitions). `launch` source is
+    // written at run INSERT when the launcher opts out; `system` on give-up.
+    promotionHold: jsonb("promotion_hold").$type<PromotionHold | null>(),
+    // ADR-126: grace-window anchor, stamped alongside status='Review' at every
+    // flow Review-flip site. NULL ⇒ no anchor ⇒ fail-closed (legacy runs stay
+    // manual). Re-stamped on rework re-entry ⇒ grace window restarts. Consumed
+    // by no domain-event consumer (D-3 — a column, NOT a run.review emit).
+    reviewEnteredAt: timestamp("review_entered_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     // Cost-budget governance (migration 0061): per-run mutable budget state —
     // raise-and-resume ceiling override + per-scope notified rung (idempotency).
     // Nullable: a run with no budget interaction never writes this column.
@@ -1668,6 +1689,10 @@ export const workspaces = pgTable("workspaces", {
   prNumber: integer("pr_number"),
   promotedAt: timestamp("promoted_at", { withTimezone: true, mode: "date" }),
   promotionState: text("promotion_state").notNull().default("none"),
+  // ADR-126: lane class written by promoteRun finalize when the input carries
+  // auto-promotion attribution — the queryable "auto" glyph datum. NULL ⇒ the
+  // run was promoted manually (or not yet promoted).
+  promotionLane: text("promotion_lane").$type<LaneClass | null>(),
   promotionClaimedAt: timestamp("promotion_claimed_at", {
     withTimezone: true,
     mode: "date",

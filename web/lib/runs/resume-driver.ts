@@ -293,9 +293,16 @@ async function completeResumedStepAndHandoff(
     // Last step. Transition Review terminally — same final state
     // runFlow would have written if it had executed the last step.
     const rows = await db.transaction(async (tx: Db) => {
+      // ADR-126 T8: one instant shared by endedAt + the grace anchor.
+      const reviewAt = new Date();
       const updatedRows = await tx
         .update(runs)
-        .set({ status: "Review", endedAt: new Date(), currentStepId: null })
+        .set({
+          status: "Review",
+          endedAt: reviewAt,
+          reviewEnteredAt: reviewAt,
+          currentStepId: null,
+        })
         .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
         .returning({ id: runs.id, projectId: runs.projectId });
 

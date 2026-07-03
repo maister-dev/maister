@@ -1662,6 +1662,9 @@ async function markRunStoppedAndCloseAssignments(args: {
         status: "Review",
         currentStepId: null,
         endedAt: args.endedAt,
+        // ADR-126 T8: a manual-takeover return is a fresh Review entry — restart
+        // the auto-promotion grace window.
+        reviewEnteredAt: args.endedAt,
       })
       .where(and(eq(runs.id, args.runId), inArray(runs.status, STOP_STATUSES)))
       .returning({ id: runs.id, projectId: runs.projectId });
