@@ -143,6 +143,10 @@ tags:
       (Implemented, ADR-093) Per-project git surface — persist the DB config back
       to `maister.yaml` (commit + opt-in push) and manage git remotes
       (list/add/edit/remove + push/fetch/set-upstream). Host-ambient auth.
+  - name: brain
+    description: >-
+      Project Brain session-auth surface: Consultant page data, indexed sources,
+      proposal review, project settings, and admin defaults (ADR-122/127/128).
 paths:
   /api/admin/acp-runners:
     get:
@@ -10436,6 +10440,259 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/projects/{slug}/brain:
+    get:
+      tags: [brain]
+      summary: (ADR-127/128, Designed) Read Project Brain page data
+      description: |
+        Requires `readBrain`. Returns the search/read model for the Project
+        Brain page: owned/indexed recall hits, source summaries, proposal
+        summaries, and degraded edge counts. Source file content is not returned;
+        pointer opening must call the existing project files route and therefore
+        also pass `readRepoFiles`.
+      operationId: getProjectBrain
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2000
+        - name: tab
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [memories, sources, proposals]
+      responses:
+        "200":
+          description: Project Brain page data.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectBrainPage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Brain disabled or invalid query (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/brain/sources:
+    get:
+      tags: [brain]
+      summary: (ADR-127, Designed) List Project Brain indexed sources
+      description: Requires `readBrain`; returns source metadata only.
+      operationId: listProjectBrainSources
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      responses:
+        "200":
+          description: Source list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items: { $ref: "#/components/schemas/BrainSource" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [brain]
+      summary: (ADR-127, Designed) Add a Project Brain source
+      description: |
+        Requires `editSettings`. The slug resolves the project server-side;
+        body paths/globs are repo-relative and validated before any git read.
+      operationId: postProjectBrainSource
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrainSourceInput" }
+      responses:
+        "201":
+          description: Source created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrainSource" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Invalid source path/glob/kind (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/brain/sources/{sourceId}:
+    patch:
+      tags: [brain]
+      summary: (ADR-127, Designed) Update a Project Brain source
+      description: Requires `editSettings`; enables/disables or edits source metadata.
+      operationId: patchProjectBrainSource
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - name: sourceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrainSourceInput" }
+      responses:
+        "200":
+          description: Source updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrainSource" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Invalid source update (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [brain]
+      summary: (ADR-127, Designed) Remove a Project Brain source
+      description: Requires `editSettings`; deletes source, chunks, chunk embeddings, and edges by cascade.
+      operationId: deleteProjectBrainSource
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - name: sourceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Source removed. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{slug}/brain/sources/{sourceId}/reindex:
+    post:
+      tags: [brain]
+      summary: (ADR-127, Designed) Reindex a Project Brain source
+      description: Requires `editSettings`; enqueues a source-scoped manual index job.
+      operationId: postProjectBrainSourceReindex
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - name: sourceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Reindex job enqueued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobId]
+                properties:
+                  jobId: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{slug}/brain/proposals/{proposalId}/conclusion:
+    post:
+      tags: [brain]
+      summary: (ADR-128, Designed) Accept or reject a Brain proposal
+      description: |
+        Human/session route. `accept` for rule/skill/flow requires the same
+        catalog permission as authored draft creation (`manageCatalog`).
+        `accept` for adr/roadmap/state projection requires the task action
+        chosen by policy (`createTask` or `editTask`). `reject` records a human
+        reason. Agent tokens cannot conclude proposals.
+      operationId: postProjectBrainProposalConclusion
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - name: proposalId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrainProposalConclusionBody" }
+      responses:
+        "200":
+          description: Proposal concluded or applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrainProposal" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Invalid transition or invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/settings/brain:
+    get:
+      tags: [brain]
+      summary: (ADR-127/128, Designed) Read project Brain settings
+      description: Requires `readBrain`; returns enablement, home resolution, projection flow, and autonomy overrides.
+      operationId: getProjectBrainSettings
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      responses:
+        "200":
+          description: Project Brain settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectBrainSettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [brain]
+      summary: (ADR-127/128, Designed) Update project Brain settings
+      description: |
+        Requires `editSettings`. Enabling still requires platform embedding and
+        distill settings. Saves home-resolution and projection/autonomy config;
+        `auto_publish` is not an allowed value.
+      operationId: patchProjectBrainSettings
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectBrainSettingsInput" }
+      responses:
+        "200":
+          description: Updated project Brain settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectBrainSettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Invalid settings (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/admin/brain-settings:
     get:
       tags: [admin]
@@ -15919,13 +16176,225 @@ components:
           nullable: true
           description: Cursor for the next page, or `null` at the end.
 
+    BrainPointer:
+      type: object
+      description: Canonical source pointer for an indexed Brain hit.
+      required: [sourcePath, stableId]
+      properties:
+        sourcePath: { type: string }
+        stableId: { type: string }
+        sourceRange:
+          type: object
+          nullable: true
+          properties:
+            startLine: { type: integer, minimum: 1 }
+            endLine: { type: integer, minimum: 1 }
+
+    BrainRecallHit:
+      oneOf:
+        - { $ref: "#/components/schemas/BrainOwnedHit" }
+        - { $ref: "#/components/schemas/BrainIndexedHit" }
+      discriminator:
+        propertyName: tier
+        mapping:
+          owned: "#/components/schemas/BrainOwnedHit"
+          indexed: "#/components/schemas/BrainIndexedHit"
+
+    BrainOwnedHit:
+      type: object
+      required: [tier, itemId, kind, title, content, confidence, score]
+      properties:
+        tier: { type: string, enum: [owned] }
+        itemId: { type: string }
+        kind:
+          type: string
+          enum: [lesson, observation, state_fact, decision, direction]
+        title: { type: string }
+        content: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        score: { type: number }
+        provenance:
+          type: object
+          additionalProperties: true
+
+    BrainIndexedHit:
+      type: object
+      required: [tier, chunkId, kind, title, preview, confidence, score, pointer]
+      properties:
+        tier: { type: string, enum: [indexed] }
+        chunkId: { type: string }
+        kind:
+          type: string
+          enum: [decision, direction, lesson, observation, state_fact]
+        title: { type: string }
+        preview:
+          type: string
+          maxLength: 800
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        score: { type: number }
+        pointer: { $ref: "#/components/schemas/BrainPointer" }
+
+    BrainSource:
+      type: object
+      required:
+        [id, kind, path, chunkerId, chunkerVersion, enabled, chunkCount]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum:
+            [repo_file, markdown, html, openapi, asyncapi, sql, flow_yaml, package_yaml, agent_md, code, text]
+        path: { type: string }
+        chunkerId: { type: string }
+        chunkerVersion: { type: string }
+        enabled: { type: boolean }
+        sourceHash:
+          type: string
+          nullable: true
+        lastIndexedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
+          type: object
+          nullable: true
+          additionalProperties: true
+        chunkCount:
+          type: integer
+          minimum: 0
+
+    BrainSourceInput:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum:
+            [repo_file, markdown, html, openapi, asyncapi, sql, flow_yaml, package_yaml, agent_md, code, text]
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Repo-relative file path or allowed glob.
+        chunkerId:
+          type: string
+          minLength: 1
+        enabled:
+          type: boolean
+
+    BrainProposal:
+      type: object
+      required: [id, kind, status, blastRadius, autonomyDecision, createdAt]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [rule, skill, flow, adr, roadmap, state]
+        status:
+          type: string
+          enum: [pending, accepted, rejected, applied]
+        blastRadius:
+          type: string
+          enum: [low, medium, high]
+        autonomyDecision:
+          type: string
+          enum: [manual, auto_draft]
+        evidenceItemIds:
+          type: array
+          items: { type: string }
+        draft:
+          type: object
+          additionalProperties: true
+        authoredDraftId:
+          type: string
+          nullable: true
+        taskId:
+          type: string
+          nullable: true
+        runId:
+          type: string
+          nullable: true
+        createdAt: { type: string, format: date-time }
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    BrainProposalConclusionBody:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [accept, reject]
+        reason:
+          type: string
+          maxLength: 2000
+
+    ProjectBrainPage:
+      type: object
+      required: [items, sources, proposals, degradedEdgeCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BrainRecallHit" }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/BrainSource" }
+        proposals:
+          type: array
+          items: { $ref: "#/components/schemas/BrainProposal" }
+        degradedEdgeCount:
+          type: integer
+          minimum: 0
+
+    ProjectBrainSettings:
+      type: object
+      required: [brainEnabled, homeResolution, autonomyDefaults]
+      properties:
+        brainEnabled: { type: boolean }
+        homeResolution:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [owned, indexed]
+        projectionFlowId:
+          type: string
+          nullable: true
+        autonomyDefaults:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [manual, auto_draft]
+
+    ProjectBrainSettingsInput:
+      type: object
+      additionalProperties: false
+      properties:
+        brainEnabled: { type: boolean }
+        homeResolution:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [owned, indexed]
+        projectionFlowId:
+          type: string
+          nullable: true
+        autonomyDefaults:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [manual, auto_draft]
+
     BrainSettings:
       type: object
       description: |
-        (ADR-122) Platform Project-Brain embedding + distillation config on the
+        (ADR-122/128) Platform Project-Brain embedding + distillation config on the
         singleton `platform_runtime_settings` row. All fields nullable; the API key
-        is an `env:NAME` reference only (never the secret). GET returns the current
-        values; PATCH sets them (a `null` value clears that field).
+        is an `env:NAME` reference only (never the secret). B/C also store admin
+        autonomy defaults; allowed values stop at `auto_draft`. GET returns the
+        current values; PATCH sets them (a `null` value clears nullable fields).
       additionalProperties: false
       properties:
         embeddingBaseUrl:
@@ -15955,6 +16424,12 @@ components:
           type: string
           nullable: true
           description: Completion model for harvest distillation (required to enable any project).
+        autonomyDefaults:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [manual, auto_draft]
+          description: ADR-128 admin defaults by proposal kind/blast radius; `auto_publish` is not allowed.
 
     WebhookSettings:
       type: object

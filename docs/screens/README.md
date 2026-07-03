@@ -134,6 +134,9 @@ flowchart TD
     Portfolio --> AddProject["projects/add-project /projects/new — admin"]
     Board --> SettingsGit["projects/project-settings-git /projects/SLUG?tab=settings — admin/owner"]
     Board --> SettingsAgents["projects/project-settings-agents /projects/SLUG?tab=settings — Implemented (M39, ADR-106)"]
+    Board --> ProjectBrain["projects/project-brain /projects/SLUG/brain — Designed (ADR-127/128)"]
+    Board --> SettingsBrain["projects/project-settings-brain /projects/SLUG?tab=settings — Designed (ADR-127/128)"]
+    Settings --> SettingsBrainAdmin["settings-brain — Admin Brain settings"]
     Rail --> RunsList["Runs ledger /runs"]
     RunsList --> FlowRun["Flow run detail /runs/ID"]
     Board --> FlowRun["Flow run detail /runs/ID"]
@@ -159,11 +162,14 @@ flowchart TD
 | [`account.md`](account.md) | Account settings (profile, password, personal API tokens) | `/account` | Implemented profile/password; personal API tokens Designed |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
+| [`settings-brain.md`](settings-brain.md) | Settings → Brain provider/autonomy defaults (admin) | `/settings` | Implemented A provider config; Designed C autonomy |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
 | [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Implemented (M39, ADR-106) |
+| [`projects/project-settings-brain.md`](projects/project-settings-brain.md) | Project Settings → Brain (enablement, home resolution, projection flow) | `/projects/{slug}?tab=settings` | Designed (ADR-127/128) |
+| [`projects/project-brain.md`](projects/project-brain.md) | Project Brain (memory search, sources, proposals) | `/projects/{slug}/brain` | Designed (ADR-127/128) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented; standalone artifact pickers / move-to-package planned |
 | [`studio/package-viewer.md`](studio/package-viewer.md) | Package viewer (BoM tabs, wide flow previews, flow/skill/agent detail) | `/studio/packages/{ref}` | Implemented |
 | [`studio/local-workspace.md`](studio/local-workspace.md) | Local packages workspace (create/import/edit/delete) | `/studio/local` | Implemented |

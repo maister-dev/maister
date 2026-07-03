@@ -7,6 +7,7 @@
     "local:blast-maister-state": "node scripts/blast-maister-local-state.mjs",
     "test:local-reset": "node --test scripts/blast-maister-local-state.test.mjs",
     "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs",
+    "validate:contracts": "node scripts/validate-contracts.mjs",
     "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all",
     "validate:docs:adr": "node scripts/validate-docs-adr-anchors.mjs",
     "validate:docs:adr:all": "node scripts/validate-docs-adr-anchors.mjs --all",
@@ -14,6 +15,7 @@
   },
   "devDependencies": {
     "jsdom": "^25.0.1",
-    "mermaid": "^11.4.1"
+    "mermaid": "^11.4.1",
+    "yaml": "^2.9.0"
   }
 }

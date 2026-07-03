@@ -179,7 +179,7 @@ implementation starts and the owner chooses the milestone slot.
 
 ### Phase 0 - SDD, Contracts, and Numbering
 
-- [ ] **T0.1 - Preflight prerequisite and collision audit.**
+- [x] **T0.1 - Preflight prerequisite and collision audit.**
   - Verify the P7 marker regression fix from the pasted prerequisite is landed
     on `main` before starting Sub-project B. Specifically inspect
     `web/lib/flows/graph/runner-graph.ts` and `web/lib/flows/graph/run-context.ts`
@@ -210,7 +210,7 @@ implementation starts and the owner chooses the milestone slot.
   - Files: this plan or `.ai-factory/specs/project-brain-bc-preflight.md`.
   - Verify: `git --no-pager diff --check`.
 
-- [ ] **T0.2 - RED-free SDD traceability freeze.**
+- [x] **T0.2 - RED-free SDD traceability freeze.**
   - Update/create the SDD artifact that implementation treats as the SSOT for
     B/C. Keep `docs/plans/2026-07-01-project-brain-architecture.md` as the
     design source; add B/C as-built pins only where the old phasing text still
@@ -231,7 +231,7 @@ implementation starts and the owner chooses the milestone slot.
   - Files: `docs/plans/2026-07-01-project-brain-architecture.md`, this plan.
   - Verify: `pnpm validate:docs`.
 
-- [ ] **T0.3 - Contract-first docs and ADRs before code.**
+- [x] **T0.3 - Contract-first docs and ADRs before code.**
   - Add ADR-B for the Consultant/indexed tier: schema, full built-in chunker
     lineup, source selection, pointers, home-resolution, state_fact supersede,
     edges/re-anchor, ambient tier-mix.
@@ -270,7 +270,7 @@ implementation starts and the owner chooses the milestone slot.
   - Verify: `pnpm validate:docs`; Redocly lint for changed OpenAPI files;
     AsyncAPI CLI only if an AsyncAPI file changes.
 
-- [ ] **T0.4 - Contract validator tooling gate.**
+- [x] **T0.4 - Contract validator tooling gate.**
   - If Redocly/AsyncAPI CLIs are not reliably available in the implementation
     environment, add a minimal root `validate:contracts` script and dev
     dependencies instead of relying on ad-hoc global tools. Keep package

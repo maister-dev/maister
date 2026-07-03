@@ -150,6 +150,8 @@
 | [ADR-122](#adr-122-project-brain-per-project-memory-substrate) | Project Brain (per-project memory substrate): build-thin pgvector, two migration lineages, immutable per-generation embeddings, harvest/decay owned tier, RecallRanker seam, 4-layer enablement (Sub-project A) | Accepted | 2026-07-02 |
 | [ADR-125](#adr-125-budget-breach-four-way-fork-with-staged-claims) | Budget-breach four-way fork with staged claims | Accepted | 2026-07-02 |
 | [ADR-126](#adr-126-auto-promotion-lanes) | Auto-promotion lanes: project-scoped path/content-bounded diff classes (docs/tests/deps/config) promoted through the same `promoteRun` choke point, non-configurable hard deny-list security boundary, `runs.review_entered_at` grace anchor, CAS hold give-up, deps supply-chain hardening | Proposed | 2026-07-03 |
+| [ADR-127](#adr-127-project-brain-consultant-indexed-tier) | Project Brain Consultant indexed tier | Accepted | 2026-07-03 |
+| [ADR-128](#adr-128-project-brain-self-improvement-proposal-bridge) | Project Brain self-improvement proposal bridge | Accepted | 2026-07-03 |
 
 ---
 
@@ -10594,6 +10596,163 @@ matrix live in the SDD plan `.ai-factory/plans/auto-promotion-lanes.md`.
   touch the lockfile) and a full consequence-proof is disproportionate for v1; the
   specifier allow-list + no-lockfile-only + best-effort scan close the two concrete
   holes, residual recorded (D-11, R4).
+
+---
+
+### ADR-127: Project Brain Consultant indexed tier
+
+**Date:** 2026-07-03
+**Status:** Accepted
+
+**Context:** ADR-122 delivered Sub-project A as an owned-tier memory substrate.
+Sub-project B must let agents and humans consult canonical project knowledge:
+ADRs, roadmap, rules, OpenAPI/AsyncAPI contracts, Flow/package manifests, agent
+docs, code, SQL, markdown, and HTML. The risk is creating a second source of
+truth or widening Brain write access while adding chunking and recall. The
+implementation also has to preserve the separate brain migration lineage and the
+P7 run-context marker/caveat split already shipped.
+
+**Decision:**
+
+- Sub-project B is read-only over indexed canonical sources. It may register
+  source metadata, index tracked default-branch content, embed chunks, recall
+  pointers, and show source status. It must not write repository files, authored
+  catalog artifacts, or project rules.
+- Brain migration `0003_brain_indexed_tier.sql` adds `brain_sources`,
+  `brain_chunks`, `brain_edges`, `brain_project_config`, chunk embedding support,
+  `decision|direction` kinds, `source_ref`, and source-aware index jobs. Main
+  migration DDL stays at zero for this slice unless a later ADR explicitly
+  changes the auth model.
+- `brain_embeddings` becomes exactly one of `item_id` or `chunk_id`. Generation
+  uniqueness applies to both owned items and indexed chunks. Rows remain
+  immutable; model/dimension/chunker upgrades add generations, never mutate old
+  rows.
+- Built-in chunkers are typed and pure behind `ChunkerRegistry`. The closed
+  return shape is `{kind,title,path,symbol?,content,metadata,source_range,
+  stable_id}`. Built-ins cover TS/JS/Python/Rust/Go/Java code, markdown, HTML
+  normalized through markdown, OpenAPI operations, AsyncAPI channels/operations,
+  SQL statements, `flow.yaml`, `maister-package.yaml`, agent markdown/frontmatter,
+  and fallback text.
+- Package-delivered chunkers/connectors are deferred. Executable third-party
+  chunkers must later pass through the same trust/sandbox boundary as MCP/setup
+  execution before they can run.
+- Source reads derive `project_id`, `repo_path`, and `main_branch` server-side.
+  Brain source APIs expose metadata and pointers only; opening file content uses
+  the existing project files API/viewer and the `readRepoFiles` gate.
+- Recall returns a union of owned item hits and indexed chunk hits. Indexed hits
+  include a canonical pointer `{sourcePath, sourceRange, stableId}` and capped
+  preview text; they never claim to be authoritative copies.
+- Ambient P7 projection keeps owned-tier priority. Indexed chunks can fill only
+  remaining slots, are capped, thresholded, and retain the explicit caveat that
+  Brain entries are background context rather than instructions.
+- `decision` and `direction` home resolution is project-scoped. If a covering
+  canonical source exists, retain into those kinds is refused with a `CONFIG`
+  error naming the source and the proposal path. If no home exists, owned-tier
+  retain is allowed.
+- `state_fact` changes from A's durable item to supersede-on-change: identical
+  hashes no-op, changed near-duplicates supersede exactly one active predecessor,
+  and lesson/observation reinforce semantics remain unchanged.
+- `brain_edges` stores lightweight references between owned items and source
+  chunks. Re-chunking best-effort re-anchors by stable id, symbol, path, and
+  content hash; unmappable edges are marked `degraded=true`, never dropped
+  silently.
+
+**Consequences:**
+
+- Consultant recall is grounded in canonical source pointers and can be audited
+  through snapshots without copying canon into Brain-owned authority.
+- The schema blast radius stays inside the brain lineage. Existing token scopes
+  and agent link axes (`memory:read`/`memory:write`,
+  `can_read_brain`/`can_write_brain`) remain enough for B.
+- Chunker behavior is testable without LLMs. Parser errors are source-scoped and
+  recorded on sources/jobs rather than process-fatal.
+- Source indexing remains event/manual driven. No watcher, `fs.watch`,
+  chokidar, or polling is introduced.
+
+**Alternatives Considered:**
+
+- _Make indexed chunks authoritative_: rejected. It would fork canonical docs and
+  contradict ADR-122's source-of-truth boundary.
+- _Add a new `can_propose_brain` or consultant scope now_: rejected for B. B is
+  read-only; proposal/write-back belongs to ADR-128.
+- _Ship package-extensible chunkers immediately_: rejected. Built-ins solve the
+  slice while executable package trust remains a separate security decision.
+- _Use Serena/LSP as the Brain indexer_: rejected. LSP is an optional runtime MCP
+  capability, not a memory-core dependency.
+
+---
+
+### ADR-128: Project Brain self-improvement proposal bridge
+
+**Date:** 2026-07-03
+**Status:** Accepted
+
+**Context:** Sub-project C turns recurring Brain evidence into improvement
+proposals without letting memory mutate canon directly. ADR-122 named
+`brain_proposals`, M25 authored catalog integration, calibrated autonomy, and a
+possible LSP connector. The accepted slice narrows this: C owns proposal and
+projection write-back, ships no LSP connector, and seeds Serena only as an
+optional non-executable MCP catalog row.
+
+**Decision:**
+
+- Brain migration `0004_brain_proposals.sql` adds `brain_proposals` and any
+  proposal-local config needed for autonomy. Proposal status is a closed FSM:
+  `pending -> accepted -> applied` and `pending -> rejected`; stale or invalid
+  transitions fail with `CONFLICT`/`CONFIG`.
+- Proposal kinds are closed: `rule`, `skill`, `flow`, `adr`, `roadmap`, and
+  `state`. Proposals store evidence ids, draft JSON, blast radius, autonomy
+  decision, cluster hash, actor fields, resolution fields, and links to authored
+  drafts, board tasks, and runs.
+- `memory_clusters` is read-only and server-computed from recurring lessons,
+  embedding proximity, and shared provenance. It uses `memory:read` plus
+  `can_read_brain` for agent tokens.
+- `memory_propose` creates pending proposals only. It uses `memory:write` plus
+  `can_write_brain` for agent tokens. It never accepts, applies, publishes, or
+  writes repo files.
+- The improver is a package-based platform agent following ADR-111 config:
+  `min_recurrence` default 3, `kinds`, and `max_proposals_per_run` default 3.
+  It runs with workspace `none`, mode `session`, risk tier `read_only`, triggers
+  `cron` and `manual`, and a default weekly schedule.
+- Human accept/reject is session-auth. Rule/skill/flow acceptance requires the
+  same project/catalog permissions as manual authored-catalog draft creation.
+  ADR/roadmap/state projection acceptance requires the chosen task action
+  (`createTask` or `editTask`), because docs-as-code work must enter the board
+  and run/promotion machine.
+- Autonomy defaults to manual. The only automatic mode in this slice is
+  `auto_draft`, which can create an authored draft or projection task inside an
+  allowed low-blast-radius zone. `auto_publish` is not a schema, config, API, UI,
+  or agent option.
+- Project docs/state projection creates board tasks with drafted path/content
+  and optional auto-launch metadata. The Brain never writes repository files
+  directly and never bypasses promotion/readiness.
+- Serena is seeded as a platform MCP catalog row with `enabled=false` and
+  `trust_status='untrusted'`. Current projection materializes only
+  `enabled=true` rows, so the default seed is visible for admin/catalog work but
+  non-executable until explicit trust/enabling occurs.
+
+**Consequences:**
+
+- The self-improvement loop has a durable, reviewable bridge from evidence to
+  catalog drafts/tasks without weakening the canonical-source boundary.
+- Existing memory scopes stay sufficient: read for clusters, write for propose.
+  Human acceptance uses session RBAC and catalog/task permissions, not agent
+  token scopes.
+- Low-risk automation can be measured through drafts/tasks while publishing
+  remains governed by current human/catalog/promotion flows.
+- Serena can be discovered and configured later without silently granting a new
+  MCP execution capability.
+
+**Alternatives Considered:**
+
+- _Let Brain write files or publish artifacts directly_: rejected. It bypasses
+  the task/run/promotion model and makes memory a second authority.
+- _Add `auto_publish` behind a flag_: rejected. The slice needs reviewable
+  evidence and rollback learning first.
+- _Open proposal acceptance to agent tokens_: rejected. Agents can propose;
+  humans or explicit autonomy conclude.
+- _Seed Serena enabled and rely on `trust_status` alone_: rejected. Current
+  projection ignores `trust_status`, so enabled would be executable today.
 
 ---
 

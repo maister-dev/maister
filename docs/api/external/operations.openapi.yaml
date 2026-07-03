@@ -81,6 +81,12 @@ tags:
       the project's launchable flows (`flows:read`) and enabled platform ACP
       runners (`runners:read`). Backs the triager's `flow_list` / `runner_list`
       MCP tools so it can only assign flows/runners that will actually launch.
+  - name: memory
+    description: |
+      (ADR-122/127/128) Project Brain operations exposed to project/global
+      tokens and mirrored by the MCP facade. Recall is implemented for the
+      owned tier and designed to return the owned/indexed union once the
+      Consultant tier lands. Clusters and proposals are Sub-project C contracts.
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -686,12 +692,13 @@ paths:
   /api/v1/ext/projects/{slug}/memory:
     get:
       tags: [memory]
-      summary: (ADR-122, Implemented) Recall project-brain memories (hybrid, no LLM at read)
+      summary: (ADR-122/127, Implemented A; Designed B) Recall project-brain memories
       description: |
         Scope `memory:read`. Hybrid recall (pgvector cosine over the active
         embedding generation + `tsvector` lexical + a confidence term;
         `created_at DESC` is a tie-break, not a boost) over
-        the project's **active** owned-tier items. NO LLM call at read time.
+        the project's active owned-tier items and, after ADR-127, indexed
+        source chunks. NO LLM call at read time.
 
         `projectId` is derived server-side from the URL `slug` and compared against
         the token's project — mismatch → 404 (the body carries no project id). For
@@ -701,7 +708,7 @@ paths:
 
         Writes a `brain_snapshots` row (`trigger='explicit'`, `run_id` set only when
         the token is run-bound, actor always set) recording the query and the
-        returned `[{itemId, score}]` for audit.
+        returned owned/indexed union for audit.
       operationId: extRecallProjectMemory
       security:
         - projectToken: [memory:read]
@@ -733,15 +740,16 @@ paths:
           in: query
           required: false
           description: |
-            Restrict to these owned-tier kinds. An unknown value → 422 `CONFIG`
-            (not silently ignored).
+            Restrict to these Brain kinds. `decision`/`direction` are indexed
+            when a canonical source is registered, otherwise owned per project
+            home resolution. An unknown value → 422 `CONFIG`.
           style: form
           explode: true
           schema:
             type: array
             items:
               type: string
-              enum: [lesson, observation, state_fact]
+              enum: [lesson, observation, state_fact, decision, direction]
         - name: minConfidence
           in: query
           required: false
@@ -822,6 +830,123 @@ paths:
           $ref: "#/components/responses/UnprocessableEntity"
         "503":
           $ref: "#/components/responses/EmbeddingUnavailable"
+
+  /api/v1/ext/projects/{slug}/memory/clusters:
+    get:
+      tags: [memory]
+      summary: (ADR-128, Designed) List recurring Project Brain evidence clusters
+      description: |
+        Scope `memory:read`. Computes recurring lesson/observation clusters
+        server-side from embedding proximity and shared provenance. The route is
+        read-only; the improver agent decides whether to call
+        `memory_propose`. For an agent token, `can_read_brain` must be true.
+      operationId: extListProjectMemoryClusters
+      security:
+        - projectToken: [memory:read]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: kinds
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [lesson, observation, state_fact]
+        - name: minRecurrence
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 2
+            maximum: 20
+            default: 3
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Recurring evidence clusters for the project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clusters]
+                properties:
+                  clusters:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtMemoryCluster" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/EmbeddingUnavailable"
+
+  /api/v1/ext/projects/{slug}/memory/proposals:
+    post:
+      tags: [memory]
+      summary: (ADR-128, Designed) Propose a Project Brain improvement
+      description: |
+        Scope `memory:write`. Creates a pending `brain_proposals` row from
+        evidence and a draft payload. This route never accepts, applies,
+        publishes, or writes repo files. For an agent token,
+        `can_write_brain` must be true. Duplicate `clusterHash` values are
+        idempotent and return the existing proposal.
+      operationId: extCreateProjectMemoryProposal
+      security:
+        - projectToken: [memory:write]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtMemoryProposalBody" }
+      responses:
+        "201":
+          description: Pending proposal created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtMemoryProposalResult" }
+        "200":
+          description: Duplicate `clusterHash`; existing pending proposal returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtMemoryProposalResult" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /api/v1/ext/runs:
     post:
@@ -1886,14 +2011,51 @@ components:
           description: Human-readable error message.
 
     ExtMemoryItem:
+      oneOf:
+        - { $ref: "#/components/schemas/ExtMemoryOwnedItem" }
+        - { $ref: "#/components/schemas/ExtMemoryIndexedItem" }
+      discriminator:
+        propertyName: tier
+        mapping:
+          owned: "#/components/schemas/ExtMemoryOwnedItem"
+          indexed: "#/components/schemas/ExtMemoryIndexedItem"
+      description: (ADR-122/127) Recalled Brain hit union.
+
+    ExtMemoryPointer:
+      type: object
+      description: Canonical pointer to indexed source truth; never a file-content payload.
+      required: [sourcePath, stableId]
+      properties:
+        sourcePath:
+          type: string
+          description: Repo-relative path opened through the project files API/viewer.
+        stableId:
+          type: string
+          description: Stable chunk id inside the source.
+        sourceRange:
+          type: object
+          nullable: true
+          additionalProperties: false
+          properties:
+            startLine:
+              type: integer
+              minimum: 1
+            endLine:
+              type: integer
+              minimum: 1
+
+    ExtMemoryOwnedItem:
       type: object
       description: (ADR-122, Implemented) A recalled owned-tier brain item.
-      required: [id, kind, title, content, confidence, score, createdAt]
+      required: [tier, itemId, kind, title, content, confidence, score, createdAt]
       properties:
-        id: { type: string }
+        tier:
+          type: string
+          enum: [owned]
+        itemId: { type: string }
         kind:
           type: string
-          enum: [lesson, observation, state_fact]
+          enum: [lesson, observation, state_fact, decision, direction]
         title: { type: string }
         content: { type: string }
         confidence:
@@ -1920,11 +2082,104 @@ components:
             runId: { type: string, nullable: true }
             gateKind: { type: string, nullable: true }
 
+    ExtMemoryIndexedItem:
+      type: object
+      description: (ADR-127, Designed) A recalled indexed chunk with canonical pointer.
+      required: [tier, chunkId, kind, title, preview, confidence, score, pointer]
+      properties:
+        tier:
+          type: string
+          enum: [indexed]
+        chunkId: { type: string }
+        kind:
+          type: string
+          enum: [decision, direction, lesson, observation, state_fact]
+        title: { type: string }
+        preview:
+          type: string
+          maxLength: 800
+          description: Capped preview of indexed content; file content opens through the project files API.
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        score:
+          type: number
+        pointer:
+          $ref: "#/components/schemas/ExtMemoryPointer"
+
+    ExtMemoryCluster:
+      type: object
+      description: (ADR-128, Designed) Recurring evidence cluster for the improver.
+      required: [clusterHash, kind, recurrence, evidenceItemIds, summary]
+      properties:
+        clusterHash: { type: string }
+        kind:
+          type: string
+          enum: [lesson, observation, state_fact]
+        recurrence:
+          type: integer
+          minimum: 2
+        evidenceItemIds:
+          type: array
+          minItems: 2
+          items: { type: string }
+        summary:
+          type: string
+          maxLength: 1000
+        provenance:
+          type: object
+          additionalProperties: true
+
+    ExtMemoryProposalBody:
+      type: object
+      description: (ADR-128, Designed) Submit a pending improvement proposal.
+      required: [kind, draft]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [rule, skill, flow, adr, roadmap, state]
+        evidenceItemIds:
+          type: array
+          items: { type: string }
+          default: []
+        draft:
+          type: object
+          additionalProperties: true
+          description: Proposed authored draft or task payload; never applied by this route.
+        blastRadius:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+        clusterHash:
+          type: string
+          nullable: true
+        rationale:
+          type: string
+          maxLength: 4000
+
+    ExtMemoryProposalResult:
+      type: object
+      description: (ADR-128, Designed) Pending proposal result.
+      required: [proposalId, status, idempotent]
+      properties:
+        proposalId: { type: string }
+        status:
+          type: string
+          enum: [pending]
+        idempotent:
+          type: boolean
+          description: true when an existing `clusterHash` proposal was returned.
+
     ExtMemoryRetainBody:
       type: object
       description: |
-        (ADR-122, Implemented) Retain a memory. The body carries NO project id —
-        `projectId` is derived server-side from the token + slug.
+        (ADR-122/127) Retain an owned-tier memory. The body carries NO project id —
+        `projectId` is derived server-side from the token + slug. `decision` and
+        `direction` are accepted only when project home-resolution says Brain is
+        the home; when a canonical source covers the kind, the route refuses
+        `CONFIG` and points the caller at the proposal path.
       required: [content, kind]
       additionalProperties: false
       properties:
@@ -1935,7 +2190,7 @@ components:
           description: The knowledge to retain (embedded; oversize content is split).
         kind:
           type: string
-          enum: [lesson, observation, state_fact]
+          enum: [lesson, observation, state_fact, decision, direction]
         title:
           type: string
           minLength: 1
@@ -1963,7 +2218,7 @@ components:
             id: { type: string }
             kind:
               type: string
-              enum: [lesson, observation, state_fact]
+              enum: [lesson, observation, state_fact, decision, direction]
             status:
               type: string
               enum: [active]

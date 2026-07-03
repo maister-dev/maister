@@ -29,6 +29,15 @@ reputation / malware scanning / sandboxing / org policy (Phase 2).
   readiness_status ∈ {Unknown,Ready,NotReady}, readiness_reasons,
   enabled, created_at, updated_at }`. Mirrors `platform_acp_runners`.
   See [db/projects-domain.md](../db/projects-domain.md).
+- **Serena default seed** (Designed, ADR-128) — boot/admin ensure inserts a
+  platform MCP catalog row `id='serena'` for the optional Serena/LSP MCP server.
+  The row is visible in the catalog but **not executable by default**:
+  `enabled=false` and `trust_status='untrusted'`. Current projection
+  (`web/lib/mcp/projection.ts`) materializes only `enabled=true` rows and does
+  not inspect `trust_status`; therefore seeding Serena enabled would grant an
+  executable capability. Any future "visible while enabled" product behavior must
+  first add a trust gate to projection/materialization and move tests/docs with
+  that change.
 - **`capability_records` kind=mcp** (Implemented, M14; extended M27) — one row
   per declared MCP in the project registry, with `source ∈ {platform, project,
   flow-package}`. The `material` jsonb carries the transport shape and
@@ -192,6 +201,11 @@ recorded but never computed before WI-2):
   from supervisor `/diagnostics` `envRefs` MUST yield `NotReady` with a
   per-cause reason; diagnostics unavailable MUST yield `Unknown` with a reason;
   the evaluator MUST NOT read or store any secret value (only `env:NAME` names).
+- **(ADR-128 — Designed)** The Serena seed MUST be insert-only idempotent and
+  MUST remain non-executable by default (`enabled=false`,
+  `trust_status='untrusted'`). Projection tests MUST prove the seeded row is not
+  returned as an executable capability until an explicit trust/enabling path is
+  completed.
 
 ## Edge cases
 
@@ -204,10 +218,13 @@ recorded but never computed before WI-2):
 | Platform MCP POST with a duplicate id | `CONFLICT` | 409 |
 | MCP stdio `command` spawn before `exec_trust=trusted` on owning revision | refused (guard — no exec) | n/a |
 | Raw (non-`env:`) secret in any MCP field | `CONFIG` | 422 |
+| Repeated Serena seed ensure | n/a | idempotent: created/skipped counts only |
+| Serena default projection | n/a | not materialized while `enabled=false` |
 
 ## Linked artifacts
 
 - **Decision:** [ADR-070](../decisions.md#adr-070) — platform MCP admin CRUD surface and delete guard.
+  [ADR-128](../decisions.md#adr-128-project-brain-self-improvement-proposal-bridge) locks the Serena seed default.
 - **SDD:** [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md) §3.1 (`platform_mcp_servers` DDL), §3.2 (`mcpCapabilitySchema`, required/additional), §6.2 (required-vs-additional gate), §7.2 (normative MCP bullets), §8 (edge cases).
 - **Capability resolution precedence:** [capabilities.md](capabilities.md) — the project > platform > flow-package winner rule applies to all `kind` values including `mcp`; this file does not restate the full rule.
 - **M14 materialization path:** [capabilities.md](capabilities.md) §Process flows — reused unchanged by M27; M27 extends the transport shape only.

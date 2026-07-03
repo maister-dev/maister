@@ -2470,14 +2470,16 @@ idempotent.
 }
 ```
 
-## Project Brain tables (Implemented — ADR-122, brain lineage migrations `0001`–`0002`)
+## Project Brain tables (A implemented, B/C designed — ADR-122/127/128)
 
-The Project Brain owned tier lives in `brain_*`
-tables provisioned by a **separate migration lineage** (`web/lib/db/brain-migrations`,
-own `_journal.json` + own ledger `__drizzle_brain_migrations`), on a pgvector-enabled
-Postgres image only (SQLite → Brain disabled, D3). The shared-table columns that
-enable it land in the **main** lineage `0088` (see the alters at the end of this
-section). Full ERD: [`db/brain-domain.md`](db/brain-domain.md).
+The Project Brain bounded context lives in `brain_*` tables provisioned by a
+**separate migration lineage** (`web/lib/db/brain-migrations`, own
+`_journal.json` + own ledger `__drizzle_brain_migrations`), on a
+pgvector-enabled Postgres image only (SQLite → Brain disabled, D3). The
+shared-table columns that enable A land in the **main** lineage `0088` (see the
+alters at the end of this section). Sub-project B adds brain migration
+`0003_brain_indexed_tier.sql`; Sub-project C adds
+`0004_brain_proposals.sql`. Full ERD: [`db/brain-domain.md`](db/brain-domain.md).
 
 ### `brain_items`
 
@@ -2487,8 +2489,8 @@ One knowledge item; `project_id` is the auth boundary (recall never crosses it).
 {
   id,                              // text PK (uuid)
   projectId,                       // FK projects(id) ON DELETE CASCADE
-  kind,                            // 'lesson' | 'observation' | 'state_fact' (A)
-  tier,                            // 'owned' (A); indexed = Phase 2
+  kind,                            // 'lesson' | 'observation' | 'state_fact' | 'decision' | 'direction'
+  tier,                            // 'owned' | 'indexed'
   title, content,                  // NOT NULL
   status,                          // 'active' | 'expired' | 'superseded'
   confidence,                      // numeric, CHECK 0..1; confidence0 = 0.3 on insert
@@ -2500,6 +2502,7 @@ One knowledge item; `project_id` is the auth boundary (recall never crosses it).
   sourceNodeAttemptId?,            // FK node_attempts(id) SET NULL
   sourceDomainEventId?,            // FK domain_events(id) SET NULL — harvest idempotency
   sourceGateKind?,                 // gate.failed provenance
+  sourceRef?,                      // jsonb canonical pointer for indexed/home-resolved items
   tsv,                             // GENERATED tsvector(title, content) — lexical leg
   createdAt, updatedAt
 }
@@ -2512,27 +2515,75 @@ btree `(project_id, status, expires_at)`.
 
 ### `brain_embeddings`
 
-**Immutable** rows, one per (item, generation, split). A model OR dimension switch
-writes a NEW `embedding_version` generation; old rows are never mutated. The
-`vector` column is **dimension-untyped**; HNSW rides per-generation expression
-indexes (`(vector::vector(N)) vector_cosine_ops WHERE embedding_model = M AND
-embedding_dimensions = N`) created by `ensureEmbeddingIndex(model, N)` — NOT in the
-migration. The UNIQUE `brain_embeddings_generation_uq` `(item_id, split_ordinal,
-embedding_model, embedding_dimensions)` (brain migration `0002`) makes a
-concurrent/double re-embed insert a no-op (`ON CONFLICT DO NOTHING`).
+**Immutable** rows, one per (owned item or indexed chunk, generation, split). A
+model OR dimension switch writes a NEW `embedding_version` generation; old rows
+are never mutated. The `vector` column is **dimension-untyped**; HNSW rides
+per-generation expression indexes (`(vector::vector(N)) vector_cosine_ops WHERE
+embedding_model = M AND embedding_dimensions = N`) created by
+`ensureEmbeddingIndex(model, N)` — NOT in the migration. Brain migration `0003`
+adds nullable `chunk_id`, `chunker_id`, `chunker_version`, and a CHECK enforcing
+exactly one of `item_id` or `chunk_id`. Generation UNIQUEs cover both arms.
 
 ```ts
 {
   id,                              // text PK (uuid)
-  itemId,                          // FK brain_items(id) ON DELETE CASCADE
+  itemId?,                         // FK brain_items(id) ON DELETE CASCADE
+  chunkId?,                        // FK brain_chunks(id) ON DELETE CASCADE
   splitOrdinal,                    // integer NOT NULL DEFAULT 0 — oversize-split order
   vector,                          // untyped pgvector column
   embeddingProvider,               // 'openai_compatible'
   embeddingModel, embeddingDimensions, embeddingVersion,  // generation key
   sourceHash, contentHash,
+  chunkerId?, chunkerVersion?,     // set for indexed chunk embeddings
   embeddedAt                       // IMMUTABLE
 }
 ```
+
+### `brain_sources` (Designed — migration `0003`)
+
+Canonical source registrations for the Consultant tier. Reads derive
+`repo_path` and `main_branch` from the project row; source APIs return metadata
+and pointers only.
+
+```ts
+{
+  id,
+  projectId,                       // FK projects(id) ON DELETE CASCADE
+  kind,                            // repo_file | markdown | html | openapi | asyncapi | sql | flow_yaml | package_yaml | agent_md | code | text
+  path,                            // repo-relative file or glob
+  sourceHash?,
+  chunkerId, chunkerVersion,
+  enabled,
+  lastIndexedAt?,
+  lastError?,                      // jsonb typed source/index error
+  createdAt, updatedAt
+}
+```
+
+### `brain_chunks` (Designed — migration `0003`)
+
+Structured chunks emitted by `ChunkerRegistry`. They are indexing artifacts, not
+canonical truth; recall returns a capped preview plus a pointer.
+
+```ts
+{
+  id,
+  sourceId,                        // FK brain_sources(id) ON DELETE CASCADE
+  projectId,                       // FK projects(id) ON DELETE CASCADE
+  stableId,                        // unique per source
+  kind, title, path,
+  symbol?,
+  content,
+  metadata,                        // jsonb
+  sourceRange,                     // jsonb line/column pointer
+  contentHash,
+  tsv,                             // GENERATED tsvector(title, content)
+  createdAt, updatedAt
+}
+```
+
+Unique `(source_id, stable_id)` keeps chunk identity stable across unchanged
+re-indexes. GIN `(tsv)` feeds the indexed lexical recall leg.
 
 ### `brain_snapshots`
 
@@ -2549,7 +2600,7 @@ CASCADE for actor-only non-run-bound snapshots).
   actorType, actorId,              // polymorphic actor (user|agent|system)
   trigger,                         // 'ambient' | 'explicit'
   query, queryHash, embeddingModel,
-  returnedItems,                   // jsonb [{itemId, score}] — ids AND scores
+  returnedItems,                   // jsonb [{tier,itemId?|chunkId?,score,pointer?}]
   rankerVersion,
   createdAt
 }
@@ -2565,13 +2616,73 @@ missing-generation worklist (`resumable_cursor` records progress, plus
 {
   id,                              // text PK (uuid)
   projectId,                       // FK projects(id) ON DELETE CASCADE
-  reason,                          // 'model_switch' | 'manual' (A)
+  sourceId?,                       // FK brain_sources(id) ON DELETE CASCADE
+  reason,                          // 'model_switch' | 'manual' | 'event' | 'chunker_upgrade'
   status,                          // 'queued' | 'running' | 'completed' | 'failed'
   progress,                        // integer NOT NULL DEFAULT 0
   resumableCursor?,                // jsonb progress/observability metadata
   createdAt
 }
 ```
+
+### `brain_edges` (Designed — migration `0003`)
+
+Lightweight references between owned items, chunks, and proposals. Re-chunking
+best-effort re-anchors by stable id, symbol, path, and content hash; unmappable
+edges are kept with `degraded=true`.
+
+```ts
+{
+  id,
+  projectId,                       // FK projects(id) ON DELETE CASCADE
+  fromRef, toRef,                  // jsonb item/chunk/proposal refs
+  relation,                        // supports | contradicts | derived_from | refines | references
+  confidence,
+  degraded,
+  createdAt, updatedAt
+}
+```
+
+### `brain_project_config` (Designed — migration `0003`)
+
+Per-project home-resolution and projection policy.
+
+```ts
+{
+  projectId,                       // PK, FK projects(id) ON DELETE CASCADE
+  homeResolution,                  // jsonb kind -> canonical source ownership
+  projectionFlowId?,               // optional FK to flows(id) SET NULL
+  autonomyPolicy?,                 // manual by default; auto_draft only
+  createdAt, updatedAt
+}
+```
+
+### `brain_proposals` (Designed — migration `0004`)
+
+Self-improvement bridge from recurring evidence to reviewable drafts/tasks.
+Closed status FSM: `pending -> accepted -> applied` or `pending -> rejected`.
+
+```ts
+{
+  id,
+  projectId,                       // FK projects(id) ON DELETE CASCADE
+  kind,                            // rule | skill | flow | adr | roadmap | state
+  evidenceItemIds,                 // jsonb ids; may reference expired evidence
+  draft,                           // jsonb proposed artifact/task payload
+  status,                          // pending | accepted | rejected | applied
+  blastRadius,                     // low | medium | high
+  autonomyDecision,                // manual | auto_draft
+  clusterHash?,
+  actor, resolution,               // jsonb polymorphic audit fields
+  authoredDraftId?,
+  taskId?,                         // FK tasks(id) SET NULL
+  runId?,                          // FK runs(id) SET NULL
+  createdAt, resolvedAt?
+}
+```
+
+Partial unique `(project_id, cluster_hash) WHERE cluster_hash IS NOT NULL`
+makes `memory_propose` and the improver idempotent for recurring clusters.
 
 ### `brain_harvested_events`
 
@@ -2597,7 +2708,9 @@ reinforced a near-dup never double-counts confidence/TTL. No FK on
 - `projects` += `brain_enabled` (boolean NOT NULL DEFAULT false). Enable-gate refuses
   `CONFIG` unless platform embedding + `distill_model` are set.
 - `agent_project_links` += `can_read_brain`, `can_write_brain` (boolean NOT NULL
-  DEFAULT false) — recall vs retain axes (separate; read never grants write).
+  DEFAULT false) — recall/clusters vs retain/propose axes (separate; read never
+  grants write). C reuses `can_write_brain`; `can_propose_brain` remains
+  deferred.
 - `runs` += `brain_context` (boolean NULL — null = off (default) in A, a
   flow/agent-level default is reserved; the persisted launch-time decision).
 

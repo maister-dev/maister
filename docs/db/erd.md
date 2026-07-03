@@ -1138,14 +1138,21 @@ erDiagram
     PROJECTS ||--o{ BRAIN_SNAPSHOTS : "recall snapshots (CASCADE)"
     PROJECTS ||--o{ BRAIN_INDEX_JOBS : "reindex jobs (CASCADE)"
     PROJECTS ||--o{ BRAIN_HARVESTED_EVENTS : "harvest ledger (CASCADE)"
+    PROJECTS ||--o{ BRAIN_SOURCES : "canonical sources (ADR-127)"
+    PROJECTS ||--o{ BRAIN_CHUNKS : "indexed chunks (ADR-127)"
+    PROJECTS ||--o{ BRAIN_EDGES : "Brain graph refs (ADR-127)"
+    PROJECTS ||--|| BRAIN_PROJECT_CONFIG : "Brain config (ADR-127)"
+    PROJECTS ||--o{ BRAIN_PROPOSALS : "improvement proposals (ADR-128)"
     BRAIN_ITEMS ||--o{ BRAIN_EMBEDDINGS : "generations x splits (CASCADE)"
+    BRAIN_SOURCES ||--o{ BRAIN_CHUNKS : "source chunks (CASCADE)"
+    BRAIN_CHUNKS ||--o{ BRAIN_EMBEDDINGS : "chunk generations (CASCADE)"
     RUNS o|--o{ BRAIN_SNAPSHOTS : "run-bound recall (CASCADE)"
 
     BRAIN_ITEMS {
         text id PK "uuid"
         text project_id FK "NOT NULL -> projects(id) CASCADE — auth boundary (Implemented, ADR-122)"
-        text kind "lesson|observation|state_fact"
-        text tier "owned"
+        text kind "lesson|observation|state_fact|decision|direction"
+        text tier "owned|indexed"
         text content "NOT NULL"
         text status "active|expired|superseded"
         numeric confidence "NOT NULL; CHECK 0..1; confidence0 0.3"
@@ -1154,19 +1161,52 @@ erDiagram
         text content_hash "NOT NULL — dedup"
         text source_run_id FK "NULL -> runs(id) SET NULL"
         bigint source_domain_event_id FK "NULL -> domain_events(id) SET NULL — harvest idempotency"
+        jsonb source_ref "NULL canonical pointer"
         tsvector tsv "GENERATED — lexical leg"
         timestamptz created_at
         timestamptz updated_at
     }
 
+    BRAIN_SOURCES {
+        text id PK "uuid"
+        text project_id FK "NOT NULL -> projects(id) CASCADE"
+        text kind "repo_file|markdown|html|openapi|asyncapi|sql|flow_yaml|package_yaml|agent_md|code|text"
+        text path "repo-relative file or glob"
+        text source_hash "NULL until indexed"
+        text chunker_id "NOT NULL"
+        text chunker_version "NOT NULL"
+        boolean enabled "NOT NULL DEFAULT true"
+        jsonb last_error "NULL"
+        timestamptz last_indexed_at
+    }
+
+    BRAIN_CHUNKS {
+        text id PK "uuid"
+        text source_id FK "NOT NULL -> brain_sources(id) CASCADE"
+        text project_id FK "NOT NULL -> projects(id) CASCADE"
+        text stable_id "NOT NULL"
+        text kind "typed chunk kind"
+        text title "NOT NULL"
+        text path "repo-relative pointer path"
+        text symbol "NULL"
+        text content "NOT NULL"
+        jsonb metadata "NOT NULL DEFAULT '{}'"
+        jsonb source_range "line/column range"
+        text content_hash "NOT NULL"
+        tsvector tsv "GENERATED — lexical leg"
+    }
+
     BRAIN_EMBEDDINGS {
         text id PK "uuid"
-        text item_id FK "NOT NULL -> brain_items(id) CASCADE"
+        text item_id FK "NULL -> brain_items(id) CASCADE"
+        text chunk_id FK "NULL -> brain_chunks(id) CASCADE"
         integer split_ordinal "NOT NULL DEFAULT 0"
         vector vector "untyped pgvector — cast vector(N) at query"
         text embedding_model "NOT NULL"
         integer embedding_dimensions "NOT NULL"
         text embedding_version "NOT NULL — recorded metadata; generation = (model, dimensions)"
+        text chunker_id "NULL for owned item embeddings"
+        text chunker_version "NULL for owned item embeddings"
         timestamptz embedded_at "IMMUTABLE"
     }
 
@@ -1178,7 +1218,7 @@ erDiagram
         text actor_type "user|agent|system"
         text actor_id "NOT NULL"
         text trigger "ambient|explicit"
-        jsonb returned_items "NOT NULL — [{itemId, score}]"
+        jsonb returned_items "NOT NULL — [{tier,itemId?|chunkId?,score,pointer?}]"
         text ranker_version "NOT NULL"
         timestamptz created_at
     }
@@ -1186,7 +1226,8 @@ erDiagram
     BRAIN_INDEX_JOBS {
         text id PK "uuid"
         text project_id FK "NOT NULL -> projects(id) CASCADE"
-        text reason "model_switch|manual"
+        text source_id FK "NULL -> brain_sources(id) CASCADE"
+        text reason "model_switch|manual|event|chunker_upgrade"
         text status "queued|running|completed|failed"
         jsonb resumable_cursor "NULL"
         timestamptz created_at
@@ -1196,6 +1237,38 @@ erDiagram
         text project_id PK "composite PK; FK -> projects(id) CASCADE (brain migration 0002)"
         bigint domain_event_id PK "composite PK; NO FK — outlives domain_events GC"
         timestamptz harvested_at "NOT NULL DEFAULT now()"
+    }
+
+    BRAIN_EDGES {
+        text id PK "uuid"
+        text project_id FK "NOT NULL -> projects(id) CASCADE"
+        jsonb from_ref "item/chunk/proposal ref"
+        jsonb to_ref "item/chunk/proposal ref"
+        text relation "supports|contradicts|derived_from|refines|references"
+        numeric confidence "CHECK 0..1"
+        boolean degraded "NOT NULL DEFAULT false"
+    }
+
+    BRAIN_PROJECT_CONFIG {
+        text project_id PK "FK -> projects(id) CASCADE"
+        jsonb home_resolution "kind -> canonical home map"
+        text projection_flow_id "NULL -> flows(id) SET NULL"
+        jsonb autonomy_policy "manual default; auto_draft only"
+    }
+
+    BRAIN_PROPOSALS {
+        text id PK "uuid"
+        text project_id FK "NOT NULL -> projects(id) CASCADE"
+        text kind "rule|skill|flow|adr|roadmap|state"
+        jsonb evidence_item_ids "NOT NULL DEFAULT '[]'"
+        jsonb draft "NOT NULL"
+        text status "pending|accepted|rejected|applied"
+        text blast_radius "low|medium|high"
+        text autonomy_decision "manual|auto_draft"
+        text cluster_hash "NULL; unique per project when present"
+        text authored_draft_id "NULL"
+        text task_id "NULL -> tasks(id) SET NULL"
+        text run_id "NULL -> runs(id) SET NULL"
     }
 ```
 
@@ -1300,8 +1373,16 @@ external-operation events) is not drawn until its migrations exist. See
 | `brain_items` | `brain_items_recall_idx` | `(project_id, status, expires_at)` | **(Implemented, ADR-122)** Recall-path project-scoped active-item scan. |
 | `brain_embeddings` | `brain_embeddings_item_idx` | `(item_id, embedding_model, embedding_dimensions)` | **(Implemented, ADR-122)** Generation lookup + FK. |
 | `brain_embeddings` | `brain_embeddings_generation_uq` | `(item_id, split_ordinal, embedding_model, embedding_dimensions)` UNIQUE | **(Implemented, ADR-122, brain migration `0002`)** Idempotent re-embed — a concurrent/double reindex insert is a no-op. |
+| `brain_embeddings` | `brain_embeddings_target_one_check` | exactly one of `item_id`, `chunk_id` | **(Designed, ADR-127, brain migration `0003`)** An embedding targets one owned item or one indexed chunk. |
+| `brain_embeddings` | `brain_embeddings_chunk_generation_uq` | `(chunk_id, split_ordinal, embedding_model, embedding_dimensions, chunker_id, chunker_version)` UNIQUE | **(Designed, ADR-127, brain migration `0003`)** Idempotent chunk re-embed across source/chunker generations. |
 | `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **(Implemented, ADR-122)** Per-generation expression HNSW, created by `ensureEmbeddingIndex` at configure/reindex (NOT in the migration). |
 | `brain_snapshots` | `brain_snapshots_run_idx` | `(run_id)` | **(Implemented, ADR-122)** Run-scoped snapshot reads. |
 | `brain_index_jobs` | `brain_index_jobs_claim_idx` | `(status, created_at)` | **(Implemented, ADR-122)** Reindex-worker claim scan. |
+| `brain_sources` | `brain_sources_project_idx` | `(project_id, enabled)` | **(Designed, ADR-127)** Enabled source scans and source list. |
+| `brain_chunks` | `brain_chunks_source_stable_uq` | `(source_id, stable_id)` UNIQUE | **(Designed, ADR-127)** Stable chunk identity. |
+| `brain_chunks` | `brain_chunks_tsv_gin` | GIN `(tsv)` | **(Designed, ADR-127)** Indexed lexical recall leg. |
+| `brain_edges` | `brain_edges_project_idx` | `(project_id, degraded)` | **(Designed, ADR-127)** Edge and degraded-edge reads. |
+| `brain_proposals` | `brain_proposals_project_status_idx` | `(project_id, status, created_at)` | **(Designed, ADR-128)** Proposal review tabs. |
+| `brain_proposals` | `brain_proposals_cluster_hash_uq` | `(project_id, cluster_hash)` PARTIAL `WHERE cluster_hash IS NOT NULL` | **(Designed, ADR-128)** Idempotent improver/propose path. |
 
 Source: `web/lib/db/schema.ts`.

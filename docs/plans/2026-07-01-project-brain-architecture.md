@@ -1,6 +1,9 @@
 # Project Brain — Target Architecture & Requirements (design spec)
 
-> Design-time spec. As-built behavior diverges in places — `docs/system-analytics/project-brain.md` is authoritative.
+> Design-time spec. As-built behavior diverges in places —
+> `docs/system-analytics/project-brain.md` is authoritative. Sub-project B/C
+> delivery pins live in
+> `.ai-factory/specs/project-brain-bc-sdd.md`.
 
 > Status: **Design spec** (pre-implementation). Not an ADR, changes no locked
 > decision. Feeds the planning feature (`/aif-plan` / writing-plans). When this
@@ -38,8 +41,8 @@ catalog artifacts (rules/skills/flows in the M25 authored catalog) remain the
 | D4 | **Embedding provider registry, `openai_compatible` default** (`local` = special case), immutable embedding rows, reindex-on-model/dimension-switch | Never hardcode a model; a model or dimension change creates a new embedding generation (per-generation HNSW expression indexes), never mutates old rows, never needs a schema migration. |
 | D5 | **`ChunkerRegistry` — built-in typed chunkers wrapping existing libraries; package-extensible** | The AST/parse work is a dependency; only the MAIster-specific slicing is ours. |
 | D6 | **Brain code-indexing = AST chunking (`code-chunk`/tree-sitter), NOT LSP.** Serena/LSP is an optional agent capability + a Phase-C edge connector | AST chunking is the embeddable memory primitive (in-process, stateless). LSP is a live stateful server (the Python sidecar we rejected) — belongs in the Hands layer, not the memory core. |
-| D7 | **Two-tier substrate; ownership resolved per-project** | *Owned/volatile* tier (lessons/observations/state-facts) + *indexed/referenced* tier (ADRs/roadmap/rules/Observatory). If a project has docs-as-code → index it; if not → the Brain owns it, and can **project it back out** to docs-as-code. |
-| D8 | **Calibrated autonomy** — harvested lessons auto-write with decay; canon (roadmap/architecture) changes go through proposal→human-accept, graduating to auto by confidence × blast-radius | Auto-writing lessons is safe (decay is the valve); auto-rewriting strategy is not — it is earned per category. |
+| D7 | **Two-tier substrate; ownership resolved per-project** | *Owned/volatile* tier (lessons/observations/state-facts) + *indexed/referenced* tier (ADRs/roadmap/rules/Observatory). If a project has docs-as-code, B indexes it and returns canonical pointers. If it has no home, C may propose/project it back out through authored drafts or board tasks. |
+| D8 | **Calibrated autonomy** — harvested lessons auto-write with decay; canon (roadmap/architecture) changes go through proposal→human-accept, graduating only to `auto_draft` by confidence × blast-radius in this slice | Auto-writing lessons is safe (decay is the valve); auto-publishing strategy is not. Publishing remains owned by the normal catalog/task/promotion machinery. |
 | D9 | **`RecallRanker` / `BrainEngine` seam** | Keeps the one thing "buy" does better (recall ranking) swappable without moving the system-of-record off Postgres. Escape hatch to an embedded reranker or Hindsight-as-recall-service later. |
 | D10 | **best-effort re-anchor** of edges/proposals across re-chunking (map old→new by symbol; keep un-mappable as degraded, not dropped) | Durable graph across chunker-version bumps. |
 
@@ -95,11 +98,14 @@ Conceptual shape (final columns settled at implementation). All rows carry
   relation(supports|contradicts|derived_from|refines|references),
   confidence, created_at`. Recursive-CTE traversal (same pattern as the task
   graph). **best-effort re-anchor** on reindex.
-- `brain_proposals` — bridge to the M25 catalog: `id, project_id, kind(rule|
-  skill|flow|adr|roadmap|state), evidence_item_ids(jsonb), draft(jsonb),
-  status(pending|accepted|rejected|applied), blast_radius, autonomy_decision,
-  created_at, resolved_at`. Accepted proposals write into the **authored
-  catalog lineage**, which stays canonical.
+- `brain_proposals` — bridge to the M25 catalog and board task machine:
+  `id, project_id, kind(rule|skill|flow|adr|roadmap|state),
+  evidence_item_ids(jsonb), draft(jsonb), status(pending|accepted|rejected|
+  applied), blast_radius, autonomy_decision, created_at, resolved_at`.
+  Accepted rule/skill/flow proposals create **authored catalog drafts**.
+  Accepted ADR/roadmap/state proposals create board tasks and optional
+  auto-launch metadata. The Brain never publishes and never writes repo files
+  directly.
 - `brain_snapshots` — recall snapshot written at **consumption** (ambient
   inject or explicit recall) for reproducibility/audit: `id, run_id?,
   node_attempt_id?, actor_type, actor_id, trigger(ambient|explicit), query,
@@ -161,10 +167,11 @@ expires_at)`.
 
 ### 5.4 Promotion (calibrated autonomy)
 
-`evidence → brain_proposals → [auto-apply if low blast-radius × high confidence ×
-recurrence | human accept] → authored catalog revision (canonical)`. Roadmap/
-architecture changes stay human-gated longer; graduate categories to auto as
-correction-rate proves the Brain trustworthy.
+`evidence → brain_proposals → [auto_draft if low blast-radius × high confidence ×
+recurrence | human accept] → authored catalog draft or board task`. Roadmap/
+architecture changes stay human-gated longer. `auto_publish` is out of scope:
+publishing and repo mutation stay in the existing catalog/task/promotion
+machinery.
 
 ## 6. Enablement (4 layers)
 
@@ -209,9 +216,10 @@ package ships — resolved through a registry like the runner/MCP catalogs.
 
 **Serena/LSP (D6):** *not* a Brain dependency. Register `serena` (oraios/serena,
 MIT, Python MCP server wrapping LSP) as an **optional MCP server in the
-capability catalog** for agents' run-time navigation/editing. Phase-C+: an
-optional **LSP source connector** may feed `brain_edges` with high-fidelity
-symbol relations.
+capability catalog** for agents' run-time navigation/editing. In B/C v1 the seed
+is visible but non-executable by default (`enabled=false`,
+`trust_status=untrusted`). A future optional LSP source connector may feed
+`brain_edges`; this slice does not ship it.
 
 **GBrain (garrytan/gbrain):** *not* adopted as a library (Bun app, not an
 embeddable npm dep; generic-text chunkers + knowledge-app connectors = wrong
@@ -242,10 +250,11 @@ MIT — attribute if copied.
 - **Sub-project B — Consultant** (indexed tier): `ChunkerRegistry` +
   code/text/markdown chunkers (`code-chunk`/`chonkie`/mdast) + typed
   chunkers (OpenAPI/AsyncAPI/SQL/flow.yaml/agent.md) + indexer over per-project
-  canonical sources + `decision`/`direction` kinds + cross-tier recall +
-  reverse projection to docs-as-code.
-- **Sub-project C — Self-improvement bridge**: `brain_proposals` → M25 catalog
-  proposals + calibrated-autonomy dial + LSP edge connector (optional).
+  canonical sources + `decision`/`direction` kinds + cross-tier recall with
+  canonical pointers. B is read-only over indexed sources.
+- **Sub-project C — Self-improvement bridge**: `brain_proposals` → M25 authored
+  catalog drafts or board tasks + calibrated-autonomy dial (`auto_draft`, never
+  `auto_publish`) + Serena catalog seed as optional non-executable MCP entry.
 
 A is the gate; B and C build on it. Each gets its own spec → plan → build.
 
@@ -366,8 +375,8 @@ v1; no separate DB; no Python runtime in the Brain core.
   `decision`/`direction` items are indexed-tier and recall returns canonical
   pointers; when the source changes, re-embedding occurs.
 - Given a project without docs-as-code, when a `decision` is authored into the
-  Brain, then it is owned-tier and can be projected out to an ADR file via a
-  proposal.
+  Brain, then it is owned-tier and can be proposed for docs-as-code projection
+  through Sub-project C's board-task path.
 - Given a chunker-version bump, when re-chunked, then edges re-anchor best-effort
   by symbol and un-mappable edges are marked degraded (not dropped).
 
@@ -376,10 +385,11 @@ v1; no separate DB; no Python runtime in the Brain core.
   improver runs, then a `brain_proposal` (rule/skill/flow) is created with
   evidence item ids and a `blast_radius`.
 - Given a low-blast-radius, high-confidence, recurring proposal, when autonomy
-  permits, then it auto-applies to the authored catalog with rollback; a
+  permits, then it can create an authored draft automatically; a
   high-blast-radius (roadmap/architecture) proposal stays human-gated.
-- Given an optional LSP connector installed, when a repo is indexed, then
-  `brain_edges` include LSP-derived symbol relations.
+- Given the default Serena seed, when platform MCP capabilities are projected,
+  then Serena is visible in the catalog but not executable until explicitly
+  trusted and enabled.
 
 ## 15. Data-flow diagram
 

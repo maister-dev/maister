@@ -1,24 +1,31 @@
-# Project Brain domain (Sub-project A — Foundation)
+# Project Brain domain (A+B+C: Foundation, Consultant, Improvement Bridge)
 
 ## Purpose
 
-The **Project Brain** (ADR-122) is MAIster's per-project, vectorized knowledge
-substrate: a self-improving, project-scoped memory that platform agents use
-natively. **Sub-project A (Foundation)** — the slice this doc governs — ships the
-**owned/volatile tier** only: kinds `lesson` / `observation` / `state_fact`
-auto-harvested from the `domain_events` bus, embedded and stored in `brain_*`
-tables on the existing Postgres + pgvector instance, decayed by a scheduled
-sweep, and read back through a hybrid `RecallRanker` (no LLM at read) via three
-paths — an MCP tool (explicit), the P7 run-context (ambient, flow runs only), and
-the external operations API. Boundary: this domain owns the `brain_*` tables, the
-harvest consumer, distillation, retain/decay/recall, the embedding-provider
-registry, and the 4-layer enablement axes; it does NOT own the `domain_events`
-fact log it consumes ([domain-events.md](domain-events.md)), the run state machine
-([runs.md](runs.md)), the M25 authored catalog (the canonical source of truth), or
-the clock the decay/reindex sweeps borrow ([scheduler.md](scheduler.md)). The
-indexed/consultant tier (`ChunkerRegistry`, `decision`/`direction` kinds, canonical
-pointers) is **Sub-project B**; the self-improvement `brain_proposals` bridge and
-LSP edge connector are **Sub-project C**.
+The **Project Brain** (ADR-122, ADR-127, ADR-128) is MAIster's per-project,
+vectorized knowledge substrate: a self-improving, project-scoped memory that
+platform agents use natively.
+
+- **Sub-project A (Implemented)** ships the owned/volatile tier:
+  `lesson` / `observation` / `state_fact`, harvested from `domain_events`,
+  embedded in `brain_*` tables, decayed by the scheduler, and recalled through
+  MCP/ext/P7 with no LLM at read.
+- **Sub-project B (Designed in this slice)** adds the read-only Consultant
+  indexed tier: canonical sources, typed chunks, `decision`/`direction`
+  home-resolution, chunk embeddings, cross-tier recall, snapshots with pointers,
+  and best-effort edge re-anchor.
+- **Sub-project C (Designed in this slice)** adds the self-improvement bridge:
+  server-computed memory clusters, `brain_proposals`, human/session review,
+  `auto_draft` autonomy, docs-as-code projection through board tasks, and the
+  non-executable Serena MCP catalog seed.
+
+Boundary: this domain owns the `brain_*` tables, harvest/index/proposal services,
+embedding-provider registry, and 4-layer enablement. It does NOT own the
+`domain_events` fact log ([domain-events.md](domain-events.md)), the run state
+machine ([runs.md](runs.md)), the M25 authored catalog, project file serving, or
+the scheduler clock ([scheduler.md](scheduler.md)). Indexed sources remain
+pointers to canonical truth; all write-back enters C proposals, authored drafts,
+or board tasks.
 
 ## Domain entities
 
@@ -70,6 +77,30 @@ LSP edge connector are **Sub-project C**.
   supersede-on-change is **(Designed — Sub-project B)** — the `superseded` status
   exists in the enum only, with no writer in A). `decision`/`direction` (indexed
   tier) are **(Phase 2 — Sub-project B)**.
+- **`brain_sources`** (Designed — brain migration `0003`) — one canonical source
+  registration per project: `{ id, project_id (FK CASCADE), kind, path/glob,
+  source_hash, chunker_id, chunker_version, enabled, last_indexed_at,
+  last_error, created_at, updated_at }`. Source content is read from the
+  project row's `repo_path` and `main_branch`; Brain source APIs return metadata
+  and pointers only.
+- **`brain_chunks`** (Designed — `0003`) — indexed-tier chunk store:
+  `{ id, source_id (FK CASCADE), project_id (FK CASCADE), stable_id, kind,
+  title, path, symbol?, content, metadata, source_range, content_hash, tsv }`.
+  Chunks are not authoritative; recall returns capped previews plus canonical
+  pointers.
+- **`brain_edges`** (Designed — `0003`) — lightweight graph references:
+  `{ id, project_id, from_ref, to_ref, relation, confidence, degraded,
+  created_at, updated_at }`. Re-chunking remaps best-effort; unmappable edges
+  become `degraded=true`.
+- **`brain_project_config`** (Designed — `0003`) — per-project Brain policy:
+  `{ project_id PK, home_resolution, projection_flow_id, autonomy_policy? }`.
+  Home resolution decides whether `decision`/`direction` are indexed canonical
+  sources or owned items.
+- **`brain_proposals`** (Designed — brain migration `0004`) — C bridge:
+  `{ id, project_id, kind, evidence_item_ids, draft, status, blast_radius,
+  autonomy_decision, cluster_hash, actor fields, resolution fields,
+  authored_draft_id?, task_id?, run_id?, created_at, resolved_at }`. Proposal
+  status is a closed FSM; publishing is not part of Brain.
 - **Policy constants** (Implemented) — `web/lib/brain/policy.ts`: τ=0.85 (dedup cosine),
   confidence₀=0.3, TTL=30d, reinforce=+0.1 confidence / +30d `expires_at`, ambient
   K=5, `ambientMinConfidence`=0.4 (ambient-inject floor — one reinforce above
@@ -271,14 +302,81 @@ confidence never decreases and there is no per-tick decrement. Items past
 sweep prunes `brain_snapshots` older than 30 days (`BRAIN_POLICY.snapshotTtlDays`).
 A sweep error is caught into the sweep summary, never thrown.
 
+### (g) Source indexing and chunk embeddings (Designed — Sub-project B)
+
+```mermaid
+flowchart TD
+    SRC[project Brain sources] --> READ[tracked default-branch blob read]
+    READ --> HASH{source_hash changed?}
+    HASH -- no --> SKIP[no-op, update observability only]
+    HASH -- yes --> CHUNK[ChunkerRegistry typed parser]
+    CHUNK --> ERR{parser error?}
+    ERR -- yes --> LAST[record source last_error and continue other sources]
+    ERR -- no --> UPSERT[upsert brain_chunks by source_id + stable_id]
+    UPSERT --> EMB[insert chunk embedding generation rows]
+    EMB --> EDGE[best-effort edge re-anchor]
+    EDGE --> DONE[index job progress]
+```
+
+All source reads derive the project repo from server state. Paths/globs are
+repo-relative and validated before any git read. `.git`, ignored/untracked files,
+absolute paths, and body-controlled worktree paths are refused. Source jobs are
+manual or domain-event triggered; no watcher or polling exists.
+
+### (h) Cross-tier recall (Designed — Sub-project B)
+
+```mermaid
+flowchart TD
+    Q[query] --> EMB[embed once with active model]
+    EMB --> OWN[owned item vector and lexical legs]
+    EMB --> IDX[indexed chunk vector and lexical legs]
+    OWN --> MERGE[RecallRanker union merge]
+    IDX --> MERGE
+    MERGE --> POLICY[ambient or explicit policy]
+    POLICY --> DTO[owned/indexed recall hit union]
+    DTO --> SNAP[brain_snapshots returned_items union]
+```
+
+Owned hits return full owned content and provenance. Indexed hits return
+`{tier:"indexed", chunkId, preview, pointer}` with a capped preview and
+canonical `{sourcePath, sourceRange, stableId}`. Ambient injection keeps owned
+priority for K=5; indexed hits fill only remaining slots and are capped at two.
+
+### (i) Proposal bridge and docs projection (Designed — Sub-project C)
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: memory_propose or improver creates proposal
+    pending --> accepted: human accept or allowed auto_draft
+    pending --> rejected: human reject with reason
+    accepted --> applied: authored draft or board task created
+    rejected --> [*]
+    applied --> [*]
+```
+
+`memory_clusters` computes recurring evidence server-side and is read-only.
+`memory_propose` creates a pending proposal only. Rule/skill/flow acceptance
+creates M25 authored catalog drafts and requires catalog permission. ADR,
+roadmap, and state projection creates board tasks with drafted path/content and
+optional auto-launch metadata, then follows the normal task/run/promotion
+machine. Brain services never write repo files directly.
+
+### (j) Serena catalog seed (Designed — Sub-project C)
+
+Serena is seeded as an optional platform MCP catalog row with `enabled=false`
+and `trust_status='untrusted'`. Current MCP projection materializes only enabled
+rows, so the seed is visible for admin/catalog configuration but non-executable
+by default. If a later product slice needs `enabled=true` visibility, projection
+must first gain a trust gate and its tests/docs must move with it.
+
 ## Expectations
 
 *(E-n pin the spec §13 numbering, top-to-bottom. A-relevant subset below; E-5, E-9,
 E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B/C)**.)*
 
-- **E-1** — Every `brain_*` row MUST carry `project_id` directly or transitively via
-  `item_id` (`brain_embeddings`); recall MUST NEVER return items across a
-  `project_id` boundary. (Implemented)
+- **E-1** — Every `brain_*` row MUST carry `project_id` directly or transitively
+  via `item_id`/`chunk_id` (`brain_embeddings`); recall MUST NEVER return items
+  across a `project_id` boundary. (Implemented for A, Designed for B/C)
 - **E-2** — `brain_embeddings` rows MUST be immutable — a model or dimension change
   MUST create a new embedding generation, NEVER mutate a row — and `(item_id,
   split_ordinal, embedding_model, embedding_dimensions)` is UNIQUE, so an
@@ -296,6 +394,15 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   claimed in `retain`'s transaction; decay and reindex MUST be scheduler-driven; the
   domain MUST NEVER use `fs.watch`/chokidar/polling. (Implemented; event-driven
   indexing of external *sources* is Phase 2 — Sub-project B.)
+- **E-9** — Package-delivered chunker/connector code MUST NOT execute in B/C v1.
+  Built-in chunkers are allowed; package extensibility waits for a separate trust
+  and sandbox implementation. (Designed)
+- **E-13** — Cross-tier recall of an indexed chunk MUST return a canonical
+  pointer and capped preview, never a forked authoritative copy. Snapshot and MCP
+  DTOs MUST use the same owned/indexed union. (Designed)
+- **E-14** — Edge/proposal re-anchoring on re-chunk MUST be best-effort by
+  stable id, symbol, path, and content hash; unmappable edges MUST be marked
+  degraded and kept visible. (Designed)
 - **E-8** — An interrupted reindex job MUST stay `running` and be re-claimed on a
   later tick; resume MUST derive from the missing-generation worklist —
   `brain_index_jobs.resumable_cursor` records progress/observability metadata only,
@@ -392,10 +499,28 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   carries no project id; `projectId` is server-derived from the token + slug).
 - **Missing scope or agent link axis** → HTTP 403 (`memory:read`/`memory:write` scope
   missing, or `can_read_brain`/`can_write_brain` false).
+- **Indexed source path escape** → `CONFIG` before any git read; source APIs
+  never return file content, and pointer opening delegates to the existing files
+  route plus `readRepoFiles`.
+- **`decision`/`direction` retain with canonical home** → `CONFIG` naming the
+  covering source and proposal path; read access never grants retain/propose.
+- **Chunk embedding target ambiguity** → DB check enforces exactly one of
+  `item_id` or `chunk_id`; unique generation indexes cover both arms.
+- **Proposal duplicate with `cluster_hash`** → idempotent no-op returning the
+  existing proposal; without `cluster_hash`, duplicate policy remains explicit in
+  route validation/tests and does not silently merge unrelated drafts.
+- **Machine actor accept/reject** → refused; agents propose, human session RBAC or
+  configured `auto_draft` concludes.
+- **`auto_publish`** → not accepted by config/schema/API/UI. A grep for the term
+  may only match non-goal docs.
+- **Serena default seed** → repeated boot/admin ensure is insert-only idempotent;
+  default row remains non-executable because it is disabled.
 
 ## Linked artifacts
 
-- **Decision:** [ADR-122](../decisions.md#adr-122-project-brain-per-project-memory-substrate).
+- **Decision:** [ADR-122](../decisions.md#adr-122-project-brain-per-project-memory-substrate),
+  [ADR-127](../decisions.md#adr-127-project-brain-consultant-indexed-tier),
+  [ADR-128](../decisions.md#adr-128-project-brain-self-improvement-proposal-bridge).
 - **Design spec (SSOT):** [`../plans/2026-07-01-project-brain-architecture.md`](../plans/2026-07-01-project-brain-architecture.md)
   — locked decisions D1–D10, data model §4, pipelines §5, Expectations §13,
   Acceptance §14.
