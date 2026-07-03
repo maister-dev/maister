@@ -3494,5 +3494,43 @@
     "brainWrite": "Can write memory (retain)",
     "colConfig": "Config",
     "configuration": "Configuration"
+  },
+  "autoPromotion": {
+    "reason": {
+      "deny_list": "Protected file in the diff",
+      "no_lane": "Diff does not fit a single auto-promotion lane",
+      "ambiguous_lane": "A file matches more than one lane",
+      "empty_diff": "No changes to promote",
+      "deps_content": "Dependency change needs review",
+      "checks_not_strict": "Checks are not strict",
+      "pending_hitl": "Awaiting a human response",
+      "readiness_not_green": "Readiness is not green",
+      "external_check_missing": "Required CI check is not defined in the flow",
+      "external_check_not_passed": "Required CI check has not passed",
+      "no_review_anchor": "No review timestamp recorded",
+      "grace_pending": "Waiting out the grace period",
+      "config_invalid": "Auto-promotion config is invalid"
+    },
+    "notApplicable": {
+      "status": "Run is not in review",
+      "run_kind": "Only flow runs auto-promote",
+      "no_task": "Run has no task",
+      "orchestrator_child": "Child runs promote via their orchestrator",
+      "shared_workspace": "Shared-workspace runs are excluded",
+      "auto_on_ready": "Run already auto-delivers"
+    },
+    "panel": {
+      "title": "Auto-promotion",
+      "promotesIn": "Promotes automatically in {time}",
+      "held": "On hold",
+      "holdReason": "Hold reason",
+      "hold": "Hold",
+      "release": "Release",
+      "disabledPlatform": "Auto-promotion is off platform-wide",
+      "disabledProject": "Auto-promotion is off for this project",
+      "promotedVia": "Promoted automatically via the {lane} lane",
+      "lane": "Lane",
+      "files": "Files"
+    }
   }
 }
