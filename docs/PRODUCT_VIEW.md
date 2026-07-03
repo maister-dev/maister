@@ -78,9 +78,11 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
 - **HITL request** — permission, structured form, or human-review input.
 - **Manual takeover** — human claim of an in-flight task, checkout of an
   editable branch, local rework, commit/push, and return to Flow execution.
-- **Promotion** — manual final action that applies a ready run branch to a
-  target branch through local merge or pull request. Deploy/release management
-  is out of scope.
+- **Promotion** — applying a ready run branch to a target branch through local
+  merge or pull request. Manual by default; lane-bounded diff classes
+  (docs/tests/deps/config) may auto-promote through the same choke point when
+  readiness is green ([ADR-126](decisions.md#adr-126-auto-promotion-lanes),
+  Designed). Deploy/release management is out of scope.
 
 ## Jobs To Be Done
 
@@ -102,6 +104,7 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
 | Steer rework without losing control | Reject through a Flow-declared decision, add instructions, choose keep/rewind/fresh workspace policy, and force stale gates to rerun. |
 | Take over work locally | Claim a task, checkout its branch, edit/test/commit on the developer machine, return it through MAIster, and continue with full audit. |
 | Review the result | Inspect logs, artifacts, diff, and status before promotion. |
+| Ship low-risk changes hands-free | Let readiness-green, lane-bounded diffs (docs/tests/deps/config) promote automatically through the same choke point, and hold or opt any run out. |
 | Retry without recreating work | Send a failed or abandoned task back to Backlog and launch attempt N+1. |
 
 ## Current Scope

@@ -573,3 +573,215 @@ flowchart LR
   `web/app/api/scratch-runs/[runId]/recover/`. **(Implemented, M18)**
   `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.
   Full Flow reconciliation remains designed.
+
+## Auto-promotion lanes (ADR-126, Designed)
+
+### Purpose
+
+Auto-promotion lanes remove the human click on `promoteRun` for **project-scoped,
+path/content-bounded diff classes** while changing nothing else about promotion.
+A system sweep (`auto_promote` scheduler job) evaluates every `Review` flow run
+each tick and, when the run's whole diff falls inside exactly one enabled lane
+(`docs | tests | deps | config`) and readiness is green, promotes it through the
+**same** `promoteRun` choke point used by humans. Everything outside an enabled
+lane behaves exactly as today. The boundary of this section is the lane
+config, the eligibility predicate, the sweep, and the promotion attribution
+delta; it does NOT touch readiness, gate, delivery-policy, or `promoteRun`
+merge/PR semantics (those live above and in [`readiness.md`](readiness.md) /
+[`execution-policy.md`](execution-policy.md)). Everything here is **Designed**.
+
+### Domain entities
+
+- **Auto-promotion config** — `projects.auto_promotion` jsonb (validated by
+  `autoPromotionConfigSchema`). NULL ⇒ shipped defaults with the master toggle
+  OFF; malformed ⇒ treated as disabled (fail-closed). See ERD
+  [`../db/runs-domain.md`](../db/runs-domain.md).
+- **Lane** — one of `docs | tests | deps | config` with `enabled`, optional
+  `mode`, `delayMinutes` (default 10), `requireExternalCheckId`, and
+  `excludeGlobs`. Fixed built-in path-glob sets per class; `BUILT_IN_LANES` ships
+  all four enabled.
+- **Hard deny-list** — `HARD_DENY_GLOBS`, a non-configurable security boundary
+  (`.github/workflows/**`, `.env*`, `maister.yaml`, `CLAUDE.md`/`AGENTS.md`/
+  `GEMINI.md`, `.claude/**`/`.codex/**`/`.agents/**`/`.ai-factory/**`), evaluated
+  before lane matching against both `path` and rename `oldPath`.
+- **Promotion hold** — `runs.promotion_hold` jsonb
+  (`{source:'user'|'system'|'launch', reason?, createdAt}`); NULL ⇒ no hold.
+  Never cleared by state transitions (survives rework).
+- **Review anchor** — `runs.review_entered_at` timestamptz, stamped at every flow
+  Review-flip, read by PK, consumed by no domain-event consumer; the grace-window
+  origin. NULL ⇒ fail-closed.
+- **Promotion lane marker** — `workspaces.promotion_lane` text, written by
+  `promoteRun` finalize when the input carries auto-promotion attribution; the
+  queryable "auto" glyph datum.
+- **Evaluation verdict** — `AutoPromotionEvaluation`, the discriminated result of
+  the ONE shared `evaluateAutoPromotion` function (the sweep decision AND the
+  run-detail panel DTO): `eligible | held | ineligible | disabled |
+  not_applicable`.
+
+### Verdict state machine
+
+The classifier that both the sweep and the run-detail panel call. A `Review`
+flow run is evaluated each tick and lands in exactly one verdict family; every
+non-`eligible` verdict is fail-to-manual (the human Promote button is
+unaffected). `Promoted` is terminal for the sweep — the candidate predicate
+excludes `Done` runs.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Evaluating: auto_promote tick reads a Review flow run
+    Evaluating --> Disabled: MAISTER_AUTO_PROMOTION off<br/>OR project master enabled false
+    Evaluating --> NotApplicable: status/run_kind/no_task<br/>OR parent_run_id set<br/>OR workspace_mode shared<br/>OR already auto_on_ready
+    Evaluating --> Held: runs.promotion_hold not null
+    Evaluating --> Ineligible: deny_list / no_lane / ambiguous_lane / empty_diff<br/>deps_content / checks_not_strict / pending_hitl<br/>readiness_not_green / external_check_* / no_review_anchor<br/>grace_pending / config_invalid
+    Evaluating --> Eligible: all predicate terms hold
+    Eligible --> Promoted: promoteRun autoOnReady success
+    Eligible --> Held: promoteRun CONFLICT or terminal PRECONDITION or CONFIG<br/>CAS runs.promotion_hold source system + one comment
+    Eligible --> Ineligible: promoteRun EXECUTOR_UNAVAILABLE or transient<br/>skip, retry next tick
+    Ineligible --> Evaluating: state changes, re-evaluated next tick
+    NotApplicable --> Evaluating: re-evaluated next tick
+    Held --> Evaluating: hold released, re-evaluated next tick
+    Promoted --> [*]
+```
+
+### Process flow — the sweep
+
+The `auto_promote` handler mirrors `auto_launch_triaged`: a cheap SQL prefilter,
+a FULL re-evaluation per candidate at claim time, then a single call into
+`promoteRun` with system attribution. Cross-caller race safety is `promoteRun`'s
+existing claim token; the sweep's own singleton lease (budget 1) prevents
+overlapping ticks during a long merge.
+
+```mermaid
+flowchart TD
+    Tick([auto_promote singleton tick]) --> Env{MAISTER_AUTO_PROMOTION off?}
+    Env -- yes --> Skip[skip tick]
+    Env -- no --> Pre[SQL prefilter: status Review AND run_kind flow<br/>AND task_id not null AND parent_run_id null<br/>AND workspace_mode not shared AND promotion_hold null<br/>AND projects.auto_promotion not null, LIMIT 20]
+    Pre --> Loop{next candidate}
+    Loop -- none --> End([done])
+    Loop -- candidate --> Eval[evaluateAutoPromotion: deny-list, one-lane-all-files,<br/>deps content check, strict checks, no HITL,<br/>readiness green, external check, grace elapsed]
+    Eval --> V{verdict eligible?}
+    V -- no --> Loop
+    V -- yes --> Promote[promoteRun autoOnReady true,<br/>attribution source auto_promotion + laneClass,<br/>system ctx]
+    Promote --> Ok{outcome?}
+    Ok -- success --> Comment[tx: workspaces.promotion_lane set in finalize;<br/>addTaskComment system: lane, file count, readiness ok, run link]
+    Ok -- "CONFLICT / terminal PRECONDITION / CONFIG" --> Hold[one tx: CAS promotion_hold source system<br/>WHERE promotion_hold null RETURNING;<br/>if row, addTaskComment system reason same tx]
+    Ok -- "EXECUTOR_UNAVAILABLE / transient" --> Loop
+    Comment --> Loop
+    Hold --> Loop
+```
+
+### Expectations
+
+- Auto-promotion MUST call the SAME `promoteRun` with the same
+  `assertEvidenceReady("review")` re-gate and blocking-gate checks; there is no
+  second promotion path and no evidence/readiness rule is relaxed (the
+  `autoOnReady: true` waiver is the pre-existing system-promotion semantics).
+  (INV-1)
+- `HARD_DENY_GLOBS` MUST be evaluated before lanes, MUST NOT be configurable, and
+  a deny-listed file — including a rename target OR source (`oldPath`) — MUST
+  defeat EVERY lane, with the offending files named on the panel. (INV-2)
+- The predicate MUST be fail-closed: unknown/zero/ambiguous lane, malformed
+  config, missing `runs.review_entered_at` anchor, non-strict checks
+  (`checksFromSnapshot(execution_policy) !== 'strict'`), pending HITL, or a
+  stale/failed/missing blocking gate ⇒ not eligible, silently, and always
+  fail-to-manual (the human Promote is unaffected). (INV-3)
+- A blocking `human_review` gate MUST NEVER be satisfied by this feature. (INV-4)
+- Exactly one promotion MUST win under concurrency (sweep vs human vs ext): the
+  loser gets `MaisterError("CONFLICT")`; there is exactly one terminal
+  transition, guaranteed by `promoteRun`'s existing `promotion_attempt_id` claim
+  token. (INV-5)
+- Conflict give-up MUST equal today's manual conflict semantics PLUS
+  `runs.promotion_hold={source:'system'}` PLUS exactly ONE system comment,
+  CAS-guarded on `promotion_hold IS NULL`; a held run MUST NEVER be retried until
+  explicitly released. (INV-6)
+- The `deps` lane MUST admit ONLY registry-version-specifier value changes on
+  both-sided dependency-block keys; non-version specifiers
+  (`file:`/`link:`/`portal:`/`git`/`github:`/`ssh:`/`http(s)`/`workspace:`/
+  `npm:`-alias/path), additions/removals/out-of-block changes/parse failures, AND
+  lockfile-only diffs (no manifest change) MUST disqualify without throwing; a
+  lockfile riding a validated manifest passes a best-effort non-registry-resolution
+  scan (full per-format consequence-proof is a Phase-2 residual, R4). (INV-7)
+- Scratch, orchestrator-child (`parent_run_id IS NOT NULL`), shared-workspace
+  (`workspace_mode='shared'`), and — once its substrate lands — non-concluded-
+  experiment-member runs MUST NEVER be candidates, by design. (INV-8)
+- Grace timing MUST derive from `runs.review_entered_at` (stamped at each
+  Review-flip, consumed by no domain-event consumer); rework re-entry re-stamps
+  and restarts the window; NULL ⇒ not eligible. (INV-9)
+- The sweep and the run-detail panel MUST render from ONE `evaluateAutoPromotion`
+  function — byte-identical verdicts for identical state. (INV-10)
+- `MAISTER_AUTO_PROMOTION=off` AND the project master toggle MUST each stop NEW
+  promotions within one tick while in-flight `promoteRun` calls complete; the
+  master default is OFF; a never-configured project gets the four shipped lanes +
+  10-minute grace the moment the master flips ON. (INV-11)
+- Every auto-promotion MUST be attributable from the task thread alone (one
+  system comment: lane, file count, readiness ✓, run link) AND from data
+  (`workspaces.promotion_lane` non-null, system actor on the existing
+  `run.done` webhook/domain events); all new strings ship EN+RU and this feature
+  adds exactly one migration and no new `MaisterError` code. (INV-12, INV-13)
+
+### Edge cases
+
+- **`empty_diff` (E1)** — a zero-file diff ⇒ ineligible, skipped; no promotion,
+  no error. Fail-to-manual.
+- **`CONFLICT` / target branch deleted (E2)** — the promote aborts, the run stays
+  `Review`, the give-up hold+comment names the missing target branch. Maps to
+  `MaisterError("CONFLICT")`.
+- **`external_check_missing` (E3)** — a lane's `requireExternalCheckId` is not
+  declared in the compiled FlowGraph gate set at all ⇒ ineligible with the misconfig
+  surfaced on the panel (distinct from `external_check_not_passed`, where the id is
+  declared but its `gate_results` latest status is not passed/overridden). Fail-to-manual.
+- **Lane disabled between ticks (E4)** — the full re-evaluation at claim time
+  re-reads config, so a lane an operator disabled mid-grace skips on the next
+  tick; no promotion fires under a since-disabled lane.
+- **Manual promote during grace (E5)** — a human promotes while the run is in its
+  grace window; the candidate is gone (status no longer `Review`) on the next
+  tick, so there is no double comment or double promotion. Serialized by the
+  `promoteRun` claim; loser (if any) gets `MaisterError("CONFLICT")`.
+- **Hold across rework (E6)** — `runs.promotion_hold` is never cleared by state
+  transitions, so a `{source:'launch'}` or `{source:'user'}` hold survives a
+  rework loop and the run stays out of the sweep until explicitly released.
+- **Promotion-mode change mid-grace (E7)** — the current lane config is read at
+  claim time, so a lane `mode` changed during the grace window takes effect on
+  the promoting tick (no stale snapshot).
+- **Singleton lease vs long merge (E8)** — the `auto_promote` job is a budget-1
+  systemManaged singleton; its `claimDueJobs` CAS prevents a second tick from
+  overlapping an in-flight long merge.
+- **Deny via rename (E9)** — a rename INTO `.claude/` (or any deny path) from an
+  allowed path is caught because the deny-list checks both `path` and rename
+  `oldPath`; the whole diff is disqualified. Fail-to-manual.
+- **i18n verbatim files (E10)** — `files`/`detail` in a verdict are rendered
+  untranslated (verbatim paths); only the `reasonCode` labels are translated
+  (EN+RU).
+- **Terminal `PRECONDITION` give-up** — stale/not-green readiness at promote time
+  after an eligible evaluation is treated as terminal give-up (needs human eyes):
+  hold + one comment, mapping to `MaisterError("PRECONDITION")`. A transient
+  `MaisterError("EXECUTOR_UNAVAILABLE")` instead skips with no hold and retries.
+
+### Linked artifacts
+
+- ADR: [ADR-126 Auto-promotion lanes](../decisions.md#adr-126-auto-promotion-lanes)
+  (Proposed). Full requirements, predicate terms 1–17, invariants INV-1…13, edge
+  cases E1…E10, and the test matrix live in the SDD plan
+  `.ai-factory/plans/auto-promotion-lanes.md`.
+- Boundary docs (no duplication, R7):
+  [`execution-policy.md`](execution-policy.md) (the C1 `auto_on_ready` autopilot
+  that OR-combines with lanes — such runs are `not_applicable`),
+  [`readiness.md`](readiness.md) (the readiness gate lanes read, never relax),
+  [`scheduler.md`](scheduler.md) (the `auto_promote` job kind).
+- Source (all Designed): `web/lib/auto-promotion/config.ts` (schemas +
+  `BUILT_IN_LANES` + `resolveAutoPromotionConfig` + `autoPromotionEnabledFromEnv`),
+  `web/lib/auto-promotion/classify.ts` (deny-list + lane classifier),
+  `web/lib/auto-promotion/deps-check.ts` (manifest + lockfile content check),
+  `web/lib/auto-promotion/evaluate.ts` (the ONE shared `evaluateAutoPromotion`),
+  `web/lib/scheduler/handlers/auto-promote.ts` (the sweep), plus the
+  attribution delta in `web/lib/runs/promote.ts`.
+- DB: migration `0089_auto_promotion_lanes` (four columns —
+  `projects.auto_promotion`, `runs.promotion_hold`, `runs.review_entered_at`,
+  `workspaces.promotion_lane`) — [`../db/runs-domain.md`](../db/runs-domain.md).
+- API: `PATCH /api/projects/{slug}/settings` (`autoPromotion`),
+  `PUT|DELETE /api/runs/{runId}/promotion-hold`,
+  `GET /api/runs/{runId}/auto-promotion`, and the `auto_promote` `jobKind` on
+  `GET|POST /api/cron/tick` — [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
+- Config: [`../configuration.md`](../configuration.md) (`MAISTER_AUTO_PROMOTION`).
+- Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md) (`CONFLICT` /
+  `PRECONDITION` — the sweep reuses these; no new code).

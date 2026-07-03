@@ -149,6 +149,7 @@
 | [ADR-121](#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate) | Priority-ordered dependency-draining task queue: unified admission gate, cycle-safe relations, cap-safe resume, advisory confidence, operator pause | Accepted | 2026-06-30 |
 | [ADR-122](#adr-122-project-brain-per-project-memory-substrate) | Project Brain (per-project memory substrate): build-thin pgvector, two migration lineages, immutable per-generation embeddings, harvest/decay owned tier, RecallRanker seam, 4-layer enablement (Sub-project A) | Accepted | 2026-07-02 |
 | [ADR-125](#adr-125-budget-breach-four-way-fork-with-staged-claims) | Budget-breach four-way fork with staged claims | Accepted | 2026-07-02 |
+| [ADR-126](#adr-126-auto-promotion-lanes) | Auto-promotion lanes: project-scoped path/content-bounded diff classes (docs/tests/deps/config) promoted through the same `promoteRun` choke point, non-configurable hard deny-list security boundary, `runs.review_entered_at` grace anchor, CAS hold give-up, deps supply-chain hardening | Proposed | 2026-07-03 |
 
 ---
 
@@ -10426,6 +10427,173 @@ resume count were scattered across other surfaces.
   while adding multi-step composites.
 - _Store the progress DTO_: rejected. It is a volatile read aggregate derived
   from budget state, rollups, node attempts, diff metadata, gates, and sessions.
+
+---
+
+### ADR-126: Auto-promotion lanes
+
+**Date:** 2026-07-03
+**Status:** Proposed
+**Context:** Every flow promotion today ends in a human click on `promoteRun`
+even when readiness is green and the diff is three Markdown files. This is the
+delivery half of the VISION autonomy loop whose front half already ships
+(triage → `auto_launch_triaged`, ADR-112/121). This ADR adds **auto-promotion
+lanes**: project-scoped, path/content-bounded diff classes promoted by a system
+sweep through the **same** `promoteRun` choke point. Everything outside an
+enabled lane behaves exactly as today. A recon pass confirmed the substrate is
+already built — `promoteRun`'s durable claim-token concurrency guard, the
+`assertEvidenceReady` in-path readiness re-gate, target-drift waiver for system
+promotions (`autoOnReady`), conflict → `CONFLICT` semantics, and the
+`deliverRunIfAutoReady` unconditional autopilot — so this work composes with
+that substrate rather than rebuilding it. Full requirements, the eligibility
+predicate (terms 1–17), invariants INV-1…13, edge cases E1…E10, and the test
+matrix live in the SDD plan `.ai-factory/plans/auto-promotion-lanes.md`.
+
+**Decision:**
+- **Lane model.** Four v1 lane classes — `docs | tests | deps | config` — each a
+  fixed path-glob set plus optional per-lane `mode`, `delayMinutes` (default 10),
+  `requireExternalCheckId`, and `excludeGlobs`. Config lives in
+  `projects.auto_promotion` jsonb (**D-1**, mirrors ADR-121 `taskQueueSettings`
+  via the aggregating settings PATCH, no new CRUD routes). `BUILT_IN_LANES` ships
+  all four enabled with a 10-minute grace, but the **master toggle ships OFF** —
+  a never-configured project gets the four shipped lanes the moment the master
+  flips ON, zero tuning required. Malformed stored config ⇒ treated as disabled
+  (fail-closed).
+- **Non-configurable hard deny-list is a security boundary, not a knob.**
+  `HARD_DENY_GLOBS` (`.github/workflows/**`, `.env*`, `maister.yaml`,
+  `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, `.claude/**`/`.codex/**`/`.agents/**`/
+  `.ai-factory/**`, each root-anchored and `**/`-nested) is evaluated BEFORE lane
+  matching, against **both** a file's `path` and its rename `oldPath`, and a
+  single deny-listed file defeats EVERY lane. Rationale: `CLAUDE.md` is `*.md` and
+  would otherwise auto-merge under the docs lane, letting an agent silently edit
+  its own operating instructions (a prompt-injection surface); workflow files are
+  a CI code-execution surface; `.env*` and agent-config dirs are secret / trust
+  surfaces. These cannot be re-enabled per project — the deny-list is a fixed
+  boundary, deliberately not exposed as configuration.
+- **No-blind-ship extended, not relaxed.** Auto-promotion calls the SAME
+  `promoteRun` with the SAME `assertEvidenceReady("review")` re-gate, required
+  artifacts, and blocking-gate checks; the `autoOnReady: true` waiver it uses is
+  the pre-existing system-promotion semantics, not a new bypass. Only the human
+  *click* is removed — no evidence rule is weakened, and a blocking `human_review`
+  gate is NEVER satisfied by this feature. Eligibility additionally requires
+  `checksFromSnapshot(execution_policy) === 'strict'`: a relaxed/skip checks
+  policy is never lane-eligible.
+- **Relationship to the existing `auto_on_ready` autopilot.** The
+  `deliverRunIfAutoReady` path already promotes unconditionally when EITHER knob
+  says so — `delivery_policy_snapshot.trigger === 'auto_on_ready'` **OR**
+  `promotionFromSnapshot(execution_policy) === 'auto_on_ready'` (the two knobs
+  OR-combine). Lanes must OR them too: a run already governed by either knob is
+  `not_applicable` to the sweep (**D-6**) — the existing autopilot owns it,
+  including its degraded-to-manual states. Lanes are the diff-bounded autopilot
+  for runs that are otherwise manual.
+- **Grace anchor = new `runs.review_entered_at` COLUMN, NOT a domain event
+  (D-3, revised).** The grace window (`now ≥ review_entered_at + delayMinutes`)
+  needs a per-run Review-entry timestamp. It is a plain `timestamptz` column
+  stamped inside the SAME `UPDATE runs SET status='Review'` at every flow
+  Review-flip site, read by PK, consumed by nobody. It is deliberately **not** a
+  top-level `run.review` domain event: `run.review` is a live **SETTLED** domain
+  kind (`taxonomy.ts`, `RUN_SETTLED_EVENT_KINDS`) consumed by seven registered
+  consumers — including **user-configurable `agentTriggers`** bindable to
+  `run.review` and `orchestratorResume` — so emitting one at flow Review flips
+  would silently fire configured agents on every flow→Review and add a seq-scan
+  over an unindexed table. NULL ⇒ fail-closed (`no_review_anchor`); legacy runs
+  stamped before this ships stay manual; rework re-entry re-stamps and restarts
+  the window.
+- **Give-up = CAS hold + exactly one comment.** On a terminal refusal
+  (`CONFLICT`, terminal `PRECONDITION`, `CONFIG`) the sweep writes
+  `runs.promotion_hold={source:'system', reason}` under a
+  `WHERE promotion_hold IS NULL` CAS and, in the SAME transaction, posts exactly
+  one system `addTaskComment` — the CAS makes the one-comment guarantee provable.
+  A held run is invisible to the candidate prefilter, so it is never retried until
+  explicitly released. This mirrors the precedent that auto-delivery already sets:
+  on any promote error it self-disarms via `switchRunToManual` (a CAS on its
+  trigger) so it fires at most once. Transient failures
+  (`EXECUTOR_UNAVAILABLE`) set no hold and retry next tick.
+- **Accepted crash-window residual (W1, Risk R2).** A crash after `promoteRun`
+  succeeds but before the success-comment transaction leaves the run correctly
+  `Done` with its `workspaces.promotion_lane` glyph, webhooks, and domain events
+  all fired — only the task comment is missing. Because the candidate predicate
+  excludes `Done` runs, there is no retry or duplicate; "exactly one comment"
+  is at-most-one, WARN-logged. Accepted for v1.
+- **PR-mode boundary = create-and-stop.** A `mode: 'pull_request'` lane creates
+  the PR through the existing `PrAdapter` path with system attribution and then
+  the run flips `Done` immediately — the established Done-on-PR semantics. No
+  further PR lifecycle action (auto-merge is a Phase-2 PR-automerger agent).
+- **Permanent exclusions.** Scratch runs, orchestrator children
+  (`parent_run_id IS NOT NULL`), and shared-workspace runs
+  (`workspace_mode='shared'`, whose promotion fans out to children — multi-run
+  blast radius, **D-7**) are never candidates, by design. A **Designed** term also
+  excludes members of a non-concluded experiment; its substrate is absent on this
+  branch, so wiring it is a merge obligation (**MO-3**: whichever of the parallel
+  tacts merges second adds the predicate term).
+- **Lane config is deliberately NOT snapshotted onto runs (D-8).** Unlike
+  delivery/execution policy, the sweep enforces CURRENT operator intent and is
+  fail-closed; policy snapshots keep governing recorded evidence, but lane
+  membership is re-evaluated live at each tick. This is a conscious divergence
+  from the snapshot rule, justified by the fail-to-manual guarantee.
+- **Deps-lane supply-chain hardening (D-11).** The `deps` lane admits ONLY
+  value changes at `(dependencies|devDependencies|peerDependencies|
+  optionalDependencies).<name>` where the key exists on both sides and both the
+  old and new value pass a strict **registry-version specifier allow-list** —
+  accepting bare semver / ranges / exact pins, REJECTING any specifier carrying a
+  protocol or path (`file:`/`link:`/`portal:`/`git`/`github:`/`ssh:`/`http(s)`/
+  `workspace:`/`npm:`-alias/bare path) on either side (**protocol-swap defense**).
+  Key add/remove, out-of-block change, or JSON parse failure disqualify without
+  throwing. A **lockfile-only diff** (a changed lockfile with no changed manifest)
+  is disqualified — no unattended shipping of a changed dependency graph no
+  manifest explains — and a lockfile riding a validated manifest bump passes a
+  best-effort non-registry-resolution textual scan. Every disqualification is
+  fail-to-manual.
+- **Phase-2 directions.** Earned-trust lane widening, a PR-automerger agent
+  driving the PR lifecycle past creation, and a full per-format lockfile
+  consequence-proof (pnpm/npm/yarn) are non-goals recorded here.
+
+**Consequences:**
+- One migration adds **four** columns: `projects.auto_promotion` (jsonb),
+  `runs.promotion_hold` (jsonb), `runs.review_entered_at` (timestamptz), and
+  `workspaces.promotion_lane` (text). No new `MaisterError` code, no new
+  scheduler event kind, no new `task_activity`/domain/webhook kind — attribution
+  rides one `addTaskComment` (which records `comment_added` + inbox fanout) plus
+  the system actor on the existing `run.done` webhook/domain events, and the board
+  "auto" glyph derives from `workspaces.promotion_lane IS NOT NULL`.
+- A new `auto_promote` systemManaged singleton scheduler job (budget 1, 60 s)
+  full-re-evaluates candidates each tick through the ONE shared
+  `evaluateAutoPromotion` function that also backs the run-detail panel — so the
+  sweep verdict and the panel explanation are byte-identical for identical state.
+- The platform kill switch `MAISTER_AUTO_PROMOTION` (`on` default / `off`) and the
+  project master toggle each stop NEW promotions within one tick; in-flight
+  `promoteRun` calls complete.
+- **Residual R4 (deps lockfile):** the best-effort lockfile specifier scan is
+  textual, not a per-format consequence-proof, so a crafted lockfile riding a
+  valid manifest bump could still alter transitive resolutions it misses. Bounded
+  by lockfile-only disqualification, the manifest specifier allow-list, the
+  deny-list, the strict-checks term, and fail-to-manual; full consequence-proof
+  is Phase-2.
+- **Numbering (MO-1):** this number and the migration are claimed on a session
+  worktree parallel to other tacts and are renumbered to the true next-free values
+  at the merge renumber pass; the `run.review`-domain-event anchor considered in an
+  earlier draft was reopened to the column above.
+
+**Alternatives Considered:**
+- *`run.review` domain event as the grace anchor*: rejected — it is a SETTLED kind
+  with seven consumers incl. user-configurable `agentTriggers`; a top-level emit
+  would silently fire configured agents on every flow→Review and seq-scan an
+  unindexed table. Replaced by the `runs.review_entered_at` column consumed by
+  nobody (D-3).
+- *A second, lane-specific promotion path*: rejected — auto-promotion MUST reuse
+  `promoteRun`'s claim token, readiness re-gate, and conflict semantics so exactly
+  one promotion wins under concurrency and no evidence rule forks (INV-1/INV-5).
+- *Configurable deny-list*: rejected — the deny-list is a security boundary
+  (self-editing agent instructions, CI, secrets); exposing it as a knob defeats
+  its purpose.
+- *Snapshotting lane config onto the run*: rejected — the sweep must enforce
+  current operator intent and remain fail-closed; a stale snapshot could promote
+  under a lane an operator has since disabled (D-8).
+- *Dropping lockfiles from the deps lane, or a full per-format lockfile proof for
+  v1*: rejected both ways — dropping lockfiles makes the lane useless (real bumps
+  touch the lockfile) and a full consequence-proof is disproportionate for v1; the
+  specifier allow-list + no-lockfile-only + best-effort scan close the two concrete
+  holes, residual recorded (D-11, R4).
 
 ---
 
