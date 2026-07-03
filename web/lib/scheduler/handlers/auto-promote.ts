@@ -1,8 +1,5 @@
 import "server-only";
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { and, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -10,20 +7,16 @@ import { autoPromotionEnabledFromEnv } from "@/lib/auto-promotion/config";
 import {
   evaluateAutoPromotion,
   type AutoPromotionEvaluation,
-  type AutoPromotionReaders,
   type AutoPromotionRunView,
-  type ExternalCheckState,
 } from "@/lib/auto-promotion/evaluate";
-import type { DepsFile } from "@/lib/auto-promotion/deps-check";
+import { buildAutoPromotionReaders } from "@/lib/auto-promotion/readers";
 import type { PromotionHold } from "@/lib/auto-promotion/types";
 import { getDb } from "@/lib/db/client";
-import { gateResults, projects, runs, workspaces } from "@/lib/db/schema";
+import { projects, runs, workspaces } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { promoteRun, type PromoteRunContext } from "@/lib/runs/promote";
 import { addTaskComment } from "@/lib/social/comments";
 import { diffChangeStats, type DiffChangeStatEntry } from "@/lib/worktree";
-import { hitlRequests } from "@/lib/db/schema";
 
 // FIXME(any): route + tests pass a minimal drizzle-like fake / a Testcontainers
 // pg client; both expose select/update/transaction.
@@ -36,7 +29,6 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const execFileAsync = promisify(execFile);
 const CANDIDATE_LIMIT = 20;
 
 export type AutoPromoteSummary = {
@@ -55,91 +47,6 @@ function systemPromoteCtx(projectId: string): PromoteRunContext {
     sessionUser: { id: `auto-promotion:${projectId}` },
     authorize: async () => undefined,
     actor: { kind: "system" },
-  };
-}
-
-// A best-effort git file-at-ref read (deps lane only). Absent at a ref ⇒ null;
-// never throws.
-async function showFileAtRef(
-  worktreePath: string,
-  ref: string,
-  path: string,
-): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["show", `${ref}:${path}`],
-      { cwd: worktreePath, maxBuffer: 8 * 1024 * 1024 },
-    );
-
-    return stdout;
-  } catch {
-    return null;
-  }
-}
-
-function buildReaders(args: {
-  db: Db;
-  runId: string;
-  worktreePath: string;
-  baseRef: string;
-  branch: string;
-}): AutoPromotionReaders {
-  const { db, runId, worktreePath, baseRef, branch } = args;
-
-  return {
-    async hasOpenHitl(): Promise<boolean> {
-      const rows = await db
-        .select({ id: hitlRequests.id })
-        .from(hitlRequests)
-        .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.response)))
-        .limit(1);
-
-      return rows.length > 0;
-    },
-    async readinessGreen(): Promise<boolean> {
-      // Read-only: the same evidence the choke point re-asserts transactionally.
-      try {
-        await assertEvidenceReady(runId, "review", db);
-
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async externalCheck(gateId: string): Promise<ExternalCheckState> {
-      // Fail-closed: a passing/overridden external_check row ⇒ passed, else
-      // declared_not_passed (the not_declared distinction needs the compiled
-      // FlowGraph; both are ineligible, so the sweep conservatively reports
-      // declared_not_passed — the panel refines it).
-      const rows = await db
-        .select({ status: gateResults.status })
-        .from(gateResults)
-        .where(
-          and(
-            eq(gateResults.runId, runId),
-            eq(gateResults.gateId, gateId),
-            eq(gateResults.kind, "external_check"),
-          ),
-        );
-
-      const passed = rows.some(
-        (r: { status: string }) =>
-          r.status === "passed" || r.status === "overridden",
-      );
-
-      return passed ? "passed" : "declared_not_passed";
-    },
-    async readDepsFiles(files: DiffChangeStatEntry[]): Promise<DepsFile[]> {
-      return Promise.all(
-        files.map(async (f) => ({
-          path: f.path,
-          status: f.status,
-          base: await showFileAtRef(worktreePath, baseRef, f.oldPath ?? f.path),
-          branch: await showFileAtRef(worktreePath, branch, f.path),
-        })),
-      );
-    },
   };
 }
 
@@ -248,7 +155,7 @@ export async function runAutoPromoteJob(
       project: { id: c.projectId, autoPromotion: c.autoPromotion },
       files,
       now,
-      readers: buildReaders({
+      readers: buildAutoPromotionReaders({
         db,
         runId: c.runId,
         worktreePath: c.worktreePath,

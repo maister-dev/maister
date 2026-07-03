@@ -20,6 +20,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
 import { taskQueueSettingsSchema } from "@/lib/tasks/queue-settings";
+import { autoPromotionConfigSchema } from "@/lib/auto-promotion/config";
 
 const { platformAcpRunners, projects } = schemaModule as unknown as Record<
   string,
@@ -41,6 +42,9 @@ const patchBodySchema = z
     // ADR-122: toggle the Project Brain for this repo. Enabling refuses CONFIG
     // unless the platform embedding config AND distill_model are set (enable-gate).
     brainEnabled: z.boolean().optional(),
+    // ADR-126: auto-promotion lane config. `null` clears to shipped defaults +
+    // master OFF. `.strict()` rejects unknown keys → 422.
+    autoPromotion: autoPromotionConfigSchema.nullable().optional(),
   })
   .strict();
 
@@ -179,6 +183,10 @@ export async function PATCH(
     if (body.brainEnabled !== undefined) {
       update.brainEnabled = body.brainEnabled;
     }
+    // SET/CLEAR symmetry: null clears to defaults+OFF, a config sets it.
+    if (body.autoPromotion !== undefined) {
+      update.autoPromotion = body.autoPromotion;
+    }
 
     if (Object.keys(update).length === 0) {
       throw new MaisterError("CONFIG", "PATCH body contains no settings");
@@ -229,6 +237,10 @@ export async function PATCH(
         body.taskQueueSettings === undefined
           ? project.taskQueueSettings
           : body.taskQueueSettings,
+      autoPromotion:
+        body.autoPromotion === undefined
+          ? project.autoPromotion
+          : body.autoPromotion,
     });
   } catch (err) {
     return errorResponse(err, slug);
