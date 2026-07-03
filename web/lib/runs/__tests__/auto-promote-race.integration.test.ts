@@ -1,0 +1,250 @@
+import { randomUUID } from "node:crypto";
+
+import {
+  PostgreSqlContainer,
+  type StartedPostgreSqlContainer,
+} from "@testcontainers/postgresql";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { eq } from "drizzle-orm";
+import { Pool } from "pg";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import * as fullSchema from "@/lib/db/schema";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
+import type { MaisterError } from "@/lib/errors";
+
+const promoteLocalMergeSpy = vi.fn(async () => undefined);
+
+// Stub the git side-effects so promoteRun's DB claim/finalize logic (the claim
+// token + workspaces.promotion_lane write) runs without a real repo.
+vi.mock("@/lib/worktree", async (orig) => ({
+  ...(await orig<typeof import("@/lib/worktree")>()),
+  resolveBaseCommit: vi.fn(async () => "targettip000000"),
+  branchExists: vi.fn(async () => true),
+  pushBranch: vi.fn(async () => undefined),
+  promoteLocalMerge: (...args: unknown[]) => promoteLocalMergeSpy(...(args as [])),
+}));
+
+let db: NodePgDatabase;
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+const { promoteRun } = await import("@/lib/runs/promote");
+
+const schema = fullSchema as unknown as Record<string, any>;
+const { runs, workspaces, tasks } = schema;
+
+let container: StartedPostgreSqlContainer;
+let pool: Pool;
+let projectId: string;
+let userId: string;
+let runnerId: string;
+let flowId: string;
+
+function systemCtx(): any {
+  return {
+    sessionUser: { id: `auto-promotion:${projectId}` },
+    authorize: async () => undefined,
+    actor: { kind: "system" },
+  };
+}
+
+function userCtx(): any {
+  return {
+    sessionUser: { id: userId },
+    authorize: async () => undefined,
+    actor: { kind: "user" },
+  };
+}
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer("postgres:16-alpine")
+    .withDatabase("maister_test")
+    .withUsername("test")
+    .withPassword("test")
+    .start();
+  pool = new Pool({ connectionString: container.getConnectionUri() });
+  db = drizzle(pool);
+  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+}, 180_000);
+
+afterAll(async () => {
+  await pool?.end();
+  await container?.stop();
+});
+
+beforeEach(async () => {
+  for (const t of [
+    "workspaces",
+    "runs",
+    "tasks",
+    "flows",
+    "platform_acp_runners",
+    "projects",
+    "users",
+  ]) {
+    await pool.query(`DELETE FROM "${t}"`);
+  }
+
+  promoteLocalMergeSpy.mockClear();
+  promoteLocalMergeSpy.mockResolvedValue(undefined);
+
+  projectId = randomUUID();
+  userId = randomUUID();
+  runnerId = randomUUID();
+  flowId = randomUUID();
+
+  await db.insert(schema.users).values({ id: userId, email: `u@t.test` });
+  await db.insert(schema.projects).values({
+    id: projectId,
+    slug: `p-${projectId.slice(0, 8)}`,
+    name: "P",
+    repoPath: `/repos/${projectId}`,
+    maisterYamlPath: "/tmp/m.yaml",
+    taskKey: `T${projectId.replace(/[^0-9A-Za-z]/g, "").slice(0, 7).toUpperCase()}`,
+  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(runnerId, "claude"));
+  await db.insert(schema.flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "g",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/g",
+    manifest: {},
+    schemaVersion: 1,
+  });
+});
+
+async function seedPromotableRun(): Promise<string> {
+  const runId = randomUUID();
+  const taskId = randomUUID();
+
+  await db
+    .insert(tasks)
+    .values({ id: taskId, projectId, number: 1, title: "t", prompt: "p", status: "InFlight" });
+  await db.insert(runs).values({
+    id: runId,
+    projectId,
+    taskId,
+    flowId,
+    runnerId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(runnerId),
+    flowVersion: "v1.0.0",
+    status: "Review",
+    runKind: "flow",
+    createdByUserId: userId,
+  });
+  await db.insert(workspaces).values({
+    id: randomUUID(),
+    runId,
+    projectId,
+    branch: `maister/${runId.slice(0, 8)}`,
+    worktreePath: `/tmp/wt/${runId}`,
+    parentRepoPath: `/repos/${projectId}`,
+    baseBranch: "main",
+    baseCommit: "abc123",
+    targetBranch: "main",
+    promotionState: "none",
+  });
+
+  return runId;
+}
+
+function autoPromoteInput(): any {
+  return {
+    autoOnReady: true,
+    mode: "local_merge",
+    targetBranch: "main",
+    attribution: { source: "auto_promotion", laneClass: "docs" },
+  };
+}
+
+async function readRun(runId: string): Promise<{ status: string }> {
+  const [row] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return row;
+}
+
+async function readLane(runId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ lane: workspaces.promotionLane })
+    .from(workspaces)
+    .where(eq(workspaces.runId, runId));
+
+  return row.lane;
+}
+
+describe("promoteRun attribution (T11)", () => {
+  it("writes workspaces.promotion_lane on an auto-promotion merge", async () => {
+    const runId = await seedPromotableRun();
+
+    await promoteRun(runId, autoPromoteInput(), systemCtx(), db);
+
+    expect((await readRun(runId)).status).toBe("Done");
+    expect(await readLane(runId)).toBe("docs");
+    expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves promotion_lane NULL for a human promote (no attribution)", async () => {
+    const runId = await seedPromotableRun();
+
+    await promoteRun(
+      runId,
+      { mode: "local_merge", targetBranch: "main", autoOnReady: true },
+      userCtx(),
+      db,
+    );
+
+    expect((await readRun(runId)).status).toBe("Done");
+    expect(await readLane(runId)).toBeNull();
+  });
+});
+
+describe("AC-7 / INV-5 — exactly one promotion wins under concurrency", () => {
+  it("sweep (system, attributed) vs human race: one Done, the other CONFLICT/PRECONDITION, merge once", async () => {
+    const runId = await seedPromotableRun();
+
+    const results = await Promise.allSettled([
+      promoteRun(runId, autoPromoteInput(), systemCtx(), db),
+      promoteRun(
+        runId,
+        { mode: "local_merge", targetBranch: "main", autoOnReady: true },
+        userCtx(),
+        db,
+      ),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter(
+      (r): r is PromiseRejectedResult => r.status === "rejected",
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(["CONFLICT", "PRECONDITION"]).toContain(
+      (rejected[0].reason as MaisterError).code,
+    );
+    expect((await readRun(runId)).status).toBe("Done");
+    // The merge git side-effect ran exactly once (the loser never merged).
+    expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
+  });
+});
