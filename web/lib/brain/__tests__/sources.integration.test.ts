@@ -270,4 +270,38 @@ describe("Project Brain sources (ADR-127)", () => {
 
     expect(afterDelete.some((source) => source.id === created.id)).toBe(false);
   });
+
+  it("disables a source whose tracked file was removed after registration", async () => {
+    const removalRepoPath = await createFixtureRepo();
+    const removalProjectId = await seedBrainProject(ctx.db, {
+      slug: `brain-sources-removed-${randomUUID().slice(0, 8)}`,
+    });
+
+    await ctx.db.execute(sql`
+      UPDATE projects
+      SET repo_path = ${removalRepoPath}, main_branch = 'main'
+      WHERE id = ${removalProjectId}
+    `);
+
+    const created = await createBrainSource(ctx.db, {
+      projectId: removalProjectId,
+      repoPath: removalRepoPath,
+      mainBranch: "main",
+      input: { path: "src/index.ts" },
+    });
+
+    await git(removalRepoPath, ["rm", "src/index.ts"]);
+    await git(removalRepoPath, ["commit", "-m", "remove indexed source"]);
+
+    const disabled = await updateBrainSource(ctx.db, {
+      projectId: removalProjectId,
+      repoPath: removalRepoPath,
+      mainBranch: "main",
+      sourceId: created.id,
+      input: { enabled: false },
+    });
+
+    expect(disabled.enabled).toBe(false);
+    expect(disabled.path).toBe("src/index.ts");
+  });
 });

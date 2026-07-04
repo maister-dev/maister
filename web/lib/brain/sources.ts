@@ -386,6 +386,22 @@ async function assertSourceReadable(args: {
   await readBrainSourceContents(args);
 }
 
+function shouldValidateSourceUpdate(args: {
+  current: BrainSourceDto;
+  input: z.infer<typeof sourceInputSchema>;
+  path: string;
+  kind: BuiltInSourceKind;
+  chunkerId: string;
+}): boolean {
+  const sourceShapeChanged =
+    args.path !== args.current.path ||
+    args.kind !== args.current.kind ||
+    args.chunkerId !== args.current.chunkerId;
+  const nextEnabled = args.input.enabled ?? args.current.enabled;
+
+  return nextEnabled || sourceShapeChanged;
+}
+
 export async function listBrainSources(
   db: SourcesDb,
   projectId: string,
@@ -459,11 +475,32 @@ export async function updateBrainSource(
   const kind = input.kind ?? current.kind;
   const chunkerId = input.chunkerId ?? current.chunkerId;
 
-  await assertSourceReadable({
-    repoPath: args.repoPath,
-    ref: args.mainBranch,
+  const validateReadable = shouldValidateSourceUpdate({
+    current,
+    input,
     path,
+    kind,
+    chunkerId,
   });
+
+  if (validateReadable) {
+    await assertSourceReadable({
+      repoPath: args.repoPath,
+      ref: args.mainBranch,
+      path,
+    });
+  } else {
+    log.info(
+      {
+        projectId: args.projectId,
+        sourceId: args.sourceId,
+        kind,
+        path,
+        reason: "disable_metadata_only",
+      },
+      "brain source readability validation skipped",
+    );
+  }
 
   await db.execute(sql`
     UPDATE brain_sources
