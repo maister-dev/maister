@@ -12,7 +12,17 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 function commit(cwd: string, message: string): void {
-  git(cwd, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", message);
+  git(
+    cwd,
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "user.name=t",
+    "commit",
+    "--allow-empty",
+    "-m",
+    message,
+  );
 }
 
 // getDefaultBranch resolves a repo's default branch in three tiers:

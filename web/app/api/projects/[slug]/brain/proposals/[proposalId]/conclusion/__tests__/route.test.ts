@@ -1,12 +1,10 @@
+import type { BrainProposalDto } from "@/lib/brain/proposals";
+
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import {
-  concludeBrainProposal,
-  getBrainProposal,
-} from "@/lib/brain/proposals";
-import type { BrainProposalDto } from "@/lib/brain/proposals";
+import { concludeBrainProposal, getBrainProposal } from "@/lib/brain/proposals";
 import { MaisterError } from "@/lib/errors";
 import { getProjectBySlug } from "@/lib/queries/project";
 
@@ -179,10 +177,7 @@ describe("Project Brain proposal conclusion route", () => {
     const res = await invokePost({ action: "accept", reason: "ok" });
 
     expect(res.status).toBe(403);
-    expect(requireProjectAction).toHaveBeenCalledWith(
-      PROJECT_ID,
-      "writeBrain",
-    );
+    expect(requireProjectAction).toHaveBeenCalledWith(PROJECT_ID, "writeBrain");
     expect(requireProjectAction).toHaveBeenCalledWith(
       PROJECT_ID,
       "manageCatalog",
@@ -191,7 +186,9 @@ describe("Project Brain proposal conclusion route", () => {
   });
 
   it("requires createTask before accepting docs projection proposals", async () => {
-    vi.mocked(getBrainProposal).mockResolvedValue(proposalRow({ kind: "state" }));
+    vi.mocked(getBrainProposal).mockResolvedValue(
+      proposalRow({ kind: "state" }),
+    );
     vi.mocked(requireProjectAction).mockImplementation(async (_id, action) => {
       if (action === "createTask") {
         throw new MaisterError("UNAUTHORIZED", "task creation required");
@@ -211,10 +208,7 @@ describe("Project Brain proposal conclusion route", () => {
     const res = await invokePost({ action: "accept", reason: "ok" });
 
     expect(res.status).toBe(403);
-    expect(requireProjectAction).toHaveBeenCalledWith(
-      PROJECT_ID,
-      "writeBrain",
-    );
+    expect(requireProjectAction).toHaveBeenCalledWith(PROJECT_ID, "writeBrain");
     expect(requireProjectAction).toHaveBeenCalledWith(PROJECT_ID, "createTask");
     expect(concludeBrainProposal).not.toHaveBeenCalled();
   });
@@ -231,10 +225,7 @@ describe("Project Brain proposal conclusion route", () => {
 
     expect(res.status).toBe(200);
     expect(requireProjectAction).toHaveBeenCalledTimes(1);
-    expect(requireProjectAction).toHaveBeenCalledWith(
-      PROJECT_ID,
-      "writeBrain",
-    );
+    expect(requireProjectAction).toHaveBeenCalledWith(PROJECT_ID, "writeBrain");
     expect(concludeBrainProposal).toHaveBeenCalledWith(expect.anything(), {
       projectId: PROJECT_ID,
       projectSlug: SLUG,

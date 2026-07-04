@@ -8,10 +8,7 @@ import pino from "pino";
 import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
 import { ensureEmbeddingIndex } from "./embedding-index";
-import {
-  processSourceIndexJob,
-  type SourceIndexerDb,
-} from "./indexer";
+import { processSourceIndexJob, type SourceIndexerDb } from "./indexer";
 import {
   brainSchemaMissingWarnOnce,
   isBrainProvisioned,

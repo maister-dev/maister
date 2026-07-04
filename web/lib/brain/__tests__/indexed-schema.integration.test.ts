@@ -52,16 +52,16 @@ async function indexExists(name: string): Promise<boolean> {
   return rows.rows.length === 1;
 }
 
-function expectColumns(
-  actual: Set<string>,
-  expected: readonly string[],
-): void {
+function expectColumns(actual: Set<string>, expected: readonly string[]): void {
   for (const column of expected) {
     expect(actual.has(column), `expected column ${column}`).toBe(true);
   }
 }
 
-async function countRows(tableName: string, projectId: string): Promise<number> {
+async function countRows(
+  tableName: string,
+  projectId: string,
+): Promise<number> {
   const rows = await ctx.db.execute(
     sql`SELECT count(*)::int AS n FROM ${sql.identifier(tableName)} WHERE project_id = ${projectId}`,
   );
@@ -243,9 +243,9 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
       `),
     ).rejects.toMatchObject({ code: "23505" });
 
-    await expect(indexExists("brain_embeddings_chunk_generation_uq")).resolves.toBe(
-      true,
-    );
+    await expect(
+      indexExists("brain_embeddings_chunk_generation_uq"),
+    ).resolves.toBe(true);
   });
 
   it("deleting a project cascades indexed-tier rows", async () => {

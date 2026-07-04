@@ -48,12 +48,14 @@ describe("parseWhen — predicate grammar", () => {
     const r = parseWhen("   confidence>=0.8   ");
 
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.predicate).toEqual({ field: "confidence", op: ">=", rhs: 0.8 });
+    if (r.ok)
+      expect(r.predicate).toEqual({ field: "confidence", op: ">=", rhs: 0.8 });
 
     const r2 = parseWhen("score   <    10");
 
     expect(r2.ok).toBe(true);
-    if (r2.ok) expect(r2.predicate).toEqual({ field: "score", op: "<", rhs: 10 });
+    if (r2.ok)
+      expect(r2.predicate).toEqual({ field: "score", op: "<", rhs: 10 });
   });
 
   it("parses a nested dot-path field", () => {
@@ -64,10 +66,22 @@ describe("parseWhen — predicate grammar", () => {
   });
 
   it("parses integer, float, leading-dot, and negative numbers", () => {
-    expect(parseWhen("n == 3")).toMatchObject({ ok: true, predicate: { rhs: 3 } });
-    expect(parseWhen("n == 3.5")).toMatchObject({ ok: true, predicate: { rhs: 3.5 } });
-    expect(parseWhen("n == .5")).toMatchObject({ ok: true, predicate: { rhs: 0.5 } });
-    expect(parseWhen("n >= -1")).toMatchObject({ ok: true, predicate: { rhs: -1 } });
+    expect(parseWhen("n == 3")).toMatchObject({
+      ok: true,
+      predicate: { rhs: 3 },
+    });
+    expect(parseWhen("n == 3.5")).toMatchObject({
+      ok: true,
+      predicate: { rhs: 3.5 },
+    });
+    expect(parseWhen("n == .5")).toMatchObject({
+      ok: true,
+      predicate: { rhs: 0.5 },
+    });
+    expect(parseWhen("n >= -1")).toMatchObject({
+      ok: true,
+      predicate: { rhs: -1 },
+    });
   });
 
   it("returns a typed error (never throws) for malformed input", () => {
@@ -110,7 +124,11 @@ describe("evalWhen — predicate evaluation", () => {
   });
 
   it("resolves a nested lhs via getPath", () => {
-    expect(evalWhen(p("verdict.confidence >= 0.7"), { verdict: { confidence: 0.9 } })).toBe(true);
+    expect(
+      evalWhen(p("verdict.confidence >= 0.7"), {
+        verdict: { confidence: 0.9 },
+      }),
+    ).toBe(true);
   });
 
   it("a missing or non-numeric lhs is a NO-MATCH (never throws)", () => {

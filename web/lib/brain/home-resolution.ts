@@ -1,9 +1,9 @@
 import "server-only";
 
+import type { BrainItemKind } from "./schema";
+
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
-
-import type { BrainItemKind } from "./schema";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -17,7 +17,9 @@ const HOME_VALUES = ["owned", "indexed"] as const;
 
 export type BrainHomeKind = (typeof HOME_KINDS)[number];
 export type BrainHomeValue = (typeof HOME_VALUES)[number];
-export type BrainHomeResolution = Partial<Record<BrainHomeKind, BrainHomeValue>>;
+export type BrainHomeResolution = Partial<
+  Record<BrainHomeKind, BrainHomeValue>
+>;
 
 type HomeResolutionDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -110,10 +112,7 @@ function assertHomeResolutionInput(
 ): BrainHomeResolution {
   for (const [kind, value] of Object.entries(input)) {
     if (!(HOME_KINDS as readonly string[]).includes(kind)) {
-      throw new MaisterError(
-        "CONFIG",
-        `unknown homeResolution kind: ${kind}`,
-      );
+      throw new MaisterError("CONFIG", `unknown homeResolution kind: ${kind}`);
     }
 
     if (!isHomeValue(value)) {

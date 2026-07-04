@@ -21,8 +21,7 @@ import {
   recordRequiredTokenAudit,
 } from "@/lib/tokens/ext-handler";
 
-const ENDPOINT_POST =
-  "POST /api/v1/ext/projects/[slug]/memory/proposals";
+const ENDPOINT_POST = "POST /api/v1/ext/projects/[slug]/memory/proposals";
 const PROPOSAL_KINDS = [
   "rule",
   "skill",
@@ -93,7 +92,9 @@ function proposalActor(actor: TokenActor): BrainProposalActor {
   return { type: "system", id: actor.tokenId };
 }
 
-function proposalDraft(input: z.infer<typeof proposalBodySchema>): Record<string, unknown> {
+function proposalDraft(
+  input: z.infer<typeof proposalBodySchema>,
+): Record<string, unknown> {
   if (input.rationale === undefined) return input.draft;
 
   return { ...input.draft, rationale: input.rationale };

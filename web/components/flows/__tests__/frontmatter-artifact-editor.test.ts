@@ -192,9 +192,13 @@ describe("applyFrontmatterFieldEdit", () => {
   });
 
   it("round-trips a capability_profile object edit", () => {
-    const next = applyFrontmatterFieldEdit(AGENT_CONTENT, "capability_profile", {
-      mcp: ["linear"],
-    });
+    const next = applyFrontmatterFieldEdit(
+      AGENT_CONTENT,
+      "capability_profile",
+      {
+        mcp: ["linear"],
+      },
+    );
 
     const fm = splitFrontmatter(next);
 

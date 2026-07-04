@@ -123,7 +123,8 @@ export async function loadStudioOverview(
       ? loadPackageSourcesView()
       : Promise.resolve<PackageSourcesView | null>(null),
   ]);
-  const sourceInstalls = await listSourceInstallsForLocalPackages(localPackages);
+  const sourceInstalls =
+    await listSourceInstallsForLocalPackages(localPackages);
 
   return {
     groups,

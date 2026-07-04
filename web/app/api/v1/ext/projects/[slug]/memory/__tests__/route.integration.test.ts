@@ -350,7 +350,10 @@ describe("ext memory routes (T4.2)", () => {
     const res = await POST(
       postReq(
         slug,
-        { content: "ADR decision owned until docs source exists", kind: "decision" },
+        {
+          content: "ADR decision owned until docs source exists",
+          kind: "decision",
+        },
         token.secret,
       ),
       { params: Promise.resolve({ slug }) },
@@ -373,6 +376,7 @@ describe("ext memory routes (T4.2)", () => {
         )
       ).rows[0]?.slug,
     );
+
     await seedRouteCanonicalSource({
       projectId,
       path: "docs/decisions.md",

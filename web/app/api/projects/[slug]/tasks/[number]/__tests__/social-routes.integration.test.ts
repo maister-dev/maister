@@ -122,9 +122,24 @@ beforeAll(async () => {
     taskKey: "SRT",
   });
   await db.insert(schema.projectMembers).values([
-    { id: randomUUID(), projectId: fx.projectId, userId: fx.ownerId, role: "owner" },
-    { id: randomUUID(), projectId: fx.projectId, userId: fx.memberId, role: "member" },
-    { id: randomUUID(), projectId: fx.projectId, userId: fx.viewerId, role: "viewer" },
+    {
+      id: randomUUID(),
+      projectId: fx.projectId,
+      userId: fx.ownerId,
+      role: "owner",
+    },
+    {
+      id: randomUUID(),
+      projectId: fx.projectId,
+      userId: fx.memberId,
+      role: "member",
+    },
+    {
+      id: randomUUID(),
+      projectId: fx.projectId,
+      userId: fx.viewerId,
+      role: "viewer",
+    },
   ]);
   await db.insert(schema.flows).values({
     id: fx.flowId,
@@ -221,9 +236,7 @@ describe("comments routes", () => {
     );
 
     expect(post.status).toBe(403);
-    expect(((await post.json()) as { code: string }).code).toBe(
-      "UNAUTHORIZED",
-    );
+    expect(((await post.json()) as { code: string }).code).toBe("UNAUTHORIZED");
   });
 
   it("unauthenticated callers get 401 before any existence probe", async () => {

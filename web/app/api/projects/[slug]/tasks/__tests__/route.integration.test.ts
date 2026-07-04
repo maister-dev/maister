@@ -54,7 +54,8 @@ beforeAll(async () => {
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
   for (const slug of ["proj-a", "proj-b"]) {
-    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    await db.insert(schema.projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: slug,
       slug,
       name: slug,

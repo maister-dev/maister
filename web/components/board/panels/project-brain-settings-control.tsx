@@ -55,7 +55,9 @@ function policyKey(policy: BrainAutonomyPolicy): string {
   }).join("|");
 }
 
-function normalizeHomeState(homeResolution: BrainHomeResolution): BrainHomeState {
+function normalizeHomeState(
+  homeResolution: BrainHomeResolution,
+): BrainHomeState {
   return HOME_CONTROLS.reduce<BrainHomeState>(
     (acc, control) => {
       acc[control.key] = homeResolution[control.key] ?? "default";
@@ -168,7 +170,10 @@ export function ProjectBrainSettingsControl({
     ...flows.map((flow) => ({ id: flow.id, label: flow.ref })),
   ];
 
-  function setDecision(key: AutonomyPolicyKey, decision: AutonomyDecision): void {
+  function setDecision(
+    key: AutonomyPolicyKey,
+    decision: AutonomyDecision,
+  ): void {
     setShowSaved(false);
     setPolicy((prev) => ({ ...prev, [key]: decision }));
   }

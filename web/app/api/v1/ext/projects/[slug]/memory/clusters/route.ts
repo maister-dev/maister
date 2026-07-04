@@ -16,8 +16,7 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
-const ENDPOINT_GET =
-  "GET /api/v1/ext/projects/[slug]/memory/clusters";
+const ENDPOINT_GET = "GET /api/v1/ext/projects/[slug]/memory/clusters";
 const KINDS = ["lesson", "observation", "state_fact"] as const;
 
 type RouteParams = { params: Promise<{ slug: string }> };
@@ -70,7 +69,10 @@ function readIntParam(
   const value = Number(raw);
 
   if (!Number.isInteger(value) || value < min || value > max) {
-    throw new MaisterError("CONFIG", `\`${name}\` must be an integer in ${min}..${max}`);
+    throw new MaisterError(
+      "CONFIG",
+      `\`${name}\` must be an integer in ${min}..${max}`,
+    );
   }
 
   return value;
@@ -118,7 +120,10 @@ export async function GET(
         const clusters = await listMemoryClusters(db, {
           projectId: ctx.projectId,
           client,
-          kinds: kindsRaw.length > 0 ? (kindsRaw as typeof KINDS[number][]) : undefined,
+          kinds:
+            kindsRaw.length > 0
+              ? (kindsRaw as (typeof KINDS)[number][])
+              : undefined,
           minRecurrence: readIntParam(url, "minRecurrence", 2, 20),
           limit: readIntParam(url, "limit", 1, 50),
         });

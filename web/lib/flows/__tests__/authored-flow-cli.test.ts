@@ -11,7 +11,10 @@ describe("authored Flow package CLI args", () => {
       /Missing required --source-dir/,
     );
     expect(
-      parseValidateAuthoredFlowArgs(["--source-dir", "test-fixtures/aif-flows/dev"]),
+      parseValidateAuthoredFlowArgs([
+        "--source-dir",
+        "test-fixtures/aif-flows/dev",
+      ]),
     ).toEqual({ sourceDir: "test-fixtures/aif-flows/dev" });
   });
 

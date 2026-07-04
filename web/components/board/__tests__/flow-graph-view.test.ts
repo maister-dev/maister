@@ -359,7 +359,10 @@ describe("FlowNodeBody — translated status surfaced as a tooltip", () => {
         restricted: true,
         restrictedLabel: "Restricted capabilities",
         labels: baseLabels,
-      } as FlowNodeBodyProps & { restricted: boolean; restrictedLabel: string }),
+      } as FlowNodeBodyProps & {
+        restricted: boolean;
+        restrictedLabel: string;
+      }),
     );
 
     expect(withGlyph).toContain('data-testid="node-restriction-glyph"');

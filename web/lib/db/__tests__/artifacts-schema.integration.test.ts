@@ -53,7 +53,8 @@ async function seedChain(): Promise<{
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `proj-${projectId.slice(0, 8)}`,
     name: "Test",
@@ -76,7 +77,8 @@ async function seedChain(): Promise<{
     schemaVersion: 1,
   });
 
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test task",

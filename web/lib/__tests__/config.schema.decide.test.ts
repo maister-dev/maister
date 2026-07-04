@@ -11,8 +11,12 @@ import { isMaisterError } from "@/lib/errors";
 
 describe("decideSchema (M38, ADR-103)", () => {
   it("accepts from: output.<dotpath> incl. nested", () => {
-    expect(decideSchema.safeParse({ from: "output.outcome" }).success).toBe(true);
-    expect(decideSchema.safeParse({ from: "output.triage.outcome" }).success).toBe(true);
+    expect(decideSchema.safeParse({ from: "output.outcome" }).success).toBe(
+      true,
+    );
+    expect(
+      decideSchema.safeParse({ from: "output.triage.outcome" }).success,
+    ).toBe(true);
     expect(decideSchema.safeParse({ from: "output.a.b.c" }).success).toBe(true);
   });
 
@@ -59,13 +63,22 @@ describe("decideSchema (M38, ADR-103)", () => {
   });
 
   it("rejects a malformed from dot-path", () => {
-    for (const bad of ["output", "output.", "output.1bad", "out.x", "verdictx", "output..x"]) {
+    for (const bad of [
+      "output",
+      "output.",
+      "output.1bad",
+      "out.x",
+      "verdictx",
+      "output..x",
+    ]) {
       expect(decideSchema.safeParse({ from: bad }).success, bad).toBe(false);
     }
   });
 
   it("rejects unknown keys (strict)", () => {
-    expect(decideSchema.safeParse({ from: "verdict", extra: 1 }).success).toBe(false);
+    expect(decideSchema.safeParse({ from: "verdict", extra: 1 }).success).toBe(
+      false,
+    );
     expect(
       decideSchema.safeParse({
         from: "verdict",
@@ -78,21 +91,28 @@ describe("decideSchema (M38, ADR-103)", () => {
 describe("output.result.on_mismatch (M38, ADR-103)", () => {
   it("accepts the literal retry and any other string", () => {
     expect(
-      nodeOutputSchema.safeParse({ result: { schema: "./s.json", on_mismatch: "retry" } }).success,
+      nodeOutputSchema.safeParse({
+        result: { schema: "./s.json", on_mismatch: "retry" },
+      }).success,
     ).toBe(true);
     expect(
-      nodeOutputSchema.safeParse({ result: { schema: "./s.json", on_mismatch: "fix" } }).success,
+      nodeOutputSchema.safeParse({
+        result: { schema: "./s.json", on_mismatch: "fix" },
+      }).success,
     ).toBe(true);
   });
 
   it("keeps output.result strict (rejects unknown keys)", () => {
     expect(
-      nodeOutputSchema.safeParse({ result: { schema: "./s.json", bogus: 1 } }).success,
+      nodeOutputSchema.safeParse({ result: { schema: "./s.json", bogus: 1 } })
+        .success,
     ).toBe(false);
   });
 
   it("accepts output.result without on_mismatch (back-compat)", () => {
-    expect(nodeOutputSchema.safeParse({ result: { schema: "./s.json" } }).success).toBe(true);
+    expect(
+      nodeOutputSchema.safeParse({ result: { schema: "./s.json" } }).success,
+    ).toBe(true);
   });
 });
 
@@ -107,7 +127,9 @@ describe("engine gate — decide/on_mismatch require engine_min >= 1.7.0", () =>
     await rm(workDir, { recursive: true, force: true });
   });
 
-  async function load(manifest: unknown): Promise<{ ok: boolean; code?: string }> {
+  async function load(
+    manifest: unknown,
+  ): Promise<{ ok: boolean; code?: string }> {
     const path = join(workDir, "flow.yaml");
 
     await writeFile(path, stringifyYaml(manifest), "utf8");
@@ -149,7 +171,11 @@ describe("engine gate — decide/on_mismatch require engine_min >= 1.7.0", () =>
           type: "ai_coding",
           action: { prompt: "x" },
           output: { result: { schema: "./s.json", on_mismatch: "retry" } },
-          rework: { allowedTargets: ["a"], workspacePolicies: ["keep"], maxLoops: 2 },
+          rework: {
+            allowedTargets: ["a"],
+            workspacePolicies: ["keep"],
+            maxLoops: 2,
+          },
           transitions: { success: "done" },
         },
       ],

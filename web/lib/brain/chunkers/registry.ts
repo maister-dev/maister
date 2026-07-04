@@ -1,7 +1,3 @@
-import { createHash } from "node:crypto";
-
-import { parse } from "yaml";
-
 import type {
   BrainChunkDraft,
   BrainSourceRange,
@@ -9,6 +5,10 @@ import type {
   ChunkerInput,
   ChunkerResult,
 } from "./types";
+
+import { createHash } from "node:crypto";
+
+import { parse } from "yaml";
 
 export type { BrainChunkDraft, ChunkerInput, ChunkerResult } from "./types";
 
@@ -101,10 +101,12 @@ export function detectSourceKind(path: string): BuiltInSourceKind {
   const ext = extension(lower);
 
   if (CODE_EXTENSIONS.has(ext)) return "code";
-  if (lower.endsWith(".md")) return lower.endsWith("agent.md") ? "agent_md" : "markdown";
+  if (lower.endsWith(".md"))
+    return lower.endsWith("agent.md") ? "agent_md" : "markdown";
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
   if (lower.endsWith(".sql")) return "sql";
-  if (lower.endsWith("flow.yaml") || lower.endsWith("flow.yml")) return "flow_yaml";
+  if (lower.endsWith("flow.yaml") || lower.endsWith("flow.yml"))
+    return "flow_yaml";
   if (
     lower.endsWith("maister-package.yaml") ||
     lower.endsWith("maister-package.yml")
@@ -191,10 +193,7 @@ function makeChunk(input: {
   };
 }
 
-function result(
-  chunkerId: string,
-  chunks: BrainChunkDraft[],
-): ChunkerResult {
+function result(chunkerId: string, chunks: BrainChunkDraft[]): ChunkerResult {
   return { chunkerId, chunkerVersion: CHUNKER_VERSION, chunks };
 }
 
@@ -288,7 +287,8 @@ function openApiResult(input: ChunkerInput): ChunkerResult {
   for (const [apiPath, operations] of Object.entries(doc.paths ?? {})) {
     for (const [method, operation] of Object.entries(operations ?? {})) {
       if (!METHODS.has(method.toLowerCase())) continue;
-      const symbol = operation.operationId ?? `${method.toUpperCase()} ${apiPath}`;
+      const symbol =
+        operation.operationId ?? `${method.toUpperCase()} ${apiPath}`;
 
       chunks.push(
         makeChunk({
@@ -333,7 +333,10 @@ function asyncApiResult(input: ChunkerInput): ChunkerResult {
     }
   }
 
-  return result("asyncapi", chunks.length > 0 ? chunks : [fallbackChunk(input)]);
+  return result(
+    "asyncapi",
+    chunks.length > 0 ? chunks : [fallbackChunk(input)],
+  );
 }
 
 function sqlResult(input: ChunkerInput): ChunkerResult {
@@ -377,7 +380,10 @@ function flowYamlResult(input: ChunkerInput): ChunkerResult {
     });
   });
 
-  return result("flow_yaml", chunks.length > 0 ? chunks : [fallbackChunk(input)]);
+  return result(
+    "flow_yaml",
+    chunks.length > 0 ? chunks : [fallbackChunk(input)],
+  );
 }
 
 function packageYamlResult(input: ChunkerInput): ChunkerResult {
@@ -404,16 +410,21 @@ function packageYamlResult(input: ChunkerInput): ChunkerResult {
     });
   });
 
-  return result("package_yaml", chunks.length > 0 ? chunks : [fallbackChunk(input)]);
+  return result(
+    "package_yaml",
+    chunks.length > 0 ? chunks : [fallbackChunk(input)],
+  );
 }
 
 function agentMarkdownResult(input: ChunkerInput): ChunkerResult {
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/m.exec(input.content);
   const body = match ? match[2] : input.content;
-  const frontmatter = match ? parseYamlObject(
-    { ...input, content: match[1], kind: "agent_md" },
-    "agent_md",
-  ) : {};
+  const frontmatter = match
+    ? parseYamlObject(
+        { ...input, content: match[1], kind: "agent_md" },
+        "agent_md",
+      )
+    : {};
   const h1 = /^#\s+(.+)$/m.exec(body)?.[1]?.trim();
 
   return result("agent_md", [
@@ -475,8 +486,14 @@ function codeResult(input: ChunkerInput): ChunkerResult {
 function fallbackTextResult(input: ChunkerInput): ChunkerResult {
   const chunks: BrainChunkDraft[] = [];
 
-  for (let offset = 0; offset < input.content.length; offset += TEXT_CHUNK_LIMIT) {
-    const content = input.content.slice(offset, offset + TEXT_CHUNK_LIMIT).trim();
+  for (
+    let offset = 0;
+    offset < input.content.length;
+    offset += TEXT_CHUNK_LIMIT
+  ) {
+    const content = input.content
+      .slice(offset, offset + TEXT_CHUNK_LIMIT)
+      .trim();
 
     if (!content) continue;
     chunks.push(
@@ -492,7 +509,10 @@ function fallbackTextResult(input: ChunkerInput): ChunkerResult {
     );
   }
 
-  return result("fallback_text", chunks.length > 0 ? chunks : [fallbackChunk(input)]);
+  return result(
+    "fallback_text",
+    chunks.length > 0 ? chunks : [fallbackChunk(input)],
+  );
 }
 
 function fallbackChunk(

@@ -299,7 +299,9 @@ describe("WorkbenchLifecycleActions dialogs", () => {
     expect(textOf(document.body)).toContain("remote branch has newer commits");
     expect(textOf(document.body)).toContain("Review the remote branch");
 
-    await click(findButton(document.body, "workbenchLifecycle.dialog.forcePush"));
+    await click(
+      findButton(document.body, "workbenchLifecycle.dialog.forcePush"),
+    );
     await flushPromises();
 
     expect(exportBodies).toEqual([

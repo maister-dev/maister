@@ -149,7 +149,9 @@ describe("POST /api/projects task_key (ADR-078 D2)", () => {
   });
 
   it("refuses a DERIVED key collision with CONFLICT (no auto-uniquify at registration)", async () => {
-    const first = await POST(postRequest({ target: projectDir("Yankee Alpha") }));
+    const first = await POST(
+      postRequest({ target: projectDir("Yankee Alpha") }),
+    );
 
     expect(first.status).toBe(201);
 

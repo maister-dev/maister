@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { BrainProposalKind } from "@/lib/brain/schema";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
@@ -13,7 +15,6 @@ import {
   getBrainProposal,
   type BrainProposalTransactionalDb,
 } from "@/lib/brain/proposals";
-import type { BrainProposalKind } from "@/lib/brain/schema";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { getProjectBySlug } from "@/lib/queries/project";
@@ -109,7 +110,10 @@ export async function POST(
     if (body.action === "accept") {
       const proposal = await getBrainProposal(db, project.id, proposalId);
 
-      await requireProjectAction(project.id, acceptActionForKind(proposal.kind));
+      await requireProjectAction(
+        project.id,
+        acceptActionForKind(proposal.kind),
+      );
     }
 
     const proposal = await concludeBrainProposal(db, {

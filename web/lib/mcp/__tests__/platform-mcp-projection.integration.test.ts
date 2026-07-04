@@ -58,7 +58,9 @@ afterAll(async () => {
 
 describe("platform MCP → capability_records projection (real postgres)", () => {
   it("ensures Serena as a disabled untrusted seed and never projects it by default", async () => {
-    await db.delete(platformMcpServers).where(eq(platformMcpServers.id, "serena"));
+    await db
+      .delete(platformMcpServers)
+      .where(eq(platformMcpServers.id, "serena"));
 
     const first = await ensureSerenaPlatformMcpSeed({ db });
     const second = await ensureSerenaPlatformMcpSeed({ db });
@@ -86,7 +88,9 @@ describe("platform MCP → capability_records projection (real postgres)", () =>
   });
 
   it("does not overwrite an admin-edited Serena catalog row", async () => {
-    await db.delete(platformMcpServers).where(eq(platformMcpServers.id, "serena"));
+    await db
+      .delete(platformMcpServers)
+      .where(eq(platformMcpServers.id, "serena"));
     await db.insert(platformMcpServers).values({
       id: "serena",
       transport: "stdio",
@@ -110,13 +114,16 @@ describe("platform MCP → capability_records projection (real postgres)", () =>
       trustStatus: "trusted",
     });
 
-    await db.delete(platformMcpServers).where(eq(platformMcpServers.id, "serena"));
+    await db
+      .delete(platformMcpServers)
+      .where(eq(platformMcpServers.id, "serena"));
   });
 
   it("projects an enabled platform_mcp_servers row as a source=platform capability record", async () => {
     const projectId = `prj_${randomUUID().slice(0, 8)}`;
 
-    await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    await db.insert(projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: projectId,
       slug: `slug-${randomUUID().slice(0, 8)}`,
       name: "proj",

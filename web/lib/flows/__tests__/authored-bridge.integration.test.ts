@@ -84,7 +84,8 @@ beforeAll(async () => {
   projectId = randomUUID();
   projectSlug = `bridge-test-${randomUUID()}`;
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: projectSlug,
     name: projectSlug,

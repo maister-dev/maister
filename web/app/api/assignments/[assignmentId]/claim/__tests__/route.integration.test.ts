@@ -89,7 +89,8 @@ async function seedProject(
   const executorId = randomUUID();
   const flowId = randomUUID();
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
@@ -149,7 +150,8 @@ async function seedAssignment(): Promise<{
     role: "member",
   });
 
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId: realProjectId,
     title: "Review",

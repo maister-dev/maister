@@ -116,7 +116,8 @@ async function seedProject(
   slug: string,
   opts: { promotionMode?: string | null } = {},
 ): Promise<void> {
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
@@ -167,7 +168,8 @@ async function seedProject(
 }
 
 async function seedTask(taskId: string, projectId: string): Promise<void> {
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "branch task",

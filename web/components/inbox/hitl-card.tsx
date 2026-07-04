@@ -263,10 +263,10 @@ export function HitlCard({
         {isPermission && canAct ? (
           <RunHitlResponse
             compact
-            canAct={canAct}
-            criticality={item.criticality}
             availableOptions={item.availableOptions}
+            canAct={canAct}
             claimStage={item.claimStage}
+            criticality={item.criticality}
             hitlRequestId={item.hitlRequestId}
             kind={item.kind}
             options={item.options}
@@ -336,15 +336,15 @@ export function HitlCard({
             <div className="mt-3.5 border-t border-line pt-3.5">
               <RunHitlResponse
                 compact
-                canAct={canAct}
-                criticality={item.criticality}
                 availableOptions={
                   item.kind === "budget_breach"
                     ? (context?.availableOptions ?? item.availableOptions)
                     : item.availableOptions
                 }
                 budgetProgress={context?.budgetProgress ?? null}
+                canAct={canAct}
                 claimStage={context?.claimStage ?? item.claimStage}
+                criticality={item.criticality}
                 hitlRequestId={item.hitlRequestId}
                 kind={item.kind}
                 options={item.options}

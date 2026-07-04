@@ -6,7 +6,10 @@ import type {
 } from "@/lib/queries/portfolio";
 import type { ReactElement, ReactNode } from "react";
 
-import { CpuChipIcon, WrenchScrewdriverIcon } from "@heroicons/react/24/outline";
+import {
+  CpuChipIcon,
+  WrenchScrewdriverIcon,
+} from "@heroicons/react/24/outline";
 import Link from "next/link";
 import clsx from "clsx";
 

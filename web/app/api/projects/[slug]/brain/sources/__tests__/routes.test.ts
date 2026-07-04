@@ -131,7 +131,10 @@ describe("Project Brain source routes", () => {
 
     expect(res.status).toBe(200);
     expect(requireProjectAction).toHaveBeenCalledWith(PROJECT_ID, "readBrain");
-    expect(listBrainSources).toHaveBeenCalledWith(expect.anything(), PROJECT_ID);
+    expect(listBrainSources).toHaveBeenCalledWith(
+      expect.anything(),
+      PROJECT_ID,
+    );
   });
 
   it("creates a source behind editSettings using server-derived project repo state", async () => {

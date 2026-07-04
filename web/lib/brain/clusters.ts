@@ -1,10 +1,11 @@
 import "server-only";
 
+import type { BrainItemKind } from "./schema";
+import type { OpenAiCompatibleClient } from "./openai-compatible";
+
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
-import type { BrainItemKind } from "./schema";
-import type { OpenAiCompatibleClient } from "./openai-compatible";
 import { sha256 } from "./codec";
 import { BRAIN_POLICY } from "./policy";
 

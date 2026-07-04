@@ -105,6 +105,7 @@ export async function GET(): Promise<NextResponse> {
     await requireGlobalRole("admin");
 
     const db = getDb() as any;
+
     await ensureSerenaPlatformMcpSeed({ db });
     const servers = await db.select().from(platformMcpServers);
 

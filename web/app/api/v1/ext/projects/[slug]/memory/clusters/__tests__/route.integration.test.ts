@@ -99,7 +99,11 @@ async function seedAgentLink(
 
 async function agentToken(projectId: string, agentId: string): Promise<string> {
   const t = await issueToken(
-    { projectId, name: "agent-clusters", scopes: ["memory:read", "memory:write"] },
+    {
+      projectId,
+      name: "agent-clusters",
+      scopes: ["memory:read", "memory:write"],
+    },
     dbRef,
   );
 
@@ -125,7 +129,9 @@ beforeAll(async () => {
   ctx = await startBrainTestDb();
   dbRef = ctx.db;
 
-  const mod = await import("@/app/api/v1/ext/projects/[slug]/memory/clusters/route");
+  const mod = await import(
+    "@/app/api/v1/ext/projects/[slug]/memory/clusters/route"
+  );
 
   GET = mod.GET;
 }, 180_000);
@@ -211,7 +217,9 @@ describe("ext memory clusters route (T10.1)", () => {
       ).status,
     ).toBe(403);
 
-    const disabledProject = await seedBrainProject(dbRef, { brainEnabled: false });
+    const disabledProject = await seedBrainProject(dbRef, {
+      brainEnabled: false,
+    });
     const disabledSlug = await slugOf(disabledProject);
     const disabledToken = await issueToken(
       { projectId: disabledProject, name: "disabled", scopes: ["memory:read"] },

@@ -1,8 +1,8 @@
+import type { InboxItemView } from "@/lib/queries/inbox";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-
-import type { InboxItemView } from "@/lib/queries/inbox";
 
 // Client component using useRouter — mock the app-router hook for static render.
 vi.mock("next/navigation", () => ({

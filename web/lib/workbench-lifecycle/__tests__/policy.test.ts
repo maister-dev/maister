@@ -35,9 +35,7 @@ describe("deriveWorkbenchLifecycleActions", () => {
 
   it("allows only stop for flow HITL wait states", () => {
     expect(enabledActionIds({ runStatus: "NeedsInput" })).toEqual(["stop"]);
-    expect(enabledActionIds({ runStatus: "NeedsInputIdle" })).toEqual([
-      "stop",
-    ]);
+    expect(enabledActionIds({ runStatus: "NeedsInputIdle" })).toEqual(["stop"]);
   });
 
   it("allows only stop for live scratch dialog states", () => {
@@ -93,7 +91,8 @@ describe("deriveWorkbenchLifecycleActions", () => {
   it("uses allow-list guards for unknown future states", () => {
     expect(
       enabledActionIds({
-        runStatus: "PausedByPolicy" as WorkbenchLifecyclePolicyInput["runStatus"],
+        runStatus:
+          "PausedByPolicy" as WorkbenchLifecyclePolicyInput["runStatus"],
       }),
     ).toEqual([]);
   });

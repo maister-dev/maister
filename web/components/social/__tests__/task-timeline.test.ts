@@ -1,8 +1,8 @@
+import type { TimelineItem } from "@/lib/queries/task-detail";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-
-import type { TimelineItem } from "@/lib/queries/task-detail";
 
 import { TaskTimeline } from "@/components/social/task-timeline";
 

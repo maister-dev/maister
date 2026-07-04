@@ -105,7 +105,8 @@ async function seedProjectRunGate() {
   const gateResultId = randomUUID();
   const slug = `gr-atomic-${randomUUID().slice(0, 8)}`;
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,
@@ -125,7 +126,8 @@ async function seedProjectRunGate() {
   await db
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.tasks as any).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks as any).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",

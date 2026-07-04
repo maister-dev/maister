@@ -1,12 +1,12 @@
 import "server-only";
 
+import type { TaskActivityEventKind } from "@/lib/db/schema";
+
 import { randomUUID } from "node:crypto";
 
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
-
-import type { TaskActivityEventKind } from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { taskActivity } = schemaModule as unknown as Record<string, any>;

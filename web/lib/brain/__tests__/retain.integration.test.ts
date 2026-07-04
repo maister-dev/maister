@@ -400,10 +400,7 @@ describe("retain — decision/direction home resolution (T6.1)", () => {
       ORDER BY kind
     `);
 
-    expect(rows.rows.map((row) => row.kind)).toEqual([
-      "decision",
-      "direction",
-    ]);
+    expect(rows.rows.map((row) => row.kind)).toEqual(["decision", "direction"]);
   });
 
   it("refuses decision retain before embedding when docs/decisions.md is the canonical home", async () => {
@@ -431,9 +428,9 @@ describe("retain — decision/direction home resolution (T6.1)", () => {
     expect((err as Error).message).toContain("docs/decisions.md");
     expect((err as Error).message).toContain("memory_propose");
     expect(embed).not.toHaveBeenCalled();
-    expect(await count(`project_id = '${projectId}' AND kind = 'decision'`)).toBe(
-      0,
-    );
+    expect(
+      await count(`project_id = '${projectId}' AND kind = 'decision'`),
+    ).toBe(0);
 
     const source = await ctx.db.execute(
       sql`SELECT id FROM brain_sources WHERE id = ${sourceId}`,
@@ -451,15 +448,18 @@ describe("retain — decision/direction home resolution (T6.1)", () => {
     await expect(
       retain(
         projectId,
-        { kind: "direction", content: "Next direction: projection through tasks" },
+        {
+          kind: "direction",
+          content: "Next direction: projection through tasks",
+        },
         {},
         { db: ctx.db, client },
       ),
     ).rejects.toMatchObject({ code: "CONFIG" });
 
-    expect(await count(`project_id = '${projectId}' AND kind = 'direction'`)).toBe(
-      0,
-    );
+    expect(
+      await count(`project_id = '${projectId}' AND kind = 'direction'`),
+    ).toBe(0);
   });
 });
 
@@ -526,7 +526,9 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
       reinforcement_count: 0,
     });
     expect(
-      await count(`project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`),
+      await count(
+        `project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`,
+      ),
     ).toBe(1);
   });
 
@@ -561,7 +563,9 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
     expect(byId.get(String(second.itemId))).toBe("superseded");
     expect(byId.get(String(third.itemId))).toBe("active");
     expect(
-      await count(`project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`),
+      await count(
+        `project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`,
+      ),
     ).toBe(1);
   });
 

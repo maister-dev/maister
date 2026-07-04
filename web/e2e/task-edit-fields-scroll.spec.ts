@@ -28,6 +28,7 @@ test("edit-task Properties panel scrolls and the Save button is reachable on a s
   await card.getByRole("button", { name: "Edit task", exact: true }).click();
 
   const dialog = page.locator('section[role="dialog"][aria-modal="true"]');
+
   await expect(dialog).toBeVisible();
 
   const panel = dialog.locator("aside");
@@ -38,6 +39,7 @@ test("edit-task Properties panel scrolls and the Save button is reachable on a s
   // section (no clipping of the lower fields).
   const metrics = await scroller.evaluate((el) => {
     const section = el.closest('section[role="dialog"]') as HTMLElement;
+
     return {
       scrollHeight: el.scrollHeight,
       clientHeight: el.clientHeight,

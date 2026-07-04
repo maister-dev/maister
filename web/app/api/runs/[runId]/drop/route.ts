@@ -2,9 +2,12 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-import { dropWorkbench } from "@/lib/workbench-lifecycle/service";
+import {
+  errorResponse,
+  type RouteParams,
+} from "../workbench-lifecycle/route-utils";
 
-import { errorResponse, type RouteParams } from "../workbench-lifecycle/route-utils";
+import { dropWorkbench } from "@/lib/workbench-lifecycle/service";
 
 export async function POST(
   _req: Request,

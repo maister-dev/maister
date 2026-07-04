@@ -112,7 +112,14 @@ describe("copyBundleArtifactsToWorktree", () => {
     ).toBe("REPO-X");
     await expect(
       readFile(
-        path.join(worktree, ".claude", "skills", "aif-x", "references", "extra.md"),
+        path.join(
+          worktree,
+          ".claude",
+          "skills",
+          "aif-x",
+          "references",
+          "extra.md",
+        ),
         "utf8",
       ),
     ).rejects.toThrow();

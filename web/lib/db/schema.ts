@@ -143,7 +143,9 @@ export const projects = pgTable("projects", {
   ).$type<ExecutionPolicy | null>(),
   // ADR-121: per-project queue settings (`{ edgeDrain?, maxInFlightAuto? }`).
   // NULL ⇒ env defaults apply (resolved live at admission, never snapshotted).
-  taskQueueSettings: jsonb("task_queue_settings").$type<TaskQueueSettings | null>(),
+  taskQueueSettings: jsonb(
+    "task_queue_settings",
+  ).$type<TaskQueueSettings | null>(),
   // ADR-126: auto-promotion lane config. NULL ⇒ shipped defaults with master OFF
   // (resolved live via resolveAutoPromotionConfig, never snapshotted — the sweep
   // enforces current operator intent, D-8).

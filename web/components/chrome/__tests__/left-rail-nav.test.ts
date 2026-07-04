@@ -16,7 +16,12 @@ const sections: LeftRailNavSection[] = [
   { id: "studio", label: "Studio", href: "/studio", ready: true },
   { id: "mcps", label: "MCPs", href: "/mcps", ready: true },
   { id: "users", label: "Users", href: "/admin/users", ready: true },
-  { id: "scheduler", label: "Scheduler", href: "/admin/scheduler", ready: true },
+  {
+    id: "scheduler",
+    label: "Scheduler",
+    href: "/admin/scheduler",
+    ready: true,
+  },
   { id: "settings", label: "Settings", href: "/settings", ready: true },
 ];
 

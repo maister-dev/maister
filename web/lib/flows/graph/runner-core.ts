@@ -225,7 +225,8 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   const runner = await loadRunnerSnapshot(
     db,
     {
-      runnerSnapshot: (defaultRow?.runnerSnapshot ?? null) as RunnerSnapshot | null,
+      runnerSnapshot: (defaultRow?.runnerSnapshot ??
+        null) as RunnerSnapshot | null,
       runnerId: (defaultRow?.runnerId ?? null) as string | null,
     },
     runId,

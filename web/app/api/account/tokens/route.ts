@@ -125,7 +125,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
     });
 
-    log.info({ tokenId: issued.tokenId, ownerUserId: user.id }, "token created");
+    log.info(
+      { tokenId: issued.tokenId, ownerUserId: user.id },
+      "token created",
+    );
 
     return NextResponse.json(
       {

@@ -55,7 +55,8 @@ describe("lib/tokens — integration (testcontainers)", () => {
     projectId = randomUUID();
     userId = randomUUID();
 
-    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    await db.insert(schema.projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: projectId,
       slug: "test-project",
       name: "Test Project",
@@ -354,9 +355,9 @@ describe("lib/tokens — integration (testcontainers)", () => {
   describe("scope helpers", () => {
     it("does not let wildcard satisfy the exact human HITL response scope", () => {
       expect(tokenHasScope(["*"], "hitl:respond:human")).toBe(false);
-      expect(
-        tokenHasScope(["hitl:respond:human"], "hitl:respond:human"),
-      ).toBe(true);
+      expect(tokenHasScope(["hitl:respond:human"], "hitl:respond:human")).toBe(
+        true,
+      );
     });
   });
 
@@ -535,7 +536,8 @@ describe("lib/tokens — integration (testcontainers)", () => {
     it("orders tokens by created_at DESC", async () => {
       const projectId2 = randomUUID();
 
-      await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+      await db.insert(schema.projects).values({
+        taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
         id: projectId2,
         slug: "test-project-2",
         name: "Test Project 2",
@@ -623,7 +625,8 @@ describe("lib/tokens — integration (testcontainers)", () => {
     it("returns 'not-found' for cross-project tokenId (existence-hide)", async () => {
       const projectId2 = randomUUID();
 
-      await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+      await db.insert(schema.projects).values({
+        taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
         id: projectId2,
         slug: "test-project-cross",
         name: "Test Project Cross",

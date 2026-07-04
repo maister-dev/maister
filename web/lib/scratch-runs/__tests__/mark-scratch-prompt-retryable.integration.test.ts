@@ -94,9 +94,11 @@ async function seedScratchRun(dialogStatus: ScratchDialogStatus): Promise<{
   return { runId };
 }
 
-async function stateOf(
-  runId: string,
-): Promise<{ dialogStatus: string; runStatus: string; errorCode: string | null }> {
+async function stateOf(runId: string): Promise<{
+  dialogStatus: string;
+  runStatus: string;
+  errorCode: string | null;
+}> {
   const scratch = await db
     .select({
       dialogStatus: schema.scratchRuns.dialogStatus,
@@ -116,7 +118,10 @@ async function stateOf(
   };
 }
 
-const unavailable = new MaisterError("EXECUTOR_UNAVAILABLE", "API key not valid");
+const unavailable = new MaisterError(
+  "EXECUTOR_UNAVAILABLE",
+  "API key not valid",
+);
 
 describe("markScratchPromptRetryable — in-flight prompt is left retryable", () => {
   it("Running → WaitingForUser + run Running + errorCode", async () => {

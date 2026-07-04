@@ -1,14 +1,14 @@
 import "server-only";
 
-import { sql, type SQL } from "drizzle-orm";
-import pino from "pino";
-
 import type {
   BrainProposalAutonomyDecision,
   BrainProposalBlastRadius,
   BrainProposalKind,
 } from "@/lib/brain/schema";
 import type { BrainHomeResolution } from "@/lib/brain/home-resolution";
+
+import { sql, type SQL } from "drizzle-orm";
+import pino from "pino";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -60,7 +60,9 @@ function isOneOf<T extends string>(
   value: unknown,
   values: readonly T[],
 ): value is T {
-  return typeof value === "string" && (values as readonly string[]).includes(value);
+  return (
+    typeof value === "string" && (values as readonly string[]).includes(value)
+  );
 }
 
 function policyKey(

@@ -58,11 +58,7 @@ const fx: {
   readOnlyToken: "",
 };
 
-function request(
-  method: string,
-  token: string,
-  body?: unknown,
-): NextRequest {
+function request(method: string, token: string, body?: unknown): NextRequest {
   return new NextRequest("http://localhost/api/v1/ext/test", {
     method,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),

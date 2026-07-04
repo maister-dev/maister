@@ -23,8 +23,9 @@ describe("normalizeScratchPrompt — scratch send seam (FR-E2/E5, T1.4)", () => 
     expect(normalizeScratchPrompt("/clear", "claude", { runId: "r1" })).toBe(
       "/clear",
     );
-    expect(normalizeScratchPrompt("/compact now", "claude", { runId: "r1" }))
-      .toBe("/compact now");
+    expect(
+      normalizeScratchPrompt("/compact now", "claude", { runId: "r1" }),
+    ).toBe("/compact now");
   });
 
   it("recognizes only the exact clear command as a transcript reset", () => {

@@ -130,7 +130,12 @@ describe("computeDecideOutcome — from: verdict", () => {
       }),
     ).toBe("human");
     expect(
-      computeDecideOutcome({ decide, vars: {}, verdict: undefined, legacy: "success" }),
+      computeDecideOutcome({
+        decide,
+        vars: {},
+        verdict: undefined,
+        legacy: "success",
+      }),
     ).toBe("human");
   });
 

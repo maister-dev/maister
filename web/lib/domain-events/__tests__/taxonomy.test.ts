@@ -32,7 +32,12 @@ describe("domain-event taxonomy", () => {
   });
 
   it("every terminal kind is also settled", () => {
-    for (const kind of ["run.done", "run.failed", "run.crashed", "run.abandoned"]) {
+    for (const kind of [
+      "run.done",
+      "run.failed",
+      "run.crashed",
+      "run.abandoned",
+    ]) {
       expect(isRunTerminalEventKind(kind)).toBe(true);
       expect(isRunSettledEventKind(kind)).toBe(true);
     }

@@ -23,14 +23,15 @@ test("task page posts a comment with an expanded KEY-N mention; board shows the 
   const body = `Blocked until EAB-42 ships — see \`EAB-42\` (literal in code).`;
 
   await page.locator("#task-comment-body").fill(body);
-  await page.getByRole("button", { name: /^(Comment|Комментировать)$/ }).click();
+  await page
+    .getByRole("button", { name: /^(Comment|Комментировать)$/ })
+    .click();
 
   // The stored body has the mention EXPANDED into a task link; the inline-code
   // occurrence stays literal text.
-  const mentionLink = page.locator(
-    `a[href="/projects/${SLUG}/tasks/42"]`,
-    { hasText: "EAB-42" },
-  );
+  const mentionLink = page.locator(`a[href="/projects/${SLUG}/tasks/42"]`, {
+    hasText: "EAB-42",
+  });
 
   await expect(mentionLink.first()).toBeVisible();
 

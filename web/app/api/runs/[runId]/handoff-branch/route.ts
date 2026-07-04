@@ -3,15 +3,15 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { branchNameSchema, remoteNameSchema } from "@/lib/worktree";
-import { createWorkbenchHandoffBranch } from "@/lib/workbench-lifecycle/service";
-
 import {
   errorResponse,
   parseJsonBody,
   parseRouteBody,
   type RouteParams,
 } from "../workbench-lifecycle/route-utils";
+
+import { branchNameSchema, remoteNameSchema } from "@/lib/worktree";
+import { createWorkbenchHandoffBranch } from "@/lib/workbench-lifecycle/service";
 
 const handoffBranchBodySchema = z
   .object({
@@ -27,11 +27,12 @@ export async function POST(
   const { runId } = await params;
 
   try {
-    const body = parseRouteBody(handoffBranchBodySchema, await parseJsonBody(req));
-
-    return NextResponse.json(
-      await createWorkbenchHandoffBranch(runId, body),
+    const body = parseRouteBody(
+      handoffBranchBodySchema,
+      await parseJsonBody(req),
     );
+
+    return NextResponse.json(await createWorkbenchHandoffBranch(runId, body));
   } catch (err) {
     return errorResponse(err, {
       runId,

@@ -60,9 +60,14 @@ function formatDate(value: string | null, emptyLabel: string): string {
   return new Date(value).toLocaleDateString(undefined, { dateStyle: "medium" });
 }
 
-function tokenStatus(token: PersonalTokenDto): "active" | "revoked" | "expired" {
+function tokenStatus(
+  token: PersonalTokenDto,
+): "active" | "revoked" | "expired" {
   if (token.revokedAt !== null) return "revoked";
-  if (token.expiresAt !== null && new Date(token.expiresAt).getTime() < Date.now()) {
+  if (
+    token.expiresAt !== null &&
+    new Date(token.expiresAt).getTime() < Date.now()
+  ) {
     return "expired";
   }
 
@@ -281,18 +286,10 @@ export function PersonalTokensPanel({
           <thead className="bg-ivory text-[10px] uppercase tracking-[0.08em] text-mute">
             <tr>
               <th className="px-3 py-2 font-semibold">{t("columns.name")}</th>
-              <th className="px-3 py-2 font-semibold">
-                {t("columns.scopes")}
-              </th>
-              <th className="px-3 py-2 font-semibold">
-                {t("columns.human")}
-              </th>
-              <th className="px-3 py-2 font-semibold">
-                {t("columns.prefix")}
-              </th>
-              <th className="px-3 py-2 font-semibold">
-                {t("columns.status")}
-              </th>
+              <th className="px-3 py-2 font-semibold">{t("columns.scopes")}</th>
+              <th className="px-3 py-2 font-semibold">{t("columns.human")}</th>
+              <th className="px-3 py-2 font-semibold">{t("columns.prefix")}</th>
+              <th className="px-3 py-2 font-semibold">{t("columns.status")}</th>
               <th className="px-3 py-2 font-semibold">
                 {t("columns.created")}
               </th>
@@ -320,44 +317,46 @@ export function PersonalTokensPanel({
                 const status = tokenStatus(item);
                 const revoked = status === "revoked";
 
-                  return (
-                    <tr key={item.id} className="border-t border-line">
-                      <td className="px-3 py-3 font-medium text-ink">
-                        {item.name}
-                      </td>
-                      <td className="max-w-[220px] px-3 py-3 text-mute">
-                        {scopesText(t, item.scopes)}
-                      </td>
-                      <td className="px-3 py-3 text-mute">
-                        {item.humanHitl ? t("human.enabled") : t("human.disabled")}
-                      </td>
-                      <td className="px-3 py-3 font-mono text-mute">
-                        {item.prefix}
-                      </td>
-                      <td className="px-3 py-3 text-mute">
-                        {t(`status.${status}`)}
-                      </td>
-                      <td className="px-3 py-3 text-mute">
-                        {formatDate(item.createdAt, emptyDate)}
-                      </td>
-                      <td className="px-3 py-3 text-mute">
-                        {formatDate(item.lastUsedAt, emptyDate)}
-                      </td>
-                      <td className="px-3 py-3 text-mute">
-                        {formatDate(item.expiresAt, emptyDate)}
-                      </td>
-                      <td className="px-3 py-3">
-                        <button
-                          className="rounded-full border border-line px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-mute transition-colors hover:border-mute hover:text-ink disabled:opacity-50"
-                          disabled={busy || revoked}
-                          type="button"
-                          onClick={() => void revokeToken(item.id)}
-                        >
-                          {t("actions.revoke")}
-                        </button>
-                      </td>
-                    </tr>
-                  );
+                return (
+                  <tr key={item.id} className="border-t border-line">
+                    <td className="px-3 py-3 font-medium text-ink">
+                      {item.name}
+                    </td>
+                    <td className="max-w-[220px] px-3 py-3 text-mute">
+                      {scopesText(t, item.scopes)}
+                    </td>
+                    <td className="px-3 py-3 text-mute">
+                      {item.humanHitl
+                        ? t("human.enabled")
+                        : t("human.disabled")}
+                    </td>
+                    <td className="px-3 py-3 font-mono text-mute">
+                      {item.prefix}
+                    </td>
+                    <td className="px-3 py-3 text-mute">
+                      {t(`status.${status}`)}
+                    </td>
+                    <td className="px-3 py-3 text-mute">
+                      {formatDate(item.createdAt, emptyDate)}
+                    </td>
+                    <td className="px-3 py-3 text-mute">
+                      {formatDate(item.lastUsedAt, emptyDate)}
+                    </td>
+                    <td className="px-3 py-3 text-mute">
+                      {formatDate(item.expiresAt, emptyDate)}
+                    </td>
+                    <td className="px-3 py-3">
+                      <button
+                        className="rounded-full border border-line px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-mute transition-colors hover:border-mute hover:text-ink disabled:opacity-50"
+                        disabled={busy || revoked}
+                        type="button"
+                        onClick={() => void revokeToken(item.id)}
+                      >
+                        {t("actions.revoke")}
+                      </button>
+                    </td>
+                  </tr>
+                );
               })
             )}
           </tbody>

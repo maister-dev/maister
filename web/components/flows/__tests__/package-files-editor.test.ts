@@ -242,7 +242,9 @@ describe("PackageFilesEditor", () => {
       }),
     );
 
-    expect(hiddenPackageFilesValue(html)).toBe(packageFilesToSubmitValue(files));
+    expect(hiddenPackageFilesValue(html)).toBe(
+      packageFilesToSubmitValue(files),
+    );
   });
 
   it("serializes controlled files from props and renders the same file tree", () => {
@@ -263,7 +265,9 @@ describe("PackageFilesEditor", () => {
       }),
     );
 
-    expect(hiddenPackageFilesValue(html)).toBe(packageFilesToSubmitValue(files));
+    expect(hiddenPackageFilesValue(html)).toBe(
+      packageFilesToSubmitValue(files),
+    );
     expect(html).toContain("schemas");
     expect(html).toContain("review.json");
   });

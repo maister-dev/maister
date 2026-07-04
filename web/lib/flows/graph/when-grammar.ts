@@ -63,7 +63,10 @@ export function parseWhen(input: string): ParseWhenResult {
   const rhs = Number(m[3]);
 
   if (!Number.isFinite(rhs)) {
-    return { ok: false, error: `invalid \`when\` predicate "${input}" — right-hand side is not a finite number` };
+    return {
+      ok: false,
+      error: `invalid \`when\` predicate "${input}" — right-hand side is not a finite number`,
+    };
   }
 
   return { ok: true, predicate: { field: m[1], op: m[2] as WhenOp, rhs } };

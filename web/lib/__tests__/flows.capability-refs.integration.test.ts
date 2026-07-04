@@ -102,7 +102,8 @@ beforeAll(async () => {
   flowRepo = await buildGraphFlowFixture(fixturesDir);
 
   projectId = randomUUID();
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "capref-app",
     name: "CapRef App",

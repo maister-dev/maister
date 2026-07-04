@@ -1,10 +1,5 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
-
-import { sql, type SQL } from "drizzle-orm";
-import pino from "pino";
-
 import type {
   AuthoredCapabilityBody,
   AuthoredCapabilityKind,
@@ -18,6 +13,11 @@ import type {
   BrainProposalResolution,
   BrainProposalStatus,
 } from "./schema";
+
+import { randomUUID } from "node:crypto";
+
+import { sql, type SQL } from "drizzle-orm";
+import pino from "pino";
 
 import {
   getBrainAutonomyPolicy,
@@ -132,14 +132,16 @@ function isOneOf<T extends string>(
   values: readonly T[],
 ): value is T {
   return (
-    typeof value === "string" &&
-    (values as readonly string[]).includes(value)
+    typeof value === "string" && (values as readonly string[]).includes(value)
   );
 }
 
 function assertActor(actor: BrainProposalActor): void {
   if (!isOneOf(actor.type, ["user", "agent", "system"] as const)) {
-    throw new MaisterError("CONFIG", `invalid proposal actor type: ${actor.type}`);
+    throw new MaisterError(
+      "CONFIG",
+      `invalid proposal actor type: ${actor.type}`,
+    );
   }
 
   if (actor.id.trim().length === 0) {
@@ -240,7 +242,10 @@ export async function getBrainProposal(
   return toProposal(rows.rows[0]);
 }
 
-function resolution(actor: BrainProposalActor, reason?: string): BrainProposalResolution {
+function resolution(
+  actor: BrainProposalActor,
+  reason?: string,
+): BrainProposalResolution {
   return reason ? { actor, reason } : { actor };
 }
 
@@ -370,7 +375,9 @@ export async function transitionBrainProposal(
   assertActor(input.actor);
   assertTransitionActor(input.transition, input.actor);
 
-  return db.transaction((tx) => transitionBrainProposalInTransaction(tx, input));
+  return db.transaction((tx) =>
+    transitionBrainProposalInTransaction(tx, input),
+  );
 }
 
 async function transitionBrainProposalInTransaction(
@@ -742,11 +749,7 @@ function optionalDraftInteger(
 
   if (value === undefined || value === null) return undefined;
 
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < 1
-  ) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
     throw new MaisterError(
       "CONFIG",
       `Brain proposal draft field "${key}" must be a positive integer`,

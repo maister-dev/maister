@@ -152,7 +152,8 @@ beforeAll(async () => {
       ],
     };
 
-    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    await db.insert(schema.projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id,
       slug,
       name: slug,
@@ -204,7 +205,8 @@ beforeAll(async () => {
     .update(schema.projects)
     .set({ defaultRunnerId: "exec-a" })
     .where(eq(schema.projects.id, "proj-a"));
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: "task-in-a",
     projectId: "proj-a",
     title: "A task",
@@ -212,7 +214,8 @@ beforeAll(async () => {
     flowId: "flow-proj-a",
   });
   // A Backlog task that belongs to project B (NOT A).
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: "task-in-b",
     projectId: "proj-b",
     title: "B task",

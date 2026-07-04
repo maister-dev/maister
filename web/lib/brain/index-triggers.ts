@@ -66,7 +66,10 @@ export async function enqueueSourceReindexForEvents(
   }
 
   if (inserted > 0) {
-    log.info({ jobs: inserted }, "brain source reindex jobs enqueued from events");
+    log.info(
+      { jobs: inserted },
+      "brain source reindex jobs enqueued from events",
+    );
   }
 
   return inserted;

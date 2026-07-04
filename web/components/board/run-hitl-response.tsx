@@ -436,9 +436,9 @@ export function RunHitlResponse({
       reviewSchema={reviewSchema}
       schema={schema}
       showConfidence={showConfidence}
-      onBudgetCeilingChange={setBudgetCeiling}
       onBudgetAbandon={handleBudgetAbandon}
       onBudgetBranchNameChange={setBudgetBranchName}
+      onBudgetCeilingChange={setBudgetCeiling}
       onBudgetDropWorkspaceChange={setBudgetDropWorkspace}
       onBudgetPark={handleBudgetPark}
       onBudgetParkModeChange={setBudgetParkMode}

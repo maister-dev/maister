@@ -55,7 +55,11 @@ async function installCoreFixture(): Promise<string> {
   const installId = randomUUID();
   const manifest = {
     spec: { name: "core", flows: [] },
-    inventory: { skills: [], agents: [], platformAgents: ["triager", "improver"] },
+    inventory: {
+      skills: [],
+      agents: [],
+      platformAgents: ["triager", "improver"],
+    },
   };
 
   await db.execute(sql`

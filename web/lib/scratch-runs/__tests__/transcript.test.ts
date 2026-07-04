@@ -97,10 +97,7 @@ function makeApi(updates: unknown[]) {
 
       for (const update of updates) {
         monotonicId += 1;
-        if (
-          opts.lastEventId !== undefined &&
-          monotonicId <= opts.lastEventId
-        ) {
+        if (opts.lastEventId !== undefined && monotonicId <= opts.lastEventId) {
           continue;
         }
         yield {

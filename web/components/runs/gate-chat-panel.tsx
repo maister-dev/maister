@@ -92,8 +92,6 @@ export function GateChatTranscript({
       assistantLabel={labels.agentLabel}
       labels={transcriptLabels}
       messages={messages.map(toTranscriptMessage)}
-      running={running}
-      userLabel={userLabel}
       renderAttachments={(messageId) =>
         revertedByMessageId.has(messageId) ? (
           <div
@@ -104,6 +102,8 @@ export function GateChatTranscript({
           </div>
         ) : null
       }
+      running={running}
+      userLabel={userLabel}
     />
   );
 }

@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readlink, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -56,7 +63,8 @@ beforeAll(async () => {
   setupFailRepo = await buildFlowFixture(fixturesDir, "with-setup-fail");
 
   projectId = randomUUID();
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "demo-app",
     name: "Demo App",

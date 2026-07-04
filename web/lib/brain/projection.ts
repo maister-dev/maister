@@ -1,10 +1,10 @@
 import "server-only";
 
-import { sql, type SQL } from "drizzle-orm";
-import pino from "pino";
-
 import type { BrainProposalActor, BrainProposalKind } from "@/lib/brain/schema";
 import type { SocialActor } from "@/lib/social/activity";
+
+import { sql, type SQL } from "drizzle-orm";
+import pino from "pino";
 
 import { MaisterError } from "@/lib/errors";
 import { createTask } from "@/lib/services/tasks";
@@ -32,10 +32,7 @@ export interface ProjectBrainProjectionResult {
   launchMode: "auto" | "manual";
 }
 
-function requiredString(
-  draft: Record<string, unknown>,
-  field: string,
-): string {
+function requiredString(draft: Record<string, unknown>, field: string): string {
   const value = draft[field];
 
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -74,7 +71,10 @@ function draftContent(draft: Record<string, unknown>): string {
   );
 }
 
-function taskTitle(kind: BrainProposalKind, draft: Record<string, unknown>): string {
+function taskTitle(
+  kind: BrainProposalKind,
+  draft: Record<string, unknown>,
+): string {
   return `Project Brain ${kind}: ${requiredString(draft, "title")}`;
 }
 

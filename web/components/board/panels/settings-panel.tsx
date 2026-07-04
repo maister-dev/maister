@@ -1,5 +1,6 @@
 import type { ProjectPageData } from "@/lib/queries/project";
 import type { ReactElement } from "react";
+import type { BrainHomeResolution } from "@/lib/brain/home-resolution";
 
 import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
@@ -15,7 +16,6 @@ import {
   getBrainProjectConfig,
   type BrainAutonomyPolicy,
 } from "@/lib/brain/autonomy";
-import type { BrainHomeResolution } from "@/lib/brain/home-resolution";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
 import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
@@ -192,8 +192,8 @@ export async function SettingsPanel({
           flows={flows}
           homeResolution={brainHomeResolution}
           platformConfigured={brainPlatformConfigured}
-          projectionFlowId={brainProjectionFlowId}
           projectSlug={project.slug}
+          projectionFlowId={brainProjectionFlowId}
         />
       ) : null}
       <div className="flex flex-col gap-px overflow-hidden rounded-xl border border-line bg-line">

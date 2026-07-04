@@ -145,7 +145,11 @@ describe("runFormCollect (graph) — T4 form-collect node", () => {
     const result = await runFormCollect(
       node,
       makeLoaded(),
-      { form_schema: "./schemas/intake.json", roles: ["reviewer"], criticality: "high" },
+      {
+        form_schema: "./schemas/intake.json",
+        roles: ["reviewer"],
+        criticality: "high",
+      },
       baseCtx,
     );
 

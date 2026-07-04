@@ -1,12 +1,11 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { InboxItemView } from "@/lib/queries/inbox";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
-import type { InboxItemView } from "@/lib/queries/inbox";
 
 export interface InboxPanelLabels {
   title: string;

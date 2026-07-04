@@ -1,5 +1,4 @@
 import type { ReactElement } from "react";
-
 import type { TimelineItem } from "@/lib/queries/task-detail";
 
 import { MarkdownBody } from "@/components/social/markdown-body";
@@ -44,9 +43,9 @@ function activityText(
 function timestamp(at: Date): ReactElement {
   return (
     <time
-      dateTime={at.toISOString()}
-      className="font-mono text-[10px] text-mute"
       suppressHydrationWarning
+      className="font-mono text-[10px] text-mute"
+      dateTime={at.toISOString()}
     >
       {at.toISOString().slice(0, 16).replace("T", " ")}
     </time>

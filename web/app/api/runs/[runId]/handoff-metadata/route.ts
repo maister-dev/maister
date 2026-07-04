@@ -2,9 +2,12 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-import { getWorkbenchHandoffMetadata } from "@/lib/workbench-lifecycle/service";
+import {
+  errorResponse,
+  type RouteParams,
+} from "../workbench-lifecycle/route-utils";
 
-import { errorResponse, type RouteParams } from "../workbench-lifecycle/route-utils";
+import { getWorkbenchHandoffMetadata } from "@/lib/workbench-lifecycle/service";
 
 export async function GET(
   _req: Request,

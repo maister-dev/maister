@@ -177,9 +177,7 @@ describe("listInstalledPackageFiles", () => {
     expect(result.files.some((f) => f.path.startsWith(".maister/"))).toBe(
       false,
     );
-    expect(result.files.some((f) => f.path.startsWith(".claude/"))).toBe(
-      false,
-    );
+    expect(result.files.some((f) => f.path.startsWith(".claude/"))).toBe(false);
   });
 
   it("returns { bundleMissing: true } for a non-existent dir", async () => {

@@ -1,10 +1,10 @@
 import "server-only";
 
-import { sql } from "drizzle-orm";
-import pino from "pino";
-
 import type { InboxSourceRef, TaskActivityEventKind } from "@/lib/db/schema";
 import type { SocialActor } from "@/lib/social/activity";
+
+import { sql } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 

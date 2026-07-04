@@ -1,11 +1,11 @@
 import "server-only";
 
+import type { BrainGraphRef, BrainSourceRef } from "./schema";
+
 import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
-
-import type { BrainGraphRef, BrainSourceRef } from "./schema";
 
 const log = pino({
   name: "brain:edges",
@@ -67,8 +67,7 @@ function matchChunk(
   ref: Record<string, unknown>,
 ): ChunkRow | null {
   const stableId = typeof ref.stableId === "string" ? ref.stableId : null;
-  const sourcePath =
-    typeof ref.sourcePath === "string" ? ref.sourcePath : null;
+  const sourcePath = typeof ref.sourcePath === "string" ? ref.sourcePath : null;
   const symbol = typeof ref.symbol === "string" ? ref.symbol : null;
   const contentHash =
     typeof ref.contentHash === "string" ? ref.contentHash : null;
@@ -121,11 +120,7 @@ export async function createRetainSourceEdges(
 ): Promise<void> {
   if (!args.sourceRef) return;
 
-  const chunk = await findChunkForSourceRef(
-    db,
-    args.projectId,
-    args.sourceRef,
-  );
+  const chunk = await findChunkForSourceRef(db, args.projectId, args.sourceRef);
 
   if (!chunk) return;
 

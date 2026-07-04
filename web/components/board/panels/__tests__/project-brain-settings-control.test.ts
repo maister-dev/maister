@@ -13,9 +13,7 @@ function render(brainEnabled: boolean, platformConfigured: boolean): string {
     createElement(ProjectBrainSettingsControl, {
       projectSlug: "demo",
       brainEnabled,
-      flows: [
-        { id: "flow-1", ref: "maister.project-brain-projection" },
-      ],
+      flows: [{ id: "flow-1", ref: "maister.project-brain-projection" }],
       homeResolution: { decision: "indexed" },
       projectionFlowId: "flow-1",
       autonomyDefaults: { "rule.low": "auto_draft" },
