@@ -27,6 +27,7 @@ import {
   revertPackageVersionChoices,
 } from "@/lib/local-packages/versions";
 import { getDb } from "@/lib/db/client";
+import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
 import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -115,24 +116,6 @@ const EXPERIMENT_MEMBER_LAUNCHABLE_STATUSES = new Set([
   "comparable",
 ]);
 
-async function selectForUpdate(query: any): Promise<Record<string, any>[]> {
-  if (typeof query.for !== "function") {
-    return (await query) as Record<string, any>[];
-  }
-
-  try {
-    return (await query.for("update")) as Record<string, any>[];
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-
-    if (message.includes("not supported") || message.includes("FOR UPDATE")) {
-      return (await query) as Record<string, any>[];
-    }
-
-    throw err;
-  }
-}
-
 async function assertExperimentMembershipLaunchable(args: {
   tx: any;
   membership: NonNullable<LaunchRunInput["experimentMembership"]>;
@@ -212,6 +195,27 @@ const log = pino({
   name: "service-runs",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+function postgresErrorRecord(err: unknown): {
+  code?: unknown;
+  constraint?: unknown;
+  cause?: unknown;
+} {
+  return err && typeof err === "object" ? err : {};
+}
+
+function isExperimentMembershipUniqueViolation(err: unknown): boolean {
+  const current = postgresErrorRecord(err);
+  const cause = postgresErrorRecord(current.cause);
+  const code = current.code ?? cause.code;
+  const constraint = current.constraint ?? cause.constraint;
+
+  return (
+    code === "23505" &&
+    (constraint === "experiment_runs_run_uq" ||
+      constraint === "experiment_runs_variant_replicate_uq")
+  );
+}
 
 // Explicit allow-list of project flow enablement states that may launch a run
 // (M10, ADR-021). `Installed`/`Disabled`/`Failed`/`Deprecated` are NOT
@@ -552,8 +556,11 @@ export async function* launchRunStaged(
     toLaunchMembership(inheritedExperimentMembership);
   const forceByBudgetMembership =
     inheritedExperimentMembership?.launchReason === "budget_restart";
+  const forceByDirectExperimentMembership = input.experimentMembership !== undefined;
   const allowConcurrentForLaunch = Boolean(
-    input.allowConcurrent || forceByBudgetMembership,
+    input.allowConcurrent ||
+      forceByBudgetMembership ||
+      forceByDirectExperimentMembership,
   );
 
   if (inheritedExperimentMembership) {
@@ -565,9 +572,17 @@ export async function* launchRunStaged(
         replicateOrdinal: inheritedExperimentMembership.replicateOrdinal,
         launchReason: inheritedExperimentMembership.launchReason,
         forceByBudgetMembership,
+        forceByDirectExperimentMembership,
       },
       "POST /api/runs inherited experiment membership",
     );
+  }
+
+  if (effectiveExperimentMembership) {
+    await assertExperimentMembershipLaunchable({
+      tx: _db,
+      membership: effectiveExperimentMembership,
+    });
   }
 
   // tasks.status is a one-way latch (nothing writes Backlog back after
@@ -1121,8 +1136,10 @@ export async function* launchRunStaged(
       );
     }
 
+    const membershipBaseCommit = effectiveExperimentMembership?.baseCommit;
+    const requestedBaseCommit = input.baseCommit ?? membershipBaseCommit;
     const baseCommit =
-      input.baseCommit === undefined
+      requestedBaseCommit === undefined
         ? await resolveBaseCommit({
             projectRepoPath: project.repoPath,
             baseRef: base,
@@ -1136,7 +1153,7 @@ export async function* launchRunStaged(
             taskId: task.id,
             projectRepoPath: project.repoPath,
             baseRef: base,
-            baseCommit: input.baseCommit,
+            baseCommit: requestedBaseCommit,
           });
     const promotionMode: PromotionMode =
       deliveryPolicy.strategy === "ai_rebase_merge"
@@ -1334,15 +1351,27 @@ export async function* launchRunStaged(
             tx,
             membership: effectiveExperimentMembership,
           });
-          await tx.insert(experimentRuns).values({
-            id: randomUUID(),
-            experimentId: effectiveExperimentMembership.experimentId,
-            runId,
-            variantKey: effectiveExperimentMembership.variantKey,
-            replicateOrdinal: effectiveExperimentMembership.replicateOrdinal,
-            launchReason: effectiveExperimentMembership.launchReason,
-            baseCommit: effectiveExperimentMembership.baseCommit,
-          });
+          try {
+            await tx.insert(experimentRuns).values({
+              id: randomUUID(),
+              experimentId: effectiveExperimentMembership.experimentId,
+              runId,
+              variantKey: effectiveExperimentMembership.variantKey,
+              replicateOrdinal: effectiveExperimentMembership.replicateOrdinal,
+              launchReason: effectiveExperimentMembership.launchReason,
+              baseCommit: effectiveExperimentMembership.baseCommit,
+            });
+          } catch (err) {
+            if (isExperimentMembershipUniqueViolation(err)) {
+              throw new MaisterError(
+                "CONFLICT",
+                `experiment member replicate already exists: ${effectiveExperimentMembership.experimentId}/${effectiveExperimentMembership.variantKey}/${effectiveExperimentMembership.replicateOrdinal}`,
+                { cause: err instanceof Error ? err : undefined },
+              );
+            }
+
+            throw err;
+          }
           await syncExperimentStatusForRun({ db: tx, runId });
 
           if (effectiveExperimentMembership.markExperimentRunning) {

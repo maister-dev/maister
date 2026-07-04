@@ -9,6 +9,8 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { markStepSucceeded } from "@/lib/flows/step-runs";
 import {
   cancelPermission,
@@ -307,6 +309,7 @@ async function completeResumedStepAndHandoff(
         .returning({ id: runs.id, projectId: runs.projectId });
 
       if (updatedRows.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
         await emitWebhookEvent({
           db: tx,
           type: "run.review",
@@ -327,6 +330,7 @@ async function completeResumedStepAndHandoff(
     // M8 Codex review fix #3: promote next Pending if Review terminal
     // write actually happened (status-guard could have lost the race).
     if (rows.length > 0) {
+      await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
       await promoteAfterResumeTerminal(db, runId, "Review");
     }
 

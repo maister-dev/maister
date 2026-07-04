@@ -13,6 +13,8 @@ import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
@@ -1613,6 +1615,8 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         args.runId,
       );
 
+      await syncExperimentStatusForRun({ db: tx, runId: args.runId });
+
       if (args.nextRunStatus === "Abandoned") {
         await emitWebhookEvent({
           db: tx,
@@ -1648,6 +1652,14 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
       }
     }
   });
+
+  if (args.nextRunStatus !== null) {
+    await captureExperimentDiffSnapshotForRun({
+      db: db(),
+      runId: args.runId,
+      force: true,
+    });
+  }
 }
 
 async function markRunStoppedAndCloseAssignments(args: {
@@ -1682,6 +1694,8 @@ async function markRunStoppedAndCloseAssignments(args: {
       reason: args.reason,
     });
 
+    await syncExperimentStatusForRun({ db: tx, runId: args.runId });
+
     await emitWebhookEvent({
       db: tx,
       type: "run.review",
@@ -1689,6 +1703,11 @@ async function markRunStoppedAndCloseAssignments(args: {
       runId: args.runId,
       data: { source: "workbench" },
     });
+  });
+  await captureExperimentDiffSnapshotForRun({
+    db: db(),
+    runId: args.runId,
+    force: true,
   });
 }
 

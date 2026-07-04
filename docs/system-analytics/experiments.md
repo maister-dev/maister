@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This domain (**Designed, Phase 1; ADR-124**) covers task-bound experiment
+This domain (**Implemented, Phase 1; ADR-124**) covers task-bound experiment
 comparison: an operator creates one experiment for one task, pins a base commit,
 launches N variants through the normal run pipeline, compares run evidence, and
 records a human verdict. The boundary includes experiment membership,
@@ -13,12 +13,12 @@ budgets, and a second review-comment surface.
 
 ## Domain entities
 
-- **Experiment** (`experiments`, Designed) — durable task-bound comparison
+- **Experiment** (`experiments`, Implemented) — durable task-bound comparison
   container: `project_id`, `task_id`, `title`, `base_branch`, pinned
   `base_commit`, immutable `variants`, immutable `rubric`, five-state `status`,
   optional verdict envelope, actor/timestamp columns, and lifecycle timestamps.
   ERD: [`../db/erd.md`](../db/erd.md).
-- **Experiment member run** (`experiment_runs`, Designed) — membership row
+- **Experiment member run** (`experiment_runs`, Implemented) — membership row
   joining one `runs.id` to one experiment with `variant_key`,
   `replicate_ordinal`, `launch_reason`, capped `diff_snapshot`, structured
   truncation fields, `diff_files_summary`, and applied `materialization_delta`.
@@ -59,7 +59,8 @@ stateDiagram-v2
 
 `Review`, `Done`, `Failed`, `Abandoned`, and `Crashed` member runs count as
 settled for comparability. `Pending`, `Running`, `NeedsInput`,
-`NeedsInputIdle`, and `HumanWorking` keep the experiment `running`.
+`NeedsInputIdle`, `HumanWorking`, and `WaitingOnChildren` keep the experiment
+`running`.
 
 ## Process flows
 
@@ -95,11 +96,13 @@ sequenceDiagram
     participant DB as Postgres
     U->>R: variants all or list, replicates
     R->>E: manageExperiments guard
-    E->>DB: lock experiment row and validate status
+    E->>DB: admission transaction locks experiment row and validates status before batch fan-out
     E->>E: validate full batch overlays and base_commit exists
     loop each variant x replicate
         E->>L: standard launch with pinned baseCommit and variant overrides
-        L->>DB: insert run, workspace, run_session, and membership in one tx
+        L->>DB: lock experiment row before worktree side effects
+        L->>DB: re-lock and insert run, workspace, run_session, and membership in one tx
+        L->>DB: map variant/replicate uniqueness races to CONFLICT
     end
     E->>DB: draft to running if first launch
     R-->>U: per-run launch outcomes and queue positions
@@ -111,18 +114,20 @@ sequenceDiagram
 flowchart TD
     Writer["run-status writer<br/>Review or terminal transition"] --> Member{"run has experiment_runs row?"}
     Member -- no --> Done["no-op"]
-    Member -- yes --> Snap["capture diff snapshot and full files summary<br/>best effort, idempotent"]
-    Snap --> Lock["lock experiment row"]
+    Member -- yes --> Lock["lock experiment row in writer transaction"]
     Lock --> Read["read all member run statuses under lock"]
     Read --> Derive{"canonical comparable rule"}
     Derive -- comparable --> UpdateC["running to comparable"]
     Derive -- active member exists --> UpdateR["comparable to running"]
     Derive -- terminal experiment --> Keep["leave terminal unchanged"]
+    UpdateC --> Snap["after commit: capture diff snapshot and full files summary<br/>best effort, idempotent"]
+    UpdateR --> Snap
+    Keep --> Snap
 ```
 
-Snapshot failure never blocks the run transition. On detail/comparison reads,
-the service recomputes the derived status; if persisted status drifted, it heals
-the row with a WARN log.
+Snapshot failure never blocks the run transition. On comparison reads, the
+service recomputes the derived status; if persisted status drifted, it heals the
+row with a compare-and-swap update and logs when a concurrent terminal write wins.
 
 ### Human verdict and advisory judge
 
@@ -135,7 +140,7 @@ sequenceDiagram
     participant DB as Postgres
     A->>X: GET experiment comparison (experiments:read)
     A->>X: POST advisory scores (experiments:advise)
-    X->>DB: append judgeAdvisories[] under row lock
+    X->>DB: append judgeAdvisories[] with server-derived agentRunId under row lock
     U->>C: outcome, scores, comment, abandonLosers?
     C->>DB: lock experiment and require comparable
     C->>DB: write verdict.human + concluded status + task_activity
@@ -160,19 +165,25 @@ runs after the verdict transaction through the standard dispatcher.
   never carry an experiment id for membership.
 - The launch route MUST validate the whole variant batch, including overlay
   refs and class-adapter compatibility, before the first side effect.
+- Each member launch MUST lock and validate the experiment row before attempt
+  allocation or worktree creation, then re-check inside the run insert
+  transaction before writing membership.
 - The comparable rule MUST be recomputed at every member run status
   choke-point and verified on experiment read; no timer, watcher, or polling
   may drive experiment status.
-- Diff snapshots MUST carry structured truncation fields, and
-  `diff_files_summary` MUST be computed from the full diff before truncation so
-  the Files matrix remains complete after truncation or GC.
+- Diff snapshots MUST carry structured truncation fields. When git metadata is
+  available, `diff_files_summary` MUST be computed from metadata for the full
+  diff before truncation; when metadata fails after the text diff succeeds, the
+  snapshot MUST still be captured with patch-derived file summaries.
 - Human conclude MUST write `verdict.human`, `status = concluded`,
   `concluded_by_user_id`, `concluded_at`, and `experiment_concluded`
   `task_activity` in one transaction; it MUST NOT mutate member-run gates or
   statuses.
 - Advisory writes MUST append only `judgeAdvisories[]` under row lock, require
   `experiments:advise`, re-validate rubric scores at the untrusted sink, and
-  fail after terminal states.
+  fail after terminal states. Agent-token callers MUST be the package-sourced
+  experiment judge; `agentRunId` is server-derived from the bound token and is
+  never accepted from the body.
 - Automated GC/reconcile sweeps MUST skip workspaces referenced by
   non-terminal experiments; manual workbench lifecycle actions remain allowed.
 - Public responses MUST be explicit DTO projections and MUST NOT expose
@@ -219,7 +230,8 @@ runs after the verdict transaction through the standard dispatcher.
   under row lock, then stops live member runs through the standard dispatcher;
   stop failures are logged per run and do not resurrect the experiment.
 - **External scope denial** — `experiments:read` and `experiments:advise` are
-  separate token scopes; missing scopes return `MaisterError("UNAUTHORIZED")`.
+  separate token scopes; missing scopes or non-judge agent tokens return
+  `MaisterError("UNAUTHORIZED")`.
 
 ## Linked artifacts
 

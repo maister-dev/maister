@@ -29,11 +29,15 @@ type RouteModule = typeof import("../route");
 
 let route: RouteModule;
 
-function request(body: Record<string, unknown>): NextRequest {
+function request(body?: Record<string, unknown>): NextRequest {
   return new Request("http://x/api/projects/demo/experiments/exp-1/abandon", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
   }) as NextRequest;
 }
 
@@ -74,7 +78,7 @@ afterEach(() => {
 
 describe("POST /api/projects/[slug]/experiments/[experimentId]/abandon", () => {
   it("requires manageExperiments and forwards stopLiveRuns explicitly", async () => {
-    const body = { reason: "superseded", stopLiveRuns: true };
+    const body = { stopLiveRuns: true };
 
     const res = await route.POST(request(body), params());
 
@@ -94,6 +98,18 @@ describe("POST /api/projects/[slug]/experiments/[experimentId]/abandon", () => {
 
     expect(dto.status).toBe("abandoned");
     expect(dto).not.toHaveProperty("createdByUserId");
+  });
+
+  it("accepts an empty optional body and applies stopLiveRuns default", async () => {
+    const res = await route.POST(request(), params());
+
+    expect(res.status).toBe(200);
+    expect(mocks.abandonExperiment).toHaveBeenCalledWith({
+      projectId: "project-1",
+      experimentId: "exp-1",
+      actorUserId: "user-1",
+      input: { stopLiveRuns: true },
+    });
   });
 
   it("checks project auth before body validation or service side effects", async () => {

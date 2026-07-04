@@ -35,6 +35,15 @@ type SeededExperiment = {
   title: string;
   comment: string;
 };
+type CreatedExperimentResponse = {
+  id: string;
+};
+type CreatedTaskResponse = {
+  taskId: string;
+};
+type LaunchExperimentResponse = {
+  outcomes: Array<{ runId: string; variantKey: string }>;
+};
 
 const BASE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const VARIANTS = [
@@ -348,6 +357,80 @@ async function seedExperiment(
   };
 }
 
+test("experiment create and launch routes create member runs that become comparable", async ({
+  page,
+  baseURL,
+}) => {
+  const fx = loadFixtures().byKey.board;
+
+  await setLocale(page, baseURL, "en");
+
+  const suffix = randomUUID().slice(0, 8);
+  const taskResponse = await page.request.post(
+    `/api/projects/${fx.projectSlug}/tasks`,
+    {
+      data: {
+        title: `Experiment route launch task ${suffix}`,
+        prompt: "Create the two comparison variants for the launch test.",
+        flowId: fx.flowId,
+      },
+    },
+  );
+
+  expect(taskResponse.status()).toBe(201);
+
+  const task = (await taskResponse.json()) as CreatedTaskResponse;
+  const title = `Route-launched experiment ${suffix}`;
+  const createResponse = await page.request.post(
+    `/api/projects/${fx.projectSlug}/experiments`,
+    {
+      data: {
+        taskId: task.taskId,
+        title,
+        description: "Created by the experiment-comparison acceptance path.",
+        baseBranch: "main",
+        variants: VARIANTS,
+        rubric: RUBRIC,
+      },
+    },
+  );
+
+  expect(createResponse.status()).toBe(201);
+
+  const created = (await createResponse.json()) as CreatedExperimentResponse;
+  const launchResponse = await page.request.post(
+    `/api/projects/${fx.projectSlug}/experiments/${created.id}/launch`,
+    { data: { variants: "all", replicates: 1 } },
+  );
+
+  expect(launchResponse.status()).toBe(200);
+
+  const launched = (await launchResponse.json()) as LaunchExperimentResponse;
+  const runIds = launched.outcomes.map((outcome) => outcome.runId);
+
+  expect(runIds).toHaveLength(2);
+  expect(launched.outcomes.map((outcome) => outcome.variantKey).sort()).toEqual(
+    ["candidate", "control"],
+  );
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      `UPDATE runs
+       SET status = 'Review',
+           current_step_id = 'review',
+           started_at = coalesce(started_at, now() - interval '1 minute'),
+           ended_at = now()
+       WHERE id = ANY($1::text[])`,
+      [runIds],
+    );
+  });
+
+  await page.goto(`/projects/${fx.projectSlug}/experiments/${created.id}`);
+
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  await expect(page.getByText("Comparable")).toBeVisible();
+});
+
 for (const scenario of SCENARIOS) {
   test(`experiment comparison studio flow renders and concludes in ${scenario.locale}`, async ({
     page,
@@ -379,7 +462,8 @@ for (const scenario of SCENARIOS) {
     await expect(
       page.getByText(scenario.labels.storedSnapshot, { exact: true }).first(),
     ).toBeVisible();
-    await expect(page.getByText("candidate path adds the studio comparison")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Candidate #1" })).toBeVisible();
+    await expect(page.getByText("src/feature.ts").first()).toBeVisible();
 
     await page.getByRole("tab", { name: scenario.labels.files }).click();
     await expect(page.getByText("docs/experiment.md")).toBeVisible();

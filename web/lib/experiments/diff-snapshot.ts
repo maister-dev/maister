@@ -6,8 +6,13 @@ import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors-core";
 import type { ExperimentDiffFileSummary } from "@/lib/experiments/types";
-import { diffRunWorkspace } from "@/lib/worktree";
+import {
+  diffRunWorkspace,
+  diffRunWorkspaceFileMetadata,
+  type DiffRunWorkspaceFileMetadata,
+} from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { experimentRuns, projects, workspaces } =
@@ -112,6 +117,21 @@ function patchHash(section: string): string {
   return createHash("sha256").update(section).digest("hex");
 }
 
+function metadataPatchHash(metadata: DiffRunWorkspaceFileMetadata): string {
+  return createHash("sha256")
+    .update(
+      [
+        metadata.path,
+        metadata.status,
+        String(metadata.additions),
+        String(metadata.deletions),
+        metadata.oldOid,
+        metadata.newOid,
+      ].join("\0"),
+    )
+    .digest("hex");
+}
+
 export function summarizeDiffFilesWithPatchHashes(
   rawDiff: string,
 ): ExperimentDiffFileSummary[] {
@@ -126,6 +146,18 @@ export function summarizeDiffFilesWithPatchHashes(
       patchHash: patchHash(parsed.section),
     };
   });
+}
+
+export function summarizeDiffFileMetadataWithPatchHashes(
+  metadata: DiffRunWorkspaceFileMetadata[],
+): ExperimentDiffFileSummary[] {
+  return metadata.map((file) => ({
+    path: file.path,
+    status: file.status,
+    additions: file.additions,
+    deletions: file.deletions,
+    patchHash: metadataPatchHash(file),
+  }));
 }
 
 export function capExperimentDiffSnapshot(
@@ -182,7 +214,10 @@ export async function captureExperimentDiffSnapshotForRun(args: {
     );
 
     if (!workspace || workspace.removedAt) {
-      throw new Error(`workspace unavailable for run ${args.runId}`);
+      throw new MaisterError(
+        "PRECONDITION",
+        `workspace unavailable for run ${args.runId}`,
+      );
     }
 
     const projectRows = await args.db
@@ -194,15 +229,43 @@ export async function captureExperimentDiffSnapshotForRun(args: {
     );
 
     if (!project) {
-      throw new Error(`project not found for run ${args.runId}`);
+      throw new MaisterError(
+        "PRECONDITION",
+        `project not found for run ${args.runId}`,
+      );
     }
 
-    const diff = await diffRunWorkspace({
+    const diffArgs = {
       projectRepoPath: String(project.repoPath),
       baseCommit: String(member.baseCommit),
       branch: String(workspace.branch),
-    });
-    const files = summarizeDiffFilesWithPatchHashes(diff.text);
+    };
+    const [diffResult, metadataResult] = await Promise.allSettled([
+      diffRunWorkspace(diffArgs),
+      diffRunWorkspaceFileMetadata(diffArgs),
+    ]);
+    if (diffResult.status === "rejected") throw diffResult.reason;
+
+    const diff = diffResult.value;
+    const fileMetadata =
+      metadataResult.status === "fulfilled" ? metadataResult.value : [];
+
+    if (metadataResult.status === "rejected") {
+      const metadataError =
+        metadataResult.reason instanceof Error
+          ? metadataResult.reason.message
+          : String(metadataResult.reason);
+
+      log.warn(
+        { runId: args.runId, err: metadataError },
+        "[FIX:experiments-diff-snapshot] diff metadata unavailable; falling back to patch summary",
+      );
+    }
+
+    const files =
+      fileMetadata.length > 0
+        ? summarizeDiffFileMetadataWithPatchHashes(fileMetadata)
+        : summarizeDiffFilesWithPatchHashes(diff.text);
     const snapshot = capExperimentDiffSnapshot(diff.text, {
       alreadyTruncated: diff.truncated,
     });

@@ -53,6 +53,8 @@ import {
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -372,6 +374,7 @@ export async function runFlow(
         });
 
       if (rows.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
         await emitWebhookEvent({
           db: tx,
           type: "run.crashed",
@@ -397,6 +400,7 @@ export async function runFlow(
         });
       }
     });
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
     throw new MaisterError(
       "CONFIG",
@@ -965,6 +969,7 @@ export async function runFlow(
         });
       }
     });
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -986,6 +991,7 @@ export async function runFlow(
         });
 
       if (rows.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
         await emitWebhookEvent({
           db: tx,
           type: "run.failed",
@@ -1011,6 +1017,7 @@ export async function runFlow(
         });
       }
     });
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -1028,6 +1035,7 @@ export async function runFlow(
         .returning({ projectId: runs.projectId });
 
       if (rows.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
         await emitWebhookEvent({
           db: tx,
           type: "run.review",
@@ -1037,6 +1045,7 @@ export async function runFlow(
         });
       }
     });
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     log2.info({}, "runFlow ended Review");
     await deliverRunIfAutoReady(runId, db);
   }

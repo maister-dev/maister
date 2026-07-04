@@ -3,9 +3,14 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { errorResponse, resolveProject } from "@/lib/api/project-route-helpers";
+import {
+  errorResponse,
+  notFoundResponse,
+  resolveProject,
+} from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
+import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 import { concludeExperimentInputSchema } from "@/lib/experiments/http-schemas";
 import { concludeExperiment } from "@/lib/experiments/service";
 
@@ -54,6 +59,9 @@ export async function POST(
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof SyntaxError) return bodyErrorResponse(err);
+    if (err instanceof ExperimentNotFoundError) {
+      return notFoundResponse(err.message);
+    }
     if (err instanceof MaisterError && err.code === "CONFIG") {
       return errorResponse(err, log, slug);
     }

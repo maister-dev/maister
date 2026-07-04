@@ -15,28 +15,62 @@ export interface VariantEditorLabels {
   mcpsRemove: string;
   subagentsAdd: string;
   subagentsRemove: string;
+  addVariant: string;
+  removeVariant: string;
 }
 
 export function VariantEditor({
   labels,
   variants,
+  minVariants = 2,
+  maxVariants = 12,
+  onAddVariant,
+  onRemoveVariant,
 }: {
   labels: VariantEditorLabels;
   variants: ExperimentVariant[];
+  minVariants?: number;
+  maxVariants?: number;
+  onAddVariant?: () => void;
+  onRemoveVariant?: (index: number) => void;
 }): ReactElement {
   return (
     <section className="rounded-[12px] border border-line bg-ivory p-4">
-      <h3 className="m-0 mb-3 font-mono text-[10.5px] font-bold uppercase tracking-[0.1em] text-mute">
-        {labels.variants}
-      </h3>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="m-0 font-mono text-[10.5px] font-bold uppercase tracking-[0.1em] text-mute">
+          {labels.variants}
+        </h3>
+        {onAddVariant ? (
+          <button
+            className="rounded-md border border-line bg-paper px-2.5 py-1.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink disabled:opacity-50"
+            disabled={variants.length >= maxVariants}
+            type="button"
+            onClick={onAddVariant}
+          >
+            {labels.addVariant}
+          </button>
+        ) : null}
+      </div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {variants.map((variant, index) => (
           <fieldset
             key={variant.key}
             className="rounded-[10px] border border-line bg-paper p-3"
           >
-            <legend className="px-1 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink">
-              {variant.label}
+            <legend className="px-1">
+              <span className="inline-flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink">
+                {variant.label}
+                {onRemoveVariant ? (
+                  <button
+                    className="rounded border border-line bg-ivory px-1.5 py-px text-[9.5px] text-mute disabled:opacity-50"
+                    disabled={variants.length <= minVariants}
+                    type="button"
+                    onClick={() => onRemoveVariant(index)}
+                  >
+                    {labels.removeVariant}
+                  </button>
+                ) : null}
+              </span>
             </legend>
             <div className="grid grid-cols-1 gap-2">
               <label className="flex flex-col gap-1">

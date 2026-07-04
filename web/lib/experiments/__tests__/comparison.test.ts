@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { getExperimentComparison } from "@/lib/experiments/comparison";
+import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 
 const {
   experimentRuns,
@@ -23,6 +24,7 @@ type State = {
   gateResults: Row[];
   runCostRollups: Row[];
   updates: Row[];
+  updateReturningRows: Row[] | null;
 };
 
 function rowsFor(table: unknown, state: State): Row[] {
@@ -63,15 +65,29 @@ function fakeDb(state: State): any {
     update: (table: unknown) => ({
       set: (patch: Row) => ({
         where: () => {
-          state.updates.push(patch);
-          if (getTableName(table as never) === "experiments") {
-            state.experiments = state.experiments.map((row) => ({
-              ...row,
-              ...patch,
-            }));
-          }
+          const updateQuery = Promise.resolve() as Promise<void> & {
+            returning: (cols?: unknown) => Promise<Row[]>;
+          };
 
-          return Promise.resolve();
+          updateQuery.returning = async () => {
+            const returningRows = state.updateReturningRows ?? [
+              { id: "exp-1" },
+            ];
+
+            if (returningRows.length > 0) {
+              state.updates.push(patch);
+              if (getTableName(table as never) === "experiments") {
+                state.experiments = state.experiments.map((row) => ({
+                  ...row,
+                  ...patch,
+                }));
+              }
+            }
+
+            return returningRows;
+          };
+
+          return updateQuery;
         },
       }),
     }),
@@ -196,6 +212,7 @@ function state(overrides: Partial<State> = {}): State {
       },
     ],
     updates: [],
+    updateReturningRows: null,
     ...overrides,
   };
 }
@@ -243,6 +260,79 @@ describe("experiment comparison DTO", () => {
     expect(JSON.stringify(dto)).not.toContain("secret-session");
   });
 
+  it("does not heal over a concurrent terminal status write", async () => {
+    const s = state({ updateReturningRows: [] });
+
+    const dto = await getExperimentComparison(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        viewerType: "session",
+      },
+      fakeDb(s),
+    );
+
+    expect(dto.experiment.status).toBe("running");
+    expect(s.updates).toEqual([]);
+  });
+
+  it("does not rewrite launchedAt when on-read heal moves comparable back to running", async () => {
+    const launchedAt = new Date("2026-07-03T10:01:00.000Z");
+    const s = state({
+      experiments: [
+        experimentRow({
+          status: "comparable",
+          launchedAt,
+          comparableAt: new Date("2026-07-03T10:05:00.000Z"),
+        }),
+      ],
+      runs: [
+        {
+          id: "run-a",
+          status: "Review",
+          attemptNumber: 1,
+          startedAt: new Date("2026-07-03T10:01:00.000Z"),
+          endedAt: new Date("2026-07-03T10:03:00.000Z"),
+        },
+        {
+          id: "run-b",
+          status: "Running",
+          attemptNumber: 2,
+          startedAt: new Date("2026-07-03T10:06:00.000Z"),
+          endedAt: null,
+        },
+      ],
+    });
+
+    const dto = await getExperimentComparison(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        viewerType: "session",
+      },
+      fakeDb(s),
+    );
+
+    expect(dto.experiment.status).toBe("running");
+    expect(dto.experiment.launchedAt).toBe(launchedAt.toISOString());
+    expect(s.updates[0]).not.toHaveProperty("launchedAt");
+  });
+
+  it("throws a typed not-found error for missing experiments", async () => {
+    const s = state({ experiments: [] });
+
+    await expect(
+      getExperimentComparison(
+        {
+          projectId: "project-1",
+          experimentId: "missing-exp",
+          viewerType: "session",
+        },
+        fakeDb(s),
+      ),
+    ).rejects.toBeInstanceOf(ExperimentNotFoundError);
+  });
+
   it("represents absent cost rollups as no-data instead of fabricated zeros", async () => {
     const s = state({ runCostRollups: [] });
 
@@ -267,5 +357,58 @@ describe("experiment comparison DTO", () => {
         verdict: { verdict: "pass", confidence: 0.83, reasons: ["ok"] },
       },
     ]);
+  });
+
+  it("projects scheduler queue positions for pending member runs", async () => {
+    const s = state({
+      experiments: [
+        experimentRow({
+          status: "running",
+          variants: [
+            { key: "claude", label: "Claude", config: {} },
+            { key: "codex", label: "Codex", config: {} },
+          ],
+        }),
+      ],
+      runs: [
+        {
+          id: "outside-pending",
+          runKind: "flow",
+          status: "Pending",
+          startedAt: new Date("2026-07-03T10:00:00.000Z"),
+          endedAt: null,
+        },
+        {
+          id: "run-a",
+          runKind: "flow",
+          status: "Running",
+          startedAt: new Date("2026-07-03T10:01:00.000Z"),
+          endedAt: null,
+        },
+        {
+          id: "run-b",
+          runKind: "flow",
+          status: "Pending",
+          startedAt: new Date("2026-07-03T10:02:00.000Z"),
+          endedAt: null,
+        },
+      ],
+    });
+
+    const dto = await getExperimentComparison(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        viewerType: "session",
+      },
+      fakeDb(s),
+    );
+
+    expect(dto.runs.find((run) => run.runId === "run-b")?.queuePosition).toBe(
+      2,
+    );
+    expect(dto.runs.find((run) => run.runId === "run-a")?.queuePosition).toBe(
+      null,
+    );
   });
 });

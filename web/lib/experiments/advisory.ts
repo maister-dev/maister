@@ -5,9 +5,13 @@ import pino from "pino";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
+import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { EXPERIMENT_JUDGE_AGENT_ID } from "@/lib/experiments/constants";
+import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 import { validateExperimentHumanVerdict } from "@/lib/experiments/rubric";
+import type { TokenActor } from "@/lib/tokens/verify";
 import type {
   ExperimentJudgeAdvisory,
   ExperimentRubric,
@@ -30,7 +34,6 @@ export const experimentAdvisoryInputSchema = z
     scores: z.record(z.string().min(1), z.record(z.string().min(1), z.number())),
     summary: z.string().min(1).max(8000),
     confidence: z.number().min(0).max(1).optional(),
-    agentRunId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -43,12 +46,12 @@ export type AppendExperimentAdvisoryResult = {
   advisory: ExperimentJudgeAdvisory;
 };
 
-async function selectForUpdate(query: any): Promise<Record<string, unknown>[]> {
-  if (typeof query.for === "function") {
-    return (await query.for("update")) as Record<string, unknown>[];
-  }
-
-  return (await query) as Record<string, unknown>[];
+export function isUnauthorizedExperimentAgentActor(
+  actor: Pick<TokenActor, "agentId" | "tokenKind">,
+): boolean {
+  return (
+    actor.tokenKind === "agent" && actor.agentId !== EXPERIMENT_JUDGE_AGENT_ID
+  );
 }
 
 function nextAdvisoryOrdinal(verdict: ExperimentVerdictEnvelope | null): number {
@@ -64,6 +67,7 @@ export async function appendExperimentAdvisory(
     projectId: string;
     experimentId: string;
     actorLabel: string;
+    agentRunId?: string | null;
     input: ExperimentAdvisoryInput;
     audit?: (tx: Db) => Promise<void>;
   },
@@ -98,10 +102,7 @@ export async function appendExperimentAdvisory(
     );
 
     if (!experiment) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `experiment not found: ${args.experimentId}`,
-      );
+      throw new ExperimentNotFoundError(args.experimentId);
     }
     if (experiment.status !== "running" && experiment.status !== "comparable") {
       throw new MaisterError(
@@ -120,7 +121,7 @@ export async function appendExperimentAdvisory(
       (experiment.verdict as ExperimentVerdictEnvelope | null) ?? {};
     const advisory: ExperimentJudgeAdvisory = {
       advisoryOrdinal: nextAdvisoryOrdinal(currentVerdict),
-      agentRunId: parsed.data.agentRunId ?? null,
+      agentRunId: args.agentRunId ?? null,
       createdAt: new Date().toISOString(),
       scores: parsed.data.scores,
       summary: parsed.data.summary,

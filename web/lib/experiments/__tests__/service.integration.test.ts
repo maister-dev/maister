@@ -215,8 +215,8 @@ describe("Experiment service integration", () => {
       projectId: seed.projectId,
       experimentId: created.id,
       actorLabel: "core:experiment-judge",
+      agentRunId: "run-judge",
       input: {
-        agentRunId: "run-judge",
         summary: "Candidate scores higher.",
         confidence: 0.72,
         scores: { correctness: { a: 3, b: 5 } },

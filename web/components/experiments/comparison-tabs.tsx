@@ -1,20 +1,35 @@
-import type {
-  ExperimentComparisonDTO,
-  ExperimentComparisonRunDTO,
-} from "@/lib/experiments/comparison";
+import type { ExperimentComparisonDTO } from "@/lib/experiments/comparison";
+import type { DiffPrepResult } from "@/lib/diff/prepare";
 import type { ReactElement, ReactNode } from "react";
 
+import {
+  DiffView,
+  type DiffViewLabels,
+} from "@/components/workbench/diff-view";
+import {
+  comparisonPairKey,
+  comparisonReplicateOrdinals,
+  comparisonRunPairs,
+  comparisonRunsForReplicate,
+  latestComparisonRuns,
+  selectComparisonDiffRunsForPreparation,
+  selectedComparisonPair,
+  selectedComparisonReplicateOrdinal,
+  type ComparisonSelectionState,
+} from "@/lib/experiments/comparison-selection";
 import { computeDiffOfDiffs } from "@/lib/experiments/diff-of-diffs";
 import { buildFilesMatrix } from "@/lib/experiments/files-matrix";
 
 export interface ComparisonTabLabels {
   pair: string;
+  replicate: string;
   snapshot: string;
   refsGone: string;
   truncated: string;
   missingSnapshot: string;
   identical: string;
   partial: string;
+  fileDrilldown: string;
   filesAll: string;
   filesDifferent: string;
   filesSame: string;
@@ -31,17 +46,30 @@ export interface ComparisonTabLabels {
   resumeTokens: string;
   byModel: string;
   byRunner: string;
+  diffEmpty: string;
+  diffBodyUnavailable: string;
+  diffAdded: string;
+  diffRemoved: string;
+  diffDisplayMode: string;
+  diffRich: string;
+  diffRaw: string;
+  diffFilterFiles: string;
+  diffFilterFilesPlaceholder: string;
+  diffFilterNoMatches: string;
+  diffShowFiles: string;
+  diffHideFiles: string;
+  diffRefresh: string;
+  diffViewMode: string;
+  diffSplit: string;
+  diffUnified: string;
 }
 
-function latestRuns(comparison: ExperimentComparisonDTO): ExperimentComparisonRunDTO[] {
-  return comparison.variants
-    .map((variant) =>
-      comparison.runs
-        .filter((run) => run.variantKey === variant.key)
-        .sort((left, right) => right.replicateOrdinal - left.replicateOrdinal)[0],
-    )
-    .filter((run): run is ExperimentComparisonRunDTO => run !== undefined);
-}
+export type ComparisonFilesFilter = "all" | "different" | "same";
+
+export type ComparisonTabState = ComparisonSelectionState & {
+  baseHref?: string;
+  filesFilter?: ComparisonFilesFilter | null;
+};
 
 function variantLabel(
   comparison: ExperimentComparisonDTO,
@@ -53,20 +81,52 @@ function variantLabel(
   );
 }
 
-function pairs(runs: ExperimentComparisonRunDTO[]): Array<[
-  ExperimentComparisonRunDTO,
-  ExperimentComparisonRunDTO,
-]> {
-  const result: Array<[ExperimentComparisonRunDTO, ExperimentComparisonRunDTO]> =
-    [];
+function tabHref(
+  state: ComparisonTabState | undefined,
+  patch: {
+    tab?: string;
+    pair?: string | null;
+    replicate?: number | null;
+    filesFilter?: ComparisonFilesFilter | null;
+  },
+): string {
+  const baseHref = state?.baseHref ?? "#";
+  const params = new URLSearchParams();
 
-  for (let left = 0; left < runs.length; left += 1) {
-    for (let right = left + 1; right < runs.length; right += 1) {
-      result.push([runs[left], runs[right]]);
-    }
-  }
+  if (patch.tab) params.set("tab", patch.tab);
+  const pair = patch.pair ?? state?.pairKey ?? null;
+  const replicate = patch.replicate ?? state?.replicateOrdinal ?? null;
+  const filesFilter = patch.filesFilter ?? state?.filesFilter ?? null;
 
-  return result;
+  if (pair) params.set("pair", pair);
+  if (replicate !== null) params.set("replicate", String(replicate));
+  if (filesFilter) params.set("filesFilter", filesFilter);
+
+  const query = params.toString();
+
+  return query.length > 0 ? `${baseHref}?${query}` : baseHref;
+}
+
+function diffViewLabels(labels: ComparisonTabLabels): DiffViewLabels {
+  return {
+    empty: labels.diffEmpty,
+    bodyUnavailable: labels.diffBodyUnavailable,
+    added: labels.diffAdded,
+    removed: labels.diffRemoved,
+    displayMode: labels.diffDisplayMode,
+    rich: labels.diffRich,
+    raw: labels.diffRaw,
+    filterFiles: labels.diffFilterFiles,
+    filterFilesPlaceholder: labels.diffFilterFilesPlaceholder,
+    filterNoMatches: labels.diffFilterNoMatches,
+    showFiles: labels.diffShowFiles,
+    hideFiles: labels.diffHideFiles,
+    refresh: labels.diffRefresh,
+    viewMode: labels.diffViewMode,
+    split: labels.diffSplit,
+    unified: labels.diffUnified,
+    truncated: labels.truncated,
+  };
 }
 
 function durationLabel(value: number | null): string {
@@ -98,60 +158,112 @@ function Section({
 export function DiffTab({
   comparison,
   labels,
+  state,
+  preparedDiffs,
 }: {
   comparison: ExperimentComparisonDTO;
   labels: ComparisonTabLabels;
+  state?: ComparisonTabState;
+  preparedDiffs?: Record<string, DiffPrepResult>;
 }): ReactElement {
-  const runs = latestRuns(comparison);
-  const runPairs = pairs(runs);
+  const runs = comparisonRunsForReplicate(comparison, state);
+  const visibleRuns = selectComparisonDiffRunsForPreparation(comparison, state);
+  const runPairs = comparisonRunPairs(runs);
+  const ordinals = comparisonReplicateOrdinals(comparison);
+  const currentReplicate = selectedComparisonReplicateOrdinal(
+    comparison,
+    state,
+  );
 
   return (
     <div className="grid grid-cols-1 gap-4">
-      {runPairs.length > 1 ? (
-        <Section title={labels.pair}>
+      {ordinals.length > 0 ? (
+        <Section title={labels.replicate}>
           <div className="flex flex-wrap gap-2">
-            {runPairs.map(([left, right]) => (
-              <span
-                key={`${left.runId}:${right.runId}`}
-                className="rounded-full border border-line bg-ivory px-2 py-1 font-mono text-[11px] text-ink"
+            {ordinals.map((ordinal) => (
+              <a
+                key={ordinal}
+                aria-current={ordinal === currentReplicate ? "page" : undefined}
+                className="rounded-full border border-line bg-ivory px-2 py-1 font-mono text-[11px] text-ink aria-[current]:border-amber aria-[current]:bg-amber-soft"
+                href={tabHref(state, { tab: "diff", replicate: ordinal })}
               >
-                {variantLabel(comparison, left.variantKey)} ↔{" "}
-                {variantLabel(comparison, right.variantKey)}
-              </span>
+                #{ordinal}
+              </a>
             ))}
           </div>
         </Section>
       ) : null}
+      {runPairs.length > 1 ? (
+        <Section title={labels.pair}>
+          <div className="flex flex-wrap gap-2">
+            {runPairs.map(([left, right]) => {
+              const currentPairKey = comparisonPairKey(left, right);
+
+              return (
+                <a
+                  key={`${left.runId}:${right.runId}`}
+                  aria-current={
+                    currentPairKey ===
+                    (state?.pairKey ??
+                      comparisonPairKey(runPairs[0][0], runPairs[0][1]))
+                      ? "page"
+                      : undefined
+                  }
+                  className="rounded-full border border-line bg-ivory px-2 py-1 font-mono text-[11px] text-ink aria-[current]:border-amber aria-[current]:bg-amber-soft"
+                  href={tabHref(state, { tab: "diff", pair: currentPairKey })}
+                >
+                  {variantLabel(comparison, left.variantKey)} ↔{" "}
+                  {variantLabel(comparison, right.variantKey)}
+                </a>
+              );
+            })}
+          </div>
+        </Section>
+      ) : null}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {runs.map((run) => (
-          <Section
-            key={run.runId}
-            title={`${variantLabel(comparison, run.variantKey)} #${run.replicateOrdinal}`}
-          >
-            <div className="mb-2 flex flex-wrap gap-2">
-              <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-                {labels.snapshot}
-              </span>
-              {run.diff.snapshot ? (
+        {visibleRuns.map((run) => {
+          const prepared = preparedDiffs?.[run.runId];
+
+          return (
+            <Section
+              key={run.runId}
+              title={`${variantLabel(comparison, run.variantKey)} #${run.replicateOrdinal}`}
+            >
+              <div className="mb-2 flex flex-wrap gap-2">
                 <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-                  {labels.refsGone}
+                  {labels.snapshot}
                 </span>
-              ) : null}
-              {run.diff.truncated ? (
-                <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-amber">
-                  {labels.truncated}
-                </span>
-              ) : null}
-            </div>
-            {run.diff.snapshot ? (
-              <pre className="max-h-[360px] overflow-auto rounded-[10px] border border-line bg-ivory p-3 font-mono text-[11px] leading-5 text-ink">
-                {run.diff.snapshot}
-              </pre>
-            ) : (
-              <p className="m-0 text-sm text-mute">{labels.missingSnapshot}</p>
-            )}
-          </Section>
-        ))}
+                {run.diff.snapshot ? (
+                  <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                    {labels.refsGone}
+                  </span>
+                ) : null}
+                {run.diff.truncated ? (
+                  <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-amber">
+                    {labels.truncated}
+                  </span>
+                ) : null}
+              </div>
+              {prepared ? (
+                <DiffView
+                  files={prepared.files}
+                  labels={diffViewLabels(labels)}
+                  perFile={prepared.perFile}
+                  renderUnavailable
+                  truncated={prepared.truncated}
+                />
+              ) : run.diff.snapshot ? (
+                <div className="rounded-[10px] border border-line bg-ivory p-3 font-mono text-[11px] leading-5 text-mute">
+                  {labels.diffBodyUnavailable}
+                </div>
+              ) : (
+                <p className="m-0 text-sm text-mute">
+                  {labels.missingSnapshot}
+                </p>
+              )}
+            </Section>
+          );
+        })}
       </div>
     </div>
   );
@@ -160,15 +272,35 @@ export function DiffTab({
 export function DiffOfDiffsTab({
   comparison,
   labels,
+  state,
 }: {
   comparison: ExperimentComparisonDTO;
   labels: ComparisonTabLabels;
+  state?: ComparisonTabState;
 }): ReactElement {
-  const [left, right] = latestRuns(comparison);
+  const runPairs = comparisonRunPairs(
+    comparisonRunsForReplicate(comparison, state),
+  );
+  const selected = selectedComparisonPair(runPairs, state);
 
-  if (!left || !right || !left.diff.snapshot || !right.diff.snapshot) {
+  if (!selected) {
     return (
       <Section title={labels.pair}>
+        <p className="m-0 text-sm text-mute">{labels.missingSnapshot}</p>
+      </Section>
+    );
+  }
+
+  const [left, right] = selected;
+
+  if (!left.diff.snapshot || !right.diff.snapshot) {
+    return (
+      <Section
+        title={`${variantLabel(comparison, left.variantKey)} ↔ ${variantLabel(
+          comparison,
+          right.variantKey,
+        )}`}
+      >
         <p className="m-0 text-sm text-mute">{labels.missingSnapshot}</p>
       </Section>
     );
@@ -200,11 +332,18 @@ export function DiffOfDiffsTab({
       {result.identical ? (
         <p className="m-0 text-sm text-mute">{labels.identical}</p>
       ) : (
-        <pre className="max-h-[360px] overflow-auto rounded-[10px] border border-line bg-ivory p-3 font-mono text-[11px] leading-5 text-ink">
-          {result.lines
-            .map((line) => `${line.kind === "added" ? "+" : "-"} ${line.line}`)
-            .join("\n")}
-        </pre>
+        <div className="max-h-[360px] overflow-auto rounded-[10px] border border-line bg-ivory p-3 font-mono text-[11px] leading-5 text-ink">
+          {result.lines.map((line, index) => (
+            <div
+              key={`${line.kind}:${index}:${line.line}`}
+              className={
+                line.kind === "added" ? "text-[#1a7f37]" : "text-[#cf222e]"
+              }
+            >
+              {line.kind === "added" ? "+" : "-"} {line.line}
+            </div>
+          ))}
+        </div>
       )}
     </Section>
   );
@@ -213,11 +352,13 @@ export function DiffOfDiffsTab({
 export function FilesTab({
   comparison,
   labels,
+  state,
 }: {
   comparison: ExperimentComparisonDTO;
   labels: ComparisonTabLabels;
+  state?: ComparisonTabState;
 }): ReactElement {
-  const runs = latestRuns(comparison);
+  const runs = comparisonRunsForReplicate(comparison, state);
   const matrix = buildFilesMatrix(
     runs.map((run) => ({
       variantKey: run.variantKey,
@@ -225,46 +366,99 @@ export function FilesTab({
       files: run.files,
     })),
   );
+  const activeFilter = state?.filesFilter ?? "all";
+  const differentRows = matrix.rows.filter(
+    (row) => row.classification !== "same",
+  );
+  const rows =
+    activeFilter === "different"
+      ? differentRows
+      : matrix.filters[activeFilter];
+  const filters: Array<{
+    key: ComparisonFilesFilter;
+    label: string;
+    count: number;
+  }> = [
+    { key: "all", label: labels.filesAll, count: matrix.filters.all.length },
+    {
+      key: "different",
+      label: labels.filesDifferent,
+      count: differentRows.length,
+    },
+    { key: "same", label: labels.filesSame, count: matrix.filters.same.length },
+  ];
 
   return (
     <Section title={labels.filesAll}>
       <div className="mb-3 flex flex-wrap gap-2">
-        <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] text-mute">
-          {labels.filesAll}: {matrix.filters.all.length}
-        </span>
-        <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] text-mute">
-          {labels.filesDifferent}: {matrix.filters.different.length}
-        </span>
-        <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] text-mute">
-          {labels.filesSame}: {matrix.filters.same.length}
-        </span>
+        {filters.map((filter) => (
+          <a
+            key={filter.key}
+            aria-current={filter.key === activeFilter ? "page" : undefined}
+            className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] text-mute aria-[current]:border-amber aria-[current]:bg-amber-soft aria-[current]:text-ink"
+            href={tabHref(state, {
+              tab: "files",
+              filesFilter: filter.key,
+            })}
+          >
+            {filter.label}: {filter.count}
+          </a>
+        ))}
       </div>
       <div className="overflow-hidden rounded-[10px] border border-line">
-        {matrix.rows.map((row) => (
-          <div
+        {rows.map((row) => (
+          <details
             key={row.path}
-            className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-line px-3 py-2 last:border-0"
+            className="border-b border-line px-3 py-2 last:border-0"
           >
-            <div className="min-w-0">
-              <p className="m-0 truncate font-mono text-[12px] text-ink">
-                {row.path}
+            <summary className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] gap-3">
+              <div className="min-w-0">
+                <p className="m-0 truncate font-mono text-[12px] text-ink">
+                  {row.path}
+                </p>
+                <p className="m-0 mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                  {row.touchedBy.join(", ")}
+                </p>
+              </div>
+              <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                {row.classification === "different"
+                  ? labels.filesDifferent
+                  : row.classification === "same"
+                    ? labels.filesSame
+                    : labels.contentUnavailable}
+              </span>
+            </summary>
+            <div className="mt-2 rounded-[8px] border border-line-soft bg-ivory p-2">
+              <p className="m-0 mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                {labels.fileDrilldown}
               </p>
-              <p className="m-0 mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-                {row.touchedBy.join(", ")}
-              </p>
+              <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                {Object.entries(row.variants).map(([variantKey, file]) => (
+                  <div
+                    key={`${row.path}:${variantKey}`}
+                    className="rounded border border-line bg-paper px-2 py-1 font-mono text-[10.5px] text-mute"
+                  >
+                    <span className="block font-semibold text-ink">
+                      {variantLabel(comparison, variantKey)}
+                    </span>
+                    {file ? (
+                      <span>
+                        {file.status} +{file.additions} -{file.deletions}
+                      </span>
+                    ) : (
+                      <span>{labels.contentUnavailable}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-            <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-              {row.classification === "different"
-                ? labels.filesDifferent
-                : row.classification === "same"
-                  ? labels.filesSame
-                  : labels.contentUnavailable}
-            </span>
-          </div>
+          </details>
         ))}
       </div>
       {runs.some((run) => run.diff.snapshot === null) ? (
-        <p className="m-0 mt-3 text-sm text-mute">{labels.contentUnavailable}</p>
+        <p className="m-0 mt-3 text-sm text-mute">
+          {labels.contentUnavailable}
+        </p>
       ) : null}
     </Section>
   );
@@ -277,7 +471,7 @@ export function GatesTab({
   comparison: ExperimentComparisonDTO;
   labels: ComparisonTabLabels;
 }): ReactElement {
-  const runs = latestRuns(comparison);
+  const runs = latestComparisonRuns(comparison);
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -291,9 +485,10 @@ export function GatesTab({
           ) : (
             <div className="grid grid-cols-1 gap-2">
               {run.gates.map((gate) => {
-                const verdict = gate.verdict as
-                  | { verdict?: string; confidence?: number }
-                  | null;
+                const verdict = gate.verdict as {
+                  verdict?: string;
+                  confidence?: number;
+                } | null;
 
                 return (
                   <div
@@ -331,7 +526,7 @@ export function CostTab({
   comparison: ExperimentComparisonDTO;
   labels: ComparisonTabLabels;
 }): ReactElement {
-  const runs = latestRuns(comparison);
+  const runs = latestComparisonRuns(comparison);
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

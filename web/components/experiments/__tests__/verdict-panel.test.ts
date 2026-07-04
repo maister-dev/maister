@@ -2,7 +2,7 @@ import type { ExperimentComparisonDTO } from "@/lib/experiments/comparison";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   JudgePanel,
@@ -10,6 +10,14 @@ import {
   type JudgePanelLabels,
   type VerdictPanelLabels,
 } from "@/components/experiments/verdict-panel";
+
+const navigationMocks = vi.hoisted(() => ({
+  refresh: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => navigationMocks,
+}));
 
 const verdictLabels: VerdictPanelLabels = {
   title: "Human verdict",

@@ -20,6 +20,8 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { markNodeFailed, markNodeNeedsInput } from "@/lib/flows/graph/ledger";
@@ -373,6 +375,8 @@ export async function runPass2(db: Db): Promise<number> {
           and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
         );
 
+      await syncExperimentStatusForRun({ db: tx, runId: row.id });
+
       // ADR-097: a project-less local-package run has no project to attribute
       // these project-scoped events to — skip the emits (its terminal row is
       // the record).
@@ -416,6 +420,11 @@ export async function runPass2(db: Db): Promise<number> {
     }
 
     abandoned += 1;
+    await captureExperimentDiffSnapshotForRun({
+      db,
+      runId: row.id,
+      force: true,
+    });
     log.warn(
       { runId: row.id, ttlHours },
       "sweeper pass2 NeedsInputIdle → Abandoned (TTL exceeded)",
@@ -657,6 +666,8 @@ async function runTimeLimitPass(db: Db): Promise<number> {
         reason: "node execution exceeded maxDurationMinutes",
       });
 
+      await syncExperimentStatusForRun({ db: tx, runId: row.id });
+
       await emitWebhookEvent({
         db: tx,
         type: "run.failed",
@@ -695,6 +706,11 @@ async function runTimeLimitPass(db: Db): Promise<number> {
     }
 
     killed += 1;
+    await captureExperimentDiffSnapshotForRun({
+      db,
+      runId: row.id,
+      force: true,
+    });
     log.warn(
       { runId: row.id, nodeId: row.currentStepId, capMinutes: cap, elapsedMs },
       "watchdog terminated run past maxDurationMinutes cap",
@@ -1661,6 +1677,8 @@ async function actBudgetTerminateRun(
       reason: "budget exceeded",
     });
 
+    await syncExperimentStatusForRun({ db: tx, runId: candidate.id });
+
     if (upd[0].projectId) {
       await emitWebhookEvent({
         db: tx,
@@ -1698,6 +1716,11 @@ async function actBudgetTerminateRun(
 
     return false;
   }
+  await captureExperimentDiffSnapshotForRun({
+    db,
+    runId: candidate.id,
+    force: true,
+  });
   await promoteAfterTimeoutKill(db);
   logBudgetTerminated(candidate, verdict);
 
@@ -1821,6 +1844,8 @@ async function actBudgetTerminateTree(
       reason: "budget exceeded (tree)",
     });
 
+    await syncExperimentStatusForRun({ db: tx, runId: candidate.id });
+
     if (rows[0].projectId) {
       await emitWebhookEvent({
         db: tx,
@@ -1858,6 +1883,11 @@ async function actBudgetTerminateTree(
 
     return false;
   }
+  await captureExperimentDiffSnapshotForRun({
+    db,
+    runId: candidate.id,
+    force: true,
+  });
   await promoteAfterTimeoutKill(db);
   logBudgetTerminated(candidate, verdict);
 

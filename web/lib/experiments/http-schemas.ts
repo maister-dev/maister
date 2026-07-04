@@ -42,10 +42,7 @@ export type CreateExperimentInput = z.infer<typeof createExperimentInputSchema>;
 
 export const launchExperimentInputSchema = z
   .object({
-    variants: z.union([
-      z.literal("all"),
-      z.array(z.string().min(1)).min(1),
-    ]),
+    variants: z.union([z.literal("all"), z.array(z.string().min(1)).min(1)]),
     replicates: z.number().int().min(1).max(10).optional().default(1),
   })
   .strict();
@@ -57,7 +54,9 @@ export const concludeExperimentInputSchema = z
     outcome: z.enum(["winner", "tie", "inconclusive"]),
     winnerVariantKey: z.string().min(1).optional(),
     comment: z.string().max(10_000).optional(),
-    scores: z.record(z.string().min(1), z.record(z.string().min(1), z.number())).optional(),
+    scores: z
+      .record(z.string().min(1), z.record(z.string().min(1), z.number()))
+      .optional(),
     skippedOptionalCriteria: z.array(z.string().min(1)).optional(),
     abandonLosers: z.boolean().optional().default(false),
   })
@@ -69,9 +68,10 @@ export type ConcludeExperimentInput = z.infer<
 
 export const abandonExperimentInputSchema = z
   .object({
-    reason: z.string().max(4000).optional(),
     stopLiveRuns: z.boolean().optional().default(true),
   })
   .strict();
 
-export type AbandonExperimentInput = z.infer<typeof abandonExperimentInputSchema>;
+export type AbandonExperimentInput = z.infer<
+  typeof abandonExperimentInputSchema
+>;

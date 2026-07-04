@@ -81,6 +81,10 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
+vi.mock("@/lib/experiments/status-sync", () => ({
+  syncExperimentStatusForRun: vi.fn(async () => null),
+}));
+
 vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
   assertEvidenceReady: vi.fn(async () => ({ ready: true, reasons: [] })),
 }));

@@ -85,12 +85,14 @@ const state: {
   inserts: InsertCall[];
   experiments: Record<string, unknown>[];
   latestFlowRun: Record<string, unknown> | null;
+  insertFailures: Record<string, unknown>;
 } = {
   selectResults: [],
   selectCalls: 0,
   inserts: [],
   experiments: [],
   latestFlowRun: null,
+  insertFailures: {},
 };
 
 function nextSelectResult(): Record<string, unknown>[] {
@@ -139,8 +141,18 @@ const fakeDb: FakeDb = {
   }),
   insert: (table: unknown) => ({
     values: (values: unknown): InsertResult => {
-      state.inserts.push({ table, values: values as Record<string, unknown> });
-      const result = Promise.resolve() as InsertResult;
+      const tableName = getTableName(table as never);
+      const failure = state.insertFailures[tableName];
+      const result = (
+        failure ? Promise.reject(failure) : Promise.resolve()
+      ) as InsertResult;
+
+      if (!failure) {
+        state.inserts.push({
+          table,
+          values: values as Record<string, unknown>,
+        });
+      }
 
       result.onConflictDoNothing = () => ({
         returning: async () => [{ id: (values as { id?: string }).id ?? "" }],
@@ -315,6 +327,7 @@ beforeEach(async () => {
   state.inserts = [];
   state.experiments = [{ id: "exp-1", status: "running" }];
   state.latestFlowRun = null;
+  state.insertFailures = {};
 
   ({ MaisterError } = await import("@/lib/errors"));
 
@@ -695,7 +708,65 @@ describe("launchRun — experiment membership transaction (ADR-124)", () => {
       ),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
 
+    expect(mocks.addWorktree).not.toHaveBeenCalled();
     expect(experimentRunInsert()).toBeUndefined();
+  });
+
+  it("uses the force launchability gate for direct experiment member fan-out", async () => {
+    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
+
+    state.latestFlowRun = { id: "busy-run", status: "Running" };
+
+    await launchRun(
+      {
+        taskId: TASK_ID,
+        baseCommit: pinnedCommit,
+        allowConcurrent: false,
+        experimentMembership: {
+          experimentId: "exp-1",
+          variantKey: "codex",
+          replicateOrdinal: 2,
+          launchReason: "initial",
+          baseCommit: pinnedCommit,
+        },
+      } as Parameters<typeof launchRun>[0],
+      ctx(),
+      fakeDb,
+    );
+
+    expect(experimentRunInsert()).toMatchObject({
+      experimentId: "exp-1",
+      variantKey: "codex",
+      replicateOrdinal: 2,
+      launchReason: "initial",
+    });
+  });
+
+  it("maps duplicate experiment membership inserts to CONFLICT", async () => {
+    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
+
+    state.insertFailures.experiment_runs = Object.assign(
+      new Error("duplicate key value violates unique constraint"),
+      { code: "23505", constraint: "experiment_runs_variant_replicate_uq" },
+    );
+
+    await expect(
+      launchRun(
+        {
+          taskId: TASK_ID,
+          baseCommit: pinnedCommit,
+          experimentMembership: {
+            experimentId: "exp-1",
+            variantKey: "codex",
+            replicateOrdinal: 1,
+            launchReason: "initial",
+            baseCommit: pinnedCommit,
+          },
+        } as Parameters<typeof launchRun>[0],
+        ctx(),
+        fakeDb,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
   it("inherits experiment membership for manual relaunchOfRunId sources", async () => {

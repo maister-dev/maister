@@ -9,6 +9,7 @@ type State = {
   experimentRuns: Row[];
   runs: Row[];
   updates: Array<{ tableName: string; values: Row }>;
+  updateReturningRows: Row[] | null;
 };
 
 function fakeDb(state: State) {
@@ -39,12 +40,26 @@ function fakeDb(state: State) {
     update: (table: unknown) => ({
       set: (values: Row) => ({
         where: () => {
-          state.updates.push({
-            tableName: getTableName(table as never),
-            values,
-          });
+          const updateQuery = Promise.resolve() as Promise<void> & {
+            returning: (cols?: unknown) => Promise<Row[]>;
+          };
 
-          return Promise.resolve();
+          updateQuery.returning = async () => {
+            const returningRows = state.updateReturningRows ?? [
+              { id: "exp-1" },
+            ];
+
+            if (returningRows.length > 0) {
+              state.updates.push({
+                tableName: getTableName(table as never),
+                values,
+              });
+            }
+
+            return returningRows;
+          };
+
+          return updateQuery;
         },
       }),
     }),
@@ -63,6 +78,7 @@ function state(overrides: Partial<State> = {}): State {
       { id: "run-b", status: "Review" },
     ],
     updates: [],
+    updateReturningRows: null,
     ...overrides,
   };
 }
@@ -111,6 +127,27 @@ describe("syncExperimentStatusForRun", () => {
     });
   });
 
+  it("does not rewrite launchedAt when a comparable experiment becomes running again", async () => {
+    const launchedAt = new Date("2026-07-03T10:01:00.000Z");
+    const dbState = state({
+      experiments: [{ id: "exp-1", status: "comparable", launchedAt }],
+      runs: [
+        { id: "run-a", status: "Review" },
+        { id: "run-b", status: "Running" },
+      ],
+    });
+
+    await expect(
+      syncExperimentStatusForRun({ db: fakeDb(dbState), runId: "run-b" }),
+    ).resolves.toMatchObject({
+      changed: true,
+      fromStatus: "comparable",
+      toStatus: "running",
+    });
+    expect(dbState.updates[0]?.values).toMatchObject({ status: "running" });
+    expect(dbState.updates[0]?.values).not.toHaveProperty("launchedAt");
+  });
+
   it("keeps a parked member run from becoming comparable", async () => {
     const dbState = state({
       runs: [
@@ -118,6 +155,37 @@ describe("syncExperimentStatusForRun", () => {
         { id: "run-b", status: "NeedsInput" },
       ],
     });
+
+    await expect(
+      syncExperimentStatusForRun({ db: fakeDb(dbState), runId: "run-b" }),
+    ).resolves.toMatchObject({
+      changed: false,
+      fromStatus: "running",
+      toStatus: "running",
+    });
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it("treats unknown future run statuses as active instead of settled", async () => {
+    const dbState = state({
+      runs: [
+        { id: "run-a", status: "Review" },
+        { id: "run-b", status: "QueuedElsewhere" },
+      ],
+    });
+
+    await expect(
+      syncExperimentStatusForRun({ db: fakeDb(dbState), runId: "run-b" }),
+    ).resolves.toMatchObject({
+      changed: false,
+      fromStatus: "running",
+      toStatus: "running",
+    });
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it("skips the status update when a concurrent writer changed the experiment", async () => {
+    const dbState = state({ updateReturningRows: [] });
 
     await expect(
       syncExperimentStatusForRun({ db: fakeDb(dbState), runId: "run-b" }),

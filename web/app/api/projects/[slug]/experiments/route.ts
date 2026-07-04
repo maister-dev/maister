@@ -5,11 +5,9 @@ import pino from "pino";
 
 import {
   errorResponse,
-  notFoundResponse,
   resolveProject,
 } from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { MaisterError } from "@/lib/errors";
 import { createExperimentInputSchema } from "@/lib/experiments/http-schemas";
 import {
   createExperiment,
@@ -81,10 +79,6 @@ export async function POST(
   } catch (err) {
     if (err instanceof SyntaxError) {
       return bodyErrorResponse(err);
-    }
-
-    if (err instanceof MaisterError && err.message.includes("not found")) {
-      return notFoundResponse(err.message);
     }
 
     return errorResponse(err, log, slug);

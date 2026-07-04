@@ -6,13 +6,14 @@ import {
   launchAgentRun,
   type LaunchAgentRunResult,
 } from "@/lib/agents/launch";
+import { EXPERIMENT_JUDGE_AGENT_ID } from "@/lib/experiments/constants";
 
 const log = pino({
   name: "experiments-judge",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export const EXPERIMENT_JUDGE_AGENT_ID = "core:experiment-judge";
+export { EXPERIMENT_JUDGE_AGENT_ID };
 
 export async function launchExperimentJudge(args: {
   projectId: string;

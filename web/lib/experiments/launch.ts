@@ -6,13 +6,18 @@ import pino from "pino";
 import type { ProjectAction } from "@/lib/authz";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
+import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 import {
   launchExperimentInputSchema,
   type LaunchExperimentInput,
 } from "@/lib/experiments/http-schemas";
-import type { ExperimentStatus, ExperimentVariant } from "@/lib/experiments/types";
+import type {
+  ExperimentStatus,
+  ExperimentVariant,
+} from "@/lib/experiments/types";
 import {
   assertOverlayRefsKnown,
   assertVariantOverlaySupported,
@@ -21,10 +26,20 @@ import {
 import { launchRun } from "@/lib/services/runs";
 import { assertBaseCommitReachable } from "@/lib/worktree";
 
-const { capabilityRecords, experimentRuns, experiments, platformAcpRunners, projects } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  capabilityRecords,
+  experimentRuns,
+  experiments,
+  platformAcpRunners,
+  platformRuntimeSettings,
+  projects,
+} = schemaModule as unknown as Record<string, any>;
 
 type Db = any;
+type LaunchAdmission = {
+  experiment: Record<string, any>;
+  existingRows: Array<Record<string, any>>;
+};
 
 const log = pino({
   name: "experiments-launch",
@@ -49,7 +64,10 @@ export type LaunchExperimentVariantsArgs = {
   experimentId: string;
   actorUserId: string;
   input: LaunchExperimentInput;
-  authorizeRunAction?: (projectId: string, action?: ProjectAction) => Promise<void>;
+  authorizeRunAction?: (
+    projectId: string,
+    action?: ProjectAction,
+  ) => Promise<void>;
 };
 
 const LAUNCHABLE_EXPERIMENT_STATUSES = new Set<ExperimentStatus>([
@@ -71,8 +89,14 @@ function parseLaunchInput(input: LaunchExperimentInput): LaunchExperimentInput {
   return parsed.data;
 }
 
-async function loadProject(projectId: string, db: Db): Promise<Record<string, any>> {
-  const rows = await db.select().from(projects).where(eq(projects.id, projectId));
+async function loadProject(
+  projectId: string,
+  db: Db,
+): Promise<Record<string, any>> {
+  const rows = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId));
   const project = rows.find(
     (row: Record<string, any>) => row.id === projectId && !row.archivedAt,
   );
@@ -84,43 +108,69 @@ async function loadProject(projectId: string, db: Db): Promise<Record<string, an
   return project;
 }
 
-async function loadExperiment(
+async function loadExperimentForLaunch(
   args: { projectId: string; experimentId: string },
   db: Db,
 ): Promise<Record<string, any>> {
-  const rows = await db
+  const query = db
     .select()
     .from(experiments)
-    .where(eq(experiments.id, args.experimentId))
-    .limit(1);
+    .where(eq(experiments.id, args.experimentId));
+  const rows = await selectForUpdate(query);
   const experiment = rows.find(
     (row: Record<string, any>) =>
       row.id === args.experimentId && row.projectId === args.projectId,
   );
 
   if (!experiment) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `experiment not found: ${args.experimentId}`,
-    );
+    throw new ExperimentNotFoundError(args.experimentId);
   }
 
   return experiment;
 }
 
-async function loadMembershipRows(
+async function loadMembershipRowsForLaunch(
   experimentId: string,
   db: Db,
 ): Promise<Array<Record<string, any>>> {
-  const rows = await db
+  const query = db
     .select()
     .from(experimentRuns)
     .where(eq(experimentRuns.experimentId, experimentId))
     .orderBy(desc(experimentRuns.replicateOrdinal));
+  const rows = await selectForUpdate(query);
 
   return rows.filter(
     (row: Record<string, any>) => row.experimentId === experimentId,
   );
+}
+
+async function loadLaunchAdmission(
+  args: { projectId: string; experimentId: string },
+  db: Db,
+): Promise<LaunchAdmission> {
+  const load = async (tx: Db): Promise<LaunchAdmission> => {
+    const experiment = await loadExperimentForLaunch(args, tx);
+    const existingRows = await loadMembershipRowsForLaunch(
+      args.experimentId,
+      tx,
+    );
+
+    log.debug(
+      {
+        experimentId: args.experimentId,
+        projectId: args.projectId,
+        memberCount: existingRows.length,
+      },
+      "[FIX:experiment-launch-admission] locked launch admission",
+    );
+
+    return { experiment, existingRows };
+  };
+
+  if (typeof db.transaction === "function") return await db.transaction(load);
+
+  return await load(db);
 }
 
 function selectedVariants(
@@ -165,7 +215,8 @@ function hasOverlay(variant: ExperimentVariant): boolean {
   if (!overlay) return false;
 
   return Object.values(overlay).some(
-    (delta) => (delta?.add?.length ?? 0) > 0 || (delta?.remove?.length ?? 0) > 0,
+    (delta) =>
+      (delta?.add?.length ?? 0) > 0 || (delta?.remove?.length ?? 0) > 0,
   );
 }
 
@@ -220,15 +271,36 @@ async function loadRunnerAgents(
   return new Map(
     (rows as Array<Record<string, unknown>>)
       .filter((row) => runnerIds.includes(String(row.id)))
-      .map((row) => [
-        String(row.id),
-        row.capabilityAgent as CapabilityAgent,
-      ]),
+      .map((row) => [String(row.id), row.capabilityAgent as CapabilityAgent]),
   );
+}
+
+async function loadInheritedRunnerId(
+  project: Record<string, any>,
+  db: Db,
+): Promise<string | null> {
+  if (typeof project.defaultRunnerId === "string" && project.defaultRunnerId) {
+    return project.defaultRunnerId;
+  }
+
+  const rows = await db
+    .select({
+      defaultRunnerId: platformRuntimeSettings.defaultRunnerId,
+    })
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"));
+  const setting = (rows as Array<Record<string, unknown>>).find(
+    (row) => typeof row.defaultRunnerId === "string",
+  );
+
+  return typeof setting?.defaultRunnerId === "string"
+    ? setting.defaultRunnerId
+    : null;
 }
 
 async function validateVariantOverlayBatch(args: {
   projectId: string;
+  project: Record<string, any>;
   variants: ExperimentVariant[];
   db: Db;
 }): Promise<void> {
@@ -236,27 +308,32 @@ async function validateVariantOverlayBatch(args: {
 
   if (overlayVariants.length === 0) return;
 
+  const inheritedRunnerId = await loadInheritedRunnerId(args.project, args.db);
+  const runnerIds = [
+    ...new Set(
+      overlayVariants
+        .map((variant) => variant.config.runnerId ?? inheritedRunnerId)
+        .filter((runnerId): runnerId is string => runnerId !== null),
+    ),
+  ];
   const [refs, runnerAgents] = await Promise.all([
     loadOverlayRefCatalog(args.projectId, args.db),
-    loadRunnerAgents(
-      overlayVariants
-        .map((variant) => variant.config.runnerId)
-        .filter((runnerId): runnerId is string => runnerId !== undefined),
-      args.db,
-    ),
+    loadRunnerAgents(runnerIds, args.db),
   ]);
 
   for (const variant of overlayVariants) {
     assertOverlayRefsKnown(variant.config.capabilityOverlay, refs);
 
-    if (!variant.config.runnerId) continue;
+    const runnerId = variant.config.runnerId ?? inheritedRunnerId;
 
-    const capabilityAgent = runnerAgents.get(variant.config.runnerId);
+    if (!runnerId) continue;
+
+    const capabilityAgent = runnerAgents.get(runnerId);
 
     if (!capabilityAgent) {
       throw new MaisterError(
         "CONFIG",
-        `variant "${variant.key}" runner "${variant.config.runnerId}" is not available for overlay validation`,
+        `variant "${variant.key}" runner "${runnerId}" is not available for overlay validation`,
       );
     }
 
@@ -274,13 +351,11 @@ export async function launchExperimentVariants(
 ): Promise<ExperimentLaunchResponse> {
   const input = parseLaunchInput(args.input);
   const _db = db ?? getDb();
-  const [project, experiment] = await Promise.all([
-    loadProject(args.projectId, _db),
-    loadExperiment(
-      { projectId: args.projectId, experimentId: args.experimentId },
-      _db,
-    ),
-  ]);
+  const project = await loadProject(args.projectId, _db);
+  const { experiment, existingRows } = await loadLaunchAdmission(
+    { projectId: args.projectId, experimentId: args.experimentId },
+    _db,
+  );
   const status = experiment.status as ExperimentStatus;
 
   if (!LAUNCHABLE_EXPERIMENT_STATUSES.has(status)) {
@@ -296,10 +371,10 @@ export async function launchExperimentVariants(
   );
   await validateVariantOverlayBatch({
     projectId: args.projectId,
+    project,
     variants,
     db: _db,
   });
-  const existingRows = await loadMembershipRows(args.experimentId, _db);
   const nextOrdinal = nextOrdinalByVariant(variants, existingRows);
 
   try {

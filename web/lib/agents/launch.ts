@@ -51,6 +51,8 @@ import {
 } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
 import {
   loadActiveRunSession,
@@ -1964,6 +1966,8 @@ export async function finalizeAgentRun(
       });
     }
 
+    await syncExperimentStatusForRun({ db: tx, runId });
+
     await emitWebhookEvent({
       db: tx,
       type: WEBHOOK_TYPE_BY_STATUS[status],
@@ -2024,6 +2028,10 @@ export async function finalizeAgentRun(
       { runId, outcome, status: finalizeResult.status, reason: opts.reason },
       "agent run finalized",
     );
+
+    if (finalizeResult.status !== "Done") {
+      await captureExperimentDiffSnapshotForRun({ db: _db, runId, force: true });
+    }
 
     if (ephemeralCleanup) {
       const cleanup = ephemeralCleanup as {

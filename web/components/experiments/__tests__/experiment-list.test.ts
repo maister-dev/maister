@@ -1,5 +1,6 @@
 import type { ExperimentListItemDTO } from "@/lib/experiments/dto";
 import type { ExperimentRubric, ExperimentVariant } from "@/lib/experiments/types";
+import type { ProjectFlow } from "@/lib/queries/project";
 import type { TaskDTO } from "@/lib/services/tasks";
 
 import { createElement } from "react";
@@ -56,6 +57,7 @@ const createLabels: CreateExperimentLabels = {
   task: "Task",
   taskTitle: "Task title",
   taskPrompt: "Task prompt",
+  taskFlow: "Task flow",
   baseBranch: "Base branch",
   baseRef: "Explicit ref",
   variants: "Variants",
@@ -71,6 +73,8 @@ const createLabels: CreateExperimentLabels = {
   mcpsRemove: "MCPs remove",
   subagentsAdd: "Subagents add",
   subagentsRemove: "Subagents remove",
+  addVariant: "Add variant",
+  removeVariant: "Remove variant",
   rubric: "Rubric",
   optional: "optional",
   create: "Create",
@@ -109,9 +113,33 @@ const experiments: ExperimentListItemDTO[] = [
   },
 ];
 
-const tasks: Array<Pick<TaskDTO, "id" | "number" | "title" | "taskKey">> = [
-  { id: "task-1", number: 12, taskKey: "KEY", title: "Implement feature" },
-  { id: "task-2", number: 13, taskKey: "KEY", title: "Polish docs" },
+const tasks: Array<
+  Pick<TaskDTO, "id" | "number" | "title" | "taskKey" | "flowId">
+> = [
+  {
+    id: "task-1",
+    number: 12,
+    taskKey: "KEY",
+    title: "Implement feature",
+    flowId: "flow-dev",
+  },
+  {
+    id: "task-2",
+    number: 13,
+    taskKey: "KEY",
+    title: "Polish docs",
+    flowId: null,
+  },
+];
+
+const flows: ProjectFlow[] = [
+  {
+    id: "flow-dev",
+    ref: "aif-dev",
+    source: "local",
+    version: "1.0.0",
+    stepCount: 2,
+  },
 ];
 
 const variants: ExperimentVariant[] = [
@@ -216,6 +244,7 @@ describe("CreateExperimentForm", () => {
         defaultBaseBranch: "main",
         defaultVariants: variants,
         defaultRubric: rubric,
+        flows,
         busy: false,
         error: null,
       }),
@@ -226,8 +255,30 @@ describe("CreateExperimentForm", () => {
     expect(html).toContain("Rules add");
     expect(html).toContain("MCPs remove");
     expect(html).toContain("Subagents add");
+    expect(html).toContain("Add variant");
     expect(html).toContain("Correctness");
     expect(html).toContain("Spec traceability");
     expect(html).toContain("optional");
+  });
+
+  it("only offers launchable tasks and requires a flow for inline task creation", () => {
+    const html = renderToStaticMarkup(
+      createElement(CreateExperimentForm, {
+        labels: createLabels,
+        tasks,
+        defaultBaseBranch: "main",
+        defaultVariants: variants,
+        defaultRubric: rubric,
+        flows,
+        busy: false,
+        error: null,
+      }),
+    );
+
+    expect(html).toContain("Task flow");
+    expect(html).toContain('name="flowId"');
+    expect(html).toContain("aif-dev");
+    expect(html).toContain("KEY-12 · Implement feature");
+    expect(html).not.toContain("KEY-13 · Polish docs");
   });
 });

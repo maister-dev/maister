@@ -8,6 +8,8 @@ import { nextKeepaliveAt } from "./keepalive-config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -377,6 +379,8 @@ export async function failResumedRun(
 
     if (rows.length === 0) return false;
 
+    await syncExperimentStatusForRun({ db: tx, runId });
+
     await emitWebhookEvent({
       db: tx,
       type: "run.failed",
@@ -418,6 +422,7 @@ export async function failResumedRun(
     { runId, to: "Failed", reason },
     "run-state transition — failed during resume",
   );
+  await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
   return { ok: true };
 }
@@ -619,6 +624,8 @@ export async function markAbandoned(
 
     if (rows.length === 0) return false;
 
+    await syncExperimentStatusForRun({ db: tx, runId });
+
     // M19 Phase 1 (T1.C): stamp the GC removal deadline on the run's
     // workspace in the SAME tx so an abandoned run never lingers with a
     // null scheduled_removal_at. Same endedAt instant the run row carries.
@@ -674,6 +681,7 @@ export async function markAbandoned(
   }
 
   log.info({ runId, to: "Abandoned" }, "run-state transition — abandoned");
+  await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
   return { ok: true };
 }
@@ -704,6 +712,8 @@ export async function crashResumedRun(
       });
 
     if (rows.length === 0) return false;
+
+    await syncExperimentStatusForRun({ db: tx, runId });
 
     await emitWebhookEvent({
       db: tx,
@@ -746,6 +756,7 @@ export async function crashResumedRun(
     { runId, from: "NeedsInput", to: "Crashed", reason },
     "run-state transition — crashed during resume",
   );
+  await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
   return { ok: true };
 }
@@ -807,6 +818,8 @@ export async function crashRunningRun(
 
     if (rows.length === 0) return false;
 
+    await syncExperimentStatusForRun({ db: tx, runId });
+
     await emitWebhookEvent({
       db: tx,
       type: "run.crashed",
@@ -848,6 +861,7 @@ export async function crashRunningRun(
     { runId, from: "Running", to: "Crashed", reason },
     "run-state transition — crashed (reconcile/GC)",
   );
+  await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
   return { ok: true };
 }
@@ -892,6 +906,8 @@ export async function crashWaitingOnChildren(
 
     if (rows.length === 0) return false;
 
+    await syncExperimentStatusForRun({ db: tx, runId });
+
     await emitWebhookEvent({
       db: tx,
       type: "run.crashed",
@@ -933,6 +949,7 @@ export async function crashWaitingOnChildren(
     { runId, from: "WaitingOnChildren", to: "Crashed", reason },
     "run-state transition — orchestrator crashed (reconcile)",
   );
+  await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
   return { ok: true };
 }

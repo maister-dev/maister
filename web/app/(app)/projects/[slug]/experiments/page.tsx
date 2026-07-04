@@ -14,7 +14,10 @@ import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getBoardData } from "@/lib/queries/board";
 import { getProjectBySlug } from "@/lib/queries/project";
 import { listTaskDTOs } from "@/lib/services/tasks";
-import { listProjectExperiments } from "@/lib/experiments/service";
+import {
+  listProjectExperimentFlows,
+  listProjectExperiments,
+} from "@/lib/experiments/service";
 import { DEFAULT_EXPERIMENT_RUBRIC } from "@/lib/experiments/rubric";
 
 interface PageProps {
@@ -42,11 +45,12 @@ export default async function ProjectExperimentsPage({
 
   if (role === null) notFound();
 
-  const [t, board, experiments, tasks] = await Promise.all([
+  const [t, board, experiments, tasks, flows] = await Promise.all([
     getTranslations("experiments"),
     getBoardData(project.id),
     listProjectExperiments(project.id),
     listTaskDTOs(project.id),
+    listProjectExperimentFlows(project.id),
   ]);
   const listLabels: ExperimentListLabels = {
     title: t("list.title"),
@@ -90,6 +94,7 @@ export default async function ProjectExperimentsPage({
     task: t("create.task"),
     taskTitle: t("create.taskTitle"),
     taskPrompt: t("create.taskPrompt"),
+    taskFlow: t("create.taskFlow"),
     baseBranch: t("create.baseBranch"),
     baseRef: t("create.baseRef"),
     variants: t("create.variants"),
@@ -105,6 +110,8 @@ export default async function ProjectExperimentsPage({
     mcpsRemove: t("create.mcpsRemove"),
     subagentsAdd: t("create.subagentsAdd"),
     subagentsRemove: t("create.subagentsRemove"),
+    addVariant: t("create.addVariant"),
+    removeVariant: t("create.removeVariant"),
     rubric: t("create.rubric"),
     optional: t("create.optional"),
     create: t("create.create"),
@@ -127,6 +134,7 @@ export default async function ProjectExperimentsPage({
             <CreateExperimentModal
               defaultBaseBranch={project.mainBranch}
               defaultRubric={DEFAULT_EXPERIMENT_RUBRIC}
+              flows={flows}
               labels={createLabels}
               slug={slug}
               tasks={tasks}

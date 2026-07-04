@@ -32,9 +32,12 @@ import {
   resolveConfidence,
 } from "@/lib/flows/hitl-validate";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { runFlow } from "@/lib/flows/runner";
 import { runtimeRoot } from "@/lib/runtime-root";
 import {
+  classifyForceRelaunchLaunchability,
   classifyManualTaskLaunchability,
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
@@ -77,6 +80,7 @@ import { headCommit, localBranchHead, remoteBranchHead } from "@/lib/worktree";
 const {
   assignments,
   hitlRequests,
+  experimentRuns,
   projects,
   runs,
   scratchRuns,
@@ -102,6 +106,16 @@ const TERMINAL_RUN_STATUS = new Set([
   "Abandoned",
   "Review",
 ]);
+
+async function isExperimentMemberRun(args: { db: any; runId: string }): Promise<boolean> {
+  const rows = await args.db
+    .select({ runId: experimentRuns.runId })
+    .from(experimentRuns)
+    .where(eq(experimentRuns.runId, args.runId))
+    .limit(1);
+
+  return rows.some((row: { runId: string }) => row.runId === args.runId);
+}
 
 // A form/human/permission HITL is genuinely pending ONLY while the run awaits
 // the response — NeedsInput or its idle checkpoint NeedsInputIdle. Any other
@@ -1095,6 +1109,10 @@ async function handlePermissionResponse(
           .set({ respondedAt: new Date() })
           .where(eq(hitlRequests.id, hitlRequestId));
 
+        if (terminalRows.length > 0) {
+          await syncExperimentStatusForRun({ db: tx, runId });
+        }
+
         // ADR-097: project-less assistant run ⇒ no project to attribute the
         // terminal outbox events to (both emits require a non-null projectId).
         if (terminalRows.length > 0 && terminalRows[0].projectId) {
@@ -1179,6 +1197,7 @@ async function handlePermissionResponse(
         runId,
         reason: "permission deferred expired before response was delivered",
       });
+      await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
       log.warn(
         {
@@ -1691,6 +1710,8 @@ async function handleInfraRecoveryResponse(args: {
           (hitlRow.schema as { code?: string } | null)?.code ??
           "EXECUTOR_UNAVAILABLE";
 
+        await syncExperimentStatusForRun({ db: tx, runId });
+
         await emitWebhookEvent({
           db: tx,
           type: "run.failed",
@@ -1759,6 +1780,7 @@ async function handleInfraRecoveryResponse(args: {
   }
 
   if (outcome.transition === "abandoned") {
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     log.info(
       { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
       "infra_recovery abandoned — run Failed",
@@ -1900,6 +1922,10 @@ async function terminalizeBudgetRun(args: {
     });
   const row = terminal[0] ?? null;
 
+  if (row) {
+    await syncExperimentStatusForRun({ db: args.tx, runId: args.runId });
+  }
+
   if (row?.projectId) {
     await emitWebhookEvent({
       db: args.tx,
@@ -1941,6 +1967,8 @@ async function markBudgetParkedRun(args: {
   runId: string;
   ref: string | null;
 }): Promise<"Abandoned"> {
+  let changed = false;
+
   await args.db.transaction(async (tx: any) => {
     const endedAt = new Date();
     const updated = await tx
@@ -1979,6 +2007,9 @@ async function markBudgetParkedRun(args: {
       );
     }
 
+    changed = true;
+    await syncExperimentStatusForRun({ db: tx, runId: args.runId });
+
     if (row.projectId) {
       await emitWebhookEvent({
         db: tx,
@@ -2016,6 +2047,14 @@ async function markBudgetParkedRun(args: {
       reason: "budget breach parked",
     });
   });
+
+  if (changed) {
+    await captureExperimentDiffSnapshotForRun({
+      db: args.db,
+      runId: args.runId,
+      force: true,
+    });
+  }
 
   return "Abandoned";
 }
@@ -2215,35 +2254,41 @@ async function preflightBudgetRestartLaunchability(args: {
   }
 
   await requireProjectAction(task.projectId, "launchRun");
+  const experimentMemberRestart = await isExperimentMemberRun({
+    db: args.db,
+    runId: args.runId,
+  });
 
-  const activeTaskRuns = await args.db
-    .select({ id: runs.id, status: runs.status })
-    .from(runs)
-    .where(
-      and(
-        eq(runs.taskId, taskId),
-        ne(runs.id, args.runId),
-        inArray(runs.status, [
-          "Pending",
-          "Running",
-          "NeedsInput",
-          "NeedsInputIdle",
-          "HumanWorking",
-          "WaitingOnChildren",
-          "Review",
-        ]),
-      ),
-    )
-    .limit(1);
-  const otherActive = activeTaskRuns.filter(
-    (run: { id: string }) => run.id !== args.runId,
-  );
-
-  if (otherActive.length > 0) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `task is not launchable (classification: busy)`,
+  if (!experimentMemberRestart) {
+    const activeTaskRuns = await args.db
+      .select({ id: runs.id, status: runs.status })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.taskId, taskId),
+          ne(runs.id, args.runId),
+          inArray(runs.status, [
+            "Pending",
+            "Running",
+            "NeedsInput",
+            "NeedsInputIdle",
+            "HumanWorking",
+            "WaitingOnChildren",
+            "Review",
+          ]),
+        ),
+      )
+      .limit(1);
+    const otherActive = activeTaskRuns.filter(
+      (run: { id: string }) => run.id !== args.runId,
     );
+
+    if (otherActive.length > 0) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `task is not launchable (classification: busy)`,
+      );
+    }
   }
 
   const latestFlowRun = await getLatestFlowRun(taskId, args.db);
@@ -2253,11 +2298,9 @@ async function preflightBudgetRestartLaunchability(args: {
       : latestFlowRun;
   const openBlockers =
     (await getOpenRelationBlockers([taskId], args.db)).get(taskId) ?? [];
-  const launchability = classifyManualTaskLaunchability(
-    task,
-    latestForRestart,
-    { openBlockers },
-  );
+  const launchability = experimentMemberRestart
+    ? classifyForceRelaunchLaunchability(task, latestForRestart, { openBlockers })
+    : classifyManualTaskLaunchability(task, latestForRestart, { openBlockers });
 
   if (launchability !== "launchable") {
     const blockerSuffix =
@@ -2831,6 +2874,7 @@ async function handleBudgetBreachResponse(args: {
           return row;
         });
         oldRunTerminalized = true;
+        await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
       }
 
       const launched = await launchBudgetRestart({
@@ -3040,6 +3084,8 @@ async function handleBudgetBreachResponse(args: {
   }
 
   if (outcome.transition === "abandoned") {
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
+
     if (
       decision.optionId === "abandon" &&
       decision.dropWorkspace &&
@@ -3192,6 +3238,10 @@ async function handleHookTripResponse(args: {
           parentRunId: runs.parentRunId,
         });
 
+      if (terminal.length > 0) {
+        await syncExperimentStatusForRun({ db: tx, runId });
+      }
+
       if (terminal.length > 0 && terminal[0].projectId) {
         await emitWebhookEvent({
           db: tx,
@@ -3269,6 +3319,7 @@ async function handleHookTripResponse(args: {
   }
 
   if (outcome.transition === "aborted") {
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     log.info(
       { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
       "hook_trip aborted — run Failed",

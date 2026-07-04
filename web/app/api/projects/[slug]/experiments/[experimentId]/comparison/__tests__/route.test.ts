@@ -80,4 +80,20 @@ describe("GET /api/projects/[slug]/experiments/[experimentId]/comparison", () =>
       "verdict",
     ]);
   });
+
+  it("maps a missing experiment to a 404", async () => {
+    const { ExperimentNotFoundError } = await import(
+      "@/lib/experiments/errors"
+    );
+
+    mocks.getExperimentComparison.mockRejectedValueOnce(
+      new ExperimentNotFoundError("exp-404"),
+    );
+
+    const res = await route.GET(request(), params());
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(404);
+    expect(body).toMatchObject({ code: "NOT_FOUND" });
+  });
 });

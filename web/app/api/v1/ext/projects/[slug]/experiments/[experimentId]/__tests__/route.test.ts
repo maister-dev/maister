@@ -44,8 +44,25 @@ beforeEach(async () => {
     async (
       _req: Request,
       _opts: Record<string, unknown>,
-      work: (ctx: { projectId: string; actor: Record<string, unknown> }) => Promise<NextResponse>,
-    ) => work({ projectId: "project-1", actor: { tokenId: "tok-1" } }),
+      work: (ctx: {
+        projectId: string;
+        actor: {
+          tokenId: string;
+          tokenKind: string;
+          agentId: string;
+          boundRunId: string;
+        };
+      }) => Promise<NextResponse>,
+    ) =>
+      work({
+        projectId: "project-1",
+        actor: {
+          tokenId: "tok-1",
+          tokenKind: "agent",
+          agentId: "core:experiment-judge",
+          boundRunId: "judge-run-1",
+        },
+      }),
   );
 
   route = await import("../route");
@@ -84,5 +101,38 @@ describe("GET /api/v1/ext/projects/[slug]/experiments/[experimentId]", () => {
       "variants",
       "verdict",
     ]);
+  });
+
+  it("rejects non-judge agent tokens before returning the comparison", async () => {
+    mocks.handleExt.mockImplementationOnce(
+      async (
+        _req: Request,
+        _opts: Record<string, unknown>,
+        work: (ctx: {
+          projectId: string;
+          actor: {
+            tokenId: string;
+            tokenKind: string;
+            agentId: string;
+            boundRunId: string;
+          };
+        }) => Promise<NextResponse>,
+      ) =>
+        work({
+          projectId: "project-1",
+          actor: {
+            tokenId: "tok-2",
+            tokenKind: "agent",
+            agentId: "core:aif-plan",
+            boundRunId: "run-other",
+          },
+        }),
+    );
+
+    const res = await route.GET(request(), params());
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "UNAUTHORIZED" });
+    expect(mocks.getExperimentComparison).not.toHaveBeenCalled();
   });
 });

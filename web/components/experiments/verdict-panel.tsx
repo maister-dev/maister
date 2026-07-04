@@ -5,6 +5,7 @@ import type { ExperimentHumanVerdict } from "@/lib/experiments/types";
 import type { ReactElement } from "react";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 export interface VerdictPanelLabels {
@@ -74,7 +75,7 @@ function latestAdvisory(comparison: ExperimentComparisonDTO) {
     comparison.experiment.verdict?.judgeAdvisories ??
     [];
 
-  return advisories.sort(
+  return [...advisories].sort(
     (left, right) => right.advisoryOrdinal - left.advisoryOrdinal,
   )[0];
 }
@@ -331,31 +332,41 @@ export function JudgePanel({
   pending: boolean;
   latestSummary: string | null;
 }): ReactElement {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
 
   async function askJudge(): Promise<void> {
     setBusy(true);
     setError(null);
 
-    const res = await fetch(
-      `/api/projects/${projectSlug}/experiments/${experimentId}/judge`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      },
-    );
+    try {
+      const res = await fetch(
+        `/api/projects/${projectSlug}/experiments/${experimentId}/judge`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({}),
+        },
+      );
 
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as
-        | { message?: string; code?: string }
-        | null;
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as
+          | { message?: string; code?: string }
+          | null;
 
-      setError(body?.message ?? body?.code ?? labels.unavailable);
+        setError(body?.message ?? body?.code ?? labels.unavailable);
+
+        return;
+      }
+
+      startTransition(() => router.refresh());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : labels.unavailable);
+    } finally {
+      setBusy(false);
     }
-
-    setBusy(false);
   }
 
   return (

@@ -66,7 +66,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   experiment_get: {
     description:
-      "Get an Experiment Comparison Studio detail DTO for judge advisory work. Requires experiments:read; returns pinned-base variants, rubric, member-run snapshots, and existing advisory history.",
+      "Get an Experiment Comparison Studio detail DTO for judge advisory work. Requires experiments:read; agent tokens must be the package-sourced experiment judge; returns pinned-base variants, rubric, member-run snapshots, and existing advisory history.",
     inputSchema: {
       type: "object",
       properties: {
@@ -78,7 +78,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   experiment_advise: {
     description:
-      "Append an advisory-only judge result to an experiment. Requires experiments:advise; cannot conclude, abandon, pick a winner, launch runs, or mutate human verdict fields.",
+      "Append an advisory-only judge result to an experiment. Requires experiments:advise; agent tokens must be the package-sourced experiment judge and attribution is server-derived; cannot conclude, abandon, pick a winner, launch runs, or mutate human verdict fields.",
     inputSchema: {
       type: "object",
       properties: {
@@ -87,7 +87,6 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         scores: { type: "object" },
         summary: { type: "string", minLength: 1, maxLength: 8000 },
         confidence: { type: "number", minimum: 0, maximum: 1 },
-        agentRunId: { type: "string", minLength: 1 },
       },
       required: ["slug", "experimentId", "scores", "summary"],
     },
@@ -631,19 +630,17 @@ function resolveRouting(
       };
     }
     case "experiment_advise": {
-      const { slug, experimentId, scores, summary, confidence, agentRunId } =
+      const { slug, experimentId, scores, summary, confidence } =
         args as {
           slug: string;
           experimentId: string;
           scores: Record<string, Record<string, number>>;
           summary: string;
           confidence?: number;
-          agentRunId?: string;
         };
       const body: Record<string, unknown> = { scores, summary };
 
       if (confidence !== undefined) body.confidence = confidence;
-      if (agentRunId !== undefined) body.agentRunId = agentRunId;
 
       return {
         method: "POST",

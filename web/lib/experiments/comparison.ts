@@ -5,11 +5,16 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { experimentToDetailDTO, type ExperimentDetailDTO } from "@/lib/experiments/dto";
+import {
+  experimentToDetailDTO,
+  type ExperimentDetailDTO,
+} from "@/lib/experiments/dto";
+import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 import {
   assertExperimentTransition,
   deriveExperimentProgressStatus,
 } from "@/lib/experiments/fsm";
+import { experimentStatusTimestampPatch } from "@/lib/experiments/repository";
 import type {
   ExperimentDiffFileSummary,
   ExperimentLaunchReason,
@@ -131,7 +136,9 @@ function runnerLabel(row: Record<string, unknown>): string {
   return String(row.sessionName ?? "default");
 }
 
-function costDto(row: Record<string, unknown> | undefined): ExperimentComparisonCostDTO {
+function costDto(
+  row: Record<string, unknown> | undefined,
+): ExperimentComparisonCostDTO {
   if (!row) return { hasData: false };
 
   return {
@@ -150,6 +157,45 @@ function costDto(row: Record<string, unknown> | undefined): ExperimentComparison
   };
 }
 
+function poolForComparisonRunKind(runKind: unknown): "flow" | "agent" {
+  return String(runKind) === "agent" ? "agent" : "flow";
+}
+
+function queuePositionByRunId(args: {
+  memberRunIds: Set<string>;
+  pendingRows: Array<Record<string, unknown>>;
+}): Map<string, number> {
+  const positions = new Map<string, number>();
+
+  for (const target of args.pendingRows) {
+    const targetRunId = String(target.id);
+
+    if (!args.memberRunIds.has(targetRunId)) continue;
+
+    const targetStartedAt = new Date(
+      target.startedAt as Date | string | number,
+    ).getTime();
+
+    if (!Number.isFinite(targetStartedAt)) continue;
+
+    const targetPool = poolForComparisonRunKind(target.runKind);
+    const aheadCount = args.pendingRows.filter((row) => {
+      if (String(row.status) !== "Pending") return false;
+      if (poolForComparisonRunKind(row.runKind) !== targetPool) return false;
+
+      const startedAt = new Date(
+        row.startedAt as Date | string | number,
+      ).getTime();
+
+      return Number.isFinite(startedAt) && startedAt < targetStartedAt;
+    }).length;
+
+    positions.set(targetRunId, aheadCount + 1);
+  }
+
+  return positions;
+}
+
 async function verifyStatusOnRead(args: {
   db: Db;
   experiment: Record<string, unknown>;
@@ -160,7 +206,9 @@ async function verifyStatusOnRead(args: {
   const memberRuns = args.members.map(
     (member): ExperimentMemberRunProgress => ({
       variantKey: String(member.variantKey),
-      status: asStatus(args.runById.get(String(member.runId))?.status ?? "Failed"),
+      status: asStatus(
+        args.runById.get(String(member.runId))?.status ?? "Failed",
+      ),
     }),
   );
   const derivedStatus = deriveExperimentProgressStatus({
@@ -176,14 +224,37 @@ async function verifyStatusOnRead(args: {
   const patch = {
     status: derivedStatus,
     updatedAt: now,
-    ...(derivedStatus === "running" ? { launchedAt: now } : {}),
-    ...(derivedStatus === "comparable" ? { comparableAt: now } : {}),
+    ...experimentStatusTimestampPatch(currentStatus, derivedStatus, now),
   };
 
-  await args.db
+  const updateQuery = args.db
     .update(experiments)
     .set(patch)
-    .where(eq(experiments.id, args.experiment.id));
+    .where(
+      and(
+        eq(experiments.id, args.experiment.id),
+        eq(experiments.status, currentStatus),
+      ),
+    );
+
+  if (typeof updateQuery.returning === "function") {
+    const updatedRows = await updateQuery.returning({ id: experiments.id });
+
+    if (updatedRows.length === 0) {
+      log.info(
+        {
+          experimentId: args.experiment.id,
+          observedStatus: currentStatus,
+          skippedStatus: derivedStatus,
+        },
+        "experiment status heal skipped after concurrent status change",
+      );
+
+      return args.experiment;
+    }
+  } else {
+    await updateQuery;
+  }
 
   log.warn(
     {
@@ -214,12 +285,11 @@ export async function getExperimentComparison(
     )
     .limit(1);
   const experiment = (experimentRows as Array<Record<string, unknown>>).find(
-    (row) =>
-      row.id === args.experimentId && row.projectId === args.projectId,
+    (row) => row.id === args.experimentId && row.projectId === args.projectId,
   );
 
   if (!experiment) {
-    throw new Error(`experiment not found: ${args.experimentId}`);
+    throw new ExperimentNotFoundError(args.experimentId);
   }
 
   const memberRows = (
@@ -260,6 +330,27 @@ export async function getExperimentComparison(
         Record<string, unknown>
       >)
     : [];
+  const hasPendingMemberRun = runRows.some(
+    (row) =>
+      runIds.includes(String(row.id)) && String(row.status) === "Pending",
+  );
+  const pendingQueueRows = hasPendingMemberRun
+    ? ((await d
+        .select({
+          id: runs.id,
+          status: runs.status,
+          runKind: runs.runKind,
+          startedAt: runs.startedAt,
+        })
+        .from(runs)
+        .where(eq(runs.status, "Pending"))) as Array<Record<string, unknown>>)
+    : [];
+  const queuePositions = queuePositionByRunId({
+    memberRunIds: new Set(runIds),
+    pendingRows: pendingQueueRows.filter(
+      (row) => String(row.status) === "Pending",
+    ),
+  });
   const runById = new Map(runRows.map((row) => [String(row.id), row]));
   const sessionsByRunId = Map.groupBy(sessionRows, (row) => String(row.runId));
   const gatesByRunId = Map.groupBy(gateRows, (row) => String(row.runId));
@@ -271,7 +362,9 @@ export async function getExperimentComparison(
     runById,
   });
   const variants = healedExperiment.variants as ExperimentVariant[];
-  const variantOrder = new Map(variants.map((variant, index) => [variant.key, index]));
+  const variantOrder = new Map(
+    variants.map((variant, index) => [variant.key, index]),
+  );
   const comparisonRuns = memberRows
     .map((member): ExperimentComparisonRunDTO => {
       const runId = String(member.runId);
@@ -285,7 +378,7 @@ export async function getExperimentComparison(
         status: asStatus(runRow?.status ?? "Failed"),
         statusTone: runStatusTone(String(runRow?.status ?? "Failed")),
         durationMs: durationMs(runRow),
-        queuePosition: null,
+        queuePosition: queuePositions.get(runId) ?? null,
         runnerLabels: (sessionsByRunId.get(runId) ?? []).map(runnerLabel),
         gates: (gatesByRunId.get(runId) ?? []).map((gate) => ({
           gateId: String(gate.gateId),
@@ -302,7 +395,8 @@ export async function getExperimentComparison(
               : null,
           truncated: Boolean(member.diffSnapshotTruncated),
           bytes:
-            member.diffSnapshotBytes === null || member.diffSnapshotBytes === undefined
+            member.diffSnapshotBytes === null ||
+            member.diffSnapshotBytes === undefined
               ? null
               : Number(member.diffSnapshotBytes),
           capturedAt: iso(
@@ -342,7 +436,8 @@ export async function getExperimentComparison(
     experiment: experimentToDetailDTO(healedExperiment as never),
     variants,
     runs: comparisonRuns,
-    verdict: (healedExperiment.verdict as ExperimentVerdictEnvelope | null) ?? null,
+    verdict:
+      (healedExperiment.verdict as ExperimentVerdictEnvelope | null) ?? null,
     generatedAt: new Date().toISOString(),
   };
 }

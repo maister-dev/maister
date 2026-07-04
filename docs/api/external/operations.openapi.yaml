@@ -89,9 +89,10 @@ tags:
       contracts.
   - name: experiments
     description: |
-      (ADR-124, Designed) Experiment Comparison Studio token surface. Agents may
+      (ADR-124, Implemented) Experiment Comparison Studio token surface. Agents may
       read experiment detail with `experiments:read` and append judge advisories
-      with `experiments:advise`; conclusions remain human/session-auth only.
+      with `experiments:advise`; agent tokens are limited to the experiment
+      judge agent, and conclusions remain human/session-auth only.
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -699,17 +700,19 @@ paths:
   /api/v1/ext/projects/{slug}/experiments/{experimentId}:
     get:
       tags: [experiments]
-      summary: (ADR-124, Designed) Get experiment detail for judge advisories
+      summary: (ADR-124, Implemented) Get experiment comparison for judge advisories
       description: |
-        Scope `experiments:read`. Returns an experiment detail DTO for the
+        Scope `experiments:read`. Returns the experiment comparison envelope for the
         project identified by `slug`. The `projectId` is derived server-side
         from the URL slug and re-validated against the token project; the
         addressed experiment must belong to that project or the route returns
         404.
 
-        The DTO exposes pinned-base comparison inputs and run snapshots needed
+        The envelope exposes pinned-base comparison inputs and run snapshots needed
         by an external judge. It never includes absolute worktree paths,
         supervisor handles, token hashes, or hidden session identifiers.
+        Agent-token callers must be the package-sourced experiment judge agent;
+        other agent tokens with the same scope receive 403 `UNAUTHORIZED`.
 
         Writes a `token_audit_log` row with scope `experiments:read` after
         success.
@@ -745,7 +748,7 @@ paths:
   /api/v1/ext/projects/{slug}/experiments/{experimentId}/advisory:
     post:
       tags: [experiments]
-      summary: (ADR-124, Designed) Append an experiment judge advisory
+      summary: (ADR-124, Implemented) Append an experiment judge advisory
       description: |
         Scope `experiments:advise`. Appends one advisory object to
         `experiments.verdict.judgeAdvisories[]` under the experiment row lock.
@@ -759,6 +762,10 @@ paths:
         rubric criterion ids; an unknown criterion returns 422 `CONFIG`.
         Status must be `running` or `comparable`, otherwise the route returns
         409 `PRECONDITION`.
+
+        Agent-run attribution is derived from the authenticated token's
+        server-side bound run id. The request body cannot supply `agentRunId`;
+        extra properties return 422 `CONFIG`.
 
         Writes the success `token_audit_log` row in the same transaction as the
         advisory append (`successAuditInWork: true`), so the mutation and audit
@@ -2502,19 +2509,17 @@ components:
 
     ExtExperimentVariant:
       type: object
-      description: (ADR-124, Designed) Immutable variant config projected for a judge.
-      required: [key, title, prompt, config]
+      description: (ADR-124, Implemented) Immutable variant config projected for a judge.
+      required: [key, label, config]
       additionalProperties: false
       properties:
         key:
           type: string
           minLength: 1
-        title:
+        label:
           type: string
           minLength: 1
-        prompt:
-          type: string
-          minLength: 1
+          maxLength: 120
         config:
           type: object
           description: Closed-registry capability overlay after validation.
@@ -2522,8 +2527,8 @@ components:
 
     ExtExperimentRubricCriterion:
       type: object
-      description: (ADR-124, Designed) One criterion the advisory scores must address.
-      required: [id, label, weight]
+      description: (ADR-124, Implemented) One criterion the advisory scores must address.
+      required: [id, label, guidance, scale]
       additionalProperties: false
       properties:
         id:
@@ -2532,11 +2537,21 @@ components:
         label:
           type: string
           minLength: 1
-        description:
+        guidance:
           type: string
+          minLength: 1
+        scale:
+          type: object
+          additionalProperties: false
+          required: [min, max]
+          properties:
+            min: { type: number }
+            max: { type: number }
         weight:
           type: number
           minimum: 0
+        optional:
+          type: boolean
 
     ExtExperimentRubric:
       type: object
@@ -2550,19 +2565,22 @@ components:
 
     ExtExperimentRunSummary:
       type: object
-      description: (ADR-124, Designed) Redacted member-run snapshot for comparison.
-      required: [runId, variantKey, replicateIndex, status]
+      description: (ADR-124, Implemented) Redacted member-run snapshot for comparison.
+      required:
+        [runId, variantKey, replicateOrdinal, launchReason, status, statusTone, queuePosition, durationMs, runnerLabels, gates, cost, diff, files, materializationDelta]
       additionalProperties: false
       properties:
         runId:
           type: string
-          format: uuid
         variantKey:
           type: string
           minLength: 1
-        replicateIndex:
+        replicateOrdinal:
           type: integer
           minimum: 1
+        launchReason:
+          type: string
+          enum: [initial, manual_relaunch, budget_restart]
         status:
           type: string
           enum:
@@ -2571,34 +2589,54 @@ components:
             - NeedsInput
             - NeedsInputIdle
             - HumanWorking
+            - WaitingOnChildren
             - Review
             - Crashed
             - Done
             - Abandoned
             - Failed
-        baseCommit:
+        statusTone:
           type: string
-          minLength: 7
-        resultBranch:
-          type: string
-          nullable: true
-        diffStat:
-          type: object
-          additionalProperties: true
-        diffFilesSummary:
+          enum: [pending, running, review, done, failed]
+        queuePosition: { type: integer, nullable: true }
+        durationMs: { type: integer, nullable: true }
+        runnerLabels:
+          type: array
+          items: { type: string }
+        gates:
           type: array
           items:
             type: object
             additionalProperties: true
-        costUsd:
-          type: number
+        cost:
+          type: object
+          additionalProperties: true
+          required: [hasData]
+          properties:
+            hasData: { type: boolean }
+        diff:
+          type: object
+          additionalProperties: false
+          required: [snapshot, truncated, bytes, capturedAt]
+          properties:
+            snapshot: { type: string, nullable: true }
+            truncated: { type: boolean }
+            bytes: { type: integer, nullable: true }
+            capturedAt: { type: string, format: date-time, nullable: true }
+        files:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        materializationDelta:
+          type: object
+          additionalProperties: true
           nullable: true
-          minimum: 0
 
     ExtExperimentHumanVerdict:
       type: object
       description: Human-only conclusion projection. External agents cannot set this.
-      required: [outcome, decidedAt]
+      required: [outcome]
       additionalProperties: false
       properties:
         outcome:
@@ -2613,29 +2651,28 @@ components:
         scores:
           type: object
           additionalProperties:
-            type: number
-            minimum: 0
-            maximum: 1
-        decidedAt:
-          type: string
-          format: date-time
+            type: object
+            additionalProperties: { type: number }
+        skippedOptionalCriteria:
+          type: array
+          items: { type: string }
 
     ExtExperimentJudgeAdvisory:
       type: object
-      description: (ADR-124, Designed) Advisory-only judge result.
-      required: [id, summary, scores, createdAt]
+      description: (ADR-124, Implemented) Advisory-only judge result.
+      required: [advisoryOrdinal, summary, scores, createdAt]
       additionalProperties: false
       properties:
-        id:
-          type: string
+        advisoryOrdinal:
+          type: integer
+          minimum: 1
         summary:
           type: string
         scores:
           type: object
           additionalProperties:
-            type: number
-            minimum: 0
-            maximum: 1
+            type: object
+            additionalProperties: { type: number }
         confidence:
           type: number
           nullable: true
@@ -2663,66 +2700,38 @@ components:
     ExtExperimentDTO:
       type: object
       description: |
-        (ADR-124, Designed) Token-safe experiment detail for MCP judges. It
-        contains pinned base information, immutable variants, rubric, member-run
-        snapshots, and advisory history; no worktree paths or hidden session ids.
+        (ADR-124, Implemented) Token-safe experiment comparison envelope for MCP
+        judges. It contains the same redacted `experiment`, `variants`, `runs`,
+        `verdict`, and `generatedAt` shape returned by the web comparison route;
+        no worktree paths or hidden session ids.
       required:
-        - id
-        - projectId
-        - taskId
-        - title
-        - status
-        - baseBranch
-        - baseCommit
+        - experiment
         - variants
-        - rubric
         - runs
         - verdict
-        - createdAt
-        - updatedAt
+        - generatedAt
       additionalProperties: false
       properties:
-        id:
-          type: string
-          format: uuid
-        projectId:
-          type: string
-          format: uuid
-        taskId:
-          type: string
-          format: uuid
-        title:
-          type: string
-        status:
-          $ref: "#/components/schemas/ExtExperimentStatus"
-        baseBranch:
-          type: string
-          minLength: 1
-        baseCommit:
-          type: string
-          minLength: 7
+        experiment:
+          type: object
+          additionalProperties: true
         variants:
           type: array
-          minItems: 1
           items: { $ref: "#/components/schemas/ExtExperimentVariant" }
-        rubric:
-          $ref: "#/components/schemas/ExtExperimentRubric"
         runs:
           type: array
           items: { $ref: "#/components/schemas/ExtExperimentRunSummary" }
         verdict:
-          $ref: "#/components/schemas/ExtExperimentVerdict"
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
+          allOf: [{ $ref: "#/components/schemas/ExtExperimentVerdict" }]
+          nullable: true
+        generatedAt:
           type: string
           format: date-time
 
     ExtExperimentAdvisoryBody:
       type: object
       description: |
-        (ADR-124, Designed) Append-only advisory payload. `scores` keys must be
+        (ADR-124, Implemented) Append-only advisory payload. `scores` keys must be
         existing rubric criterion ids; an unknown key returns 422 `CONFIG`.
       required: [scores, summary]
       additionalProperties: false
@@ -2741,9 +2750,6 @@ components:
           type: number
           minimum: 0
           maximum: 1
-        agentRunId:
-          type: string
-          minLength: 1
 
     ExtExperimentAdvisoryResponse:
       type: object

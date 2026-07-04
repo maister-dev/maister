@@ -25,6 +25,8 @@ const labels: ComparisonTabLabels = {
   filesDifferent: "Different",
   filesSame: "Same",
   contentUnavailable: "Content unavailable",
+  replicate: "Replicate",
+  fileDrilldown: "Per-file detail",
   noGates: "No gates",
   confidence: "Confidence",
   noCost: "No cost data",
@@ -37,6 +39,22 @@ const labels: ComparisonTabLabels = {
   resumeTokens: "Resume",
   byModel: "By model",
   byRunner: "By runner",
+  diffEmpty: "Empty diff",
+  diffBodyUnavailable: "Diff body unavailable",
+  diffAdded: "Added",
+  diffRemoved: "Removed",
+  diffDisplayMode: "Display mode",
+  diffRich: "Rich",
+  diffRaw: "Raw",
+  diffFilterFiles: "Filter files",
+  diffFilterFilesPlaceholder: "Filter files",
+  diffFilterNoMatches: "No matches",
+  diffShowFiles: "Show files",
+  diffHideFiles: "Hide files",
+  diffRefresh: "Refresh",
+  diffViewMode: "View mode",
+  diffSplit: "Split",
+  diffUnified: "Unified",
 };
 
 const comparison: ExperimentComparisonDTO = {
@@ -183,30 +201,60 @@ const comparison: ExperimentComparisonDTO = {
 describe("comparison tabs", () => {
   it("renders diff pair selector for three variants plus snapshot and truncation states", () => {
     const html = renderToStaticMarkup(
-      createElement(DiffTab, { comparison, labels }),
+      createElement(DiffTab, {
+        comparison,
+        labels,
+        state: {
+          baseHref: "/projects/proj/experiments/exp-1",
+          pairKey: "a:b",
+          replicateOrdinal: 1,
+        },
+      }),
     );
 
     expect(html).toContain("Pair");
+    expect(html).toContain("Replicate");
     expect(html).toContain("Control ↔ Candidate");
     expect(html).toContain("Control ↔ Third");
+    expect(html).toContain("aria-current");
+    expect(html).toContain("Control #1");
+    expect(html).toContain("Candidate #1");
+    expect(html).not.toContain("Third #1");
     expect(html).toContain("Stored snapshot");
     expect(html).toContain("Truncated");
-    expect(html).toContain("No diff snapshot");
+    expect(html).not.toContain("No diff snapshot");
+    expect(html).not.toContain("<pre");
   });
 
   it("renders diff-of-diffs and files matrix classifications", () => {
     const diffs = renderToStaticMarkup(
-      createElement(DiffOfDiffsTab, { comparison, labels }),
+      createElement(DiffOfDiffsTab, {
+        comparison,
+        labels,
+        state: { pairKey: "a:b", replicateOrdinal: 1 },
+      }),
     );
     const files = renderToStaticMarkup(
-      createElement(FilesTab, { comparison, labels }),
+      createElement(FilesTab, {
+        comparison,
+        labels,
+        state: {
+          baseHref: "/projects/proj/experiments/exp-1",
+          filesFilter: "different",
+          replicateOrdinal: 1,
+        },
+      }),
     );
 
     expect(diffs).toContain("Partial comparison");
     expect(diffs).toContain("src/a.ts");
+    expect(diffs).not.toContain("<pre");
     expect(files).toContain("Different");
+    expect(files).toContain("Different: 2");
     expect(files).toContain("src/b.ts");
     expect(files).toContain("Content unavailable");
+    expect(files).toContain("Per-file detail");
+    expect(files).toContain("aria-current");
   });
 
   it("renders gates and cost without fabricating zeros for missing rollups", () => {

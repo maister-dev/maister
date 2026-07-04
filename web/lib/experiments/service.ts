@@ -6,8 +6,10 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 import {
   experimentToDetailDTO,
   experimentToListItemDTO,
@@ -36,13 +38,10 @@ import {
 import { isSettledRunStatus } from "@/lib/runs/run-status-sets";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { stopWorkbenchRun } from "@/lib/workbench-lifecycle/service";
-import {
-  assertBaseCommitReachable,
-  resolveBaseCommit,
-} from "@/lib/worktree";
+import { assertBaseCommitReachable, resolveBaseCommit } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { experimentRuns, experiments, projects, runs, tasks } =
+const { experimentRuns, experiments, flows, projects, runs, tasks } =
   schemaModule as unknown as Record<string, any>;
 
 type Db = any;
@@ -58,6 +57,11 @@ export type CreateExperimentArgs = {
   slug: string;
   actorUserId: string;
   input: CreateExperimentInput;
+};
+
+export type ExperimentFlowOption = {
+  id: string;
+  ref: string;
 };
 
 function parseCreateInput(input: CreateExperimentInput): CreateExperimentInput {
@@ -93,19 +97,19 @@ function byCreatedAtDesc(
   left: Record<string, any>,
   right: Record<string, any>,
 ): number {
-  return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  return (
+    new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+  );
 }
 
-async function selectForUpdate(query: any): Promise<Record<string, any>[]> {
-  if (typeof query.for === "function") {
-    return (await query.for("update")) as Record<string, any>[];
-  }
-
-  return (await query) as Record<string, any>[];
-}
-
-async function loadProject(projectId: string, db: Db): Promise<Record<string, any>> {
-  const rows = await db.select().from(projects).where(eq(projects.id, projectId));
+async function loadProject(
+  projectId: string,
+  db: Db,
+): Promise<Record<string, any>> {
+  const rows = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId));
   const project = rows.find(
     (row: Record<string, any>) => row.id === projectId && !row.archivedAt,
   );
@@ -124,12 +128,13 @@ async function loadProject(projectId: string, db: Db): Promise<Record<string, an
   return project;
 }
 
-async function loadTask(taskId: string, db: Db): Promise<Record<string, any> | null> {
+async function loadTask(
+  taskId: string,
+  db: Db,
+): Promise<Record<string, any> | null> {
   const rows = await db.select().from(tasks).where(eq(tasks.id, taskId));
 
-  return (
-    rows.find((row: Record<string, any>) => row.id === taskId) ?? null
-  );
+  return rows.find((row: Record<string, any>) => row.id === taskId) ?? null;
 }
 
 async function loadStoppableMemberRunIds(
@@ -154,7 +159,8 @@ async function loadStoppableMemberRunIds(
     ) {
       continue;
     }
-    if (typeof memberRow.runId === "string") candidateRunIds.add(memberRow.runId);
+    if (typeof memberRow.runId === "string")
+      candidateRunIds.add(memberRow.runId);
   }
 
   if (candidateRunIds.size === 0) return [];
@@ -162,7 +168,9 @@ async function loadStoppableMemberRunIds(
   const runRows = (await tx
     .select()
     .from(runs)
-    .where(inArray(runs.id, [...candidateRunIds]))) as Array<Record<string, any>>;
+    .where(inArray(runs.id, [...candidateRunIds]))) as Array<
+    Record<string, any>
+  >;
 
   return runRows
     .filter((runRow) => candidateRunIds.has(String(runRow.id)))
@@ -183,6 +191,7 @@ async function stopMemberRunsAfterCommit(args: {
   if (args.runIds.length === 0) return;
 
   const stopRun = args.stopRun ?? stopWorkbenchRun;
+  const failedRunIds: string[] = [];
 
   for (const runId of args.runIds) {
     try {
@@ -205,8 +214,19 @@ async function stopMemberRunsAfterCommit(args: {
         },
         "experiment member run stop failed",
       );
-      throw err;
+      failedRunIds.push(runId);
     }
+  }
+
+  if (failedRunIds.length > 0) {
+    log.warn(
+      {
+        experimentId: args.experimentId,
+        stopReason: args.reason,
+        failedRunIds,
+      },
+      "experiment member run stop failures ignored after terminal commit",
+    );
   }
 }
 
@@ -352,6 +372,30 @@ export async function listProjectExperiments(
     );
 }
 
+export async function listProjectExperimentFlows(
+  projectId: string,
+  db?: Db,
+): Promise<ExperimentFlowOption[]> {
+  const _db = (db ?? getDb()) as unknown as {
+    select: any;
+  };
+  const rows = await _db
+    .select({ id: flows.id, ref: flows.flowRefId })
+    .from(flows)
+    .where(eq(flows.projectId, projectId))
+    .orderBy(flows.flowRefId);
+
+  log.debug(
+    { projectId, flowCount: rows.length },
+    "[FIX:experiment-create-flow] loaded experiment flow options",
+  );
+
+  return (rows as Array<{ id: string; ref: string }>).map((row) => ({
+    id: row.id,
+    ref: row.ref,
+  }));
+}
+
 export async function getExperimentDetail(
   projectId: string,
   experimentId: string,
@@ -361,7 +405,12 @@ export async function getExperimentDetail(
   const rows = await _db
     .select()
     .from(experiments)
-    .where(and(eq(experiments.id, experimentId), eq(experiments.projectId, projectId)))
+    .where(
+      and(
+        eq(experiments.id, experimentId),
+        eq(experiments.projectId, projectId),
+      ),
+    )
     .limit(1);
   const row = (rows as Array<Record<string, any>>).find(
     (candidate) =>
@@ -412,15 +461,11 @@ export async function concludeExperiment(
         ),
     );
     const experiment = lockedRows.find(
-      (row) =>
-        row.id === args.experimentId && row.projectId === args.projectId,
+      (row) => row.id === args.experimentId && row.projectId === args.projectId,
     );
 
     if (!experiment) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `experiment not found: ${args.experimentId}`,
-      );
+      throw new ExperimentNotFoundError(args.experimentId);
     }
     if (experiment.status !== "comparable") {
       throw new MaisterError(
@@ -539,17 +584,16 @@ export async function abandonExperiment(
         ),
     );
     const experiment = lockedRows.find(
-      (row) =>
-        row.id === args.experimentId && row.projectId === args.projectId,
+      (row) => row.id === args.experimentId && row.projectId === args.projectId,
     );
 
     if (!experiment) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `experiment not found: ${args.experimentId}`,
-      );
+      throw new ExperimentNotFoundError(args.experimentId);
     }
-    if (experiment.status === "concluded" || experiment.status === "abandoned") {
+    if (
+      experiment.status === "concluded" ||
+      experiment.status === "abandoned"
+    ) {
       throw new MaisterError(
         "PRECONDITION",
         `experiment ${args.experimentId} is already terminal`,

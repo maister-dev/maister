@@ -2603,7 +2603,7 @@ paths:
   /api/projects/{slug}/experiments:
     get:
       tags: [experiments]
-      summary: (ADR-124, Designed) List project experiments
+      summary: (ADR-124, Implemented) List project experiments
       description: |
         Requires `requireProjectAction(projectId, "readExperiments")`
         (`viewer`). The `projectId` is derived from the path slug. Phase 1 has
@@ -2631,7 +2631,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [experiments]
-      summary: (ADR-124, Designed) Create an experiment
+      summary: (ADR-124, Implemented) Create an experiment
       description: |
         Requires `requireProjectAction(projectId, "manageExperiments")`
         (`member`). Auth/session checks run before body parsing. Body-controlled
@@ -2683,12 +2683,11 @@ paths:
   /api/projects/{slug}/experiments/{experimentId}:
     get:
       tags: [experiments]
-      summary: (ADR-124, Designed) Get experiment detail
+      summary: (ADR-124, Implemented) Get experiment detail
       description: |
         Requires `readExperiments`. The experiment is joined through the
-        slug-derived project and verified on read: if stored status drifted from
-        member-run status, the service heals it with a WARN log. No code
-        execution or new SSE subscription occurs.
+        slug-derived project and returned as an explicit DTO. No code execution,
+        status healing, or new SSE subscription occurs.
       operationId: getProjectExperiment
       parameters:
         - { $ref: "#/components/parameters/ProjectSlug" }
@@ -2705,17 +2704,19 @@ paths:
   /api/projects/{slug}/experiments/{experimentId}/launch:
     post:
       tags: [experiments]
-      summary: (ADR-124, Designed) Launch experiment variants
+      summary: (ADR-124, Implemented) Launch experiment variants
       description: |
-        Requires `manageExperiments`. Under the experiment row lock, status must
-        be `draft`, `running`, or `comparable`; unknown variant keys are
-        `CONFIG`; terminal states are `PRECONDITION`. The whole batch is
-        validated before the first side effect: pinned `baseCommit` exists,
-        overlay refs resolve, class x adapter compatibility holds, and runner/
-        policy settings are valid. Each member run goes through standard
-        `launchRun`; the `experiment_runs` membership row is inserted in the
-        same transaction as the run insert. Cap overflow is the existing
-        `Pending` queue, never an experiment-specific error.
+        Requires `manageExperiments`. An admission transaction locks the
+        experiment row and validates that status is `draft`, `running`, or
+        `comparable`; unknown variant keys are `CONFIG`; terminal states are
+        `PRECONDITION`. The whole batch is validated before the first side
+        effect: pinned `baseCommit` exists, overlay refs resolve, class x
+        adapter compatibility holds, and runner/policy settings are valid.
+        Each member run then goes through standard `launchRun`; the
+        `experiment_runs` membership row is inserted in the same transaction as
+        the run insert, and replicate uniqueness races map to `409 CONFLICT`.
+        Cap overflow is the existing `Pending` queue, never an
+        experiment-specific error.
 
         Audit/debug fields: `projectId`, `experimentId`, `taskId`, `runId`,
         `variantKey`, `replicateOrdinal`, `baseCommit`, `queueState`,
@@ -2730,13 +2731,13 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/LaunchExperimentBody" }
       responses:
-        "202":
+        "200":
           description: Variant launch batch accepted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LaunchExperimentResponse" }
         "400":
-          description: `CONFIG` for unknown variant/config/overlay ref or unsupported overlay class for adapter.
+          description: "`CONFIG` for unknown variant/config/overlay ref or unsupported overlay class for adapter."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2744,7 +2745,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: `PRECONDITION` for illegal FSM state, missing pinned commit, or duplicate/racing replicate allocation.
+          description: "`PRECONDITION` for illegal FSM state, missing pinned commit, or duplicate/racing replicate allocation."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2756,7 +2757,7 @@ paths:
   /api/projects/{slug}/experiments/{experimentId}/conclude:
     post:
       tags: [experiments]
-      summary: (ADR-124, Designed) Conclude an experiment with a human verdict
+      summary: (ADR-124, Implemented) Conclude an experiment with a human verdict
       description: |
         Requires a human session and `concludeExperiments` (`member`). Machine
         or token actors are rejected. Under the row lock, status must be
@@ -2799,7 +2800,7 @@ paths:
   /api/projects/{slug}/experiments/{experimentId}/abandon:
     post:
       tags: [experiments]
-      summary: (ADR-124, Designed) Abandon an experiment
+      summary: (ADR-124, Implemented) Abandon an experiment
       description: |
         Requires `manageExperiments`. Under the row lock, status must be
         `draft`, `running`, or `comparable`. The transaction flips status to
@@ -2831,7 +2832,7 @@ paths:
   /api/projects/{slug}/experiments/{experimentId}/comparison:
     get:
       tags: [experiments]
-      summary: (ADR-124, Designed) Get experiment comparison DTO
+      summary: (ADR-124, Implemented) Get experiment comparison DTO
       description: |
         Requires `readExperiments`. Performs on-read status verification, then
         returns an explicit comparison DTO: member run statuses, queue
@@ -2851,6 +2852,51 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/projects/{slug}/experiments/{experimentId}/judge:
+    post:
+      tags: [experiments]
+      summary: (ADR-124, Implemented) Launch an advisory experiment judge
+      description: |
+        Requires `manageExperiments`. Launches the configured
+        `experiment-judge` package agent for the experiment. The judge reads
+        the comparison DTO through the token external API and may append an
+        advisory; it never concludes or mutates the human verdict.
+      operationId: launchProjectExperimentJudge
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/ExperimentId" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "202":
+          description: Judge agent run launched or queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [runId, status]
+                properties:
+                  runId: { type: string }
+                  status:
+                    type: string
+                    enum: [Pending, Running]
+                  queuePosition:
+                    type: integer
+                    nullable: true
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Judge is unavailable or experiment state refuses launch (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/inbox/{itemId}/read:
     patch:
       tags: [social-board]
@@ -12543,7 +12589,7 @@ components:
           minLength: 1
         comment:
           type: string
-          maxLength: 8000
+          maxLength: 10000
         scores:
           type: object
           additionalProperties:
@@ -12586,7 +12632,17 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, title, taskId, taskNumber, status, variantsCount, baseBranch, baseCommit, createdAt]
+        [
+          id,
+          title,
+          taskId,
+          taskNumber,
+          status,
+          variantsCount,
+          baseBranch,
+          baseCommit,
+          createdAt,
+        ]
       properties:
         id: { type: string }
         title: { type: string }
@@ -12606,7 +12662,19 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, projectId, taskId, title, status, baseBranch, baseCommit, variants, rubric, verdict, createdAt]
+        [
+          id,
+          projectId,
+          taskId,
+          title,
+          status,
+          baseBranch,
+          baseCommit,
+          variants,
+          rubric,
+          verdict,
+          createdAt,
+        ]
       properties:
         id: { type: string }
         projectId: { type: string }
@@ -12679,7 +12747,7 @@ components:
           minLength: 1
         comment:
           type: string
-          maxLength: 8000
+          maxLength: 10000
         scores:
           type: object
           additionalProperties:
@@ -12695,16 +12763,29 @@ components:
       type: object
       additionalProperties: false
       properties:
-        reason:
-          type: string
-          maxLength: 4000
         stopLiveRuns:
           type: boolean
           default: true
     ExperimentRunComparison:
       type: object
       additionalProperties: false
-      required: [runId, variantKey, replicateOrdinal, status, launchReason]
+      required:
+        [
+          runId,
+          variantKey,
+          replicateOrdinal,
+          status,
+          statusTone,
+          launchReason,
+          queuePosition,
+          durationMs,
+          runnerLabels,
+          gates,
+          cost,
+          diff,
+          files,
+          materializationDelta,
+        ]
       properties:
         runId: { type: string }
         variantKey: { type: string }
@@ -12712,15 +12793,59 @@ components:
         status:
           type: string
           enum:
-            [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Crashed, Done, Abandoned, Failed]
+            [
+              Pending,
+              Running,
+              NeedsInput,
+              NeedsInputIdle,
+              HumanWorking,
+              WaitingOnChildren,
+              Review,
+              Crashed,
+              Done,
+              Abandoned,
+              Failed,
+            ]
         launchReason:
           type: string
           enum: [initial, manual_relaunch, budget_restart]
+        statusTone:
+          type: string
+          enum: [pending, running, review, done, failed]
         queuePosition: { type: integer, minimum: 1, nullable: true }
         durationMs: { type: integer, minimum: 0, nullable: true }
-        diffSnapshot: { type: string, nullable: true }
-        diffSnapshotTruncated: { type: boolean }
-        diffFilesSummary:
+        runnerLabels:
+          type: array
+          items: { type: string }
+        gates:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [gateId, kind, mode, status, verdict]
+            properties:
+              gateId: { type: string }
+              kind: { type: string }
+              mode: { type: string }
+              status: { type: string }
+              verdict: {}
+        cost:
+          type: object
+          additionalProperties: true
+          required: [hasData]
+          properties:
+            hasData: { type: boolean }
+          description: Existing token classes and byModel/byRunner breakdown; `{hasData:false}` means no rollup row.
+        diff:
+          type: object
+          additionalProperties: false
+          required: [snapshot, truncated, bytes, capturedAt]
+          properties:
+            snapshot: { type: string, nullable: true }
+            truncated: { type: boolean }
+            bytes: { type: integer, minimum: 0, nullable: true }
+            capturedAt: { type: string, format: date-time, nullable: true }
+        files:
           type: array
           items:
             type: object
@@ -12735,33 +12860,26 @@ components:
         materializationDelta:
           type: object
           nullable: true
-        cost:
-          type: object
-          nullable: true
-          description: Existing token classes and byModel/byRunner breakdown; null means no rollup row.
-        gates:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
+          additionalProperties: true
     ExperimentComparison:
       type: object
       additionalProperties: false
-      required: [experiment, runs]
+      required: [experiment, variants, runs, verdict, generatedAt]
       properties:
         experiment:
           $ref: "#/components/schemas/ExperimentDetail"
+        variants:
+          type: array
+          items: { $ref: "#/components/schemas/ExperimentVariant" }
         runs:
           type: array
           items: { $ref: "#/components/schemas/ExperimentRunComparison" }
-        diffOfDiffs:
-          type: object
-          additionalProperties: true
-          description: Pairwise diff-of-diffs payload, computed from normalized stored snapshots.
-        filesMatrix:
-          type: object
-          additionalProperties: true
-          description: All/Different/Same files matrix computed from `diffFilesSummary`.
+        verdict:
+          allOf: [{ $ref: "#/components/schemas/ExperimentVerdictEnvelope" }]
+          nullable: true
+        generatedAt:
+          type: string
+          format: date-time
     PostRunBody:
       type: object
       required: [taskId]
@@ -12796,7 +12914,7 @@ components:
           type: string
           minLength: 7
           description: |
-            (ADR-124, Designed) Optional immutable commit SHA/ref resolved by
+            (ADR-124, Implemented) Optional immutable commit SHA/ref resolved by
             the caller for pinned launches. The server verifies that it exists
             and is ancestor-reachable from the selected server-derived base ref
             (`baseBranch` / task / project default) before any worktree side
@@ -12841,7 +12959,7 @@ components:
           type: string
           minLength: 1
           description: |
-            (ADR-124, Designed) Optional source run for server-derived
+            (ADR-124, Implemented) Optional source run for server-derived
             experiment membership inheritance. It must reference a run of the
             same task or the route returns `CONFLICT` (409). If the source run
             is an experiment member and the experiment is `running` or

@@ -8,6 +8,7 @@ import {
   actorIdentities as actorIdentitiesTable,
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
+  experimentRuns as experimentRunsTable,
   hitlRequests as hitlRequestsTable,
   domainEvents as domainEventsTable,
   projects as projectsTable,
@@ -17,6 +18,16 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { respondToHitl, HitlActor } from "@/lib/services/hitl";
+
+vi.mock("@/lib/experiments/diff-snapshot", () => ({
+  captureExperimentDiffSnapshotForRun: vi.fn(async () => ({
+    status: "not-member",
+  })),
+}));
+
+vi.mock("@/lib/experiments/status-sync", () => ({
+  syncExperimentStatusForRun: vi.fn(async () => null),
+}));
 
 type Row = Record<string, unknown>;
 type Tables = {
@@ -29,6 +40,7 @@ type Tables = {
   assignment_events: Row[];
   webhook_events: Row[];
   domain_events: Row[];
+  experiment_runs: Row[];
 };
 
 const dbState: {
@@ -45,6 +57,7 @@ const dbState: {
     assignment_events: [],
     webhook_events: [],
     domain_events: [],
+    experiment_runs: [],
   },
   updates: [],
 };
@@ -59,6 +72,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === assignmentEventsTable) return "assignment_events";
   if (t === webhookEventsTable) return "webhook_events";
   if (t === domainEventsTable) return "domain_events";
+  if (t === experimentRunsTable) return "experiment_runs";
   throw new Error("unknown table");
 }
 
@@ -67,14 +81,14 @@ const selectChain = (cols?: Row) => ({
     const name = tableOf(table);
     const project = () =>
       cols
-        ? dbState.tables[name].map((r) => {
+        ? (dbState.tables[name] ?? []).map((r) => {
             const o: Row = {};
 
             for (const k of Object.keys(cols)) o[k] = r[k];
 
             return o;
           })
-        : dbState.tables[name];
+        : (dbState.tables[name] ?? []);
 
     return {
       where: async () => project(),
@@ -221,6 +235,7 @@ beforeEach(async () => {
     assignment_events: [],
     webhook_events: [],
     domain_events: [],
+    experiment_runs: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();

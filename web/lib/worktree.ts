@@ -380,6 +380,7 @@ export async function assertBaseCommitReachable(
 
       return baseCommit;
     } catch (err) {
+      lastResolveErr = err;
       const stderrText = errorText(err);
 
       log.warn(
@@ -394,18 +395,12 @@ export async function assertBaseCommitReachable(
         },
         "pinned base commit reachability check failed",
       );
-
-      throw new MaisterError(
-        "PRECONDITION",
-        `base commit ${baseCommit} is not reachable from base ref ${ref}`,
-        { cause: asError(err) },
-      );
     }
   }
 
   throw new MaisterError(
     "PRECONDITION",
-    `base ref does not resolve to a commit: ${baseRef}`,
+    `base commit ${baseCommit} is not reachable from base ref ${baseRef}`,
     { cause: asError(lastResolveErr) },
   );
 }
@@ -539,6 +534,127 @@ export type DiffRunWorkspaceArgs = {
   baseCommit: string;
   branch: string;
 };
+
+export type DiffRunWorkspaceFileMetadata = {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  oldOid: string;
+  newOid: string;
+};
+
+type RawDiffMetadata = {
+  path: string;
+  status: string;
+  oldOid: string;
+  newOid: string;
+};
+
+function parseDiffMetadataCount(value: string | undefined): number {
+  if (value === undefined || value === "-") return 0;
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseNumstat(
+  stdout: string,
+): Map<string, { additions: number; deletions: number }> {
+  const result = new Map<string, { additions: number; deletions: number }>();
+  const parts = stdout.split("\0").filter((part) => part.length > 0);
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index];
+    const fields = record.split("\t");
+
+    if (fields.length >= 3) {
+      result.set(fields[2], {
+        additions: parseDiffMetadataCount(fields[0]),
+        deletions: parseDiffMetadataCount(fields[1]),
+      });
+      continue;
+    }
+
+    if (fields.length === 2 && parts[index + 1] && parts[index + 2]) {
+      result.set(parts[index + 2], {
+        additions: parseDiffMetadataCount(fields[0]),
+        deletions: parseDiffMetadataCount(fields[1]),
+      });
+      index += 2;
+    }
+  }
+
+  return result;
+}
+
+function parseRawDiff(stdout: string): RawDiffMetadata[] {
+  const result: RawDiffMetadata[] = [];
+  const parts = stdout.split("\0").filter((part) => part.length > 0);
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const meta = parts[index];
+
+    if (!meta.startsWith(":")) continue;
+
+    const tokens = meta.split(" ");
+    const statusToken = tokens[4] ?? "M";
+    const status = statusToken.slice(0, 1);
+    const oldOid = tokens[2] ?? "";
+    const newOid = tokens[3] ?? "";
+    const pathPartCount = status === "R" || status === "C" ? 2 : 1;
+    const path =
+      pathPartCount === 2
+        ? (parts[index + 2] ?? parts[index + 1] ?? "")
+        : (parts[index + 1] ?? "");
+
+    if (path.length > 0) {
+      result.push({ path, status, oldOid, newOid });
+    }
+
+    index += pathPartCount;
+  }
+
+  return result;
+}
+
+export async function diffRunWorkspaceFileMetadata(
+  args: DiffRunWorkspaceArgs,
+): Promise<DiffRunWorkspaceFileMetadata[]> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const baseCommit = validate(gitCommitSchema, args.baseCommit, "baseCommit");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+  const range = `${baseCommit}..${branch}`;
+
+  try {
+    const [raw, numstat] = await Promise.all([
+      runGit(repo, ["diff", "--raw", "--no-abbrev", "-z", range]),
+      runGit(repo, ["diff", "--numstat", "-z", range]),
+    ]);
+    const countsByPath = parseNumstat(numstat.stdout);
+
+    return parseRawDiff(raw.stdout).map((metadata) => {
+      const counts = countsByPath.get(metadata.path);
+
+      return {
+        ...metadata,
+        additions: counts?.additions ?? 0,
+        deletions: counts?.deletions ?? 0,
+      };
+    });
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff metadata failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
 
 export async function diffRunWorkspace(
   args: DiffRunWorkspaceArgs,

@@ -3,7 +3,11 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { errorResponse, resolveProject } from "@/lib/api/project-route-helpers";
+import {
+  errorResponse,
+  notFoundResponse,
+  resolveProject,
+} from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { getExperimentDetail } from "@/lib/experiments/service";
@@ -35,7 +39,7 @@ export async function POST(
     const experiment = await getExperimentDetail(project.id, experimentId);
 
     if (!experiment) {
-      throw new MaisterError("PRECONDITION", `experiment not found: ${experimentId}`);
+      return notFoundResponse(`experiment not found: ${experimentId}`);
     }
 
     const result = await launchExperimentJudge({

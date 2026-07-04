@@ -1,9 +1,11 @@
 import type { ExperimentComparisonDTO } from "@/lib/experiments/comparison";
+import type { DiffPrepResult } from "@/lib/diff/prepare";
 import type { ExperimentStatus } from "@/lib/experiments/types";
 import type { ReactElement } from "react";
 
 import Link from "next/link";
 
+import { ExperimentActions } from "@/components/experiments/experiment-actions";
 import {
   CostTab,
   DiffOfDiffsTab,
@@ -39,6 +41,8 @@ export interface ExperimentLabLabels extends VariantMatrixLabels {
   branch: string;
   launch: string;
   abandon: string;
+  launchVariants: string;
+  launchReplicates: string;
   conclude: string;
   tabs: Record<ExperimentLabTab, string>;
   status: Record<ExperimentStatus, string>;
@@ -71,12 +75,14 @@ function statusClass(status: ExperimentStatus): string {
   return "border-line bg-ivory text-mute";
 }
 
-function latestJudgeSummary(comparison: ExperimentComparisonDTO): string | null {
+function latestJudgeSummary(
+  comparison: ExperimentComparisonDTO,
+): string | null {
   const advisories =
     comparison.verdict?.judgeAdvisories ??
     comparison.experiment.verdict?.judgeAdvisories ??
     [];
-  const latest = advisories.sort(
+  const latest = [...advisories].sort(
     (left, right) => right.advisoryOrdinal - left.advisoryOrdinal,
   )[0];
 
@@ -93,7 +99,10 @@ export function ExperimentLab({
   canConclude,
   projectSlug,
   taskNumber,
+  taskKeyPrefix,
   activeTab = "diff",
+  tabState,
+  preparedDiffs,
   judgeAvailable,
   judgePending = false,
 }: {
@@ -106,7 +115,15 @@ export function ExperimentLab({
   canConclude: boolean;
   projectSlug: string;
   taskNumber: number;
+  taskKeyPrefix: string;
   activeTab?: ExperimentLabTab;
+  tabState?: {
+    baseHref: string;
+    pairKey?: string | null;
+    replicateOrdinal?: number | null;
+    filesFilter?: "all" | "different" | "same" | null;
+  };
+  preparedDiffs?: Record<string, DiffPrepResult>;
   judgeAvailable: boolean;
   judgePending?: boolean;
 }): ReactElement {
@@ -115,7 +132,8 @@ export function ExperimentLab({
     label: labels.tabs[tab],
     href: `/projects/${projectSlug}/experiments/${comparison.experiment.id}?tab=${tab}`,
   }));
-  const resolvedComparisonLabels = comparisonLabels ?? fallbackComparisonLabels();
+  const resolvedComparisonLabels =
+    comparisonLabels ?? fallbackComparisonLabels();
   const resolvedVerdictLabels = verdictLabels ?? fallbackVerdictLabels();
   const resolvedJudgeLabels = judgeLabels ?? fallbackJudgeLabels();
 
@@ -144,7 +162,7 @@ export function ExperimentLab({
                 className="text-amber hover:text-amber-2"
                 href={`/projects/${projectSlug}/tasks/${taskNumber}`}
               >
-                {labels.task} KEY-{taskNumber}
+                {labels.task} {taskKeyPrefix}-{taskNumber}
               </Link>
               <span>
                 {labels.base}: {shortSha(comparison.experiment.baseCommit)}
@@ -156,14 +174,18 @@ export function ExperimentLab({
           </div>
           <div className="flex flex-wrap items-start justify-end gap-2">
             {canManage ? (
-              <>
-                <button className="rounded-lg border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white">
-                  {labels.launch}
-                </button>
-                <button className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-ink">
-                  {labels.abandon}
-                </button>
-              </>
+              <ExperimentActions
+                experimentId={comparison.experiment.id}
+                labels={{
+                  launch: labels.launch,
+                  abandon: labels.abandon,
+                  launchVariants: labels.launchVariants,
+                  launchReplicates: labels.launchReplicates,
+                }}
+                projectSlug={projectSlug}
+                status={comparison.experiment.status}
+                variants={comparison.variants}
+              />
             ) : null}
             {canConclude && comparison.experiment.status === "comparable" ? (
               <a
@@ -185,16 +207,26 @@ export function ExperimentLab({
 
       <div className="mt-4 grid grid-cols-1 gap-4">
         {activeTab === "diff" ? (
-          <DiffTab comparison={comparison} labels={resolvedComparisonLabels} />
+          <DiffTab
+            comparison={comparison}
+            labels={resolvedComparisonLabels}
+            preparedDiffs={preparedDiffs}
+            state={tabState}
+          />
         ) : null}
         {activeTab === "diffOfDiffs" ? (
           <DiffOfDiffsTab
             comparison={comparison}
             labels={resolvedComparisonLabels}
+            state={tabState}
           />
         ) : null}
         {activeTab === "files" ? (
-          <FilesTab comparison={comparison} labels={resolvedComparisonLabels} />
+          <FilesTab
+            comparison={comparison}
+            labels={resolvedComparisonLabels}
+            state={tabState}
+          />
         ) : null}
         {activeTab === "gates" ? (
           <GatesTab comparison={comparison} labels={resolvedComparisonLabels} />
@@ -231,12 +263,14 @@ export function ExperimentLab({
 function fallbackComparisonLabels(): ComparisonTabLabels {
   return {
     pair: "Pair",
+    replicate: "Replicate",
     snapshot: "Stored snapshot",
     refsGone: "Refs gone - serving stored snapshot",
     truncated: "Truncated",
     missingSnapshot: "No diff snapshot",
     identical: "No differences",
     partial: "Partial comparison",
+    fileDrilldown: "Per-file detail",
     filesAll: "All",
     filesDifferent: "Different",
     filesSame: "Same",
@@ -253,6 +287,22 @@ function fallbackComparisonLabels(): ComparisonTabLabels {
     resumeTokens: "Resume",
     byModel: "By model",
     byRunner: "By runner",
+    diffEmpty: "No files changed",
+    diffBodyUnavailable: "Diff body unavailable",
+    diffAdded: "Added",
+    diffRemoved: "Removed",
+    diffDisplayMode: "Display mode",
+    diffRich: "Rich",
+    diffRaw: "Raw",
+    diffFilterFiles: "Filter files",
+    diffFilterFilesPlaceholder: "Filter files",
+    diffFilterNoMatches: "No files match",
+    diffShowFiles: "Show files",
+    diffHideFiles: "Hide files",
+    diffRefresh: "Refresh",
+    diffViewMode: "View mode",
+    diffSplit: "Split",
+    diffUnified: "Unified",
   };
 }
 

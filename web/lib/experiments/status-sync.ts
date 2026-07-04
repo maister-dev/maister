@@ -1,13 +1,15 @@
 import "server-only";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
+import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
 import {
   assertExperimentTransition,
   deriveExperimentProgressStatus,
 } from "@/lib/experiments/fsm";
+import { experimentStatusTimestampPatch } from "@/lib/experiments/repository";
 import type {
   ExperimentMemberRunProgress,
   ExperimentMemberRunStatus,
@@ -67,15 +69,7 @@ function asExperimentStatus(value: unknown): ExperimentStatus {
 function asMemberStatus(value: unknown): ExperimentMemberRunStatus {
   const status = String(value) as ExperimentMemberRunStatus;
 
-  return MEMBER_RUN_STATUSES.has(status) ? status : "Failed";
-}
-
-async function selectForUpdate(query: any): Promise<Record<string, unknown>[]> {
-  if (typeof query.for === "function") {
-    return (await query.for("update")) as Record<string, unknown>[];
-  }
-
-  return (await query) as Record<string, unknown>[];
+  return MEMBER_RUN_STATUSES.has(status) ? status : "Running";
 }
 
 function readinessByVariant(
@@ -99,12 +93,15 @@ function readinessByVariant(
   return result;
 }
 
-function statusUpdateValues(toStatus: ExperimentStatus, now: Date) {
+function statusUpdateValues(
+  fromStatus: ExperimentStatus,
+  toStatus: ExperimentStatus,
+  now: Date,
+) {
   return {
     status: toStatus,
     updatedAt: now,
-    ...(toStatus === "running" ? { launchedAt: now } : {}),
-    ...(toStatus === "comparable" ? { comparableAt: now } : {}),
+    ...experimentStatusTimestampPatch(fromStatus, toStatus, now),
   };
 }
 
@@ -184,10 +181,42 @@ export async function syncExperimentStatusForRun(args: {
     };
   }
 
-  await args.db
+  const updateQuery = args.db
     .update(experiments)
-    .set(statusUpdateValues(toStatus, new Date()))
-    .where(eq(experiments.id, experimentId));
+    .set(statusUpdateValues(fromStatus, toStatus, new Date()))
+    .where(
+      and(
+        eq(experiments.id, experimentId),
+        eq(experiments.status, fromStatus),
+      ),
+    );
+
+  if (typeof updateQuery.returning === "function") {
+    const updatedRows = await updateQuery.returning({ id: experiments.id });
+
+    if (updatedRows.length === 0) {
+      log.info(
+        {
+          experimentId,
+          runId: args.runId,
+          observedStatus: fromStatus,
+          skippedStatus: toStatus,
+        },
+        "experiment status sync skipped after concurrent status change",
+      );
+
+      return {
+        experimentId,
+        changed: false,
+        fromStatus,
+        toStatus: fromStatus,
+        memberCount: memberRuns.length,
+        readinessByVariant: readiness,
+      };
+    }
+  } else {
+    await updateQuery;
+  }
 
   log.info(
     {

@@ -4244,7 +4244,7 @@ export async function runGraph(
         });
       }
     });
-    await captureExperimentDiffSnapshotForRun({ db, runId });
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -4292,7 +4292,7 @@ export async function runGraph(
         });
       }
     });
-    await captureExperimentDiffSnapshotForRun({ db, runId });
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -4320,7 +4320,7 @@ export async function runGraph(
         });
       }
     });
-    await captureExperimentDiffSnapshotForRun({ db, runId });
+    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     log2.info({}, "runGraph ended Review");
     await deliverRunIfAutoReady(runId, db);
   }

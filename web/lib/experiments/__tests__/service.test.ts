@@ -531,6 +531,49 @@ describe("experiment service lifecycle", () => {
     expect(stopRun).toHaveBeenCalledWith("run-loser-live");
   });
 
+  it("does not fail a committed conclusion when loser stop dispatch fails", async () => {
+    const stopRun = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("supervisor unavailable"))
+      .mockResolvedValueOnce({ ok: true });
+    const state: State = {
+      projects: [projectRow()],
+      tasks: [projectTask()],
+      experiments: [experimentRow({ status: "comparable" })],
+      experimentRuns: [
+        { experimentId: "exp-1", runId: "run-winner", variantKey: "claude" },
+        { experimentId: "exp-1", runId: "run-loser-a", variantKey: "codex" },
+        { experimentId: "exp-1", runId: "run-loser-b", variantKey: "codex" },
+      ],
+      runs: [
+        { id: "run-winner", status: "Review" },
+        { id: "run-loser-a", status: "Running" },
+        { id: "run-loser-b", status: "NeedsInput" },
+      ],
+      inserts: [],
+    };
+
+    const dto = await service.concludeExperiment(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        actor: { type: "user", id: "user-1" },
+        input: {
+          outcome: "winner",
+          winnerVariantKey: "claude",
+          abandonLosers: true,
+        },
+        stopRun,
+      },
+      fakeDb(state),
+    );
+
+    expect(dto.status).toBe("concluded");
+    expect(stopRun).toHaveBeenCalledTimes(2);
+    expect(stopRun).toHaveBeenNthCalledWith(1, "run-loser-a");
+    expect(stopRun).toHaveBeenNthCalledWith(2, "run-loser-b");
+  });
+
   it.each(["draft", "running", "comparable"] as const)(
     "abandons %s experiments and stops live member runs",
     async (status) => {
@@ -566,6 +609,43 @@ describe("experiment service lifecycle", () => {
       expect(stopRun).toHaveBeenCalledWith("run-live");
     },
   );
+
+  it("does not fail a committed abandonment when live-run stop dispatch fails", async () => {
+    const stopRun = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("supervisor unavailable"))
+      .mockResolvedValueOnce({ ok: true });
+    const state: State = {
+      projects: [projectRow()],
+      tasks: [projectTask()],
+      experiments: [experimentRow({ status: "running" })],
+      experimentRuns: [
+        { experimentId: "exp-1", runId: "run-live-a", variantKey: "claude" },
+        { experimentId: "exp-1", runId: "run-live-b", variantKey: "codex" },
+      ],
+      runs: [
+        { id: "run-live-a", status: "Running" },
+        { id: "run-live-b", status: "NeedsInput" },
+      ],
+      inserts: [],
+    };
+
+    const dto = await service.abandonExperiment(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        actorUserId: "user-1",
+        input: { stopLiveRuns: true },
+        stopRun,
+      },
+      fakeDb(state),
+    );
+
+    expect(dto.status).toBe("abandoned");
+    expect(stopRun).toHaveBeenCalledTimes(2);
+    expect(stopRun).toHaveBeenNthCalledWith(1, "run-live-a");
+    expect(stopRun).toHaveBeenNthCalledWith(2, "run-live-b");
+  });
 
   it("rejects double abandonment without stopping runs", async () => {
     const stopRun = vi.fn(async () => ({ ok: true }));

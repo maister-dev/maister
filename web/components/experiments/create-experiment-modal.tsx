@@ -5,6 +5,7 @@ import type {
   ExperimentVariant,
   ExperimentVariantConfig,
 } from "@/lib/experiments/types";
+import type { ExperimentFlowOption } from "@/lib/experiments/service";
 import type { TaskDTO } from "@/lib/services/tasks";
 import type { ReactElement } from "react";
 
@@ -31,6 +32,7 @@ export interface CreateExperimentLabels extends VariantEditorLabels {
   task: string;
   taskTitle: string;
   taskPrompt: string;
+  taskFlow: string;
   baseBranch: string;
   baseRef: string;
   rubric: string;
@@ -44,18 +46,25 @@ export interface CreateExperimentLabels extends VariantEditorLabels {
 
 export interface CreateExperimentFormProps {
   labels: CreateExperimentLabels;
-  tasks: Array<Pick<TaskDTO, "id" | "number" | "title" | "taskKey">>;
+  tasks: CreateExperimentTaskOption[];
+  flows: ExperimentFlowOption[];
   defaultBaseBranch: string;
   defaultVariants: ExperimentVariant[];
   defaultRubric: ExperimentRubric;
   busy: boolean;
   error: string | null;
   onSubmit?: (form: HTMLFormElement) => void;
+  onCancel?: () => void;
 }
 
 type CreatedTaskResponse = {
   taskId: string;
 };
+
+type CreateExperimentTaskOption = Pick<
+  TaskDTO,
+  "id" | "number" | "title" | "taskKey" | "flowId"
+>;
 
 function nonEmpty(value: FormDataEntryValue | null): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -67,6 +76,19 @@ function parseExecutionPolicy(value: string | undefined): unknown {
   if (!value) return undefined;
 
   return JSON.parse(value) as unknown;
+}
+
+function formIndexes(form: FormData, pattern: RegExp): number[] {
+  return Array.from(form.keys())
+    .map((key) => {
+      const match = pattern.exec(key);
+
+      return match ? Number(match[1]) : null;
+    })
+    .filter(
+      (index): index is number => index !== null && Number.isInteger(index),
+    )
+    .sort((left, right) => left - right);
 }
 
 function overlayClass(
@@ -110,7 +132,7 @@ function variantConfig(form: FormData, index: number): ExperimentVariantConfig {
 }
 
 function variantsFromForm(form: FormData): ExperimentVariant[] {
-  return [0, 1]
+  return formIndexes(form, /^variant\.(\d+)\.key$/)
     .map((index) => {
       const key = nonEmpty(form.get(`variant.${index}.key`));
       const label = nonEmpty(form.get(`variant.${index}.label`));
@@ -123,14 +145,16 @@ function variantsFromForm(form: FormData): ExperimentVariant[] {
 }
 
 function rubricFromForm(form: FormData): ExperimentRubric {
-  const criteria = [0, 1, 2, 3, 4, 5]
+  const criteria = formIndexes(form, /^rubric\.(\d+)\.id$/)
     .map((index) => {
       const id = nonEmpty(form.get(`rubric.${index}.id`));
       const label = nonEmpty(form.get(`rubric.${index}.label`));
       const guidance = nonEmpty(form.get(`rubric.${index}.guidance`));
       const min = Number(nonEmpty(form.get(`rubric.${index}.min`)) ?? "1");
       const max = Number(nonEmpty(form.get(`rubric.${index}.max`)) ?? "5");
-      const weight = Number(nonEmpty(form.get(`rubric.${index}.weight`)) ?? "1");
+      const weight = Number(
+        nonEmpty(form.get(`rubric.${index}.weight`)) ?? "1",
+      );
 
       if (!id || !label || !guidance) return null;
 
@@ -145,29 +169,61 @@ function rubricFromForm(form: FormData): ExperimentRubric {
           : {}),
       };
     })
-    .filter((criterion): criterion is ExperimentRubric["criteria"][number] =>
-      criterion !== null,
+    .filter(
+      (criterion): criterion is ExperimentRubric["criteria"][number] =>
+        criterion !== null,
     );
 
   return { criteria };
 }
 
 function defaultTaskId(
-  tasks: Array<Pick<TaskDTO, "id" | "number" | "title" | "taskKey">>,
+  tasks: CreateExperimentTaskOption[],
 ): string {
   return tasks[0]?.id ?? "";
+}
+
+function nextVariantKey(variants: ExperimentVariant[]): string {
+  const used = new Set(variants.map((variant) => variant.key));
+
+  for (let code = 97; code <= 122; code += 1) {
+    const candidate = String.fromCharCode(code);
+
+    if (!used.has(candidate)) return candidate;
+  }
+
+  return `v${variants.length + 1}`;
+}
+
+function createBlankVariant(variants: ExperimentVariant[]): ExperimentVariant {
+  const nextIndex = variants.length + 1;
+
+  return {
+    key: nextVariantKey(variants),
+    label: `Variant ${nextIndex}`,
+    config: {},
+  };
 }
 
 export function CreateExperimentForm({
   labels,
   tasks,
+  flows,
   defaultBaseBranch,
   defaultVariants,
   defaultRubric,
   busy,
   error,
   onSubmit,
+  onCancel,
 }: CreateExperimentFormProps): ReactElement {
+  const [variants, setVariants] = useState(defaultVariants);
+  const flowIds = new Set(flows.map((flow) => flow.id));
+  const configuredTasks = tasks.filter(
+    (task) => task.flowId !== null && flowIds.has(task.flowId),
+  );
+  const defaultTaskMode = configuredTasks.length > 0 ? "existing" : "new";
+
   return (
     <form
       className="flex max-h-[80vh] flex-col overflow-hidden"
@@ -216,7 +272,7 @@ export function CreateExperimentForm({
             </span>
             <select
               className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink"
-              defaultValue="existing"
+              defaultValue={defaultTaskMode}
               name="taskMode"
             >
               <option value="existing">{labels.existingTask}</option>
@@ -229,10 +285,10 @@ export function CreateExperimentForm({
             </span>
             <select
               className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink"
-              defaultValue={defaultTaskId(tasks)}
+              defaultValue={defaultTaskId(configuredTasks)}
               name="taskId"
             >
-              {tasks.map((task) => (
+              {configuredTasks.map((task) => (
                 <option key={task.id} value={task.id}>
                   {task.taskKey}-{task.number} · {task.title}
                 </option>
@@ -252,6 +308,25 @@ export function CreateExperimentForm({
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-mute">
+              {labels.taskFlow}
+            </span>
+            <select
+              className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink"
+              defaultValue={flows[0]?.id ?? ""}
+              disabled={flows.length === 0}
+              name="flowId"
+            >
+              {flows.map((flow) => (
+                <option key={flow.id} value={flow.id}>
+                  {flow.ref}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-mute">
               {labels.baseRef}
             </span>
             <input
@@ -269,7 +344,24 @@ export function CreateExperimentForm({
             name="taskPrompt"
           />
         </label>
-        <VariantEditor labels={labels} variants={defaultVariants} />
+        <VariantEditor
+          labels={labels}
+          variants={variants}
+          onAddVariant={() =>
+            setVariants((current) =>
+              current.length >= 12
+                ? current
+                : [...current, createBlankVariant(current)],
+            )
+          }
+          onRemoveVariant={(index) =>
+            setVariants((current) =>
+              current.length <= 2
+                ? current
+                : current.filter((_, currentIndex) => currentIndex !== index),
+            )
+          }
+        />
         <RubricEditor
           labels={{ rubric: labels.rubric, optional: labels.optional }}
           rubric={defaultRubric}
@@ -287,6 +379,7 @@ export function CreateExperimentForm({
         <button
           className="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold text-mute hover:text-ink"
           type="button"
+          onClick={onCancel}
         >
           {labels.cancel}
         </button>
@@ -310,12 +403,14 @@ export function CreateExperimentModal({
   slug,
   labels,
   tasks,
+  flows,
   defaultBaseBranch,
   defaultRubric,
 }: {
   slug: string;
   labels: CreateExperimentLabels;
-  tasks: Array<Pick<TaskDTO, "id" | "number" | "title" | "taskKey">>;
+  tasks: CreateExperimentTaskOption[];
+  flows: ExperimentFlowOption[];
   defaultBaseBranch: string;
   defaultRubric: ExperimentRubric;
 }): ReactElement {
@@ -342,12 +437,17 @@ export function CreateExperimentModal({
       let taskId = nonEmpty(form.get("taskId"));
 
       if (form.get("taskMode") === "new") {
+        const flowId = nonEmpty(form.get("flowId"));
+
+        if (!flowId) throw new Error(labels.validationRequired);
+
         const taskRes = await fetch(`/api/projects/${slug}/tasks`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             title: nonEmpty(form.get("taskTitle")),
             prompt: nonEmpty(form.get("taskPrompt")),
+            flowId,
           }),
         });
 
@@ -375,9 +475,10 @@ export function CreateExperimentModal({
       });
 
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as
-          | { code?: string; message?: string }
-          | null;
+        const body = (await res.json().catch(() => null)) as {
+          code?: string;
+          message?: string;
+        } | null;
 
         throw new Error(body?.message ?? body?.code ?? labels.errorGeneric);
       }
@@ -433,8 +534,10 @@ export function CreateExperimentModal({
               defaultRubric={defaultRubric}
               defaultVariants={defaultVariants}
               error={error}
+              flows={flows}
               labels={labels}
               tasks={tasks}
+              onCancel={() => setOpen(false)}
               onSubmit={(form) => void submit(form)}
             />
           </div>

@@ -2,7 +2,7 @@
 
 - **Routes:** `/projects/{slug}/experiments`,
   `/projects/{slug}/experiments/{experimentId}`
-- **Status:** Designed (ADR-124, Phase 1)
+- **Status:** Implemented (ADR-124, Phase 1)
 - **Source:** `web/app/(app)/projects/[slug]/experiments/page.tsx`,
   `web/app/(app)/projects/[slug]/experiments/[experimentId]/page.tsx`,
   `web/components/experiments/*`
@@ -24,8 +24,8 @@ or auto-promote work.
 | Project viewer | Experiment list, lab matrix, stored snapshots, gates, token rollups, verdict/advisory state | Open experiment lab and member runs |
 | Project member/admin/owner | Same | Create experiments, launch variants/replicates, abandon non-terminal experiments, ask the judge |
 | Project member/admin/owner with conclusion affordance | Same | Conclude comparable experiments with a human verdict |
-| Agent token with `experiments:read` | External comparison DTO subset | Read experiment detail/comparison through MCP/API |
-| Agent token with `experiments:advise` | Existing comparison DTO plus rubric | Append advisory scores only |
+| Experiment judge agent token with `experiments:read` | External comparison DTO subset | Read experiment detail/comparison through MCP/API |
+| Experiment judge agent token with `experiments:advise` | Existing comparison DTO plus rubric | Append advisory scores only with server-derived run attribution |
 
 Screen read access uses `requireProjectAction(projectId, "readExperiments")`.
 Create/launch/abandon use `manageExperiments`; conclusion uses
@@ -61,12 +61,11 @@ flowchart TD
   manage experiments.
 - **Create flow** is a modal wizard: task picker with inline task creation,
   title/description, base branch and optional explicit ref, variant editor, and
-  rubric editor pre-filled from the platform default template. The pinned SHA
-  is shown before save. Variant config validates the closed registry and
-  localizes errors.
-- **Lab header** shows localized FSM chip, pinned commit with copy action, base
-  branch, task link, and icon+label actions: launch, ask judge, abandon, and
-  conclude when comparable.
+  rubric editor pre-filled from the platform default template. Variant config
+  validates the closed registry and localizes errors.
+- **Lab header** shows localized FSM chip, pinned short commit SHA, base branch,
+  task link, and icon+label actions: launch, ask judge, abandon, and conclude
+  when comparable.
 - **Variant matrix** lays variants across replicates. Each cell shows run
   status tone, duration, queue position for `Pending`, launch reason, run link,
   and compact node status strip. Failed/crashed members stay visible and do not
@@ -107,13 +106,16 @@ read-only controls for viewers or terminal experiments.
 - Session API: `GET/POST /api/projects/{slug}/experiments`,
   `GET /api/projects/{slug}/experiments/{experimentId}`,
   `POST /api/projects/{slug}/experiments/{experimentId}/launch`,
+  `POST /api/projects/{slug}/experiments/{experimentId}/judge`,
   `POST /api/projects/{slug}/experiments/{experimentId}/conclude`,
   `POST /api/projects/{slug}/experiments/{experimentId}/abandon`, and
   `GET /api/projects/{slug}/experiments/{experimentId}/comparison`.
 - Generic launch API: `POST /api/runs` gains optional `baseCommit` and
   `relaunchOfRunId` for pinned launches and membership inheritance.
 - External API/MCP: `GET /api/v1/ext/projects/{slug}/experiments/{id}` powers
-  `experiment_get`; `POST .../advisory` powers `experiment_advise`.
+  `experiment_get`; `POST .../advisory` powers `experiment_advise`. Agent-token
+  callers must be the package-sourced experiment judge; `agentRunId` comes from
+  the authenticated token's bound run, not the body.
 - No new SSE channel exists. The lab composes existing run streams/status
   surfaces and refetches comparison DTOs at tab/action boundaries.
 

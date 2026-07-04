@@ -14,6 +14,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
@@ -1015,6 +1016,7 @@ async function promoteWorkspaceRun(
         runId: child.id,
         reason: "run promoted to Done",
       });
+      await syncExperimentStatusForRun({ db: tx, runId: child.id });
       await emitWebhookEvent({
         db: tx,
         type: "run.done",
@@ -1251,6 +1253,7 @@ async function finalizePullRequest(args: {
       runId,
       reason: "run promoted to Done",
     });
+    await syncExperimentStatusForRun({ db: tx, runId });
 
     await emitWebhookEvent({
       db: tx,
@@ -1577,6 +1580,7 @@ async function promoteScratchRun(
       runId,
       reason: "run promoted to Done",
     });
+    await syncExperimentStatusForRun({ db: tx, runId });
 
     await emitWebhookEvent({
       db: tx,

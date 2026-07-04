@@ -119,6 +119,10 @@ vi.mock("@/lib/webhooks/outbox", () => ({
   emitWebhookEvent: (...args: unknown[]) => emitWebhookEventMock(...args),
 }));
 
+vi.mock("@/lib/experiments/status-sync", () => ({
+  syncExperimentStatusForRun: vi.fn(async () => null),
+}));
+
 // `pushBranch` + `selectPrAdapter` are the NEW seams. The createOrUpdatePr spy
 // is shared so tests can inspect / reconfigure it.
 const createOrUpdatePr = vi.fn(async () => ({

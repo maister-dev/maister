@@ -94,8 +94,8 @@ describe("appendExperimentAdvisory", () => {
         projectId: "project-1",
         experimentId: "exp-1",
         actorLabel: "agent:judge",
+        agentRunId: "agent-run-1",
         input: {
-          agentRunId: "agent-run-1",
           scores: { correctness: { claude: 5, codex: 4 } },
           summary: "Claude is slightly stronger.",
           confidence: 0.7,

@@ -20,7 +20,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-function statusTimestampPatch(
+export function experimentStatusTimestampPatch(
   fromStatus: ExperimentStatus,
   toStatus: ExperimentStatus,
   now: Date,
@@ -51,7 +51,11 @@ export async function transitionExperimentStatus(
   const set = {
     status: args.toStatus,
     updatedAt: args.now,
-    ...statusTimestampPatch(args.fromStatus, args.toStatus, args.now),
+    ...experimentStatusTimestampPatch(
+      args.fromStatus,
+      args.toStatus,
+      args.now,
+    ),
   };
 
   log.info(

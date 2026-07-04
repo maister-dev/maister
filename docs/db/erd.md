@@ -669,6 +669,7 @@ erDiagram
         text variant_key
         integer replicate_ordinal
         text launch_reason "initial|manual_relaunch|budget_restart"
+        text base_commit "pinned member run base"
         text diff_snapshot "capped text"
         boolean diff_snapshot_truncated
         integer diff_snapshot_bytes

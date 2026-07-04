@@ -3,9 +3,14 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { errorResponse, resolveProject } from "@/lib/api/project-route-helpers";
+import {
+  errorResponse,
+  notFoundResponse,
+  resolveProject,
+} from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getExperimentComparison } from "@/lib/experiments/comparison";
+import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 
 const log = pino({
   name: "api-project-experiment-comparison",
@@ -36,6 +41,10 @@ export async function GET(
       }),
     );
   } catch (err) {
+    if (err instanceof ExperimentNotFoundError) {
+      return notFoundResponse(err.message);
+    }
+
     return errorResponse(err, log, slug);
   }
 }

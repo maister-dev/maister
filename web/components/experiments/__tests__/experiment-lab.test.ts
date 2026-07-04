@@ -3,9 +3,17 @@ import type { ExperimentLabLabels } from "@/components/experiments/experiment-la
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ExperimentLab } from "@/components/experiments/experiment-lab";
+
+const navigationMocks = vi.hoisted(() => ({
+  refresh: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => navigationMocks,
+}));
 
 const labels: ExperimentLabLabels = {
   eyebrow: "Experiment lab",
@@ -15,6 +23,8 @@ const labels: ExperimentLabLabels = {
   launch: "Launch",
   abandon: "Abandon",
   conclude: "Conclude",
+  launchVariants: "Launch variants",
+  launchReplicates: "Replicates",
   variants: "Variants",
   latestReplicate: "Latest replicate",
   queuePosition: "Queue",
@@ -148,6 +158,7 @@ function render(status: ExperimentComparisonDTO["experiment"]["status"]): string
       canManage: true,
       canConclude: true,
       projectSlug: "proj",
+      taskKeyPrefix: "KEY",
       taskNumber: 12,
       judgeAvailable: true,
     }),
@@ -191,11 +202,14 @@ describe("ExperimentLab", () => {
           ...labels,
           eyebrow: "Лаборатория",
           launch: "Запустить",
-          status: { ...labels.status, running: "В работе" },
-        },
+      status: { ...labels.status, running: "В работе" },
+      launchVariants: "Варианты запуска",
+      launchReplicates: "Повторы",
+    },
         canManage: true,
         canConclude: false,
         projectSlug: "proj",
+        taskKeyPrefix: "KEY",
         taskNumber: 12,
         judgeAvailable: false,
       }),
@@ -204,5 +218,14 @@ describe("ExperimentLab", () => {
     expect(html).toContain("Лаборатория");
     expect(html).toContain("Запустить");
     expect(html).toContain("В работе");
+  });
+
+  it("renders launch variant and replicate controls instead of hardcoding all x1", () => {
+    const html = render("draft");
+
+    expect(html).toContain("Launch variants");
+    expect(html).toContain('name="replicates"');
+    expect(html).toContain('value="a"');
+    expect(html).toContain('value="b"');
   });
 });
