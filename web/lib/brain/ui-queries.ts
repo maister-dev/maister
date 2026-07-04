@@ -1,15 +1,12 @@
 import "server-only";
 
-import { sql, type SQL } from "drizzle-orm";
-
 import type { BrainSourceRef } from "@/lib/brain/schema";
 
-import {
-  listBrainSources,
-  type BrainSourceDto,
-} from "@/lib/brain/sources";
+import { sql, type SQL } from "drizzle-orm";
 
-type BrainUiDb = {
+import { listBrainSources, type BrainSourceDto } from "@/lib/brain/sources";
+
+export type BrainUiDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
 
@@ -53,9 +50,7 @@ function previewOf(content: unknown): string {
 }
 
 function pointerOf(value: unknown): BrainSourceRef | null {
-  return value && typeof value === "object"
-    ? (value as BrainSourceRef)
-    : null;
+  return value && typeof value === "object" ? (value as BrainSourceRef) : null;
 }
 
 function toMemoryRow(row: Record<string, unknown>): BrainMemorySearchRow {
@@ -160,7 +155,10 @@ async function evidenceById(
     SELECT id, title, source_ref
     FROM brain_items
     WHERE project_id = ${projectId}
-      AND id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+      AND id IN (${sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`, `,
+      )})
   `);
 
   return new Map(

@@ -1141,18 +1141,22 @@ erDiagram
     PROJECTS ||--o{ BRAIN_SOURCES : "canonical sources (ADR-127)"
     PROJECTS ||--o{ BRAIN_CHUNKS : "indexed chunks (ADR-127)"
     PROJECTS ||--o{ BRAIN_EDGES : "Brain graph refs (ADR-127)"
-    PROJECTS ||--|| BRAIN_PROJECT_CONFIG : "Brain config (ADR-127)"
+    PROJECTS ||--o| BRAIN_PROJECT_CONFIG : "lazy Brain config (ADR-127)"
     PROJECTS ||--o{ BRAIN_PROPOSALS : "improvement proposals (ADR-128)"
+    PROJECTS ||--o{ BRAIN_PROPOSAL_DECISION_STATS : "proposal counters (ADR-128)"
     BRAIN_ITEMS ||--o{ BRAIN_EMBEDDINGS : "generations x splits (CASCADE)"
     BRAIN_SOURCES ||--o{ BRAIN_CHUNKS : "source chunks (CASCADE)"
     BRAIN_CHUNKS ||--o{ BRAIN_EMBEDDINGS : "chunk generations (CASCADE)"
     RUNS o|--o{ BRAIN_SNAPSHOTS : "run-bound recall (CASCADE)"
+    FLOWS ||--o{ BRAIN_PROJECT_CONFIG : "projection_flow_id (SET NULL)"
+    TASKS ||--o{ BRAIN_PROPOSALS : "projection task_id (SET NULL)"
+    RUNS ||--o{ BRAIN_PROPOSALS : "projection run_id (SET NULL)"
 
     BRAIN_ITEMS {
         text id PK "uuid"
         text project_id FK "NOT NULL -> projects(id) CASCADE — auth boundary (Implemented, ADR-122)"
         text kind "lesson|observation|state_fact|decision|direction"
-        text tier "owned|indexed"
+        text tier "owned"
         text content "NOT NULL"
         text status "active|expired|superseded"
         numeric confidence "NOT NULL; CHECK 0..1; confidence0 0.3"
@@ -1386,14 +1390,14 @@ external-operation events) is not drawn until its migrations exist. See
 | `brain_items` | `brain_items_recall_idx` | `(project_id, status, expires_at)` | **(Implemented, ADR-122)** Recall-path project-scoped active-item scan. |
 | `brain_embeddings` | `brain_embeddings_item_idx` | `(item_id, embedding_model, embedding_dimensions)` | **(Implemented, ADR-122)** Generation lookup + FK. |
 | `brain_embeddings` | `brain_embeddings_generation_uq` | `(item_id, split_ordinal, embedding_model, embedding_dimensions)` UNIQUE | **(Implemented, ADR-122, brain migration `0002`)** Idempotent re-embed — a concurrent/double reindex insert is a no-op. |
-| `brain_embeddings` | `brain_embeddings_target_one_check` | exactly one of `item_id`, `chunk_id` | **(Designed, ADR-127, brain migration `0003`)** An embedding targets one owned item or one indexed chunk. |
-| `brain_embeddings` | `brain_embeddings_chunk_generation_uq` | `(chunk_id, split_ordinal, embedding_model, embedding_dimensions, chunker_id, chunker_version)` UNIQUE | **(Designed, ADR-127, brain migration `0003`)** Idempotent chunk re-embed across source/chunker generations. |
+| `brain_embeddings` | `brain_embeddings_target_one_check` | exactly one of `item_id`, `chunk_id` | **(Implemented, ADR-127, brain migration `0003`)** An embedding targets one owned item or one indexed chunk. |
+| `brain_embeddings` | `brain_embeddings_chunk_generation_uq` | `(chunk_id, split_ordinal, embedding_model, embedding_dimensions, chunker_id, chunker_version)` UNIQUE | **(Implemented, ADR-127, brain migration `0003`)** Idempotent chunk re-embed across source/chunker generations. |
 | `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **(Implemented, ADR-122)** Per-generation expression HNSW, created by `ensureEmbeddingIndex` at configure/reindex (NOT in the migration). |
 | `brain_snapshots` | `brain_snapshots_run_idx` | `(run_id)` | **(Implemented, ADR-122)** Run-scoped snapshot reads. |
 | `brain_index_jobs` | `brain_index_jobs_claim_idx` | `(status, created_at)` | **(Implemented, ADR-122)** Reindex-worker claim scan. |
-| `brain_sources` | `brain_sources_project_idx` | `(project_id, enabled)` | **(Designed, ADR-127)** Enabled source scans and source list. |
-| `brain_chunks` | `brain_chunks_source_stable_uq` | `(source_id, stable_id)` UNIQUE | **(Designed, ADR-127)** Stable chunk identity. |
-| `brain_chunks` | `brain_chunks_tsv_gin` | GIN `(tsv)` | **(Designed, ADR-127)** Indexed lexical recall leg. |
+| `brain_sources` | `brain_sources_project_idx` | `(project_id, enabled)` | **(Implemented, ADR-127)** Enabled source scans and source list. |
+| `brain_chunks` | `brain_chunks_source_stable_uq` | `(source_id, stable_id)` UNIQUE | **(Implemented, ADR-127)** Stable chunk identity. |
+| `brain_chunks` | `brain_chunks_tsv_gin` | GIN `(tsv)` | **(Implemented, ADR-127)** Indexed lexical recall leg. |
 | `brain_edges` | `brain_edges_project_idx` | `(project_id, degraded)` | **(Implemented, ADR-127)** Edge and degraded-edge reads. |
 | `brain_proposals` | `brain_proposals_project_status_idx` | `(project_id, status, created_at)` | **(Implemented, ADR-128)** Proposal review tabs. |
 | `brain_proposals` | `brain_proposals_cluster_hash_uq` | `(project_id, cluster_hash)` PARTIAL `WHERE cluster_hash IS NOT NULL` | **(Implemented, ADR-128)** Idempotent improver/propose path. |

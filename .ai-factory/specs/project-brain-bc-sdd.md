@@ -22,8 +22,8 @@ publishes artifacts by itself.
 | --- | --- | --- | --- | --- |
 | FR-B1 | Add indexed-tier Brain schema, chunk tables, source tables, edges, project config, and chunk embedding support in brain migration `0003`. | D2, D4, E-1, E-2, sec.4 | T1.1, T1.2 | `indexed-schema.integration.test.ts`, `check-brain-migrations.test.ts` |
 | FR-B2 | Provide built-in typed chunkers through `ChunkerRegistry`; keep package-extensible chunkers deferred. | D5, D6, E-9 disposition, sec.7 | T2.1, T2.2 | `chunker-registry.test.ts` and fixture corpus |
-| FR-B3 | Register per-project canonical sources and read tracked default-branch content through server-side repo state. | D7, sec.3.2 | T3.1, T3.2, T14.1 | source service integration tests, Project Brain UI E2E |
-| FR-B4 | Incrementally index source chunks with `source_hash`, chunker-version gating, resumable jobs, and per-source errors. | E-7, E-8, sec.5.2 | T3.2, T4.1, T4.2 | `indexer.integration.test.ts` |
+| FR-B3 | Register per-project canonical sources and read tracked default-branch content through server-side repo state. | D7, sec.3.2 | T3.1, T3.2, T14.1 | source/indexer integration tests, Project Brain SSR component/route coverage |
+| FR-B4 | Incrementally index source chunks with `source_hash`, chunker-version gating, bounded source jobs, and per-source errors. Owned-item reindex remains resumable from the missing-generation worklist. | E-7, E-8, sec.5.2 | T3.2, T4.1, T4.2 | `indexer.integration.test.ts` |
 | FR-B5 | Extend explicit, MCP, ambient, and snapshot recall to a union of owned item hits and indexed chunk hits. | D9, E-12, E-13, sec.5.3 | T5.1, T5.2 | recall integration, ext route, MCP contract, ambient tests |
 | FR-B6 | Resolve `decision`/`direction` home per project; refuse retain into canonical kinds when a covering source exists. | D7, sec.3.1, sec.3.2, E-13 | T6.1 | home-resolution integration tests |
 | FR-B7 | Make `state_fact` supersede on changed near-duplicate content while preserving lesson/observation reinforce behavior. | sec.3.1, sec.13 | T6.2 | retain race and supersede tests |
@@ -66,8 +66,8 @@ Owned hit:
   "confidence": 0.7,
   "score": 0.91,
   "provenance": {
-    "sourceRunId": "run_id",
-    "sourceDomainEventId": 123
+    "runId": "run_id",
+    "gateKind": "command_check"
   }
 }
 ```
@@ -147,10 +147,10 @@ field names above where the current API style already does so.
 | Project Brain page read | session | `readBrain` | n/a | Pointer opening delegates to the existing file viewer and also needs `readRepoFiles`. |
 | Project Brain source mutation/reindex | session | `editSettings` | n/a | Source body paths are repo-relative and server validated. |
 | Proposal accept for rule/skill/flow | session | `manageCatalog` plus project access | n/a | Creates authored catalog draft; publishing path unchanged. |
-| Proposal accept for adr/roadmap/state projection | session | `createTask` or `editTask` | n/a | Creates a board task and optional auto-launch metadata. |
+| Proposal accept for adr/roadmap/state projection | session | `createTask` | n/a | Creates a board task and optional auto-launch metadata. |
 | Project Brain settings | session | `editSettings` | n/a | Saves home-resolution and projection flow settings. |
 | Admin Brain defaults | session | global admin | n/a | Embedding/distill/autonomy defaults. |
-| Serena catalog seed | boot/admin ensure | global admin path when exposed | n/a | Seed is `enabled=false`, `trust_status=untrusted`; not executable by default. |
+| Serena catalog seed | admin-catalog ensure | global admin path when exposed | n/a | Seed is `enabled=false`, `trust_status=untrusted`; not executable by default. |
 
 ## Edge-Case Ownership
 
@@ -159,6 +159,9 @@ field names above where the current API style already does so.
 | Binary or oversized source | T4.1 | Source records a terminal error; index job continues. |
 | Malformed parse input | T2.1, T4.1 | Typed parser error scoped to source; no process crash. |
 | Source vanished from HEAD | T4.1 | Source records vanished state and retires chunks per indexer decision. |
+| Glob source exceeds match/byte budget | T3.2, T4.1 | Registration/indexing refuses with `PRECONDITION`; an existing source records `brain_sources.last_error` and the worker continues. |
+| Source produces too many chunks or embedding segments | T4.1 | Indexing records a deterministic source error and does not insert partial chunks. |
+| Glob overlaps an enabled exact source of the same project/kind | T4.1 | The glob excludes the exact peer path so recall does not duplicate canonical chunks. |
 | HTML normalized to markdown | T2.1 | `source.kind=html`, `chunker_id=markdown`, range maps to normalized intermediate. |
 | Embedding outage mid-index | T4.1 | Job remains retryable/running with `EMBEDDING_UNAVAILABLE`. |
 | Supersede vs reinforce race | T6.2 | Existing advisory lock serializes state_fact supersede and lesson reinforce paths. |
@@ -171,7 +174,7 @@ field names above where the current API style already does so.
 | Reindex vs retain | T4.1, T5.1 | Immutable generation rows plus exact-one embedding target prevent duplicates. |
 | Chunker-version bump | T7.1 | Edges re-anchor by symbol/path; unmapped edges become degraded. |
 | Machine actor accept/reject | T11.1 | Refused; only human/session or explicit autonomy path can conclude. |
-| Serena seed repeated | T13.1 | Insert-only idempotent ensure with `created`/`skipped` counts. |
+| Serena seed repeated through admin-catalog ensure | T13.1 | Insert-only idempotent ensure with `created`/`skipped` counts. |
 
 ## Test Design Rules
 
@@ -181,8 +184,10 @@ field names above where the current API style already does so.
   reducers, and closed config parsing.
 - Integration tests own DB migrations, route authz, source/index jobs, recall,
   proposals, and task projection.
-- E2E tests own Project Brain UI, file-viewer pointer opening, source actions,
-  proposal review, settings blocks, i18n parity, and no horizontal scroll.
+- SSR component, route, auth, and integration tests own this branch's
+  server-rendered Project Brain UI, source actions, proposal review, settings
+  blocks, and i18n parity. Add Playwright when a browser-only Brain interaction
+  or file-viewer journey is introduced.
 - Tests must avoid overlap: one edge case has one owning test unless a second
   boundary must prove contract parity, such as ext route plus MCP mirror.
 - Trivial tests that repeat TypeScript checking, static rendering, or constant

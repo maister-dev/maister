@@ -10,7 +10,7 @@ lineage. See
 for process flows and [`../database-schema.md`](../database-schema.md) for the
 column-level narrative.
 
-> **Status:** A is Implemented. B/C are Designed for this branch. Migrations:
+> **Status:** A/B/C are Implemented in this branch. Migrations:
 > shared-table
 > ALTERs land in the **main** lineage `0088`; `brain_*` CREATEs + `CREATE EXTENSION
 > vector` land in the **separate brain lineage** `web/lib/db/brain-migrations/0001`
@@ -18,7 +18,8 @@ column-level narrative.
 > `brain_embeddings_generation_uq`; own `_journal.json`, own ledger
 > `__drizzle_brain_migrations`). Sub-project B uses brain migration
 > `0003_brain_indexed_tier.sql`; Sub-project C uses
-> `0004_brain_proposals.sql`. The brain lineage is provisioned only on Postgres
+> `0004_brain_proposals.sql` plus
+> `0005_brain_proposal_decision_stats.sql`. The brain lineage is provisioned only on Postgres
 > (SQLite → Brain disabled, D3).
 >
 > **Refinement over the design-spec §4 conceptual shape:** `brain_snapshots` carries
@@ -36,20 +37,24 @@ erDiagram
     PROJECTS ||--o{ BRAIN_SOURCES : "indexes canonical sources (CASCADE)"
     PROJECTS ||--o{ BRAIN_CHUNKS : "owns chunk auth boundary (CASCADE)"
     PROJECTS ||--o{ BRAIN_EDGES : "owns graph refs (CASCADE)"
-    PROJECTS ||--|| BRAIN_PROJECT_CONFIG : "config (CASCADE)"
+    PROJECTS ||--o| BRAIN_PROJECT_CONFIG : "lazy config (CASCADE)"
     PROJECTS ||--o{ BRAIN_PROPOSALS : "improvement proposals (CASCADE)"
+    PROJECTS ||--o{ BRAIN_PROPOSAL_DECISION_STATS : "proposal counters (CASCADE)"
     BRAIN_ITEMS ||--o{ BRAIN_EMBEDDINGS : "generations x splits (CASCADE)"
     BRAIN_SOURCES ||--o{ BRAIN_CHUNKS : "chunks (CASCADE)"
     BRAIN_CHUNKS ||--o{ BRAIN_EMBEDDINGS : "generations (CASCADE)"
     RUNS ||--o{ BRAIN_ITEMS : "provenance source_run_id (SET NULL)"
     DOMAIN_EVENTS ||--o{ BRAIN_ITEMS : "provenance source_domain_event_id (SET NULL)"
     RUNS ||--o{ BRAIN_SNAPSHOTS : "run-bound recall run_id (CASCADE)"
+    FLOWS ||--o{ BRAIN_PROJECT_CONFIG : "projection_flow_id (SET NULL)"
+    TASKS ||--o{ BRAIN_PROPOSALS : "projection task_id (SET NULL)"
+    RUNS ||--o{ BRAIN_PROPOSALS : "projection run_id (SET NULL)"
 
     BRAIN_ITEMS {
         text id PK "uuid"
         text project_id FK "NOT NULL -> projects(id) CASCADE — auth boundary"
         text kind "lesson|observation|state_fact|decision|direction"
-        text tier "owned|indexed"
+        text tier "owned"
         text title "NOT NULL"
         text content "NOT NULL"
         text status "active|expired|superseded"
@@ -225,7 +230,7 @@ erDiagram
 | `brain_embeddings` | (immutable) | — | No UPDATE/DELETE app path except cascade; a re-embed inserts a new generation row. |
 | `brain_embeddings` | `CHECK` (migration `0003`) | exactly one of `item_id`, `chunk_id` | An embedding belongs to one owned item or one indexed chunk, never both or neither. |
 | `brain_embeddings` | `UNIQUE` (migration `0002` + `0003` refinement) | item arm and chunk arm generation keys | Idempotent re-embed for owned items and indexed chunks. |
-| `brain_sources` | `UNIQUE` | `(project_id, path, kind)` | One source registration per canonical source/kind. |
+| `brain_sources` | `UNIQUE` | `(project_id, kind, path)` | One source registration per canonical source/kind. |
 | `brain_chunks` | `UNIQUE` | `(source_id, stable_id)` | Stable chunk identity across reindex. |
 | `brain_proposals` | partial `UNIQUE` | `(project_id, cluster_hash) WHERE cluster_hash IS NOT NULL` | Idempotent improver/propose path for recurring clusters. |
 | `brain_proposal_decision_stats` | `PRIMARY KEY` | `(project_id, kind, blast_radius)` | Autonomy-graduation counters by proposal class. |
@@ -268,7 +273,14 @@ projects
 
 runs
   ├── brain_items.source_run_id      (ON DELETE SET NULL — item survives run delete)
+  ├── brain_proposals.run_id         (ON DELETE SET NULL — proposal survives run delete)
   └── brain_snapshots.run_id         (ON DELETE CASCADE — run-bound snapshot dies with the run)
+
+tasks
+  └── brain_proposals.task_id        (ON DELETE SET NULL — proposal survives task delete)
+
+flows
+  └── brain_project_config.projection_flow_id (ON DELETE SET NULL)
 
 domain_events
   └── brain_items.source_domain_event_id (ON DELETE SET NULL — item survives event prune)
@@ -309,6 +321,6 @@ harvested lesson survives the deletion of the run/event it was distilled from.
   [ADR-127](../decisions.md#adr-127-project-brain-consultant-indexed-tier),
   [ADR-128](../decisions.md#adr-128-project-brain-self-improvement-proposal-bridge).
 - Design spec: [`../plans/2026-07-01-project-brain-architecture.md`](../plans/2026-07-01-project-brain-architecture.md) §4.
-- Source (Implemented): `web/lib/brain/schema.ts`, `web/lib/db/brain-migrations/0001_*.sql`
-  + `0002_brain_review_fixes.sql`, `web/lib/db/migrations/0088_*.sql`,
-  `web/lib/brain/embedding-index.ts`.
+- Source (Implemented): `web/lib/brain/schema.ts`,
+  `web/lib/db/brain-migrations/0001_*.sql` through `0005_*.sql`,
+  `web/lib/db/migrations/0088_*.sql`, `web/lib/brain/embedding-index.ts`.

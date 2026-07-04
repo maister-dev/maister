@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { BrainChunkDraft } from "./chunkers/types";
+import type { OpenAiCompatibleClient } from "./openai-compatible";
+
 import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
@@ -9,19 +12,24 @@ import {
   ChunkerError,
   createBuiltInChunkerRegistry,
 } from "./chunkers/registry";
-import type { BrainChunkDraft } from "./chunkers/types";
 import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
 import { reanchorBrainEdgesForSource } from "./edges";
-import type { OpenAiCompatibleClient } from "./openai-compatible";
-import { readBrainSourceContent } from "./sources";
+import {
+  isBrainSourceGlob,
+  readBrainSourceContents,
+  type SourceContent,
+} from "./sources";
 
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "brain:indexer",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+export const BRAIN_SOURCE_MAX_CHUNKS_PER_JOB = 1_000;
+export const BRAIN_SOURCE_MAX_EMBEDDING_SEGMENTS_PER_JOB = 2_000;
 
 type IndexerTx = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -113,6 +121,26 @@ async function loadSource(
   return (rows.rows[0] as unknown as SourceRow | undefined) ?? null;
 }
 
+async function loadExactPeerSourcePaths(
+  db: IndexerTx,
+  source: SourceRow,
+): Promise<string[]> {
+  if (!isBrainSourceGlob(source.path)) return [];
+
+  const rows = await db.execute(sql`
+    SELECT path
+    FROM brain_sources
+    WHERE project_id = ${source.project_id}
+      AND id <> ${source.id}
+      AND kind = ${source.kind}
+      AND enabled = true
+  `);
+
+  return rows.rows
+    .map((row) => String(row.path))
+    .filter((path) => !isBrainSourceGlob(path));
+}
+
 async function loadExistingChunks(
   db: IndexerTx,
   source: SourceRow,
@@ -189,6 +217,10 @@ function sourceErrorPayload(error: unknown): Record<string, unknown> {
   };
 }
 
+function isTransientEmbeddingError(error: unknown): boolean {
+  return isMaisterError(error) && error.code === "EMBEDDING_UNAVAILABLE";
+}
+
 async function recordSourceError(
   db: IndexerTx,
   job: SourceJobRow,
@@ -199,7 +231,9 @@ async function recordSourceError(
   const payload = sourceErrorPayload(error);
 
   if (opts.retireChunks) {
-    await db.execute(sql`DELETE FROM brain_chunks WHERE source_id = ${job.source_id}`);
+    await db.execute(
+      sql`DELETE FROM brain_chunks WHERE source_id = ${job.source_id}`,
+    );
     await reanchorBrainEdgesForSource(db, {
       projectId: job.project_id,
       sourceId: job.source_id,
@@ -233,6 +267,7 @@ async function buildChunkPlans(
   client: OpenAiCompatibleClient,
 ): Promise<ChunkPlan[]> {
   const plans: ChunkPlan[] = [];
+  let segmentCount = 0;
 
   for (const draft of drafts) {
     const contentHash = sha256(draft.content);
@@ -242,6 +277,28 @@ async function buildChunkPlans(
       old.content_hash !== contentHash ||
       !old.has_current_embedding;
     const segments = shouldEmbed ? splitForEmbedding(draft.content) : [];
+
+    segmentCount += segments.length;
+
+    if (segmentCount > BRAIN_SOURCE_MAX_EMBEDDING_SEGMENTS_PER_JOB) {
+      log.warn(
+        {
+          projectId: source.project_id,
+          sourceId: source.id,
+          path: source.path,
+          segmentCount,
+          maxSegments: BRAIN_SOURCE_MAX_EMBEDDING_SEGMENTS_PER_JOB,
+          reason: "embedding_segment_limit",
+        },
+        "brain source embedding budget exceeded",
+      );
+
+      throw new MaisterError(
+        "PRECONDITION",
+        `Brain source "${source.path}" produced ${segmentCount} embedding segments; limit is ${BRAIN_SOURCE_MAX_EMBEDDING_SEGMENTS_PER_JOB}`,
+      );
+    }
+
     const vectors = segments.length > 0 ? await client.embed(segments) : [];
 
     plans.push({
@@ -257,6 +314,30 @@ async function buildChunkPlans(
   return plans;
 }
 
+function assertChunkBudget(
+  source: SourceRow,
+  drafts: readonly BrainChunkDraft[],
+): void {
+  if (drafts.length <= BRAIN_SOURCE_MAX_CHUNKS_PER_JOB) return;
+
+  log.warn(
+    {
+      projectId: source.project_id,
+      sourceId: source.id,
+      path: source.path,
+      chunkCount: drafts.length,
+      maxChunks: BRAIN_SOURCE_MAX_CHUNKS_PER_JOB,
+      reason: "chunk_limit",
+    },
+    "brain source chunk budget exceeded",
+  );
+
+  throw new MaisterError(
+    "PRECONDITION",
+    `Brain source "${source.path}" produced ${drafts.length} chunks; limit is ${BRAIN_SOURCE_MAX_CHUNKS_PER_JOB}`,
+  );
+}
+
 async function persistChunkPlans(
   tx: IndexerTx,
   source: SourceRow,
@@ -268,7 +349,9 @@ async function persistChunkPlans(
   const stableIds = plans.map((plan) => plan.draft.stableId);
 
   if (stableIds.length === 0) {
-    await tx.execute(sql`DELETE FROM brain_chunks WHERE source_id = ${source.id}`);
+    await tx.execute(
+      sql`DELETE FROM brain_chunks WHERE source_id = ${source.id}`,
+    );
   } else {
     await tx.execute(sql`
       DELETE FROM brain_chunks
@@ -370,17 +453,19 @@ export async function processSourceIndexJob(
     return { chunksEmbedded: 0 };
   }
 
-  let content: string;
+  let files: SourceContent[];
   let sourceHash: string;
 
   try {
-    const read = await readBrainSourceContent({
+    const excludePaths = await loadExactPeerSourcePaths(db, source);
+    const read = await readBrainSourceContents({
       repoPath: source.repo_path,
       ref: source.main_branch,
       path: source.path,
+      excludePaths,
     });
 
-    content = read.content;
+    files = read.files;
     sourceHash = read.sourceHash;
   } catch (error) {
     await recordSourceError(db, job, "read", error, { retireChunks: true });
@@ -405,13 +490,16 @@ export async function processSourceIndexJob(
   let drafts: BrainChunkDraft[];
 
   try {
-    const chunked = createBuiltInChunkerRegistry().chunk({
-      path: source.path,
-      content,
-      kind: source.kind as never,
-    });
+    drafts = files.flatMap((file) => {
+      const chunked = createBuiltInChunkerRegistry().chunk({
+        path: file.path,
+        content: file.content,
+        kind: source.kind as never,
+      });
 
-    drafts = chunked.chunks;
+      return chunked.chunks;
+    });
+    assertChunkBudget(source, drafts);
   } catch (error) {
     await recordSourceError(db, job, "chunk", error, { retireChunks: false });
 
@@ -419,7 +507,17 @@ export async function processSourceIndexJob(
   }
 
   const existing = await loadExistingChunks(db, source, client);
-  const plans = await buildChunkPlans(source, drafts, existing, client);
+  let plans: ChunkPlan[];
+
+  try {
+    plans = await buildChunkPlans(source, drafts, existing, client);
+  } catch (error) {
+    if (isTransientEmbeddingError(error)) throw error;
+
+    await recordSourceError(db, job, "embed", error, { retireChunks: false });
+
+    return { chunksEmbedded: 0 };
+  }
 
   return db.transaction(async (tx) => ({
     chunksEmbedded: await persistChunkPlans(

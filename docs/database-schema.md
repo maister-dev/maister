@@ -2470,7 +2470,7 @@ idempotent.
 }
 ```
 
-## Project Brain tables (A implemented, B/C designed — ADR-122/127/128)
+## Project Brain tables (A/B/C implemented — ADR-122/127/128)
 
 The Project Brain bounded context lives in `brain_*` tables provisioned by a
 **separate migration lineage** (`web/lib/db/brain-migrations`, own
@@ -2479,7 +2479,8 @@ pgvector-enabled Postgres image only (SQLite → Brain disabled, D3). The
 shared-table columns that enable A land in the **main** lineage `0088` (see the
 alters at the end of this section). Sub-project B adds brain migration
 `0003_brain_indexed_tier.sql`; Sub-project C adds
-`0004_brain_proposals.sql`. Full ERD: [`db/brain-domain.md`](db/brain-domain.md).
+`0004_brain_proposals.sql` and `0005_brain_proposal_decision_stats.sql`.
+Full ERD: [`db/brain-domain.md`](db/brain-domain.md).
 
 ### `brain_items`
 
@@ -2490,7 +2491,7 @@ One knowledge item; `project_id` is the auth boundary (recall never crosses it).
   id,                              // text PK (uuid)
   projectId,                       // FK projects(id) ON DELETE CASCADE
   kind,                            // 'lesson' | 'observation' | 'state_fact' | 'decision' | 'direction'
-  tier,                            // 'owned' | 'indexed'
+  tier,                            // 'owned'
   title, content,                  // NOT NULL
   status,                          // 'active' | 'expired' | 'superseded'
   confidence,                      // numeric, CHECK 0..1; confidence0 = 0.3 on insert
@@ -2539,7 +2540,7 @@ exactly one of `item_id` or `chunk_id`. Generation UNIQUEs cover both arms.
 }
 ```
 
-### `brain_sources` (Designed — migration `0003`)
+### `brain_sources` (Implemented — migration `0003`)
 
 Canonical source registrations for the Consultant tier. Reads derive
 `repo_path` and `main_branch` from the project row; source APIs return metadata
@@ -2560,7 +2561,7 @@ and pointers only.
 }
 ```
 
-### `brain_chunks` (Designed — migration `0003`)
+### `brain_chunks` (Implemented — migration `0003`)
 
 Structured chunks emitted by `ChunkerRegistry`. They are indexing artifacts, not
 canonical truth; recall returns a capped preview plus a pointer.

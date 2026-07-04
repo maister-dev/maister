@@ -16,6 +16,7 @@ import {
   isBrainFullyConfigured,
   reconcileBrainIndexJobs,
 } from "@/lib/brain/settings";
+import { seedDefaultBrainSourcesForFirstSetup } from "@/lib/brain/sources";
 import {
   saveBrainHomeResolution,
   type BrainHomeResolution,
@@ -27,6 +28,8 @@ import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
 import { taskQueueSettingsSchema } from "@/lib/tasks/queue-settings";
 import { autoPromotionConfigSchema } from "@/lib/auto-promotion/config";
 
+// FIXME(any): Drizzle's mixed Postgres/SQLite schema export loses table typing at
+// this route boundary; route writes stay constrained by the imported table names.
 const { platformAcpRunners, projects } = schemaModule as unknown as Record<
   string,
   any
@@ -113,6 +116,8 @@ export async function PATCH(
     // the body schema or force body parsing via a validation error.
     await requireActiveSession();
 
+    // FIXME(any): getDb returns the runtime-selected Drizzle dialect; this route
+    // uses only common select/update/transaction operations shared by both.
     const db = getDb() as any;
     const projectRows = await db
       .select()
@@ -218,29 +223,40 @@ export async function PATCH(
       throw new MaisterError("CONFIG", "PATCH body contains no settings");
     }
 
-    await db.transaction(async (tx: any) => {
-      if (Object.keys(update).length > 0) {
-        await tx.update(projects).set(update).where(eq(projects.id, project.id));
-      }
+    await db.transaction(
+      // FIXME(any): transaction client type is dialect-dependent but passed only
+      // to helpers that use SQL/common Drizzle primitives.
+      async (tx: any) => {
+        if (Object.keys(update).length > 0) {
+          await tx
+            .update(projects)
+            .set(update)
+            .where(eq(projects.id, project.id));
+        }
 
-      if (body.homeResolution !== undefined) {
-        await saveBrainHomeResolution(
-          tx,
-          project.id,
-          body.homeResolution as BrainHomeResolution,
-        );
-      }
+        if (body.homeResolution !== undefined) {
+          await saveBrainHomeResolution(
+            tx,
+            project.id,
+            body.homeResolution as BrainHomeResolution,
+          );
+        }
 
-      if (
-        body.projectionFlowId !== undefined ||
-        body.autonomyDefaults !== undefined
-      ) {
-        await saveBrainAutonomyConfig(tx, project.id, {
-          projectionFlowId: body.projectionFlowId,
-          autonomyDefaults: body.autonomyDefaults,
-        });
-      }
-    });
+        if (
+          body.projectionFlowId !== undefined ||
+          body.autonomyDefaults !== undefined
+        ) {
+          await saveBrainAutonomyConfig(tx, project.id, {
+            projectionFlowId: body.projectionFlowId,
+            autonomyDefaults: body.autonomyDefaults,
+          });
+        }
+
+        if (body.brainEnabled === true) {
+          await seedDefaultBrainSourcesForFirstSetup(tx, project.id);
+        }
+      },
+    );
 
     // ADR-122: a project re-enabled AFTER a generation switch has old-generation
     // embeddings only — reconcile-enqueue a reindex job so its vector leg

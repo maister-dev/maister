@@ -10697,7 +10697,9 @@ optional non-executable MCP catalog row.
 **Decision:**
 
 - Brain migration `0004_brain_proposals.sql` adds `brain_proposals` and any
-  proposal-local config needed for autonomy. Proposal status is a closed FSM:
+  proposal-local config needed for autonomy. Brain migration
+  `0005_brain_proposal_decision_stats.sql` adds the durable autonomy-graduation
+  counters keyed by `(project_id, kind, blast_radius)`. Proposal status is a closed FSM:
   `pending -> accepted -> applied` and `pending -> rejected`; stale or invalid
   transitions fail with `CONFLICT`/`CONFIG`.
 - Proposal kinds are closed: `rule`, `skill`, `flow`, `adr`, `roadmap`, and
@@ -10716,9 +10718,9 @@ optional non-executable MCP catalog row.
   `cron` and `manual`, and a default weekly schedule.
 - Human accept/reject is session-auth. Rule/skill/flow acceptance requires the
   same project/catalog permissions as manual authored-catalog draft creation.
-  ADR/roadmap/state projection acceptance requires the chosen task action
-  (`createTask` or `editTask`), because docs-as-code work must enter the board
-  and run/promotion machine.
+  ADR/roadmap/state projection acceptance requires `createTask`, because
+  docs-as-code work enters the board as a new task and then uses the normal
+  run/promotion machine.
 - Autonomy defaults to manual. The only automatic mode in this slice is
   `auto_draft`, which can create an authored draft or projection task inside an
   allowed low-blast-radius zone. `auto_publish` is not a schema, config, API, UI,

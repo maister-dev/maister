@@ -1,21 +1,20 @@
 import "server-only";
 
+import type { BuiltInSourceKind } from "./chunkers/types";
+
 import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
+import picomatch from "picomatch";
 import pino from "pino";
 import { z } from "zod";
 
-import {
-  defaultChunkerIdForKind,
-  detectSourceKind,
-} from "./chunkers/registry";
-import type { BuiltInSourceKind } from "./chunkers/types";
+import { defaultChunkerIdForKind, detectSourceKind } from "./chunkers/registry";
 import { sha256 } from "./codec";
 
 import { workbenchMaxFileBytes } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
-import { readBlob, repoRelPathSchema } from "@/lib/worktree";
+import { listTree, readBlob, repoRelPathSchema } from "@/lib/worktree";
 
 const log = pino({
   name: "brain:sources",
@@ -23,6 +22,8 @@ const log = pino({
 });
 
 export const BRAIN_SOURCE_CHUNKER_VERSION = "1";
+export const BRAIN_SOURCE_MAX_GLOB_MATCHES = 200;
+export const BRAIN_SOURCE_MAX_TOTAL_BYTES = 2_000_000;
 
 const BRAIN_SOURCE_KINDS = [
   "repo_file",
@@ -47,7 +48,7 @@ const sourceInputSchema = z
   })
   .strict();
 
-type SourcesDb = {
+export type SourcesDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
 
@@ -83,7 +84,13 @@ export interface BrainSourceDto {
 }
 
 export interface SourceContent {
+  path: string;
   content: string;
+  sourceHash: string;
+}
+
+export interface SourceContentSet {
+  files: SourceContent[];
   sourceHash: string;
 }
 
@@ -118,7 +125,9 @@ function toBrainSourceDto(row: Record<string, unknown>): BrainSourceDto {
   };
 }
 
-function parseSourceInput(input: BrainSourceInput): z.infer<typeof sourceInputSchema> {
+function parseSourceInput(
+  input: BrainSourceInput,
+): z.infer<typeof sourceInputSchema> {
   const parsed = sourceInputSchema.safeParse(input);
 
   if (!parsed.success) {
@@ -144,8 +153,56 @@ function validateSourcePath(path: string): string {
   return parsed.data;
 }
 
-function isGlobSource(path: string): boolean {
+export function isBrainSourceGlob(path: string): boolean {
   return /[*?[\]{}]/.test(path);
+}
+
+async function listTrackedFilePaths(args: {
+  repoPath: string;
+  ref: string;
+  dir?: string;
+}): Promise<string[]> {
+  const paths: string[] = [];
+
+  async function visit(dir: string): Promise<void> {
+    const tree = await listTree({ repo: args.repoPath, ref: args.ref, dir });
+
+    if (!tree) return;
+
+    for (const entry of tree.entries) {
+      const nextPath = dir === "" ? entry.name : `${dir}/${entry.name}`;
+
+      if (entry.type === "dir") {
+        await visit(nextPath);
+      } else {
+        paths.push(nextPath);
+      }
+    }
+  }
+
+  await visit(args.dir ?? "");
+
+  return paths.sort();
+}
+
+function globSearchRoot(path: string): string {
+  const firstGlobIndex = path.search(/[*?[\]{}]/);
+
+  if (firstGlobIndex === -1)
+    return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+
+  const fixedPrefix = path.slice(0, firstGlobIndex);
+  const lastSlashIndex = fixedPrefix.lastIndexOf("/");
+
+  if (lastSlashIndex === -1) return "";
+
+  return fixedPrefix.slice(0, lastSlashIndex);
+}
+
+function hashSourceContentSet(files: readonly SourceContent[]): string {
+  return sha256(
+    files.map((file) => `${file.path}\0${file.sourceHash}`).join("\0"),
+  );
 }
 
 export async function readBrainSourceContent(args: {
@@ -156,7 +213,7 @@ export async function readBrainSourceContent(args: {
 }): Promise<SourceContent> {
   const path = validateSourcePath(args.path);
 
-  if (isGlobSource(path)) {
+  if (isBrainSourceGlob(path)) {
     throw new MaisterError(
       "CONFIG",
       `Brain source "${path}" is a glob and must be expanded before content read`,
@@ -171,7 +228,11 @@ export async function readBrainSourceContent(args: {
   });
 
   if (blob.kind === "text") {
-    return { content: blob.content, sourceHash: sha256(blob.content) };
+    return {
+      path,
+      content: blob.content,
+      sourceHash: sha256(blob.content),
+    };
   }
 
   if (blob.kind === "too-large") {
@@ -194,13 +255,115 @@ export async function readBrainSourceContent(args: {
   );
 }
 
-async function assertExactSourceReadable(args: {
+export async function readBrainSourceContents(args: {
+  repoPath: string;
+  ref: string;
+  path: string;
+  maxBytes?: number;
+  excludePaths?: readonly string[];
+  maxMatches?: number;
+  maxTotalBytes?: number;
+}): Promise<SourceContentSet> {
+  const path = validateSourcePath(args.path);
+
+  if (!isBrainSourceGlob(path)) {
+    const content = await readBrainSourceContent({ ...args, path });
+
+    return { files: [content], sourceHash: content.sourceHash };
+  }
+
+  const isMatch = picomatch(path, { dot: true });
+  const excludedPaths = new Set(
+    (args.excludePaths ?? []).map((excludedPath) =>
+      validateSourcePath(excludedPath),
+    ),
+  );
+  const trackedMatches = (
+    await listTrackedFilePaths({
+      repoPath: args.repoPath,
+      ref: args.ref,
+      dir: globSearchRoot(path),
+    })
+  ).filter((filePath) => isMatch(filePath));
+  const matchedPaths = trackedMatches.filter(
+    (filePath) => !excludedPaths.has(filePath),
+  );
+  const maxMatches = args.maxMatches ?? BRAIN_SOURCE_MAX_GLOB_MATCHES;
+
+  if (trackedMatches.length === 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `Brain source glob "${path}" matched no tracked files at ${args.ref}`,
+    );
+  }
+
+  if (matchedPaths.length === 0) {
+    return { files: [], sourceHash: hashSourceContentSet([]) };
+  }
+
+  if (matchedPaths.length > maxMatches) {
+    log.warn(
+      {
+        path,
+        ref: args.ref,
+        matchCount: matchedPaths.length,
+        maxMatches,
+        reason: "glob_match_limit",
+      },
+      "brain source glob rejected",
+    );
+
+    throw new MaisterError(
+      "PRECONDITION",
+      `Brain source glob "${path}" matched ${matchedPaths.length} tracked files at ${args.ref}; limit is ${maxMatches}`,
+    );
+  }
+
+  const files: SourceContent[] = [];
+  const maxTotalBytes = args.maxTotalBytes ?? BRAIN_SOURCE_MAX_TOTAL_BYTES;
+  let totalBytes = 0;
+
+  for (const filePath of matchedPaths) {
+    const file = await readBrainSourceContent({
+      ...args,
+      path: filePath,
+    });
+
+    totalBytes += Buffer.byteLength(file.content, "utf8");
+
+    if (totalBytes > maxTotalBytes) {
+      log.warn(
+        {
+          path,
+          ref: args.ref,
+          totalBytes,
+          maxTotalBytes,
+          reason: "glob_total_bytes_limit",
+        },
+        "brain source glob rejected",
+      );
+
+      throw new MaisterError(
+        "PRECONDITION",
+        `Brain source glob "${path}" exceeds the aggregate indexed byte limit (${totalBytes}/${maxTotalBytes})`,
+      );
+    }
+
+    files.push(file);
+  }
+
+  return {
+    files,
+    sourceHash: hashSourceContentSet(files),
+  };
+}
+
+async function assertSourceReadable(args: {
   repoPath: string;
   ref: string;
   path: string;
 }): Promise<void> {
-  if (isGlobSource(args.path)) return;
-  await readBrainSourceContent(args);
+  await readBrainSourceContents(args);
 }
 
 export async function listBrainSources(
@@ -235,7 +398,7 @@ export async function createBrainSource(
   const kind = input.kind ?? detectSourceKind(path);
   const chunkerId = input.chunkerId ?? defaultChunkerIdForKind(kind);
 
-  await assertExactSourceReadable({
+  await assertSourceReadable({
     repoPath: args.repoPath,
     ref: args.mainBranch,
     path,
@@ -276,7 +439,7 @@ export async function updateBrainSource(
   const kind = input.kind ?? current.kind;
   const chunkerId = input.chunkerId ?? current.chunkerId;
 
-  await assertExactSourceReadable({
+  await assertSourceReadable({
     repoPath: args.repoPath,
     ref: args.mainBranch,
     path,
@@ -415,10 +578,35 @@ export async function seedDefaultBrainSources(
 
     if (inserted.rows.length === 0) continue;
 
-    created.push(await getBrainSource(db, projectId, String(inserted.rows[0]?.id)));
+    created.push(
+      await getBrainSource(db, projectId, String(inserted.rows[0]?.id)),
+    );
   }
 
   return created;
+}
+
+export async function seedDefaultBrainSourcesForFirstSetup(
+  db: SourcesDb,
+  projectId: string,
+): Promise<BrainSourceDto[]> {
+  const existing = await db.execute(sql`
+    SELECT id
+    FROM brain_sources
+    WHERE project_id = ${projectId}
+    LIMIT 1
+  `);
+
+  if (existing.rows.length > 0) {
+    log.debug(
+      { projectId, reason: "existing_sources_present" },
+      "brain default source seed skipped",
+    );
+
+    return [];
+  }
+
+  return seedDefaultBrainSources(db, projectId);
 }
 
 async function getBrainSource(

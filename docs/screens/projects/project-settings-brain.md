@@ -37,7 +37,8 @@ flowchart TD
 ## Layout & regions
 
 - Enablement row: project Brain toggle and status.
-- Home resolution: per-kind segmented controls for `owned` versus `indexed`.
+- Home resolution: per-kind dropdown selectors with the default policy plus
+  `owned` and `indexed` choices.
 - Sources: managed from the Project Brain tab, not duplicated in Settings.
 - Projection: flow picker for docs/state projection tasks.
 - Autonomy overrides: compact selectors limited to `manual` and `auto_draft`.

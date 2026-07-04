@@ -36,11 +36,11 @@ import {
   getSessionUser,
   requireProjectAction,
 } from "@/lib/authz";
+import { isBrainProvisioned, isBrainSchemaApplied } from "@/lib/brain/guard";
 import {
-  isBrainProvisioned,
-  isBrainSchemaApplied,
-} from "@/lib/brain/guard";
-import { loadProjectBrainPanelData } from "@/lib/brain/ui-queries";
+  loadProjectBrainPanelData,
+  type BrainUiDb,
+} from "@/lib/brain/ui-queries";
 import { getDb } from "@/lib/db/client";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
@@ -242,7 +242,7 @@ export default async function ProjectBoardPage({
   const brainPanelData =
     tab === "brain" && isBrainProvisioned()
       ? await (async () => {
-          const db = getDb() as any;
+          const db = getDb() as unknown as BrainUiDb;
 
           if (!(await isBrainSchemaApplied(db))) {
             return { memory: [], proposals: [], sources: [] };
@@ -460,7 +460,6 @@ export default async function ProjectBoardPage({
       {tab === "brain" ? (
         <ProjectBrainPanel
           canManageSources={isAdmin}
-          canReviewProposals={canAct}
           labels={{
             title: tBrain("title"),
             memoryTitle: tBrain("memoryTitle"),
@@ -493,6 +492,11 @@ export default async function ProjectBoardPage({
             emptyProposals: tBrain("emptyProposals"),
           }}
           memory={brainPanelData.memory}
+          proposalCapabilities={{
+            canAcceptCatalog: isAdmin,
+            canAcceptProjection: canAct,
+            canReject: canAct,
+          }}
           proposals={brainPanelData.proposals}
           query={brainQuery}
           slug={slug}

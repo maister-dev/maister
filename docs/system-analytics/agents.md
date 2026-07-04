@@ -81,7 +81,8 @@ not contain the package-root `maister-agents/`).
   (runner, branch base, autoApply, onBudgetBreach). The two per-link Brain toggles
   (`canReadBrain`/`canWriteBrain`, default false) are edited on the attach/edit
   modal and surface as a `brain:rw` chip on the attached row; they gate the agent
-  token's `memory_recall`/`memory_retain` access
+  token's `memory_recall`/`memory_clusters` and
+  `memory_retain`/`memory_propose` access
   ([project-brain.md](project-brain.md)).
 - **`agent_schedules`** (Implemented) — trigger bindings per (agent, project):
   `trigger_type='cron'` rows carry `cron_expr + timezone + next_fire_at +

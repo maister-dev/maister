@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ProjectBrainPanel,
+  type BrainProposalReviewCapabilities,
   type ProjectBrainPanelLabels,
 } from "@/components/brain/project-brain-panel";
 
@@ -39,7 +40,15 @@ const labels: ProjectBrainPanelLabels = {
   emptyProposals: "No proposals",
 };
 
-function render(): string {
+const fullProposalCapabilities: BrainProposalReviewCapabilities = {
+  canAcceptCatalog: true,
+  canAcceptProjection: true,
+  canReject: true,
+};
+
+function render(
+  proposalCapabilities: BrainProposalReviewCapabilities = fullProposalCapabilities,
+): string {
   return renderToStaticMarkup(
     createElement(ProjectBrainPanel, {
       slug: "demo",
@@ -86,7 +95,24 @@ function render(): string {
           ],
           createdAt: "2026-07-03T00:00:00.000Z",
         },
+        {
+          id: "proposal-2",
+          kind: "state",
+          status: "pending",
+          blastRadius: "low",
+          autonomyDecision: "manual",
+          draft: { title: "Document Brain state" },
+          evidence: [
+            {
+              id: "item-2",
+              title: "Brain source state",
+              pointer: { sourcePath: "docs/system-analytics/project-brain.md" },
+            },
+          ],
+          createdAt: "2026-07-03T00:00:00.000Z",
+        },
       ],
+      proposalCapabilities,
       sources: [
         {
           id: "source-1",
@@ -126,7 +152,24 @@ describe("ProjectBrainPanel", () => {
     expect(html).toContain('data-testid="brain-source-reindex-all"');
     expect(html).toContain('data-testid="brain-proposal-accept-proposal-1"');
     expect(html).toContain('data-testid="brain-proposal-reject-proposal-1"');
+    expect(html).toContain('data-testid="brain-proposal-accept-proposal-2"');
+    expect(html).toContain('data-testid="brain-proposal-reject-proposal-2"');
     expect(html).toContain("Reason");
     expect(html).not.toContain("auto_publish");
+  });
+
+  it("hides catalog accept actions when the user can only reject and accept projections", () => {
+    const html = render({
+      canAcceptCatalog: false,
+      canAcceptProjection: true,
+      canReject: true,
+    });
+
+    expect(html).not.toContain(
+      'data-testid="brain-proposal-accept-proposal-1"',
+    );
+    expect(html).toContain('data-testid="brain-proposal-reject-proposal-1"');
+    expect(html).toContain('data-testid="brain-proposal-accept-proposal-2"');
+    expect(html).toContain('data-testid="brain-proposal-reject-proposal-2"');
   });
 });

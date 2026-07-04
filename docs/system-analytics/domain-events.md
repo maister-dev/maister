@@ -131,6 +131,12 @@ borrows ([scheduler.md](scheduler.md)).
   skip-advance. At-least-once redelivery is idempotent via the
   `brain_harvested_events` ledger written in `retain`'s transaction (F4). See
   [project-brain.md](project-brain.md).
+- **`brain_source_reindex` consumer** (ADR-127 — Implemented) — the Project-Brain
+  source-index consumer (`startFrom: "now"`): matches run-terminal domain events
+  and enqueues source-scoped `brain_index_jobs` with reason `event` for enabled
+  sources on enabled Brain projects. It is idempotent under the queued/running
+  job guard plus the recorded `domainEventId` in `resumable_cursor`; external
+  repository edits are still manual reindex, not watched.
 
 ## State machine
 
@@ -233,7 +239,7 @@ flowchart TD
 - `domain_events` MUST be append-only: no UPDATE or DELETE application paths;
   any future pruning MUST honor `min(cursor_event_id)` across registered
   consumers (no pruning in this stage).
-- `domain_events.kind` MUST be one of the 8 taxonomy kinds (CHECK-enforced);
+- `domain_events.kind` MUST be one of the 10 taxonomy kinds (CHECK-enforced);
   `task.triage_requeued` MUST be emitted only by the M34 "Send to triage"
   action (Implemented) — no other emitter.
 - The dispatch read window MUST be exactly `id > cursor_event_id AND tx_id <

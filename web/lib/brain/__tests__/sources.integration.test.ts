@@ -9,12 +9,15 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  BRAIN_SOURCE_MAX_GLOB_MATCHES,
   createBrainSource,
   deleteBrainSource,
   enqueueBrainSourceReindex,
   listBrainSources,
   readBrainSourceContent,
+  readBrainSourceContents,
   seedDefaultBrainSources,
+  seedDefaultBrainSourcesForFirstSetup,
   updateBrainSource,
 } from "@/lib/brain/sources";
 import {
@@ -37,9 +40,22 @@ async function createFixtureRepo(): Promise<string> {
   await git(repo, ["config", "user.email", "test@example.com"]);
   await git(repo, ["config", "user.name", "Test User"]);
   await mkdir(join(repo, "docs/api"), { recursive: true });
+  await mkdir(join(repo, "docs/guide"), { recursive: true });
+  await mkdir(join(repo, "many"), { recursive: true });
   await mkdir(join(repo, "src"), { recursive: true });
   await writeFile(join(repo, "docs/README.md"), "# Brain Docs\n");
-  await writeFile(join(repo, "docs/api/openapi.yaml"), "openapi: 3.0.3\npaths: {}\n");
+  await writeFile(join(repo, "docs/decisions.md"), "# Decisions\n");
+  await writeFile(join(repo, "docs/guide/intro.md"), "# Intro\n");
+  await writeFile(
+    join(repo, "docs/api/openapi.yaml"),
+    "openapi: 3.0.3\npaths: {}\n",
+  );
+  for (let index = 0; index <= BRAIN_SOURCE_MAX_GLOB_MATCHES; index++) {
+    await writeFile(
+      join(repo, "many", `file-${index}.md`),
+      `# File ${index}\n`,
+    );
+  }
   await writeFile(join(repo, "src/index.ts"), "export const answer = 42;\n");
   await writeFile(join(repo, ".gitignore"), "ignored.txt\n");
   await writeFile(join(repo, "ignored.txt"), "ignored\n");
@@ -92,6 +108,34 @@ describe("Project Brain sources (ADR-127)", () => {
     expect(listed.some((source) => source.path === "docs/**/*.md")).toBe(true);
   });
 
+  it("skips suggested defaults after the project already has curated sources", async () => {
+    const curatedRepoPath = await createFixtureRepo();
+    const curatedProjectId = await seedBrainProject(ctx.db, {
+      slug: `brain-sources-curated-${randomUUID().slice(0, 8)}`,
+    });
+
+    await ctx.db.execute(sql`
+      UPDATE projects
+      SET repo_path = ${curatedRepoPath}, main_branch = 'main'
+      WHERE id = ${curatedProjectId}
+    `);
+    await createBrainSource(ctx.db, {
+      projectId: curatedProjectId,
+      repoPath: curatedRepoPath,
+      mainBranch: "main",
+      input: { path: "src/index.ts" },
+    });
+
+    const seeded = await seedDefaultBrainSourcesForFirstSetup(
+      ctx.db,
+      curatedProjectId,
+    );
+    const listed = await listBrainSources(ctx.db, curatedProjectId);
+
+    expect(seeded).toHaveLength(0);
+    expect(listed.map((source) => source.path)).toEqual(["src/index.ts"]);
+  });
+
   it("registers an exact tracked source with autodetected kind and chunker metadata", async () => {
     const source = await createBrainSource(ctx.db, {
       projectId,
@@ -119,6 +163,40 @@ describe("Project Brain sources (ADR-127)", () => {
       content: "openapi: 3.0.3\npaths: {}\n",
     });
     expect(content.sourceHash).toHaveLength(64);
+  });
+
+  it("expands glob sources only to tracked matching files", async () => {
+    const content = await readBrainSourceContents({
+      repoPath,
+      ref: "main",
+      path: "docs/**/*.md",
+    });
+
+    expect(content.sourceHash).toHaveLength(64);
+    expect(content.files.map((file) => file.path)).toEqual([
+      "docs/README.md",
+      "docs/decisions.md",
+      "docs/guide/intro.md",
+    ]);
+  });
+
+  it("rejects overly broad glob sources before registration", async () => {
+    await expect(
+      readBrainSourceContents({
+        repoPath,
+        ref: "main",
+        path: "many/**/*.md",
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    await expect(
+      createBrainSource(ctx.db, {
+        projectId,
+        repoPath,
+        mainBranch: "main",
+        input: { path: "many/**/*.md", kind: "markdown" },
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
   it("fails closed for traversal, .git, ignored, and untracked source paths", async () => {

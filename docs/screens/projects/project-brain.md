@@ -19,9 +19,9 @@ Brain improves the system without becoming a second authority.
 
 | Role | Can see | Can act |
 | --- | --- | --- |
-| Project viewer | Memory search results, source list, proposal list | Open canonical pointers only when `readRepoFiles` also passes |
-| Project member/admin/owner | Same | Same |
-| Project admin/owner | Same | Add/update/remove/reindex sources via `editSettings`; accept catalog proposals with `manageCatalog`; accept docs projection proposals with task permissions |
+| Project viewer | No Brain page access; `readBrain` requires project member | No Brain actions |
+| Project member | Memory search results, source list, proposal list | Open canonical pointers only when `readRepoFiles` also passes; reject pending proposals via `writeBrain`; accept docs/state projection proposals through task permissions |
+| Project admin/owner | Same | Reindex individual sources and run index-all via `editSettings`; accept catalog proposals with `manageCatalog`; accept docs/state projection proposals with task permissions |
 | Global admin | Same as project owner | Same as project owner |
 
 ## Navigation
@@ -47,9 +47,13 @@ The page uses the existing app shell and project chrome. Primary regions:
 - Memory search: compact search input, tier badges (`owned` / `indexed`),
   confidence, preview, and canonical pointer link.
 - Sources: table with path/glob, kind, chunker, enabled state, chunk count, last
-  indexed time, last error, per-source reindex, and index-all action.
-- Proposals: pending count, evidence links, draft JSON preview, accept action,
-  and reject with reason. Accepted catalog proposals link to authored drafts;
+  indexed time, last error, per-source reindex, and index-all action. Source
+  add/update/remove exist on the API surface but are not currently exposed as UI
+  controls on this page.
+- Proposals: pending count, evidence links, draft JSON preview, allowed accept
+  actions, and reject with reason. Catalog accept controls render only for
+  `manageCatalog` users; docs/state projection accept controls render for users
+  with task permissions. Accepted catalog proposals link to authored drafts;
   accepted docs/state proposals link to board tasks.
 
 No Brain API returns source file content. Pointer links open the existing file

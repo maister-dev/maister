@@ -1,4 +1,10 @@
 import type { ReactElement } from "react";
+import type {
+  BrainMemorySearchRow,
+  BrainProposalReviewRow,
+} from "@/lib/brain/ui-queries";
+import type { BrainSourceDto } from "@/lib/brain/sources";
+import type { BrainSourceRef } from "@/lib/brain/schema";
 
 import Link from "next/link";
 
@@ -7,12 +13,6 @@ import {
   BrainSourceReindexAction,
   BrainSourceReindexAllAction,
 } from "@/components/brain/project-brain-actions";
-import type {
-  BrainMemorySearchRow,
-  BrainProposalReviewRow,
-} from "@/lib/brain/ui-queries";
-import type { BrainSourceDto } from "@/lib/brain/sources";
-import type { BrainSourceRef } from "@/lib/brain/schema";
 
 export interface ProjectBrainPanelLabels {
   title: string;
@@ -54,13 +54,18 @@ interface ProjectBrainPanelProps {
   proposals: BrainProposalReviewRow[];
   sources: BrainSourceDto[];
   canManageSources?: boolean;
-  canReviewProposals?: boolean;
+  proposalCapabilities?: BrainProposalReviewCapabilities;
+}
+
+export interface BrainProposalReviewCapabilities {
+  canAcceptCatalog: boolean;
+  canAcceptProjection: boolean;
+  canReject: boolean;
 }
 
 const sectionClass =
   "overflow-hidden rounded-[8px] border border-line bg-paper";
-const headingClass =
-  "m-0 text-[14px] font-bold tracking-[-0.01em] text-ink";
+const headingClass = "m-0 text-[14px] font-bold tracking-[-0.01em] text-ink";
 const tableHeadClass =
   "border-b border-line bg-ivory px-3 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute";
 const tableCellClass = "border-b border-line px-3 py-3 align-top text-[12px]";
@@ -132,6 +137,17 @@ function draftText(draft: Record<string, unknown>): string {
   return JSON.stringify(draft, null, 2);
 }
 
+function canAcceptProposal(
+  kind: BrainProposalReviewRow["kind"],
+  capabilities: BrainProposalReviewCapabilities,
+): boolean {
+  if (kind === "rule" || kind === "skill" || kind === "flow") {
+    return capabilities.canAcceptCatalog;
+  }
+
+  return capabilities.canAcceptProjection;
+}
+
 function MemorySection({
   slug,
   query,
@@ -173,7 +189,9 @@ function MemorySection({
             <article key={item.id} className="grid gap-2 px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={badgeClass}>
-                  {item.tier === "owned" ? labels.tierOwned : labels.tierIndexed}
+                  {item.tier === "owned"
+                    ? labels.tierOwned
+                    : labels.tierIndexed}
                 </span>
                 <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
                   {item.kind}
@@ -247,7 +265,9 @@ function SourcesSection({
                   {formatDate(source.lastIndexedAt) ||
                     labels.sourceNeverIndexed}
                 </td>
-                <td className={tableCellClass}>{errorText(source.lastError)}</td>
+                <td className={tableCellClass}>
+                  {errorText(source.lastError)}
+                </td>
                 <td className={tableCellClass}>{source.chunkCount}</td>
                 <td className={tableCellClass}>
                   {canManageSources ? (
@@ -271,11 +291,13 @@ function ProposalsSection({
   slug,
   labels,
   proposals,
-  canReviewProposals,
-}: Pick<
-  ProjectBrainPanelProps,
-  "slug" | "labels" | "proposals" | "canReviewProposals"
->): ReactElement {
+  proposalCapabilities,
+}: {
+  slug: string;
+  labels: ProjectBrainPanelLabels;
+  proposals: BrainProposalReviewRow[];
+  proposalCapabilities: BrainProposalReviewCapabilities;
+}): ReactElement {
   return (
     <section className={sectionClass}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
@@ -291,53 +313,63 @@ function ProposalsSection({
         </div>
       ) : (
         <div className="divide-y divide-line">
-          {proposals.map((proposal) => (
-            <article
-              key={proposal.id}
-              className="grid gap-3 px-4 py-4 lg:grid-cols-[1fr_auto]"
-            >
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className={badgeClass}>{proposal.kind}</span>
-                  <span className="font-mono text-[10.5px] text-mute">
-                    {proposal.status} · {proposal.blastRadius} ·{" "}
-                    {proposal.autonomyDecision}
-                  </span>
-                </div>
-                <div className="mb-2">
-                  <div className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-                    {labels.proposalEvidence}
+          {proposals.map((proposal) => {
+            const canAccept = canAcceptProposal(
+              proposal.kind,
+              proposalCapabilities,
+            );
+            const canReject = proposalCapabilities.canReject;
+
+            return (
+              <article
+                key={proposal.id}
+                className="grid gap-3 px-4 py-4 lg:grid-cols-[1fr_auto]"
+              >
+                <div className="min-w-0">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className={badgeClass}>{proposal.kind}</span>
+                    <span className="font-mono text-[10.5px] text-mute">
+                      {proposal.status} · {proposal.blastRadius} ·{" "}
+                      {proposal.autonomyDecision}
+                    </span>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {proposal.evidence.map((item) => (
-                      <span key={item.id} className="text-[12px]">
-                        {renderPointer(slug, item.pointer) ?? item.title}
-                      </span>
-                    ))}
+                  <div className="mb-2">
+                    <div className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+                      {labels.proposalEvidence}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {proposal.evidence.map((item) => (
+                        <span key={item.id} className="text-[12px]">
+                          {renderPointer(slug, item.pointer) ?? item.title}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+                      {labels.proposalDraft}
+                    </div>
+                    <pre className="m-0 max-h-[220px] overflow-auto rounded-md border border-line bg-canvas p-3 font-mono text-[11px] leading-[1.45] text-ink">
+                      {draftText(proposal.draft)}
+                    </pre>
                   </div>
                 </div>
-                <div>
-                  <div className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-                    {labels.proposalDraft}
-                  </div>
-                  <pre className="m-0 max-h-[220px] overflow-auto rounded-md border border-line bg-canvas p-3 font-mono text-[11px] leading-[1.45] text-ink">
-                    {draftText(proposal.draft)}
-                  </pre>
-                </div>
-              </div>
-              {canReviewProposals && proposal.status === "pending" ? (
-                <BrainProposalReviewActions
-                  labels={{
-                    accept: labels.accept,
-                    reject: labels.reject,
-                    rejectReason: labels.rejectReason,
-                  }}
-                  proposalId={proposal.id}
-                  slug={slug}
-                />
-              ) : null}
-            </article>
-          ))}
+                {proposal.status === "pending" && (canAccept || canReject) ? (
+                  <BrainProposalReviewActions
+                    canAccept={canAccept}
+                    canReject={canReject}
+                    labels={{
+                      accept: labels.accept,
+                      reject: labels.reject,
+                      rejectReason: labels.rejectReason,
+                    }}
+                    proposalId={proposal.id}
+                    slug={slug}
+                  />
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       )}
     </section>
@@ -352,7 +384,11 @@ export function ProjectBrainPanel({
   proposals,
   sources,
   canManageSources = true,
-  canReviewProposals = true,
+  proposalCapabilities = {
+    canAcceptCatalog: true,
+    canAcceptProjection: true,
+    canReject: true,
+  },
 }: ProjectBrainPanelProps): ReactElement {
   return (
     <section className="grid gap-4">
@@ -374,8 +410,8 @@ export function ProjectBrainPanel({
         sources={sources}
       />
       <ProposalsSection
-        canReviewProposals={canReviewProposals}
         labels={labels}
+        proposalCapabilities={proposalCapabilities}
         proposals={proposals}
         slug={slug}
       />

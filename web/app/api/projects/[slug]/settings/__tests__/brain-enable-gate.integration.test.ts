@@ -78,6 +78,17 @@ async function brainEnabledOf(projectId: string): Promise<boolean> {
   return Boolean(r.rows[0]?.brain_enabled);
 }
 
+async function brainSourcePathsOf(projectId: string): Promise<string[]> {
+  const r = await dbRef.execute(sql`
+    SELECT path
+    FROM brain_sources
+    WHERE project_id = ${projectId}
+    ORDER BY path ASC
+  `);
+
+  return r.rows.map((row) => String(row.path));
+}
+
 async function homeResolutionOf(
   projectId: string,
 ): Promise<Record<string, string>> {
@@ -102,9 +113,15 @@ async function brainProjectConfigOf(projectId: string): Promise<{
   `);
 
   return {
-    homeResolution: (r.rows[0]?.home_resolution ?? {}) as Record<string, string>,
+    homeResolution: (r.rows[0]?.home_resolution ?? {}) as Record<
+      string,
+      string
+    >,
     projectionFlowId: (r.rows[0]?.projection_flow_id as string | null) ?? null,
-    autonomyPolicy: (r.rows[0]?.autonomy_policy ?? {}) as Record<string, string>,
+    autonomyPolicy: (r.rows[0]?.autonomy_policy ?? {}) as Record<
+      string,
+      string
+    >,
   };
 }
 
@@ -151,6 +168,41 @@ describe("project settings brain enable-gate (T5.2)", () => {
 
     expect(res.status).toBe(200);
     expect(await brainEnabledOf(projectId)).toBe(true);
+    expect(new Set(await brainSourcePathsOf(projectId))).toEqual(
+      new Set([
+        ".ai-factory/ROADMAP.md",
+        "docs/**/*.md",
+        "docs/api/*.yaml",
+        "docs/decisions.md",
+        "maister.yaml",
+      ]),
+    );
+  });
+
+  it("does not restore deleted default sources after first setup", async () => {
+    await fullyConfigure();
+    const projectId = await seedBrainProject(ctx.db, { brainEnabled: false });
+    const slug = await slugOf(projectId);
+
+    const enable = await PATCH(patchReq(slug, { brainEnabled: true }), {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(enable.status).toBe(200);
+
+    await dbRef.execute(sql`
+      DELETE FROM brain_sources
+      WHERE project_id = ${projectId} AND path = 'docs/decisions.md'
+    `);
+
+    const saveAgain = await PATCH(patchReq(slug, { brainEnabled: true }), {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(saveAgain.status).toBe(200);
+    expect(await brainSourcePathsOf(projectId)).not.toContain(
+      "docs/decisions.md",
+    );
   });
 
   it("refuses to enable (422 CONFIG) when the distill model is unset, and does NOT persist", async () => {

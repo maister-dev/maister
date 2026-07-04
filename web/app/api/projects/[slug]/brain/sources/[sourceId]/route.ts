@@ -3,7 +3,11 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { deleteBrainSource, updateBrainSource } from "@/lib/brain/sources";
+import {
+  deleteBrainSource,
+  updateBrainSource,
+  type SourcesDb,
+} from "@/lib/brain/sources";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { getProjectBySlug } from "@/lib/queries/project";
@@ -88,7 +92,8 @@ export async function PATCH(
       throw new MaisterError("CONFIG", "invalid JSON body");
     }
 
-    const source = await updateBrainSource(getDb() as any, {
+    const db = getDb() as unknown as SourcesDb;
+    const source = await updateBrainSource(db, {
       projectId: project.id,
       repoPath: project.repoPath,
       mainBranch: project.mainBranch,
@@ -113,7 +118,9 @@ export async function DELETE(
     const project = await loadProject(slug);
 
     await requireProjectAction(project.id, "editSettings");
-    await deleteBrainSource(getDb() as any, { projectId: project.id, sourceId });
+    const db = getDb() as unknown as SourcesDb;
+
+    await deleteBrainSource(db, { projectId: project.id, sourceId });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

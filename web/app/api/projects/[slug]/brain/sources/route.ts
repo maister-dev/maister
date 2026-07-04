@@ -3,7 +3,11 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { createBrainSource, listBrainSources } from "@/lib/brain/sources";
+import {
+  createBrainSource,
+  listBrainSources,
+  type SourcesDb,
+} from "@/lib/brain/sources";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { getProjectBySlug } from "@/lib/queries/project";
@@ -80,7 +84,8 @@ export async function GET(
 
     await requireProjectAction(project.id, "readBrain");
 
-    const sources = await listBrainSources(getDb() as any, project.id);
+    const db = getDb() as unknown as SourcesDb;
+    const sources = await listBrainSources(db, project.id);
 
     return NextResponse.json({ sources });
   } catch (err) {
@@ -108,7 +113,8 @@ export async function POST(
       throw new MaisterError("CONFIG", "invalid JSON body");
     }
 
-    const source = await createBrainSource(getDb() as any, {
+    const db = getDb() as unknown as SourcesDb;
+    const source = await createBrainSource(db, {
       projectId: project.id,
       repoPath: project.repoPath,
       mainBranch: project.mainBranch,

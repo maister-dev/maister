@@ -10,11 +10,11 @@ platform agents use natively.
   `lesson` / `observation` / `state_fact`, harvested from `domain_events`,
   embedded in `brain_*` tables, decayed by the scheduler, and recalled through
   MCP/ext/P7 with no LLM at read.
-- **Sub-project B (Designed in this slice)** adds the read-only Consultant
+- **Sub-project B (Implemented)** adds the read-only Consultant
   indexed tier: canonical sources, typed chunks, `decision`/`direction`
   home-resolution, chunk embeddings, cross-tier recall, snapshots with pointers,
   and best-effort edge re-anchor.
-- **Sub-project C (Designed in this slice)** adds the self-improvement bridge:
+- **Sub-project C (Implemented)** adds the self-improvement bridge:
   server-computed memory clusters, `brain_proposals`, human/session review,
   `auto_draft` autonomy, docs-as-code projection through board tasks, and the
   non-executable Serena MCP catalog seed.
@@ -29,37 +29,42 @@ or board tasks.
 
 ## Domain entities
 
-- **`brain_items`** (Implemented) — one knowledge item: `{ id, project_id (FK,
-  ON DELETE CASCADE — the auth boundary), kind (lesson|observation|state_fact in A),
+- **`brain_items`** (Implemented) — one owned-tier knowledge item: `{ id, project_id (FK,
+  ON DELETE CASCADE — the auth boundary), kind (lesson|observation|state_fact|decision|direction),
   tier (owned), title, content, status (active|expired|superseded), confidence,
   reinforcement_count, last_reinforced_at, expires_at, content_hash, tags
   (jsonb string[] — owned metadata), provenance
   (source_run_id?, source_node_attempt_id?, source_domain_event_id?,
   source_gate_kind?), created_at, updated_at, tsv (generated tsvector) }`. See
   [db/brain-domain.md](../db/brain-domain.md).
-- **`brain_embeddings`** (Implemented) — **immutable** per (item, embedding
-  generation): `{ id, item_id (FK cascade), split_ordinal, vector (dimension-
-  untyped), embedding_provider, embedding_model, embedding_dimensions,
-  embedding_version, source_hash, content_hash, embedded_at }`. N rows per item
-  across generations × splits. A model OR dimension switch writes a NEW generation,
-  never mutates a row. One **active** generation is read at recall.
+- **`brain_embeddings`** (Implemented) — **immutable** per (owned item or indexed
+  chunk, embedding generation): `{ id, item_id? (FK cascade), chunk_id? (FK cascade),
+  split_ordinal, vector (dimension-untyped), embedding_provider, embedding_model,
+  embedding_dimensions, embedding_version, source_hash, content_hash,
+  chunker_id?, chunker_version?, embedded_at }`. The DB CHECK enforces exactly one
+  target arm. N rows per target across generations × splits. A model, dimension,
+  or chunker switch writes a NEW generation, never mutates a row. One **active**
+  generation is read at recall.
 - **`brain_snapshots`** (Implemented) — a recall snapshot written at **consumption**
   (ambient inject or explicit recall) for reproducibility/audit: `{ id, project_id
   (FK CASCADE), run_id? (FK), node_attempt_id? (RESERVED — always NULL in A),
   actor_type, actor_id, trigger (ambient|explicit), query, query_hash,
-  embedding_model, returned_items (jsonb: [{itemId, score}] — ids AND scores),
+  embedding_model, returned_items (jsonb:
+  `[{tier,itemId?|chunkId?,score,pointer?}]` — ids, scores, and indexed pointers),
   ranker_version, created_at }`. Ambient writes exactly ONE row per `(run,
   query_hash, embedding_model)` — repeated node iterations never duplicate; rows
   older than 30 days (`BRAIN_POLICY.snapshotTtlDays`) are pruned by the decay
   sweep. The launch-time *decision* to include Brain context persists on
   `runs.brain_context`, not here.
-- **`brain_index_jobs`** (Implemented) — reindex work: `{ id, project_id (FK), reason
-  (model_switch|manual in A), status (queued|running|completed|failed), progress,
-  resumable_cursor, created_at }`. Enqueued by the reconcile pass on every
-  brain-settings save and every project Brain-enable; consumed by the reindex
-  worker on the M24 tick. `resumable_cursor` is progress/observability metadata
-  (`{lastItemId, error}` on failure) — resume derives from the missing-generation
-  worklist, not the cursor.
+- **`brain_index_jobs`** (Implemented) — reindex work: `{ id, project_id (FK),
+  source_id? (FK), reason (model_switch|manual|event|chunker_upgrade), status
+  (queued|running|completed|failed), progress, resumable_cursor, created_at }`.
+  Enqueued by settings/enable reconciliation, manual source reindex, and the
+  `brain_source_reindex` domain-event consumer; consumed by the reindex worker
+  on the M24 tick. `resumable_cursor` is progress/observability metadata
+  (`{lastItemId, error}` on failed owned reindex, or event cursor metadata for
+  source jobs) — resume derives from the missing-generation worklist and source
+  coverage checks, not the cursor.
 - **`brain_harvested_events`** (Implemented, brain migration `0002`) — the harvest
   idempotency ledger: `{ project_id (FK CASCADE), domain_event_id (no FK — the
   marker outlives `domain_events` GC), harvested_at }`, PK `(project_id,
@@ -137,21 +142,24 @@ moves the active-generation pointer (platform embedding settings); old rows pers
 
 ### `brain_index_jobs` lifecycle (Implemented)
 
-An interrupted/crashed job STAYS `running` and is re-claimed on the next tick;
-transient per-item errors also leave it `running` for retry. Resume derives from the
-missing-generation worklist (active items without a current-generation embedding),
-NOT from a cursor. Recovery after `failed` is the reconcile enqueue: every
-brain-settings save and every project Brain-enable enqueues a job for any
-Brain-enabled project whose active items miss current-generation embeddings and
-that has no queued/running job.
+An interrupted/crashed owned-item job STAYS `running` and is re-claimed on the
+next tick; transient embedding errors also leave it `running` for retry. Resume
+derives from the missing-generation worklist (active items or chunks without a
+current generation), NOT from a cursor. Source-scoped jobs record deterministic
+read/chunk errors on `brain_sources.last_error` and complete so one bad source
+does not poison the cursor. Recovery after an owned-item `failed` is the
+reconcile enqueue: every brain-settings save and every project Brain-enable
+enqueues a job for any Brain-enabled project whose active items miss
+current-generation embeddings and that has no queued/running job.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> queued: reconcile enqueue — settings save or project Brain-enable (reason model_switch on generation change, manual otherwise)
+    [*] --> queued: reconcile/manual/source-event enqueue
     queued --> running: reindex worker claims on a sweep tick (brain-disabled projects are skipped — stay queued)
-    running --> running: batch re-embed off the missing-generation worklist — progress recorded in resumable_cursor
+    running --> running: batch re-embed off the missing-generation worklist or source coverage check
     running --> completed: no active item missing the current generation
-    running --> failed: deterministic per-item CONFIG error — resumable_cursor carries lastItemId + error
+    running --> completed: deterministic source read/chunk error — source.last_error recorded
+    running --> failed: deterministic owned-item CONFIG error — resumable_cursor carries lastItemId + error
     completed --> [*]
     failed --> [*]: recovery = reconcile enqueue on the next settings save / Brain-enable
 ```
@@ -200,7 +208,9 @@ advisory lock. Exact active `content_hash` duplicates no-op. Near
 
 ```mermaid
 flowchart TD
-    S([retain projectId, item, provenance]) --> OV{content > model token limit?}
+    S([retain projectId, item, provenance]) --> HOME{decision/direction has canonical home?}
+    HOME -- yes --> REFUSE[CONFIG: use proposal path]
+    HOME -- no / other kind --> OV{content > model token limit?}
     OV -- yes --> SPL[recursive splitter — ordered segments]
     OV -- no --> ONE[single segment]
     SPL --> EMB[embed segments — outside tx]
@@ -309,12 +319,12 @@ confidence never decreases and there is no per-tick decrement. Items past
 sweep prunes `brain_snapshots` older than 30 days (`BRAIN_POLICY.snapshotTtlDays`).
 A sweep error is caught into the sweep summary, never thrown.
 
-### (g) Source indexing and chunk embeddings (Designed — Sub-project B)
+### (g) Source indexing and chunk embeddings (Implemented — Sub-project B)
 
 ```mermaid
 flowchart TD
     SRC[project Brain sources] --> READ[tracked default-branch blob read]
-    READ --> HASH{source_hash changed?}
+    READ --> HASH{source_hash changed or coverage stale?}
     HASH -- no --> SKIP[no-op, update observability only]
     HASH -- yes --> CHUNK[ChunkerRegistry typed parser]
     CHUNK --> ERR{parser error?}
@@ -327,10 +337,15 @@ flowchart TD
 
 All source reads derive the project repo from server state. Paths/globs are
 repo-relative and validated before any git read. `.git`, ignored/untracked files,
-absolute paths, and body-controlled worktree paths are refused. Source jobs are
-manual or domain-event triggered; no watcher or polling exists.
+absolute paths, and body-controlled worktree paths are refused. Glob reads are
+bounded by match-count and aggregate-byte limits before chunking, and indexing
+also refuses sources that exceed per-job chunk or embedding-segment budgets. A
+glob source excludes enabled exact peer sources of the same project/kind, so the
+default `docs/**/*.md` row does not duplicate chunks owned by the explicit
+`docs/decisions.md` row. Source jobs are manual or domain-event triggered; no
+watcher or polling exists.
 
-### (h) Cross-tier recall (Designed — Sub-project B)
+### (h) Cross-tier recall (Implemented — Sub-project B)
 
 ```mermaid
 flowchart TD
@@ -388,16 +403,16 @@ with it.
 
 ## Expectations
 
-*(E-n pin the spec §13 numbering, top-to-bottom. A-relevant subset below; E-5, E-9,
-E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B/C)**.)*
+*(E-n pin the spec §13 numbering, top-to-bottom. The B/C guarantees below are
+implemented in this branch unless a bullet explicitly names a later deferral.)*
 
 - **E-1** — Every `brain_*` row MUST carry `project_id` directly or transitively
   via `item_id`/`chunk_id` (`brain_embeddings`); recall MUST NEVER return items
-  across a `project_id` boundary. (Implemented for A, Designed for B/C)
+  across a `project_id` boundary. (Implemented)
 - **E-2** — `brain_embeddings` rows MUST be immutable — a model or dimension change
-  MUST create a new embedding generation, NEVER mutate a row — and `(item_id,
-  split_ordinal, embedding_model, embedding_dimensions)` is UNIQUE, so an
-  overlapping reindex sweep never writes a duplicate generation row. (Implemented)
+  MUST create a new embedding generation, NEVER mutate a row — and both the owned
+  item arm and indexed chunk arm carry UNIQUE generation keys, so an overlapping
+  reindex sweep never writes a duplicate generation row. (Implemented)
 - **E-3** — `retain` MUST be idempotent on identical `content_hash`;
   semantically-near active `lesson`/`observation` items of the SAME kind above
   threshold τ=0.85 reinforce in place, while changed near `state_fact` items
@@ -410,32 +425,40 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   `RUN_TERMINAL_EVENT_KINDS` + `gate.failed` (`run.review` MUST NOT be harvested)
   and idempotent across ALL retain outcomes via the `brain_harvested_events` ledger
   claimed in `retain`'s transaction; decay and reindex MUST be scheduler-driven; the
-  domain MUST NEVER use `fs.watch`/chokidar/polling. (Implemented; event-driven
-  indexing of external *sources* is Phase 2 — Sub-project B.)
+  domain MUST NEVER use `fs.watch`/chokidar/polling. Source indexing is
+  scheduler/manual driven, with `brain_source_reindex` enqueueing enabled
+  sources from run-terminal domain events; external repo edits still require
+  manual reindex. (Implemented)
 - **E-9** — Package-delivered chunker/connector code MUST NOT execute in B/C v1.
   Built-in chunkers are allowed; package extensibility waits for a separate trust
-  and sandbox implementation. (Designed)
+  and sandbox implementation. (Implemented)
 - **E-13** — Cross-tier recall of an indexed chunk MUST return a canonical
   pointer and capped preview, never a forked authoritative copy. Snapshot and MCP
   DTOs MUST use the same owned/indexed union. (Implemented)
 - **E-14** — Edge re-anchoring on re-chunk MUST be best-effort by stable id,
   symbol, path, and content hash; unmappable edges MUST be marked degraded and
   kept visible. (Implemented for edges; proposal re-anchor remains Designed)
-- **E-8** — An interrupted reindex job MUST stay `running` and be re-claimed on a
-  later tick; resume MUST derive from the missing-generation worklist —
-  `brain_index_jobs.resumable_cursor` records progress/observability metadata only,
-  carrying `{lastItemId, error}` on failure (source-hash-gated skip-unchanged is
-  Phase 2 — Sub-project B). (Implemented)
+- **E-8** — An interrupted owned-item reindex job MUST stay `running` and be
+  re-claimed on a later tick; resume MUST derive from the missing-generation
+  worklist. Source jobs complete on deterministic read/chunk errors and write
+  `brain_sources.last_error`; broad globs and excessive chunk/embedding segment
+  production are deterministic bounded errors. Transient embedding outages leave
+  the job retryable. Source no-op is gated by `source_hash` plus current
+  chunk/embedding coverage.
+  `brain_index_jobs.resumable_cursor` records progress/observability metadata
+  only. (Implemented)
 - **E-10** — Embedding-provider secrets MUST be stored as `env:NAME` refs and MUST
   NEVER be logged, streamed, or embedded in any payload. (Implemented)
 - **E-11** — In SQLite mode the Brain MUST be disabled: the ext memory routes,
   `GET/PATCH /api/admin/brain-settings`, and the project `brainEnabled` enable-gate
   MUST call `assertBrainProvisioned()` FIRST (409 `PRECONDITION`), and MCP memory
   tools MUST fail closed (the facade still lists `TOOL_SPECS` statically). (Implemented)
-- **E-12** — Every Brain consumption MUST record a `brain_snapshots` row — explicit
-  recall records the token's `boundRunId` as `run_id` when run-bound; ambient writes
-  exactly ONE row per `(run, query_hash, embedding_model)` with `node_attempt_id`
-  NULL (reserved in A). (Implemented)
+- **E-12** — Every recall-path Brain consumption MUST record a `brain_snapshots`
+  row — explicit ext/MCP recall records the token's `boundRunId` as `run_id` when
+  run-bound; ambient writes exactly ONE row per `(run, query_hash,
+  embedding_model)` with `node_attempt_id` NULL (reserved in A). The Project Brain
+  page's lexical browser query is an authenticated UI list/search surface, not a
+  recall consumption path, and intentionally does not snapshot. (Implemented)
 - Enablement MUST flow through the ONE shared guard (`web/lib/brain/guard.ts`
   `isProjectBrainEnabled`/`assertProjectBrainEnabled`) — enforced at the ext route
   AND inside `recall()`/`retain()` as a belt, with ambient inject and harvest
@@ -506,12 +529,18 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
 - **Oversized/abusive ext input** → the ext memory routes + MCP mirror cap
   `content` ≤ 32000 chars, `title` 1..512, `tags` ≤ 10 items × ≤ 64 chars, recall
   `q` 1..2000, `limit` 1..50, `minConfidence` 0..1; an unknown `kinds` value → 422
-  `CONFIG` (not silently ignored). Rate limiting is an accepted deferral
-  (Sub-project B candidate).
-- **Reindex job hits a deterministic per-item error** → `MaisterError("CONFIG")`
-  marks the job `failed` (`resumable_cursor` carries `{lastItemId, error}`);
-  transient errors leave it `running` for retry; recovery is the reconcile enqueue
-  on the next brain-settings save or project Brain-enable.
+  `CONFIG` (not silently ignored). Rate limiting is deferred until the
+  multi-tenant middleware exists.
+- **Reindex job hits a deterministic owned-item error** → `MaisterError("CONFIG")`
+  marks the job `failed` (`resumable_cursor` carries `{lastItemId, error}`).
+  **Source-index jobs** record deterministic read/chunk errors on
+  `brain_sources.last_error`, retire affected chunks when appropriate, and
+  complete so one bad source does not poison the worker. Broad globs,
+  aggregate-byte overflow, and excessive chunk/embedding segment production are
+  deterministic source errors. Transient embedding errors leave the job
+  `running` for retry; recovery is the reconcile enqueue on the next
+  brain-settings save, project Brain-enable, manual reindex, or source reindex
+  event.
 - **Reindex job of a brain-DISABLED project** → skipped (stays `queued`) until the
   project is re-enabled.
 - **Snapshot growth** → `brain_snapshots` rows older than 30 days
@@ -543,8 +572,8 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   graduation evidence.
 - **`auto_publish`** → not accepted by config/schema/API/UI. A grep for the term
   may only match non-goal docs.
-- **Serena default seed** → repeated boot/admin ensure is insert-only idempotent;
-  default row remains non-executable because it is disabled.
+- **Serena default seed** → repeated admin-catalog ensure is insert-only
+  idempotent; default row remains non-executable because it is disabled.
 
 ## Linked artifacts
 
@@ -563,13 +592,20 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
   folded into `runSystemSweep()` on the M24 tick.
 - **Ambient host:** [`flow-graph.md`](flow-graph.md) / P7 run-context — `writeRunContext`
   → `.maister/run.json` (flow runs only).
-- **MCP facade / ext API:** [`external-operations.md`](external-operations.md) — the
-  `memory_recall`/`memory_retain` tools + `GET/POST /api/v1/ext/projects/{slug}/memory`.
+- **MCP facade / ext API:** [`external-operations.md`](external-operations.md) —
+  `memory_recall`, `memory_retain`, `memory_clusters`, and `memory_propose` plus
+  `GET/POST /api/v1/ext/projects/{slug}/memory`, `GET
+  /api/v1/ext/projects/{slug}/memory/clusters`, and `POST
+  /api/v1/ext/projects/{slug}/memory/proposals`.
 - **Error taxonomy:** [`error-taxonomy.md`](../error-taxonomy.md) —
   `EMBEDDING_UNAVAILABLE` (503).
 - **Secret redaction pattern:** `web/lib/mcp/projection.ts` (`env:NAME` refs).
 - **Source (Implemented):** `web/lib/brain/*`
   (`policy.ts`, `schema.ts`, `guard.ts`, `chunk.ts`, `openai-compatible.ts`,
   `embedding-index.ts`, `retain.ts`, `recall.ts`, `recall-ranker.ts`, `distill.ts`,
-  `decay.ts`, `reindex.ts`, `ambient.ts`), `web/lib/domain-events/memory-harvest.ts`,
-  `web/lib/db/brain-migrations/*`, `web/lib/db/migrate-brain.ts`.
+  `decay.ts`, `reindex.ts`, `ambient.ts`, `sources.ts`, `indexer.ts`,
+  `chunkers/*`, `edges.ts`, `home-resolution.ts`, `clusters.ts`, `proposals.ts`,
+  `autonomy.ts`, `projection.ts`, `index-triggers.ts`, `ui-queries.ts`),
+  `web/lib/domain-events/memory-harvest.ts`, `web/lib/mcp/serena-seed.ts`,
+  `web/lib/db/brain-migrations/0001_*.sql` through `0005_*.sql`,
+  `web/lib/db/migrate-brain.ts`.

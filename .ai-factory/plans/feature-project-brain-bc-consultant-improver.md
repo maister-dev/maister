@@ -13,7 +13,7 @@ write-back enters the M25 authored catalog or the normal task/run/promotion
 machine.
 
 **Architecture:** Extend ADR-122's in-app Postgres + pgvector bounded context.
-Use brain-lineage migrations only (`0003` for B, `0004` for C), keep
+Use brain-lineage migrations only (`0003` for B, `0004` and `0005` for C), keep
 `web/lib/brain/*` as the domain boundary, reuse project git-file browsing for
 canonical pointers, reuse the external operations/MCP facade for agent access,
 reuse M25 authored catalog drafts for rule/skill/flow proposals, and reuse
@@ -23,7 +23,8 @@ owns all proposal/write-back behavior.
 
 **Tech Stack:** Next.js 16 App Router, TypeScript strict, Drizzle raw-SQL brain
 lineage, Postgres 16 + pgvector, HeroUI/Tailwind, vitest unit/integration,
-Playwright E2E, `docs/` OpenAPI/AsyncAPI/Mermaid contracts, external
+Vitest unit/integration plus existing Playwright harness where browser-only
+behavior is present, `docs/` OpenAPI/AsyncAPI/Mermaid contracts, external
 `maister-plugins` core package for the improver platform agent.
 
 Branch: planned `feature/project-brain-bc-consultant-improver` (plan written
@@ -89,9 +90,9 @@ implementation starts and the owner chooses the milestone slot.
   embedding_dimensions)`.
 - Current `brain_index_jobs.reason` supports only `model_switch|manual`.
   `source_id`, `event`, and `chunker_upgrade` are not implemented.
-- Current explicit recall returns owned item content and snapshots
-  `returned_items: [{itemId, score}]`. It does not yet carry `tier`, `chunkId`,
-  or canonical `pointer`.
+- Pre-implementation explicit recall returned owned item content and snapshots
+  with only owned item ids and scores; this branch extends that shape to the
+  owned/indexed union with `tier`, `chunkId`, and canonical `pointer`.
 - Current MCP facade registers `TOOL_SPECS` statically. SQLite/disabled Brain
   must fail closed at route/service/tool execution time; do not rely on dynamic
   tool disappearance.
@@ -130,7 +131,7 @@ implementation starts and the owner chooses the milestone slot.
 ## Contract Surface Trace
 | Surface | Change | Spec/document that must move |
 | --- | --- | --- |
-| Brain DB schema | Yes: brain migration `0003`, `0004`; no main migration unless Phase 0 proves a shared ALTER is unavoidable. A separate `can_propose_brain` axis is not assumed; FR-C6 defaults to existing `can_write_brain`. | `web/lib/db/brain-migrations/*`, `web/lib/brain/schema.ts`, `docs/db/brain-domain.md`, `docs/db/erd.md`, `docs/database-schema.md`; main Drizzle lineage only if Phase 0 records the reason |
+| Brain DB schema | Yes: brain migration `0003`, `0004`, `0005`; no main migration unless Phase 0 proves a shared ALTER is unavoidable. A separate `can_propose_brain` axis is not assumed; FR-C6 defaults to existing `can_write_brain`. | `web/lib/db/brain-migrations/*`, `web/lib/brain/schema.ts`, `docs/db/brain-domain.md`, `docs/db/erd.md`, `docs/database-schema.md`; main Drizzle lineage only if Phase 0 records the reason |
 | Token scopes/authz | No new scope expected. `memory_clusters` uses `memory:read` + `can_read_brain`; `memory_propose` uses `memory:write` + `can_write_brain`. If Phase 0 introduces a new scope, update issuance and handlers atomically. | `web/types/token-scopes.ts`, `web/lib/tokens/ext-handler.ts`, `web/lib/authz.ts`, OpenAPI security docs, ext/MCP auth tests |
 | External operations HTTP | Yes: recall response extension, `GET /api/v1/ext/projects/{slug}/memory/clusters`, `POST /api/v1/ext/projects/{slug}/memory/proposals`; source/reindex/proposal ops only if Phase 0 marks them external-facing. | `docs/api/external/operations.openapi.yaml`, `docs/system-analytics/external-operations.md` |
 | Web HTTP | Yes: Project Brain page data, source CRUD/reindex, proposal review, project settings Brain config, admin autonomy defaults if UI-backed by routes. Every route must resolve slug to project server-side and use the same auth-first pattern as current project routes. | `docs/api/web.openapi.yaml`, `docs/system-analytics/project-brain.md`, screen docs |
@@ -149,7 +150,7 @@ implementation starts and the owner chooses the milestone slot.
 | --- | --- | --- | --- |
 | FR-B1 schema | D2, D4, E-1, E-2, spec sec.4 | T1.1, T1.2 | `indexed-schema.integration.test.ts`, `check-brain-migrations.test.ts` |
 | FR-B2 ChunkerRegistry | D5, D6, E-9 disposition, spec sec.7 | T2.1, T2.2 | `chunker-registry.test.ts`, fixture snapshots |
-| FR-B3 sources/selection | D7, sec.3.2 | T3.1, T3.2, T14.1 | `sources.integration.test.ts`, project Brain UI E2E |
+| FR-B3 sources/selection | D7, sec.3.2 | T3.1, T3.2, T14.1 | `sources.integration.test.ts`, `indexer.integration.test.ts`, Project Brain SSR component/route coverage |
 | FR-B4 incremental indexing | E-7, E-8, sec.5.2 | T3.2, T4.1 | `indexer.integration.test.ts`, recovery test |
 | FR-B5 cross-tier recall/pointers/ambient | D9, E-12, E-13, sec.5.3 | T5.1, T5.2 | `recall.integration.test.ts`, ext memory route test, MCP contract test, `ambient.integration.test.ts` |
 | FR-B6 decision/direction home-resolution | D7, sec.3.1, sec.3.2, E-13 | T6.1 | `home-resolution.integration.test.ts`, ext retain route test |
@@ -157,7 +158,7 @@ implementation starts and the owner chooses the milestone slot.
 | FR-B8 edges/re-anchor | D10, E-14 | T7.1 | `edges.integration.test.ts`, re-anchor chunker-version test |
 | FR-C1 proposals table/FSM | E-5, sec.4, sec.5.4 | T9.1, T11.1 | `proposals.integration.test.ts` |
 | FR-C2 improver platform agent | D8, ADR-111, sec.5.4, sec.14-C | T10.1, T10.2 | `clusters.integration.test.ts`, scripted agent-path test, maister-plugins package smoke |
-| FR-C3 review surface/accept path | E-5, M25 authored catalog | T11.1, T12.1 | proposal review route tests, UI E2E |
+| FR-C3 review surface/accept path | E-5, M25 authored catalog | T11.1, T12.1 | proposal review route tests, Project Brain SSR component coverage |
 | FR-C4 autonomy dial | D8 | T12.1 | autonomy reducer tests, proposal integration |
 | FR-C5 docs projection via task | D7, D8, E-5, sec.3.2 | T12.2 | task creation integration, auto-launch tick integration |
 | FR-C6 memory_propose | E-5, agent write-half | T10.1 | ext route authz tests, MCP dispatch tests |
@@ -174,6 +175,9 @@ implementation starts and the owner chooses the milestone slot.
 - Commit 6 (Tasks T11-T12): `feat(brain): review proposals and project docs through tasks`
 - Commit 7 (Tasks T13-T14): `feat(brain): add brain UI and serena catalog seed`
 - Commit 8 (Task T15): `test(brain): complete acceptance gates`
+
+Note: the shipped branch folded later tasks into fewer implementation commits;
+this table is the planned grouping, not an acceptance-count requirement.
 
 ## Tasks
 
@@ -192,8 +196,8 @@ implementation starts and the owner chooses the milestone slot.
     Do not assume this checkout's ADR-125 max is final. Tentative allocation:
     ADR-B and ADR-C use the next two free numbers after parallel reservations.
   - Re-check brain migration journal from `main`; reserve brain `0003` for B
-    and `0004` for C. Re-check main migration journal; assert zero main DDL is
-    still viable.
+    and `0004`/`0005` for C. Re-check main migration journal; assert zero main
+    DDL is still viable.
   - Audit current token/auth contracts before adding any route: confirm
     `memory:read -> readBrain`, `memory:write -> writeBrain`, current
     `agent_project_links` axes, and whether the `can_propose_brain` comment is
@@ -411,8 +415,11 @@ implementation starts and the owner chooses the milestone slot.
     source preview or pointer opening must delegate to the existing project
     files API/viewer and therefore pass the `readRepoFiles` gate as well as
     repo-relative path validation.
-  - Seed suggested defaults on first setup: `docs/**/*.md`, ADR/roadmap files,
-    `docs/api/*.yaml`, `maister.yaml`, plus explicit user-added globs.
+  - Seed suggested defaults only when the project has no existing Brain
+    sources: `docs/**/*.md`, ADR/roadmap files, `docs/api/*.yaml`,
+    `maister.yaml`, plus explicit user-added globs. During indexing, broad
+    globs are bounded and enabled exact peer paths of the same kind are excluded
+    from glob chunks to prevent duplicate recall hits.
   - Acceptance: T3.1 turns GREEN; identifiers section in the plan/spec labels
     URL slug as `url-param`, project id as `server-state`, body path/glob as
     validated body input with allow-list checks.
@@ -431,9 +438,10 @@ implementation starts and the owner chooses the milestone slot.
     - first index inserts chunks and chunk embeddings.
     - unchanged `source_hash` reindex is a no-op.
     - source change re-embeds only changed chunks.
-    - interrupted job resumes from the missing-worklist.
+    - owned-item interrupted job resumes from the missing-worklist.
     - deterministic malformed source marks `brain_sources.last_error` and
       continues other sources.
+    - overly broad or over-chunked sources record bounded per-source errors.
     - vanished source path marks a documented terminal source state and retires
       chunks/embeddings per Phase 0 decision.
     - embedding-provider outage mid-index leaves the job retryable/running and
@@ -446,10 +454,13 @@ implementation starts and the owner chooses the milestone slot.
   - RED evidence: `CI=true pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/indexer.integration.test.ts`
     failed because source-scoped jobs did not write chunks, source hashes, source errors, or retryable embedding outage state.
 
-- [x] **T4.2 - GREEN: resumable source indexer and domain-event trigger consumer.**
+- [x] **T4.2 - GREEN: bounded source indexer and domain-event trigger consumer.**
   - Implement `web/lib/brain/indexer.ts` with source_hash gating,
-    chunker-version gating, per-source error isolation, resumable worklist, and
-    chunk embedding insertion into immutable current generation rows.
+    chunker-version gating, per-source error isolation, bounded glob/chunk/
+    segment budgets, and chunk embedding insertion into immutable current
+    generation rows. Owned-item model-switch reindex remains the resumable
+    worklist path; source jobs complete deterministic source errors and keep
+    transient embedding outages retryable.
   - Extend `brain_index_jobs` worker/reconcile path for source jobs without
     regressing A's model-switch item reindex.
   - Add `brain_index_triggers` domain-event consumer for run-terminal/promotion
@@ -797,7 +808,7 @@ implementation starts and the owner chooses the milestone slot.
   - RED: projection/materialization tests prove the default seeded Serena row is
     not returned as an executable project capability until the explicit
     admin/project trust path is completed.
-  - GREEN: implement a boot/admin ensure path mirroring the default package
+  - GREEN: implement an admin-catalog ensure path mirroring the default package
     source insert-only pattern. Seed only the catalog shape after Phase 0
     verifies the exact Serena command/args. Do not enable project materialization
     automatically.
@@ -807,8 +818,9 @@ implementation starts and the owner chooses the milestone slot.
     `enabled=false` with `trust_status='untrusted'` if `enabled` is what drives
     projection; if product visibility requires `enabled=true`, add the trust
     gate before seeding.
-  - Acceptance: row is visible out of the box; stdio execution remains an
-    explicit admin/project act; seed is idempotent; Brain tables are untouched.
+  - Acceptance: row is visible after the admin MCP catalog ensure path; stdio
+    execution remains an explicit admin/project act; seed is idempotent; Brain
+    tables are untouched.
   - Logging requirements: INFO on seed ensure with `{id:"serena", created,
     skipped}`; no secrets.
   - Files: MCP seed service/tests, docs/system-analytics/mcp-management.md,
@@ -823,7 +835,7 @@ implementation starts and the owner chooses the milestone slot.
     `enabled=false`/`trust_status='untrusted'`.
 
 - [x] **T14.1 - RED/GREEN: Project Brain page and settings blocks.**
-  - RED: component/route/E2E tests for:
+  - RED: component/route tests for:
     - Project Brain page Memory search with tier badges, confidence, canonical
       pointer links opening the existing file viewer at path/range.
     - Sources tab with path, kind, chunker, status, last indexed, error,
@@ -846,7 +858,9 @@ implementation starts and the owner chooses the milestone slot.
     structured WARN/ERROR only on failures.
   - Files: `web/app/(app)/projects/[slug]/page.tsx` Brain tab, components under
     `web/components/brain/*`, settings components, routes, messages, screen docs.
-  - Verify: targeted unit/E2E tests; `pnpm --filter maister-web typecheck`.
+  - Verify: targeted unit, route, and integration tests; `pnpm --filter
+    maister-web typecheck`. Add Playwright only when a browser-only Brain
+    interaction is introduced.
   - RED evidence:
     `CI=true pnpm --filter maister-web exec vitest run --project unit components/brain/__tests__/project-brain-panel.test.ts components/board/__tests__/project-tabs.test.ts components/board/panels/__tests__/project-brain-settings-control.test.ts`
     failed because the Brain tab, panel, and home/projection settings controls
@@ -884,7 +898,8 @@ implementation starts and the owner chooses the milestone slot.
     - contract validator command from T0.4
     - targeted Brain unit/integration suites
     - targeted MCP facade tests
-    - targeted Playwright Brain E2E
+    - Project Brain SSR component/route coverage; no dedicated Brain Playwright
+      spec is required for this server-rendered slice
     - broader `pnpm --filter maister-web test:unit` and
       `pnpm --filter maister-web test:integration` unless a known unrelated
       flake is explicitly quarantined by the owner.
@@ -934,7 +949,9 @@ implementation starts and the owner chooses the milestone slot.
     - `rg -n "Project Brain|Brain|brain" web/e2e` found no dedicated Brain
       Playwright spec. The implemented UI surface is server-rendered and
       covered by SSR component tests, route tests, auth gates, and full
-      unit/integration suites; no browser-only Brain state machine was added.
+      unit/integration suites; no browser-only Brain state machine was added,
+      so the traceability rows above record the as-built coverage instead of
+      claiming an E2E substitution as a delivered Playwright spec.
     - Docs drift was checked through updated OpenAPI, external operations,
       database schema/ERD, system analytics, MCP analytics, and screen artifacts,
       then validated with docs and contract commands above.
@@ -958,7 +975,7 @@ implementation starts and the owner chooses the milestone slot.
 | Reindex vs retain race | T4.1/T5.1 |
 | Chunker-version bump re-anchor with degraded edges | T7.1 |
 | Machine actor tries accept/reject | T11.1 |
-| Serena seed repeated across boots | T13.1 |
+| Serena seed repeated through admin-catalog ensure | T13.1 |
 
 ## Phase Exit Gates
 - **Phase 0 exit:** docs/contracts validator-clean, ADR/migration numbers
@@ -969,8 +986,9 @@ implementation starts and the owner chooses the milestone slot.
   covered, no watch/polling.
 - **Phase 3 exit:** cross-tier recall, ambient tier-mix, home-resolution,
   supersede, edges/re-anchor GREEN and contract-clean.
-- **Phase 4 exit:** proposals, improver ops, autonomy, and projection transport
-  GREEN; maister-plugins deliverable packaged/tagged or explicitly blocked.
+- **Phase 4 exit:** proposals, improver ops, decision stats, autonomy, and
+  projection transport GREEN; maister-plugins deliverable packaged/tagged or
+  explicitly blocked.
 - **Phase 5 exit:** UI/UX and Serena seed GREEN, full acceptance suite recorded,
   consistency/logical-holes checks pass.
 

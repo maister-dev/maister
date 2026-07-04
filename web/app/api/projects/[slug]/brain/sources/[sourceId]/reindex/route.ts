@@ -3,7 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { enqueueBrainSourceReindex } from "@/lib/brain/sources";
+import { enqueueBrainSourceReindex, type SourcesDb } from "@/lib/brain/sources";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { getProjectBySlug } from "@/lib/queries/project";
@@ -65,7 +65,8 @@ export async function POST(
 
     await requireProjectAction(project.id, "editSettings");
 
-    const jobId = await enqueueBrainSourceReindex(getDb() as any, {
+    const db = getDb() as unknown as SourcesDb;
+    const jobId = await enqueueBrainSourceReindex(db, {
       projectId: project.id,
       sourceId,
       reason: "manual",

@@ -64,7 +64,8 @@ control.
 
 ## i18n
 
-Namespace: `settings.brain.*`.
+Namespace: flat `settings.brain...` message keys loaded through
+`useTranslations("settings")`.
 
 ## Linked artifacts
 

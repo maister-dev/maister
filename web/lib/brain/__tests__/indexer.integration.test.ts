@@ -1,3 +1,5 @@
+import type { OpenAiCompatibleClient } from "@/lib/brain/openai-compatible";
+
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -9,7 +11,6 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
-import type { OpenAiCompatibleClient } from "@/lib/brain/openai-compatible";
 import {
   createBrainSource,
   enqueueBrainSourceReindex,
@@ -37,12 +38,35 @@ async function createIndexerRepo(): Promise<string> {
   await git(repo, ["config", "user.email", "test@example.com"]);
   await git(repo, ["config", "user.name", "Test User"]);
   await mkdir(join(repo, "docs/api"), { recursive: true });
+  await mkdir(join(repo, "docs/guide"), { recursive: true });
+  await mkdir(join(repo, "limits"), { recursive: true });
   await writeFile(
     join(repo, "docs/README.md"),
     "# Project Brain\n\nConsultant memory.\n\n## Runbook\n\nUse indexed sources.\n",
   );
-  await writeFile(join(repo, "docs/api/openapi.yaml"), "openapi: 3.0.3\npaths: {}\n");
-  await writeFile(join(repo, "docs/api/broken.openapi.yaml"), "openapi: 3.0.3\npaths: [\n");
+  await writeFile(
+    join(repo, "docs/decisions.md"),
+    "# Decisions\n\nUse indexed recall.\n",
+  );
+  await writeFile(
+    join(repo, "docs/guide/intro.md"),
+    "# Intro\n\nGlob coverage.\n",
+  );
+  await writeFile(
+    join(repo, "docs/api/openapi.yaml"),
+    "openapi: 3.0.3\npaths: {}\n",
+  );
+  await writeFile(
+    join(repo, "docs/api/broken.openapi.yaml"),
+    "openapi: 3.0.3\npaths: [\n",
+  );
+  await writeFile(
+    join(repo, "limits/huge.md"),
+    Array.from(
+      { length: 1_001 },
+      (_, index) => `## Heading ${index}\nBody`,
+    ).join("\n\n"),
+  );
   await git(repo, ["add", "."]);
   await git(repo, ["commit", "-m", "seed"]);
 
@@ -82,6 +106,24 @@ async function chunkCount(ctx: BrainTestDb, sourceId: string): Promise<number> {
   return Number(r.rows[0]?.n ?? 0);
 }
 
+async function seedIndexerProject(
+  ctx: BrainTestDb,
+  repoPath: string,
+  slugPrefix: string,
+): Promise<string> {
+  const projectId = await seedBrainProject(ctx.db, {
+    slug: `${slugPrefix}-${randomUUID().slice(0, 8)}`,
+  });
+
+  await ctx.db.execute(sql`
+    UPDATE projects
+    SET repo_path = ${repoPath}, main_branch = 'main'
+    WHERE id = ${projectId}
+  `);
+
+  return projectId;
+}
+
 async function embeddingRows(
   ctx: BrainTestDb,
   sourceId: string,
@@ -105,14 +147,7 @@ describe("Project Brain source indexer (ADR-127)", () => {
   beforeAll(async () => {
     ctx = await startBrainTestDb();
     repoPath = await createIndexerRepo();
-    projectId = await seedBrainProject(ctx.db, {
-      slug: `brain-indexer-${randomUUID().slice(0, 8)}`,
-    });
-    await ctx.db.execute(sql`
-      UPDATE projects
-      SET repo_path = ${repoPath}, main_branch = 'main'
-      WHERE id = ${projectId}
-    `);
+    projectId = await seedIndexerProject(ctx, repoPath, "brain-indexer");
   });
 
   afterAll(async () => {
@@ -216,6 +251,131 @@ describe("Project Brain source indexer (ADR-127)", () => {
     expect(after.map((row) => row.content_hash)).not.toEqual(
       before.map((row) => row.content_hash),
     );
+  });
+
+  it("indexes glob sources as separate tracked-file chunks", async () => {
+    const globRepoPath = await createIndexerRepo();
+    const globProjectId = await seedIndexerProject(
+      ctx,
+      globRepoPath,
+      "brain-indexer-glob",
+    );
+    const source = await createBrainSource(ctx.db, {
+      projectId: globProjectId,
+      repoPath: globRepoPath,
+      mainBranch: "main",
+      input: { path: "docs/**/*.md", kind: "markdown" },
+    });
+
+    await enqueueBrainSourceReindex(ctx.db, {
+      projectId: globProjectId,
+      sourceId: source.id,
+      reason: "manual",
+    });
+
+    const summary = await runBrainReindexSweep({
+      db: ctx.db as any,
+      client: fakeEmbeddingClient(),
+      maxItemsPerJob: 10,
+    });
+    const paths = await ctx.db.execute(sql`
+      SELECT DISTINCT path
+      FROM brain_chunks
+      WHERE source_id = ${source.id}
+      ORDER BY path ASC
+    `);
+
+    expect(summary.jobsCompleted).toBe(1);
+    expect(new Set(paths.rows.map((row) => row.path))).toEqual(
+      new Set(["docs/README.md", "docs/decisions.md", "docs/guide/intro.md"]),
+    );
+  });
+
+  it("excludes exact peer sources from glob chunks for the same project and kind", async () => {
+    const overlapRepoPath = await createIndexerRepo();
+    const overlapProjectId = await seedIndexerProject(
+      ctx,
+      overlapRepoPath,
+      "brain-indexer-overlap",
+    );
+    const exact = await createBrainSource(ctx.db, {
+      projectId: overlapProjectId,
+      repoPath: overlapRepoPath,
+      mainBranch: "main",
+      input: { path: "docs/decisions.md", kind: "markdown" },
+    });
+    const glob = await createBrainSource(ctx.db, {
+      projectId: overlapProjectId,
+      repoPath: overlapRepoPath,
+      mainBranch: "main",
+      input: { path: "docs/**/*.md", kind: "markdown" },
+    });
+
+    await enqueueBrainSourceReindex(ctx.db, {
+      projectId: overlapProjectId,
+      sourceId: exact.id,
+      reason: "manual",
+    });
+    await enqueueBrainSourceReindex(ctx.db, {
+      projectId: overlapProjectId,
+      sourceId: glob.id,
+      reason: "manual",
+    });
+    await runBrainReindexSweep({
+      db: ctx.db as any,
+      client: fakeEmbeddingClient(),
+      maxItemsPerJob: 10,
+    });
+
+    const exactPaths = await ctx.db.execute(sql`
+      SELECT DISTINCT path
+      FROM brain_chunks
+      WHERE source_id = ${exact.id}
+      ORDER BY path ASC
+    `);
+    const globPaths = await ctx.db.execute(sql`
+      SELECT DISTINCT path
+      FROM brain_chunks
+      WHERE source_id = ${glob.id}
+      ORDER BY path ASC
+    `);
+
+    expect(new Set(exactPaths.rows.map((row) => row.path))).toEqual(
+      new Set(["docs/decisions.md"]),
+    );
+    expect(new Set(globPaths.rows.map((row) => row.path))).toEqual(
+      new Set(["docs/README.md", "docs/guide/intro.md"]),
+    );
+  });
+
+  it("records a bounded source error when chunk production exceeds the job budget", async () => {
+    const source = await createBrainSource(ctx.db, {
+      projectId,
+      repoPath,
+      mainBranch: "main",
+      input: { path: "limits/huge.md", kind: "markdown" },
+    });
+
+    await enqueueBrainSourceReindex(ctx.db, {
+      projectId,
+      sourceId: source.id,
+      reason: "manual",
+    });
+
+    const summary = await runBrainReindexSweep({
+      db: ctx.db as any,
+      client: fakeEmbeddingClient(),
+      maxItemsPerJob: 10,
+    });
+    const row = await ctx.db.execute(sql`
+      SELECT last_error
+      FROM brain_sources
+      WHERE id = ${source.id}
+    `);
+
+    expect(summary.jobsCompleted).toBe(1);
+    expect(await chunkCount(ctx, source.id)).toBe(0);
+    expect(row.rows[0]?.last_error).toMatchObject({ code: "PRECONDITION" });
   });
 
   it("records parser errors per source and continues other source jobs", async () => {

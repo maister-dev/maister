@@ -46,8 +46,8 @@ Rebase order:
    `docs/decisions.md`, `docs/api/web.openapi.yaml`, `docs/db/erd.md`, or
    `web/lib/db/schema.ts`, re-check whether
    `claude/optimistic-leakey-8fde07` merged and rebase/renumber if needed.
-3. Brain schema changes stay in `web/lib/db/brain-migrations/0003` and `0004`
-   unless Phase 0 records an unavoidable main-lineage ALTER.
+3. Brain schema changes stay in `web/lib/db/brain-migrations/0003`, `0004`,
+   and `0005` unless Phase 0 records an unavoidable main-lineage ALTER.
 
 ## ADR Allocation
 
@@ -69,6 +69,8 @@ Rebase order:
 - Allocation for this branch:
   - `0003_brain_indexed_tier.sql` for Sub-project B.
   - `0004_brain_proposals.sql` for Sub-project C.
+  - `0005_brain_proposal_decision_stats.sql` for Sub-project C decision
+    analytics.
 - Main migration journal currently ends at `0088_mixed_hercules`.
 - Disposition: zero main-lineage DDL remains viable for the default contract.
   The existing `memory:read`/`memory:write` scopes and

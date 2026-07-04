@@ -84,9 +84,9 @@ tags:
   - name: memory
     description: |
       (ADR-122/127/128) Project Brain operations exposed to project/global
-      tokens and mirrored by the MCP facade. Recall is implemented for the
-      owned tier and designed to return the owned/indexed union once the
-      Consultant tier lands. Clusters and proposals are Sub-project C contracts.
+      tokens and mirrored by the MCP facade. Recall returns the implemented
+      owned/indexed union; clusters and proposals are implemented Sub-project C
+      contracts.
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -139,6 +139,8 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/EmbeddingUnavailable"
 
     get:
       tags: [tasks]
@@ -692,13 +694,13 @@ paths:
   /api/v1/ext/projects/{slug}/memory:
     get:
       tags: [memory]
-      summary: (ADR-122/127, Implemented A; Designed B) Recall project-brain memories
+      summary: (ADR-122/127, Implemented) Recall project-brain memories
       description: |
         Scope `memory:read`. Hybrid recall (pgvector cosine over the active
         embedding generation + `tsvector` lexical + a confidence term;
         `created_at DESC` is a tie-break, not a boost) over
-        the project's active owned-tier items and, after ADR-127, indexed
-        source chunks. NO LLM call at read time.
+        the project's active owned-tier items and indexed source chunks. NO LLM
+        call at read time.
 
         `projectId` is derived server-side from the URL `slug` and compared against
         the token's project — mismatch → 404 (the body carries no project id). For
@@ -839,8 +841,8 @@ paths:
       tags: [memory]
       summary: (ADR-128, Implemented) List recurring Project Brain evidence clusters
       description: |
-        Scope `memory:read`. Computes recurring lesson/observation clusters
-        server-side from embedding proximity and shared provenance. The route is
+        Scope `memory:read`. Computes recurring lesson/observation/state_fact
+        clusters server-side from embedding proximity and shared provenance. The route is
         read-only; the improver agent decides whether to call
         `memory_propose`. For an agent token, `can_read_brain` must be true.
       operationId: extListProjectMemoryClusters
@@ -901,8 +903,6 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
-        "503":
-          $ref: "#/components/responses/EmbeddingUnavailable"
 
   /api/v1/ext/projects/{slug}/memory/proposals:
     post:
@@ -2089,7 +2089,7 @@ components:
 
     ExtMemoryIndexedItem:
       type: object
-      description: (ADR-127, Designed) A recalled indexed chunk with canonical pointer.
+      description: (ADR-127, Implemented) A recalled indexed chunk with canonical pointer.
       required: [tier, chunkId, kind, title, preview, confidence, score, pointer]
       properties:
         tier:
@@ -2098,7 +2098,17 @@ components:
         chunkId: { type: string }
         kind:
           type: string
-          enum: [decision, direction, lesson, observation, state_fact]
+          enum:
+            - markdown_section
+            - openapi_operation
+            - asyncapi_operation
+            - sql_statement
+            - flow_node
+            - package_entry
+            - agent_md
+            - agent_doc
+            - code_symbol
+            - text
         title: { type: string }
         preview:
           type: string
@@ -2127,7 +2137,7 @@ components:
           minimum: 2
         evidenceItemIds:
           type: array
-          minItems: 2
+          minItems: 1
           items: { type: string }
         summary:
           type: string
