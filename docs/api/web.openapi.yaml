@@ -10504,7 +10504,7 @@ paths:
                     items: { $ref: "#/components/schemas/BrainSource" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "404": { $ref: "#/components/responses/Precondition" }
     post:
       tags: [brain]
       summary: (ADR-127, Implemented) Add a Project Brain source
@@ -10527,7 +10527,7 @@ paths:
               schema: { $ref: "#/components/schemas/BrainSource" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "404": { $ref: "#/components/responses/Precondition" }
         "422":
           description: Invalid source path/glob/kind (`CONFIG`).
           content:
@@ -10559,7 +10559,7 @@ paths:
               schema: { $ref: "#/components/schemas/BrainSource" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "404": { $ref: "#/components/responses/Precondition" }
         "422":
           description: Invalid source update (`CONFIG`).
           content:
@@ -10580,7 +10580,7 @@ paths:
         "204": { description: Source removed. }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "404": { $ref: "#/components/responses/Precondition" }
 
   /api/projects/{slug}/brain/sources/reindex:
     post:
@@ -10606,7 +10606,7 @@ paths:
                     items: { type: string }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "404": { $ref: "#/components/responses/Precondition" }
 
   /api/projects/{slug}/brain/sources/{sourceId}/reindex:
     post:
@@ -10632,7 +10632,7 @@ paths:
                   jobId: { type: string }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "404": { $ref: "#/components/responses/Precondition" }
 
   /api/projects/{slug}/brain/proposals/{proposalId}/conclusion:
     post:
@@ -10667,7 +10667,7 @@ paths:
               schema: { $ref: "#/components/schemas/BrainProposal" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "404": { $ref: "#/components/responses/Precondition" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422":
           description: Invalid transition or invalid body (`CONFIG`).

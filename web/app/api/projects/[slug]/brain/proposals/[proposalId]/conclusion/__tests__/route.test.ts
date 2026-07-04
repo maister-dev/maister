@@ -247,4 +247,19 @@ describe("Project Brain proposal conclusion route", () => {
     expect(getBrainProposal).not.toHaveBeenCalled();
     expect(concludeBrainProposal).not.toHaveBeenCalled();
   });
+
+  it("returns a PRECONDITION body for missing proposals", async () => {
+    vi.mocked(concludeBrainProposal).mockRejectedValue(
+      new MaisterError("PRECONDITION", "Brain proposal not found"),
+    );
+
+    const res = await invokePost({ action: "reject", reason: "missing" });
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body).toMatchObject({
+      code: "PRECONDITION",
+      message: "Brain proposal not found",
+    });
+  });
 });

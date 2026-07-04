@@ -168,6 +168,21 @@ describe("Project Brain source routes", () => {
     expect(createBrainSource).not.toHaveBeenCalled();
   });
 
+  it("returns a PRECONDITION body for unreadable source inputs", async () => {
+    vi.mocked(createBrainSource).mockRejectedValue(
+      new MaisterError("PRECONDITION", "Brain source glob is too broad"),
+    );
+
+    const res = await invokePost({ path: "many/**/*.md" });
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body).toMatchObject({
+      code: "PRECONDITION",
+      message: "Brain source glob is too broad",
+    });
+  });
+
   it("enqueues all enabled sources behind editSettings", async () => {
     const res = await invokeReindexAll();
     const body = await res.json();
@@ -193,8 +208,10 @@ describe("Project Brain source routes", () => {
     );
 
     const res = await invokeGet();
+    const body = await res.json();
 
     expect(res.status).toBe(404);
+    expect(body).toMatchObject({ code: "PRECONDITION" });
     expect(listBrainSources).not.toHaveBeenCalled();
   });
 });

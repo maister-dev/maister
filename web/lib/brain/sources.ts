@@ -157,12 +157,40 @@ export function isBrainSourceGlob(path: string): boolean {
   return /[*?[\]{}]/.test(path);
 }
 
-async function listTrackedFilePaths(args: {
+interface TrackedGlobMatches {
+  readonly trackedMatchCount: number;
+  readonly matchedPaths: string[];
+}
+
+async function listTrackedGlobMatches(args: {
   repoPath: string;
   ref: string;
-  dir?: string;
-}): Promise<string[]> {
-  const paths: string[] = [];
+  dir: string;
+  sourcePath: string;
+  isMatch: (path: string) => boolean;
+  excludedPaths: ReadonlySet<string>;
+  maxMatches: number;
+}): Promise<TrackedGlobMatches> {
+  const matchedPaths: string[] = [];
+  let trackedMatchCount = 0;
+
+  function rejectOverLimit(): never {
+    log.warn(
+      {
+        path: args.sourcePath,
+        ref: args.ref,
+        matchCount: matchedPaths.length,
+        maxMatches: args.maxMatches,
+        reason: "glob_match_limit",
+      },
+      "brain source glob rejected",
+    );
+
+    throw new MaisterError(
+      "PRECONDITION",
+      `Brain source glob "${args.sourcePath}" matched ${matchedPaths.length} tracked files at ${args.ref}; limit is ${args.maxMatches}`,
+    );
+  }
 
   async function visit(dir: string): Promise<void> {
     const tree = await listTree({ repo: args.repoPath, ref: args.ref, dir });
@@ -174,15 +202,26 @@ async function listTrackedFilePaths(args: {
 
       if (entry.type === "dir") {
         await visit(nextPath);
-      } else {
-        paths.push(nextPath);
+      } else if (args.isMatch(nextPath)) {
+        trackedMatchCount += 1;
+
+        if (!args.excludedPaths.has(nextPath)) {
+          matchedPaths.push(nextPath);
+
+          if (matchedPaths.length > args.maxMatches) {
+            rejectOverLimit();
+          }
+        }
       }
     }
   }
 
-  await visit(args.dir ?? "");
+  await visit(args.dir);
 
-  return paths.sort();
+  return {
+    trackedMatchCount,
+    matchedPaths: matchedPaths.sort(),
+  };
 }
 
 function globSearchRoot(path: string): string {
@@ -278,19 +317,18 @@ export async function readBrainSourceContents(args: {
       validateSourcePath(excludedPath),
     ),
   );
-  const trackedMatches = (
-    await listTrackedFilePaths({
-      repoPath: args.repoPath,
-      ref: args.ref,
-      dir: globSearchRoot(path),
-    })
-  ).filter((filePath) => isMatch(filePath));
-  const matchedPaths = trackedMatches.filter(
-    (filePath) => !excludedPaths.has(filePath),
-  );
   const maxMatches = args.maxMatches ?? BRAIN_SOURCE_MAX_GLOB_MATCHES;
+  const { trackedMatchCount, matchedPaths } = await listTrackedGlobMatches({
+    repoPath: args.repoPath,
+    ref: args.ref,
+    dir: globSearchRoot(path),
+    sourcePath: path,
+    isMatch,
+    excludedPaths,
+    maxMatches,
+  });
 
-  if (trackedMatches.length === 0) {
+  if (trackedMatchCount === 0) {
     throw new MaisterError(
       "PRECONDITION",
       `Brain source glob "${path}" matched no tracked files at ${args.ref}`,
@@ -299,24 +337,6 @@ export async function readBrainSourceContents(args: {
 
   if (matchedPaths.length === 0) {
     return { files: [], sourceHash: hashSourceContentSet([]) };
-  }
-
-  if (matchedPaths.length > maxMatches) {
-    log.warn(
-      {
-        path,
-        ref: args.ref,
-        matchCount: matchedPaths.length,
-        maxMatches,
-        reason: "glob_match_limit",
-      },
-      "brain source glob rejected",
-    );
-
-    throw new MaisterError(
-      "PRECONDITION",
-      `Brain source glob "${path}" matched ${matchedPaths.length} tracked files at ${args.ref}; limit is ${maxMatches}`,
-    );
   }
 
   const files: SourceContent[] = [];

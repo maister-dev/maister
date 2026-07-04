@@ -50,7 +50,7 @@ async function createFixtureRepo(): Promise<string> {
     join(repo, "docs/api/openapi.yaml"),
     "openapi: 3.0.3\npaths: {}\n",
   );
-  for (let index = 0; index <= BRAIN_SOURCE_MAX_GLOB_MATCHES; index++) {
+  for (let index = 0; index <= BRAIN_SOURCE_MAX_GLOB_MATCHES + 1; index++) {
     await writeFile(
       join(repo, "many", `file-${index}.md`),
       `# File ${index}\n`,
@@ -60,7 +60,7 @@ async function createFixtureRepo(): Promise<string> {
   await writeFile(join(repo, ".gitignore"), "ignored.txt\n");
   await writeFile(join(repo, "ignored.txt"), "ignored\n");
   await writeFile(join(repo, "untracked.md"), "# Untracked\n");
-  await git(repo, ["add", "docs", "src", ".gitignore"]);
+  await git(repo, ["add", "docs", "many", "src", ".gitignore"]);
   await git(repo, ["commit", "-m", "seed"]);
 
   return repo;
@@ -181,13 +181,18 @@ describe("Project Brain sources (ADR-127)", () => {
   });
 
   it("rejects overly broad glob sources before registration", async () => {
+    const expectedLimitMessage = `matched ${BRAIN_SOURCE_MAX_GLOB_MATCHES + 1} tracked files`;
+
     await expect(
       readBrainSourceContents({
         repoPath,
         ref: "main",
         path: "many/**/*.md",
       }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      message: expect.stringContaining(expectedLimitMessage),
+    });
 
     await expect(
       createBrainSource(ctx.db, {
@@ -196,7 +201,10 @@ describe("Project Brain sources (ADR-127)", () => {
         mainBranch: "main",
         input: { path: "many/**/*.md", kind: "markdown" },
       }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      message: expect.stringContaining(expectedLimitMessage),
+    });
   });
 
   it("fails closed for traversal, .git, ignored, and untracked source paths", async () => {
