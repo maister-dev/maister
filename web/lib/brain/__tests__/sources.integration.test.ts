@@ -88,18 +88,24 @@ describe("Project Brain sources (ADR-127)", () => {
     await stopBrainTestDb(ctx);
   });
 
-  it("seeds suggested defaults once as metadata-only source rows", async () => {
+  it("seeds the docs indexing profile once as metadata-only source rows", async () => {
     const first = await seedDefaultBrainSources(ctx.db, projectId);
     const second = await seedDefaultBrainSources(ctx.db, projectId);
 
     expect(first.map((source) => source.path)).toEqual(
       expect.arrayContaining([
+        "README.md",
+        "AGENTS.md",
+        "CLAUDE.md",
         "docs/**/*.md",
         "docs/decisions.md",
-        ".ai-factory/ROADMAP.md",
+        "docs/ROADMAP.md",
         "docs/api/*.yaml",
         "maister.yaml",
       ]),
+    );
+    expect(first.map((source) => source.path)).not.toContain(
+      ".ai-factory/ROADMAP.md",
     );
     expect(second).toHaveLength(0);
 
@@ -180,30 +186,25 @@ describe("Project Brain sources (ADR-127)", () => {
     ]);
   });
 
-  it("rejects overly broad glob sources before registration", async () => {
-    const expectedLimitMessage = `matched ${BRAIN_SOURCE_MAX_GLOB_MATCHES + 1} tracked files`;
-
-    await expect(
-      readBrainSourceContents({
-        repoPath,
-        ref: "main",
-        path: "many/**/*.md",
-      }),
-    ).rejects.toMatchObject({
-      code: "PRECONDITION",
-      message: expect.stringContaining(expectedLimitMessage),
+  it("allows broad glob sources because source jobs process them in batches", async () => {
+    const content = await readBrainSourceContents({
+      repoPath,
+      ref: "main",
+      path: "many/**/*.md",
+      maxMatches: BRAIN_SOURCE_MAX_GLOB_MATCHES + 10,
+    });
+    const source = await createBrainSource(ctx.db, {
+      projectId,
+      repoPath,
+      mainBranch: "main",
+      input: { path: "many/**/*.md", kind: "markdown" },
     });
 
-    await expect(
-      createBrainSource(ctx.db, {
-        projectId,
-        repoPath,
-        mainBranch: "main",
-        input: { path: "many/**/*.md", kind: "markdown" },
-      }),
-    ).rejects.toMatchObject({
-      code: "PRECONDITION",
-      message: expect.stringContaining(expectedLimitMessage),
+    expect(content.files.length).toBe(BRAIN_SOURCE_MAX_GLOB_MATCHES + 2);
+    expect(source).toMatchObject({
+      path: "many/**/*.md",
+      kind: "markdown",
+      enabled: true,
     });
   });
 

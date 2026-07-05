@@ -88,6 +88,8 @@ beforeEach(() => {
     sourceHash: null,
     lastIndexedAt: null,
     lastError: null,
+    indexedFileCount: 0,
+    indexedFilePaths: [],
     chunkCount: 0,
   });
   vi.mocked(enqueueAllBrainSourcesReindex).mockResolvedValue(["job-1"]);

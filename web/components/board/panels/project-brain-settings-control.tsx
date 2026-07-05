@@ -10,6 +10,7 @@ import { useTranslations } from "next-intl";
 type Props = {
   projectSlug: string;
   brainEnabled: boolean;
+  indexingProfile: BrainIndexingProfile;
   homeResolution: BrainHomeResolution;
   projectionFlowId: string | null;
   autonomyDefaults: BrainAutonomyPolicy;
@@ -27,6 +28,7 @@ type BrainHomeValue = "owned" | "indexed";
 type BrainHomeSelection = BrainHomeValue | "default";
 type BrainHomeResolution = Partial<Record<BrainHomeKind, BrainHomeValue>>;
 type BrainHomeState = Record<BrainHomeKind, BrainHomeSelection>;
+type BrainIndexingProfile = "docs" | "docs_source" | "all";
 
 const AUTONOMY_CONTROLS: Array<{ key: AutonomyPolicyKey; labelKey: string }> = [
   { key: "rule.low", labelKey: "brainAutonomyRuleLow" },
@@ -109,6 +111,7 @@ async function patchJson(url: string, body: unknown): Promise<void> {
 export function ProjectBrainSettingsControl({
   projectSlug,
   brainEnabled,
+  indexingProfile,
   homeResolution,
   projectionFlowId,
   autonomyDefaults,
@@ -117,11 +120,16 @@ export function ProjectBrainSettingsControl({
 }: Props): ReactElement {
   const t = useTranslations("settings");
   const labelId = useId();
+  const profileId = useId();
   const homeId = useId();
   const projectionId = useId();
   const autonomyId = useId();
   const [enabled, setEnabled] = useState(brainEnabled);
   const [savedEnabled, setSavedEnabled] = useState(brainEnabled);
+  const [profile, setProfile] =
+    useState<BrainIndexingProfile>(indexingProfile);
+  const [savedProfile, setSavedProfile] =
+    useState<BrainIndexingProfile>(indexingProfile);
   const [home, setHome] = useState<BrainHomeState>(
     normalizeHomeState(homeResolution),
   );
@@ -147,6 +155,7 @@ export function ProjectBrainSettingsControl({
   const currentPolicyKey = policyKey(policy);
   const changed =
     enabled !== savedEnabled ||
+    profile !== savedProfile ||
     currentHomeKey !== savedHomeKey ||
     projection !== savedProjection ||
     currentPolicyKey !== savedPolicyKey;
@@ -169,6 +178,11 @@ export function ProjectBrainSettingsControl({
   const flowOptions: Array<{ id: string; label: string }> = [
     { id: NO_PROJECTION_FLOW, label: t("brainProjectionFlowNone") },
     ...flows.map((flow) => ({ id: flow.id, label: flow.ref })),
+  ];
+  const profileOptions: Array<{ id: BrainIndexingProfile; label: string }> = [
+    { id: "docs", label: t("brainIndexingProfileDocs") },
+    { id: "docs_source", label: t("brainIndexingProfileDocsSource") },
+    { id: "all", label: t("brainIndexingProfileAll") },
   ];
 
   function setDecision(
@@ -195,6 +209,7 @@ export function ProjectBrainSettingsControl({
       const body: Record<string, unknown> = {};
 
       if (enabled !== savedEnabled) body.brainEnabled = enabled;
+      if (profile !== savedProfile) body.brainIndexingProfile = profile;
       if (currentHomeKey !== savedHomeKey) {
         body.homeResolution = currentHomeResolution;
       }
@@ -211,6 +226,7 @@ export function ProjectBrainSettingsControl({
         body,
       );
       setSavedEnabled(enabled);
+      setSavedProfile(profile);
       setSavedHomeKey(currentHomeKey);
       setSavedProjection(projection);
       setSavedPolicyKey(currentPolicyKey);
@@ -252,6 +268,40 @@ export function ProjectBrainSettingsControl({
             <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
               <ListBox aria-label={t("brainEnabledLabel")}>
                 {options.map((option) => (
+                  <ListBox.Item
+                    key={option.id}
+                    id={option.id}
+                    textValue={option.label}
+                  >
+                    {option.label}
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+        </label>
+        <label className="flex min-w-[220px] flex-col gap-1.5">
+          <span className={labelClass} id={profileId}>
+            {t("brainIndexingProfile")}
+          </span>
+          <Select
+            aria-labelledby={profileId}
+            selectedKey={profile}
+            variant="secondary"
+            onSelectionChange={(key: Key | null) => {
+              if (key === null) return;
+
+              setShowSaved(false);
+              setProfile(String(key) as BrainIndexingProfile);
+            }}
+          >
+            <Select.Trigger className="h-10 rounded-[8px] border-line bg-canvas px-3 text-[13px] text-ink">
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
+              <ListBox aria-label={t("brainIndexingProfile")}>
+                {profileOptions.map((option) => (
                   <ListBox.Item
                     key={option.id}
                     id={option.id}

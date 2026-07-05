@@ -11,6 +11,11 @@ import { z } from "zod";
 
 import { defaultChunkerIdForKind, detectSourceKind } from "./chunkers/registry";
 import { sha256 } from "./codec";
+import {
+  brainSourceInputsForProfile,
+  normalizeBrainIndexingProfile,
+  type BrainIndexingProfile,
+} from "./indexing-profiles";
 
 import { workbenchMaxFileBytes } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
@@ -80,6 +85,8 @@ export interface BrainSourceDto {
   sourceHash: string | null;
   lastIndexedAt: Date | string | null;
   lastError: Record<string, unknown> | null;
+  indexedFileCount: number;
+  indexedFilePaths: string[];
   chunkCount: number;
 }
 
@@ -94,21 +101,7 @@ export interface SourceContentSet {
   sourceHash: string;
 }
 
-const DEFAULT_SOURCE_INPUTS: Array<{
-  path: string;
-  kind: BuiltInSourceKind;
-  chunkerId: string;
-}> = [
-  { path: "docs/**/*.md", kind: "markdown", chunkerId: "markdown" },
-  { path: "docs/decisions.md", kind: "markdown", chunkerId: "markdown" },
-  {
-    path: ".ai-factory/ROADMAP.md",
-    kind: "markdown",
-    chunkerId: "markdown",
-  },
-  { path: "docs/api/*.yaml", kind: "openapi", chunkerId: "openapi" },
-  { path: "maister.yaml", kind: "flow_yaml", chunkerId: "flow_yaml" },
-];
+const DEFAULT_SOURCE_INPUTS = brainSourceInputsForProfile("docs");
 
 function toBrainSourceDto(row: Record<string, unknown>): BrainSourceDto {
   return {
@@ -121,8 +114,16 @@ function toBrainSourceDto(row: Record<string, unknown>): BrainSourceDto {
     sourceHash: (row.source_hash as string | null) ?? null,
     lastIndexedAt: (row.last_indexed_at as Date | string | null) ?? null,
     lastError: (row.last_error as Record<string, unknown> | null) ?? null,
+    indexedFileCount: Number(row.indexed_file_count ?? 0),
+    indexedFilePaths: textArrayOf(row.indexed_file_paths),
     chunkCount: Number(row.chunk_count ?? 0),
   };
+}
+
+function textArrayOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 function parseSourceInput(
@@ -169,7 +170,7 @@ async function listTrackedGlobMatches(args: {
   sourcePath: string;
   isMatch: (path: string) => boolean;
   excludedPaths: ReadonlySet<string>;
-  maxMatches: number;
+  maxMatches?: number;
 }): Promise<TrackedGlobMatches> {
   const matchedPaths: string[] = [];
   let trackedMatchCount = 0;
@@ -208,7 +209,10 @@ async function listTrackedGlobMatches(args: {
         if (!args.excludedPaths.has(nextPath)) {
           matchedPaths.push(nextPath);
 
-          if (matchedPaths.length > args.maxMatches) {
+          if (
+            args.maxMatches !== undefined &&
+            matchedPaths.length > args.maxMatches
+          ) {
             rejectOverLimit();
           }
         }
@@ -222,6 +226,51 @@ async function listTrackedGlobMatches(args: {
     trackedMatchCount,
     matchedPaths: matchedPaths.sort(),
   };
+}
+
+export async function listBrainSourceMatchedPaths(args: {
+  repoPath: string;
+  ref: string;
+  path: string;
+  excludePaths?: readonly string[];
+  maxMatches?: number;
+}): Promise<TrackedGlobMatches> {
+  const path = validateSourcePath(args.path);
+
+  if (!isBrainSourceGlob(path)) {
+    await readBrainSourceContent({
+      repoPath: args.repoPath,
+      ref: args.ref,
+      path,
+    });
+
+    return { trackedMatchCount: 1, matchedPaths: [path] };
+  }
+
+  const isMatch = picomatch(path, { dot: true });
+  const excludedPaths = new Set(
+    (args.excludePaths ?? []).map((excludedPath) =>
+      validateSourcePath(excludedPath),
+    ),
+  );
+  const result = await listTrackedGlobMatches({
+    repoPath: args.repoPath,
+    ref: args.ref,
+    dir: globSearchRoot(path),
+    sourcePath: path,
+    isMatch,
+    excludedPaths,
+    maxMatches: args.maxMatches,
+  });
+
+  if (result.trackedMatchCount === 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `Brain source glob "${path}" matched no tracked files at ${args.ref}`,
+    );
+  }
+
+  return result;
 }
 
 function globSearchRoot(path: string): string {
@@ -311,21 +360,18 @@ export async function readBrainSourceContents(args: {
     return { files: [content], sourceHash: content.sourceHash };
   }
 
-  const isMatch = picomatch(path, { dot: true });
-  const excludedPaths = new Set(
-    (args.excludePaths ?? []).map((excludedPath) =>
-      validateSourcePath(excludedPath),
-    ),
-  );
-  const maxMatches = args.maxMatches ?? BRAIN_SOURCE_MAX_GLOB_MATCHES;
   const { trackedMatchCount, matchedPaths } = await listTrackedGlobMatches({
     repoPath: args.repoPath,
     ref: args.ref,
     dir: globSearchRoot(path),
     sourcePath: path,
-    isMatch,
-    excludedPaths,
-    maxMatches,
+    isMatch: picomatch(path, { dot: true }),
+    excludedPaths: new Set(
+      (args.excludePaths ?? []).map((excludedPath) =>
+        validateSourcePath(excludedPath),
+      ),
+    ),
+    maxMatches: args.maxMatches,
   });
 
   if (trackedMatchCount === 0) {
@@ -339,11 +385,26 @@ export async function readBrainSourceContents(args: {
     return { files: [], sourceHash: hashSourceContentSet([]) };
   }
 
+  return readBrainSourceFiles({
+    ...args,
+    paths: matchedPaths,
+    sourcePath: path,
+  });
+}
+
+export async function readBrainSourceFiles(args: {
+  repoPath: string;
+  ref: string;
+  paths: readonly string[];
+  sourcePath?: string;
+  maxBytes?: number;
+  maxTotalBytes?: number;
+}): Promise<SourceContentSet> {
   const files: SourceContent[] = [];
   const maxTotalBytes = args.maxTotalBytes ?? BRAIN_SOURCE_MAX_TOTAL_BYTES;
   let totalBytes = 0;
 
-  for (const filePath of matchedPaths) {
+  for (const filePath of args.paths) {
     const file = await readBrainSourceContent({
       ...args,
       path: filePath,
@@ -354,7 +415,7 @@ export async function readBrainSourceContents(args: {
     if (totalBytes > maxTotalBytes) {
       log.warn(
         {
-          path,
+          path: args.sourcePath ?? filePath,
           ref: args.ref,
           totalBytes,
           maxTotalBytes,
@@ -365,7 +426,7 @@ export async function readBrainSourceContents(args: {
 
       throw new MaisterError(
         "PRECONDITION",
-        `Brain source glob "${path}" exceeds the aggregate indexed byte limit (${totalBytes}/${maxTotalBytes})`,
+        `Brain source "${args.sourcePath ?? filePath}" exceeds the aggregate indexed byte limit (${totalBytes}/${maxTotalBytes})`,
       );
     }
 
@@ -383,7 +444,13 @@ async function assertSourceReadable(args: {
   ref: string;
   path: string;
 }): Promise<void> {
-  await readBrainSourceContents(args);
+  if (isBrainSourceGlob(args.path)) {
+    await listBrainSourceMatchedPaths(args);
+
+    return;
+  }
+
+  await readBrainSourceContent(args);
 }
 
 function shouldValidateSourceUpdate(args: {
@@ -409,6 +476,12 @@ export async function listBrainSources(
   const rows = await db.execute(sql`
     SELECT s.id, s.kind, s.path, s.chunker_id, s.chunker_version, s.enabled,
            s.source_hash, s.last_indexed_at, s.last_error,
+           count(DISTINCT c.path)::int AS indexed_file_count,
+           COALESCE(
+             array_agg(DISTINCT c.path ORDER BY c.path)
+               FILTER (WHERE c.path IS NOT NULL),
+             ARRAY[]::text[]
+           ) AS indexed_file_paths,
            count(c.id)::int AS chunk_count
     FROM brain_sources s
     LEFT JOIN brain_chunks c ON c.source_id = s.id
@@ -442,15 +515,17 @@ export async function createBrainSource(
 
   const inserted = await db.execute(sql`
     INSERT INTO brain_sources
-      (id, project_id, kind, path, chunker_id, chunker_version, enabled)
+      (id, project_id, kind, path, chunker_id, chunker_version, enabled,
+       profile_managed)
     VALUES
       (${randomUUID()}, ${args.projectId}, ${kind}, ${path}, ${chunkerId},
-       ${BRAIN_SOURCE_CHUNKER_VERSION}, ${input.enabled ?? true})
+       ${BRAIN_SOURCE_CHUNKER_VERSION}, ${input.enabled ?? true}, false)
     ON CONFLICT (project_id, kind, path)
     DO UPDATE SET
       chunker_id = EXCLUDED.chunker_id,
       chunker_version = EXCLUDED.chunker_version,
       enabled = EXCLUDED.enabled,
+      profile_managed = false,
       updated_at = now()
     RETURNING id
   `);
@@ -565,6 +640,33 @@ export async function enqueueBrainSourceReindex(
 ): Promise<string> {
   await getBrainSource(db, args.projectId, args.sourceId);
 
+  const existing = await db.execute(sql`
+    SELECT id
+    FROM brain_index_jobs
+    WHERE project_id = ${args.projectId}
+      AND source_id = ${args.sourceId}
+      AND status IN ('queued', 'running')
+    ORDER BY created_at ASC
+    LIMIT 1
+  `);
+
+  if (existing.rows.length > 0) {
+    const jobId = String(existing.rows[0]?.id);
+
+    log.info(
+      {
+        projectId: args.projectId,
+        sourceId: args.sourceId,
+        jobId,
+        reason: args.reason ?? "manual",
+        outcome: "existing_live_job",
+      },
+      "brain source reindex already queued",
+    );
+
+    return jobId;
+  }
+
   const inserted = await db.execute(sql`
     INSERT INTO brain_index_jobs (id, project_id, source_id, reason, status)
     VALUES (
@@ -589,6 +691,76 @@ export async function enqueueBrainSourceReindex(
   );
 
   return jobId;
+}
+
+export async function applyBrainIndexingProfile(
+  db: SourcesDb,
+  args: { projectId: string; profile: BrainIndexingProfile },
+): Promise<BrainSourceDto[]> {
+  const profile = normalizeBrainIndexingProfile(args.profile);
+  const inputs = brainSourceInputsForProfile(profile);
+  const keepClauses = inputs.map(
+    (source) => sql`(kind = ${source.kind} AND path = ${source.path})`,
+  );
+  const keepClause =
+    keepClauses.length === 0 ? sql`false` : sql.join(keepClauses, sql` OR `);
+
+  await db.execute(sql`
+    INSERT INTO brain_project_config (
+      project_id,
+      home_resolution,
+      autonomy_policy,
+      indexing_profile
+    )
+    VALUES (
+      ${args.projectId},
+      '{}'::jsonb,
+      '{}'::jsonb,
+      ${profile}
+    )
+    ON CONFLICT (project_id)
+    DO UPDATE SET
+      indexing_profile = EXCLUDED.indexing_profile,
+      updated_at = now()
+  `);
+
+  await db.execute(sql`
+    UPDATE brain_sources
+    SET enabled = false,
+        updated_at = now()
+    WHERE project_id = ${args.projectId}
+      AND profile_managed = true
+      AND NOT (${keepClause})
+  `);
+
+  for (const source of inputs) {
+    await db.execute(sql`
+      INSERT INTO brain_sources
+        (id, project_id, kind, path, chunker_id, chunker_version, enabled,
+         profile_managed)
+      VALUES
+        (${randomUUID()}, ${args.projectId}, ${source.kind}, ${source.path},
+         ${source.chunkerId}, ${BRAIN_SOURCE_CHUNKER_VERSION}, true, true)
+      ON CONFLICT (project_id, kind, path)
+      DO UPDATE SET
+        chunker_id = EXCLUDED.chunker_id,
+        chunker_version = EXCLUDED.chunker_version,
+        enabled = true,
+        profile_managed = true,
+        updated_at = now()
+    `);
+  }
+
+  log.info(
+    {
+      projectId: args.projectId,
+      profile,
+      sourceCount: inputs.length,
+    },
+    "brain indexing profile applied",
+  );
+
+  return listBrainSources(db, args.projectId);
 }
 
 export async function enqueueAllBrainSourcesReindex(
@@ -625,10 +797,11 @@ export async function seedDefaultBrainSources(
   for (const source of DEFAULT_SOURCE_INPUTS) {
     const inserted = await db.execute(sql`
       INSERT INTO brain_sources
-        (id, project_id, kind, path, chunker_id, chunker_version, enabled)
+        (id, project_id, kind, path, chunker_id, chunker_version, enabled,
+         profile_managed)
       VALUES
         (${randomUUID()}, ${projectId}, ${source.kind}, ${source.path},
-         ${source.chunkerId}, ${BRAIN_SOURCE_CHUNKER_VERSION}, true)
+         ${source.chunkerId}, ${BRAIN_SOURCE_CHUNKER_VERSION}, true, true)
       ON CONFLICT (project_id, kind, path) DO NOTHING
       RETURNING id
     `);
@@ -663,7 +836,16 @@ export async function seedDefaultBrainSourcesForFirstSetup(
     return [];
   }
 
-  return seedDefaultBrainSources(db, projectId);
+  const config = await db.execute(sql`
+    SELECT indexing_profile
+    FROM brain_project_config
+    WHERE project_id = ${projectId}
+  `);
+  const profile = normalizeBrainIndexingProfile(
+    config.rows[0]?.indexing_profile ?? "docs",
+  );
+
+  return applyBrainIndexingProfile(db, { projectId, profile });
 }
 
 async function getBrainSource(
@@ -674,6 +856,12 @@ async function getBrainSource(
   const rows = await db.execute(sql`
     SELECT s.id, s.kind, s.path, s.chunker_id, s.chunker_version, s.enabled,
            s.source_hash, s.last_indexed_at, s.last_error,
+           count(DISTINCT c.path)::int AS indexed_file_count,
+           COALESCE(
+             array_agg(DISTINCT c.path ORDER BY c.path)
+               FILTER (WHERE c.path IS NOT NULL),
+             ARRAY[]::text[]
+           ) AS indexed_file_paths,
            count(c.id)::int AS chunk_count
     FROM brain_sources s
     LEFT JOIN brain_chunks c ON c.source_id = s.id

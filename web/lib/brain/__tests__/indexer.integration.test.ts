@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 import {
+  BRAIN_SOURCE_MAX_GLOB_MATCHES,
   createBrainSource,
   enqueueBrainSourceReindex,
 } from "@/lib/brain/sources";
@@ -71,6 +72,23 @@ async function createIndexerRepo(): Promise<string> {
   await git(repo, ["commit", "-m", "seed"]);
 
   return repo;
+}
+
+async function addManyMarkdownFiles(
+  repo: string,
+  count: number,
+): Promise<void> {
+  await mkdir(join(repo, "many"), { recursive: true });
+
+  for (let index = 0; index < count; index++) {
+    await writeFile(
+      join(repo, "many", `file-${String(index).padStart(4, "0")}.md`),
+      `# File ${index}\n\nBatch indexed ${index}.\n`,
+    );
+  }
+
+  await git(repo, ["add", "many"]);
+  await git(repo, ["commit", "-m", "add many indexed docs"]);
 }
 
 async function updateTrackedFile(
@@ -289,6 +307,74 @@ describe("Project Brain source indexer (ADR-127)", () => {
     expect(new Set(paths.rows.map((row) => row.path))).toEqual(
       new Set(["docs/README.md", "docs/decisions.md", "docs/guide/intro.md"]),
     );
+  });
+
+  it("keeps broad glob source jobs running across bounded batches", async () => {
+    const batchRepoPath = await createIndexerRepo();
+    const batchProjectId = await seedIndexerProject(
+      ctx,
+      batchRepoPath,
+      "brain-indexer-batch",
+    );
+    const fileCount = BRAIN_SOURCE_MAX_GLOB_MATCHES + 5;
+
+    await addManyMarkdownFiles(batchRepoPath, fileCount);
+
+    const source = await createBrainSource(ctx.db, {
+      projectId: batchProjectId,
+      repoPath: batchRepoPath,
+      mainBranch: "main",
+      input: { path: "many/**/*.md", kind: "markdown" },
+    });
+
+    await enqueueBrainSourceReindex(ctx.db, {
+      projectId: batchProjectId,
+      sourceId: source.id,
+      reason: "manual",
+    });
+
+    const first = await runBrainReindexSweep({
+      db: ctx.db as any,
+      client: fakeEmbeddingClient(),
+      maxItemsPerJob: 10,
+    });
+    const afterFirst = await ctx.db.execute(sql`
+      SELECT status, progress, resumable_cursor
+      FROM brain_index_jobs
+      WHERE source_id = ${source.id}
+    `);
+    const pathsAfterFirst = await ctx.db.execute(sql`
+      SELECT DISTINCT path
+      FROM brain_chunks
+      WHERE source_id = ${source.id}
+      ORDER BY path ASC
+    `);
+
+    expect(first.jobsProcessed).toBe(1);
+    expect(first.jobsCompleted).toBe(0);
+    expect(afterFirst.rows[0]).toMatchObject({
+      status: "running",
+      progress: BRAIN_SOURCE_MAX_GLOB_MATCHES,
+    });
+    expect(afterFirst.rows[0]?.resumable_cursor).toMatchObject({
+      processedFiles: BRAIN_SOURCE_MAX_GLOB_MATCHES,
+    });
+    expect(pathsAfterFirst.rows).toHaveLength(BRAIN_SOURCE_MAX_GLOB_MATCHES);
+
+    const second = await runBrainReindexSweep({
+      db: ctx.db as any,
+      client: fakeEmbeddingClient(),
+      maxItemsPerJob: 10,
+    });
+    const pathsAfterSecond = await ctx.db.execute(sql`
+      SELECT DISTINCT path
+      FROM brain_chunks
+      WHERE source_id = ${source.id}
+      ORDER BY path ASC
+    `);
+
+    expect(second.jobsCompleted).toBe(1);
+    expect(pathsAfterSecond.rows).toHaveLength(fileCount);
   });
 
   it("excludes exact peer sources from glob chunks for the same project and kind", async () => {

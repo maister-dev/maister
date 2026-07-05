@@ -14,11 +14,20 @@ const labels: ProjectBrainPanelLabels = {
   searchPlaceholder: "Search memory",
   searchAction: "Search",
   emptyMemory: "No memory",
+  memorySearchRequired: "Search first",
   tierOwned: "owned",
   tierIndexed: "indexed",
   confidence: "confidence",
   indexStatusTitle: "Index status",
   indexLatestSourceIndex: "Latest source index",
+  indexIndexedFiles: "Indexed files",
+  indexIndexedChunks: "Chunks",
+  indexSources: "Sources",
+  indexSourcesHint: "enabled / total",
+  indexFailedSources: "Failed sources",
+  indexQueue: "Queue",
+  indexQueueHint: "queued / running",
+  indexLastCompleted: "Last completed",
   indexQueued: "Queued",
   indexRunning: "Running",
   indexFailed: "Failed",
@@ -46,6 +55,7 @@ const labels: ProjectBrainPanelLabels = {
   sourceStatus: "Status",
   sourceLastIndexed: "Last indexed",
   sourceError: "Error",
+  sourceIndexedFiles: "Indexed files",
   sourceChunks: "Chunks",
   sourceEnabled: "enabled",
   sourceDisabled: "disabled",
@@ -70,11 +80,12 @@ const fullProposalCapabilities: BrainProposalReviewCapabilities = {
 
 function render(
   proposalCapabilities: BrainProposalReviewCapabilities = fullProposalCapabilities,
+  query = "decision",
 ): string {
   return renderToStaticMarkup(
     createElement(ProjectBrainPanel, {
       slug: "demo",
-      query: "decision",
+      query,
       labels,
       indexStatus: {
         activeJobs: [
@@ -90,9 +101,14 @@ function render(
         ],
         completed: 2,
         failed: 0,
+        failedSourceCount: 0,
+        enabledSourceCount: 1,
+        indexedChunkCount: 3,
+        indexedFileCount: 1,
         latestSourceIndexedAt: "2026-07-03T00:00:00.000Z",
         queued: 1,
         running: 0,
+        sourceCount: 1,
       },
       memory: [
         {
@@ -164,6 +180,8 @@ function render(
           sourceHash: "abc",
           lastIndexedAt: "2026-07-03T00:00:00.000Z",
           lastError: null,
+          indexedFileCount: 1,
+          indexedFilePaths: ["docs/decisions.md"],
           chunkCount: 3,
         },
       ],
@@ -181,7 +199,8 @@ describe("ProjectBrainPanel", () => {
     expect(html).toContain("73%");
     expect(html).toContain("100%");
     expect(html).toContain("Index status");
-    expect(html).toContain("Latest source index");
+    expect(html).toContain("Indexed files");
+    expect(html).toContain("Last completed");
     expect(html).toContain("job-1");
     expect(html).toContain(
       "/projects/demo?tab=repo&amp;file=docs%2Fdecisions.md#L10",
@@ -193,6 +212,9 @@ describe("ProjectBrainPanel", () => {
 
     expect(html).toContain('data-testid="brain-source-reindex-source-1"');
     expect(html).toContain('data-testid="brain-source-reindex-all"');
+    expect(html).toContain(
+      "/projects/demo?tab=repo&amp;file=docs%2Fdecisions.md",
+    );
     expect(html).toContain('data-testid="brain-proposal-accept-proposal-1"');
     expect(html).toContain('data-testid="brain-proposal-reject-proposal-1"');
     expect(html).toContain('data-testid="brain-proposal-accept-proposal-2"');
@@ -214,5 +236,13 @@ describe("ProjectBrainPanel", () => {
     expect(html).toContain('data-testid="brain-proposal-reject-proposal-1"');
     expect(html).toContain('data-testid="brain-proposal-accept-proposal-2"');
     expect(html).toContain('data-testid="brain-proposal-reject-proposal-2"');
+  });
+
+  it("shows the search prompt instead of memory results for an empty query", () => {
+    const html = render(fullProposalCapabilities, "");
+
+    expect(html).toContain("Search first");
+    expect(html).not.toContain("Use task projection");
+    expect(html).not.toContain("Brain proposals produce authored drafts.");
   });
 });

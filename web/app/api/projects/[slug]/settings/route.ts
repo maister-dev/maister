@@ -16,7 +16,12 @@ import {
   isBrainFullyConfigured,
   reconcileBrainIndexJobs,
 } from "@/lib/brain/settings";
-import { seedDefaultBrainSourcesForFirstSetup } from "@/lib/brain/sources";
+import {
+  applyBrainIndexingProfile,
+  enqueueAllBrainSourcesReindex,
+  seedDefaultBrainSourcesForFirstSetup,
+} from "@/lib/brain/sources";
+import { BRAIN_INDEXING_PROFILE_VALUES } from "@/lib/brain/indexing-profiles";
 import {
   saveBrainHomeResolution,
   type BrainHomeResolution,
@@ -60,6 +65,7 @@ const patchBodySchema = z
       })
       .strict()
       .optional(),
+    brainIndexingProfile: z.enum(BRAIN_INDEXING_PROFILE_VALUES).optional(),
     projectionFlowId: z.string().min(1).nullable().optional(),
     autonomyDefaults: z.record(z.string(), z.unknown()).optional(),
   })
@@ -176,6 +182,7 @@ export async function PATCH(
     if (
       body.brainEnabled === true ||
       body.homeResolution !== undefined ||
+      body.brainIndexingProfile !== undefined ||
       body.projectionFlowId !== undefined ||
       body.autonomyDefaults !== undefined
     ) {
@@ -219,6 +226,7 @@ export async function PATCH(
     if (
       Object.keys(update).length === 0 &&
       body.homeResolution === undefined &&
+      body.brainIndexingProfile === undefined &&
       body.projectionFlowId === undefined &&
       body.autonomyDefaults === undefined
     ) {
@@ -257,6 +265,13 @@ export async function PATCH(
         if (body.brainEnabled === true) {
           await seedDefaultBrainSourcesForFirstSetup(tx, project.id);
         }
+
+        if (body.brainIndexingProfile !== undefined) {
+          await applyBrainIndexingProfile(tx, {
+            projectId: project.id,
+            profile: body.brainIndexingProfile,
+          });
+        }
       },
     );
 
@@ -264,8 +279,34 @@ export async function PATCH(
     // embeddings only — reconcile-enqueue a reindex job so its vector leg
     // catches up (no-op when coverage is current or a job is already live).
     // Best-effort: the settings-save reconcile + reindex sweep are the belt.
+    const brainEnabledAfter =
+      body.brainEnabled === undefined
+        ? Boolean(project.brainEnabled)
+        : body.brainEnabled;
+
+    if (brainEnabledAfter && body.brainIndexingProfile !== undefined) {
+      try {
+        await enqueueAllBrainSourcesReindex(db, {
+          projectId: project.id,
+          reason: "manual",
+        });
+      } catch (err) {
+        log.warn(
+          {
+            projectId: project.id,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "brain source reindex enqueue after profile save failed",
+        );
+      }
+    }
+
     if (body.brainEnabled === true) {
       try {
+        await enqueueAllBrainSourcesReindex(db, {
+          projectId: project.id,
+          reason: "manual",
+        });
         await reconcileBrainIndexJobs(db, {
           projectId: project.id,
           reason: "manual",
@@ -287,6 +328,7 @@ export async function PATCH(
         runnerId: body.runnerId,
         deliveryPolicyDefault: body.deliveryPolicyDefault,
         homeResolutionChanged: body.homeResolution !== undefined,
+        brainIndexingProfileChanged: body.brainIndexingProfile !== undefined,
         projectionFlowChanged: body.projectionFlowId !== undefined,
         autonomyPolicyChanged: body.autonomyDefaults !== undefined,
       },
@@ -311,6 +353,7 @@ export async function PATCH(
           ? project.autoPromotion
           : body.autoPromotion,
       homeResolution: body.homeResolution,
+      brainIndexingProfile: body.brainIndexingProfile,
       projectionFlowId: body.projectionFlowId,
       autonomyDefaults: body.autonomyDefaults,
     });

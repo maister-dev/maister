@@ -126,6 +126,7 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
       "chunker_id",
       "chunker_version",
       "enabled",
+      "profile_managed",
       "last_indexed_at",
       "last_error",
     ]);
@@ -158,6 +159,7 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
       "home_resolution",
       "projection_flow_id",
       "autonomy_policy",
+      "indexing_profile",
     ]);
     expectColumns(await tableColumns("brain_proposal_decision_stats"), [
       "project_id",

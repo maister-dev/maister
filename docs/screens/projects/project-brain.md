@@ -44,16 +44,26 @@ flowchart TD
 
 The page uses the existing app shell and project chrome. Primary regions:
 
-- Memory search: compact search input, tier badges (`owned` / `indexed`),
-  confidence, preview, and canonical pointer link.
-- Index status: latest source `last_indexed_at`, queued/running/failed/completed
-  `brain_index_jobs` counts, and active index jobs with source, reason, status,
+- Memory search: compact search input. Until the user enters a query, the
+  region shows an instruction empty-state instead of recent/default recall
+  results. Query results show tier badges (`owned` / `indexed`), confidence,
+  preview, and canonical pointer link.
+- Index status: compact inventory cards for indexed file count, chunk count,
+  source enablement, failed sources, queued/running jobs, and latest successful
+  source index time. It also shows queued/running/failed/completed
+  `brain_index_jobs` counts and active index jobs with source, reason, status,
   and progress. This is project-local status; the full cross-project queue lives
   in `/admin/scheduler`.
-- Sources: table with path/glob, kind, chunker, enabled state, chunk count, last
-  indexed time, last error, per-source reindex, and index-all action. Source
-  add/update/remove exist on the API surface but are not currently exposed as UI
-  controls on this page.
+- Project settings: admins choose the managed source profile (`docs`,
+  `docs_source`, or `all`). `docs` covers documentation/contracts,
+  `docs_source` adds common source-code folders, and `all` also includes
+  MAIster/agent internals such as `.ai-factory`, `.agents`, `.codex`, and
+  `.claude`. Profile changes upsert managed source rows and queue source
+  reindex jobs when Brain is enabled; manually added sources are left untouched.
+- Sources: table with path/glob, kind, chunker, enabled state, indexed-file
+  count with expandable file links, chunk count, last indexed time, last error,
+  per-source reindex, and index-all action. Source add/update/remove exist on
+  the API surface but are not currently exposed as UI controls on this page.
 - Proposals: pending count, evidence links, draft JSON preview, allowed accept
   actions, and reject with reason. Catalog accept controls render only for
   `manageCatalog` users; docs/state projection accept controls render for users

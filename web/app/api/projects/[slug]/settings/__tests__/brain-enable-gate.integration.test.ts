@@ -105,9 +105,11 @@ async function brainProjectConfigOf(projectId: string): Promise<{
   homeResolution: Record<string, string>;
   projectionFlowId: string | null;
   autonomyPolicy: Record<string, string>;
+  indexingProfile: string;
 }> {
   const r = await dbRef.execute(sql`
-    SELECT home_resolution, projection_flow_id, autonomy_policy
+    SELECT home_resolution, projection_flow_id, autonomy_policy,
+           indexing_profile
     FROM brain_project_config
     WHERE project_id = ${projectId}
   `);
@@ -122,6 +124,7 @@ async function brainProjectConfigOf(projectId: string): Promise<{
       string,
       string
     >,
+    indexingProfile: String(r.rows[0]?.indexing_profile ?? "docs"),
   };
 }
 
@@ -171,8 +174,11 @@ describe("project settings brain enable-gate (T5.2)", () => {
     expect(await brainEnabledOf(projectId)).toBe(true);
     expect(new Set(await brainSourcePathsOf(projectId))).toEqual(
       new Set([
-        ".ai-factory/ROADMAP.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "README.md",
         "docs/**/*.md",
+        "docs/ROADMAP.md",
         "docs/api/*.yaml",
         "docs/decisions.md",
         "maister.yaml",
@@ -203,6 +209,27 @@ describe("project settings brain enable-gate (T5.2)", () => {
     expect(saveAgain.status).toBe(200);
     expect(await brainSourcePathsOf(projectId)).not.toContain(
       "docs/decisions.md",
+    );
+  });
+
+  it("saves the project indexing profile and reconciles managed source rows", async () => {
+    const projectId = await seedBrainProject(ctx.db, { brainEnabled: true });
+    const slug = await slugOf(projectId);
+
+    const res = await PATCH(
+      patchReq(slug, { brainIndexingProfile: "docs_source" }),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(res.status).toBe(200);
+    await expect(brainProjectConfigOf(projectId)).resolves.toMatchObject({
+      indexingProfile: "docs_source",
+    });
+    expect(await brainSourcePathsOf(projectId)).toEqual(
+      expect.arrayContaining([
+        "docs/**/*.md",
+        "src/**/*.{ts,tsx,js,jsx,py,rs,go,java}",
+      ]),
     );
   });
 

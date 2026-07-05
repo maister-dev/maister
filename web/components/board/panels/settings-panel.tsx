@@ -16,6 +16,7 @@ import {
   getBrainProjectConfig,
   type BrainAutonomyPolicy,
 } from "@/lib/brain/autonomy";
+import type { BrainIndexingProfile } from "@/lib/brain/indexing-profiles";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
 import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
@@ -63,6 +64,7 @@ export async function SettingsPanel({
   let brainAutonomyDefaults: BrainAutonomyPolicy = {};
   let brainHomeResolution: BrainHomeResolution = {};
   let brainProjectionFlowId: string | null = null;
+  let brainIndexingProfile: BrainIndexingProfile = "docs";
 
   if (isAdmin) {
     try {
@@ -93,11 +95,13 @@ export async function SettingsPanel({
       brainAutonomyDefaults = brainProjectConfig.autonomyDefaults;
       brainHomeResolution = brainProjectConfig.homeResolution;
       brainProjectionFlowId = brainProjectConfig.projectionFlowId;
+      brainIndexingProfile = brainProjectConfig.indexingProfile;
     } catch {
       brainPlatformConfigured = false;
       brainAutonomyDefaults = {};
       brainHomeResolution = {};
       brainProjectionFlowId = null;
+      brainIndexingProfile = "docs";
     }
   }
 
@@ -192,6 +196,7 @@ export async function SettingsPanel({
           brainEnabled={project.brainEnabled ?? false}
           flows={flows}
           homeResolution={brainHomeResolution}
+          indexingProfile={brainIndexingProfile}
           platformConfigured={brainPlatformConfigured}
           projectSlug={project.slug}
           projectionFlowId={brainProjectionFlowId}

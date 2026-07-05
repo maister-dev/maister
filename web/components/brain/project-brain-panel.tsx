@@ -25,11 +25,20 @@ export interface ProjectBrainPanelLabels {
   searchPlaceholder: string;
   searchAction: string;
   emptyMemory: string;
+  memorySearchRequired: string;
   tierOwned: string;
   tierIndexed: string;
   confidence: string;
   indexStatusTitle: string;
   indexLatestSourceIndex: string;
+  indexIndexedFiles: string;
+  indexIndexedChunks: string;
+  indexSources: string;
+  indexSourcesHint: string;
+  indexFailedSources: string;
+  indexQueue: string;
+  indexQueueHint: string;
+  indexLastCompleted: string;
   indexQueued: string;
   indexRunning: string;
   indexFailed: string;
@@ -47,6 +56,7 @@ export interface ProjectBrainPanelLabels {
   sourceStatus: string;
   sourceLastIndexed: string;
   sourceError: string;
+  sourceIndexedFiles: string;
   sourceChunks: string;
   sourceEnabled: string;
   sourceDisabled: string;
@@ -110,11 +120,14 @@ function errorText(error: Record<string, unknown> | null): string {
 }
 
 function repoFileHref(slug: string, pointer: BrainSourceRef): string {
+  return repoPathHref(slug, pointer.sourcePath, pointer.sourceRange?.startLine);
+}
+
+function repoPathHref(slug: string, sourcePath: string, line?: number): string {
   const params = new URLSearchParams({
     tab: "repo",
-    file: pointer.sourcePath,
+    file: sourcePath,
   });
-  const line = pointer.sourceRange?.startLine;
 
   return `/projects/${encodeURIComponent(slug)}?${params.toString()}${
     line ? `#L${line}` : ""
@@ -166,6 +179,65 @@ function canAcceptProposal(
   return capabilities.canAcceptProjection;
 }
 
+function IndexMetric({
+  label,
+  sub,
+  value,
+}: {
+  label: string;
+  sub?: string;
+  value: string | number;
+}): ReactElement {
+  return (
+    <div className="min-w-0 bg-paper px-4 py-3">
+      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+        {label}
+      </div>
+      <div className="mt-1 truncate font-mono text-[18px] font-semibold tracking-[-0.015em] text-ink">
+        {value}
+      </div>
+      {sub ? (
+        <div className="mt-0.5 truncate font-mono text-[10.5px] text-mute">
+          {sub}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SourceIndexedFilesCell({
+  slug,
+  source,
+}: {
+  slug: string;
+  source: BrainSourceDto;
+}): ReactElement {
+  if (source.indexedFileCount === 0) {
+    return <span className="font-mono text-[12px] text-mute">0</span>;
+  }
+
+  return (
+    <details className="group">
+      <summary className="cursor-pointer font-mono text-[12px] font-semibold text-ink underline-offset-2 hover:underline">
+        {source.indexedFileCount}
+      </summary>
+      <div className="mt-2 max-h-[180px] overflow-auto rounded-md border border-line bg-canvas p-2">
+        <div className="grid gap-1">
+          {source.indexedFilePaths.map((path) => (
+            <Link
+              className="truncate font-mono text-[11px] text-accent underline-offset-2 hover:underline"
+              href={repoPathHref(slug, path)}
+              key={path}
+            >
+              {path}
+            </Link>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function MemorySection({
   slug,
   query,
@@ -175,6 +247,8 @@ function MemorySection({
   ProjectBrainPanelProps,
   "slug" | "query" | "labels" | "memory"
 >): ReactElement {
+  const hasQuery = query.trim().length > 0;
+
   return (
     <section className={sectionClass}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
@@ -197,9 +271,9 @@ function MemorySection({
           </button>
         </form>
       </div>
-      {memory.length === 0 ? (
+      {!hasQuery || memory.length === 0 ? (
         <div className="px-4 py-6 font-mono text-[12px] text-mute">
-          {labels.emptyMemory}
+          {hasQuery ? labels.emptyMemory : labels.memorySearchRequired}
         </div>
       ) : (
         <div className="divide-y divide-line">
@@ -257,12 +331,36 @@ function IndexStatusSection({
         </div>
       </div>
       <div className="grid gap-3 px-4 py-3">
-        <div className="font-mono text-[11px] text-mute">
-          {labels.indexLatestSourceIndex}:{" "}
-          <span className="text-ink">
-            {formatDate(indexStatus.latestSourceIndexedAt) ||
-              labels.sourceNeverIndexed}
-          </span>
+        <div className="grid gap-px overflow-hidden rounded-[8px] border border-line bg-line sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+          <IndexMetric
+            label={labels.indexIndexedFiles}
+            value={indexStatus.indexedFileCount}
+          />
+          <IndexMetric
+            label={labels.indexIndexedChunks}
+            value={indexStatus.indexedChunkCount}
+          />
+          <IndexMetric
+            label={labels.indexSources}
+            sub={labels.indexSourcesHint}
+            value={`${indexStatus.enabledSourceCount}/${indexStatus.sourceCount}`}
+          />
+          <IndexMetric
+            label={labels.indexFailedSources}
+            value={indexStatus.failedSourceCount}
+          />
+          <IndexMetric
+            label={labels.indexQueue}
+            sub={labels.indexQueueHint}
+            value={`${indexStatus.queued}/${indexStatus.running}`}
+          />
+          <IndexMetric
+            label={labels.indexLastCompleted}
+            value={
+              formatDate(indexStatus.latestSourceIndexedAt) ||
+              labels.sourceNeverIndexed
+            }
+          />
         </div>
         <div>
           <div className="mb-2 font-mono text-[10.5px] font-semibold uppercase text-mute">
@@ -339,6 +437,7 @@ function SourcesSection({
               <th className={tableHeadClass}>{labels.sourceStatus}</th>
               <th className={tableHeadClass}>{labels.sourceLastIndexed}</th>
               <th className={tableHeadClass}>{labels.sourceError}</th>
+              <th className={tableHeadClass}>{labels.sourceIndexedFiles}</th>
               <th className={tableHeadClass}>{labels.sourceChunks}</th>
               <th className={tableHeadClass} />
             </tr>
@@ -360,6 +459,9 @@ function SourcesSection({
                 </td>
                 <td className={tableCellClass}>
                   {errorText(source.lastError)}
+                </td>
+                <td className={tableCellClass}>
+                  <SourceIndexedFilesCell slug={slug} source={source} />
                 </td>
                 <td className={tableCellClass}>{source.chunkCount}</td>
                 <td className={tableCellClass}>

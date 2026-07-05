@@ -62,17 +62,27 @@ export interface BrainIndexPanelStatus {
   activeJobs: BrainIndexPanelJobRow[];
   completed: number;
   failed: number;
+  failedSourceCount: number;
+  enabledSourceCount: number;
+  indexedChunkCount: number;
+  indexedFileCount: number;
   latestSourceIndexedAt: Date | string | null;
   queued: number;
   running: number;
+  sourceCount: number;
 }
 
 type BrainIndexSummaryDbRow = {
   completed: number | string | null;
+  enabled_source_count: number | string | null;
   failed: number | string | null;
+  failed_source_count: number | string | null;
+  indexed_chunk_count: number | string | null;
+  indexed_file_count: number | string | null;
   latest_source_indexed_at: Date | string | null;
   queued: number | string | null;
   running: number | string | null;
+  source_count: number | string | null;
 };
 
 type BrainIndexJobDbRow = {
@@ -279,18 +289,36 @@ async function loadIndexStatus(
         WHERE project_id = ${projectId}
       ),
       source_summary AS (
-        SELECT max(last_indexed_at) AS latest_source_indexed_at
+        SELECT
+          count(*)::int AS source_count,
+          count(*) FILTER (WHERE enabled = true)::int AS enabled_source_count,
+          count(*) FILTER (WHERE last_error IS NOT NULL)::int AS failed_source_count,
+          max(last_indexed_at) AS latest_source_indexed_at
         FROM brain_sources
         WHERE project_id = ${projectId}
+      ),
+      chunk_summary AS (
+        SELECT
+          count(DISTINCT c.path)::int AS indexed_file_count,
+          count(c.id)::int AS indexed_chunk_count
+        FROM brain_chunks c
+        JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true
+        WHERE c.project_id = ${projectId}
       )
       SELECT
         job_counts.queued,
         job_counts.running,
         job_counts.failed,
         job_counts.completed,
+        source_summary.source_count,
+        source_summary.enabled_source_count,
+        source_summary.failed_source_count,
+        chunk_summary.indexed_file_count,
+        chunk_summary.indexed_chunk_count,
         source_summary.latest_source_indexed_at
       FROM job_counts
       CROSS JOIN source_summary
+      CROSS JOIN chunk_summary
     `),
     db.execute(sql`
       SELECT
@@ -324,9 +352,14 @@ async function loadIndexStatus(
     ),
     completed: coerceCount(row.completed),
     failed: coerceCount(row.failed),
+    failedSourceCount: coerceCount(row.failed_source_count),
+    enabledSourceCount: coerceCount(row.enabled_source_count),
+    indexedChunkCount: coerceCount(row.indexed_chunk_count),
+    indexedFileCount: coerceCount(row.indexed_file_count),
     latestSourceIndexedAt: row.latest_source_indexed_at ?? null,
     queued: coerceCount(row.queued),
     running: coerceCount(row.running),
+    sourceCount: coerceCount(row.source_count),
   };
 }
 
@@ -347,9 +380,12 @@ export async function loadProjectBrainPanelData(
   projectId: string,
   query: string,
 ): Promise<ProjectBrainPanelData> {
+  const trimmedQuery = query.trim();
   const [indexStatus, memory, proposals, sources] = await Promise.all([
     loadIndexStatus(db, projectId),
-    listMemoryRows(db, projectId, query),
+    trimmedQuery.length > 0
+      ? listMemoryRows(db, projectId, trimmedQuery)
+      : Promise.resolve([]),
     listProposalRows(db, projectId),
     listBrainSources(db, projectId),
   ]);

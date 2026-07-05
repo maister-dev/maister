@@ -13,6 +13,7 @@ function render(brainEnabled: boolean, platformConfigured: boolean): string {
     createElement(ProjectBrainSettingsControl, {
       projectSlug: "demo",
       brainEnabled,
+      indexingProfile: "docs_source",
       flows: [{ id: "flow-1", ref: "maister.project-brain-projection" }],
       homeResolution: { decision: "indexed" },
       projectionFlowId: "flow-1",
@@ -35,6 +36,10 @@ describe("ProjectBrainSettingsControl", () => {
 
     expect(html).toContain("settings.brainProjectTitle");
     expect(html).toContain("settings.brainEnabledLabel");
+    expect(html).toContain("settings.brainIndexingProfile");
+    expect(html).toContain("settings.brainIndexingProfileDocs");
+    expect(html).toContain("settings.brainIndexingProfileDocsSource");
+    expect(html).toContain("settings.brainIndexingProfileAll");
     expect(html).toContain("settings.brainAutonomyRuleLow");
     expect(html).toContain("settings.brainAutonomySkillLow");
     expect(html).toContain("settings.brainAutonomyFlowLow");

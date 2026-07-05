@@ -106,6 +106,7 @@ export const brainSources = pgTable("brain_sources", {
   chunkerId: text("chunker_id").notNull(),
   chunkerVersion: text("chunker_version").notNull(),
   enabled: boolean("enabled").notNull().default(true),
+  profileManaged: boolean("profile_managed").notNull().default(false),
   lastIndexedAt: timestamp("last_indexed_at", {
     withTimezone: true,
     mode: "date",
@@ -248,6 +249,11 @@ export const brainProjectConfig = pgTable("brain_project_config", {
   autonomyPolicy: jsonb("autonomy_policy")
     .$type<Record<string, unknown>>()
     .notNull(),
+  indexingProfile: text("indexing_profile", {
+    enum: ["docs", "docs_source", "all"],
+  })
+    .notNull()
+    .default("docs"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),

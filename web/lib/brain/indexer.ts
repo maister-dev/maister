@@ -16,7 +16,10 @@ import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
 import { reanchorBrainEdgesForSource } from "./edges";
 import {
+  BRAIN_SOURCE_MAX_GLOB_MATCHES,
   isBrainSourceGlob,
+  listBrainSourceMatchedPaths,
+  readBrainSourceFiles,
   readBrainSourceContents,
   type SourceContent,
 } from "./sources";
@@ -30,6 +33,7 @@ const log = pino({
 
 export const BRAIN_SOURCE_MAX_CHUNKS_PER_JOB = 1_000;
 export const BRAIN_SOURCE_MAX_EMBEDDING_SEGMENTS_PER_JOB = 2_000;
+export const BRAIN_SOURCE_MAX_FILES_PER_BATCH = BRAIN_SOURCE_MAX_GLOB_MATCHES;
 
 type IndexerTx = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -44,6 +48,12 @@ export interface SourceJobRow {
   project_id: string;
   source_id: string;
   status: string;
+}
+
+interface SourceJobCursor {
+  lastPath?: string;
+  processedFiles: number;
+  sourceHash: string;
 }
 
 interface SourceRow {
@@ -104,6 +114,39 @@ async function completeJob(
         progress = progress + ${progressDelta}
     WHERE id = ${jobId}
   `);
+}
+
+async function loadSourceJobCursor(
+  db: IndexerTx,
+  jobId: string,
+): Promise<SourceJobCursor> {
+  const rows = await db.execute(sql`
+    SELECT resumable_cursor
+    FROM brain_index_jobs
+    WHERE id = ${jobId}
+  `);
+  const raw = rows.rows[0]?.resumable_cursor;
+
+  if (raw === null || raw === undefined) {
+    return { processedFiles: 0, sourceHash: "" };
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { processedFiles: 0, sourceHash: "" };
+  }
+
+  const cursor = raw as Record<string, unknown>;
+  const lastPath =
+    typeof cursor.lastPath === "string" ? cursor.lastPath : undefined;
+  const processedFiles =
+    typeof cursor.processedFiles === "number" &&
+    Number.isInteger(cursor.processedFiles) &&
+    cursor.processedFiles > 0
+      ? cursor.processedFiles
+      : 0;
+  const sourceHash =
+    typeof cursor.sourceHash === "string" ? cursor.sourceHash : "";
+
+  return { lastPath, processedFiles, sourceHash };
 }
 
 async function loadSource(
@@ -346,6 +389,30 @@ async function persistChunkPlans(
   client: OpenAiCompatibleClient,
   plans: ChunkPlan[],
 ): Promise<number> {
+  await pruneSourceChunks(tx, source, plans);
+
+  const chunksEmbedded = await upsertChunkPlans(
+    tx,
+    source,
+    client,
+    plans,
+  );
+
+  await markSourceIndexed(tx, source, sourceHash);
+  await reanchorBrainEdgesForSource(tx, {
+    projectId: source.project_id,
+    sourceId: source.id,
+  });
+  await completeJob(tx, job.id, chunksEmbedded);
+
+  return chunksEmbedded;
+}
+
+async function pruneSourceChunks(
+  tx: IndexerTx,
+  source: SourceRow,
+  plans: readonly ChunkPlan[],
+): Promise<void> {
   const stableIds = plans.map((plan) => plan.draft.stableId);
 
   if (stableIds.length === 0) {
@@ -360,9 +427,71 @@ async function persistChunkPlans(
           stableIds.map((id) => sql`${id}`),
           sql`, `,
         )})
+      `);
+  }
+}
+
+async function pruneChunkPaths(
+  tx: IndexerTx,
+  source: SourceRow,
+  paths: readonly string[],
+  plans: readonly ChunkPlan[],
+): Promise<void> {
+  if (paths.length === 0) return;
+
+  const stableIds = plans.map((plan) => plan.draft.stableId);
+  const pathList = sql.join(paths.map((path) => sql`${path}`), sql`, `);
+
+  if (stableIds.length === 0) {
+    await tx.execute(sql`
+      DELETE FROM brain_chunks
+      WHERE source_id = ${source.id}
+        AND path IN (${pathList})
     `);
+
+    return;
   }
 
+  await tx.execute(sql`
+    DELETE FROM brain_chunks
+    WHERE source_id = ${source.id}
+      AND path IN (${pathList})
+      AND stable_id NOT IN (${sql.join(
+        stableIds.map((id) => sql`${id}`),
+        sql`, `,
+      )})
+  `);
+}
+
+async function pruneRemovedGlobPaths(
+  tx: IndexerTx,
+  source: SourceRow,
+  matchedPaths: readonly string[],
+): Promise<void> {
+  if (matchedPaths.length === 0) {
+    await tx.execute(
+      sql`DELETE FROM brain_chunks WHERE source_id = ${source.id}`,
+    );
+
+    return;
+  }
+
+  await tx.execute(sql`
+    DELETE FROM brain_chunks
+    WHERE source_id = ${source.id}
+      AND path NOT IN (${sql.join(
+        matchedPaths.map((path) => sql`${path}`),
+        sql`, `,
+      )})
+  `);
+}
+
+async function upsertChunkPlans(
+  tx: IndexerTx,
+  source: SourceRow,
+  client: OpenAiCompatibleClient,
+  plans: ChunkPlan[],
+): Promise<number> {
   let chunksEmbedded = 0;
 
   for (const plan of plans) {
@@ -421,6 +550,14 @@ async function persistChunkPlans(
     chunksEmbedded += 1;
   }
 
+  return chunksEmbedded;
+}
+
+async function markSourceIndexed(
+  tx: IndexerTx,
+  source: SourceRow,
+  sourceHash: string,
+): Promise<void> {
   await tx.execute(sql`
     UPDATE brain_sources
     SET source_hash = ${sourceHash},
@@ -429,13 +566,176 @@ async function persistChunkPlans(
         updated_at = now()
     WHERE id = ${source.id}
   `);
-  await reanchorBrainEdgesForSource(tx, {
-    projectId: source.project_id,
-    sourceId: source.id,
-  });
-  await completeJob(tx, job.id, chunksEmbedded);
+}
 
-  return chunksEmbedded;
+function hashBatches(
+  previousHash: string,
+  files: readonly SourceContent[],
+): string {
+  return sha256(
+    [previousHash, ...files.map((file) => `${file.path}\0${file.sourceHash}`)]
+      .filter((part) => part.length > 0)
+      .join("\0"),
+  );
+}
+
+function nextBatchStartIndex(
+  matchedPaths: readonly string[],
+  cursor: SourceJobCursor,
+): number {
+  if (!cursor.lastPath) return 0;
+
+  const nextIndex = matchedPaths.findIndex((path) => path > cursor.lastPath!);
+
+  return nextIndex === -1 ? matchedPaths.length : nextIndex;
+}
+
+function chunkSourceFiles(
+  source: SourceRow,
+  files: readonly SourceContent[],
+): BrainChunkDraft[] {
+  const drafts = files.flatMap((file) => {
+    const chunked = createBuiltInChunkerRegistry().chunk({
+      path: file.path,
+      content: file.content,
+      kind: source.kind as never,
+    });
+
+    return chunked.chunks;
+  });
+
+  assertChunkBudget(source, drafts);
+
+  return drafts;
+}
+
+async function processGlobSourceIndexJob(
+  db: SourceIndexerDb,
+  client: OpenAiCompatibleClient,
+  job: SourceJobRow,
+  source: SourceRow,
+): Promise<SourceIndexResult> {
+  let matchedPaths: string[];
+  let batchPaths: string[];
+  let cursor: SourceJobCursor;
+  let files: SourceContent[];
+
+  try {
+    const excludePaths = await loadExactPeerSourcePaths(db, source);
+    const matches = await listBrainSourceMatchedPaths({
+      repoPath: source.repo_path,
+      ref: source.main_branch,
+      path: source.path,
+      excludePaths,
+    });
+
+    matchedPaths = matches.matchedPaths;
+    cursor = await loadSourceJobCursor(db, job.id);
+
+    const startIndex = nextBatchStartIndex(matchedPaths, cursor);
+
+    batchPaths = matchedPaths.slice(
+      startIndex,
+      startIndex + BRAIN_SOURCE_MAX_FILES_PER_BATCH,
+    );
+
+    if (batchPaths.length === 0) {
+      const finalHash = cursor.sourceHash || sha256("");
+
+      await db.transaction(async (tx) => {
+        await pruneRemovedGlobPaths(tx, source, matchedPaths);
+        await markSourceIndexed(tx, source, finalHash);
+        await reanchorBrainEdgesForSource(tx, {
+          projectId: source.project_id,
+          sourceId: source.id,
+        });
+        await completeJob(tx, job.id);
+      });
+
+      return { chunksEmbedded: 0 };
+    }
+
+    const read = await readBrainSourceFiles({
+      repoPath: source.repo_path,
+      ref: source.main_branch,
+      paths: batchPaths,
+      sourcePath: source.path,
+    });
+
+    files = read.files;
+  } catch (error) {
+    await recordSourceError(db, job, "read", error, { retireChunks: true });
+
+    return { chunksEmbedded: 0 };
+  }
+
+  let drafts: BrainChunkDraft[];
+
+  try {
+    drafts = chunkSourceFiles(source, files);
+  } catch (error) {
+    await recordSourceError(db, job, "chunk", error, { retireChunks: false });
+
+    return { chunksEmbedded: 0 };
+  }
+
+  const existing = await loadExistingChunks(db, source, client);
+  let plans: ChunkPlan[];
+
+  try {
+    plans = await buildChunkPlans(source, drafts, existing, client);
+  } catch (error) {
+    if (isTransientEmbeddingError(error)) throw error;
+
+    await recordSourceError(db, job, "embed", error, { retireChunks: false });
+
+    return { chunksEmbedded: 0 };
+  }
+
+  const sourceHash = hashBatches(cursor.sourceHash, files);
+  const lastPath = batchPaths[batchPaths.length - 1];
+  const processedFiles = cursor.processedFiles + batchPaths.length;
+  const completed = processedFiles >= matchedPaths.length;
+
+  return db.transaction(async (tx) => {
+    await pruneChunkPaths(tx, source, batchPaths, plans);
+
+    const chunksEmbedded = await upsertChunkPlans(tx, source, client, plans);
+
+    if (completed) {
+      await pruneRemovedGlobPaths(tx, source, matchedPaths);
+      await markSourceIndexed(tx, source, sourceHash);
+      await reanchorBrainEdgesForSource(tx, {
+        projectId: source.project_id,
+        sourceId: source.id,
+      });
+      await completeJob(tx, job.id, batchPaths.length);
+    } else {
+      await tx.execute(sql`
+        UPDATE brain_sources
+        SET last_error = NULL,
+            updated_at = now()
+        WHERE id = ${source.id}
+      `);
+      await reanchorBrainEdgesForSource(tx, {
+        projectId: source.project_id,
+        sourceId: source.id,
+      });
+      await tx.execute(sql`
+        UPDATE brain_index_jobs
+        SET status = 'running',
+            progress = progress + ${batchPaths.length},
+            resumable_cursor = ${JSON.stringify({
+              lastPath,
+              processedFiles,
+              sourceHash,
+            })}::jsonb
+        WHERE id = ${job.id}
+      `);
+    }
+
+    return { chunksEmbedded };
+  });
 }
 
 export async function processSourceIndexJob(
@@ -453,16 +753,18 @@ export async function processSourceIndexJob(
     return { chunksEmbedded: 0 };
   }
 
+  if (isBrainSourceGlob(source.path)) {
+    return processGlobSourceIndexJob(db, client, job, source);
+  }
+
   let files: SourceContent[];
   let sourceHash: string;
 
   try {
-    const excludePaths = await loadExactPeerSourcePaths(db, source);
     const read = await readBrainSourceContents({
       repoPath: source.repo_path,
       ref: source.main_branch,
       path: source.path,
-      excludePaths,
     });
 
     files = read.files;
@@ -490,16 +792,7 @@ export async function processSourceIndexJob(
   let drafts: BrainChunkDraft[];
 
   try {
-    drafts = files.flatMap((file) => {
-      const chunked = createBuiltInChunkerRegistry().chunk({
-        path: file.path,
-        content: file.content,
-        kind: source.kind as never,
-      });
-
-      return chunked.chunks;
-    });
-    assertChunkBudget(source, drafts);
+    drafts = chunkSourceFiles(source, files);
   } catch (error) {
     await recordSourceError(db, job, "chunk", error, { retireChunks: false });
 

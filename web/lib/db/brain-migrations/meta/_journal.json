@@ -36,6 +36,13 @@
       "when": 1783089000000,
       "tag": "0005_brain_proposal_decision_stats",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783200000000,
+      "tag": "0006_brain_indexing_profiles",
+      "breakpoints": true
     }
   ]
 }

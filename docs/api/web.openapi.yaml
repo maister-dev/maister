@@ -12330,6 +12330,16 @@ components:
               enum: [owned, indexed]
           description: |
             Project Brain canonical-home override for decision/direction facts.
+        brainIndexingProfile:
+          type: string
+          enum: [docs, docs_source, all]
+          description: |
+            Project Brain managed source profile. `docs` indexes documentation
+            and contracts, `docs_source` adds common source-code folders, and
+            `all` also includes MAIster/agent internals such as `.ai-factory`,
+            `.agents`, `.codex`, and `.claude`. Changing the profile upserts
+            managed source rows and queues source reindex jobs when the Brain is
+            enabled; manually added sources are left untouched.
         projectionFlowId:
           type: string
           nullable: true
@@ -12447,6 +12457,9 @@ components:
           additionalProperties:
             type: string
             enum: [owned, indexed]
+        brainIndexingProfile:
+          type: string
+          enum: [docs, docs_source, all]
         projectionFlowId:
           type: string
           nullable: true
@@ -17075,7 +17088,7 @@ components:
     BrainSource:
       type: object
       required:
-        [id, kind, path, chunkerId, chunkerVersion, enabled, chunkCount]
+        [id, kind, path, chunkerId, chunkerVersion, enabled, indexedFileCount, indexedFilePaths, chunkCount]
       properties:
         id: { type: string }
         kind:
@@ -17097,6 +17110,12 @@ components:
           type: object
           nullable: true
           additionalProperties: true
+        indexedFileCount:
+          type: integer
+          minimum: 0
+        indexedFilePaths:
+          type: array
+          items: { type: string }
         chunkCount:
           type: integer
           minimum: 0

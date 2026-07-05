@@ -6,10 +6,12 @@ import type {
   BrainProposalKind,
 } from "@/lib/brain/schema";
 import type { BrainHomeResolution } from "@/lib/brain/home-resolution";
+import type { BrainIndexingProfile } from "@/lib/brain/indexing-profiles";
 
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { normalizeBrainIndexingProfile } from "@/lib/brain/indexing-profiles";
 import { MaisterError } from "@/lib/errors";
 
 const PROPOSAL_KINDS = [
@@ -54,6 +56,7 @@ export interface BrainProjectConfig {
   homeResolution: BrainHomeResolution;
   projectionFlowId: string | null;
   autonomyDefaults: BrainAutonomyPolicy;
+  indexingProfile: BrainIndexingProfile;
 }
 
 function isOneOf<T extends string>(
@@ -173,7 +176,8 @@ export async function getBrainProjectConfig(
   projectId: string,
 ): Promise<BrainProjectConfig> {
   const rows = await db.execute(sql`
-    SELECT home_resolution, projection_flow_id, autonomy_policy
+    SELECT home_resolution, projection_flow_id, autonomy_policy,
+           indexing_profile
     FROM brain_project_config
     WHERE project_id = ${projectId}
     LIMIT 1
@@ -181,13 +185,21 @@ export async function getBrainProjectConfig(
   const row = rows.rows[0];
 
   if (!row) {
-    return { homeResolution: {}, projectionFlowId: null, autonomyDefaults: {} };
+    return {
+      homeResolution: {},
+      projectionFlowId: null,
+      autonomyDefaults: {},
+      indexingProfile: "docs",
+    };
   }
 
   return {
     homeResolution: normalizeBrainHomeResolution(row.home_resolution),
     projectionFlowId: (row.projection_flow_id as string | null) ?? null,
     autonomyDefaults: normalizeBrainAutonomyPolicy(row.autonomy_policy ?? {}),
+    indexingProfile: normalizeBrainIndexingProfile(
+      row.indexing_profile ?? "docs",
+    ),
   };
 }
 
