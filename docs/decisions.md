@@ -10278,6 +10278,10 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   (data-compatible — same PG16 data dir).
 - Model/dimension switches are non-destructive reindex generations, never migrations —
   old embedding rows and their expression indexes stay intact (index GC is out of scope for A).
+- Source-indexer safety budgets are runtime env knobs, not schema or project settings:
+  `MAISTER_BRAIN_MAX_CHUNKS_PER_JOB` (default `1000`) and
+  `MAISTER_BRAIN_MAX_EMBEDDING_SEGMENTS_PER_JOB` (default `2000`) cap one source
+  job's chunk and embedding-segment production before paid embedding calls.
 - Harvest failure semantics are split: transient failures (`EMBEDDING_UNAVAILABLE`, network,
   distill config cleared post-enable) **throw and hold the cursor** (no event lost); permanent
   failures (schema-invalid distill output after one in-process retry) **log and skip-advance**

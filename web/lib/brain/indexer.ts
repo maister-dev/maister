@@ -31,8 +31,21 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export const BRAIN_SOURCE_MAX_CHUNKS_PER_JOB = 1_000;
-export const BRAIN_SOURCE_MAX_EMBEDDING_SEGMENTS_PER_JOB = 2_000;
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const parsed = raw ? Number.parseInt(raw, 10) : fallback;
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export const BRAIN_SOURCE_MAX_CHUNKS_PER_JOB = envInt(
+  "MAISTER_BRAIN_MAX_CHUNKS_PER_JOB",
+  1_000,
+);
+export const BRAIN_SOURCE_MAX_EMBEDDING_SEGMENTS_PER_JOB = envInt(
+  "MAISTER_BRAIN_MAX_EMBEDDING_SEGMENTS_PER_JOB",
+  2_000,
+);
 export const BRAIN_SOURCE_MAX_FILES_PER_BATCH = BRAIN_SOURCE_MAX_GLOB_MATCHES;
 
 type IndexerTx = {
