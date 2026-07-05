@@ -32,6 +32,7 @@ const labels: ProjectBrainPanelLabels = {
   indexRunning: "Running",
   indexFailed: "Failed",
   indexCompleted: "Completed",
+  indexConfigureProfile: "Configure profile",
   indexActiveJobs: "Active jobs",
   indexNoActiveJobs: "No active jobs",
   indexOwnedGeneration: "Owned generation",
@@ -201,6 +202,10 @@ describe("ProjectBrainPanel", () => {
     expect(html).toContain("Index status");
     expect(html).toContain("Indexed files");
     expect(html).toContain("Last completed");
+    expect(html).toContain("Configure profile");
+    expect(html).toContain(
+      "/projects/demo?tab=settings#project-brain-settings",
+    );
     expect(html).toContain("job-1");
     expect(html).toContain(
       "/projects/demo?tab=repo&amp;file=docs%2Fdecisions.md#L10",

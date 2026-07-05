@@ -1659,6 +1659,7 @@
     "indexRunning": "Running",
     "indexFailed": "Failed",
     "indexCompleted": "Completed",
+    "indexConfigureProfile": "Configure profile",
     "indexActiveJobs": "Active jobs",
     "indexNoActiveJobs": "No queued or running index jobs.",
     "indexOwnedGeneration": "Owned memory generation",

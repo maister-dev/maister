@@ -95,6 +95,28 @@ type BrainIndexJobDbRow = {
   status: BrainIndexJobStatus;
 };
 
+function searchRankSql(args: {
+  title: SQL;
+  content: SQL;
+  tsv: SQL;
+  path?: SQL;
+  query: string;
+  like: string;
+}): SQL {
+  const pathRank =
+    args.path === undefined
+      ? sql`0`
+      : sql`CASE WHEN ${args.path} ILIKE ${args.like} THEN 60 ELSE 0 END`;
+
+  return sql`GREATEST(
+    CASE WHEN lower(${args.title}) = lower(${args.query}) THEN 100 ELSE 0 END,
+    CASE WHEN ${args.title} ILIKE ${args.like} THEN 80 ELSE 0 END,
+    ${pathRank},
+    CASE WHEN ${args.content} ILIKE ${args.like} THEN 40 ELSE 0 END,
+    LEAST(COALESCE(ts_rank(${args.tsv}, plainto_tsquery('english', ${args.query})), 0) * 10, 10)
+  )`;
+}
+
 function previewOf(content: unknown): string {
   const value = String(content ?? "");
 
@@ -135,6 +157,21 @@ async function listMemoryRows(
 ): Promise<BrainMemorySearchRow[]> {
   const trimmed = query.trim();
   const like = `%${trimmed}%`;
+  const ownedRank = searchRankSql({
+    title: sql`i.title`,
+    content: sql`i.content`,
+    tsv: sql`i.tsv`,
+    query: trimmed,
+    like,
+  });
+  const indexedRank = searchRankSql({
+    title: sql`c.title`,
+    content: sql`c.content`,
+    tsv: sql`c.tsv`,
+    path: sql`c.path`,
+    query: trimmed,
+    like,
+  });
   const ownedWhere =
     trimmed.length === 0
       ? sql``
@@ -154,13 +191,14 @@ async function listMemoryRows(
       SELECT i.id, 'owned' AS tier, i.kind, i.title, i.content,
              i.confidence::float8 AS confidence,
              i.source_ref AS pointer,
-             i.updated_at AS touched_at
+             i.updated_at AS touched_at,
+             ${ownedRank}::float8 AS search_rank
       FROM brain_items i
       WHERE i.project_id = ${projectId}
         AND i.status = 'active'
         AND (i.expires_at IS NULL OR i.expires_at > now())
         ${ownedWhere}
-      ORDER BY i.updated_at DESC
+      ORDER BY search_rank DESC, i.updated_at DESC
       LIMIT 8
     ),
     indexed AS (
@@ -171,12 +209,13 @@ async function listMemoryRows(
                'stableId', c.stable_id,
                'sourceRange', c.source_range
              ) AS pointer,
-             c.updated_at AS touched_at
+             c.updated_at AS touched_at,
+             ${indexedRank}::float8 AS search_rank
       FROM brain_chunks c
       JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true
       WHERE c.project_id = ${projectId}
         ${indexedWhere}
-      ORDER BY c.updated_at DESC
+      ORDER BY search_rank DESC, c.updated_at DESC
       LIMIT 8
     )
     SELECT id, tier, kind, title, content, confidence, pointer
@@ -185,7 +224,7 @@ async function listMemoryRows(
       UNION ALL
       SELECT * FROM indexed
     ) hits
-    ORDER BY confidence DESC, touched_at DESC
+    ORDER BY search_rank DESC, confidence DESC, touched_at DESC
     LIMIT 12
   `);
 

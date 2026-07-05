@@ -519,6 +519,7 @@ export default async function ProjectBoardPage({
             indexRunning: tBrain("indexRunning"),
             indexFailed: tBrain("indexFailed"),
             indexCompleted: tBrain("indexCompleted"),
+            indexConfigureProfile: tBrain("indexConfigureProfile"),
             indexActiveJobs: tBrain("indexActiveJobs"),
             indexNoActiveJobs: tBrain("indexNoActiveJobs"),
             indexOwnedGeneration: tBrain("indexOwnedGeneration"),

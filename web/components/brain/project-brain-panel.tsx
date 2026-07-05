@@ -11,6 +11,7 @@ import type {
   BrainIndexJobStatus,
 } from "@/types/scheduler";
 
+import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 
 import {
@@ -43,6 +44,7 @@ export interface ProjectBrainPanelLabels {
   indexRunning: string;
   indexFailed: string;
   indexCompleted: string;
+  indexConfigureProfile: string;
   indexActiveJobs: string;
   indexNoActiveJobs: string;
   indexOwnedGeneration: string;
@@ -99,6 +101,8 @@ const tableHeadClass =
 const tableCellClass = "border-b border-line px-3 py-3 align-top text-[12px]";
 const badgeClass =
   "inline-flex rounded-full border border-line bg-canvas px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2";
+const searchButtonClass =
+  "inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-amber bg-amber px-3 font-mono text-[10.5px] font-bold uppercase leading-none tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] transition-colors hover:bg-amber-2 focus-visible:outline-none focus-visible:shadow-[0_0_0_3px_var(--amber-soft)]";
 
 function formatPercent(value: number): string {
   return `${Math.round(Math.max(0, Math.min(value, 1)) * 100)}%`;
@@ -266,7 +270,8 @@ function MemorySection({
             name="brain_query"
             placeholder={labels.searchPlaceholder}
           />
-          <button className={badgeClass} type="submit">
+          <button className={searchButtonClass} type="submit">
+            <MagnifyingGlassIcon aria-hidden="true" className="h-3.5 w-3.5" />
             {labels.searchAction}
           </button>
         </form>
@@ -308,9 +313,15 @@ function MemorySection({
 }
 
 function IndexStatusSection({
+  slug,
   labels,
   indexStatus,
-}: Pick<ProjectBrainPanelProps, "labels" | "indexStatus">): ReactElement {
+}: Pick<
+  ProjectBrainPanelProps,
+  "slug" | "labels" | "indexStatus"
+>): ReactElement {
+  const settingsHref = `/projects/${encodeURIComponent(slug)}?tab=settings#project-brain-settings`;
+
   return (
     <section className={sectionClass}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
@@ -328,6 +339,12 @@ function IndexStatusSection({
           <span className={badgeClass}>
             {labels.indexCompleted} {indexStatus.completed}
           </span>
+          <Link
+            className={`${badgeClass} text-accent underline-offset-2 hover:underline`}
+            href={settingsHref}
+          >
+            {labels.indexConfigureProfile}
+          </Link>
         </div>
       </div>
       <div className="grid gap-3 px-4 py-3">
@@ -599,7 +616,11 @@ export function ProjectBrainPanel({
         query={query}
         slug={slug}
       />
-      <IndexStatusSection indexStatus={indexStatus} labels={labels} />
+      <IndexStatusSection
+        indexStatus={indexStatus}
+        labels={labels}
+        slug={slug}
+      />
       <SourcesSection
         canManageSources={canManageSources}
         labels={labels}

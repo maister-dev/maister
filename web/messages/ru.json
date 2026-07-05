@@ -1659,6 +1659,7 @@
     "indexRunning": "В работе",
     "indexFailed": "Упало",
     "indexCompleted": "Завершено",
+    "indexConfigureProfile": "Настроить профиль",
     "indexActiveJobs": "Активные задачи",
     "indexNoActiveJobs": "Нет задач индексации в очереди или работе.",
     "indexOwnedGeneration": "Генерация памяти",

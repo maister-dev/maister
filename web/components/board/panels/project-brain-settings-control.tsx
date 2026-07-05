@@ -126,8 +126,7 @@ export function ProjectBrainSettingsControl({
   const autonomyId = useId();
   const [enabled, setEnabled] = useState(brainEnabled);
   const [savedEnabled, setSavedEnabled] = useState(brainEnabled);
-  const [profile, setProfile] =
-    useState<BrainIndexingProfile>(indexingProfile);
+  const [profile, setProfile] = useState<BrainIndexingProfile>(indexingProfile);
   const [savedProfile, setSavedProfile] =
     useState<BrainIndexingProfile>(indexingProfile);
   const [home, setHome] = useState<BrainHomeState>(
@@ -239,7 +238,10 @@ export function ProjectBrainSettingsControl({
   }
 
   return (
-    <div className="mb-4 rounded-[8px] border border-line bg-paper px-[18px] py-[15px]">
+    <div
+      className="mb-4 scroll-mt-4 rounded-[8px] border border-line bg-paper px-[18px] py-[15px]"
+      id="project-brain-settings"
+    >
       <div className="mb-1 text-[13px] font-semibold tracking-[-0.005em] text-ink">
         {t("brainProjectTitle")}
       </div>
