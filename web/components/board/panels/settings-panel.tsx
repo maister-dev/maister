@@ -49,7 +49,6 @@ export async function SettingsPanel({
     flows,
     runners,
   } = data;
-  const defaultFlow = flows[0];
 
   // ADR-093 Workstream 6: the Git section is admin-only (the route's
   // editSettings is the real boundary). Remotes are read live from git for SSR;
@@ -119,11 +118,6 @@ export async function SettingsPanel({
               : "inherited",
           },
         ]),
-    {
-      k: tBoard("defaultFlow"),
-      d: tBoard("defaultFlowDesc"),
-      v: defaultFlow?.ref ?? "—",
-    },
     {
       k: tBoard("concurrency"),
       d: tBoard("concurrencyDesc"),

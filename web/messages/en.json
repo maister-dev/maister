@@ -1163,8 +1163,6 @@
     "prsDeferred": "Pull-request sync isn't wired up on this POC yet.",
     "mcpsDeferred": "MCP server management isn't wired up on this POC yet.",
     "defaultAgentDesc": "used for new runs unless overridden per-task",
-    "defaultFlow": "Default flow",
-    "defaultFlowDesc": "applied when launching from backlog",
     "concurrency": "Concurrency limit",
     "concurrencyDesc": "max simultaneous running workspaces",
     "branchPrefix": "Branch prefix",
