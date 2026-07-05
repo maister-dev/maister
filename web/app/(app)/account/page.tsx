@@ -27,7 +27,7 @@ export default async function AccountPage(): Promise<ReactElement> {
   }));
 
   return (
-    <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6">
+    <div className="flex w-full flex-col gap-6">
       <header className="flex flex-col gap-2">
         <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
           {t("eyebrow")}
