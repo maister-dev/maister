@@ -171,6 +171,8 @@ export async function PATCH(
 
     // ADR-122 enable-gate: a project can never be enabled into an
     // unharvest-able state — platform embedding config + distill_model first.
+    // A dedicated distillation provider may override the embedding provider,
+    // but it is optional for compatibility.
     if (
       body.brainEnabled === true ||
       body.homeResolution !== undefined ||
@@ -190,7 +192,7 @@ export async function PATCH(
       if (!isBrainFullyConfigured(brainSettings)) {
         throw new MaisterError(
           "CONFIG",
-          "Project Brain cannot be enabled until the platform embedding provider and distill model are configured",
+          "Project Brain cannot be enabled until the platform embedding provider and distillation model are configured",
         );
       }
     }

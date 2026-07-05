@@ -36,7 +36,9 @@ flowchart TD
 ## Layout & regions
 
 - Embedding provider: base URL, model, dimensions, API key ref.
-- Distillation: model used by harvest.
+- Distillation provider: base URL, model used by harvest, API key ref. If the
+  distillation base/key fields are empty, distillation falls back to the
+  embedding provider for compatibility.
 - Reindex notice: model/dimension changes enqueue non-destructive reindex jobs.
 
 ## States
@@ -44,7 +46,7 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> Empty
-    Empty --> Complete: embedding + distill configured
+    Empty --> Complete: embedding config + distillation model set
     Complete --> ReindexQueued: model or dimensions changed
     ReindexQueued --> Complete: reindex completes
     Complete --> Invalid: env ref/model validation fails

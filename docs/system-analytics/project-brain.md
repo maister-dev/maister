@@ -71,9 +71,10 @@ or board tasks.
   domain_event_id)`. Claimed as the FIRST step of `retain`'s transaction so an
   at-least-once redelivery is a no-op across ALL retain outcomes
   (insert / reinforce / exact-dup).
-- **Shared-table columns (Implemented, migration `0088`)** — `platform_runtime_settings`
+- **Shared-table columns (Implemented, migrations `0088`, `0091`)** — `platform_runtime_settings`
   gains `embedding_base_url`, `embedding_model`, `embedding_dimensions`,
-  `embedding_api_key_ref`, `distill_model` (all nullable); `projects.brain_enabled`
+  `embedding_api_key_ref`, `distill_base_url`, `distill_model`,
+  `distill_api_key_ref` (all nullable); `projects.brain_enabled`
   (bool, default false); `agent_project_links.can_read_brain` /
   `can_write_brain` (bool, default false); `runs.brain_context` (bool, nullable —
   null = off (default) in A; a flow/agent-level default is reserved).
@@ -465,7 +466,10 @@ implemented in this branch unless a bullet explicitly names a later deferral.)*
   re-checking through the same function (an admin can disable the Brain after a
   launch opted in, so a disabled project recalls/injects/snapshots nothing). (Implemented)
 - A project MUST NOT be enabled (`brain_enabled=true`) unless platform embedding
-  config AND `distill_model` are set (the PATCH MUST refuse `CONFIG`); for AGENT
+  config AND `distill_model` are set (the PATCH MUST refuse `CONFIG`). A dedicated
+  distillation base/key may override the embedding provider; when no dedicated
+  distillation fields are set, distillation falls back to the embedding provider
+  for compatibility. For AGENT
   tokens recall MUST additionally be gated by `agent_project_links.can_read_brain`
   and retain by `can_write_brain` (a separate axis — a read grant MUST NOT open
   retain; user/project tokens pass these link axes by design). (Implemented)

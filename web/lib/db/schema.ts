@@ -288,15 +288,17 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
     .notNull()
     .references(() => platformAcpRunners.id),
   webhooksEnabled: boolean("webhooks_enabled").notNull().default(true),
-  // ADR-122 (Project Brain): embedding-provider + distillation config. All
-  // nullable. The API key is an `env:NAME` reference only — never the raw
-  // secret. Changing embedding_model/embedding_dimensions is a reindex
+  // ADR-122 (Project Brain): OpenAI-compatible embedding + distillation provider
+  // config. All nullable. API keys are `env:NAME` references only — never the
+  // raw secret. Changing embedding_model/embedding_dimensions is a reindex
   // generation, never a schema migration.
   embeddingBaseUrl: text("embedding_base_url"),
   embeddingModel: text("embedding_model"),
   embeddingDimensions: integer("embedding_dimensions"),
   embeddingApiKeyRef: text("embedding_api_key_ref"),
+  distillBaseUrl: text("distill_base_url"),
   distillModel: text("distill_model"),
+  distillApiKeyRef: text("distill_api_key_ref"),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),

@@ -11031,11 +11031,11 @@ paths:
   /api/admin/brain-settings:
     get:
       tags: [admin]
-      summary: (ADR-122, Implemented) Read the platform Project-Brain embedding config
+      summary: (ADR-122, Implemented) Read the platform Project-Brain provider config
       description: |
-        Admin-only. Reads the embedding-provider + distillation configuration on
-        the singleton `platform_runtime_settings` row. The API key is returned as
-        its `env:NAME` reference only — never the secret value.
+        Admin-only. Reads the embedding-provider + distillation-provider
+        configuration on the singleton `platform_runtime_settings` row. API keys
+        are returned as `env:NAME` references only — never secret values.
       operationId: getAdminBrainSettings
       responses:
         "200":
@@ -11047,15 +11047,16 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     patch:
       tags: [admin]
-      summary: (ADR-122, Implemented) Update the platform Project-Brain embedding config
+      summary: (ADR-122, Implemented) Update the platform Project-Brain provider config
       description: |
         Admin-only. Sets the embedding provider base URL, model, dimensions, API
-        key reference (`env:NAME` only), and distillation model on the singleton
-        `platform_runtime_settings` row. Changing `embeddingModel` or
+        key reference (`env:NAME` only), plus the distillation provider base URL,
+        model, and API key reference on the singleton `platform_runtime_settings`
+        row. Changing `embeddingModel` or
         `embeddingDimensions` calls `ensureEmbeddingIndex(model, N)` and enqueues a
         `brain_index_jobs` reindex row (a runtime model/dimension switch is a
-        non-destructive reindex generation — never a schema migration). The stored
-        key value MUST be the `env:NAME` reference, never the raw secret.
+        non-destructive reindex generation — never a schema migration). Stored key
+        values MUST be `env:NAME` references, never raw secrets.
       operationId: patchAdminBrainSettings
       requestBody:
         required: true
@@ -12306,7 +12307,9 @@ components:
             (ADR-122) Toggle the Project Brain for this repo (`projects.brain_enabled`).
             Enabling refuses `422 CONFIG` unless platform embedding config AND
             `distill_model` are set (a project can never be enabled into an
-            unharvest-able state). Disabling makes harvest + recall no-op.
+            unharvest-able state). Dedicated distillation base/key settings are
+            optional and fall back to the embedding provider when absent.
+            Disabling makes harvest + recall no-op.
         autoPromotion:
           type: object
           allOf: [{ $ref: "#/components/schemas/AutoPromotionConfig" }]
@@ -17226,8 +17229,8 @@ components:
       type: object
       description: |
         (ADR-122/128) Platform Project-Brain embedding + distillation config on the
-        singleton `platform_runtime_settings` row. All fields nullable; the API key
-        is an `env:NAME` reference only (never the secret). Project autonomy
+        singleton `platform_runtime_settings` row. All fields nullable; API keys
+        are `env:NAME` references only (never the secrets). Project autonomy
         policy is stored per project, not on this platform singleton. GET returns
         the current values; PATCH sets them (a `null` value clears nullable
         fields).
@@ -17237,7 +17240,7 @@ components:
           type: string
           format: uri
           nullable: true
-          description: OpenAI-compatible base URL for `/embeddings` + `/chat/completions`. Must be a valid URL.
+          description: OpenAI-compatible base URL for `/embeddings`. Also used for distillation when `distillBaseUrl` is null. Must be a valid URL.
         embeddingModel:
           type: string
           nullable: true
@@ -17255,11 +17258,21 @@ components:
           type: string
           nullable: true
           pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
-          description: "`env:NAME` reference to the API key env var. Never the secret value."
+          description: "`env:NAME` reference to the embedding API key env var. Never the secret value."
+        distillBaseUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: OpenAI-compatible base URL for `/chat/completions`. Null falls back to `embeddingBaseUrl`.
         distillModel:
           type: string
           nullable: true
           description: Completion model for harvest distillation (required to enable any project).
+        distillApiKeyRef:
+          type: string
+          nullable: true
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+          description: "`env:NAME` reference to the distillation API key env var. Null falls back to `embeddingApiKeyRef` only when no dedicated distillation provider field is set."
 
     WebhookSettings:
       type: object

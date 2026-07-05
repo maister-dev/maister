@@ -137,28 +137,31 @@ is `trusted_by_policy` (logic-trust alone is insufficient — see
 only as env-var names; the supervisor resolves them from its existing `process.env`
 at spawn. The env table above is unchanged by M27.
 
-### Project Brain embedding config — `platform_runtime_settings` (Implemented, ADR-122)
+### Project Brain provider config — `platform_runtime_settings` (Implemented, ADR-122)
 
-The Project Brain's embedding + distillation
-provider is platform-level config on the singleton `platform_runtime_settings`
-row, set via admin `/settings → Brain` (`GET/PATCH /api/admin/brain-settings`):
+The Project Brain's embedding + distillation providers are platform-level config
+on the singleton `platform_runtime_settings` row, set via admin `/settings →
+Brain` (`GET/PATCH /api/admin/brain-settings`):
 
 | Column | Meaning | Default |
 | ------ | ------- | ------- |
-| `embedding_base_url` | OpenAI-compatible base URL (`/embeddings`, `/chat/completions`). Must be a valid URL. | — |
+| `embedding_base_url` | OpenAI-compatible base URL for `/embeddings`. Also used for distillation when `distill_base_url` is empty. Must be a valid URL. | — |
 | `embedding_model` | Embedding model id. | placeholder (no default — `text-embedding-3-small` is the suggested UI placeholder) |
 | `embedding_dimensions` | Embedding dimensions, capped at 2000 (pgvector HNSW index limit). Changing enqueues a non-destructive reindex generation (never a schema migration). | placeholder (no default — `1536` is the suggested UI placeholder) |
 | `embedding_api_key_ref` | `env:NAME` reference to the API-key env var (regex `^env:[A-Za-z_][A-Za-z0-9_]*$`). **Names only** — never the secret. | placeholder (no default — `env:EMBEDDING_API_KEY` is the suggested UI placeholder) |
+| `distill_base_url` | OpenAI-compatible base URL for `/chat/completions`. Empty falls back to `embedding_base_url`; set this for GLM/Z.ai or another cheaper distillation provider. | — |
 | `distill_model` | Completion model for harvest distillation. Required to enable ANY project's Brain (enable-gate → 422 `CONFIG` otherwise). | — |
+| `distill_api_key_ref` | `env:NAME` reference to the distillation API-key env var. Empty falls back to `embedding_api_key_ref` only when no dedicated distillation provider field is set. | placeholder (no default — `env:GLM_API_KEY` is the suggested UI placeholder) |
 
 Unlike MCP/runner secrets (resolved supervisor-side), the Brain embedding client
-runs in the **web tier** (`web/lib/brain/openai-compatible.ts`), so the secret
-`env:NAME` resolves from the **web** process environment. Provide the value as a
-web-tier env var (default `EMBEDDING_API_KEY`, see `.env.example`). The value MUST
-NEVER be stored in any column, returned in any response, logged, or streamed — the
-same `env:NAME` policy as `platform_mcp_servers` / `platform_acp_runners`. A runtime
-model **or dimension** switch is a reindex generation, not a migration. Behavior
-policy constants live in `web/lib/brain/policy.ts` (not env, not DB) — including
+runs in the **web tier** (`web/lib/brain/openai-compatible.ts`), so every
+`env:NAME` resolves from the **web** process environment. Provide secret VALUES
+as web-tier env vars (for example `EMBEDDING_API_KEY` and `GLM_API_KEY`, see
+`.env.example`). Values MUST NEVER be stored in any column, returned in any
+response, logged, or streamed — the same `env:NAME` policy as
+`platform_mcp_servers` / `platform_acp_runners`. A runtime embedding model **or
+dimension** switch is a reindex generation, not a migration. Behavior policy
+constants live in `web/lib/brain/policy.ts` (not env, not DB) — including
 `ambientMinConfidence` 0.4 (ambient-inject floor) and `snapshotTtlDays` 30 (the
 `brain_snapshots` GC horizon). In SQLite
 mode the Brain is disabled (D3). See

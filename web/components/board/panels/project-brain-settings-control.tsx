@@ -103,7 +103,8 @@ async function patchJson(url: string, body: unknown): Promise<void> {
 }
 
 // Per-project Project Brain toggle (ADR-122). Enabling is gated: the platform
-// embedding provider AND distillation model must be configured, else the PATCH
+// embedding provider AND distillation model must be configured; dedicated
+// distillation provider fields are optional overrides. Otherwise the PATCH
 // returns CONFIG (422) and nothing is persisted — the message renders inline.
 export function ProjectBrainSettingsControl({
   projectSlug,

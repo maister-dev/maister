@@ -151,7 +151,8 @@ beforeEach(async () => {
   await ctx.db.execute(sql`
     UPDATE platform_runtime_settings
     SET embedding_base_url = NULL, embedding_model = NULL, embedding_dimensions = NULL,
-        embedding_api_key_ref = NULL, distill_model = NULL
+        embedding_api_key_ref = NULL, distill_base_url = NULL,
+        distill_model = NULL, distill_api_key_ref = NULL
     WHERE id = 'singleton'
   `);
 });

@@ -56,8 +56,9 @@ export async function SettingsPanel({
   // (invariant B). A non-git repo / git error degrades to an empty table.
   let gitRemotes: RemoteItem[] = [];
   // ADR-122: the project Brain toggle is enable-gated on the platform embedding
-  // provider + distillation model being configured (else the PATCH returns
-  // CONFIG). Read here so the control can hint when enabling would refuse.
+  // provider + distillation model being configured; dedicated distillation
+  // provider fields are optional overrides. Read here so the control can hint
+  // when enabling would refuse.
   let brainPlatformConfigured = false;
   let brainAutonomyDefaults: BrainAutonomyPolicy = {};
   let brainHomeResolution: BrainHomeResolution = {};

@@ -2790,8 +2790,9 @@ reinforced a near-dup never double-counts confidence/TTL. No FK on
 ### Shared-table alters (main lineage migration `0088`)
 
 - `platform_runtime_settings` += `embedding_base_url`, `embedding_model`,
-  `embedding_dimensions`, `embedding_api_key_ref` (`env:NAME` ref only), `distill_model`
-  (all nullable).
+  `embedding_dimensions`, `embedding_api_key_ref` (`env:NAME` ref only),
+  `distill_base_url`, `distill_model`, `distill_api_key_ref` (`env:NAME` ref
+  only) (all nullable).
 - `projects` += `brain_enabled` (boolean NOT NULL DEFAULT false). Enable-gate refuses
   `CONFIG` unless platform embedding + `distill_model` are set.
 - `agent_project_links` += `can_read_brain`, `can_write_brain` (boolean NOT NULL

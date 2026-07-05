@@ -12,16 +12,25 @@ import { PanelSection } from "@/components/settings/panel-section";
 
 type Props = { settings: BrainSettings };
 
-// The API key is a reference to an env var, never the secret; the value is
-// resolved from process.env server-side at embed time. An empty field clears the
-// column (null); a dimension must be a positive integer (else the PATCH returns
-// CONFIG, surfaced inline).
+// API keys are references to env vars, never secrets; values resolve from
+// process.env server-side at provider call time. An empty field clears the column
+// (null); a dimension must be a positive integer (else the PATCH returns CONFIG,
+// surfaced inline).
 type FormState = {
   embeddingBaseUrl: string;
   embeddingModel: string;
   embeddingDimensions: string;
   embeddingApiKeyRef: string;
+  distillBaseUrl: string;
   distillModel: string;
+  distillApiKeyRef: string;
+};
+
+type FieldSpec = {
+  key: keyof FormState;
+  label: string;
+  placeholder?: string;
+  numeric?: boolean;
 };
 
 function toForm(s: BrainSettings): FormState {
@@ -31,7 +40,9 @@ function toForm(s: BrainSettings): FormState {
     embeddingDimensions:
       s.embeddingDimensions != null ? String(s.embeddingDimensions) : "",
     embeddingApiKeyRef: s.embeddingApiKeyRef ?? "",
+    distillBaseUrl: s.distillBaseUrl ?? "",
     distillModel: s.distillModel ?? "",
+    distillApiKeyRef: s.distillApiKeyRef ?? "",
   };
 }
 
@@ -41,7 +52,9 @@ function formKey(f: FormState): string {
     f.embeddingModel.trim(),
     f.embeddingDimensions.trim(),
     f.embeddingApiKeyRef.trim(),
+    f.distillBaseUrl.trim(),
     f.distillModel.trim(),
+    f.distillApiKeyRef.trim(),
   ].join("|");
 }
 
@@ -67,7 +80,9 @@ function toPatch(f: FormState): Record<string, unknown> | "invalid" {
     embeddingModel: orNull(f.embeddingModel),
     embeddingDimensions,
     embeddingApiKeyRef: orNull(f.embeddingApiKeyRef),
+    distillBaseUrl: orNull(f.distillBaseUrl),
     distillModel: orNull(f.distillModel),
+    distillApiKeyRef: orNull(f.distillApiKeyRef),
   };
 }
 
@@ -87,7 +102,7 @@ async function patchJson(url: string, body: unknown): Promise<void> {
   }
 }
 
-// Admin-only platform Project-Brain embedding + distillation config (ADR-122).
+// Admin-only platform Project-Brain embedding + distillation provider config.
 // A model OR dimension change is a non-destructive reindex generation server-side
 // (new expression index + queued reindex jobs), never a schema migration.
 export function BrainSettingsPanel({ settings }: Props): ReactElement {
@@ -130,12 +145,7 @@ export function BrainSettingsPanel({ settings }: Props): ReactElement {
     }
   }
 
-  const fields: Array<{
-    key: keyof FormState;
-    label: string;
-    placeholder?: string;
-    numeric?: boolean;
-  }> = [
+  const embeddingFields: FieldSpec[] = [
     {
       key: "embeddingBaseUrl",
       label: t("brainBaseUrl"),
@@ -157,56 +167,85 @@ export function BrainSettingsPanel({ settings }: Props): ReactElement {
       label: t("brainApiKeyRef"),
       placeholder: "env:EMBEDDING_API_KEY",
     },
+  ];
+
+  const distillFields: FieldSpec[] = [
+    {
+      key: "distillBaseUrl",
+      label: t("brainDistillBaseUrl"),
+      placeholder: "https://api.example.com/v1",
+    },
     {
       key: "distillModel",
       label: t("brainDistillModel"),
-      placeholder: "gpt-4o-mini",
+      placeholder: "provider-chat-model",
+    },
+    {
+      key: "distillApiKeyRef",
+      label: t("brainDistillApiKeyRef"),
+      placeholder: "env:GLM_API_KEY",
     },
   ];
+
+  function renderField(field: FieldSpec): ReactElement {
+    return (
+      <label key={field.key} className="flex min-w-[220px] flex-col gap-1.5">
+        <span className={labelClass}>{field.label}</span>
+        <Input
+          aria-label={field.label}
+          className="h-10 rounded-[8px] border-line bg-canvas px-3 text-[13px] text-ink"
+          inputMode={field.numeric ? "numeric" : undefined}
+          placeholder={field.placeholder}
+          type={field.numeric ? "number" : "text"}
+          value={form[field.key]}
+          onChange={(event) => edit({ [field.key]: event.target.value })}
+        />
+      </label>
+    );
+  }
 
   return (
     <PanelSection title={t("brainTitle")}>
       <p className="m-0 mb-3 font-mono text-[10.5px] leading-[1.5] tracking-[0.02em] text-mute">
         {t("brainHint")}
       </p>
-      <div className="flex flex-wrap items-end gap-3">
-        {fields.map((field) => (
-          <label
-            key={field.key}
-            className="flex min-w-[220px] flex-col gap-1.5"
+      <div className="grid gap-4">
+        <div className="grid gap-2">
+          <h3 className={labelClass}>{t("brainEmbeddingSection")}</h3>
+          <div className="flex flex-wrap items-end gap-3">
+            {embeddingFields.map(renderField)}
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <h3 className={labelClass}>{t("brainDistillSection")}</h3>
+          <div className="flex flex-wrap items-end gap-3">
+            {distillFields.map(renderField)}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            className="border-line bg-ink text-[13px] font-semibold text-paper"
+            isDisabled={pending || !changed}
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => void save()}
           >
-            <span className={labelClass}>{field.label}</span>
-            <Input
-              aria-label={field.label}
-              className="h-10 rounded-[8px] border-line bg-canvas px-3 text-[13px] text-ink"
-              inputMode={field.numeric ? "numeric" : undefined}
-              placeholder={field.placeholder}
-              type={field.numeric ? "number" : "text"}
-              value={form[field.key]}
-              onChange={(event) => edit({ [field.key]: event.target.value })}
-            />
-          </label>
-        ))}
-        <Button
-          className="border-line bg-ink text-[13px] font-semibold text-paper"
-          isDisabled={pending || !changed}
-          size="sm"
-          type="button"
-          variant="outline"
-          onClick={() => void save()}
-        >
-          {pending ? t("saving") : t("save")}
-        </Button>
-        {showSaved && !changed ? (
-          <span
-            aria-label={t("brainSaved")}
-            className="flex items-center text-emerald-600"
-            role="status"
-            title={t("brainSaved")}
-          >
-            <CheckIcon className="h-5 w-5" />
-          </span>
-        ) : null}
+            {pending ? t("saving") : t("save")}
+          </Button>
+          {showSaved && !changed ? (
+            <span
+              aria-label={t("brainSaved")}
+              className="flex items-center text-emerald-600"
+              role="status"
+              title={t("brainSaved")}
+            >
+              <CheckIcon className="h-5 w-5" />
+            </span>
+          ) : null}
+        </div>
       </div>
       {error ? (
         <p

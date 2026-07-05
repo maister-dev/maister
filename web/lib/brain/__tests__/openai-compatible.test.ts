@@ -12,6 +12,7 @@ import { isMaisterError } from "@/lib/errors";
 // instant.
 
 const SECRET = "sk-super-secret-DO-NOT-LEAK-42";
+const DISTILL_SECRET = "sk-distill-secret-DO-NOT-LEAK-42";
 
 type Call = { url: string; init: RequestInit };
 
@@ -64,6 +65,7 @@ describe("openai-compatible client (T2.1)", () => {
 
   afterEach(() => {
     delete process.env.TEST_EMB_KEY;
+    delete process.env.TEST_DISTILL_KEY;
   });
 
   it("embed returns the provider vectors and sends the model + input", async () => {
@@ -216,6 +218,49 @@ describe("openai-compatible client (T2.1)", () => {
 
     expect(await client.complete("prompt")).toBe("a lesson");
     expect(calls[0]?.url).toBe("https://api.example.test/v1/chat/completions");
+  });
+
+  it("complete can use a separate distillation base URL and env key", async () => {
+    process.env.TEST_DISTILL_KEY = DISTILL_SECRET;
+    const { fetchImpl, calls } = mockFetch([
+      jsonResponse({ choices: [{ message: { content: "distilled" } }] }),
+    ]);
+    const client = makeEmbeddingClient(
+      cfg({
+        fetchImpl,
+        distillBaseUrl: "https://glm.example.test/v1",
+        distillApiKeyRef: "env:TEST_DISTILL_KEY",
+      }),
+    );
+
+    expect(await client.complete("prompt")).toBe("distilled");
+    expect(calls[0]?.url).toBe(
+      "https://glm.example.test/v1/chat/completions",
+    );
+    expect(
+      (calls[0]?.init.headers as Record<string, string>).authorization,
+    ).toBe(`Bearer ${DISTILL_SECRET}`);
+    expect(JSON.parse(String(calls[0]?.init.body))).toMatchObject({
+      model: "distiller-x",
+      messages: [{ role: "user", content: "prompt" }],
+    });
+  });
+
+  it("complete does not reuse the embedding key when only a dedicated distillation base URL is set", async () => {
+    const { fetchImpl, calls } = mockFetch([
+      jsonResponse({ choices: [{ message: { content: "local" } }] }),
+    ]);
+    const client = makeEmbeddingClient(
+      cfg({ fetchImpl, distillBaseUrl: "https://local-distill.test/v1" }),
+    );
+
+    expect(await client.complete("prompt")).toBe("local");
+    expect(calls[0]?.url).toBe(
+      "https://local-distill.test/v1/chat/completions",
+    );
+    expect(
+      (calls[0]?.init.headers as Record<string, string>).authorization,
+    ).toBeUndefined();
   });
 
   it("complete without distill_model throws CONFIG before any request", async () => {

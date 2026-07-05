@@ -8,8 +8,8 @@ import { MaisterError } from "@/lib/errors";
 import { stripEnvPrefix } from "@/lib/mcp/projection";
 
 // Project Brain (ADR-122) OpenAI-compatible client. Symmetric embed + complete
-// over one HTTP module. Config comes from `platform_runtime_settings`; the API
-// key is resolved from process.env via the `env:NAME` ref. Failure taxonomy:
+// over one HTTP module. Config comes from `platform_runtime_settings`; API keys
+// are resolved from process.env via `env:NAME` refs. Failure taxonomy:
 // transient (timeout / 429 / 5xx / network / malformed 200 body) → bounded
 // retry → `EMBEDDING_UNAVAILABLE`; deterministic provider 4xx (bad key, unknown
 // model, wrong base URL, rejected input) → `CONFIG` — retrying cannot fix it.
@@ -32,7 +32,9 @@ export interface EmbeddingClientConfig {
   embeddingModel: string;
   embeddingDimensions: number;
   apiKeyRef: string | null;
+  distillBaseUrl?: string | null;
   distillModel: string | null;
+  distillApiKeyRef?: string | null;
   maxRetries?: number;
   retryDelayMs?: number;
   // Per-attempt deadline. Without it a provider that accepts the connection then
@@ -57,6 +59,13 @@ export interface OpenAiCompatibleClient {
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
+type ProviderTarget = {
+  readonly baseUrl: string;
+  readonly logBaseUrl: string;
+  readonly apiKeyRef: string | null | undefined;
+  readonly model: string;
+};
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -70,24 +79,56 @@ export function makeEmbeddingClient(
   const retryDelayMs = cfg.retryDelayMs ?? 250;
   const timeoutMs = cfg.timeoutMs ?? 30_000;
   const doFetch = cfg.fetchImpl ?? globalThis.fetch;
-  const base = cfg.baseUrl.replace(/\/+$/, "");
-  // Log the origin only — a base URL with embedded userinfo credentials must
-  // never reach the logs (E-10).
-  let logBase: string;
+  const embeddingTarget = providerTarget({
+    baseUrl: cfg.baseUrl,
+    apiKeyRef: cfg.apiKeyRef,
+    model: cfg.embeddingModel,
+  });
 
-  try {
-    logBase = new URL(base).origin;
-  } catch {
-    logBase = "<invalid base url>";
+  function providerTarget(input: {
+    baseUrl: string;
+    apiKeyRef: string | null | undefined;
+    model: string;
+  }): ProviderTarget {
+    const baseUrl = input.baseUrl.replace(/\/+$/, "");
+    // Log the origin only — a base URL with embedded userinfo credentials must
+    // never reach the logs (E-10).
+    let logBaseUrl: string;
+
+    try {
+      logBaseUrl = new URL(baseUrl).origin;
+    } catch {
+      logBaseUrl = "<invalid base url>";
+    }
+
+    return {
+      baseUrl,
+      logBaseUrl,
+      apiKeyRef: input.apiKeyRef,
+      model: input.model,
+    };
   }
 
-  function authHeaders(): Record<string, string> {
+  function distillTarget(model: string): ProviderTarget {
+    const hasDedicatedDistillConfig =
+      cfg.distillBaseUrl != null || cfg.distillApiKeyRef != null;
+
+    return providerTarget({
+      baseUrl: cfg.distillBaseUrl ?? cfg.baseUrl,
+      apiKeyRef: hasDedicatedDistillConfig
+        ? cfg.distillApiKeyRef
+        : cfg.apiKeyRef,
+      model,
+    });
+  }
+
+  function authHeaders(
+    apiKeyRef: string | null | undefined,
+  ): Record<string, string> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
     };
-    const key = cfg.apiKeyRef
-      ? process.env[stripEnvPrefix(cfg.apiKeyRef)]
-      : undefined;
+    const key = apiKeyRef ? process.env[stripEnvPrefix(apiKeyRef)] : undefined;
 
     if (key) headers.authorization = `Bearer ${key}`;
 
@@ -100,6 +141,7 @@ export function makeEmbeddingClient(
   // non-retryable 4xx throws CONFIG immediately — a bad key / unknown model /
   // wrong base URL / rejected input cannot be fixed by retrying.
   async function request(
+    target: ProviderTarget,
     path: string,
     body: unknown,
     op: string,
@@ -110,9 +152,9 @@ export function makeEmbeddingClient(
       let res: Response;
 
       try {
-        res = await doFetch(`${base}${path}`, {
+        res = await doFetch(`${target.baseUrl}${path}`, {
           method: "POST",
-          headers: authHeaders(),
+          headers: authHeaders(target.apiKeyRef),
           body: JSON.stringify(body),
           // Per-attempt deadline — a stalled provider aborts here instead of
           // hanging the caller forever.
@@ -130,8 +172,8 @@ export function makeEmbeddingClient(
           {
             op,
             attempt,
-            model: cfg.embeddingModel,
-            baseUrl: logBase,
+            model: target.model,
+            baseUrl: target.logBaseUrl,
             kind: timedOut ? "timeout" : "network",
           },
           "embedding request failed, retrying",
@@ -155,8 +197,8 @@ export function makeEmbeddingClient(
             {
               op,
               attempt,
-              model: cfg.embeddingModel,
-              baseUrl: logBase,
+              model: target.model,
+              baseUrl: target.logBaseUrl,
               kind: "malformed-body",
             },
             "embedding request failed, retrying",
@@ -177,8 +219,8 @@ export function makeEmbeddingClient(
             op,
             attempt,
             status: res.status,
-            model: cfg.embeddingModel,
-            baseUrl: logBase,
+            model: target.model,
+            baseUrl: target.logBaseUrl,
           },
           "embedding request failed, retrying",
         );
@@ -195,7 +237,7 @@ export function makeEmbeddingClient(
       ) {
         throw new MaisterError(
           "CONFIG",
-          `embedding provider rejected ${op} (status ${res.status}) — check the embedding provider configuration/input`,
+          `Brain provider rejected ${op} (status ${res.status}) — check the provider configuration/input`,
         );
       }
 
@@ -205,7 +247,7 @@ export function makeEmbeddingClient(
 
     throw new MaisterError(
       "EMBEDDING_UNAVAILABLE",
-      `embedding provider ${op} failed after ${maxRetries + 1} attempt(s)` +
+      `Brain provider ${op} failed after ${maxRetries + 1} attempt(s)` +
         (lastStatus ? ` (last status ${lastStatus})` : " (network error)"),
     );
   }
@@ -220,6 +262,7 @@ export function makeEmbeddingClient(
       if (texts.length === 0) return [];
 
       const json = (await request(
+        embeddingTarget,
         "/embeddings",
         { model: cfg.embeddingModel, input: texts },
         "embed",
@@ -272,6 +315,7 @@ export function makeEmbeddingClient(
       }
 
       const json = (await request(
+        distillTarget(cfg.distillModel),
         "/chat/completions",
         {
           model: cfg.distillModel,
@@ -308,6 +352,8 @@ export async function getBrainEmbeddingClient(
     embeddingModel: s.embeddingModel as string,
     embeddingDimensions: s.embeddingDimensions as number,
     apiKeyRef: s.embeddingApiKeyRef,
+    distillBaseUrl: s.distillBaseUrl,
     distillModel: s.distillModel,
+    distillApiKeyRef: s.distillApiKeyRef,
   });
 }

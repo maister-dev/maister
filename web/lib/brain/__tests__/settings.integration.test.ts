@@ -31,7 +31,8 @@ beforeEach(async () => {
   await ctx.db.execute(sql`
     UPDATE platform_runtime_settings
     SET embedding_base_url = NULL, embedding_model = NULL, embedding_dimensions = NULL,
-        embedding_api_key_ref = NULL, distill_model = NULL
+        embedding_api_key_ref = NULL, distill_base_url = NULL,
+        distill_model = NULL, distill_api_key_ref = NULL
     WHERE id = 'singleton'
   `);
 });
@@ -51,7 +52,9 @@ describe("updateBrainSettings (T5.1)", () => {
         embeddingBaseUrl: "https://api.test/v1",
         embeddingModel: "text-embedding-3-small",
         embeddingDimensions: 1536,
+        distillBaseUrl: "https://distill.test/v1",
         distillModel: "distiller",
+        distillApiKeyRef: "env:DISTILL_API_KEY",
       },
       ctx.db,
     );
@@ -59,34 +62,54 @@ describe("updateBrainSettings (T5.1)", () => {
     let s = await getBrainSettings(ctx.db);
 
     expect(s.embeddingBaseUrl).toBe("https://api.test/v1");
+    expect(s.distillBaseUrl).toBe("https://distill.test/v1");
     expect(s.distillModel).toBe("distiller");
+    expect(s.distillApiKeyRef).toBe("env:DISTILL_API_KEY");
 
     // CLEAR distill only (partial patch — other fields untouched)
-    await updateBrainSettings({ distillModel: null }, ctx.db);
+    await updateBrainSettings(
+      { distillBaseUrl: null, distillModel: null, distillApiKeyRef: null },
+      ctx.db,
+    );
     s = await getBrainSettings(ctx.db);
+    expect(s.distillBaseUrl).toBeNull();
     expect(s.distillModel).toBeNull();
+    expect(s.distillApiKeyRef).toBeNull();
     expect(s.embeddingModel).toBe("text-embedding-3-small"); // untouched
 
     // re-SET
-    await updateBrainSettings({ distillModel: "distiller-2" }, ctx.db);
+    await updateBrainSettings(
+      {
+        distillBaseUrl: "https://distill-2.test/v1",
+        distillModel: "distiller-2",
+        distillApiKeyRef: "env:DISTILL_2_API_KEY",
+      },
+      ctx.db,
+    );
     s = await getBrainSettings(ctx.db);
+    expect(s.distillBaseUrl).toBe("https://distill-2.test/v1");
     expect(s.distillModel).toBe("distiller-2");
+    expect(s.distillApiKeyRef).toBe("env:DISTILL_2_API_KEY");
   });
 
-  it("stores the API key as its env:NAME reference, never a secret", async () => {
+  it("stores API keys as env:NAME references, never secrets", async () => {
     await updateBrainSettings(
-      { embeddingApiKeyRef: "env:EMBEDDING_API_KEY" },
+      {
+        embeddingApiKeyRef: "env:EMBEDDING_API_KEY",
+        distillApiKeyRef: "env:GLM_API_KEY",
+      },
       ctx.db,
     );
 
     const row = await ctx.db.execute(
-      sql`SELECT embedding_api_key_ref FROM platform_runtime_settings WHERE id = 'singleton'`,
+      sql`SELECT embedding_api_key_ref, distill_api_key_ref FROM platform_runtime_settings WHERE id = 'singleton'`,
     );
 
     expect(row.rows[0]?.embedding_api_key_ref).toBe("env:EMBEDDING_API_KEY");
+    expect(row.rows[0]?.distill_api_key_ref).toBe("env:GLM_API_KEY");
   });
 
-  it("rejects a raw (non-env:) API key with CONFIG", async () => {
+  it("rejects a raw (non-env:) embedding API key with CONFIG", async () => {
     let thrown: unknown;
 
     try {
@@ -94,6 +117,18 @@ describe("updateBrainSettings (T5.1)", () => {
         { embeddingApiKeyRef: "sk-raw-secret" },
         ctx.db,
       );
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(isMaisterError(thrown) && thrown.code).toBe("CONFIG");
+  });
+
+  it("rejects a raw (non-env:) distillation API key with CONFIG", async () => {
+    let thrown: unknown;
+
+    try {
+      await updateBrainSettings({ distillApiKeyRef: "sk-raw-secret" }, ctx.db);
     } catch (err) {
       thrown = err;
     }

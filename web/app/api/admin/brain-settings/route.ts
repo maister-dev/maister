@@ -16,8 +16,8 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 
 // Admin-only platform Project-Brain embedding + distillation config (ADR-122),
 // mirroring the webhook-settings admin route: the singleton
-// platform_runtime_settings row. The API key is stored ONLY as its env:NAME
-// reference — never the secret value.
+// platform_runtime_settings row. API keys are stored ONLY as env:NAME
+// references — never secret values.
 
 const log = pino({
   name: "api-admin-brain-settings",
@@ -83,7 +83,9 @@ const patchSchema = z
       .nullable()
       .optional(),
     embeddingApiKeyRef: z.string().regex(ENV_REF_RE).nullable().optional(),
+    distillBaseUrl: z.string().url().nullable().optional(),
     distillModel: z.string().min(1).nullable().optional(),
+    distillApiKeyRef: z.string().regex(ENV_REF_RE).nullable().optional(),
   })
   .strict();
 

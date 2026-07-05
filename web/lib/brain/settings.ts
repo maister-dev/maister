@@ -14,9 +14,9 @@ import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 
 // Project Brain (ADR-122) platform embedding + distillation config, read from
-// the `platform_runtime_settings` singleton (mirrors getWebhookSettings). The
-// API key is stored ONLY as an `env:NAME` ref (never the value); the value is
-// resolved from process.env at call time in the embedding client.
+// the `platform_runtime_settings` singleton (mirrors getWebhookSettings). API
+// keys are stored ONLY as `env:NAME` refs (never the value); values resolve
+// from process.env at call time in the embedding client.
 
 const log = pino({
   name: "brain:settings",
@@ -28,7 +28,9 @@ export interface BrainSettings {
   embeddingModel: string | null;
   embeddingDimensions: number | null;
   embeddingApiKeyRef: string | null;
+  distillBaseUrl: string | null;
   distillModel: string | null;
+  distillApiKeyRef: string | null;
 }
 
 type SettingsTx = {
@@ -49,13 +51,16 @@ function rowToSettings(
         ? Number(row.embedding_dimensions)
         : null,
     embeddingApiKeyRef: (row?.embedding_api_key_ref as string | null) ?? null,
+    distillBaseUrl: (row?.distill_base_url as string | null) ?? null,
     distillModel: (row?.distill_model as string | null) ?? null,
+    distillApiKeyRef: (row?.distill_api_key_ref as string | null) ?? null,
   };
 }
 
 const SETTINGS_SELECT = sql`
   SELECT embedding_base_url, embedding_model, embedding_dimensions,
-         embedding_api_key_ref, distill_model
+         embedding_api_key_ref, distill_base_url, distill_model,
+         distill_api_key_ref
   FROM platform_runtime_settings WHERE id = 'singleton'
 `;
 
@@ -75,9 +80,9 @@ export function isEmbeddingConfigured(s: BrainSettings): boolean {
   );
 }
 
-// The enable-gate contract (T5.2): a project may only be enabled when BOTH the
-// embedding config AND the distillation model are set — so harvest never runs
-// unconfigured by construction.
+// The enable-gate contract (T5.2): a project may only be enabled when the
+// embedding config and distillation model are set. Distillation base/key may
+// fall back to the embedding provider for compatibility.
 export function isBrainFullyConfigured(s: BrainSettings): boolean {
   return isEmbeddingConfigured(s) && Boolean(s.distillModel);
 }
@@ -173,7 +178,8 @@ export async function updateBrainSettings(
   const apply = async (tx: SettingsTx): Promise<BrainSettings> => {
     const locked = await tx.execute(
       sql`SELECT embedding_base_url, embedding_model, embedding_dimensions,
-                 embedding_api_key_ref, distill_model
+                 embedding_api_key_ref, distill_base_url, distill_model,
+                 distill_api_key_ref
           FROM platform_runtime_settings WHERE id = 'singleton' FOR UPDATE`,
     );
     const old = rowToSettings((locked.rows ?? [])[0]);
@@ -186,6 +192,13 @@ export async function updateBrainSettings(
       throw new MaisterError(
         "CONFIG",
         "embedding_api_key_ref must be an env:NAME reference (never a raw secret)",
+      );
+    }
+
+    if (merged.distillApiKeyRef && !ENV_REF_RE.test(merged.distillApiKeyRef)) {
+      throw new MaisterError(
+        "CONFIG",
+        "distill_api_key_ref must be an env:NAME reference (never a raw secret)",
       );
     }
 
@@ -207,7 +220,9 @@ export async function updateBrainSettings(
           embedding_model = ${merged.embeddingModel},
           embedding_dimensions = ${merged.embeddingDimensions},
           embedding_api_key_ref = ${merged.embeddingApiKeyRef},
+          distill_base_url = ${merged.distillBaseUrl},
           distill_model = ${merged.distillModel},
+          distill_api_key_ref = ${merged.distillApiKeyRef},
           updated_at = now()
       WHERE id = 'singleton'
     `);

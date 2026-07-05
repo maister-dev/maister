@@ -69,7 +69,7 @@ describe("brain foundation — two lineages + pgvector (T1.3)", () => {
           WHERE (table_name = 'projects' AND column_name = 'brain_enabled')
              OR (table_name = 'runs' AND column_name = 'brain_context')
              OR (table_name = 'agent_project_links' AND column_name IN ('can_read_brain','can_write_brain'))
-             OR (table_name = 'platform_runtime_settings' AND column_name IN ('embedding_base_url','embedding_model','embedding_dimensions','embedding_api_key_ref','distill_model'))`,
+             OR (table_name = 'platform_runtime_settings' AND column_name IN ('embedding_base_url','embedding_model','embedding_dimensions','embedding_api_key_ref','distill_base_url','distill_model','distill_api_key_ref'))`,
     );
     const byKey = new Map(
       cols.rows.map((r) => [`${r.table_name}.${r.column_name}`, r]),
@@ -89,13 +89,15 @@ describe("brain foundation — two lineages + pgvector (T1.3)", () => {
     );
     // runs.brain_context: nullable (null = inherit)
     expect(byKey.get("runs.brain_context")?.is_nullable).toBe("YES");
-    // platform embedding config: all five present + nullable
+    // platform embedding/distillation config: all provider fields present + nullable
     for (const c of [
       "embedding_base_url",
       "embedding_model",
       "embedding_dimensions",
       "embedding_api_key_ref",
+      "distill_base_url",
       "distill_model",
+      "distill_api_key_ref",
     ]) {
       expect(byKey.get(`platform_runtime_settings.${c}`)?.is_nullable).toBe(
         "YES",
