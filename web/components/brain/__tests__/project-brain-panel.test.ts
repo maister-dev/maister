@@ -17,6 +17,28 @@ const labels: ProjectBrainPanelLabels = {
   tierOwned: "owned",
   tierIndexed: "indexed",
   confidence: "confidence",
+  indexStatusTitle: "Index status",
+  indexLatestSourceIndex: "Latest source index",
+  indexQueued: "Queued",
+  indexRunning: "Running",
+  indexFailed: "Failed",
+  indexCompleted: "Completed",
+  indexActiveJobs: "Active jobs",
+  indexNoActiveJobs: "No active jobs",
+  indexOwnedGeneration: "Owned generation",
+  indexProgress: "progress",
+  indexJobStatus: {
+    queued: "queued",
+    running: "running",
+    completed: "completed",
+    failed: "failed",
+  },
+  indexJobReason: {
+    model_switch: "model switch",
+    manual: "manual",
+    event: "event",
+    chunker_upgrade: "chunker upgrade",
+  },
   sourcesTitle: "Sources",
   sourcePath: "Path",
   sourceKind: "Kind",
@@ -54,6 +76,24 @@ function render(
       slug: "demo",
       query: "decision",
       labels,
+      indexStatus: {
+        activeJobs: [
+          {
+            id: "job-1",
+            sourceId: "source-1",
+            sourcePath: "docs/decisions.md",
+            reason: "manual",
+            status: "queued",
+            progress: 0,
+            createdAt: "2026-07-04T00:00:00.000Z",
+          },
+        ],
+        completed: 2,
+        failed: 0,
+        latestSourceIndexedAt: "2026-07-03T00:00:00.000Z",
+        queued: 1,
+        running: 0,
+      },
       memory: [
         {
           id: "item-1",
@@ -140,6 +180,9 @@ describe("ProjectBrainPanel", () => {
     expect(html).toContain("indexed");
     expect(html).toContain("73%");
     expect(html).toContain("100%");
+    expect(html).toContain("Index status");
+    expect(html).toContain("Latest source index");
+    expect(html).toContain("job-1");
     expect(html).toContain(
       "/projects/demo?tab=repo&amp;file=docs%2Fdecisions.md#L10",
     );

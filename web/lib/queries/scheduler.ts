@@ -7,11 +7,19 @@ import type {
   SchedulerJobKind,
   SchedulerJobRunStatus,
 } from "@/lib/db/schema";
-import type { SchedulerRunScheduleOverviewDataRow } from "@/types/scheduler";
+import type {
+  BrainIndexJobReason,
+  BrainIndexJobStatus,
+  BrainIndexQueueData,
+  BrainIndexQueueDataRow,
+  SchedulerClockStatus,
+  SchedulerRunScheduleOverviewDataRow,
+} from "@/types/scheduler";
 
 import { sql, type SQL } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
+import { readSchedulerClockStatus } from "@/lib/scheduler/timer-config";
 
 export type SchedulerStatusRow = {
   id: string;
@@ -33,6 +41,8 @@ export type SchedulerStatusRow = {
 
 export type SchedulerRunScheduleOverviewRow =
   SchedulerRunScheduleOverviewDataRow;
+
+export type BrainIndexQueueRow = BrainIndexQueueDataRow;
 
 type SchedulerQueryDb = {
   execute(query: SQL): Promise<{ rows?: unknown[] }>;
@@ -80,6 +90,38 @@ type SchedulerRunScheduleOverviewDbRow = {
   last_run_id: string | null;
   last_run_status: RunStatus | null;
 };
+
+type BrainIndexQueueDbRow = {
+  created_at: Date | string;
+  id: string;
+  progress: number;
+  project_id: string;
+  project_name: string;
+  project_slug: string;
+  reason: BrainIndexJobReason;
+  resumable_cursor: unknown;
+  source_id: string | null;
+  source_last_error: unknown;
+  source_last_indexed_at: Date | string | null;
+  source_path: string | null;
+  status: BrainIndexJobStatus;
+};
+
+type BrainIndexQueueSummaryDbRow = {
+  completed: number | string | null;
+  failed: number | string | null;
+  queued: number | string | null;
+  running: number | string | null;
+  total: number | string | null;
+};
+
+type TableExistsDbRow = {
+  applied: boolean | null;
+};
+
+export function getSchedulerClockStatus(): SchedulerClockStatus {
+  return readSchedulerClockStatus();
+}
 
 export async function listSchedulerStatusRows(
   args: {
@@ -170,6 +212,83 @@ export async function listSchedulerRunScheduleOverviewRows(
   );
 }
 
+export async function listBrainIndexQueueRows(
+  args: {
+    limit?: number;
+    db?: SchedulerQueryDb;
+  } = {},
+): Promise<BrainIndexQueueData> {
+  const db = args.db ?? (getDb() as unknown as SchedulerQueryDb);
+  const limit = args.limit ?? 50;
+  const schemaApplied = await hasBrainIndexQueueSchema(db);
+
+  if (!schemaApplied) {
+    return {
+      rows: [],
+      schemaApplied: false,
+      summary: emptyBrainIndexQueueSummary(),
+    };
+  }
+
+  const [summaryResult, rowsResult] = await Promise.all([
+    db.execute(sql`
+      SELECT
+        count(*)::int AS total,
+        count(*) FILTER (WHERE status = 'queued')::int AS queued,
+        count(*) FILTER (WHERE status = 'running')::int AS running,
+        count(*) FILTER (WHERE status = 'failed')::int AS failed,
+        count(*) FILTER (WHERE status = 'completed')::int AS completed
+      FROM brain_index_jobs
+    `),
+    db.execute(sql`
+      SELECT
+        j.id,
+        j.project_id,
+        p.slug AS project_slug,
+        p.name AS project_name,
+        j.source_id,
+        s.path AS source_path,
+        s.last_indexed_at AS source_last_indexed_at,
+        s.last_error AS source_last_error,
+        j.reason,
+        j.status,
+        j.progress,
+        j.resumable_cursor,
+        j.created_at
+      FROM brain_index_jobs j
+      INNER JOIN projects p ON p.id = j.project_id
+      LEFT JOIN brain_sources s ON s.id = j.source_id
+      ORDER BY
+        CASE j.status
+          WHEN 'running' THEN 0
+          WHEN 'queued' THEN 1
+          WHEN 'failed' THEN 2
+          ELSE 3
+        END ASC,
+        j.created_at DESC,
+        j.id ASC
+      LIMIT ${limit}
+    `),
+  ]);
+
+  const summaryRow = (summaryResult.rows?.[0] ??
+    {}) as BrainIndexQueueSummaryDbRow;
+
+  return {
+    rows: (rowsResult.rows ?? []).map((row) =>
+      toBrainIndexQueueRow(row as BrainIndexQueueDbRow),
+    ),
+    schemaApplied: true,
+    summary: {
+      completed: coerceCount(summaryRow.completed),
+      failed: coerceCount(summaryRow.failed),
+      queued: coerceCount(summaryRow.queued),
+      running: coerceCount(summaryRow.running),
+      total: coerceCount(summaryRow.total),
+    },
+  };
+}
+
 function toSchedulerStatusRow(row: SchedulerStatusDbRow): SchedulerStatusRow {
   return {
     id: row.id,
@@ -217,6 +336,61 @@ function toSchedulerRunScheduleOverviewRow(
     lastRunId: row.last_run_id,
     lastRunStatus: row.last_run_status,
   };
+}
+
+function toBrainIndexQueueRow(row: BrainIndexQueueDbRow): BrainIndexQueueRow {
+  return {
+    createdAt: coerceDate(row.created_at),
+    id: row.id,
+    progress: row.progress,
+    projectId: row.project_id,
+    projectName: row.project_name,
+    projectSlug: row.project_slug,
+    reason: row.reason,
+    resumableCursor: coerceRecord(row.resumable_cursor),
+    sourceId: row.source_id,
+    sourceLastError: coerceRecord(row.source_last_error),
+    sourceLastIndexedAt: coerceNullableDate(row.source_last_indexed_at),
+    sourcePath: row.source_path,
+    status: row.status,
+  };
+}
+
+async function hasBrainIndexQueueSchema(
+  db: SchedulerQueryDb,
+): Promise<boolean> {
+  const result = await db.execute(sql`
+    SELECT (
+      to_regclass('public.brain_index_jobs') IS NOT NULL
+      AND to_regclass('public.brain_sources') IS NOT NULL
+    ) AS applied
+  `);
+  const row = result.rows?.[0] as TableExistsDbRow | undefined;
+
+  return row?.applied === true;
+}
+
+function emptyBrainIndexQueueSummary(): BrainIndexQueueData["summary"] {
+  return { completed: 0, failed: 0, queued: 0, running: 0, total: 0 };
+}
+
+function coerceRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value)) return null;
+  if (typeof value !== "object") return null;
+
+  return value as Record<string, unknown>;
+}
+
+function coerceCount(value: number | string | null | undefined): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
 }
 
 function coerceDate(value: Date | string): Date {

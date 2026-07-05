@@ -1,6 +1,10 @@
 import "server-only";
 
 import type { BrainSourceRef } from "@/lib/brain/schema";
+import type {
+  BrainIndexJobReason,
+  BrainIndexJobStatus,
+} from "@/types/scheduler";
 
 import { sql, type SQL } from "drizzle-orm";
 
@@ -38,10 +42,48 @@ export interface BrainProposalReviewRow {
 }
 
 export interface ProjectBrainPanelData {
+  indexStatus: BrainIndexPanelStatus;
   memory: BrainMemorySearchRow[];
   proposals: BrainProposalReviewRow[];
   sources: BrainSourceDto[];
 }
+
+export interface BrainIndexPanelJobRow {
+  id: string;
+  sourceId: string | null;
+  sourcePath: string | null;
+  reason: BrainIndexJobReason;
+  status: BrainIndexJobStatus;
+  progress: number;
+  createdAt: Date | string;
+}
+
+export interface BrainIndexPanelStatus {
+  activeJobs: BrainIndexPanelJobRow[];
+  completed: number;
+  failed: number;
+  latestSourceIndexedAt: Date | string | null;
+  queued: number;
+  running: number;
+}
+
+type BrainIndexSummaryDbRow = {
+  completed: number | string | null;
+  failed: number | string | null;
+  latest_source_indexed_at: Date | string | null;
+  queued: number | string | null;
+  running: number | string | null;
+};
+
+type BrainIndexJobDbRow = {
+  created_at: Date | string;
+  id: string;
+  progress: number;
+  reason: BrainIndexJobReason;
+  source_id: string | null;
+  source_path: string | null;
+  status: BrainIndexJobStatus;
+};
 
 function previewOf(content: unknown): string {
   const value = String(content ?? "");
@@ -51,6 +93,17 @@ function previewOf(content: unknown): string {
 
 function pointerOf(value: unknown): BrainSourceRef | null {
   return value && typeof value === "object" ? (value as BrainSourceRef) : null;
+}
+
+function coerceCount(value: number | string | null | undefined): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
 }
 
 function toMemoryRow(row: Record<string, unknown>): BrainMemorySearchRow {
@@ -210,16 +263,96 @@ async function listProposalRows(
   });
 }
 
+async function loadIndexStatus(
+  db: BrainUiDb,
+  projectId: string,
+): Promise<BrainIndexPanelStatus> {
+  const [summary, jobs] = await Promise.all([
+    db.execute(sql`
+      WITH job_counts AS (
+        SELECT
+          count(*) FILTER (WHERE status = 'queued')::int AS queued,
+          count(*) FILTER (WHERE status = 'running')::int AS running,
+          count(*) FILTER (WHERE status = 'failed')::int AS failed,
+          count(*) FILTER (WHERE status = 'completed')::int AS completed
+        FROM brain_index_jobs
+        WHERE project_id = ${projectId}
+      ),
+      source_summary AS (
+        SELECT max(last_indexed_at) AS latest_source_indexed_at
+        FROM brain_sources
+        WHERE project_id = ${projectId}
+      )
+      SELECT
+        job_counts.queued,
+        job_counts.running,
+        job_counts.failed,
+        job_counts.completed,
+        source_summary.latest_source_indexed_at
+      FROM job_counts
+      CROSS JOIN source_summary
+    `),
+    db.execute(sql`
+      SELECT
+        j.id,
+        j.source_id,
+        s.path AS source_path,
+        j.reason,
+        j.status,
+        j.progress,
+        j.created_at
+      FROM brain_index_jobs j
+      LEFT JOIN brain_sources s ON s.id = j.source_id
+      WHERE j.project_id = ${projectId}
+        AND j.status IN ('running', 'queued', 'failed')
+      ORDER BY
+        CASE j.status
+          WHEN 'running' THEN 0
+          WHEN 'queued' THEN 1
+          ELSE 2
+        END ASC,
+        j.created_at DESC,
+        j.id ASC
+      LIMIT 8
+    `),
+  ]);
+  const row = (summary.rows[0] ?? {}) as BrainIndexSummaryDbRow;
+
+  return {
+    activeJobs: jobs.rows.map((job) =>
+      toBrainIndexPanelJob(job as BrainIndexJobDbRow),
+    ),
+    completed: coerceCount(row.completed),
+    failed: coerceCount(row.failed),
+    latestSourceIndexedAt: row.latest_source_indexed_at ?? null,
+    queued: coerceCount(row.queued),
+    running: coerceCount(row.running),
+  };
+}
+
+function toBrainIndexPanelJob(row: BrainIndexJobDbRow): BrainIndexPanelJobRow {
+  return {
+    createdAt: row.created_at,
+    id: row.id,
+    progress: row.progress,
+    reason: row.reason,
+    sourceId: row.source_id,
+    sourcePath: row.source_path,
+    status: row.status,
+  };
+}
+
 export async function loadProjectBrainPanelData(
   db: BrainUiDb,
   projectId: string,
   query: string,
 ): Promise<ProjectBrainPanelData> {
-  const [memory, proposals, sources] = await Promise.all([
+  const [indexStatus, memory, proposals, sources] = await Promise.all([
+    loadIndexStatus(db, projectId),
     listMemoryRows(db, projectId, query),
     listProposalRows(db, projectId),
     listBrainSources(db, projectId),
   ]);
 
-  return { memory, proposals, sources };
+  return { indexStatus, memory, proposals, sources };
 }

@@ -245,14 +245,38 @@ export default async function ProjectBoardPage({
           const db = getDb() as unknown as BrainUiDb;
 
           if (!(await isBrainSchemaApplied(db))) {
-            return { memory: [], proposals: [], sources: [] };
+            return {
+              indexStatus: {
+                activeJobs: [],
+                completed: 0,
+                failed: 0,
+                latestSourceIndexedAt: null,
+                queued: 0,
+                running: 0,
+              },
+              memory: [],
+              proposals: [],
+              sources: [],
+            };
           }
 
           await requireProjectAction(project.id, "readBrain");
 
           return loadProjectBrainPanelData(db, project.id, brainQuery);
         })()
-      : { memory: [], proposals: [], sources: [] };
+      : {
+          indexStatus: {
+            activeJobs: [],
+            completed: 0,
+            failed: 0,
+            latestSourceIndexedAt: null,
+            queued: 0,
+            running: 0,
+          },
+          memory: [],
+          proposals: [],
+          sources: [],
+        };
 
   return (
     <>
@@ -470,6 +494,28 @@ export default async function ProjectBoardPage({
             tierOwned: tBrain("tierOwned"),
             tierIndexed: tBrain("tierIndexed"),
             confidence: tBrain("confidence"),
+            indexStatusTitle: tBrain("indexStatusTitle"),
+            indexLatestSourceIndex: tBrain("indexLatestSourceIndex"),
+            indexQueued: tBrain("indexQueued"),
+            indexRunning: tBrain("indexRunning"),
+            indexFailed: tBrain("indexFailed"),
+            indexCompleted: tBrain("indexCompleted"),
+            indexActiveJobs: tBrain("indexActiveJobs"),
+            indexNoActiveJobs: tBrain("indexNoActiveJobs"),
+            indexOwnedGeneration: tBrain("indexOwnedGeneration"),
+            indexProgress: tBrain("indexProgress"),
+            indexJobStatus: {
+              queued: tBrain("indexJobStatus.queued"),
+              running: tBrain("indexJobStatus.running"),
+              completed: tBrain("indexJobStatus.completed"),
+              failed: tBrain("indexJobStatus.failed"),
+            },
+            indexJobReason: {
+              model_switch: tBrain("indexJobReason.model_switch"),
+              manual: tBrain("indexJobReason.manual"),
+              event: tBrain("indexJobReason.event"),
+              chunker_upgrade: tBrain("indexJobReason.chunker_upgrade"),
+            },
             sourcesTitle: tBrain("sourcesTitle"),
             sourcePath: tBrain("sourcePath"),
             sourceKind: tBrain("sourceKind"),
@@ -492,6 +538,7 @@ export default async function ProjectBoardPage({
             rejectReason: tBrain("rejectReason"),
             emptyProposals: tBrain("emptyProposals"),
           }}
+          indexStatus={brainPanelData.indexStatus}
           memory={brainPanelData.memory}
           proposalCapabilities={{
             canAcceptCatalog: isAdmin,

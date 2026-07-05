@@ -1,10 +1,15 @@
 import type { ReactElement } from "react";
 import type {
+  BrainIndexPanelStatus,
   BrainMemorySearchRow,
   BrainProposalReviewRow,
 } from "@/lib/brain/ui-queries";
 import type { BrainSourceDto } from "@/lib/brain/sources";
 import type { BrainSourceRef } from "@/lib/brain/schema";
+import type {
+  BrainIndexJobReason,
+  BrainIndexJobStatus,
+} from "@/types/scheduler";
 
 import Link from "next/link";
 
@@ -23,6 +28,18 @@ export interface ProjectBrainPanelLabels {
   tierOwned: string;
   tierIndexed: string;
   confidence: string;
+  indexStatusTitle: string;
+  indexLatestSourceIndex: string;
+  indexQueued: string;
+  indexRunning: string;
+  indexFailed: string;
+  indexCompleted: string;
+  indexActiveJobs: string;
+  indexNoActiveJobs: string;
+  indexOwnedGeneration: string;
+  indexProgress: string;
+  indexJobStatus: Record<BrainIndexJobStatus, string>;
+  indexJobReason: Record<BrainIndexJobReason, string>;
   sourcesTitle: string;
   sourcePath: string;
   sourceKind: string;
@@ -50,6 +67,7 @@ interface ProjectBrainPanelProps {
   slug: string;
   query: string;
   labels: ProjectBrainPanelLabels;
+  indexStatus: BrainIndexPanelStatus;
   memory: BrainMemorySearchRow[];
   proposals: BrainProposalReviewRow[];
   sources: BrainSourceDto[];
@@ -211,6 +229,81 @@ function MemorySection({
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+function IndexStatusSection({
+  labels,
+  indexStatus,
+}: Pick<ProjectBrainPanelProps, "labels" | "indexStatus">): ReactElement {
+  return (
+    <section className={sectionClass}>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <h2 className={headingClass}>{labels.indexStatusTitle}</h2>
+        <div className="flex flex-wrap gap-2">
+          <span className={badgeClass}>
+            {labels.indexQueued} {indexStatus.queued}
+          </span>
+          <span className={badgeClass}>
+            {labels.indexRunning} {indexStatus.running}
+          </span>
+          <span className={badgeClass}>
+            {labels.indexFailed} {indexStatus.failed}
+          </span>
+          <span className={badgeClass}>
+            {labels.indexCompleted} {indexStatus.completed}
+          </span>
+        </div>
+      </div>
+      <div className="grid gap-3 px-4 py-3">
+        <div className="font-mono text-[11px] text-mute">
+          {labels.indexLatestSourceIndex}:{" "}
+          <span className="text-ink">
+            {formatDate(indexStatus.latestSourceIndexedAt) ||
+              labels.sourceNeverIndexed}
+          </span>
+        </div>
+        <div>
+          <div className="mb-2 font-mono text-[10.5px] font-semibold uppercase text-mute">
+            {labels.indexActiveJobs}
+          </div>
+          {indexStatus.activeJobs.length === 0 ? (
+            <div className="font-mono text-[12px] text-mute">
+              {labels.indexNoActiveJobs}
+            </div>
+          ) : (
+            <div className="divide-y divide-line">
+              {indexStatus.activeJobs.map((job) => (
+                <div
+                  className="grid gap-2 py-2 md:grid-cols-[minmax(0,1fr)_auto]"
+                  key={job.id}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-[11.5px] text-ink">
+                      {job.sourcePath ?? labels.indexOwnedGeneration}
+                    </div>
+                    <div className="mt-1 truncate font-mono text-[10px] text-mute">
+                      {job.id}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                    <span className={badgeClass}>
+                      {labels.indexJobStatus[job.status]}
+                    </span>
+                    <span className={badgeClass}>
+                      {labels.indexJobReason[job.reason]}
+                    </span>
+                    <span className="font-mono text-[10.5px] text-mute">
+                      {labels.indexProgress} {job.progress}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -380,6 +473,7 @@ export function ProjectBrainPanel({
   slug,
   query,
   labels,
+  indexStatus,
   memory,
   proposals,
   sources,
@@ -403,6 +497,7 @@ export function ProjectBrainPanel({
         query={query}
         slug={slug}
       />
+      <IndexStatusSection indexStatus={indexStatus} labels={labels} />
       <SourcesSection
         canManageSources={canManageSources}
         labels={labels}

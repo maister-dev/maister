@@ -3,6 +3,7 @@ import "server-only";
 import pino from "pino";
 
 import { runSchedulerTick } from "@/lib/scheduler/tick-service";
+import { schedulerTickIntervalSeconds } from "@/lib/scheduler/timer-config";
 
 type SchedulerTimerState = {
   handle: NodeJS.Timeout | null;
@@ -55,15 +56,6 @@ export function stopSchedulerTimer(): void {
   clearInterval(state.handle);
   state.handle = null;
   log.info({}, "scheduler fallback timer stopped");
-}
-
-function schedulerTickIntervalSeconds(): number {
-  const raw = process.env.MAISTER_SCHEDULER_TICK_INTERVAL_SECONDS;
-  const parsed = raw ? Number.parseInt(raw, 10) : 60;
-
-  if (!Number.isFinite(parsed) || parsed < 1) return 60;
-
-  return parsed;
 }
 
 function globalState(): SchedulerTimerState {

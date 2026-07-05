@@ -34,3 +34,64 @@ export type SchedulerRunScheduleOverviewDataRow =
 
 export type SchedulerRunScheduleOverviewViewRow =
   SchedulerRunScheduleOverviewShape<string>;
+
+export type SchedulerClockDriver =
+  | "fallback_timer"
+  | "external_tick"
+  | "missing_tick";
+
+export type SchedulerClockStatus = {
+  cronTokenConfigured: boolean;
+  driver: SchedulerClockDriver;
+  fallbackTimerEnabled: boolean;
+  tickIntervalSeconds: number;
+  tickPath: "/api/cron/tick";
+};
+
+export type BrainIndexJobReason =
+  | "model_switch"
+  | "manual"
+  | "event"
+  | "chunker_upgrade";
+
+export type BrainIndexJobStatus = "queued" | "running" | "completed" | "failed";
+
+export type BrainIndexQueueSummary = {
+  completed: number;
+  failed: number;
+  queued: number;
+  running: number;
+  total: number;
+};
+
+export type BrainIndexQueueShape<TDate> = {
+  createdAt: TDate;
+  id: string;
+  progress: number;
+  projectId: string;
+  projectName: string;
+  projectSlug: string;
+  reason: BrainIndexJobReason;
+  resumableCursor: Record<string, unknown> | null;
+  sourceId: string | null;
+  sourceLastError: Record<string, unknown> | null;
+  sourceLastIndexedAt: TDate | null;
+  sourcePath: string | null;
+  status: BrainIndexJobStatus;
+};
+
+export type BrainIndexQueueDataRow = BrainIndexQueueShape<Date>;
+
+export type BrainIndexQueueViewRow = BrainIndexQueueShape<string>;
+
+export type BrainIndexQueueData = {
+  rows: BrainIndexQueueDataRow[];
+  schemaApplied: boolean;
+  summary: BrainIndexQueueSummary;
+};
+
+export type BrainIndexQueueViewData = {
+  rows: BrainIndexQueueViewRow[];
+  schemaApplied: boolean;
+  summary: BrainIndexQueueSummary;
+};

@@ -253,6 +253,16 @@ flowchart TD
   separate concepts: Engine jobs are fixed-interval clock work; Task schedules
   are cron rows owned by projects and fired through the single
   `run_schedule.dispatcher` job.
+- `/admin/scheduler` MUST show scheduler clock diagnostics for operators:
+  fallback timer state, fallback interval, whether `MAISTER_CRON_TOKEN` is
+  configured, and an explicit driver state. When the fallback timer is disabled,
+  the screen MUST say that an external caller is expected to hit
+  `/api/cron/tick`; when neither clock path is configured, it MUST say that no
+  tick is configured.
+- `/admin/scheduler` MUST show the Brain index queue from `brain_index_jobs`,
+  active rows first, with project, source, reason, status, progress, created
+  time, source `last_indexed_at`, and source/job error context. The queue is
+  drained by `system_sweep.default`, not by a separate Brain-specific worker.
 - Scheduler job kind lists MUST share one catalog across parsing, filtering,
   creation, and editing. All DB-supported kinds are visible/filterable:
   `system_sweep`, `command`, `agent_tick`, `flow_run`, `run_schedule`,

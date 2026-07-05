@@ -46,6 +46,10 @@ The page uses the existing app shell and project chrome. Primary regions:
 
 - Memory search: compact search input, tier badges (`owned` / `indexed`),
   confidence, preview, and canonical pointer link.
+- Index status: latest source `last_indexed_at`, queued/running/failed/completed
+  `brain_index_jobs` counts, and active index jobs with source, reason, status,
+  and progress. This is project-local status; the full cross-project queue lives
+  in `/admin/scheduler`.
 - Sources: table with path/glob, kind, chunker, enabled state, chunk count, last
   indexed time, last error, per-source reindex, and index-all action. Source
   add/update/remove exist on the API surface but are not currently exposed as UI

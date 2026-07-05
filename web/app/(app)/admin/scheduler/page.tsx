@@ -1,9 +1,11 @@
 import type { SchedulerJobKind } from "@/lib/db/schema";
 import type { Metadata } from "next";
 import type { ReactElement } from "react";
+import type { BrainIndexQueueViewData } from "@/types/scheduler";
 
 import { getTranslations } from "next-intl/server";
 
+import { SchedulerBrainIndexQueue } from "@/components/admin/scheduler-brain-index-queue";
 import {
   SchedulerJobsTable,
   type SchedulerJobRow,
@@ -14,6 +16,8 @@ import {
 } from "@/components/admin/scheduler-run-schedules-overview";
 import { requireGlobalRole } from "@/lib/authz";
 import {
+  getSchedulerClockStatus,
+  listBrainIndexQueueRows,
   listSchedulerRunScheduleOverviewRows,
   listSchedulerStatusRows,
 } from "@/lib/queries/scheduler";
@@ -55,9 +59,11 @@ export default async function AdminSchedulerPage({
       ? (stateParam as (typeof STATES)[number])
       : undefined;
 
-  const [all, schedules] = await Promise.all([
+  const clock = getSchedulerClockStatus();
+  const [all, schedules, brainQueue] = await Promise.all([
     listSchedulerStatusRows({ limit: 200 }),
     listSchedulerRunScheduleOverviewRows({ limit: 200 }),
+    listBrainIndexQueueRows({ limit: 50 }),
   ]);
   const filtered = all.filter((job) => {
     if (jobKind && job.jobKind !== jobKind) return false;
@@ -110,6 +116,25 @@ export default async function AdminSchedulerPage({
       lastRunStatus: schedule.lastRunStatus,
     }),
   );
+  const brainQueueRows: BrainIndexQueueViewData = {
+    rows: brainQueue.rows.map((row) => ({
+      createdAt: row.createdAt.toISOString(),
+      id: row.id,
+      progress: row.progress,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectSlug: row.projectSlug,
+      reason: row.reason,
+      resumableCursor: row.resumableCursor,
+      sourceId: row.sourceId,
+      sourceLastError: row.sourceLastError,
+      sourceLastIndexedAt: row.sourceLastIndexedAt?.toISOString() ?? null,
+      sourcePath: row.sourcePath,
+      status: row.status,
+    })),
+    schemaApplied: brainQueue.schemaApplied,
+    summary: brainQueue.summary,
+  };
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -134,6 +159,7 @@ export default async function AdminSchedulerPage({
         }}
         jobs={rows}
       />
+      <SchedulerBrainIndexQueue clock={clock} queue={brainQueueRows} />
       <SchedulerRunSchedulesOverview schedules={scheduleRows} />
     </div>
   );

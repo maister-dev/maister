@@ -1640,6 +1640,28 @@
     "tierOwned": "Owned",
     "tierIndexed": "Indexed",
     "confidence": "confidence",
+    "indexStatusTitle": "Index status",
+    "indexLatestSourceIndex": "Latest source index",
+    "indexQueued": "Queued",
+    "indexRunning": "Running",
+    "indexFailed": "Failed",
+    "indexCompleted": "Completed",
+    "indexActiveJobs": "Active jobs",
+    "indexNoActiveJobs": "No queued or running index jobs.",
+    "indexOwnedGeneration": "Owned memory generation",
+    "indexProgress": "progress",
+    "indexJobStatus": {
+      "queued": "queued",
+      "running": "running",
+      "completed": "completed",
+      "failed": "failed"
+    },
+    "indexJobReason": {
+      "model_switch": "model switch",
+      "manual": "manual",
+      "event": "event",
+      "chunker_upgrade": "chunker upgrade"
+    },
     "sourcesTitle": "Sources",
     "sourcePath": "Path",
     "sourceKind": "Kind",
@@ -2443,6 +2465,49 @@
     "sub": "Manage background scheduler jobs and inspect project task schedules.",
     "tableTitle": "Engine jobs",
     "tableSub": "Platform jobs are claimed on each /api/cron/tick. Disabled jobs are skipped.",
+    "brainQueue": {
+      "tableTitle": "Brain index queue",
+      "tableSub": "Index jobs are stored in brain_index_jobs and drained by system_sweep.default on each scheduler tick.",
+      "schemaMissing": "Brain index tables are not applied in this database.",
+      "noResults": "No Brain index jobs found.",
+      "source": "Source",
+      "reason": "Reason",
+      "progress": "Progress",
+      "created": "Created",
+      "lastIndexed": "Last indexed",
+      "error": "Error",
+      "ownedGeneration": "Owned memory generation",
+      "status": {
+        "queued": "queued",
+        "running": "running",
+        "completed": "completed",
+        "failed": "failed"
+      },
+      "reasonValue": {
+        "model_switch": "model switch",
+        "manual": "manual",
+        "event": "event",
+        "chunker_upgrade": "chunker upgrade"
+      },
+      "clock": {
+        "tickPath": "Tick route",
+        "interval": "Fallback interval",
+        "cronToken": "Cron token",
+        "configured": "configured",
+        "missing": "missing",
+        "guidanceLabel": "Driver",
+        "driver": {
+          "fallback_timer": "Fallback timer",
+          "external_tick": "External tick expected",
+          "missing_tick": "No tick configured"
+        },
+        "guidance": {
+          "fallback_timer": "The web process calls {path} every {seconds}s.",
+          "external_tick": "Call {path} from external cron; fallback timer is off.",
+          "missing_tick": "Set MAISTER_CRON_TOKEN for an external cron caller or MAISTER_SCHEDULER_TIMER_ENABLED=true for single-box installs."
+        }
+      }
+    },
     "newJob": "New job",
     "filterKindAll": "All kinds",
     "filterStateAll": "All states",

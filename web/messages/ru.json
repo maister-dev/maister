@@ -1640,6 +1640,28 @@
     "tierOwned": "Owned",
     "tierIndexed": "Indexed",
     "confidence": "уверенность",
+    "indexStatusTitle": "Состояние индекса",
+    "indexLatestSourceIndex": "Последняя индексация источника",
+    "indexQueued": "В очереди",
+    "indexRunning": "В работе",
+    "indexFailed": "Упало",
+    "indexCompleted": "Завершено",
+    "indexActiveJobs": "Активные задачи",
+    "indexNoActiveJobs": "Нет задач индексации в очереди или работе.",
+    "indexOwnedGeneration": "Генерация памяти",
+    "indexProgress": "прогресс",
+    "indexJobStatus": {
+      "queued": "в очереди",
+      "running": "в работе",
+      "completed": "завершена",
+      "failed": "упала"
+    },
+    "indexJobReason": {
+      "model_switch": "смена модели",
+      "manual": "вручную",
+      "event": "событие",
+      "chunker_upgrade": "обновление chunker"
+    },
     "sourcesTitle": "Источники",
     "sourcePath": "Путь",
     "sourceKind": "Тип",
@@ -2443,6 +2465,49 @@
     "sub": "Управление фоновыми задачами планировщика и обзор расписаний задач в проектах.",
     "tableTitle": "Задачи движка",
     "tableSub": "Платформенные задачи забираются на каждом /api/cron/tick. Отключённые задачи пропускаются.",
+    "brainQueue": {
+      "tableTitle": "Очередь индексации Brain",
+      "tableSub": "Задачи индексации лежат в brain_index_jobs и разгребаются system_sweep.default на каждом тике планировщика.",
+      "schemaMissing": "Таблицы Brain index ещё не применены в этой базе.",
+      "noResults": "Задач индексации Brain нет.",
+      "source": "Источник",
+      "reason": "Причина",
+      "progress": "Прогресс",
+      "created": "Создана",
+      "lastIndexed": "Последний индекс",
+      "error": "Ошибка",
+      "ownedGeneration": "Генерация памяти",
+      "status": {
+        "queued": "в очереди",
+        "running": "в работе",
+        "completed": "завершена",
+        "failed": "упала"
+      },
+      "reasonValue": {
+        "model_switch": "смена модели",
+        "manual": "вручную",
+        "event": "событие",
+        "chunker_upgrade": "обновление chunker"
+      },
+      "clock": {
+        "tickPath": "Tick route",
+        "interval": "Интервал fallback",
+        "cronToken": "Cron token",
+        "configured": "задан",
+        "missing": "не задан",
+        "guidanceLabel": "Драйвер",
+        "driver": {
+          "fallback_timer": "Fallback timer",
+          "external_tick": "Нужен внешний tick",
+          "missing_tick": "Tick не настроен"
+        },
+        "guidance": {
+          "fallback_timer": "Web-процесс вызывает {path} каждые {seconds}с.",
+          "external_tick": "Вызывайте {path} внешним cron; fallback timer выключен.",
+          "missing_tick": "Задайте MAISTER_CRON_TOKEN для внешнего cron или MAISTER_SCHEDULER_TIMER_ENABLED=true для single-box инсталляции."
+        }
+      }
+    },
     "newJob": "Новая задача",
     "filterKindAll": "Все типы",
     "filterStateAll": "Все состояния",
