@@ -294,18 +294,15 @@ Concretely:
 
 This behavior is enforced inside `resolveCapabilityProfile` (`web/lib/capabilities/resolver.ts`) and tested in `resolver-precedence.test.ts` (see SDD M27 §9 test matrix). No duplicate capability record reaches materialization for the same `(kind, refId)`.
 
-## Per-adapter materialization, generalized (Designed — capability composer, FR-C)
+## Per-adapter materialization, generalized (Implemented)
 
-Today materialization is **claude-only**: `mapProfileToAgentArtifacts`
-(`web/lib/capabilities/agent-map.ts`) writes skills + `settings.local.json` into
-the worktree `.claude/`; codex gets MCP servers but **no skills**, and subagent
-`.md` files are written only for flow-bound nodes (not scratch). The capability
-composer generalizes this to **all five adapter families** via a per-adapter
-**materialization-target descriptor** on the supervisor adapter registry
-(`{ mode, dir, redirectEnv?, supports }`). The frozen table — modes, redirect env
-vars, and `supports` set per adapter — lives in [acp-runners.md](acp-runners.md),
-§"Per-adapter materialization target"; this section states only what changes in
-*this* domain.
+Capability materialization is descriptor-driven across all five adapter
+families via the per-adapter materialization target
+(`{ mode, dir, redirectEnv?, supports }`). Claude and Gemini use cwd-local
+directories; Codex/OpenCode/MiMo use composed per-session homes with redirect
+env vars. The frozen table — modes, redirect env vars, and `supports` set per
+adapter — lives in [acp-runners.md](acp-runners.md), §"Per-adapter
+materialization target"; this section states only what this domain requires.
 
 - **codex skills are now written (FR-C2).** codex uses `home-redirect`: spawn sets
   `CODEX_HOME` to a per-session **composed** dir — symlink the global `auth.json`
@@ -327,6 +324,15 @@ vars, and `supports` set per adapter — lives in [acp-runners.md](acp-runners.m
   by the agent — do NOT inline instructions into the prompt); **MCP stays
   selected/defaults** (each stdio MCP is a process). Flow runs keep their existing
   per-node selection unchanged.
+- **Standalone package-agent materialization uses the pinned package.** A
+  standalone `run_kind='agent'` session materializes every skill-kind capability
+  from the same project-pinned package install that supplied the effective
+  `maister-agents/<stem>.md` definition. The source roots are
+  `manifest.spec.capabilities[*].path/skills`, not a flat package-root
+  `skills/` directory and not the newest catalog projection. Claude sessions
+  also materialize capability-local `agents/` from those member roots into
+  `.claude/agents/`; non-Claude adapters omit subagents because their capability
+  surface does not support them.
 - **Materialization is verbatim of files only** — the cross-runner wire-form
   rewriting happens web-side in the normalizer (FR-E,
   [flow-settings.md](flow-settings.md)); the supervisor still forwards the

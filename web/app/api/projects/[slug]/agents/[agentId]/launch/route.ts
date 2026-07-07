@@ -18,6 +18,7 @@ const bodySchema = z
   .object({
     taskId: z.string().uuid().optional(),
     runnerId: z.string().min(1).max(128).optional(),
+    workspace: z.enum(["none", "repo_read", "worktree"]).optional(),
   })
   .strict();
 
@@ -69,6 +70,7 @@ export async function POST(
       projectId: project.id,
       taskId: body.taskId ?? null,
       launchOverrideRunnerId: body.runnerId ?? null,
+      workspace: body.workspace ?? null,
       trigger: { source: "manual" },
     });
 

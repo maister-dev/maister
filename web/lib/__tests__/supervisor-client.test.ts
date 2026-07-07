@@ -326,6 +326,12 @@ describe("checkSupervisorDiagnostics", () => {
           reason: null,
           checkedAt: null,
           protocolVersion: null,
+          readOnlySession: {
+            status: "not_required",
+            reason: null,
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
       {
@@ -341,6 +347,12 @@ describe("checkSupervisorDiagnostics", () => {
           reason: null,
           checkedAt: null,
           protocolVersion: null,
+          readOnlySession: {
+            status: "not_required",
+            reason: null,
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
       {
@@ -356,6 +368,12 @@ describe("checkSupervisorDiagnostics", () => {
           reason: "gemini ACP compatibility smoke has not been cached",
           checkedAt: null,
           protocolVersion: null,
+          readOnlySession: {
+            status: "pending",
+            reason: "gemini read-only-session smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
       {
@@ -371,6 +389,12 @@ describe("checkSupervisorDiagnostics", () => {
           reason: "opencode ACP compatibility smoke has not been cached",
           checkedAt: null,
           protocolVersion: null,
+          readOnlySession: {
+            status: "pending",
+            reason: "opencode read-only-session smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
       {
@@ -386,6 +410,12 @@ describe("checkSupervisorDiagnostics", () => {
           reason: "mimo ACP compatibility smoke has not been cached",
           checkedAt: null,
           protocolVersion: null,
+          readOnlySession: {
+            status: "pending",
+            reason: "mimo read-only-session smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
     ],
@@ -418,6 +448,28 @@ describe("checkSupervisorDiagnostics", () => {
               value: "secret",
             },
           ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(checkSupervisorDiagnostics()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "malformed",
+    });
+  });
+
+  it("rejects diagnostics bodies missing read-only-session smoke evidence", async () => {
+    const [first, ...rest] = diagnostics.adapters;
+    const smoke: Partial<typeof first.smoke> = { ...first.smoke };
+
+    delete smoke.readOnlySession;
+
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          ...diagnostics,
+          adapters: [{ ...first, smoke }, ...rest],
         }),
         { status: 200 },
       ),

@@ -1,12 +1,16 @@
 import "server-only";
 
-import { rm, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { atomicWriteText } from "@/lib/atomic";
+import {
+  PACKAGE_SKILLS_MANIFEST_RELATIVE,
+  type PackageSkillsManifest,
+} from "@/lib/agents/materialization-manifest";
 import * as schemaModule from "@/lib/db/schema";
 import { recordTaskActivity } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
@@ -24,6 +28,11 @@ const log = pino({
 
 const SETTINGS_RELATIVE = ".claude/settings.local.json";
 const MARKER_RELATIVE = ".claude/settings.local.json.maister-owned";
+const PACKAGE_MATERIALIZATION_ROOTS = [
+  ".claude/skills",
+  ".claude/agents",
+  ".gemini/skills",
+] as const;
 
 // ADR-090 L2 (materialize-only, ADR-041 boundary unchanged): instructed
 // deny rules for write-class tools. Best-effort instruction for well-behaved
@@ -44,7 +53,11 @@ const READ_ONLY_SETTINGS = `${JSON.stringify(
 )}\n`;
 
 export function agentMaterializationManifest(cwd: string): string[] {
-  return [path.join(cwd, SETTINGS_RELATIVE), path.join(cwd, MARKER_RELATIVE)];
+  return [
+    path.join(cwd, SETTINGS_RELATIVE),
+    path.join(cwd, MARKER_RELATIVE),
+    path.join(cwd, PACKAGE_SKILLS_MANIFEST_RELATIVE),
+  ];
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -82,15 +95,32 @@ export async function materializeAgentReadOnlySettings(
   return { materialized: true };
 }
 
-// Removes exactly the manifest-tracked files (only when our marker is
-// present). Idempotent — safe to call at every terminal pass.
+// Removes exactly MAIster-owned materialization. The package-skill manifest is
+// session-owned; read-only settings are removed only when our marker is present.
 export async function restoreAgentMaterialization(cwd: string): Promise<void> {
+  const manifestPath = path.join(cwd, PACKAGE_SKILLS_MANIFEST_RELATIVE);
   const markerPath = path.join(cwd, MARKER_RELATIVE);
+  const packageMaterializationPaths =
+    await readPackageMaterializationManifest(cwd);
+  const hasMarker = await fileExists(markerPath);
+  const hasPackageSkillManifest = await fileExists(manifestPath);
 
-  if (!(await fileExists(markerPath))) return;
+  if (
+    !hasMarker &&
+    !hasPackageSkillManifest &&
+    packageMaterializationPaths.length === 0
+  )
+    return;
 
-  for (const p of agentMaterializationManifest(cwd)) {
-    await rm(p, { force: true });
+  for (const relPath of packageMaterializationPaths) {
+    await rm(path.resolve(cwd, relPath), { recursive: true, force: true });
+  }
+
+  await rm(manifestPath, { force: true });
+
+  if (hasMarker) {
+    await rm(path.join(cwd, SETTINGS_RELATIVE), { force: true });
+    await rm(markerPath, { force: true });
   }
   log.info({ cwd }, "L2 materialization restored");
 }
@@ -98,16 +128,107 @@ export async function restoreAgentMaterialization(cwd: string): Promise<void> {
 // Drops porcelain lines that name manifest-tracked paths — the watchdog
 // never attributes our own materialization as agent dirt (belt for the
 // restore above).
-export function filterManifestPorcelain(porcelain: string): string {
+export function filterManifestPorcelain(
+  porcelain: string,
+  extraRelativePaths: readonly string[] = [],
+): string {
+  const ownedRelativePaths = [
+    SETTINGS_RELATIVE,
+    MARKER_RELATIVE,
+    PACKAGE_SKILLS_MANIFEST_RELATIVE,
+    ...extraRelativePaths.flatMap((relPath) => {
+      const normalized = normalizePackageSkillRelativePath(relPath);
+
+      return normalized ? [normalized] : [];
+    }),
+  ];
+
   return porcelain
     .split("\n")
     .filter(
       (line) =>
         line.trim() !== "" &&
-        !line.includes(SETTINGS_RELATIVE) &&
-        !line.includes(MARKER_RELATIVE),
+        !ownedRelativePaths.some((relPath) =>
+          porcelainLineReferencesPath(line, relPath),
+        ),
     )
     .join("\n");
+}
+
+async function readPackageMaterializationManifest(
+  cwd: string,
+): Promise<string[]> {
+  const manifestPath = path.join(cwd, PACKAGE_SKILLS_MANIFEST_RELATIVE);
+
+  try {
+    const parsed = JSON.parse(
+      await readFile(manifestPath, "utf8"),
+    ) as Partial<PackageSkillsManifest>;
+
+    if (!Array.isArray(parsed.paths)) return [];
+
+    const paths = parsed.paths.flatMap((value) => {
+      if (typeof value !== "string") return [];
+      const normalized = normalizePackageSkillRelativePath(value);
+
+      return normalized ? [normalized] : [];
+    });
+    const invalidCount = parsed.paths.length - paths.length;
+
+    if (invalidCount > 0) {
+      log.warn(
+        { cwd, invalidCount },
+        "ignored invalid package materialization manifest path(s)",
+      );
+    }
+
+    return paths;
+  } catch {
+    return [];
+  }
+}
+
+function normalizePackageSkillRelativePath(value: string): string | null {
+  if (
+    value === "" ||
+    value.endsWith("/") ||
+    value.includes("\\") ||
+    path.isAbsolute(value) ||
+    value !== path.posix.normalize(value)
+  ) {
+    return null;
+  }
+
+  const parts = value.split("/");
+
+  if (parts.includes("..") || parts.includes(".")) return null;
+
+  return PACKAGE_MATERIALIZATION_ROOTS.some(
+    (root) => value.startsWith(`${root}/`) && value.length > root.length + 1,
+  )
+    ? value
+    : null;
+}
+
+function unquotePorcelainPath(value: string): string {
+  return value.startsWith('"') && value.endsWith('"')
+    ? value.slice(1, -1)
+    : value;
+}
+
+function porcelainLinePath(line: string): string {
+  const pathPart = line.length > 3 ? line.slice(3).trim() : line.trim();
+  const renameIndex = pathPart.lastIndexOf(" -> ");
+  const currentPath =
+    renameIndex >= 0 ? pathPart.slice(renameIndex + 4) : pathPart;
+
+  return unquotePorcelainPath(currentPath);
+}
+
+function porcelainLineReferencesPath(line: string, relPath: string): boolean {
+  const changedPath = porcelainLinePath(line);
+
+  return changedPath === relPath || changedPath.startsWith(`${relPath}/`);
 }
 
 export type DirtyWatchdogVerdict =
@@ -120,6 +241,9 @@ export type DirtyWatchdogVerdict =
 export async function checkRepoReadDirt(
   repoPath: string,
 ): Promise<DirtyWatchdogVerdict> {
+  const packageMaterializationPaths =
+    await readPackageMaterializationManifest(repoPath);
+
   await restoreAgentMaterialization(repoPath).catch((err: unknown) => {
     log.warn(
       { repoPath, err: err instanceof Error ? err.message : String(err) },
@@ -128,7 +252,10 @@ export async function checkRepoReadDirt(
   });
 
   const porcelain = await statusPorcelain({ worktreePath: repoPath });
-  const meaningful = filterManifestPorcelain(porcelain);
+  const meaningful = filterManifestPorcelain(
+    porcelain,
+    packageMaterializationPaths,
+  );
 
   if (meaningful === "") return { dirty: false };
 

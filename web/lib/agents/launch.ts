@@ -20,6 +20,10 @@ import {
   type RunnerSnapshot,
   type RunnerSidecarSnapshot,
 } from "@/lib/acp-runners/resolve";
+import {
+  type AdapterId,
+  getAdapterSupportById,
+} from "@/lib/acp-runners/adapter-support";
 import { resolveAgentConfig } from "@/lib/agents/config";
 import { type ParsedAgentDefinition } from "@/lib/agents/definition";
 import {
@@ -43,6 +47,7 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
+import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -81,6 +86,7 @@ import {
 } from "@/lib/scheduler";
 import {
   checkpointSession,
+  checkSupervisorDiagnostics,
   createSession,
   deliverPermission,
   listSessions,
@@ -267,6 +273,8 @@ function runnerCatalogEntry(
     provider: row.provider,
     providerKind: row.provider?.kind ?? "anthropic",
     permissionPolicy: row.permissionPolicy,
+    readOnlyCapable:
+      getAdapterSupportById(row.capabilityAgent)?.readOnlyCapable === true,
     sidecar: sidecar
       ? ({
           id: sidecar.id,
@@ -409,6 +417,7 @@ async function resolveRunnerForAgent(
   _db: Db,
   ctx: LoadedAgentContext,
   launchOverrideRunnerId: string | null | undefined,
+  workspace: "none" | "repo_read" | "worktree",
 ): Promise<RunnerResolution> {
   const runtimeRows = await _db
     .select()
@@ -429,13 +438,13 @@ async function resolveRunnerForAgent(
     sidecarRows.map((row: Record<string, any>) => [row.id, row]),
   );
 
-  return resolveAgentRunner({
+  const resolution = resolveAgentRunner({
     launchOverrideRunnerId,
     link: { runnerOverrideId: ctx.link.runnerOverrideId },
     agent: {
       runnerId: ctx.effective.parsed.runner,
       mode: ctx.effective.parsed.mode,
-      workspace: ctx.effective.parsed.workspace,
+      workspace,
     },
     project: { defaultRunnerId: ctx.project.defaultRunnerId },
     platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
@@ -443,6 +452,82 @@ async function resolveRunnerForAgent(
       runnerCatalogEntry(row, sidecarById),
     ),
   });
+
+  await assertReadOnlySessionEvidence({
+    capabilityAgent: resolution.capabilityAgent,
+    runnerId: resolution.runnerId,
+    workspace,
+  });
+
+  return resolution;
+}
+
+async function assertReadOnlySessionEvidence(args: {
+  readonly capabilityAgent: string;
+  readonly runnerId: string;
+  readonly workspace: "none" | "repo_read" | "worktree";
+}): Promise<void> {
+  if (args.workspace === "worktree") return;
+
+  const support = getAdapterSupportById(args.capabilityAgent);
+
+  if (support?.readOnlySessionSmoke !== "required") return;
+
+  const diagnostics = await checkSupervisorDiagnostics();
+
+  if (diagnostics.kind !== "ready") {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `agent runner ${args.runnerId} (capability ${args.capabilityAgent}) cannot host a ${args.workspace} agent — read-only-session diagnostics are unavailable: ${diagnostics.message}`,
+    );
+  }
+
+  const adapter = diagnostics.diagnostics.adapters.find(
+    (item) => item.id === args.capabilityAgent,
+  );
+  const readOnlySession = adapter?.smoke.readOnlySession;
+
+  if (!readOnlySession || readOnlySession.status !== "ok") {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `agent runner ${args.runnerId} (capability ${args.capabilityAgent}) cannot host a ${args.workspace} agent — read-only-session smoke is ${readOnlySession?.status ?? "missing"}: ${readOnlySession?.reason ?? "missing adapter diagnostics"}`,
+    );
+  }
+}
+
+async function packageSkillMaterializationRoots(
+  effective: EffectiveAgentDefinition,
+): Promise<string[]> {
+  const capabilities = Array.isArray(effective.manifest?.spec?.capabilities)
+    ? effective.manifest.spec.capabilities
+    : [];
+  const roots: string[] = [];
+
+  for (const capability of capabilities) {
+    const root = path.join(effective.installedPath, capability.path);
+
+    try {
+      const rootStat = await stat(root);
+
+      if (!rootStat.isDirectory()) {
+        throw new MaisterError(
+          "CONFIG",
+          `agent "${effective.parsed.id}": package install ${effective.packageInstallId} capability ${capability.id} path ${capability.path} is not a directory`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof MaisterError) throw err;
+
+      throw new MaisterError(
+        "CONFIG",
+        `agent "${effective.parsed.id}": package install ${effective.packageInstallId} capability ${capability.id} path ${capability.path} is missing`,
+      );
+    }
+
+    roots.push(root);
+  }
+
+  return roots;
 }
 
 export async function resolveAgentLaunchRuntime(
@@ -450,10 +535,12 @@ export async function resolveAgentLaunchRuntime(
 ): Promise<AgentLaunchRuntime> {
   const _db = input.db ?? getDb();
   const ctx = await loadAgentContext(_db, input);
+  const workspace = input.workspace ?? ctx.effective.parsed.workspace;
   const resolution = await resolveRunnerForAgent(
     _db,
     ctx,
     input.launchOverrideRunnerId,
+    workspace,
   );
 
   return { ...ctx, resolution };
@@ -788,6 +875,7 @@ export async function launchAgentRun(
     _db,
     ctx,
     input.launchOverrideRunnerId,
+    input.workspace ?? ctx.effective.parsed.workspace,
   );
 
   const runId = randomUUID();
@@ -2769,6 +2857,17 @@ export async function startAgentSession(
       );
     }
 
+    const packageSkillRoots = await packageSkillMaterializationRoots(effective);
+    const packageSkillHome =
+      packageSkillRoots.length > 0
+        ? await materializeAdapterCapabilityHome({
+            agent: snapshot.capabilityAgent as AdapterId,
+            worktreePath: cwd,
+            runId,
+            installedPaths: packageSkillRoots,
+          })
+        : null;
+
     const session = await api.createSession({
       runId,
       projectSlug: project.slug,
@@ -2776,7 +2875,10 @@ export async function startAgentSession(
       stepId: "agent",
       executor: runnerExecutorInput(snapshot),
       runner: runnerSupervisorInput({ snapshot }),
-      adapterLaunch: mergeRunnerAdapterLaunch(snapshot),
+      adapterLaunch: mergeRunnerAdapterLaunch(
+        snapshot,
+        packageSkillHome ?? undefined,
+      ),
       // ADR-089 D9: the facade carries the ephemeral token to the agent.
       mcpServers: [
         ...profileMcpServers,

@@ -7,6 +7,8 @@ export type AdapterRuntime = {
   readonly defaultBinary: string;
   readonly defaultArgs: readonly string[];
   readonly binaryOverrideEnv: string;
+  readonly readOnlyCapable: boolean;
+  readonly readOnlySessionSmoke: "required" | "not_required";
   readonly modelChannel: "settings_local" | "set_session_model" | "advisory";
   readonly resumeStrategy:
     | "session_resume"
@@ -44,6 +46,8 @@ const ADAPTER_RUNTIMES = [
     defaultBinary: "claude-agent-acp",
     defaultArgs: [],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_CLAUDE",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "not_required",
     modelChannel: "settings_local",
     resumeStrategy: "session_resume",
   },
@@ -52,6 +56,8 @@ const ADAPTER_RUNTIMES = [
     defaultBinary: "codex-acp",
     defaultArgs: [],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_CODEX",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "not_required",
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume",
   },
@@ -60,6 +66,8 @@ const ADAPTER_RUNTIMES = [
     defaultBinary: "gemini",
     defaultArgs: ["--acp"],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_GEMINI",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "required",
     modelChannel: "advisory",
     resumeStrategy: "load_session_pending_smoke",
   },
@@ -68,6 +76,8 @@ const ADAPTER_RUNTIMES = [
     defaultBinary: "opencode",
     defaultArgs: ["acp"],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_OPENCODE",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "required",
     modelChannel: "advisory",
     resumeStrategy: "session_resume_pending_smoke",
   },
@@ -76,6 +86,8 @@ const ADAPTER_RUNTIMES = [
     defaultBinary: "mimo",
     defaultArgs: ["acp"],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_MIMO",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "required",
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume_pending_smoke",
   },

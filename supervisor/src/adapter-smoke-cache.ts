@@ -5,7 +5,9 @@ import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
-const AdapterSmokeCacheEntrySchema = z
+import { getAdapterRuntime } from "./adapter-registry";
+
+const AdapterSmokeEvidenceSchema = z
   .object({
     status: z.enum(["ok", "skipped", "error"]),
     reason: z.string().min(1).optional(),
@@ -13,6 +15,10 @@ const AdapterSmokeCacheEntrySchema = z
     protocolVersion: z.number().int().positive().optional(),
   })
   .strict();
+
+const AdapterSmokeCacheEntrySchema = AdapterSmokeEvidenceSchema.extend({
+  readOnlySession: AdapterSmokeEvidenceSchema.optional(),
+}).strict();
 
 const AdapterSmokeCacheSchema = z
   .object({
@@ -30,6 +36,7 @@ const AdapterSmokeCacheSchema = z
   .strict();
 
 type AdapterSmokeCacheEntry = z.infer<typeof AdapterSmokeCacheEntrySchema>;
+type AdapterSmokeEvidence = z.infer<typeof AdapterSmokeEvidenceSchema>;
 
 export type AdapterSmokeStatus =
   | "not_required"
@@ -37,6 +44,14 @@ export type AdapterSmokeStatus =
   | AdapterSmokeCacheEntry["status"];
 
 export type AdapterSmokeDiagnostic = {
+  readonly status: AdapterSmokeStatus;
+  readonly reason: string | null;
+  readonly checkedAt: string | null;
+  readonly protocolVersion: number | null;
+  readonly readOnlySession: AdapterSmokeDimensionDiagnostic;
+};
+
+export type AdapterSmokeDimensionDiagnostic = {
   readonly status: AdapterSmokeStatus;
   readonly reason: string | null;
   readonly checkedAt: string | null;
@@ -50,9 +65,14 @@ export type AdapterSmokeCacheRead = {
 
 export type AdapterSmokeCacheWriteEntry = {
   readonly adapter: ExecutorAgent;
-  readonly status: AdapterSmokeCacheEntry["status"];
+  readonly status: AdapterSmokeEvidence["status"];
   readonly reason?: string;
   readonly protocolVersion?: number;
+  readonly readOnlySession?: {
+    readonly status: AdapterSmokeEvidence["status"];
+    readonly reason?: string;
+    readonly protocolVersion?: number;
+  };
 };
 
 const SMOKE_REQUIRED_ADAPTERS: ReadonlySet<ExecutorAgent> = new Set([
@@ -110,7 +130,65 @@ export function smokeDiagnosticForAdapter(
   adapter: ExecutorAgent,
   cache: AdapterSmokeCacheRead,
 ): AdapterSmokeDiagnostic {
+  const readOnlySession = readOnlySessionDiagnosticForAdapter(adapter, cache);
+
   if (!SMOKE_REQUIRED_ADAPTERS.has(adapter)) {
+    return {
+      status: "not_required",
+      reason: null,
+      checkedAt: null,
+      protocolVersion: null,
+      readOnlySession,
+    };
+  }
+
+  if (cache.error) {
+    return {
+      status: "error",
+      reason: cache.error,
+      checkedAt: null,
+      protocolVersion: null,
+      readOnlySession,
+    };
+  }
+
+  const entry = cache.entries[adapter];
+
+  if (!entry) {
+    return {
+      status: "pending",
+      reason: `${adapter} ACP compatibility smoke has not been cached`,
+      checkedAt: null,
+      protocolVersion: null,
+      readOnlySession,
+    };
+  }
+
+  return {
+    status: entry.status,
+    reason: entry.reason ?? null,
+    checkedAt: entry.checkedAt,
+    protocolVersion: entry.protocolVersion ?? null,
+    readOnlySession,
+  };
+}
+
+function smokeDimensionDiagnostic(
+  entry: AdapterSmokeEvidence,
+): AdapterSmokeDimensionDiagnostic {
+  return {
+    status: entry.status,
+    reason: entry.reason ?? null,
+    checkedAt: entry.checkedAt,
+    protocolVersion: entry.protocolVersion ?? null,
+  };
+}
+
+function readOnlySessionDiagnosticForAdapter(
+  adapter: ExecutorAgent,
+  cache: AdapterSmokeCacheRead,
+): AdapterSmokeDimensionDiagnostic {
+  if (getAdapterRuntime(adapter).readOnlySessionSmoke !== "required") {
     return {
       status: "not_required",
       reason: null,
@@ -128,23 +206,33 @@ export function smokeDiagnosticForAdapter(
     };
   }
 
-  const entry = cache.entries[adapter];
+  const entry = cache.entries[adapter]?.readOnlySession;
+  const genericEntry = cache.entries[adapter];
 
   if (!entry) {
     return {
       status: "pending",
-      reason: `${adapter} ACP compatibility smoke has not been cached`,
+      reason: `${adapter} read-only-session smoke has not been cached`,
       checkedAt: null,
       protocolVersion: null,
     };
   }
 
-  return {
-    status: entry.status,
-    reason: entry.reason ?? null,
-    checkedAt: entry.checkedAt,
-    protocolVersion: entry.protocolVersion ?? null,
-  };
+  if (entry.status === "ok" && genericEntry?.status !== "ok") {
+    const genericStatus = genericEntry?.status ?? "missing";
+    const genericReason = genericEntry?.reason
+      ? `: ${genericEntry.reason}`
+      : "";
+
+    return {
+      status: genericEntry?.status ?? "pending",
+      reason: `${adapter} read-only-session smoke ignored because adapter ACP compatibility smoke is ${genericStatus}${genericReason}`,
+      checkedAt: genericEntry?.checkedAt ?? null,
+      protocolVersion: null,
+    };
+  }
+
+  return smokeDimensionDiagnostic(entry);
 }
 
 export async function writeAdapterSmokeCache(
@@ -164,6 +252,20 @@ export async function writeAdapterSmokeCache(
       ...(entry.reason ? { reason: entry.reason } : {}),
       ...(entry.protocolVersion
         ? { protocolVersion: entry.protocolVersion }
+        : {}),
+      ...(entry.readOnlySession
+        ? {
+            readOnlySession: {
+              status: entry.readOnlySession.status,
+              checkedAt,
+              ...(entry.readOnlySession.reason
+                ? { reason: entry.readOnlySession.reason }
+                : {}),
+              ...(entry.readOnlySession.protocolVersion
+                ? { protocolVersion: entry.readOnlySession.protocolVersion }
+                : {}),
+            },
+          }
         : {}),
     };
   }

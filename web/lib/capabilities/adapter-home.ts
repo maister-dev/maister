@@ -18,13 +18,16 @@ import {
   type AdapterId,
   getAdapterSupportById,
 } from "@/lib/acp-runners/adapter-support";
-import { copyBundleArtifactsToWorktree } from "@/lib/capabilities/materialize-bundle";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import {
   FLOW_AUTHORING_SKILL_FILES,
   FLOW_AUTHORING_SKILL_ID,
 } from "@/lib/flows/authoring-skill";
 import { atomicWriteText } from "@/lib/atomic";
+import {
+  PACKAGE_SKILLS_MANIFEST_RELATIVE,
+  type PackageSkillsManifest,
+} from "@/lib/agents/materialization-manifest";
 
 const log = pino({
   name: "capabilities",
@@ -86,8 +89,8 @@ async function listDir(dir: string): Promise<string[]> {
  * Materialize a project's installed-bundle skills into the per-adapter target
  * (FR-C1/C2) and return the redirect env the spawn must set.
  *
- * - claude (cwd-dir): copy each bundle's `skills/` + `agents/` into the worktree
- *   `.claude/` (the agent auto-discovers from cwd). No redirect env.
+ * - claude (cwd-dir): copy each bundle's `skills/` and `agents/` into the
+ *   worktree `.claude/` (the agent auto-discovers from cwd). No redirect env.
  * - gemini (cwd-dir): copy project bundle `skills/` into the worktree
  *   `.gemini/skills/` so Gemini keeps using its native user home/auth and
  *   merges workspace skills through its own settings model. No redirect env.
@@ -116,28 +119,38 @@ export async function materializeAdapterCapabilityHome(args: {
   const materialization = getAdapterSupportById(args.agent)?.materialization;
 
   if (!materialization) {
-    for (const installedPath of args.installedPaths) {
-      await copyBundleArtifactsToWorktree({ installedPath, worktreePath });
-    }
-
     return { env: {}, materializedRoots: [] };
   }
 
   if (materialization.mode === "cwd-dir") {
-    if (args.agent === "gemini") {
-      await copyBundleSkills(
-        path.join(worktreePath, materialization.dir, "skills"),
-        args.installedPaths,
-      );
+    const copiedSkills = await copyBundleSkills(
+      path.join(worktreePath, materialization.dir, "skills"),
+      args.installedPaths,
+    );
+    const copiedAgents =
+      args.agent === "claude"
+        ? await copyBundleAgents(
+            path.join(worktreePath, materialization.dir, "agents"),
+            args.installedPaths,
+          )
+        : [];
+    const copied = [...copiedSkills, ...copiedAgents];
 
-      return { env: {}, materializedRoots: [] };
+    if (copied.length > 0) {
+      await writePackageSkillsManifest(worktreePath, copied);
     }
 
-    for (const installedPath of args.installedPaths) {
-      await copyBundleArtifactsToWorktree({ installedPath, worktreePath });
-    }
+    log.debug(
+      {
+        agent: args.agent,
+        worktreePath,
+        skillCount: copiedSkills.length,
+        subagentCount: copiedAgents.length,
+      },
+      "[capabilities.adapter-home] materialized cwd adapter package entries",
+    );
 
-    return { env: {}, materializedRoots: [] };
+    return { env: {}, materializedRoots: copied };
   }
 
   const homeRoot = path.join(
@@ -220,8 +233,9 @@ async function copyBundleSkills(
   destSkillsDir: string,
   installedPaths: readonly string[],
   opts: { projectWins?: boolean } = {},
-): Promise<void> {
+): Promise<string[]> {
   await mkdir(destSkillsDir, { recursive: true });
+  const copied: string[] = [];
 
   for (const installedPath of installedPaths) {
     const src = path.join(installedPath, "skills");
@@ -240,8 +254,57 @@ async function copyBundleSkills(
         force: false,
         errorOnExist: false,
       });
+      copied.push(dest);
     }
   }
+
+  return copied;
+}
+
+async function copyBundleAgents(
+  destAgentsDir: string,
+  installedPaths: readonly string[],
+): Promise<string[]> {
+  await mkdir(destAgentsDir, { recursive: true });
+  const copied: string[] = [];
+
+  for (const installedPath of installedPaths) {
+    const src = path.join(installedPath, "agents");
+
+    for (const entry of await listDir(src)) {
+      if (entry.startsWith(".")) continue;
+      const dest = path.join(destAgentsDir, entry);
+
+      if (await pathExists(dest)) continue;
+
+      await cp(path.join(src, entry), dest, {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+      });
+      copied.push(dest);
+    }
+  }
+
+  return copied;
+}
+
+async function writePackageSkillsManifest(
+  worktreePath: string,
+  copiedPaths: readonly string[],
+): Promise<void> {
+  const manifestPath = path.join(
+    worktreePath,
+    PACKAGE_SKILLS_MANIFEST_RELATIVE,
+  );
+  const manifest: PackageSkillsManifest = {
+    paths: copiedPaths.map((copiedPath) =>
+      path.relative(worktreePath, copiedPath),
+    ),
+  };
+
+  await mkdir(path.dirname(manifestPath), { recursive: true });
+  await atomicWriteText(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 /**

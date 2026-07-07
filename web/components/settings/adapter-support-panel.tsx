@@ -12,6 +12,11 @@ type Props = {
   diagnostics: SupervisorDiagnosticsStatus | null;
 };
 
+type SmokeEvidence = {
+  readonly status: string;
+  readonly reason: string | null;
+};
+
 export async function AdapterSupportPanel({
   adapters,
   diagnostics,
@@ -23,6 +28,14 @@ export async function AdapterSupportPanel({
       : [],
   );
   const diagnosticsUnavailable = diagnostics?.kind === "unavailable";
+  const formatSmokeEvidence = (evidence: SmokeEvidence | undefined): string => {
+    if (!evidence) return t("unknown");
+
+    const status =
+      evidence.status === "not_required" ? t("notRequired") : evidence.status;
+
+    return evidence.reason ? `${status}: ${evidence.reason}` : status;
+  };
 
   return (
     <PanelSection title={t("adapterSupport")}>
@@ -92,6 +105,20 @@ export async function AdapterSupportPanel({
                     <dt className="text-mute">{t("permissionPolicies")}</dt>
                     <dd className="m-0 text-ink">
                       {adapter.permissionPolicies.join(", ")}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-mute">{t("genericSmoke")}</dt>
+                    <dd className="m-0 break-words text-ink">
+                      {formatSmokeEvidence(diagnostic?.smoke)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-mute">{t("readOnlyCapable")}</dt>
+                    <dd className="m-0 break-words text-ink">
+                      {adapter.readOnlyCapable
+                        ? formatSmokeEvidence(diagnostic?.smoke.readOnlySession)
+                        : t("notRequired")}
                     </dd>
                   </div>
                 </dl>

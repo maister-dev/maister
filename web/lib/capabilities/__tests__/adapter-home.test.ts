@@ -33,6 +33,8 @@ beforeEach(async () => {
     path.join(pkg, "skills", "aif-plan", "SKILL.md"),
     "PROJECT aif-plan",
   );
+  await mkdir(path.join(pkg, "agents"), { recursive: true });
+  await writeFile(path.join(pkg, "agents", "helper.md"), "PROJECT helper");
 
   await mkdir(path.join(codexGlobal, "skills", "coding-style"), {
     recursive: true,
@@ -50,7 +52,7 @@ afterEach(async () => {
 });
 
 describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", () => {
-  it("claude (cwd-dir): copies bundle skills into worktree .claude/, no redirect env", async () => {
+  it("claude (cwd-dir): copies bundle skills and subagents into worktree .claude/, no redirect env", async () => {
     const res = await materializeAdapterCapabilityHome({
       agent: "claude",
       worktreePath: work,
@@ -65,6 +67,79 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
         "utf8",
       ),
     ).toBe("PROJECT aif-plan");
+    expect(
+      await readFile(path.join(work, ".claude", "agents", "helper.md"), "utf8"),
+    ).toBe("PROJECT helper");
+  });
+
+  it("claude package capability roots materialize capability subagents", async () => {
+    const capRoot = path.join(pkg, "capability", "review");
+
+    await mkdir(path.join(capRoot, "skills", "aif-review"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(capRoot, "skills", "aif-review", "SKILL.md"),
+      "PROJECT aif-review",
+    );
+    await mkdir(path.join(capRoot, "agents"), { recursive: true });
+    await writeFile(
+      path.join(capRoot, "agents", "reviewer.md"),
+      "capability subagent",
+    );
+
+    const res = await materializeAdapterCapabilityHome({
+      agent: "claude",
+      worktreePath: work,
+      runId: "r1",
+      installedPaths: [capRoot],
+    });
+
+    expect(res.env).toEqual({});
+    expect(
+      await readFile(
+        path.join(work, ".claude", "skills", "aif-review", "SKILL.md"),
+        "utf8",
+      ),
+    ).toBe("PROJECT aif-review");
+    expect(
+      await readFile(
+        path.join(work, ".claude", "agents", "reviewer.md"),
+        "utf8",
+      ),
+    ).toBe("capability subagent");
+  });
+
+  it("claude preserves user-owned same-name skills and subagents", async () => {
+    await mkdir(path.join(work, ".claude", "skills", "aif-plan"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(work, ".claude", "skills", "aif-plan", "SKILL.md"),
+      "USER aif-plan",
+    );
+    await mkdir(path.join(work, ".claude", "agents"), { recursive: true });
+    await writeFile(
+      path.join(work, ".claude", "agents", "helper.md"),
+      "USER helper",
+    );
+
+    await materializeAdapterCapabilityHome({
+      agent: "claude",
+      worktreePath: work,
+      runId: "r1",
+      installedPaths: [pkg],
+    });
+
+    expect(
+      await readFile(
+        path.join(work, ".claude", "skills", "aif-plan", "SKILL.md"),
+        "utf8",
+      ),
+    ).toBe("USER aif-plan");
+    expect(
+      await readFile(path.join(work, ".claude", "agents", "helper.md"), "utf8"),
+    ).toBe("USER helper");
   });
 
   it("codex (home-redirect): composes CODEX_HOME with symlinked global auth/config + global skills + project skills", async () => {
@@ -135,6 +210,9 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
         "utf8",
       ),
     ).toBe("PROJECT aif-plan");
+    await expect(
+      lstat(path.join(work, ".gemini", "agents", "helper.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

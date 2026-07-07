@@ -9,7 +9,7 @@ import { isMaisterError } from "@/lib/errors";
 
 function entry(
   id: string,
-  overrides: Partial<RunnerCatalogEntry> = {},
+  overrides: Partial<RunnerCatalogEntry> & { readOnlyCapable?: boolean } = {},
 ): RunnerCatalogEntry {
   return {
     id,
@@ -18,6 +18,7 @@ function entry(
     model: "claude-sonnet-4-6",
     providerKind: "anthropic",
     permissionPolicy: "default",
+    readOnlyCapable: true,
     enabled: true,
     ready: true,
     ...overrides,
@@ -196,36 +197,44 @@ describe("resolveAgentRunner — compatibility refusals (ADR-089/088)", () => {
     expect(resolution.runnerId).toBe("skip-r");
   });
 
-  it("refuses read-only agent workspaces on non-claude runners", () => {
+  it("allows read-only agent workspaces on readOnlyCapable non-claude runners", () => {
     for (const workspace of ["none", "repo_read"] as const) {
-      expectUnavailable(
-        () =>
-          resolveAgentRunner(
-            baseInput({
-              launchOverrideRunnerId: "codex-r",
-              agent: { runnerId: null, mode: "session", workspace },
-              runners: [
-                entry("codex-r", {
-                  adapter: "codex",
-                  capabilityAgent: "codex",
-                }),
-              ],
+      const resolution = resolveAgentRunner(
+        baseInput({
+          launchOverrideRunnerId: "opencode-r",
+          agent: { runnerId: null, mode: "session", workspace },
+          runners: [
+            entry("opencode-r", {
+              adapter: "opencode",
+              capabilityAgent: "opencode",
+              readOnlyCapable: true,
             }),
-          ),
-        /requires a claude-capability runner/,
+          ],
+        }),
       );
+
+      expect(resolution.runnerId).toBe("opencode-r");
+      expect(resolution.capabilityAgent).toBe("opencode");
     }
+  });
 
-    const resolution = resolveAgentRunner(
-      baseInput({
-        launchOverrideRunnerId: "codex-r",
-        agent: { runnerId: null, mode: "session", workspace: "worktree" },
-        runners: [
-          entry("codex-r", { adapter: "codex", capabilityAgent: "codex" }),
-        ],
-      }),
+  it("refuses read-only agent workspaces when the runner is not readOnlyCapable", () => {
+    expectUnavailable(
+      () =>
+        resolveAgentRunner(
+          baseInput({
+            launchOverrideRunnerId: "codex-r",
+            agent: { runnerId: null, mode: "session", workspace: "repo_read" },
+            runners: [
+              entry("codex-r", {
+                adapter: "codex",
+                capabilityAgent: "codex",
+                readOnlyCapable: false,
+              }),
+            ],
+          }),
+        ),
+      /readOnlyCapable/,
     );
-
-    expect(resolution.runnerId).toBe("codex-r");
   });
 });

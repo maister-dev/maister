@@ -1476,6 +1476,9 @@
     "usePreset": "Use",
     "permissionPolicies": "permission policies",
     "adapterDetails": "Details",
+    "genericSmoke": "generic smoke",
+    "readOnlyCapable": "read-only capable",
+    "notRequired": "not required",
     "setupHint": {
       "claude": "Native Anthropic via `claude-agent-acp`. For multi-provider routing, run a CCR sidecar (port 3456) or set ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN.",
       "codex": "Install `codex-acp`. OpenAI-native, or an OpenAI-compatible `base_url` with `wire_api = responses` in ~/.codex/config.toml.",

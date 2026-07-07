@@ -15,9 +15,9 @@ launches use a known, editable runtime profile.
 
 ## Roles & capabilities
 
-| Role | Access |
-| --- | --- |
-| Global admin | Full ACP runner catalog, create/edit/delete, enable/disable, default-runner selection |
+| Role          | Access                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| Global admin  | Full ACP runner catalog, create/edit/delete, enable/disable, default-runner selection                 |
 | Everyone else | Settings nav is hidden or read-only/forbidden; admin API routes re-check `requireGlobalRole("admin")` |
 
 The hidden nav item is convenience only. Runner writes are authorized by the
@@ -48,6 +48,15 @@ flowchart TD
 The ACP runner catalog appears as an admin data-management block: configured
 runners, adapter/readiness details, default-runner controls, and row actions.
 Edits happen in `AcpRunnerModal`.
+
+Each row/details area separates three signals:
+
+- **Ready** — the runner can be selected for normal launches.
+- **Generic smoke** — cached ACP initialize/newSession evidence; pending or
+  skipped generic smoke is advisory unless it is an explicit error.
+- **Read-only capable** — descriptor support plus ok
+  `smoke.readOnlySession` evidence when the adapter descriptor marks
+  read-only-session smoke as required.
 
 The modal contains:
 
@@ -87,6 +96,10 @@ stateDiagram-v2
   `PATCH /api/admin/acp-runners` for the platform default runner.
 - Launch consumption: runner rows are snapshotted into run launch data; env
   refs are preserved in snapshots and resolved only by the supervisor process.
+  Read-only standalone agent launches additionally require ok
+  `smoke.readOnlySession` evidence for adapters whose descriptor marks
+  read-only-session smoke as required; a normal Ready row without that evidence
+  still refuses `workspace: none | repo_read` with `EXECUTOR_UNAVAILABLE`.
 - Behavior: [`../system-analytics/acp-runners.md`](../system-analytics/acp-runners.md)
   and [`../system-analytics/executors.md`](../system-analytics/executors.md).
 

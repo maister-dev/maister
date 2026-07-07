@@ -13,6 +13,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { type PackageInstallManifest } from "@/lib/packages/attach";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { packageInstalls, projectPackageAttachments } =
@@ -43,6 +44,8 @@ export type EffectiveAgentDefinition = {
   sourcePath: string;
   packageName: string;
   packageInstallId: string;
+  installedPath: string;
+  manifest: PackageInstallManifest | null;
   versionLabel: string;
   // T-B3 exec-trust axis — gates stdio MCP spawn for the agent's
   // capability_profile (RD7). A resolved definition always comes from a
@@ -73,6 +76,7 @@ export async function resolveEffectiveAgentDefinition(
     .select({
       packageInstallId: packageInstalls.id,
       installedPath: packageInstalls.installedPath,
+      manifest: packageInstalls.manifest,
       packageStatus: packageInstalls.packageStatus,
       trustStatus: packageInstalls.trustStatus,
       versionLabel: packageInstalls.versionLabel,
@@ -138,6 +142,8 @@ export async function resolveEffectiveAgentDefinition(
     sourcePath,
     packageName,
     packageInstallId: install.packageInstallId as string,
+    installedPath: install.installedPath as string,
+    manifest: install.manifest as PackageInstallManifest | null,
     versionLabel: install.versionLabel as string,
     execTrust: "trusted",
   };

@@ -11,7 +11,7 @@ import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -54,6 +54,7 @@ let db: NodePgDatabase;
 let agentsRoot: string;
 let repoPath: string;
 let projectId: string;
+let projectSlug: string;
 let installId: string;
 let worktreesTmp: string;
 let originalWorktreesRoot: string | undefined;
@@ -63,7 +64,7 @@ let startAgentSession: typeof import("@/lib/agents/launch").startAgentSession;
 beforeAll(async () => {
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-aexec-"));
   await mkdir(path.join(agentsRoot, "maister-agents"), { recursive: true });
-  worktreesTmp = await mkdtemp(path.join(os.homedir(), ".maister-aexec-wt-"));
+  worktreesTmp = await mkdtemp(path.join(os.tmpdir(), "maister-aexec-wt-"));
   originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
   process.env.MAISTER_WORKTREES_ROOT = worktreesTmp;
 
@@ -96,7 +97,7 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "package_installs"`);
   await pool.query(`DELETE FROM "projects"`);
 
-  repoPath = await mkdtemp(path.join(os.homedir(), ".maister-aexec-repo-"));
+  repoPath = await mkdtemp(path.join(os.tmpdir(), "maister-aexec-repo-"));
   await exec("git", ["-C", repoPath, "init", "-q", "-b", "main"]);
   await writeFile(path.join(repoPath, "README.md"), "hello\n");
   await exec("git", ["-C", repoPath, "add", "-A"]);
@@ -113,12 +114,13 @@ beforeEach(async () => {
   ]);
 
   projectId = randomUUID();
+  projectSlug = `p-${projectId.slice(0, 8)}`;
   await pool.query(
     `INSERT INTO "projects" ("id", "slug", "name", "repo_path", "main_branch", "branch_prefix", "maister_yaml_path", "task_key", "next_task_number")
      VALUES ($1, $2, 'P', $3, 'main', 'maister/', '/tmp/m.yaml', $4, 1)`,
     [
       projectId,
-      `p-${projectId.slice(0, 8)}`,
+      projectSlug,
       repoPath,
       `K${projectId
         .replace(/[^0-9A-Za-z]/g, "")
@@ -194,6 +196,46 @@ You are ${args.stem}.
   );
 
   return id;
+}
+
+async function seedPackageCapabilitySkills(): Promise<void> {
+  const capabilityRoot = path.join(agentsRoot, "capability", "review");
+
+  await mkdir(path.join(capabilityRoot, "skills", "aif-review"), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(capabilityRoot, "skills", "aif-review", "SKILL.md"),
+    "PINNED aif-review",
+    "utf8",
+  );
+  await mkdir(path.join(capabilityRoot, "agents"), { recursive: true });
+  await writeFile(
+    path.join(capabilityRoot, "agents", "helper.md"),
+    "capability subagent",
+    "utf8",
+  );
+
+  const manifest = {
+    spec: {
+      schemaVersion: 1,
+      name: "pkg",
+      flows: [],
+      capabilities: [{ id: "review", path: "capability/review" }],
+      mcps: [],
+      restrictions: [],
+    },
+    inventory: {
+      skills: ["aif-review"],
+      agents: ["helper"],
+      platformAgents: [],
+    },
+  };
+
+  await pool.query(
+    `UPDATE "package_installs" SET "manifest" = $1::jsonb WHERE "id" = $2`,
+    [JSON.stringify(manifest), installId],
+  );
 }
 
 async function getRunPolicy(runId: string): Promise<unknown> {
@@ -374,5 +416,31 @@ describe("startAgentSession — autoApply → supervisor auto-approve (M39 T5.2,
 
     expect(createSessionCalls).toHaveLength(1);
     expect(createSessionCalls[0].autoApprovePermissions).toBe(false);
+  });
+
+  it("materializes skills and Claude subagents from the pinned providing package", async () => {
+    await seedPackageCapabilitySkills();
+    const id = await seedAgent({ stem: "skilled" });
+    const runId = await launchRunningAgent(id);
+    const { api, createSessionCalls } = recordingApi();
+
+    await startAgentSession(runId, { db, api });
+
+    expect(createSessionCalls).toHaveLength(1);
+    expect(createSessionCalls[0].worktreePath).toBe(
+      path.join(worktreesTmp, projectSlug, runId),
+    );
+
+    const cwd = String(createSessionCalls[0].worktreePath);
+
+    expect(
+      await readFile(
+        path.join(cwd, ".claude", "skills", "aif-review", "SKILL.md"),
+        "utf8",
+      ),
+    ).toBe("PINNED aif-review");
+    expect(
+      await readFile(path.join(cwd, ".claude", "agents", "helper.md"), "utf8"),
+    ).toBe("capability subagent");
   });
 });

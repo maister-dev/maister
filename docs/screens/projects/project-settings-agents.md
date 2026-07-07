@@ -123,12 +123,21 @@ stateDiagram-v2
   schedules?, canReadBrain?, canWriteBrain? }` in one transaction.
 - **Detach:** `DELETE /api/projects/{slug}/agents/{agentId}` (revokes tokens).
 - **Launch:** `POST /api/projects/{slug}/agents/{agentId}/launch` `{ taskId?,
-  runnerId? }` (launchRun).
+  runnerId?, workspace? }` (launchRun). The launch dialog may override the
+  workspace for this run; runner compatibility is checked against that final
+  workspace before any run/workspace artifact is created.
 
 Behavior (gating allow-list, trigger-toggle cascade, run_kind discriminant,
-runner policy) lives in
+runner policy, read-only runner compatibility, and package-skill materialization)
+lives in
 [`../../system-analytics/agents.md`](../../system-analytics/agents.md) — not
 restated here (R7).
+
+Read-only standalone validation is runner-family based, not claude-name based.
+If a `workspace: none | repo_read` launch selects a non-proven adapter, the UI
+surfaces the server's `EXECUTOR_UNAVAILABLE` message with the selected runner,
+adapter, workspace, and missing read-only-session evidence; no partial run row is
+shown.
 
 ## i18n
 

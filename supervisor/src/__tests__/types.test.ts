@@ -427,6 +427,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
             reason: null,
             checkedAt: null,
             protocolVersion: null,
+            readOnlySession: {
+              status: "not_required",
+              reason: null,
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
         {
@@ -442,6 +448,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
             reason: null,
             checkedAt: null,
             protocolVersion: null,
+            readOnlySession: {
+              status: "not_required",
+              reason: null,
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
         {
@@ -457,6 +469,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
             reason: "gemini ACP compatibility smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
+            readOnlySession: {
+              status: "pending",
+              reason: "gemini read-only-session smoke has not been cached",
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
         {
@@ -472,6 +490,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
             reason: "opencode ACP compatibility smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
+            readOnlySession: {
+              status: "pending",
+              reason: "opencode read-only-session smoke has not been cached",
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
         {
@@ -487,6 +511,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
             reason: "mimo ACP compatibility smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
+            readOnlySession: {
+              status: "pending",
+              reason: "mimo read-only-session smoke has not been cached",
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
       ],

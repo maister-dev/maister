@@ -26,6 +26,7 @@ export type RunnerCatalogEntry = {
   readonly provider?: PlatformRunnerProvider;
   readonly providerKind: string;
   readonly permissionPolicy: string;
+  readonly readOnlyCapable?: boolean;
   readonly sidecar?: RunnerSidecarSnapshot | null;
   readonly sidecarId?: string | null;
   readonly enabled: boolean;
@@ -81,6 +82,7 @@ export type RunnerSnapshot = {
   readonly provider?: PlatformRunnerProvider;
   readonly providerKind: string;
   readonly permissionPolicy: string;
+  readonly readOnlyCapable?: boolean;
   readonly sidecar?: RunnerSidecarSnapshot | null;
   readonly sidecarId?: string | null;
 };
@@ -135,6 +137,7 @@ function snapshotRunner(runner: RunnerCatalogEntry): RunnerSnapshot {
     provider: runner.provider,
     providerKind: runner.providerKind,
     permissionPolicy: runner.permissionPolicy,
+    readOnlyCapable: runner.readOnlyCapable,
     sidecar: runner.sidecar,
     sidecarId: runner.sidecarId,
   };
@@ -232,11 +235,11 @@ export function resolveAgentRunner(
 
     if (
       input.agent.workspace !== "worktree" &&
-      runner.capabilityAgent !== "claude"
+      runner.readOnlyCapable !== true
     ) {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
-        `agent runner ${runner.id} (capability ${runner.capabilityAgent}) cannot host a ${input.agent.workspace} agent — read-only enforcement requires a claude-capability runner`,
+        `agent runner ${runner.id} (capability ${runner.capabilityAgent}) cannot host a ${input.agent.workspace} agent — adapter is not readOnlyCapable`,
       );
     }
 

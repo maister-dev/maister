@@ -36,6 +36,12 @@ function diagAdapter(
       reason: null,
       checkedAt: null,
       protocolVersion: null,
+      readOnlySession: {
+        status: "not_required",
+        reason: null,
+        checkedAt: null,
+        protocolVersion: null,
+      },
     },
   };
 }

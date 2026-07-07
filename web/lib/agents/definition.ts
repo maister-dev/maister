@@ -97,6 +97,28 @@ const flowRefValueSchema = z
     "flow must not be '.', '..' or contain '..'",
   );
 
+const capabilityProfileMcpRefSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9._-]+$/, "mcps must match /^[A-Za-z0-9._-]+$/")
+  .refine(
+    (s) => s !== "." && s !== ".." && !s.includes(".."),
+    "mcps must not be '.', '..' or contain '..'",
+  );
+
+const capabilityProfileSchema = z
+  .object({
+    mcps: z
+      .array(capabilityProfileMcpRefSchema)
+      .max(32)
+      .transform((items) => [...new Set(items)])
+      .optional(),
+  })
+  .strict();
+
+export type AgentCapabilityProfile = z.infer<typeof capabilityProfileSchema>;
+
 // Per-agent runner-policy recommendation (ADR-106): seeds the per-project
 // instance. `autoApply` maps to the B1/B2 axes, `onBudgetBreach` is the new
 // budget terminal-handling axis; both resolved + enforced in Phase 5.
@@ -213,7 +235,7 @@ export const agentDefinitionFrontmatterSchema = z
     workspace_ref: z.string().min(1).max(255).optional(),
     mode: z.enum(["session", "subagent"]),
     triggers: z.array(z.enum(AGENT_TRIGGER_KINDS)).min(1),
-    capability_profile: z.record(z.unknown()).optional(),
+    capability_profile: capabilityProfileSchema.optional(),
     risk_tier: z.enum(["read_only", "standard", "destructive"]),
     // (ADR-106) Optional same-package flow this agent drives. Membership in the
     // package manifest's flows[] is enforced at registration.
@@ -282,7 +304,7 @@ export type ParsedAgentDefinition = {
   workspaceRef: string | null;
   mode: AgentMode;
   triggers: AgentTriggerKind[];
-  capabilityProfile: Record<string, unknown> | null;
+  capabilityProfile: AgentCapabilityProfile | null;
   riskTier: AgentRiskTier;
   flow: string | null;
   recommended: AgentRecommended | null;
@@ -362,7 +384,7 @@ export type AgentDefinitionInput = {
   workspaceRef?: string | null;
   mode: AgentMode;
   triggers: AgentTriggerKind[];
-  capabilityProfile?: Record<string, unknown> | null;
+  capabilityProfile?: AgentCapabilityProfile | null;
   riskTier: AgentRiskTier;
   flow?: string | null;
   recommended?: AgentRecommended | null;

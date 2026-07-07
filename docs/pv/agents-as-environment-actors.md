@@ -133,8 +133,9 @@ Guards:
 
 ### Capabilities, secrets, HITL
 
-- **`capability_profile`** in frontmatter: `allowed_tools`, `mcp_servers` (refs),
-  `fs_paths`, `network`, `secret_refs`, `risk_tier`.
+- **`capability_profile`** in platform-agent frontmatter is strict
+  `{ mcps?: string[] }`; richer tool, filesystem, network, secret, and risk
+  controls belong to flow/package capability settings and execution policy.
 - **Materialization (M14):** on spawn, scoped `settings.local.json` + ACP
   `mcpServers` (reuse ADR-043). Runner-specific: CC → `.claude/agents/<name>.md`
   + `settings.local.json`; codex/hosted are later seams.

@@ -1814,7 +1814,9 @@ paths:
         `agentId` are url-params; body `taskId` (optional task-bound context)
         is validated to belong to the project; body `runnerId` (optional
         launch override, tier 1 of the standalone chain) is validated against
-        the enabled runner catalog. Refusals: disabled/quarantined agent,
+        the enabled runner catalog; body `workspace` (optional launch override)
+        is the workspace used for runner compatibility, cwd selection, and
+        persisted `runs.agent_workspace`. Refusals: disabled/quarantined agent,
         `risk_tier=destructive` (ADR-041 gate), `manual` missing from the
         agent's `triggers`, or a dirty `repo_read` baseline → `409
         PRECONDITION`; runner resolution/incompatibility → `503
@@ -1840,6 +1842,8 @@ paths:
               properties:
                 taskId: { type: string, format: uuid }
                 runnerId: { type: string }
+                workspace:
+                  { type: string, enum: [none, repo_read, worktree] }
       responses:
         "202":
           description: Agent run created (`Running` or queued `Pending`).

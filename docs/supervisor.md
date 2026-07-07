@@ -127,8 +127,17 @@ since M5 — the body field is gone.)
 (Note: `readOnlySession` (M34, ADR-090) and `hooksConfig` (Designed — ADR-108)
 are optional behavioral-policy fields beside the launch fields; both arbitrate
 ACP permission requests pre-hoc at the supervisor seam. A `hooksConfig` trip
-emits the `session.hook_trip` SSE event. See `StartSessionRequest` in
-[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml) and
+emits the `session.hook_trip` SSE event. Supervisor `/diagnostics` reports both
+generic adapter ACP smoke and nested `smoke.readOnlySession` evidence. The web
+tier treats generic pending/skipped smoke as advisory for normal runner
+readiness, but standalone `workspace: none | repo_read` agent launches require
+ok read-only-session evidence when the adapter descriptor says
+`readOnlySessionSmoke: required`. Generic initialize/newSession smoke is not
+enough for this nested dimension; `ok` must come from an adapter
+prompt/permission probe that actually exercised the permission wire. See
+`StartSessionRequest` and
+`SupervisorDiagnosticsResponse`
+in [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml), plus
 [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md).)
 
 When `runner.sidecar.kind === "ccr"` (or the legacy
@@ -195,7 +204,13 @@ Adapter diagnostic entries are:
     reason: string | null;
     checkedAt: string | null;
     protocolVersion: number | null;
-  };
+    readOnlySession: {
+      status: "not_required" | "pending" | "ok" | "skipped" | "error";
+      reason: string | null;
+      checkedAt: string | null;
+      protocolVersion: number | null;
+    }
+  }
 }
 ```
 
@@ -206,18 +221,24 @@ override paths, version probe failures, and adapter first-run writable-state
 failures. This matters for OpenCode: a Homebrew binary can exist while the
 process still fails to initialize its user state directory.
 
-Gemini, OpenCode, and MiMo require cached ACP smoke evidence before readiness can
-become `Ready`. The supervisor reads the cache from
-`MAISTER_ADAPTER_SMOKE_CACHE_PATH` when set; otherwise it looks for
-`adapter-smoke-cache.json` under its runtime root. Operators update the cache
-with the opt-in smoke script:
+Gemini, OpenCode, and MiMo report cached ACP smoke evidence in diagnostics. The
+supervisor reads the cache from `MAISTER_ADAPTER_SMOKE_CACHE_PATH` when set;
+otherwise it looks for `adapter-smoke-cache.json` under its runtime root.
+Operators update the cache with the opt-in smoke script:
 
 ```bash
 pnpm -C supervisor smoke:acp --cache /path/to/adapter-smoke-cache.json gemini opencode mimo
 ```
 
-Only `smoke.status="ok"` satisfies the Gemini/OpenCode/MiMo launch gate. `pending`,
-`skipped`, and `error` remain operator-visible `NotReady` reasons.
+Generic `smoke.status` is operator-visible health evidence: `error` makes the
+adapter unavailable, while `pending` and `skipped` are advisory. Standalone
+`workspace: none | repo_read` launches use the nested
+`smoke.readOnlySession.status` evidence described above. When invoked with
+`--read-only-session`, the smoke script opens an ACP session and sends dedicated
+prompt probes that must observe read-like permission allow, write-like
+permission deny, and unknown-kind deny decisions before writing nested `ok`
+evidence. If the adapter does not produce those wire observations, the nested
+dimension is written as `error` and read-only standalone launch stays refused.
 
 `envRefs` contains a fixed safe catalog of known runner env-ref names plus the
 comma-separated names in `MAISTER_DIAGNOSTIC_ENV_REFS`. It reports presence
@@ -229,23 +250,23 @@ provider tokens, generated config bodies, or raw ACP frames.
 
 #### Capability adapter support matrix (Implemented snapshot + designed native activation)
 
-| Capability kind | Claude adapter | Codex adapter | V1 behavior |
-| --------------- | -------------- | ------------- | ----------- |
-| MCP activation | Selected MCP ids are persisted in the profile and exposed to the adapter through profile/instruction paths. | Selected MCP ids are persisted in the profile and exposed to the adapter through profile/instruction paths. | Snapshot + instruction handoff is implemented. Adapter-specific MCP config generation is not yet implemented; enforced unsupported entries are refused by resolver policy. |
-| Skills | Selected skill ids are persisted and listed in instructions. | Selected skill ids are persisted and listed in instructions. | Snapshot + instruction handoff is implemented. Adapter-native skill loading is designed, not implemented. |
-| Rules | Selected rule ids are persisted and listed in instructions. | Selected rule ids are persisted and listed in instructions. | Instructed-only in V1. |
-| Settings | No adapter settings file is generated in V1. | No adapter settings file is generated in V1. | Designed follow-up; unknown enforced settings are refused by policy. |
-| Restrictions | Persisted in the profile and listed in instructions. | Persisted in the profile and listed in instructions. | Refused for enforced restrictions the adapter cannot enforce; instructed-only restrictions are recorded as downgrades in the profile. |
-| Tools / agent definitions | Not activated directly by supervisor. | Not activated directly by supervisor. | Refused as enforced capabilities in v1; optional entries are downgraded to instructed-only only when persisted in the profile. |
+| Capability kind           | Claude adapter                                                                                              | Codex adapter                                                                                               | V1 behavior                                                                                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP activation            | Selected MCP ids are persisted in the profile and exposed to the adapter through profile/instruction paths. | Selected MCP ids are persisted in the profile and exposed to the adapter through profile/instruction paths. | Snapshot + instruction handoff is implemented. Adapter-specific MCP config generation is not yet implemented; enforced unsupported entries are refused by resolver policy. |
+| Skills                    | Selected skill ids are persisted and listed in instructions.                                                | Selected skill ids are persisted and listed in instructions.                                                | Snapshot + instruction handoff is implemented. Adapter-native skill loading is designed, not implemented.                                                                  |
+| Rules                     | Selected rule ids are persisted and listed in instructions.                                                 | Selected rule ids are persisted and listed in instructions.                                                 | Instructed-only in V1.                                                                                                                                                     |
+| Settings                  | No adapter settings file is generated in V1.                                                                | No adapter settings file is generated in V1.                                                                | Designed follow-up; unknown enforced settings are refused by policy.                                                                                                       |
+| Restrictions              | Persisted in the profile and listed in instructions.                                                        | Persisted in the profile and listed in instructions.                                                        | Refused for enforced restrictions the adapter cannot enforce; instructed-only restrictions are recorded as downgrades in the profile.                                      |
+| Tools / agent definitions | Not activated directly by supervisor.                                                                       | Not activated directly by supervisor.                                                                       | Refused as enforced capabilities in v1; optional entries are downgraded to instructed-only only when persisted in the profile.                                             |
 
 Responses:
 
-| Status | Body | When |
-| ------ | ---- | ---- |
-| `201` | `{ "sessionId": "<uuid>", "pid": 12345, "acpSessionId": "<uuid>" }` | Spawn succeeded; ACP handshake completed. |
-| `409` | `{ "code": "PRECONDITION", "message": "<zod path>: <issue>" }` | Body failed Zod validation. |
-| `500` | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }` | Low-level spawn failed despite readiness: ENOENT, EACCES, first-run state failure, or OOM at fork. |
-| `503` | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }` | Runner, adapter, env-ref, checkpoint strategy, or sidecar is not launchable before spawn: adapter unsupported, binary diagnostics unavailable, CCR config missing or malformed, sidecar health/identity failure, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
+| Status | Body                                                                | When                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `201`  | `{ "sessionId": "<uuid>", "pid": 12345, "acpSessionId": "<uuid>" }` | Spawn succeeded; ACP handshake completed.                                                                                                                                                                                                                                                                                                                                                       |
+| `409`  | `{ "code": "PRECONDITION", "message": "<zod path>: <issue>" }`      | Body failed Zod validation.                                                                                                                                                                                                                                                                                                                                                                     |
+| `500`  | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }`      | Low-level spawn failed despite readiness: ENOENT, EACCES, first-run state failure, or OOM at fork.                                                                                                                                                                                                                                                                                              |
+| `503`  | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }`              | Runner, adapter, env-ref, checkpoint strategy, or sidecar is not launchable before spawn: adapter unsupported, binary diagnostics unavailable, CCR config missing or malformed, sidecar health/identity failure, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
 
 ### `DELETE /sessions/:id`
 
@@ -254,10 +275,10 @@ default 5000 ms) → `SIGKILL`. Marks the session as an
 **intentional shutdown** so the heartbeat reports `session.exited`,
 not `session.crashed`, even on non-zero exit codes.
 
-| Status | Body | When |
-| ------ | ---- | ---- |
-| `204` | empty | Termination initiated; the SSE stream will report the terminal event. |
-| `404` | `{ "code": "PRECONDITION", "message": "unknown session" }` | No such session in the registry. |
+| Status | Body                                                       | When                                                                  |
+| ------ | ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| `204`  | empty                                                      | Termination initiated; the SSE stream will report the terminal event. |
+| `404`  | `{ "code": "PRECONDITION", "message": "unknown session" }` | No such session in the registry.                                      |
 
 ### `GET /sessions/:id/stream`
 
@@ -301,7 +322,7 @@ stepId, status (`live | exited | crashed`), pid, startedAt, exitedAt,
 exitCode, signal, logPath, monotonicId. Used by `lib/reconcile.ts` and
 admin views.
 
-### `POST /sessions/:id/checkpoint` *(Implemented M8)*
+### `POST /sessions/:id/checkpoint` _(Implemented M8)_
 
 Real graceful-checkpoint endpoint. Body is `{}` strictly (Zod-validated
 empty object; unknown keys → 409 PRECONDITION). For each open
@@ -380,7 +401,7 @@ Each respawn costs ~$0.28 of `cache_creation_input_tokens` per the M0
 spike — keep-alive is the cost lever, not just UX. Resumed sessions'
 `cost.jsonl` entries carry `resumed: true` for ops attribution.
 
-### `POST /sessions/:id/input` *(M7+)*
+### `POST /sessions/:id/input` _(M7+)_
 
 Permission-only HITL surface. Body is a Zod-validated discriminated
 union on `action`:
@@ -411,7 +432,7 @@ responses are written by the web tier's
 `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` route after
 its row-level claim succeeds.
 
-### `POST /model-catalog/resolve` *(Implemented — ADR-076)*
+### `POST /model-catalog/resolve` _(Implemented — ADR-076)_
 
 Model-discovery resolver. The body is a runner **draft**
 (`{ adapter, provider, router?, sidecarId?, force? }`). The supervisor fans the
@@ -431,7 +452,8 @@ env-ref field — the provider source reads the conventional host keys
 (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, see
 [configuration.md](configuration.md)) and reports `status: "skipped"` when unset.
 
-Status mapping (consistent with *a per-source failure never fails the resolve*):
+Status mapping (consistent with _a per-source failure never fails the resolve_):
+
 - `200` — resolved. A single source's failure (missing env-ref, unreachable
   provider/CCR, probe reject/timeout, malformed decode) is reported in that
   source's `status`, not raised. The codex probe without non-interactive auth
@@ -452,7 +474,7 @@ never extends its TTL window). The web tier proxies this route through the admin
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
 domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
 
-### `POST /sidecars/:id/start` *(Implemented — ADR-094)*
+### `POST /sidecars/:id/start` _(Implemented — ADR-094)_
 
 Admin-triggered start for a CCR router sidecar. The web tier
 (`POST /api/admin/router-sidecars/:sidecarId/start`) loads the sidecar from
@@ -463,7 +485,7 @@ then calls `ccrManager.ensureRunning({ instance })` and returns the current
 state.
 
 - `200 { ok: true, state }` — `state ∈ idle | starting | ready | failed |
-  stopping`. Idempotent: an already-`ready` instance returns `state: "ready"`.
+stopping`. Idempotent: an already-`ready` instance returns `state: "ready"`.
 - `409 { code: "PRECONDITION" }` — CCR manager not wired
   (`spawnOverrides.ccrManager` absent), body `id` ≠ path `id`, or invalid
   `lifecycle`.
@@ -477,7 +499,7 @@ concern — a started-without-config CCR healthchecks red and `state` stays
 `failed`. The route is a proxy over supervisor-owned process state; it writes no
 DB idempotency marker.
 
-### `POST /sidecars/:id/stop` *(Implemented — ADR-094)*
+### `POST /sidecars/:id/stop` _(Implemented — ADR-094)_
 
 Admin-triggered stop for **one** CCR sidecar instance. Calls the per-instance
 `ccrManager.stop(id)` (SIGTERM → grace → SIGKILL on the targeted child only) —
@@ -488,7 +510,7 @@ session routing through CCR.
   returns `state: "idle"`.
 - `409 { code: "PRECONDITION" }` — CCR manager not wired.
 
-### Run-scoped durable event log: `<runId>/run.events.jsonl` *(M7+)*
+### Run-scoped durable event log: `<runId>/run.events.jsonl` _(M7+)_
 
 Every `SessionEvent` (`session.line`, `session.update`,
 `session.permission_request`, `session.exited`, `session.crashed`)
@@ -530,14 +552,14 @@ supervisor/
 `MaisterError`, which is server-only inside web). It is translated to
 JSON at the HTTP boundary.
 
-| Code | HTTP | When |
-| ---- | ---- | ---- |
-| `PRECONDITION` | 409 (or 404 for unknown session) | Validation failure, duplicate sessionId. |
-| `SPAWN` | 500 | `child_process.spawn` failed (ENOENT, EACCES…). |
-| `EXECUTOR_UNAVAILABLE` | 503 | CCR-related failure for `router=ccr` executors (config missing / malformed JSON / daemon failed to become ready / identity mismatch / `ANTHROPIC_AUTH_TOKEN` missing). Also reserved for future resource-cap rejections. Implemented M6. |
-| `ACP_PROTOCOL` | 500 | Wire-level failure while opening a session, sending a prompt, or delivering permission input. |
-| `CHECKPOINT` | 500 | Checkpoint or resume contract failure. |
-| `CRASH` | 500 | Reserved for heartbeat-promoted crash conditions. |
+| Code                   | HTTP                             | When                                                                                                                                                                                                                                     |
+| ---------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PRECONDITION`         | 409 (or 404 for unknown session) | Validation failure, duplicate sessionId.                                                                                                                                                                                                 |
+| `SPAWN`                | 500                              | `child_process.spawn` failed (ENOENT, EACCES…).                                                                                                                                                                                          |
+| `EXECUTOR_UNAVAILABLE` | 503                              | CCR-related failure for `router=ccr` executors (config missing / malformed JSON / daemon failed to become ready / identity mismatch / `ANTHROPIC_AUTH_TOKEN` missing). Also reserved for future resource-cap rejections. Implemented M6. |
+| `ACP_PROTOCOL`         | 500                              | Wire-level failure while opening a session, sending a prompt, or delivering permission input.                                                                                                                                            |
+| `CHECKPOINT`           | 500                              | Checkpoint or resume contract failure.                                                                                                                                                                                                   |
+| `CRASH`                | 500                              | Reserved for heartbeat-promoted crash conditions.                                                                                                                                                                                        |
 
 The web client `web/lib/supervisor-client.ts` parses `{ code, message }`
 from the body and re-throws as `MaisterError({ code })`. The taxonomy
@@ -555,11 +577,11 @@ bounded depth 8). When found, it appends a record to
 {
   "ts": "2026-05-26T12:34:56.789Z",
   "sessionId": "uuid",
-  "model": "claude-sonnet-4-6",      // optional, scraped from same object tree
+  "model": "claude-sonnet-4-6", // optional, scraped from same object tree
   "input_tokens": 100,
   "output_tokens": 200,
   "cache_creation_input_tokens": 5000,
-  "cache_read_input_tokens": 0
+  "cache_read_input_tokens": 0,
 }
 ```
 
@@ -577,25 +599,25 @@ on malformed adapter output.
 All knobs are environment variables. Defaults assume a single-host
 docker compose; production overrides go in `.env`.
 
-| Var | Default | Purpose |
-| --- | ------- | ------- |
-| `MAISTER_SUPERVISOR_PORT` | `7777` | Bind port on `0.0.0.0`. |
-| `MAISTER_SUPERVISOR_URL` | `http://localhost:7777` | Read by `web/lib/supervisor-client.ts`. |
-| `MAISTER_RUNTIME_ROOT` | `process.cwd()` | Root under which `.maister/<slug>/runs/...` is written. |
-| `MAISTER_HEARTBEAT_INTERVAL_MS` | `5000` | Orphan-child detection interval. |
-| `MAISTER_KILL_GRACE_MS` | `5000` | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown. |
-| `MAISTER_SHUTDOWN_GRACE_MS` | `15000` | Total wall-clock budget for graceful supervisor shutdown. |
-| `MAISTER_KEEPALIVE_MINUTES` | `30` | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout (M7) AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition (M8). Bumped by every web activity ping. |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs. |
-| `ANTHROPIC_AUTH_TOKEN` | unset | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). |
-| `MAISTER_CCR_AUTH_TOKEN` | unset | Default env ref for `ccr-default` sidecars. Missing when referenced → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
-| `MAISTER_CCR_CONFIG_PATH` | `/app/.ccr/config.json` (Docker) / `~/.claude-code-router/config.json` (otherwise) | Legacy/default config path for `ccr-default`. Platform sidecar config may override with a typed config path. Missing file or malformed JSON → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
-| `MAISTER_ADAPTER_BINARY_CLAUDE` | unset | Optional supervisor-side executable override for `claude`. When unset, PATH resolution uses `claude-agent-acp`. |
-| `MAISTER_ADAPTER_BINARY_CODEX` | unset | Optional supervisor-side executable override for `codex`. When unset, PATH resolution uses `codex-acp`. |
-| `MAISTER_ADAPTER_BINARY_GEMINI` | unset | Optional supervisor-side executable override for `gemini`. When unset, PATH resolution uses `gemini` plus the registry argv `--acp`. |
-| `MAISTER_ADAPTER_BINARY_OPENCODE` | unset | Optional supervisor-side executable override for `opencode`. When unset, PATH resolution uses `opencode` plus the registry argv `acp`. |
-| `MAISTER_ADAPTER_BINARY_MIMO` | unset | Optional supervisor-side executable override for `mimo`. When unset, PATH resolution uses `mimo` plus the registry argv `acp`. |
-| `LOG_LEVEL` | `debug` | pino level: `trace | debug | info | warn | error | fatal | silent`. |
+| Var                               | Default                                                                            | Purpose                                                                                                                                                                                                     |
+| --------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAISTER_SUPERVISOR_PORT`         | `7777`                                                                             | Bind port on `0.0.0.0`.                                                                                                                                                                                     |
+| `MAISTER_SUPERVISOR_URL`          | `http://localhost:7777`                                                            | Read by `web/lib/supervisor-client.ts`.                                                                                                                                                                     |
+| `MAISTER_RUNTIME_ROOT`            | `process.cwd()`                                                                    | Root under which `.maister/<slug>/runs/...` is written.                                                                                                                                                     |
+| `MAISTER_HEARTBEAT_INTERVAL_MS`   | `5000`                                                                             | Orphan-child detection interval.                                                                                                                                                                            |
+| `MAISTER_KILL_GRACE_MS`           | `5000`                                                                             | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown.                                                                                                                                          |
+| `MAISTER_SHUTDOWN_GRACE_MS`       | `15000`                                                                            | Total wall-clock budget for graceful supervisor shutdown.                                                                                                                                                   |
+| `MAISTER_KEEPALIVE_MINUTES`       | `30`                                                                               | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout (M7) AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition (M8). Bumped by every web activity ping. |
+| `ANTHROPIC_BASE_URL`              | `https://api.anthropic.com`                                                        | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs.                                                                                    |
+| `ANTHROPIC_AUTH_TOKEN`            | unset                                                                              | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …).                                                                                                                       |
+| `MAISTER_CCR_AUTH_TOKEN`          | unset                                                                              | Default env ref for `ccr-default` sidecars. Missing when referenced → 503 `EXECUTOR_UNAVAILABLE` at spawn.                                                                                                  |
+| `MAISTER_CCR_CONFIG_PATH`         | `/app/.ccr/config.json` (Docker) / `~/.claude-code-router/config.json` (otherwise) | Legacy/default config path for `ccr-default`. Platform sidecar config may override with a typed config path. Missing file or malformed JSON → 503 `EXECUTOR_UNAVAILABLE` at spawn.                          |
+| `MAISTER_ADAPTER_BINARY_CLAUDE`   | unset                                                                              | Optional supervisor-side executable override for `claude`. When unset, PATH resolution uses `claude-agent-acp`.                                                                                             |
+| `MAISTER_ADAPTER_BINARY_CODEX`    | unset                                                                              | Optional supervisor-side executable override for `codex`. When unset, PATH resolution uses `codex-acp`.                                                                                                     |
+| `MAISTER_ADAPTER_BINARY_GEMINI`   | unset                                                                              | Optional supervisor-side executable override for `gemini`. When unset, PATH resolution uses `gemini` plus the registry argv `--acp`.                                                                        |
+| `MAISTER_ADAPTER_BINARY_OPENCODE` | unset                                                                              | Optional supervisor-side executable override for `opencode`. When unset, PATH resolution uses `opencode` plus the registry argv `acp`.                                                                      |
+| `MAISTER_ADAPTER_BINARY_MIMO`     | unset                                                                              | Optional supervisor-side executable override for `mimo`. When unset, PATH resolution uses `mimo` plus the registry argv `acp`.                                                                              |
+| `LOG_LEVEL`                       | `debug`                                                                            | pino level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.                                                                                                                                |
 
 Secrets MUST NEVER appear in:
 
@@ -668,7 +690,7 @@ sidecar manager before spawning the adapter:
   **single** instance through the per-instance `ccrManager.stop(id)` — never the
   manager-wide `shutdown()` (which would kill every instance and any live
   CCR-routed session). Both are idempotent and echo the instance `state`. Start
-  only launches the process; CCR *routing configuration* is deferred, so a
+  only launches the process; CCR _routing configuration_ is deferred, so a
   started-without-config sidecar healthchecks red.
 - **All failure modes surface as `EXECUTOR_UNAVAILABLE` (503).** Full
   table in
@@ -720,10 +742,10 @@ until the web tier calls `POST /sessions/:id/input`.
 
 ```json
 {
-  "runId":         "run-1",
-  "projectSlug":   "demo-app",
-  "worktreePath":  "/abs/path",
-  "stepId":        "plan",
+  "runId": "run-1",
+  "projectSlug": "demo-app",
+  "worktreePath": "/abs/path",
+  "stepId": "plan",
   "runner": {
     "version": 1,
     "runnerId": "claude-code-default",
@@ -734,8 +756,8 @@ until the web tier calls `POST /sessions/:id/input`.
     "provider": { "kind": "anthropic" },
     "permissionPolicy": "default"
   },
-  "executor":      { "agent": "claude", "model": "claude-sonnet-4-6" },
-  "resumeSessionId": "uuid-abc"        // optional
+  "executor": { "agent": "claude", "model": "claude-sonnet-4-6" },
+  "resumeSessionId": "uuid-abc" // optional
 }
 ```
 
@@ -752,9 +774,11 @@ The response includes the negotiated ACP session id:
 ```
 
 **Prompt endpoint:** `POST /sessions/:id/prompt`
+
 ```json
 { "stepId": "plan", "prompt": "..." }
 ```
+
 Body validated by `SendPromptRequestSchema` (`stepId` must match
 `^[A-Za-z0-9._-]+$`, `prompt ≤ 1 MB`). **(Designed — capability composer, FR-D5)**
 the body MAY also carry an optional `contentBlocks` array (ACP `text` +
@@ -763,9 +787,11 @@ the body MAY also carry an optional `contentBlocks` array (ACP `text` +
 rewrites; capability-token normalization and worktree path-confinement of
 resource URIs are already done web-side. `prompt` stays the plain-text
 equivalent. Response:
+
 ```json
 { "stopReason": "end_turn", "meta": null }
 ```
+
 `stopReason` ∈ `end_turn | max_tokens | max_turn_requests | refusal`.
 `cancelled` is not a successful supervisor prompt response. If an adapter
 returns ACP prompt `stopReason: "cancelled"` for a direct prompt, the supervisor

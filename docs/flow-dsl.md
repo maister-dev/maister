@@ -522,9 +522,9 @@ nodes:
   else `MaisterError("CONFIG")`.
 - **`mode: session` agents** — the catalog profile substitutes the inline
   prompt: the agent's `.md` body becomes the system prompt, the node's
-  `action.prompt` is appended as the task block, and the agent's
-  `capability_profile` merges with node settings (node settings win on
-  collision).
+  `action.prompt` is appended as the task block, and `capability_profile.mcps`
+  is combined with node `settings.mcps` where node settings remain the local
+  launch override.
 - **`mode: subagent` agents** — the `.md` is materialized into the run
   worktree's `.claude/agents/<stem>.md` (the file STEM — a `:` in the
   filename is hostile to the convention) so the Claude session can
@@ -560,6 +560,8 @@ mode: session                       # required — session | subagent
 triggers: [manual, cron]            # required, ≥1 — manual | cron | domain_event | webhook | flow
 risk_tier: read_only                # required — read_only | standard | destructive
 flow: bugfix                        # (ADR-106) optional — a same-package flow id the agent drives
+capability_profile:                 # optional — strict standalone profile
+  mcps: [github, postgres]           # only MCP refs; no skills/restrictions keys
 recommended:                        # optional — SEEDS the attach panel + per-project instance defaults
   runner: claude-code
   branch_base: develop              # (ADR-106) seeds agents.branch_base (default: project main)
@@ -596,6 +598,14 @@ The agent persona / system prompt (the body; MUST be non-empty).
   pause) | `full` (also auto-pass `human` review). `onBudgetBreach`: `escalate` |
   `terminate` | `terminate_restorable`. Each is a closed enum — an out-of-enum
   value is refused `CONFIG`.
+- **`capability_profile`** (optional) — strict `{ mcps?: string[] }`. The `mcps`
+  list is id-shaped, bounded, deduplicated in first-seen order, resolved through
+  the platform/project MCP catalog, and exec-trust gated at launch. Unknown keys
+  such as `skills`, `mcp_servers`, or `restrictions` are refused with
+  `MaisterError("CONFIG")` during registration/resync; invalid definitions are
+  reported and no catalog row is written. Skills are delivered to standalone
+  package agents from the providing pinned package's manifest capability roots,
+  not through `capability_profile`.
 
 **Cross-field rules** (Implemented + M39): `mode=subagent` allows ONLY the `flow`
 trigger; `workspace_ref` is valid ONLY with `workspace=repo_read`; `triggers` must

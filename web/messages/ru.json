@@ -1476,6 +1476,9 @@
     "usePreset": "Использовать",
     "permissionPolicies": "политики прав",
     "adapterDetails": "Подробнее",
+    "genericSmoke": "общий smoke",
+    "readOnlyCapable": "read-only доступность",
+    "notRequired": "не требуется",
     "setupHint": {
       "claude": "Нативный Anthropic через `claude-agent-acp`. Для мульти-провайдерной маршрутизации запустите CCR-сайдкар (порт 3456) или задайте ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN.",
       "codex": "Установите `codex-acp`. Нативный OpenAI или OpenAI-совместимый `base_url` с `wire_api = responses` в ~/.codex/config.toml.",

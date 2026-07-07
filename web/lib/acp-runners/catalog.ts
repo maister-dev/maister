@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 
 const {
   platformAcpRunners,
@@ -50,6 +51,8 @@ function runnerCatalogEntry(
     provider: row.provider,
     providerKind: runnerProviderKind(row.provider),
     permissionPolicy: row.permissionPolicy,
+    readOnlyCapable:
+      getAdapterSupportById(row.capabilityAgent)?.readOnlyCapable === true,
     sidecar: sidecar
       ? {
           id: sidecar.id,

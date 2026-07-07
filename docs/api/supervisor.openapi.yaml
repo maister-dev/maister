@@ -769,15 +769,24 @@ components:
                   writable-state failure. Must not contain env values.
               smoke:
                 type: object
-                required: [status, reason, checkedAt, protocolVersion]
+                required:
+                  [
+                    status,
+                    reason,
+                    checkedAt,
+                    protocolVersion,
+                    readOnlySession,
+                  ]
                 additionalProperties: false
                 properties:
                   status:
                     type: string
                     enum: [not_required, pending, ok, skipped, error]
                     description: |
-                      Cached ACP compatibility smoke state. `ok` is required
-                      before Gemini/OpenCode/MiMo can become launch-ready.
+                      Cached generic ACP compatibility smoke state. Pending or
+                      skipped generic smoke is advisory for normal readiness;
+                      explicit `error` makes the adapter unavailable. Read-only
+                      standalone launches use `readOnlySession` below.
                   reason:
                     type: string
                     nullable: true
@@ -788,6 +797,34 @@ components:
                   protocolVersion:
                     type: integer
                     nullable: true
+                  readOnlySession:
+                    type: object
+                    required: [status, reason, checkedAt, protocolVersion]
+                    additionalProperties: false
+                    description: |
+                      Cached adapter-specific evidence that `readOnlySession`
+                      permission arbitration behaves safely for standalone
+                      read-only agent workspaces. `ok` must come from a probe
+                      that exercised the adapter prompt/permission wire; generic
+                      initialize/newSession smoke is not enough and remains
+                      `skipped` for this dimension. `ok` is required for
+                      adapters whose descriptor marks read-only-session smoke as
+                      required; descriptors marked `not_required` skip this
+                      evidence gate.
+                    properties:
+                      status:
+                        type: string
+                        enum: [not_required, pending, ok, skipped, error]
+                      reason:
+                        type: string
+                        nullable: true
+                      checkedAt:
+                        type: string
+                        format: date-time
+                        nullable: true
+                      protocolVersion:
+                        type: integer
+                        nullable: true
         sidecars:
           type: array
           items:

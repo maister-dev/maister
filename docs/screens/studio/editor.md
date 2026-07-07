@@ -149,6 +149,9 @@ correctness and first-class kinds (behavior SSOT:
   raw-file view, dispatched by inferred kind. Platform agents live at
   package-root `maister-agents/`; subagents at `capability/<id>/agents/` (lenient
   schema) — see [`../../system-analytics/agents.md`](../../system-analytics/agents.md).
+  Platform-agent validation surfaces strict `capability_profile` issues inline:
+  only `{ mcps?: string[] }` is accepted, legacy `skills`, `mcp_servers`, or
+  `restrictions` keys hard-block commit/cut-version flows.
   **Create is a generic Add-File today** — the per-kind create wizards (New Flow /
   Platform Agent / Subagent / Skill, with seeded templates) are **deferred** (#134,
   A4); `newSubagentTemplate` exists but is not yet wired into a create flow.

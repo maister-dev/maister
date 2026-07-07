@@ -40,6 +40,7 @@ export type AdapterResumeStrategy =
 
 export type AdapterFsPolicy = "none";
 export type AdapterMcpTransport = "stdio" | "sse" | "http";
+export type ReadOnlySessionSmokeRequirement = "required" | "not_required";
 
 // Capability-token surface forms, frozen 2026-06-16 vs the installed CLIs
 // (acp-runners.md §"Per-adapter materialization target" / flow-settings.md
@@ -70,6 +71,8 @@ export type AdapterMaterialization = {
 export type AdapterSupport = {
   readonly id: AdapterId;
   readonly capabilityAgent: AdapterId;
+  readonly readOnlyCapable: boolean;
+  readonly readOnlySessionSmoke: ReadOnlySessionSmokeRequirement;
   readonly providerKinds: readonly ProviderKind[];
   readonly permissionPolicies: readonly PermissionPolicy[];
   readonly binaryId: string;
@@ -86,6 +89,8 @@ export const ADAPTER_SUPPORT = [
   {
     id: "claude",
     capabilityAgent: "claude",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "not_required",
     providerKinds: ["anthropic", "anthropic_compatible"],
     permissionPolicies: ["default", "dangerously_skip_permissions"],
     binaryId: "claude-agent-acp",
@@ -100,6 +105,8 @@ export const ADAPTER_SUPPORT = [
   {
     id: "codex",
     capabilityAgent: "codex",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "not_required",
     providerKinds: ["openai", "openai_compatible"],
     permissionPolicies: ["default"],
     binaryId: "codex-acp",
@@ -118,6 +125,8 @@ export const ADAPTER_SUPPORT = [
   {
     id: "gemini",
     capabilityAgent: "gemini",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "required",
     providerKinds: ["google_gemini", "google_vertex", "google_gateway"],
     permissionPolicies: ["default"],
     binaryId: "gemini",
@@ -132,6 +141,8 @@ export const ADAPTER_SUPPORT = [
   {
     id: "opencode",
     capabilityAgent: "opencode",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "required",
     providerKinds: ["agent_native"],
     permissionPolicies: ["default"],
     binaryId: "opencode",
@@ -150,6 +161,8 @@ export const ADAPTER_SUPPORT = [
   {
     id: "mimo",
     capabilityAgent: "mimo",
+    readOnlyCapable: true,
+    readOnlySessionSmoke: "required",
     providerKinds: ["agent_native"],
     permissionPolicies: ["default"],
     binaryId: "mimo",

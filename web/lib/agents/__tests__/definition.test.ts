@@ -17,7 +17,7 @@ triggers:
   - manual
   - domain_event
 capability_profile:
-  mcp_servers: []
+  mcps: []
 risk_tier: read_only
 ---
 You are the triager. Classify the task.
@@ -49,6 +49,7 @@ describe("parseAgentDefinition", () => {
       mode: "session",
       triggers: ["manual", "domain_event"],
       riskTier: "read_only",
+      capabilityProfile: { mcps: [] },
       recommended: null,
     });
     expect(parsed.prompt).toContain("You are the triager.");
@@ -89,6 +90,15 @@ describe("parseAgentDefinition", () => {
     expectConfig(
       () => parseAgentDefinition("aif:triager", content),
       /bogus_key|unrecognized/i,
+    );
+  });
+
+  it("refuses legacy capability_profile keys", () => {
+    const content = VALID.replace("mcps: []", "mcp_servers: []");
+
+    expectConfig(
+      () => parseAgentDefinition("aif:triager", content),
+      /capability_profile|mcp_servers/i,
     );
   });
 
@@ -490,7 +500,7 @@ describe("renderAgentDefinition", () => {
       workspace: "worktree",
       mode: "session",
       triggers: ["manual", "flow"],
-      capabilityProfile: { skills: ["review"] },
+      capabilityProfile: { mcps: ["github"] },
       riskTier: "standard",
       recommended: { events: ["run.done"] },
       hooks: {
@@ -507,7 +517,7 @@ describe("renderAgentDefinition", () => {
       runner: null,
       workspace: "worktree",
       triggers: ["manual", "flow"],
-      capabilityProfile: { skills: ["review"] },
+      capabilityProfile: { mcps: ["github"] },
       riskTier: "standard",
       recommended: { events: ["run.done"] },
       hooks: {

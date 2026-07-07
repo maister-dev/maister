@@ -20,9 +20,11 @@ import {
   type Readable as NodeReadable,
   type Writable as NodeWritable,
 } from "node:stream";
+import { pathToFileURL } from "node:url";
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import { resolveReadOnlySessionDecision } from "../src/acp-client";
 import {
   clientCapabilitiesForAdapter,
   getAdapterRuntime,
@@ -42,12 +44,58 @@ type SmokeResult = {
   binary?: string;
   protocolVersion?: number;
   acpSessionId?: string;
+  readOnlySession?: {
+    status: SmokeStatus;
+    reason?: string;
+    protocolVersion?: number;
+  };
+};
+
+type ReadOnlySessionSmokeResult = NonNullable<SmokeResult["readOnlySession"]>;
+
+type SmokeAdapterOptions = {
+  readonly readOnlySession?: boolean;
 };
 
 type CliArgs = {
   readonly adapters: ExecutorAgent[];
   readonly cachePath?: string;
+  readonly readOnlySession: boolean;
 };
+
+type PermissionProbeObservation = {
+  readonly kind: string | null;
+  readonly decision: "allow" | "deny";
+  readonly optionId: string | null;
+};
+
+const READ_ONLY_SESSION_PROBES = [
+  {
+    kind: "read",
+    prompt:
+      "MAIster read-only-session smoke probe permission-kind:read. Request permission for a harmless read/search/fetch operation in the temporary current working directory, then stop.",
+  },
+  {
+    kind: "edit",
+    prompt:
+      "MAIster read-only-session smoke probe permission-kind:edit. Request permission for a harmless write/edit operation in the temporary current working directory. If permission is denied or cancelled, do not modify files and stop.",
+  },
+  {
+    kind: "other",
+    prompt:
+      "MAIster read-only-session smoke probe permission-kind:other. Request permission with an ACP other/unknown kind if your test harness supports it, then stop.",
+  },
+] as const;
+
+const READ_ONLY_ALLOWED_KINDS = new Set(["read", "search", "fetch", "think"]);
+const WRITE_LIKE_KINDS = new Set([
+  "edit",
+  "write",
+  "create",
+  "delete",
+  "move",
+  "execute",
+]);
 
 const noopClient: acp.Client = {
   async sessionUpdate() {
@@ -58,6 +106,146 @@ const noopClient: acp.Client = {
   },
 };
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function toolCallKind(toolCall: unknown): string | null {
+  if (typeof toolCall !== "object" || toolCall === null) return null;
+  if (!("kind" in toolCall)) return null;
+
+  const kind = (toolCall as { readonly kind?: unknown }).kind;
+
+  return typeof kind === "string" ? kind : null;
+}
+
+function createReadOnlyProbeClient(
+  observations: PermissionProbeObservation[],
+): acp.Client {
+  return {
+    async sessionUpdate() {
+      // Smoke probes inspect permission decisions only; updates prove prompt flow.
+    },
+    async requestPermission(params) {
+      const kind = toolCallKind(params.toolCall);
+      const options = params.options.map((option) => ({
+        optionId: option.optionId,
+        kind: option.kind,
+        name: option.name,
+      }));
+      const decision = resolveReadOnlySessionDecision(
+        true,
+        kind ? { kind } : {},
+        options,
+      );
+
+      observations.push({
+        kind,
+        decision: decision?.decision ?? "deny",
+        optionId: decision?.option?.optionId ?? null,
+      });
+
+      if (!decision?.option) return { outcome: { outcome: "cancelled" } };
+
+      return {
+        outcome: {
+          outcome: "selected",
+          optionId: decision.option.optionId,
+        },
+      };
+    },
+  };
+}
+
+function isUnknownPermissionKind(kind: string | null): boolean {
+  return (
+    kind === null ||
+    (!READ_ONLY_ALLOWED_KINDS.has(kind) && !WRITE_LIKE_KINDS.has(kind))
+  );
+}
+
+function observedDecisionSummary(
+  observations: readonly PermissionProbeObservation[],
+): string {
+  if (observations.length === 0) return "none";
+
+  return observations
+    .map((observation) => {
+      const kind = observation.kind ?? "missing";
+      const option = observation.optionId ? `:${observation.optionId}` : "";
+
+      return `${kind}:${observation.decision}${option}`;
+    })
+    .join(", ");
+}
+
+function summarizeReadOnlyProbe(
+  protocolVersion: number,
+  observations: readonly PermissionProbeObservation[],
+): ReadOnlySessionSmokeResult {
+  const readAllowed = observations.some(
+    (observation) =>
+      observation.kind !== null &&
+      READ_ONLY_ALLOWED_KINDS.has(observation.kind) &&
+      observation.decision === "allow",
+  );
+  const writeDenied = observations.some(
+    (observation) =>
+      observation.kind !== null &&
+      WRITE_LIKE_KINDS.has(observation.kind) &&
+      observation.decision === "deny",
+  );
+  const unknownDenied = observations.some(
+    (observation) =>
+      isUnknownPermissionKind(observation.kind) &&
+      observation.decision === "deny",
+  );
+  const missing = [
+    ...(readAllowed ? [] : ["read allow"]),
+    ...(writeDenied ? [] : ["write deny"]),
+    ...(unknownDenied ? [] : ["unknown-kind deny"]),
+  ];
+
+  if (missing.length === 0) {
+    return { status: "ok", protocolVersion };
+  }
+
+  return {
+    status: "error",
+    protocolVersion,
+    reason: `read-only-session prompt probe did not observe ${missing.join(
+      ", ",
+    )}; observed ${observedDecisionSummary(observations)}`,
+  };
+}
+
+async function smokeReadOnlySession(args: {
+  readonly adapter: ExecutorAgent;
+  readonly connection: acp.ClientSideConnection;
+  readonly sessionId: string;
+  readonly protocolVersion: number;
+  readonly observations: readonly PermissionProbeObservation[];
+}): Promise<ReadOnlySessionSmokeResult> {
+  try {
+    for (const probe of READ_ONLY_SESSION_PROBES) {
+      await args.connection.prompt({
+        sessionId: args.sessionId,
+        prompt: [{ type: "text", text: probe.prompt }],
+      });
+    }
+  } catch (err) {
+    return {
+      status: "error",
+      protocolVersion: args.protocolVersion,
+      reason: `${args.adapter} read-only-session prompt probe failed: ${errorMessage(
+        err,
+      )}`,
+    };
+  }
+
+  return summarizeReadOnlyProbe(args.protocolVersion, args.observations);
+}
+
 function allAdapters(): ExecutorAgent[] {
   return listAdapterRuntimes().map((runtime) => runtime.id);
 }
@@ -65,6 +253,7 @@ function allAdapters(): ExecutorAgent[] {
 function parseArgs(): CliArgs {
   const requested: string[] = [];
   let cachePath: string | undefined;
+  let readOnlySession = false;
   const argv = process.argv.slice(2);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -80,6 +269,12 @@ function parseArgs(): CliArgs {
       continue;
     }
 
+    if (value === "--read-only-session") {
+      readOnlySession = true;
+
+      continue;
+    }
+
     requested.push(value);
   }
 
@@ -87,6 +282,7 @@ function parseArgs(): CliArgs {
     return {
       adapters: ["gemini", "opencode", "mimo"],
       cachePath: cachePath ?? process.env.MAISTER_ADAPTER_SMOKE_CACHE_PATH,
+      readOnlySession,
     };
   }
 
@@ -103,6 +299,7 @@ function parseArgs(): CliArgs {
       return value as ExecutorAgent;
     }),
     cachePath: cachePath ?? process.env.MAISTER_ADAPTER_SMOKE_CACHE_PATH,
+    readOnlySession,
   };
 }
 
@@ -181,7 +378,10 @@ async function terminate(child: ChildProcess): Promise<void> {
   child.stdout?.destroy();
 }
 
-async function smokeAdapter(adapter: ExecutorAgent): Promise<SmokeResult> {
+export async function smokeAdapter(
+  adapter: ExecutorAgent,
+  options: SmokeAdapterOptions = {},
+): Promise<SmokeResult> {
   const runtime = getAdapterRuntime(adapter);
   const binaryResolution = resolveAdapterBinary({ adapter });
   const resolvedPath = await executablePath(binaryResolution.binary);
@@ -213,6 +413,10 @@ async function smokeAdapter(adapter: ExecutorAgent): Promise<SmokeResult> {
     env: childEnv,
     stdio: ["pipe", "pipe", "ignore"],
   });
+  const permissionObservations: PermissionProbeObservation[] = [];
+  const client = options.readOnlySession
+    ? createReadOnlyProbeClient(permissionObservations)
+    : noopClient;
 
   try {
     await waitForSpawn(child);
@@ -229,12 +433,21 @@ async function smokeAdapter(adapter: ExecutorAgent): Promise<SmokeResult> {
         child.stdout as NodeReadable,
       ) as unknown as NodeReadableStream<Uint8Array>,
     );
-    const connection = new acp.ClientSideConnection(() => noopClient, stream);
+    const connection = new acp.ClientSideConnection(() => client, stream);
     const init = await connection.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: clientCapabilitiesForAdapter(adapter),
     });
     const session = await connection.newSession({ cwd, mcpServers: [] });
+    const readOnlySession = options.readOnlySession
+      ? await smokeReadOnlySession({
+          adapter,
+          connection,
+          sessionId: session.sessionId,
+          protocolVersion: init.protocolVersion,
+          observations: permissionObservations,
+        })
+      : undefined;
 
     return {
       adapter,
@@ -242,13 +455,14 @@ async function smokeAdapter(adapter: ExecutorAgent): Promise<SmokeResult> {
       binary: resolvedPath,
       protocolVersion: init.protocolVersion,
       acpSessionId: session.sessionId,
+      ...(readOnlySession ? { readOnlySession } : {}),
     };
   } catch (err) {
     return {
       adapter,
       status: "error",
       binary: resolvedPath,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorMessage(err),
     };
   } finally {
     await terminate(child);
@@ -261,7 +475,11 @@ async function main(): Promise<void> {
   const results: SmokeResult[] = [];
 
   for (const adapter of args.adapters) {
-    results.push(await smokeAdapter(adapter));
+    const result = await smokeAdapter(adapter, {
+      readOnlySession: args.readOnlySession,
+    });
+
+    results.push(result);
   }
 
   for (const result of results) {
@@ -278,16 +496,35 @@ async function main(): Promise<void> {
         ...(result.protocolVersion
           ? { protocolVersion: result.protocolVersion }
           : {}),
+        ...(result.readOnlySession
+          ? { readOnlySession: result.readOnlySession }
+          : {}),
       })),
     );
   }
 
-  if (results.some((result) => result.status === "error")) {
+  if (
+    results.some(
+      (result) =>
+        result.status === "error" || result.readOnlySession?.status === "error",
+    )
+  ) {
     process.exitCode = 1;
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  process.exitCode = 1;
-});
+function isMainModule(): boolean {
+  const entrypoint = process.argv[1];
+
+  return (
+    entrypoint !== undefined &&
+    import.meta.url === pathToFileURL(entrypoint).href
+  );
+}
+
+if (isMainModule()) {
+  main().catch((err) => {
+    process.stderr.write(`${errorMessage(err)}\n`);
+    process.exitCode = 1;
+  });
+}

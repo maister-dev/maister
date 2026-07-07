@@ -8,7 +8,7 @@ const mode = process.argv.includes("--gemini-load-only")
   ? "gemini-load-only"
   : process.argv.includes("--gemini-reject-authenticate")
     ? "gemini-reject-authenticate"
-  : "opencode-resume";
+    : "opencode-resume";
 
 // The kind reported in the single permission request the agent emits per
 // prompt. Defaults to a write-class "edit" (the existing compatibility tests
@@ -17,6 +17,21 @@ const mode = process.argv.includes("--gemini-load-only")
 const permissionKindIdx = process.argv.indexOf("--permission-kind");
 const permissionKind =
   permissionKindIdx >= 0 ? process.argv[permissionKindIdx + 1] : "edit";
+
+function promptText(params) {
+  if (!Array.isArray(params.prompt)) return "";
+
+  return params.prompt
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n");
+}
+
+function permissionKindForPrompt(params) {
+  const match = promptText(params).match(/permission-kind:([A-Za-z0-9_-]+)/);
+
+  return match?.[1] ?? permissionKind;
+}
 
 function modelState(currentModelId = "observed-model") {
   return {
@@ -63,7 +78,9 @@ class CompatibilityAgent {
 
   async resumeSession() {
     if (mode !== "opencode-resume") {
-      throw new Error("resumeSession is not supported in gemini-load-only mode");
+      throw new Error(
+        "resumeSession is not supported in gemini-load-only mode",
+      );
     }
 
     return {
@@ -100,11 +117,12 @@ class CompatibilityAgent {
   }
 
   async prompt(params) {
+    const effectivePermissionKind = permissionKindForPrompt(params);
     const result = await this.connection.requestPermission({
       sessionId: params.sessionId,
       toolCall: {
         toolCallId: "compat-tool-call",
-        kind: permissionKind,
+        kind: effectivePermissionKind,
         title: "compat permission",
       },
       options: [

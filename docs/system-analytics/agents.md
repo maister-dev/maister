@@ -173,12 +173,31 @@ sequenceDiagram
     L->>L: resolve EFFECTIVE definition — attached install's pinned revision →<br/>package_installs.installed_path/maister-agents/stem.md
     L->>L: guards on the effective parse — risk_tier != destructive, mode=session, trigger declared
     L->>L: resolve executionPolicy (instance → recommended → project/platform) + branch base
-    L->>R: launch override → link override → effective runner → project default → platform default
-    R-->>L: snapshot or EXECUTOR_UNAVAILABLE
+    L->>L: final workspace = launch override ?? effective definition workspace
+    L->>R: launch override → link override → effective runner → project default → platform default<br/>with final workspace compatibility + readOnlyCapable evidence
+    R-->>L: snapshot or EXECUTOR_UNAVAILABLE before side effects
     L->>L: workspace axis (none / repo_read[+workspace_ref] / worktree)
     L->>L: INSERT runs (kind=agent, trigger_*, execution_policy snapshot, branch base) + budget check
-    L->>S: spawn — re-resolve effective, L2 materialize, profile MCPs (exec-trust gated),<br/>POST /sessions (readOnlySession, facade + token env)
+    L->>S: spawn — re-resolve effective, package skill materialization, profile MCPs (exec-trust gated),<br/>POST /sessions (readOnlySession, facade + token env)
 ```
+
+For `workspace: none | repo_read`, runner compatibility is stricter than normal
+runner readiness. The selected adapter must have descriptor `readOnlyCapable`
+support and ok read-only-session smoke evidence from supervisor diagnostics (or
+an explicit not-required classification). The check runs before any worktree,
+detached checkout, `runs` row, or agent token is created. `permission_policy:
+dangerously_skip_permissions` remains refused for read-only workspaces, and
+`mode: subagent` remains claude-only.
+
+Standalone package-agent launches materialize package skills from the same
+attached, trusted, pinned package install that supplied the effective
+`maister-agents/<stem>.md` definition. Skill roots are discovered through the
+package manifest's capability member roots
+(`manifest.spec.capabilities[*].path/skills`), not through a flat package-root
+`skills/` directory and not through the newest catalog projection. For Claude,
+the same capability member roots also materialize `agents/` into
+`.claude/agents/`; non-Claude adapters omit subagents because their descriptor
+surface does not support them.
 
 ### (c) Optional-flow enrichment — "agent drives a flow" (Implemented — ADR-106)
 
@@ -392,6 +411,15 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
 - The EFFECTIVE definition MUST resolve through the attached install's pinned
   revision → `package_installs.installed_path/maister-agents/<stem>.md`, at launch
   and again at spawn; `projectId` MUST be server-derived, never a body field.
+- A read-only standalone launch MUST resolve runner compatibility against the
+  final launch workspace (`input.workspace ?? effective.workspace`) before any
+  worktree, detached checkout, `runs` row, or agent token is created; non-proven
+  read-only adapters MUST fail with `MaisterError("EXECUTOR_UNAVAILABLE")`.
+- For `workspace: none | repo_read`, a non-claude runner MUST require descriptor
+  `readOnlyCapable` support. When its descriptor sets
+  `readOnlySessionSmoke: required`, ok read-only-session smoke evidence is also
+  required; missing, pending, skipped, stale, or failed evidence MUST fail
+  closed.
 - Launch MUST branch on has-`flow_ref`: no flow → `run_kind='agent'` (standalone
   ACP session, `MAISTER_MAX_CONCURRENT_AGENTS` pool); flow → `run_kind='flow'`
   (the same-package flow run, `runs.agent_id` + `flowId`, the agent `.md` injected
@@ -429,6 +457,15 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
   `runs` writes after the terminal flip; agent tokens MUST stay per-launch
   ephemeral with the fixed scope set and the `{type:'agent', id}` actor, never
   logged/streamed/client-visible.
+- A standalone package-agent run MUST materialize every skill-kind capability
+  from the providing pinned package install's manifest capability roots. Claude
+  runs MUST also materialize capability-local subagents from those roots into
+  `.claude/agents/`; non-Claude runs MUST omit subagents. User-owned same-name
+  skill or subagent entries MUST be preserved.
+- `capability_profile` frontmatter MUST be strict `{ mcps?: string[] }`; unknown
+  keys such as `skills`, `mcp_servers`, or `restrictions` MUST be reported as
+  `MaisterError("CONFIG")` during registration/resync and no invalid row may be
+  written.
 
 ## Edge cases
 
@@ -446,6 +483,15 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
 - **Runner tier resolves to a missing/disabled/not-ready runner, or an
   incompatibility rule fires** → `MaisterError("EXECUTOR_UNAVAILABLE")` before
   spawn; no run row.
+- **Read-only-session smoke evidence missing or not ok for a read-only
+  standalone non-claude runner** → `MaisterError("EXECUTOR_UNAVAILABLE")` before
+  worktree/cwd creation, `runs` insert, or token issuance.
+- **Pinned package skill record points at a missing member-root file** →
+  `MaisterError("CONFIG")` with `agentId`, `packageInstallId`, and
+  `capabilityRefId`; no partial materialization.
+- **Legacy `capability_profile` keys (`skills`, `mcp_servers`, `restrictions`)**
+  → invalid-definition reporting during registration/resync; no invalid `agents`
+  row is written.
 - **Budget breach with `onBudgetBreach='terminate_restorable'`** → the run lands in
   the recoverable `NeedsInputIdle` (NOT `Failed`), its slot frees (a queued run
   promotes), and a budget raise + `session/resume` restores it. *(Implemented —

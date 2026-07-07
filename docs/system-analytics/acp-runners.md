@@ -1,8 +1,7 @@
 # Platform ACP runner catalog domain
 
 > **M42 — Unified runner & session model (Implemented).** Runner bindings move from
-> the per-step `flow_runner_remaps` to **per-slot**
-> `(project_id, flow_revision_id, slot_key)` rows set at flow-connect / first
+> the per-step `flow_runner_remaps` to **per-slot** > `(project_id, flow_revision_id, slot_key)` rows set at flow-connect / first
 > launch, covering every session and consensus slot (never deduped by intent);
 > the resolved host runner is snapshotted per session in `run_sessions`.
 > Canonical: [`sessions.md`](sessions.md) /
@@ -13,8 +12,8 @@
 
 The platform ACP runner catalog is the admin-owned, host-scoped registry of
 launchable agent runtimes (`platform_acp_runners`). It answers a single
-question: *which adapter + model + provider + permission policy combinations
-may a run use on this host?* This domain owns the **CRUD lifecycle** of that
+question: _which adapter + model + provider + permission policy combinations
+may a run use on this host?_ This domain owns the **CRUD lifecycle** of that
 catalog — create, read, update, delete, enable/disable, and platform-default
 selection — exposed on the admin-gated `/settings` page. It does NOT own runner
 **resolution** at launch (see [executors.md](executors.md)), readiness
@@ -28,12 +27,12 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
 ## Domain entities
 
 - **`platform_acp_runners`** — one row per runner: `{ id, adapter, capability_agent,
-  model, provider (jsonb), env (jsonb), permission_policy, sidecar_id?, readiness_status,
-  readiness_reasons, enabled, created_at, updated_at }`. Persisted; see
+model, provider (jsonb), env (jsonb), permission_policy, sidecar_id?, readiness_status,
+readiness_reasons, enabled, created_at, updated_at }`. Persisted; see
   [db/projects-domain.md](../db/projects-domain.md).
 - **`provider`** — discriminated union. Implemented kinds:
   `anthropic | anthropic_compatible | openai | openai_compatible |
-  google_gemini | google_vertex | google_gateway | agent_native`.
+google_gemini | google_vertex | google_gateway | agent_native`.
   Secret material is stored ONLY as `env:NAME` references
   (`^env:[A-Za-z_][A-Za-z0-9_]*$`). See [configuration.md](../configuration.md).
 - **`env`** — optional child-process env override map for the selected ACP
@@ -42,10 +41,14 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   supervisor environment at launch.
 - **Adapter support** — static adapter registry in
   `web/lib/acp-runners/adapter-support.ts`: `claude` → providers `anthropic |
-  anthropic_compatible`, policies `default | dangerously_skip_permissions`;
+anthropic_compatible`, policies `default | dangerously_skip_permissions`;
   `codex` → providers `openai | openai_compatible`, policy `default` only;
   `gemini` → Google provider kinds, policy `default`; `opencode` and `mimo` →
-  `agent_native`, policy `default`. Gemini/OpenCode/MiMo are code-owned adapter
+  `agent_native`, policy `default`. Each support row also declares whether the
+  adapter can be used for standalone read-only agent workspaces
+  (`readOnlyCapable`) and whether read-only-session smoke is `required` or
+  `not_required`; required rows become effective only when diagnostics carry
+  successful read-only-session smoke evidence. Gemini/OpenCode/MiMo are code-owned adapter
   families, not operator-created arbitrary commands.
 - **Runner presets** — static templates (`platformRunnerPresetRows()`) offered
   as create-form prefills and a collapsed read-only reference list; **not**
@@ -63,7 +66,7 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
 - **`platform_runtime_settings.default_runner_id`** — NOT-NULL FK to a runner
   row (no cascade); the singleton platform default. The singleton is **created
   by the reconcile** (pointing at the first `Ready` default) rather than seeded;
-  until then it is *absent* (there is no null-default state), and readers fall
+  until then it is _absent_ (there is no null-default state), and readers fall
   back to "no platform default configured". (Implemented, ADR-094)
 - **Usage references** — `loadRunnerUsageReferences()` computes every live and
   historical pointer at a runner (platform/project/flow defaults, flow-step
@@ -108,11 +111,11 @@ objects.
 Gemini CLI, OpenCode, and MiMo Code widen the runner catalog without changing
 its ownership. They are new adapter families, not a new runner kind.
 
-| Adapter | Provider kinds | Permission policies | Binary contract | Initial readiness |
-| --- | --- | --- | --- | --- |
-| `gemini` | `google_gemini`, `google_vertex`, `google_gateway` | `default` | `gemini --acp` | `NotReady` until CLI-native auth and SDK initialize/newSession smoke pass |
-| `opencode` | `agent_native` | `default` | `opencode acp` | Basic SDK initialize/newSession smoke passed locally; broader permissions/MCP/resume/model gates remain readiness constraints |
-| `mimo` | `agent_native` | `default` | `mimo acp` | `NotReady` until binary is installed and SDK initialize/newSession smoke passes |
+| Adapter    | Provider kinds                                     | Permission policies | Binary contract | Initial readiness                                                                                                             |
+| ---------- | -------------------------------------------------- | ------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `gemini`   | `google_gemini`, `google_vertex`, `google_gateway` | `default`           | `gemini --acp`  | `NotReady` until CLI-native auth and SDK initialize/newSession smoke pass                                                     |
+| `opencode` | `agent_native`                                     | `default`           | `opencode acp`  | Basic SDK initialize/newSession smoke passed locally; broader permissions/MCP/resume/model gates remain readiness constraints |
+| `mimo`     | `agent_native`                                     | `default`           | `mimo acp`      | `NotReady` until binary is installed and SDK initialize/newSession smoke passes                                               |
 
 Readiness reasons must distinguish these states:
 
@@ -123,7 +126,10 @@ Readiness reasons must distinguish these states:
 - binary executable but first-run state directory is not writable;
 - provider kind unsupported by adapter;
 - explicitly configured auth env ref missing;
-- protocol initialize/newSession smoke missing or failed;
+- protocol initialize/newSession smoke missing or failed when the workflow
+  requires the generic smoke result;
+- read-only-session smoke missing, pending, skipped, stale, or failed when a
+  `workspace: none | repo_read` standalone agent launch selects the adapter;
 - resume/checkpoint strategy unsupported or unproven;
 - model application channel unsupported or advisory-only;
 - strict capability class unsupported by the resolved adapter.
@@ -131,6 +137,38 @@ Readiness reasons must distinguish these states:
 The admin UI may let operators create disabled Gemini/OpenCode/MiMo runners before
 all smoke gates pass, but it must not allow them as platform default or launch
 targets until readiness is `Ready`.
+
+## Read-only standalone capability evidence
+
+`readOnlyCapable` is a descriptor-backed contract:
+
+1. The static descriptor says the adapter family can support supervisor-side
+   `readOnlySession` arbitration for standalone agent workspaces.
+2. The static descriptor declares whether read-only-session smoke is `required`
+   or `not_required` for that adapter family.
+3. When smoke is required, supervisor diagnostics include adapter-specific
+   `readOnlySession` evidence from a prompt/permission probe that exercised the
+   adapter wire: write-like requests deny, read-like requests allow, unknown
+   permission kinds deny, no HITL request leaks, and `pendingPermissions` stays
+   empty.
+
+The generic `smoke:acp` initialize/newSession path does not by itself prove the
+permission wire. When invoked with `--read-only-session`, the smoke script opens
+an ACP session and sends dedicated prompt probes. Nested
+`smoke.readOnlySession.status="ok"` requires observed read-like allow,
+write-like deny, and unknown-kind deny decisions. If those observations are
+missing, the nested dimension is `error`, not `ok`.
+
+The generic ACP smoke result (`adapter.smoke.status`) remains advisory for normal
+runner readiness unless it is an explicit `error`; pending or skipped generic
+smoke must not make an otherwise usable runner `NotReady`. Read-only standalone
+launch is stricter: `workspace: none | repo_read` requires
+`adapter.smoke.readOnlySession.status === "ok"` for any adapter whose descriptor
+sets `readOnlySessionSmoke: required`; descriptors with
+`readOnlySessionSmoke: not_required` do not perform this evidence gate. Missing,
+pending, skipped, stale, or failed read-only-session evidence refuses the launch
+with `MaisterError("EXECUTOR_UNAVAILABLE")` before worktree/cwd creation, run
+insertion, or token issuance.
 
 ## Per-adapter materialization target (Designed — capability composer, FR-C1/T0.4)
 
@@ -157,13 +195,13 @@ Frozen 2026-06-16 against the locally-installed CLIs (claude 2.1.170, codex
 reads; the precise skill-write **subpath** per agent is proven by the
 per-adapter smoke in T3.5 and tagged accordingly.
 
-| Adapter | mode | dir / redirect env | layout | skills / subagents / mcp / config |
-| --- | --- | --- | --- | --- |
-| `claude` | `cwd-dir` | worktree `.claude/` (no redirect env) | `skills/<slug>/SKILL.md`, `agents/<stem>.md`, `settings.local.json` | ✓ / ✓ / ✓ / ✓ |
-| `codex` | `home-redirect` | `CODEX_HOME` → per-session composed dir | `skills/<slug>/`, symlinked global `auth.json`+`config.toml`, MCP in `config.toml` | ✓ / ✗ / ✓ / ✓ |
-| `gemini` | `cwd-dir` | worktree `.gemini/` (no redirect env) | `skills/<slug>/SKILL.md`; user auth/config stays in native `~/.gemini`; workspace `settings.json` can merge MCP/config when needed | ✓ / ✗ / ✓ / ✓ |
-| `opencode` | `home-redirect` | `OPENCODE_CONFIG_DIR` | `opencode.jsonc` (config+MCP), `agent/`; reads Claude-Code `.claude/skills` unless `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
-| `mimo` | `home-redirect` | `XDG_CONFIG_HOME`/`XDG_DATA_HOME` → `mimocode` | opencode-shaped; skills via `OPENCODE_SKILLS` / claude-compat *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
+| Adapter    | mode            | dir / redirect env                             | layout                                                                                                                             | skills / subagents / mcp / config |
+| ---------- | --------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `claude`   | `cwd-dir`       | worktree `.claude/` (no redirect env)          | `skills/<slug>/SKILL.md`, `agents/<stem>.md`, `settings.local.json`                                                                | ✓ / ✓ / ✓ / ✓                     |
+| `codex`    | `home-redirect` | `CODEX_HOME` → per-session composed dir        | `skills/<slug>/`, symlinked global `auth.json`+`config.toml`, MCP in `config.toml`                                                 | ✓ / ✗ / ✓ / ✓                     |
+| `gemini`   | `cwd-dir`       | worktree `.gemini/` (no redirect env)          | `skills/<slug>/SKILL.md`; user auth/config stays in native `~/.gemini`; workspace `settings.json` can merge MCP/config when needed | ✓ / ✗ / ✓ / ✓                     |
+| `opencode` | `home-redirect` | `OPENCODE_CONFIG_DIR`                          | `opencode.jsonc` (config+MCP), `agent/`; reads Claude-Code `.claude/skills` unless `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` _(T3.5)_  | ✓ / ✗ / ✓ / ✓                     |
+| `mimo`     | `home-redirect` | `XDG_CONFIG_HOME`/`XDG_DATA_HOME` → `mimocode` | opencode-shaped; skills via `OPENCODE_SKILLS` / claude-compat _(T3.5)_                                                             | ✓ / ✗ / ✓ / ✓                     |
 
 Notes:
 
@@ -255,7 +293,7 @@ flowchart TD
     del --> ok[204 No Content]
 ```
 
-### Default-runner reconcile (admin → GET /settings) *(Implemented, ADR-094)*
+### Default-runner reconcile (admin → GET /settings) _(Implemented, ADR-094)_
 
 The admin settings page fetches supervisor diagnostics, then runs
 `reconcilePlatformRunners` before reading the catalog. It is the single writer of
@@ -337,13 +375,14 @@ sequenceDiagram
   adapter support set; a mismatch MUST be rejected with
   `MaisterError("CONFIG")` (422). (Implemented)
 - For `gemini`, `opencode`, and `mimo`, readiness MUST remain `NotReady` unless
-  diagnostics prove the binary can execute in the supervisor environment and
-  the adapter-specific ACP smoke evidence required for the workflow has passed.
-  The proof is explicit diagnostics data: `adapter.smoke.status` must be `ok`.
+  diagnostics prove the binary can execute in the supervisor environment; a
+  generic ACP smoke `error` also makes the adapter unavailable. Pending/skipped
+  generic smoke is advisory for normal readiness, but a read-only standalone
+  launch MUST require `adapter.smoke.readOnlySession.status="ok"` unless that
+  adapter is explicitly documented as not requiring read-only-session smoke.
   (Implemented with ADR-078 gates)
 - OpenCode installed-but-not-initializable MUST be distinct from OpenCode
-  missing: a first-run writable-state failure is a readiness reason, not a raw
-  500. (Implemented, ADR-078)
+  missing: a first-run writable-state failure is a readiness reason, not a raw 500. (Implemented, ADR-078)
 - Gemini `loadSession` MUST NOT satisfy MAIster checkpoint readiness until an
   SDK smoke proves it preserves the checkpoint invariant. (Implemented gate,
   ADR-078)

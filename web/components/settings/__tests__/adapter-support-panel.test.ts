@@ -34,6 +34,12 @@ describe("AdapterSupportPanel", () => {
                 reason: null,
                 checkedAt: null,
                 protocolVersion: null,
+                readOnlySession: {
+                  status: "not_required",
+                  reason: null,
+                  checkedAt: null,
+                  protocolVersion: null,
+                },
               },
             },
             {
@@ -49,6 +55,12 @@ describe("AdapterSupportPanel", () => {
                 reason: null,
                 checkedAt: null,
                 protocolVersion: null,
+                readOnlySession: {
+                  status: "not_required",
+                  reason: null,
+                  checkedAt: null,
+                  protocolVersion: null,
+                },
               },
             },
           ],
@@ -69,6 +81,9 @@ describe("AdapterSupportPanel", () => {
     expect(html).toContain("claude-agent-acp");
     expect(html).toContain("codex-acp");
     expect(html).toContain("adapterDetails");
+    expect(html).toContain("genericSmoke");
+    expect(html).toContain("readOnlyCapable");
+    expect(html).toContain("notRequired");
     // Setup hint only for the unavailable adapter.
     expect(html).toContain("setupHint.codex");
     expect(html).not.toContain("setupHint.claude");
