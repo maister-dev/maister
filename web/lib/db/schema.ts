@@ -4,8 +4,19 @@ import type {
 } from "@/lib/runs/delivery-policy";
 import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskQueueSettings } from "@/lib/tasks/queue-settings";
-import type { AutoPromotionConfig, LaneClass } from "@/lib/auto-promotion/config";
+import type {
+  AutoPromotionConfig,
+  LaneClass,
+} from "@/lib/auto-promotion/config";
 import type { PromotionHold } from "@/lib/auto-promotion/types";
+import type { RunnerResolutionWarning } from "@/lib/acp-runners/resolve";
+import type {
+  ExperimentDiffFileSummary,
+  ExperimentMaterializationDelta,
+  ExperimentRubric,
+  ExperimentVariant,
+  ExperimentVerdictEnvelope,
+} from "@/lib/experiments/types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -29,13 +40,6 @@ import {
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
-import type {
-  ExperimentDiffFileSummary,
-  ExperimentMaterializationDelta,
-  ExperimentRubric,
-  ExperimentVariant,
-  ExperimentVerdictEnvelope,
-} from "@/lib/experiments/types";
 
 export const users = pgTable(
   "users",
@@ -1649,9 +1653,9 @@ export const experimentRuns = pgTable(
     diffFilesSummary: jsonb("diff_files_summary").$type<
       ExperimentDiffFileSummary[] | null
     >(),
-    materializationDelta: jsonb("materialization_delta").$type<
-      ExperimentMaterializationDelta | null
-    >(),
+    materializationDelta: jsonb(
+      "materialization_delta",
+    ).$type<ExperimentMaterializationDelta | null>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -1661,9 +1665,11 @@ export const experimentRuns = pgTable(
   },
   (t) => ({
     uniqRun: unique("experiment_runs_run_uq").on(t.runId),
-    uniqVariantReplicate: unique(
-      "experiment_runs_variant_replicate_uq",
-    ).on(t.experimentId, t.variantKey, t.replicateOrdinal),
+    uniqVariantReplicate: unique("experiment_runs_variant_replicate_uq").on(
+      t.experimentId,
+      t.variantKey,
+      t.replicateOrdinal,
+    ),
     idxExperiment: index("experiment_runs_experiment_idx").on(t.experimentId),
     launchReasonCheck: check(
       "experiment_runs_launch_reason_check",
@@ -1717,6 +1723,9 @@ export const runSessions = pgTable(
     // runner (the slot_key for a binding/auto-match, the chain scope for the
     // default chain, or "launch-dialog" for an ephemeral per-run override).
     resolutionSource: text("resolution_source"),
+    resolutionWarning: jsonb(
+      "resolution_warning",
+    ).$type<RunnerResolutionWarning | null>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),

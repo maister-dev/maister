@@ -1,13 +1,14 @@
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ExperimentCapabilityOverlay } from "@/lib/experiments/types";
+
+import { z } from "zod";
+
 import {
   OVERLAY_CLASS_SUPPORT_BY_AGENT,
   type OverlayCapabilityClass,
 } from "@/lib/flows/enforcement";
 import { MaisterError } from "@/lib/errors-core";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
-
-import { z } from "zod";
 
 const OVERLAY_CLASSES = ["rules", "skills", "mcps", "subagents"] as const;
 
@@ -151,10 +152,7 @@ export function assertVariantOverlaySupported(args: {
     const delta = args.overlay?.[cls];
 
     if (!delta) continue;
-    if (
-      (delta.add?.length ?? 0) === 0 &&
-      (delta.remove?.length ?? 0) === 0
-    ) {
+    if ((delta.add?.length ?? 0) === 0 && (delta.remove?.length ?? 0) === 0) {
       continue;
     }
 

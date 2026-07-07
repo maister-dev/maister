@@ -4,6 +4,7 @@ import type { ReactElement, ReactNode } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
@@ -1244,6 +1245,32 @@ export default async function RunDetailLayout({
         title={shellTitle}
       >
         <div className="grid min-w-0 max-w-full gap-5">
+          {detail.runnerResolutionWarnings.length > 0 ? (
+            <section
+              className="flex gap-2 rounded-[10px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-amber"
+              data-testid="run-runner-resolution-warnings"
+            >
+              <ExclamationTriangleIcon
+                aria-hidden="true"
+                className="mt-[1px] size-4 shrink-0"
+              />
+              <div className="min-w-0">
+                <h2 className="text-[12px] font-semibold">
+                  {t("runnerResolutionWarningTitle")}
+                </h2>
+                <ul className="mt-1 flex list-disc flex-col gap-1 pl-4 font-mono text-[10px] leading-snug">
+                  {detail.runnerResolutionWarnings.map((item) => (
+                    <li key={item.warning.slotKey}>
+                      {item.warning.sessionName
+                        ? `${item.warning.sessionName}: ${item.warning.message}`
+                        : `${item.sessionName}: ${item.warning.message}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          ) : null}
+
           <div className="flex min-w-0 flex-wrap items-center gap-3">
             <ExecutionPolicyBadge
               labels={{

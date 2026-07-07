@@ -90,6 +90,30 @@ export type RunnerResolution = {
   readonly runnerResolutionTier: RunnerResolutionTier;
   readonly capabilityAgent: string;
   readonly runnerSnapshot: RunnerSnapshot;
+  readonly resolutionWarning?: RunnerResolutionWarning;
+};
+
+export type RunnerResolutionWarning = {
+  readonly code: "runner_intent_soft_mismatch";
+  readonly slotKey: string;
+  readonly sessionName?: string;
+  readonly requested: {
+    readonly capabilityAgent: string;
+    readonly model?: string;
+    readonly providerKind?: string;
+  };
+  readonly launched: {
+    readonly runnerId: string;
+    readonly capabilityAgent: string;
+    readonly model: string;
+    readonly providerKind: string;
+  };
+  readonly message: string;
+};
+
+export type RunnerIntentCandidates = {
+  readonly exact: readonly RunnerCatalogEntry[];
+  readonly sameCapability: readonly RunnerCatalogEntry[];
 };
 
 type Candidate = {
@@ -114,6 +138,10 @@ function snapshotRunner(runner: RunnerCatalogEntry): RunnerSnapshot {
     sidecar: runner.sidecar,
     sidecarId: runner.sidecarId,
   };
+}
+
+export function baseModelName(model: string): string {
+  return model.replace(/\[[^\[\]]+\]$/, "");
 }
 
 function assertLaunchableRunner(
@@ -282,6 +310,7 @@ export function defaultRunSessionValues(
   runnerSnapshot: RunnerSnapshot;
   acpSessionId: null;
   resolutionSource: string;
+  resolutionWarning?: RunnerResolutionWarning;
 } {
   return {
     runId,
@@ -292,6 +321,7 @@ export function defaultRunSessionValues(
     runnerSnapshot: resolution.runnerSnapshot,
     acpSessionId: null,
     resolutionSource: resolution.runnerResolutionTier,
+    resolutionWarning: resolution.resolutionWarning,
   };
 }
 
@@ -351,17 +381,15 @@ export function resolveSlotConfig(
   return profile;
 }
 
-// Match a runner config to host runners by INTENT (capability_agent, plus model
-// and provider.kind when the config pins them). Only enabled+ready catalog
-// runners are eligible. Returns ALL matches so the caller can distinguish a
-// unique auto-match (1) from ambiguity (>1 → needs a binding) and no host (0).
-export function autoMatchRunners(
+// Grade host runners for a declared intent. Exact keeps the hard happy path
+// strict; sameCapability is the only candidate set eligible for soft fallback.
+export function runnerIntentCandidates(
   config: FlowRunnerConfig,
   runners: readonly RunnerCatalogEntry[],
-): RunnerCatalogEntry[] {
-  return runners.filter((runner) => {
+): RunnerIntentCandidates {
+  const sameCapability = sameCapabilityRunners(config, runners);
+  const exact = sameCapability.filter((runner) => {
     if (!runner.enabled || !runner.ready) return false;
-    if (runner.capabilityAgent !== config.capability_agent) return false;
     if (config.model !== undefined && runner.model !== config.model) {
       return false;
     }
@@ -374,6 +402,111 @@ export function autoMatchRunners(
 
     return true;
   });
+
+  return { exact, sameCapability };
+}
+
+function sameCapabilityRunners(
+  config: FlowRunnerConfig,
+  runners: readonly RunnerCatalogEntry[],
+): RunnerCatalogEntry[] {
+  return runners.filter(
+    (runner) =>
+      runner.enabled &&
+      runner.ready &&
+      runner.capabilityAgent === config.capability_agent,
+  );
+}
+
+function defaultFallbackCandidate(
+  runnerId: string | null | undefined,
+  tier: RunnerResolutionTier,
+  runnerById: ReadonlyMap<string, RunnerCatalogEntry>,
+  config: FlowRunnerConfig,
+): {
+  readonly tier: RunnerResolutionTier;
+  readonly runner: RunnerCatalogEntry;
+} | null {
+  if (!runnerId) return null;
+
+  const runner = runnerById.get(runnerId);
+
+  if (
+    !runner ||
+    !runner.enabled ||
+    !runner.ready ||
+    runner.capabilityAgent !== config.capability_agent
+  ) {
+    return null;
+  }
+
+  return { tier, runner };
+}
+
+function softFallbackCandidate(input: {
+  readonly config: FlowRunnerConfig;
+  readonly sameCapabilityCandidates: readonly RunnerCatalogEntry[];
+  readonly runnerById: ReadonlyMap<string, RunnerCatalogEntry>;
+  readonly project?: { readonly defaultRunnerId?: string | null };
+  readonly platform?: { readonly defaultRunnerId?: string | null };
+}): {
+  readonly tier: RunnerResolutionTier;
+  readonly runner: RunnerCatalogEntry;
+} | null {
+  const sameBase =
+    input.config.model === undefined
+      ? null
+      : (input.sameCapabilityCandidates.find(
+          (runner) =>
+            baseModelName(runner.model) === baseModelName(input.config.model!),
+        ) ?? null);
+
+  if (sameBase) return { tier: "autoMatch", runner: sameBase };
+
+  return (
+    defaultFallbackCandidate(
+      input.project?.defaultRunnerId,
+      "projectDefault",
+      input.runnerById,
+      input.config,
+    ) ??
+    defaultFallbackCandidate(
+      input.platform?.defaultRunnerId,
+      "platformDefault",
+      input.runnerById,
+      input.config,
+    )
+  );
+}
+
+function runnerResolutionWarning(input: {
+  readonly slotKey: string;
+  readonly config: FlowRunnerConfig;
+  readonly runner: RunnerCatalogEntry;
+}): RunnerResolutionWarning {
+  const requested = {
+    capabilityAgent: input.config.capability_agent,
+    ...(input.config.model ? { model: input.config.model } : {}),
+    ...(input.config.provider?.kind
+      ? { providerKind: input.config.provider.kind }
+      : {}),
+  };
+  const launched = {
+    runnerId: input.runner.id,
+    capabilityAgent: input.runner.capabilityAgent,
+    model: input.runner.model,
+    providerKind: input.runner.providerKind,
+  };
+  const requestedModel = requested.model ?? "<unspecified>";
+  const requestedProvider = requested.providerKind ?? "<unspecified>";
+
+  return {
+    code: "runner_intent_soft_mismatch",
+    slotKey: input.slotKey,
+    requested,
+    launched,
+    message: `flow requested model=${requestedModel}/provider=${requestedProvider}, launched on runner ${input.runner.id} (model=${input.runner.model}/provider=${input.runner.providerKind})`,
+  };
 }
 
 function intentLabel(config: FlowRunnerConfig): string {
@@ -393,6 +526,8 @@ export type RunnerSlotResolutionInput = {
   readonly overrideRunnerId?: string | null;
   readonly binding?: RunnerSlotBinding;
   readonly runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
+  readonly project?: { readonly defaultRunnerId?: string | null };
+  readonly platform?: { readonly defaultRunnerId?: string | null };
   readonly runners: readonly RunnerCatalogEntry[];
 };
 
@@ -412,12 +547,14 @@ export function resolveRunnerSlot(
     tier: RunnerResolutionTier,
     runner: RunnerCatalogEntry,
     resolutionSource: string,
+    resolutionWarning?: RunnerResolutionWarning,
   ): ResolvedRunnerSlot => ({
     runnerId: runner.id,
     runnerResolutionTier: tier,
     capabilityAgent: runner.capabilityAgent,
     runnerSnapshot: snapshotRunner(runner),
     resolutionSource,
+    ...(resolutionWarning ? { resolutionWarning } : {}),
   });
 
   // 1. Ephemeral per-run override.
@@ -457,7 +594,8 @@ export function resolveRunnerSlot(
 
   // 4. Auto-match the unified config to a UNIQUE host runner by intent.
   const config = resolveSlotConfig(input.slot, input.runnerProfiles);
-  const matches = autoMatchRunners(config, input.runners);
+  const candidates = runnerIntentCandidates(config, input.runners);
+  const matches = candidates.exact;
 
   if (matches.length === 1) {
     return resolved("autoMatch", matches[0], input.slotKey);
@@ -470,9 +608,39 @@ export function resolveRunnerSlot(
     );
   }
 
-  throw new MaisterError(
-    "EXECUTOR_UNAVAILABLE",
-    `runner slot "${input.slotKey}" has no enabled+ready host runner matching intent (${intentLabel(config)})`,
+  const sameCapabilityCandidates = candidates.sameCapability;
+
+  if (sameCapabilityCandidates.length === 0) {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `runner slot "${input.slotKey}" has no enabled+ready host runner with capability ${config.capability_agent}`,
+    );
+  }
+
+  const fallback = softFallbackCandidate({
+    config,
+    sameCapabilityCandidates,
+    runnerById,
+    project: input.project,
+    platform: input.platform,
+  });
+
+  if (!fallback) {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `runner slot "${input.slotKey}" has no enabled+ready same-capability fallback after intent mismatch (${intentLabel(config)})`,
+    );
+  }
+
+  return resolved(
+    fallback.tier,
+    fallback.runner,
+    input.slotKey,
+    runnerResolutionWarning({
+      slotKey: input.slotKey,
+      config,
+      runner: fallback.runner,
+    }),
   );
 }
 
@@ -511,11 +679,24 @@ export function resolveRunSessions(
       overrideRunnerId: input.ephemeralOverrides?.[session.name],
       binding: bindingBySlotKey.get(slotKey),
       runnerProfiles: input.runnerProfiles,
+      project: input.project,
+      platform: input.platform,
       runners: input.runners,
     });
 
     if (slotResolution) {
-      out.push({ ...slotResolution, sessionName: session.name });
+      out.push({
+        ...slotResolution,
+        sessionName: session.name,
+        ...(slotResolution.resolutionWarning
+          ? {
+              resolutionWarning: {
+                ...slotResolution.resolutionWarning,
+                sessionName: session.name,
+              },
+            }
+          : {}),
+      });
       continue;
     }
 

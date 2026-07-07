@@ -1,11 +1,13 @@
+import type { LaneClass } from "./config";
+
 import { eq } from "drizzle-orm";
 
-import type { LaneClass } from "./config";
 import {
   evaluateAutoPromotion,
   type AutoPromotionEvaluation,
 } from "./evaluate";
 import { buildAutoPromotionReaders } from "./readers";
+
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { diffChangeStats } from "@/lib/worktree";
 

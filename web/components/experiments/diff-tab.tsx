@@ -1,1 +1,4 @@
-export { DiffTab, type ComparisonTabLabels } from "@/components/experiments/comparison-tabs";
+export {
+  DiffTab,
+  type ComparisonTabLabels,
+} from "@/components/experiments/comparison-tabs";

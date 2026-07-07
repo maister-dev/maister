@@ -1,5 +1,8 @@
 import type { ExperimentListItemDTO } from "@/lib/experiments/dto";
-import type { ExperimentRubric, ExperimentVariant } from "@/lib/experiments/types";
+import type {
+  ExperimentRubric,
+  ExperimentVariant,
+} from "@/lib/experiments/types";
 import type { ProjectFlow } from "@/lib/queries/project";
 import type { TaskDTO } from "@/lib/services/tasks";
 
@@ -167,11 +170,13 @@ const rubric: ExperimentRubric = {
   ],
 };
 
-function renderList(overrides: {
-  items?: ExperimentListItemDTO[];
-  error?: string | null;
-  labels?: ExperimentListLabels;
-} = {}): string {
+function renderList(
+  overrides: {
+    items?: ExperimentListItemDTO[];
+    error?: string | null;
+    labels?: ExperimentListLabels;
+  } = {},
+): string {
   return renderToStaticMarkup(
     createElement(ExperimentList, {
       slug: "proj",

@@ -31,6 +31,7 @@ import {
   budgetTextHasInvalid,
   buildLaunchBody,
   effectiveLaunchVerdict,
+  launchRunnerResolutionWarnings,
   isBudgetFieldInvalid,
   launchUnavailableReasonMessage,
   pruneBudgetText,
@@ -95,6 +96,70 @@ describe("LaunchPopover — launchability reason copy", () => {
     expect(launchUnavailableReasonMessage("new_reason", translate)).toBe(
       "new_reason",
     );
+  });
+});
+
+describe("LaunchPopover — runner resolution warnings", () => {
+  const selectedWarning = {
+    code: "runner_intent_soft_mismatch" as const,
+    slotKey: "session:default",
+    requested: { capabilityAgent: "claude", model: "claude-opus-4-8" },
+    launched: {
+      runnerId: "claude-code",
+      capabilityAgent: "claude",
+      model: "claude-opus-4-8[1m]",
+      providerKind: "anthropic",
+    },
+    message: "flow requested model=claude-opus-4-8",
+  };
+
+  it("shows the selected runner warning while the resolved runner is selected", () => {
+    expect(
+      launchRunnerResolutionWarnings(
+        {
+          selectedRunnerId: "claude-code",
+          selectedRunnerWarning: selectedWarning,
+          sessions: [],
+        },
+        "claude-code",
+      ),
+    ).toEqual([selectedWarning]);
+  });
+
+  it("hides the selected warning after an explicit runner override", () => {
+    expect(
+      launchRunnerResolutionWarnings(
+        {
+          selectedRunnerId: "claude-code",
+          selectedRunnerWarning: selectedWarning,
+          sessions: [],
+        },
+        "codex-ready",
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps non-primary session warnings visible", () => {
+    const reviewWarning = { ...selectedWarning, slotKey: "session:review" };
+
+    expect(
+      launchRunnerResolutionWarnings(
+        {
+          selectedRunnerId: "claude-code",
+          selectedRunnerWarning: selectedWarning,
+          sessions: [
+            {
+              sessionName: "review",
+              runnerId: "claude-review",
+              label: "review",
+              overridable: true,
+              warning: reviewWarning,
+            },
+          ],
+        },
+        "codex-ready",
+      ),
+    ).toEqual([reviewWarning]);
   });
 });
 
@@ -202,6 +267,16 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
     expect(buildLaunchBody({ ...base, forceRelaunch: false })).toMatchObject({
       allowConcurrent: false,
     });
+  });
+
+  it("omits runnerId when the launch preview has no resolved runner", () => {
+    expect(
+      buildLaunchBody({
+        ...base,
+        runnerId: "",
+        forceRelaunch: false,
+      }),
+    ).not.toHaveProperty("runnerId");
   });
 });
 

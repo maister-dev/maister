@@ -88,6 +88,32 @@ type LaunchRunnerOption = {
   pinnedModel: { model: string; source: string };
 };
 
+type RunnerResolutionWarning = {
+  code: "runner_intent_soft_mismatch";
+  slotKey: string;
+  sessionName?: string;
+  requested: {
+    capabilityAgent: string;
+    model?: string;
+    providerKind?: string;
+  };
+  launched: {
+    runnerId: string;
+    capabilityAgent: string;
+    model: string;
+    providerKind: string;
+  };
+  message: string;
+};
+
+type LaunchSessionOption = {
+  sessionName: string;
+  runnerId: string | null;
+  label: string | null;
+  overridable: boolean;
+  warning: RunnerResolutionWarning | null;
+};
+
 type LaunchVerdict = { launchable: boolean; reason: string };
 
 type LaunchOptions = {
@@ -101,8 +127,10 @@ type LaunchOptions = {
   relaunch?: LaunchVerdict;
   flows: LaunchFlowOption[];
   runners: LaunchRunnerOption[];
+  sessions?: LaunchSessionOption[];
   selectedFlowId: string;
   selectedRunnerId: string | null;
+  selectedRunnerWarning?: RunnerResolutionWarning | null;
   branches: string[];
   defaultBaseBranch: string | null;
   defaultTargetBranch: string | null;
@@ -180,17 +208,20 @@ export function buildLaunchBody(args: {
   packageVersions?: Record<string, VersionChoice>;
   forceRelaunch: boolean;
 }): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     taskId: args.taskId,
     flowId: args.flowId,
-    runnerId: args.runnerId || undefined,
-    baseBranch: args.baseBranch || undefined,
-    targetBranch: args.targetBranch || undefined,
     deliveryPolicy: args.deliveryPolicy,
     executionPolicy: args.executionPolicy,
     packageVersions: nonKeepPackageVersions(args.packageVersions ?? {}),
     allowConcurrent: args.forceRelaunch,
   };
+
+  if (args.runnerId) body.runnerId = args.runnerId;
+  if (args.baseBranch) body.baseBranch = args.baseBranch;
+  if (args.targetBranch) body.targetBranch = args.targetBranch;
+
+  return body;
 }
 
 function branchFallback(options: LaunchOptions): string {
@@ -219,6 +250,32 @@ export function launchUnavailableReasonMessage(
   const key = LAUNCH_UNAVAILABLE_REASON_KEY[reason];
 
   return key ? translate(key) : reason;
+}
+
+export function launchRunnerResolutionWarnings(
+  options: Pick<
+    LaunchOptions,
+    "selectedRunnerId" | "selectedRunnerWarning" | "sessions"
+  >,
+  currentRunnerId: string,
+): RunnerResolutionWarning[] {
+  const warnings = new Map<string, RunnerResolutionWarning>();
+
+  if (
+    currentRunnerId === (options.selectedRunnerId ?? "") &&
+    options.selectedRunnerWarning
+  ) {
+    warnings.set(
+      options.selectedRunnerWarning.slotKey,
+      options.selectedRunnerWarning,
+    );
+  }
+
+  for (const session of options.sessions ?? []) {
+    if (session.warning) warnings.set(session.warning.slotKey, session.warning);
+  }
+
+  return [...warnings.values()];
 }
 
 function LaunchSelect<T extends string>(props: {
@@ -690,6 +747,9 @@ export function LaunchPopover({
       disabled: !runner.enabled || runner.readinessStatus !== "Ready",
       label: runnerLabel(runner),
     })) ?? [];
+  const runnerResolutionWarnings = options
+    ? launchRunnerResolutionWarnings(options, runnerId)
+    : [];
   const branchOptions: Array<SelectOption<string>> =
     options?.branches.map((branch) => ({ id: branch, label: branch })) ?? [];
   const strategyOptions: Array<SelectOption<DeliveryPolicyStrategy>> = [
@@ -980,6 +1040,28 @@ export function LaunchPopover({
                         />
                       </label>
                     </div>
+
+                    {runnerResolutionWarnings.length > 0 ? (
+                      <div
+                        className="flex gap-2 rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-amber"
+                        role="status"
+                      >
+                        <ExclamationTriangleIcon
+                          aria-hidden="true"
+                          className="mt-[1px] size-4 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <p className="font-semibold">
+                            {t("runnerResolutionWarningTitle")}
+                          </p>
+                          <ul className="mt-1 flex list-disc flex-col gap-1 pl-4 font-mono text-[10px] leading-snug">
+                            {runnerResolutionWarnings.map((warning) => (
+                              <li key={warning.slotKey}>{warning.message}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    ) : null}
 
                     {options.availablePackageVersions.length > 0 ? (
                       <div

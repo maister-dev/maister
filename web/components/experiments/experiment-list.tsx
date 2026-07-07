@@ -106,7 +106,9 @@ export function ExperimentList({
             {labels.subtitle}
           </p>
         </div>
-        {createSlot !== undefined ? createSlot : (
+        {createSlot !== undefined ? (
+          createSlot
+        ) : (
           <button className="rounded-lg border border-line px-3 py-2">
             {labels.create}
           </button>

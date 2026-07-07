@@ -1030,7 +1030,12 @@ export async function runFlow(
         .update(runs)
         // ADR-126 T8: stamp the auto-promotion grace anchor alongside the flip
         // (a column, NOT a run.review domain emit — D-3).
-        .set({ status: "Review", endedAt, reviewEnteredAt: endedAt, currentStepId: null })
+        .set({
+          status: "Review",
+          endedAt,
+          reviewEnteredAt: endedAt,
+          currentStepId: null,
+        })
         .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
         .returning({ projectId: runs.projectId });
 

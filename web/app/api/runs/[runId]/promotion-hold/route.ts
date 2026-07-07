@@ -1,11 +1,12 @@
 import "server-only";
 
+import type { PromotionHold } from "@/lib/auto-promotion/types";
+
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import type { PromotionHold } from "@/lib/auto-promotion/types";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -113,7 +114,10 @@ export async function PUT(
       createdAt: new Date().toISOString(),
     };
 
-    await db.update(runs).set({ promotionHold: hold }).where(eq(runs.id, runId));
+    await db
+      .update(runs)
+      .set({ promotionHold: hold })
+      .where(eq(runs.id, runId));
 
     log.info({ runId, projectId }, "auto-promotion hold set");
 
@@ -138,7 +142,10 @@ export async function DELETE(
     await requireProjectAction(projectId, "promoteRun");
 
     // Clears a hold of ANY source; the run re-enters normal evaluation.
-    await db.update(runs).set({ promotionHold: null }).where(eq(runs.id, runId));
+    await db
+      .update(runs)
+      .set({ promotionHold: null })
+      .where(eq(runs.id, runId));
 
     log.info({ runId, projectId }, "auto-promotion hold cleared");
 

@@ -1,3 +1,5 @@
+import type { CreateExperimentInput } from "@/lib/experiments/http-schemas";
+
 import { randomUUID } from "node:crypto";
 
 import {
@@ -9,8 +11,6 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-
-import type { CreateExperimentInput } from "@/lib/experiments/http-schemas";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -25,7 +25,9 @@ vi.mock("@/lib/db/client", () => ({
 
 vi.mock("@/lib/worktree", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/worktree")>()),
-  resolveBaseCommit: vi.fn(async () => "abcdef1234567890abcdef1234567890abcdef12"),
+  resolveBaseCommit: vi.fn(
+    async () => "abcdef1234567890abcdef1234567890abcdef12",
+  ),
   assertBaseCommitReachable: vi.fn(
     async () => "abcdef1234567890abcdef1234567890abcdef12",
   ),

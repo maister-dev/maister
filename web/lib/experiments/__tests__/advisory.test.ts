@@ -133,7 +133,10 @@ describe("appendExperimentAdvisory", () => {
             summary: "Too late.",
           },
         },
-        fakeDb({ experiments: [experiment({ status: "concluded" })], updates: [] }),
+        fakeDb({
+          experiments: [experiment({ status: "concluded" })],
+          updates: [],
+        }),
       ),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
 

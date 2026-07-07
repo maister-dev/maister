@@ -1,23 +1,26 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-import pino from "pino";
-
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
 import type {
   ExperimentCapabilityOverlay,
   ExperimentMaterializationDelta,
   ExperimentVariant,
 } from "@/lib/experiments/types";
+
+import { eq } from "drizzle-orm";
+import pino from "pino";
+
+import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import {
   applyCapabilityOverlay,
   type CapabilitySelection,
 } from "@/lib/experiments/variant-config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { experiments, experimentRuns } =
-  schemaModule as unknown as Record<string, any>;
+const { experiments, experimentRuns } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): pg|sqlite drizzle union.
 type Db = any;

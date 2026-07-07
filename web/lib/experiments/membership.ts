@@ -1,15 +1,18 @@
 import "server-only";
 
+import type { ExperimentLaunchReason } from "@/lib/experiments/types";
+
 import { desc, eq } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import type { ExperimentLaunchReason } from "@/lib/experiments/types";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { experiments, experimentRuns, runs } =
-  schemaModule as unknown as Record<string, any>;
+const { experiments, experimentRuns, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): pg|sqlite drizzle union.
 type Db = any;

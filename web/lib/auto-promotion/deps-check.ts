@@ -131,7 +131,10 @@ function checkDepBlock(
 
     if (b[k] === br[k]) continue;
 
-    if (!isRegistryVersionSpecifier(b[k]) || !isRegistryVersionSpecifier(br[k])) {
+    if (
+      !isRegistryVersionSpecifier(b[k]) ||
+      !isRegistryVersionSpecifier(br[k])
+    ) {
       return {
         ok: false,
         detail: `non-registry specifier: ${block}.${k} ${JSON.stringify(b[k])} → ${JSON.stringify(br[k])} (${path})`,
@@ -201,9 +204,7 @@ const NON_REGISTRY_LINE = /(git\+|git:\/\/|file:|link:|portal:|ssh:\/\/)/;
 function scanLockfile(f: DepsFile): DepsCheckResult {
   if (f.branch == null) return { ok: true };
 
-  const baseLines = new Set(
-    (f.base ?? "").split("\n").map((l) => l.trim()),
-  );
+  const baseLines = new Set((f.base ?? "").split("\n").map((l) => l.trim()));
   const introduced = f.branch
     .split("\n")
     .map((l) => l.trim())

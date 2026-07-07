@@ -246,10 +246,10 @@ export function DiffTab({
               </div>
               {prepared ? (
                 <DiffView
+                  renderUnavailable
                   files={prepared.files}
                   labels={diffViewLabels(labels)}
                   perFile={prepared.perFile}
-                  renderUnavailable
                   truncated={prepared.truncated}
                 />
               ) : run.diff.snapshot ? (
@@ -371,9 +371,7 @@ export function FilesTab({
     (row) => row.classification !== "same",
   );
   const rows =
-    activeFilter === "different"
-      ? differentRows
-      : matrix.filters[activeFilter];
+    activeFilter === "different" ? differentRows : matrix.filters[activeFilter];
   const filters: Array<{
     key: ComparisonFilesFilter;
     label: string;

@@ -458,11 +458,15 @@ for (const scenario of SCENARIOS) {
     );
 
     await expect(page.getByText(scenario.labels.labHeading)).toBeVisible();
-    await expect(page.getByRole("heading", { name: seeded.title })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: seeded.title }),
+    ).toBeVisible();
     await expect(
       page.getByText(scenario.labels.storedSnapshot, { exact: true }).first(),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Candidate #1" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Candidate #1" }),
+    ).toBeVisible();
     await expect(page.getByText("src/feature.ts").first()).toBeVisible();
 
     await page.getByRole("tab", { name: scenario.labels.files }).click();
@@ -473,26 +477,40 @@ for (const scenario of SCENARIOS) {
 
     await page.getByRole("tab", { name: scenario.labels.gates }).click();
     await expect(page.getByText("ai_judgment").first()).toBeVisible();
-    await expect(page.getByText(scenario.labels.confidence).first()).toBeVisible();
+    await expect(
+      page.getByText(scenario.labels.confidence).first(),
+    ).toBeVisible();
 
     await page.getByRole("tab", { name: scenario.labels.cost }).click();
-    await expect(page.getByText(scenario.labels.tokensCaption).first()).toBeVisible();
-    await expect(page.locator("pre").filter({ hasText: "gpt-5" }).first()).toBeVisible();
+    await expect(
+      page.getByText(scenario.labels.tokensCaption).first(),
+    ).toBeVisible();
+    await expect(
+      page.locator("pre").filter({ hasText: "gpt-5" }).first(),
+    ).toBeVisible();
 
     await page.getByRole("tab", { name: scenario.labels.verdict }).click();
     await expect(page.getByText(scenario.labels.humanVerdict)).toBeVisible();
-    await page.locator('select[name="winnerVariantKey"]').selectOption("candidate");
+    await page
+      .locator('select[name="winnerVariantKey"]')
+      .selectOption("candidate");
     await page.locator('input[name="score.correctness.control"]').fill("4");
     await page.locator('input[name="score.correctness.candidate"]').fill("5");
-    await page.locator('input[name="score.spec_traceability.control"]').fill("3");
-    await page.locator('input[name="score.spec_traceability.candidate"]').fill("5");
+    await page
+      .locator('input[name="score.spec_traceability.control"]')
+      .fill("3");
+    await page
+      .locator('input[name="score.spec_traceability.candidate"]')
+      .fill("5");
     await page.locator('textarea[name="comment"]').fill(seeded.comment);
 
     const concludeResponse = page.waitForResponse(
       (response) =>
-        response.url().includes(
-          `/api/projects/${seeded.slug}/experiments/${seeded.experimentId}/conclude`,
-        ) && response.request().method() === "POST",
+        response
+          .url()
+          .includes(
+            `/api/projects/${seeded.slug}/experiments/${seeded.experimentId}/conclude`,
+          ) && response.request().method() === "POST",
     );
 
     await page.getByTestId("verdict-submit").click();

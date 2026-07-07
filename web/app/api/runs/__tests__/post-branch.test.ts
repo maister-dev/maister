@@ -166,9 +166,7 @@ describe("POST /api/runs — branch-targeting body schema (M18)", () => {
   });
 
   it("rejects an empty relaunchOfRunId with 400 CONFIG before launch", async () => {
-    const res = await POST(
-      request({ taskId: "task-1", relaunchOfRunId: "" }),
-    );
+    const res = await POST(request({ taskId: "task-1", relaunchOfRunId: "" }));
     const body = (await res.json()) as { code?: string };
 
     expect(res.status).toBe(400);

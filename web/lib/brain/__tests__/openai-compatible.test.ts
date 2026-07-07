@@ -234,9 +234,7 @@ describe("openai-compatible client (T2.1)", () => {
     );
 
     expect(await client.complete("prompt")).toBe("distilled");
-    expect(calls[0]?.url).toBe(
-      "https://glm.example.test/v1/chat/completions",
-    );
+    expect(calls[0]?.url).toBe("https://glm.example.test/v1/chat/completions");
     expect(
       (calls[0]?.init.headers as Record<string, string>).authorization,
     ).toBe(`Bearer ${DISTILL_SECRET}`);

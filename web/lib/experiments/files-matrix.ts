@@ -24,7 +24,9 @@ export type FilesMatrixResult = {
   };
 };
 
-function classify(files: ExperimentDiffFileSummary[]): FilesMatrixClassification {
+function classify(
+  files: ExperimentDiffFileSummary[],
+): FilesMatrixClassification {
   if (files.length <= 1) return "single";
 
   const hashes = new Set(files.map((file) => file.patchHash));
@@ -32,7 +34,9 @@ function classify(files: ExperimentDiffFileSummary[]): FilesMatrixClassification
   return hashes.size === 1 ? "same" : "different";
 }
 
-export function buildFilesMatrix(inputs: FilesMatrixInput[]): FilesMatrixResult {
+export function buildFilesMatrix(
+  inputs: FilesMatrixInput[],
+): FilesMatrixResult {
   const variantOrder = inputs.map((input) => input.variantKey);
   const byPath = new Map<string, Record<string, ExperimentDiffFileSummary>>();
 

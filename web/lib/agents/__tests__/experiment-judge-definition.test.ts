@@ -39,6 +39,8 @@ describe("core:experiment-judge definition", () => {
     expect(parsed.prompt).toContain("You never conclude an experiment");
     expect(parsed.prompt).toContain("experiment_get");
     expect(parsed.prompt).toContain("experiment_advise");
-    expect(parsed.prompt).toContain("criterion-id -> variant-key -> numeric score");
+    expect(parsed.prompt).toContain(
+      "criterion-id -> variant-key -> numeric score",
+    );
   });
 });

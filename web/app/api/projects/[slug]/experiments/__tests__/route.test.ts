@@ -112,20 +112,21 @@ describe("GET /api/projects/[slug]/experiments", () => {
     );
     expect(mocks.listProjectExperiments).toHaveBeenCalledWith("project-1");
     expect(body.experiments).toHaveLength(1);
-    expect(Object.keys(body.experiments[0] as Record<string, unknown>).sort())
-      .toEqual([
-        "baseBranch",
-        "baseCommit",
-        "createdAt",
-        "id",
-        "status",
-        "taskId",
-        "taskNumber",
-        "title",
-        "variantsCount",
-        "verdictOutcome",
-        "winnerVariantKey",
-      ]);
+    expect(
+      Object.keys(body.experiments[0] as Record<string, unknown>).sort(),
+    ).toEqual([
+      "baseBranch",
+      "baseCommit",
+      "createdAt",
+      "id",
+      "status",
+      "taskId",
+      "taskNumber",
+      "title",
+      "variantsCount",
+      "verdictOutcome",
+      "winnerVariantKey",
+    ]);
   });
 });
 
@@ -186,7 +187,10 @@ describe("POST /api/projects/[slug]/experiments", () => {
   });
 
   it("returns 422 CONFIG for invalid body shape after authz", async () => {
-    const res = await route.POST(request("POST", { taskId: "task-1" }), params());
+    const res = await route.POST(
+      request("POST", { taskId: "task-1" }),
+      params(),
+    );
     const body = (await res.json()) as { code?: string };
 
     expect(res.status).toBe(422);

@@ -31,6 +31,8 @@ test.describe("auto-promotion lanes settings (ADR-126)", () => {
     }
 
     // The non-configurable deny-list is rendered read-only (CLAUDE.md is denied).
-    await expect(page.getByText("CLAUDE.md", { exact: false }).first()).toBeVisible();
+    await expect(
+      page.getByText("CLAUDE.md", { exact: false }).first(),
+    ).toBeVisible();
   });
 });

@@ -1,11 +1,12 @@
-import { z } from "zod";
-
-import { MaisterError } from "@/lib/errors-core";
 import type {
   ExperimentHumanVerdict,
   ExperimentRubric,
   ExperimentVariant,
 } from "@/lib/experiments/types";
+
+import { z } from "zod";
+
+import { MaisterError } from "@/lib/errors-core";
 
 export const experimentRubricCriterionSchema = z
   .object({
@@ -63,7 +64,8 @@ export const DEFAULT_EXPERIMENT_RUBRIC: ExperimentRubric = {
     {
       id: "code_quality",
       label: "Code quality",
-      guidance: "The solution is maintainable, simple, typed, and well factored.",
+      guidance:
+        "The solution is maintainable, simple, typed, and well factored.",
       scale: { min: 1, max: 5 },
       weight: 1,
     },
@@ -115,7 +117,10 @@ export function validateExperimentHumanVerdict(
 
   if (args.verdict.outcome === "winner") {
     if (!args.verdict.winnerVariantKey) {
-      throw new MaisterError("CONFIG", "winner verdict requires winnerVariantKey");
+      throw new MaisterError(
+        "CONFIG",
+        "winner verdict requires winnerVariantKey",
+      );
     }
     if (!variantKeys.has(args.verdict.winnerVariantKey)) {
       throw new MaisterError(

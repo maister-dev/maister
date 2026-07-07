@@ -16,7 +16,9 @@ export function latestComparisonRuns(
       (variant) =>
         comparison.runs
           .filter((run) => run.variantKey === variant.key)
-          .sort((left, right) => right.replicateOrdinal - left.replicateOrdinal)[0],
+          .sort(
+            (left, right) => right.replicateOrdinal - left.replicateOrdinal,
+          )[0],
     )
     .filter((run): run is ExperimentComparisonRunDTO => run !== undefined);
 }

@@ -26,10 +26,12 @@ const releaseCapacity = vi.hoisted(() => vi.fn());
 const acquireConsensusAgentCapacity = vi.hoisted(() => vi.fn());
 const loadRunnerCatalog = vi.hoisted(() => vi.fn());
 const loadFlowRunnerBindings = vi.hoisted(() => vi.fn());
+const loadProjectPlatformRunnerDefaults = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/acp-runners/catalog", () => ({
   loadRunnerCatalog,
   loadFlowRunnerBindings,
+  loadProjectPlatformRunnerDefaults,
 }));
 
 vi.mock("@/lib/flows/graph/consensus/drafts", async (importOriginal) => {
@@ -263,6 +265,10 @@ beforeEach(() => {
     catalogRunner("codex", "codex"),
   ]);
   loadFlowRunnerBindings.mockResolvedValue([]);
+  loadProjectPlatformRunnerDefaults.mockResolvedValue({
+    project: { defaultRunnerId: null },
+    platform: { defaultRunnerId: null },
+  });
   loadConsensusVerdicts.mockResolvedValue([]);
   atomicWriteJson.mockResolvedValue(undefined);
   createHitlAssignmentForRun.mockResolvedValue(undefined);

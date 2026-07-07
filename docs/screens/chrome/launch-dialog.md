@@ -53,6 +53,9 @@ rail. It preloads launch options from the selected task and shows:
 - a human-readable launchability banner for states such as active run,
   relation blocker, missing Flow revision, or installed-but-not-enabled Flow;
 - Flow, runner/model, base branch, and target branch selects;
+- non-blocking runner-resolution warnings when a Flow slot launches on a
+  same-capability runner whose model and/or provider kind differs from the
+  package intent;
 - delivery-policy controls for strategy, push, and trigger;
 - execution preset controls plus advanced checks, human-gate, and promotion
   selectors;
@@ -84,8 +87,11 @@ The shortcut never fires while focus is in an `input` / `textarea` /
 
 The `ScratchLauncher` composer owns scratch submission and routing; task-scoped
 run launch uses `GET /api/runs/launch-options?taskId=...` followed by
-`POST /api/runs` with server-validated overrides. Behavior and the run substrate
-live in
+`POST /api/runs` with server-validated overrides. `launch-options` returns
+`selectedRunnerWarning` and per-session `warning` objects for soft
+model/provider fallback previews; those warnings do not disable submit, while
+capability absence and exact-match ambiguity keep the existing blocked or
+unresolved preview behavior. Behavior and the run substrate live in
 [`../../system-analytics/scratch-runs.md`](../../system-analytics/scratch-runs.md).
 Task run behavior lives in
 [`../../system-analytics/runs.md`](../../system-analytics/runs.md).

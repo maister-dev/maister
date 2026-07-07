@@ -7,8 +7,7 @@ import { isUnauthorizedExperimentAgentActor } from "@/lib/experiments/advisory";
 import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
-const ENDPOINT =
-  "GET /api/v1/ext/projects/[slug]/experiments/[experimentId]";
+const ENDPOINT = "GET /api/v1/ext/projects/[slug]/experiments/[experimentId]";
 
 type RouteParams = {
   params: Promise<{ slug: string; experimentId: string }>;
@@ -33,7 +32,8 @@ export async function GET(
         return NextResponse.json(
           {
             code: "UNAUTHORIZED",
-            message: "experiment detail is reserved for the experiment judge agent",
+            message:
+              "experiment detail is reserved for the experiment judge agent",
           },
           { status: 403 },
         );

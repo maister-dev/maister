@@ -305,14 +305,14 @@ describe("scheduler job SQL integration", () => {
       maxFailures: 3,
       nextRunAt: now,
     });
-    expect(
-      rows.find((row) => row.id === "auto_promote.default"),
-    ).toMatchObject({
-      jobKind: "auto_promote",
-      cadenceIntervalSeconds: 60,
-      maxFailures: 3,
-      nextRunAt: now,
-    });
+    expect(rows.find((row) => row.id === "auto_promote.default")).toMatchObject(
+      {
+        jobKind: "auto_promote",
+        cadenceIntervalSeconds: 60,
+        maxFailures: 3,
+        nextRunAt: now,
+      },
+    );
   });
 });
 

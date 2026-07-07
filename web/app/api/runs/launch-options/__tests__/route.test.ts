@@ -214,6 +214,88 @@ describe("GET /api/runs/launch-options per-session resolution (M42)", () => {
     expect(body.sessions).toEqual([]);
   });
 
+  it("returns a warning preview for same-capability model fallback", async () => {
+    state.platform_acp_runners = [
+      {
+        ...state.platform_acp_runners[0],
+        id: "claude-code",
+        model: "claude-opus-4-8[1m]",
+        provider: { kind: "anthropic" },
+      },
+      state.platform_acp_runners[1],
+    ];
+    state.platform_runtime_settings = [
+      { id: "singleton", defaultRunnerId: "claude-code" },
+    ];
+    state.flow_revisions[0].manifest = {
+      ...manifest([aiNode("implement", "flow-claude")]),
+      runner_profiles: {
+        "flow-claude": {
+          runner_type: "acp",
+          capability_agent: "claude",
+          model: "claude-opus-4-8",
+          provider: { kind: "anthropic" },
+          permission_policy: "default",
+        },
+      },
+    };
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      selectedRunnerId?: string;
+      selectedRunnerWarning?: {
+        code?: string;
+        requested?: { model?: string };
+        launched?: { runnerId?: string; model?: string };
+        message?: string;
+      };
+      sessions?: unknown[];
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.selectedRunnerId).toBe("claude-code");
+    expect(body.sessions).toEqual([]);
+    expect(body.selectedRunnerWarning).toMatchObject({
+      code: "runner_intent_soft_mismatch",
+      requested: { model: "claude-opus-4-8" },
+      launched: { runnerId: "claude-code", model: "claude-opus-4-8[1m]" },
+    });
+    expect(body.selectedRunnerWarning?.message).toContain(
+      "flow requested model=claude-opus-4-8",
+    );
+  });
+
+  it("does not synthesize a fallback runner for an unresolved declared single session", async () => {
+    state.platform_acp_runners = [state.platform_acp_runners[1]];
+    state.platform_runtime_settings = [
+      { id: "singleton", defaultRunnerId: "codex-ready" },
+    ];
+    state.flow_revisions[0].manifest = {
+      ...manifest([aiNode("implement", "flow-claude")]),
+      runner_profiles: {
+        "flow-claude": {
+          runner_type: "acp",
+          capability_agent: "claude",
+          model: "claude-opus-4-8",
+          provider: { kind: "anthropic" },
+          permission_policy: "default",
+        },
+      },
+    };
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      selectedRunnerId?: string | null;
+      selectedRunnerWarning?: unknown;
+      sessions?: unknown[];
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.selectedRunnerId).toBeNull();
+    expect(body.selectedRunnerWarning).toBeNull();
+    expect(body.sessions).toEqual([]);
+  });
+
   it("binds a solo session runner via a Mapped slot binding", async () => {
     state.flow_revisions[0].manifest = manifest([
       aiNode("implement", "flow-claude"),

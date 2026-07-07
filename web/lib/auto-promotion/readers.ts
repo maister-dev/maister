@@ -1,15 +1,17 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-import { and, eq, isNull } from "drizzle-orm";
-import pino from "pino";
-
 import type {
   AutoPromotionReaders,
   ExternalCheckState,
 } from "@/lib/auto-promotion/evaluate";
 import type { DepsFile } from "@/lib/auto-promotion/deps-check";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { DiffChangeStatEntry } from "@/lib/worktree";
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+import { and, eq, isNull } from "drizzle-orm";
+import pino from "pino";
+
 import {
   flowRevisions,
   flows,
@@ -25,7 +27,6 @@ import {
   isExternalGateReady,
   latestAttemptIdsByNode,
 } from "@/lib/flows/graph/readiness-core";
-import type { DiffChangeStatEntry } from "@/lib/worktree";
 
 // FIXME(any): tests pass a Testcontainers pg client; both expose select.
 type Db = any;
@@ -135,7 +136,9 @@ export function buildAutoPromotionReaders(args: {
       const rows = await db
         .select({ id: hitlRequests.id })
         .from(hitlRequests)
-        .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.response)))
+        .where(
+          and(eq(hitlRequests.runId, runId), isNull(hitlRequests.response)),
+        )
         .limit(1);
 
       return rows.length > 0;

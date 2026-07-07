@@ -108,6 +108,7 @@ describe("resolveAgentRunner — standalone chain precedence", () => {
       capabilityAgent: "claude",
       permissionPolicy: "default",
     });
+    expect(viaPlatform).not.toHaveProperty("resolutionWarning");
   });
 
   it("a named tier never falls through: disabled/missing/not-ready refuse", () => {

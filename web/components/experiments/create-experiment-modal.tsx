@@ -177,9 +177,7 @@ function rubricFromForm(form: FormData): ExperimentRubric {
   return { criteria };
 }
 
-function defaultTaskId(
-  tasks: CreateExperimentTaskOption[],
-): string {
+function defaultTaskId(tasks: CreateExperimentTaskOption[]): string {
   return tasks[0]?.id ?? "";
 }
 
@@ -239,9 +237,9 @@ export function CreateExperimentForm({
               {labels.experimentTitle}
             </span>
             <input
+              required
               className="rounded-lg border border-line bg-paper px-3 py-2 text-[13px] text-ink"
               name="title"
-              required
             />
           </label>
           <label className="flex flex-col gap-1.5">
@@ -249,10 +247,10 @@ export function CreateExperimentForm({
               {labels.baseBranch}
             </span>
             <input
+              required
               className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink"
               defaultValue={defaultBaseBranch}
               name="baseBranch"
-              required
             />
           </label>
         </div>

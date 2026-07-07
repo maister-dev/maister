@@ -50,7 +50,9 @@ const judgeLabels: JudgePanelLabels = {
   settings: "Open agents settings",
 };
 
-function comparison(over: Partial<ExperimentComparisonDTO> = {}): ExperimentComparisonDTO {
+function comparison(
+  over: Partial<ExperimentComparisonDTO> = {},
+): ExperimentComparisonDTO {
   return {
     experiment: {
       id: "exp-1",
@@ -180,6 +182,7 @@ describe("VerdictPanel", () => {
       }),
     );
     const concluded = comparison();
+
     concluded.experiment.status = "concluded";
     concluded.verdict = {
       human: {

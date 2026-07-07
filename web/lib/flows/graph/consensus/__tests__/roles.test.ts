@@ -1,15 +1,17 @@
 import type { RunnerCatalogEntry } from "@/lib/acp-runners/resolve";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveAgentLaunchRuntime = vi.hoisted(() => vi.fn());
 const loadRunnerCatalog = vi.hoisted(() => vi.fn());
 const loadFlowRunnerBindings = vi.hoisted(() => vi.fn());
+const loadProjectPlatformRunnerDefaults = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/agents/launch", () => ({ resolveAgentLaunchRuntime }));
 vi.mock("@/lib/acp-runners/catalog", () => ({
   loadRunnerCatalog,
   loadFlowRunnerBindings,
+  loadProjectPlatformRunnerDefaults,
 }));
 
 import {
@@ -45,6 +47,14 @@ const ccrRunner: RunnerCatalogEntry = {
 };
 
 describe("consensus role resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loadProjectPlatformRunnerDefaults.mockResolvedValue({
+      project: { defaultRunnerId: null },
+      platform: { defaultRunnerId: null },
+    });
+  });
+
   it("resolves a bound runner slot and preserves its provider + sidecar snapshot", async () => {
     loadRunnerCatalog.mockResolvedValue([ccrRunner]);
     loadFlowRunnerBindings.mockResolvedValue([
@@ -102,6 +112,42 @@ describe("consensus role resolution", () => {
 
     expect(resolved.runnerResolutionTier).toBe("autoMatch");
     expect(resolved.runnerId).toBe("runner-ccr");
+  });
+
+  it("uses project/platform defaults for soft mismatch fallback", async () => {
+    loadRunnerCatalog.mockResolvedValue([
+      { ...ccrRunner, id: "runner-platform", model: "haiku" },
+      { ...ccrRunner, id: "runner-project", model: "sonnet-alt" },
+    ]);
+    loadFlowRunnerBindings.mockResolvedValue([]);
+    loadProjectPlatformRunnerDefaults.mockResolvedValue({
+      project: { defaultRunnerId: "runner-project" },
+      platform: { defaultRunnerId: "runner-platform" },
+    });
+
+    const resolved = await resolveConsensusRunnerSlot({
+      db: {} as never,
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "opus",
+        permission_policy: "default",
+      },
+      slotKey: "consensus:gate:synthesizer",
+      projectId: "project-1",
+      flowRevisionId: "rev-1",
+      runnerProfiles: undefined,
+      roleLabel: "consensus synthesizer",
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: "runner-project",
+      runnerResolutionTier: "projectDefault",
+      resolutionWarning: {
+        code: "runner_intent_soft_mismatch",
+        slotKey: "consensus:gate:synthesizer",
+      },
+    });
   });
 
   it("fails when no host runner matches the slot intent", async () => {

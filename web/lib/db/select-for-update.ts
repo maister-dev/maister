@@ -1,9 +1,10 @@
 import "server-only";
 
-type SelectForUpdateQuery<Row extends Record<string, unknown>> =
-  PromiseLike<Row[]> & {
-    for?: (mode: "update") => Promise<Row[]>;
-  };
+type SelectForUpdateQuery<Row extends Record<string, unknown>> = PromiseLike<
+  Row[]
+> & {
+  for?: (mode: "update") => Promise<Row[]>;
+};
 
 export async function selectForUpdate<Row extends Record<string, unknown>>(
   query: SelectForUpdateQuery<Row>,

@@ -1,7 +1,11 @@
+import type {
+  ExperimentRubric,
+  ExperimentVariant,
+} from "@/lib/experiments/types";
+
 import { describe, expect, it } from "vitest";
 
 import { validateExperimentHumanVerdict } from "@/lib/experiments/verdict";
-import type { ExperimentRubric, ExperimentVariant } from "@/lib/experiments/types";
 
 const variants: ExperimentVariant[] = [
   { key: "a", label: "A", config: {} },

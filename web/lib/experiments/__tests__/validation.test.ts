@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
-
-import { assertExperimentDefinitionImmutable } from "@/lib/experiments/validation";
 import type {
   ExperimentImmutableDefinition,
   ExperimentRubric,
   ExperimentVariant,
 } from "@/lib/experiments/types";
+
+import { describe, expect, it } from "vitest";
+
+import { assertExperimentDefinitionImmutable } from "@/lib/experiments/validation";
 
 const variants: ExperimentVariant[] = [
   { key: "a", label: "A", config: { runnerId: "claude" } },
@@ -53,10 +54,7 @@ describe("experiment validation", () => {
       {
         baseBranch: "main",
         baseCommit: "abc1234",
-        variants: [
-          variants[0],
-          { ...variants[1], label: "Mutated label" },
-        ],
+        variants: [variants[0], { ...variants[1], label: "Mutated label" }],
         rubric,
       },
     ],

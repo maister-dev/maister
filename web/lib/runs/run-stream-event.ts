@@ -1,6 +1,7 @@
 import "server-only";
 
-import { open, readFile } from "node:fs/promises";
+import { mkdir, open, readFile } from "node:fs/promises";
+import path from "node:path";
 
 // A non-agent gate (human / form / review / infra_recovery) transitions a run to
 // NeedsInput with NO supervisor session running, so nothing appends to
@@ -42,9 +43,11 @@ export async function appendRunStreamEvent(
   const line = `${JSON.stringify({
     type: event.type,
     monotonicId,
-    ...event.data,
     sessionName: "default",
+    ...event.data,
   })}\n`;
+
+  await mkdir(path.dirname(eventsLogPath), { recursive: true });
 
   const handle = await open(eventsLogPath, "a");
 

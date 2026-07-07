@@ -107,7 +107,10 @@ const TERMINAL_RUN_STATUS = new Set([
   "Review",
 ]);
 
-async function isExperimentMemberRun(args: { db: any; runId: string }): Promise<boolean> {
+async function isExperimentMemberRun(args: {
+  db: any;
+  runId: string;
+}): Promise<boolean> {
   const rows = await args.db
     .select({ runId: experimentRuns.runId })
     .from(experimentRuns)
@@ -2299,7 +2302,9 @@ async function preflightBudgetRestartLaunchability(args: {
   const openBlockers =
     (await getOpenRelationBlockers([taskId], args.db)).get(taskId) ?? [];
   const launchability = experimentMemberRestart
-    ? classifyForceRelaunchLaunchability(task, latestForRestart, { openBlockers })
+    ? classifyForceRelaunchLaunchability(task, latestForRestart, {
+        openBlockers,
+      })
     : classifyManualTaskLaunchability(task, latestForRestart, { openBlockers });
 
   if (launchability !== "launchable") {

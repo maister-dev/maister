@@ -778,9 +778,7 @@ describe("launchRun — experiment membership transaction (ADR-124)", () => {
       baseCommit: "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e",
     };
 
-    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(
-      inherited,
-    );
+    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(inherited);
 
     await launchRun(
       {

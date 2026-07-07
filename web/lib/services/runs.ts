@@ -51,9 +51,11 @@ import {
 } from "@/lib/capabilities/resolver";
 import { normalizeNodeMcps } from "@/lib/config.schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
+import { runtimeRoot } from "@/lib/runtime-root";
 import {
   launchProgress,
   type LaunchProgressEvent,
@@ -76,6 +78,7 @@ import {
 } from "@/lib/runs/execution-policy";
 import { activeSessionRunnerId } from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
+import { appendRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
@@ -116,6 +119,47 @@ const EXPERIMENT_MEMBER_LAUNCHABLE_STATUSES = new Set([
   "comparable",
 ]);
 
+type RunnerResolutionWarningRecord = {
+  readonly sessionName: string;
+  readonly warning: NonNullable<
+    ReturnType<typeof resolveRunSessions>[number]["resolutionWarning"]
+  >;
+};
+
+async function appendRunnerResolutionWarningEvents(args: {
+  readonly runId: string;
+  readonly projectSlug: string;
+  readonly taskId: string;
+  readonly warnings: readonly RunnerResolutionWarningRecord[];
+}): Promise<void> {
+  if (args.warnings.length === 0) return;
+
+  const eventsLogPath = path.join(
+    runDirPath(runtimeRoot(), args.projectSlug, args.runId),
+    "run.events.jsonl",
+  );
+
+  for (const { sessionName, warning } of args.warnings) {
+    try {
+      await appendRunStreamEvent(eventsLogPath, {
+        type: "run.runner_resolution_warning",
+        data: { sessionName, warning },
+      });
+    } catch (err) {
+      log.error(
+        {
+          runId: args.runId,
+          taskId: args.taskId,
+          sessionName,
+          slotKey: warning.slotKey,
+          err: (err as Error).message,
+        },
+        "failed to append runner resolution warning event",
+      );
+    }
+  }
+}
+
 async function assertExperimentMembershipLaunchable(args: {
   tx: any;
   membership: NonNullable<LaunchRunInput["experimentMembership"]>;
@@ -127,8 +171,7 @@ async function assertExperimentMembershipLaunchable(args: {
       .where(eq(experiments.id, args.membership.experimentId)),
   );
   const experiment = rows.find(
-    (row: Record<string, unknown>) =>
-      row.id === args.membership.experimentId,
+    (row: Record<string, unknown>) => row.id === args.membership.experimentId,
   );
 
   if (!experiment) {
@@ -313,9 +356,7 @@ function budgetRestartSourceRunId(
   return triggerPayload.oldRunId;
 }
 
-function membershipSourceForLaunch(
-  input: LaunchRunInput,
-): {
+function membershipSourceForLaunch(input: LaunchRunInput): {
   sourceRunId: string;
   launchReason: "manual_relaunch" | "budget_restart";
 } | null {
@@ -556,7 +597,8 @@ export async function* launchRunStaged(
     toLaunchMembership(inheritedExperimentMembership);
   const forceByBudgetMembership =
     inheritedExperimentMembership?.launchReason === "budget_restart";
-  const forceByDirectExperimentMembership = input.experimentMembership !== undefined;
+  const forceByDirectExperimentMembership =
+    input.experimentMembership !== undefined;
   const allowConcurrentForLaunch = Boolean(
     input.allowConcurrent ||
       forceByBudgetMembership ||
@@ -688,6 +730,7 @@ export async function* launchRunStaged(
   // Hoisted above the outer try so the post-compensation tryStartRun / return
   // block can still read it (the try opens right after the adopt).
   const runId = randomUUID();
+  let runnerResolutionWarnings: RunnerResolutionWarningRecord[] = [];
 
   // ADR-107: adopt advanced the SHARED project pin. Everything below, up to the
   // durable run-insert, is fallible — this outer try re-pins the attachment(s) on
@@ -871,6 +914,33 @@ export async function* launchRunStaged(
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
       runners: runnerCatalog,
     });
+
+    runnerResolutionWarnings = sessionResolutions.flatMap((session) =>
+      session.resolutionWarning
+        ? [
+            {
+              sessionName: session.sessionName,
+              warning: session.resolutionWarning,
+            },
+          ]
+        : [],
+    );
+
+    for (const { sessionName, warning } of runnerResolutionWarnings) {
+      log.warn(
+        {
+          runId,
+          taskId: task.id,
+          projectId: project.id,
+          sessionName,
+          slotKey: warning.slotKey,
+          requested: warning.requested,
+          launched: warning.launched,
+        },
+        "runner slot resolved with soft intent mismatch",
+      );
+    }
+
     // The run's `runs.*` runner columns mirror the primary session (expand phase —
     // they are dropped once every reader migrates to `run_sessions`, M42 #24).
     const runnerResolution =
@@ -1301,7 +1371,10 @@ export async function* launchRunStaged(
             // the sweep never considers this run (survives rework like any hold).
             promotionHold:
               input.autoPromote === false
-                ? { source: "launch" as const, createdAt: new Date().toISOString() }
+                ? {
+                    source: "launch" as const,
+                    createdAt: new Date().toISOString(),
+                  }
                 : null,
             // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
             // a normal board launch). The graph runner reads it to inject the
@@ -1386,7 +1459,10 @@ export async function* launchRunStaged(
               })
               .where(
                 and(
-                  eq(experiments.id, effectiveExperimentMembership.experimentId),
+                  eq(
+                    experiments.id,
+                    effectiveExperimentMembership.experimentId,
+                  ),
                   eq(experiments.status, "draft"),
                 ),
               );
@@ -1408,6 +1484,7 @@ export async function* launchRunStaged(
             runnerSnapshot: session.runnerSnapshot,
             acpSessionId: null,
             resolutionSource: session.resolutionSource,
+            resolutionWarning: session.resolutionWarning ?? null,
           })),
         );
 
@@ -1492,6 +1569,13 @@ export async function* launchRunStaged(
     });
     throw err;
   }
+
+  await appendRunnerResolutionWarningEvents({
+    runId,
+    projectSlug: project.slug,
+    taskId: task.id,
+    warnings: runnerResolutionWarnings,
+  });
 
   const startResult = await tryStartRun(runId, { db: _db });
 

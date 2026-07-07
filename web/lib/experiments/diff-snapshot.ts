@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ExperimentDiffFileSummary } from "@/lib/experiments/types";
+
 import { createHash } from "node:crypto";
 
 import { eq } from "drizzle-orm";
@@ -7,7 +9,6 @@ import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors-core";
-import type { ExperimentDiffFileSummary } from "@/lib/experiments/types";
 import {
   diffRunWorkspace,
   diffRunWorkspaceFileMetadata,
@@ -244,6 +245,7 @@ export async function captureExperimentDiffSnapshotForRun(args: {
       diffRunWorkspace(diffArgs),
       diffRunWorkspaceFileMetadata(diffArgs),
     ]);
+
     if (diffResult.status === "rejected") throw diffResult.reason;
 
     const diff = diffResult.value;

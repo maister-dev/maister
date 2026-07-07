@@ -1,7 +1,7 @@
+import type { LegacyPromotionMode } from "@/lib/runs/delivery-policy";
+
 import pino from "pino";
 import { z } from "zod";
-
-import type { LegacyPromotionMode } from "@/lib/runs/delivery-policy";
 
 // ADR-126 §4.2: auto-promotion lane config — the single source of truth for the
 // settings PATCH body, the sweep, and the run-detail panel. `.strict()` so an
@@ -105,7 +105,10 @@ export function resolveAutoPromotionConfig(
   }
 
   return {
-    config: { enabled: parsed.data.enabled, lanes: dedupeLanes(parsed.data.lanes) },
+    config: {
+      enabled: parsed.data.enabled,
+      lanes: dedupeLanes(parsed.data.lanes),
+    },
     source: "stored",
   };
 }

@@ -21,9 +21,7 @@ describe("experiment token scope contract", () => {
   });
 
   it("maps experiment scopes to the matching project actions", () => {
-    expect(PROJECT_ACTION_BY_SCOPE["experiments:read"]).toBe(
-      "readExperiments",
-    );
+    expect(PROJECT_ACTION_BY_SCOPE["experiments:read"]).toBe("readExperiments");
     expect(PROJECT_ACTION_BY_SCOPE["experiments:advise"]).toBe(
       "manageExperiments",
     );

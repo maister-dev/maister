@@ -2,10 +2,7 @@ import "server-only";
 
 import pino from "pino";
 
-import {
-  launchAgentRun,
-  type LaunchAgentRunResult,
-} from "@/lib/agents/launch";
+import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { EXPERIMENT_JUDGE_AGENT_ID } from "@/lib/experiments/constants";
 
 const log = pino({

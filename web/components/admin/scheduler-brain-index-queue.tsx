@@ -202,7 +202,7 @@ export function SchedulerBrainIndexQueue({
               </tr>
             ) : (
               queue.rows.map((job) => (
-                <BrainIndexJobRow job={job} key={job.id} />
+                <BrainIndexJobRow key={job.id} job={job} />
               ))
             )}
           </tbody>

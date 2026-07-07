@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  autoMatchRunners,
+  baseModelName,
   resolveRunSessions,
   resolveRunnerSlot,
   resolveSlotConfig,
+  runnerIntentCandidates,
   type RunnerCatalogEntry,
   type RunSessionResolutionInput,
 } from "@/lib/acp-runners/resolve";
+import { isMaisterError } from "@/lib/errors";
 
 function runner(
   input: Partial<RunnerCatalogEntry> &
@@ -42,6 +44,31 @@ const codexGpt = runner({
 
 const catalog = [claudeOpus, claudeSonnet, codexGpt];
 
+function expectMaisterCode(
+  fn: () => unknown,
+  code: "CONFIG" | "EXECUTOR_UNAVAILABLE",
+): void {
+  try {
+    fn();
+    expect.unreachable(`expected ${code}`);
+  } catch (err) {
+    expect(isMaisterError(err)).toBe(true);
+    if (isMaisterError(err)) {
+      expect(err.code).toBe(code);
+    }
+  }
+}
+
+describe("baseModelName", () => {
+  it("strips exactly one trailing model variant suffix", () => {
+    expect(baseModelName("claude-opus-4-8[1m]")).toBe("claude-opus-4-8");
+    expect(baseModelName("claude-opus-4-8[1m][beta]")).toBe(
+      "claude-opus-4-8[1m]",
+    );
+    expect(baseModelName("claude-opus-4-8")).toBe("claude-opus-4-8");
+  });
+});
+
 describe("resolveSlotConfig", () => {
   it("derefs a string ref through runner_profiles", () => {
     const config = resolveSlotConfig("primary", {
@@ -74,9 +101,9 @@ describe("resolveSlotConfig", () => {
   });
 });
 
-describe("autoMatchRunners", () => {
-  it("matches on capability + model + provider", () => {
-    const matches = autoMatchRunners(
+describe("runnerIntentCandidates", () => {
+  it("grades exact matches separately from same-capability fallback candidates", () => {
+    const candidates = runnerIntentCandidates(
       {
         runner_type: "acp",
         capability_agent: "claude",
@@ -87,11 +114,15 @@ describe("autoMatchRunners", () => {
       catalog,
     );
 
-    expect(matches.map((r) => r.id)).toEqual(["claude-opus"]);
+    expect(candidates.exact.map((r) => r.id)).toEqual(["claude-opus"]);
+    expect(candidates.sameCapability.map((r) => r.id)).toEqual([
+      "claude-opus",
+      "claude-sonnet",
+    ]);
   });
 
   it("matches every capability runner when model/provider are unpinned", () => {
-    const matches = autoMatchRunners(
+    const candidates = runnerIntentCandidates(
       {
         runner_type: "acp",
         capability_agent: "claude",
@@ -100,11 +131,14 @@ describe("autoMatchRunners", () => {
       catalog,
     );
 
-    expect(matches.map((r) => r.id)).toEqual(["claude-opus", "claude-sonnet"]);
+    expect(candidates.exact.map((r) => r.id)).toEqual([
+      "claude-opus",
+      "claude-sonnet",
+    ]);
   });
 
   it("excludes disabled and not-ready runners", () => {
-    const matches = autoMatchRunners(
+    const candidates = runnerIntentCandidates(
       {
         runner_type: "acp",
         capability_agent: "claude",
@@ -116,7 +150,7 @@ describe("autoMatchRunners", () => {
       ],
     );
 
-    expect(matches).toHaveLength(0);
+    expect(candidates).toEqual({ exact: [], sameCapability: [] });
   });
 });
 
@@ -124,6 +158,8 @@ describe("resolveRunnerSlot", () => {
   const base = {
     runnerProfiles: undefined,
     runners: catalog,
+    project: { defaultRunnerId: null },
+    platform: { defaultRunnerId: "claude-opus" },
   };
 
   it("returns null for a config-less slot with no override/binding", () => {
@@ -202,6 +238,291 @@ describe("resolveRunnerSlot", () => {
     });
   });
 
+  it("selects an exact intent match silently", () => {
+    const resolved = resolveRunnerSlot({
+      ...base,
+      slotKey: "session:implement",
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "claude-opus-4-8",
+        provider: { kind: "anthropic" },
+        permission_policy: "default",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: "claude-opus",
+      runnerResolutionTier: "autoMatch",
+      resolutionSource: "session:implement",
+    });
+    expect(resolved?.resolutionWarning).toBeUndefined();
+  });
+
+  it("falls back to a same-base model variant with a warning", () => {
+    const resolved = resolveRunnerSlot({
+      ...base,
+      runners: [
+        runner({
+          id: "claude-opus-1m",
+          capabilityAgent: "claude",
+          model: "claude-opus-4-8[1m]",
+        }),
+      ],
+      slotKey: "session:implement",
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "claude-opus-4-8",
+        provider: { kind: "anthropic" },
+        permission_policy: "default",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: "claude-opus-1m",
+      runnerResolutionTier: "autoMatch",
+      resolutionWarning: {
+        code: "runner_intent_soft_mismatch",
+        requested: { model: "claude-opus-4-8", providerKind: "anthropic" },
+        launched: {
+          runnerId: "claude-opus-1m",
+          model: "claude-opus-4-8[1m]",
+          providerKind: "anthropic",
+        },
+      },
+    });
+  });
+
+  it("falls back on provider-kind mismatch with a warning", () => {
+    const resolved = resolveRunnerSlot({
+      ...base,
+      runners: [
+        runner({
+          id: "claude-compatible",
+          capabilityAgent: "claude",
+          model: "claude-opus-4-8",
+          providerKind: "anthropic_compatible",
+        }),
+      ],
+      slotKey: "session:review",
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "claude-opus-4-8",
+        provider: { kind: "anthropic" },
+        permission_policy: "default",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: "claude-compatible",
+      resolutionWarning: {
+        requested: { providerKind: "anthropic" },
+        launched: { providerKind: "anthropic_compatible" },
+      },
+    });
+  });
+
+  it("combines model and provider mismatch into one warning", () => {
+    const resolved = resolveRunnerSlot({
+      ...base,
+      runners: [
+        runner({
+          id: "claude-compatible-1m",
+          capabilityAgent: "claude",
+          model: "claude-opus-4-8[1m]",
+          providerKind: "anthropic_compatible",
+        }),
+      ],
+      slotKey: "session:review",
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "claude-opus-4-8",
+        provider: { kind: "anthropic" },
+        permission_policy: "default",
+      },
+    });
+
+    expect(resolved?.resolutionWarning).toMatchObject({
+      requested: {
+        model: "claude-opus-4-8",
+        providerKind: "anthropic",
+      },
+      launched: {
+        model: "claude-opus-4-8[1m]",
+        providerKind: "anthropic_compatible",
+      },
+    });
+  });
+
+  it("ranks same base model before project and platform defaults", () => {
+    const resolved = resolveRunnerSlot({
+      ...base,
+      runners: [
+        runner({
+          id: "project-default",
+          capabilityAgent: "claude",
+          model: "claude-sonnet-4-6",
+        }),
+        runner({
+          id: "platform-default",
+          capabilityAgent: "claude",
+          model: "claude-haiku-4-5",
+        }),
+        runner({
+          id: "same-base",
+          capabilityAgent: "claude",
+          model: "claude-opus-4-8[1m]",
+        }),
+      ],
+      project: { defaultRunnerId: "project-default" },
+      platform: { defaultRunnerId: "platform-default" },
+      slotKey: "session:implement",
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "claude-opus-4-8",
+        provider: { kind: "anthropic" },
+        permission_policy: "default",
+      },
+    });
+
+    expect(resolved?.runnerId).toBe("same-base");
+  });
+
+  it("uses same-capability project default before platform default", () => {
+    const resolved = resolveRunnerSlot({
+      ...base,
+      runners: [
+        runner({
+          id: "platform-default",
+          capabilityAgent: "claude",
+          model: "claude-haiku-4-5",
+        }),
+        runner({
+          id: "project-default",
+          capabilityAgent: "claude",
+          model: "claude-sonnet-4-6",
+        }),
+      ],
+      project: { defaultRunnerId: "project-default" },
+      platform: { defaultRunnerId: "platform-default" },
+      slotKey: "session:implement",
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "claude-opus-4-8",
+        provider: { kind: "anthropic" },
+        permission_policy: "default",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: "project-default",
+      runnerResolutionTier: "projectDefault",
+      resolutionWarning: {
+        launched: { runnerId: "project-default" },
+      },
+    });
+  });
+
+  it("skips disabled and not-ready defaults while searching fallback candidates", () => {
+    const resolved = resolveRunnerSlot({
+      ...base,
+      runners: [
+        runner({
+          id: "project-default",
+          capabilityAgent: "claude",
+          model: "claude-sonnet-4-6",
+          enabled: false,
+        }),
+        runner({
+          id: "platform-default",
+          capabilityAgent: "claude",
+          model: "claude-haiku-4-5",
+        }),
+        runner({
+          id: "not-ready-default",
+          capabilityAgent: "claude",
+          model: "claude-ignored",
+          ready: false,
+        }),
+      ],
+      project: { defaultRunnerId: "project-default" },
+      platform: { defaultRunnerId: "platform-default" },
+      slotKey: "session:implement",
+      slot: {
+        runner_type: "acp",
+        capability_agent: "claude",
+        model: "claude-opus-4-8",
+        provider: { kind: "anthropic" },
+        permission_policy: "default",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: "platform-default",
+      runnerResolutionTier: "platformDefault",
+    });
+  });
+
+  it("skips defaults with the wrong capability", () => {
+    expectMaisterCode(
+      () =>
+        resolveRunnerSlot({
+          ...base,
+          runners: [
+            runner({
+              id: "codex-default",
+              capabilityAgent: "codex",
+              model: "gpt-5-codex",
+              providerKind: "openai",
+            }),
+          ],
+          project: { defaultRunnerId: "codex-default" },
+          platform: { defaultRunnerId: "codex-default" },
+          slotKey: "session:implement",
+          slot: {
+            runner_type: "acp",
+            capability_agent: "claude",
+            model: "claude-opus-4-8",
+            provider: { kind: "anthropic" },
+            permission_policy: "default",
+          },
+        }),
+      "EXECUTOR_UNAVAILABLE",
+    );
+  });
+
+  it("throws when capability exists but no ranked fallback candidate remains", () => {
+    expectMaisterCode(
+      () =>
+        resolveRunnerSlot({
+          ...base,
+          runners: [
+            runner({
+              id: "unranked-claude",
+              capabilityAgent: "claude",
+              model: "claude-haiku-4-5",
+            }),
+          ],
+          project: { defaultRunnerId: null },
+          platform: { defaultRunnerId: null },
+          slotKey: "session:implement",
+          slot: {
+            runner_type: "acp",
+            capability_agent: "claude",
+            model: "claude-opus-4-8",
+            provider: { kind: "anthropic" },
+            permission_policy: "default",
+          },
+        }),
+      "EXECUTOR_UNAVAILABLE",
+    );
+  });
+
   it("resolves a bare profile-ref that IS a host runner id (stepTarget)", () => {
     const resolved = resolveRunnerSlot({
       ...base,
@@ -216,32 +537,62 @@ describe("resolveRunnerSlot", () => {
   });
 
   it("throws CONFIG when intent matches multiple host runners", () => {
-    expect(() =>
-      resolveRunnerSlot({
-        ...base,
-        slotKey: "session:default",
-        slot: {
-          runner_type: "acp",
-          capability_agent: "claude",
-          permission_policy: "default",
-        },
-      }),
-    ).toThrowError(/matches 2 host runners by intent/);
+    expectMaisterCode(
+      () =>
+        resolveRunnerSlot({
+          ...base,
+          slotKey: "session:default",
+          slot: {
+            runner_type: "acp",
+            capability_agent: "claude",
+            permission_policy: "default",
+          },
+        }),
+      "CONFIG",
+    );
   });
 
   it("throws EXECUTOR_UNAVAILABLE when no host matches the intent", () => {
-    expect(() =>
-      resolveRunnerSlot({
-        ...base,
-        slotKey: "session:default",
-        slot: {
-          runner_type: "acp",
-          capability_agent: "claude",
-          model: "claude-haiku-4-5",
-          permission_policy: "default",
-        },
-      }),
-    ).toThrowError(/no enabled\+ready host runner/);
+    expectMaisterCode(
+      () =>
+        resolveRunnerSlot({
+          ...base,
+          runners: [codexGpt],
+          slotKey: "session:default",
+          slot: {
+            runner_type: "acp",
+            capability_agent: "claude",
+            model: "claude-haiku-4-5",
+            permission_policy: "default",
+          },
+        }),
+      "EXECUTOR_UNAVAILABLE",
+    );
+  });
+
+  it("does not fall back from an explicit bad override", () => {
+    expectMaisterCode(
+      () =>
+        resolveRunnerSlot({
+          ...base,
+          overrideRunnerId: "ghost",
+          runners: [
+            runner({
+              id: "same-base",
+              capabilityAgent: "claude",
+              model: "claude-opus-4-8[1m]",
+            }),
+          ],
+          slotKey: "session:default",
+          slot: {
+            runner_type: "acp",
+            capability_agent: "claude",
+            model: "claude-opus-4-8",
+            permission_policy: "default",
+          },
+        }),
+      "EXECUTOR_UNAVAILABLE",
+    );
   });
 });
 
@@ -324,6 +675,41 @@ describe("resolveRunSessions", () => {
       sessionName: "review",
       runnerId: "codex-gpt",
       runnerResolutionTier: "autoMatch",
+    });
+  });
+
+  it("threads warning session names through resolved sessions", () => {
+    const out = resolveRunSessions(
+      input({
+        sessions: [
+          {
+            name: "review",
+            runner: {
+              runner_type: "acp",
+              capability_agent: "claude",
+              model: "claude-opus-4-8",
+              provider: { kind: "anthropic" },
+              permission_policy: "default",
+            },
+          },
+        ],
+        runners: [
+          runner({
+            id: "claude-opus-1m",
+            capabilityAgent: "claude",
+            model: "claude-opus-4-8[1m]",
+          }),
+        ],
+      }),
+    );
+
+    expect(out[0]).toMatchObject({
+      sessionName: "review",
+      runnerId: "claude-opus-1m",
+      resolutionWarning: {
+        sessionName: "review",
+        slotKey: "session:review",
+      },
     });
   });
 

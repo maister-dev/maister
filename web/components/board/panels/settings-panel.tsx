@@ -1,6 +1,7 @@
 import type { ProjectPageData } from "@/lib/queries/project";
 import type { ReactElement } from "react";
 import type { BrainHomeResolution } from "@/lib/brain/home-resolution";
+import type { BrainIndexingProfile } from "@/lib/brain/indexing-profiles";
 
 import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
@@ -16,7 +17,6 @@ import {
   getBrainProjectConfig,
   type BrainAutonomyPolicy,
 } from "@/lib/brain/autonomy";
-import type { BrainIndexingProfile } from "@/lib/brain/indexing-profiles";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
 import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";

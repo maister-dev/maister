@@ -48,7 +48,12 @@ beforeEach(async () => {
   mocks.launchExperimentVariants.mockResolvedValue({
     experimentId: "exp-1",
     outcomes: [
-      { variantKey: "claude", replicateOrdinal: 1, runId: "run-1", status: "Running" },
+      {
+        variantKey: "claude",
+        replicateOrdinal: 1,
+        runId: "run-1",
+        status: "Running",
+      },
     ],
   });
 

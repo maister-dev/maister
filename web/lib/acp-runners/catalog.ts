@@ -7,8 +7,13 @@ import { and, eq } from "drizzle-orm";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-const { platformAcpRunners, platformRouterSidecars, flowRunnerRemaps } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  platformAcpRunners,
+  platformRouterSidecars,
+  flowRunnerRemaps,
+  platformRuntimeSettings,
+  projects,
+} = schemaModule as unknown as Record<string, any>;
 
 // A minimal read surface — every caller already holds a Drizzle client or a
 // transaction; both satisfy this.
@@ -102,4 +107,28 @@ export async function loadFlowRunnerBindings(
     );
 
   return rows as RunnerSlotBinding[];
+}
+
+export async function loadProjectPlatformRunnerDefaults(
+  db: Db,
+  projectId: string,
+): Promise<{
+  readonly project: { readonly defaultRunnerId?: string | null };
+  readonly platform: { readonly defaultRunnerId?: string | null };
+}> {
+  const [projectRows, platformRows] = await Promise.all([
+    db
+      .select({ defaultRunnerId: projects.defaultRunnerId })
+      .from(projects)
+      .where(eq(projects.id, projectId)),
+    db
+      .select({ defaultRunnerId: platformRuntimeSettings.defaultRunnerId })
+      .from(platformRuntimeSettings)
+      .where(eq(platformRuntimeSettings.id, "singleton")),
+  ]);
+
+  return {
+    project: { defaultRunnerId: projectRows[0]?.defaultRunnerId ?? null },
+    platform: { defaultRunnerId: platformRows[0]?.defaultRunnerId ?? null },
+  };
 }

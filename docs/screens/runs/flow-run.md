@@ -160,9 +160,12 @@ The landing focus follows state:
 
 - `getRunDetail(runId)` supplies run, project, branch, workspace, HITL,
   lifecycle metadata, and the **task title + prompt**, **flow ref**, and
-  **current node label** that feed the task-first header. For `budget_breach`
-  HITL rows it also supplies the server-computed option list, `claimStage`, and
-  the budget progress DTO used by the run-detail decision panel.
+  **current node label** that feed the task-first header. It also supplies
+  persisted runner-resolution warnings from `run_sessions.resolution_warning`,
+  so the run page still shows soft model/provider fallback advisories even if
+  the post-commit event-log append failed. For `budget_breach` HITL rows it also
+  supplies the server-computed option list, `claimStage`, and the budget
+  progress DTO used by the run-detail decision panel.
 - `loadRunManifest(runId)`, `compileManifest`, `buildGraphTopology`, and
   `presentationLayout` build the Flow topology when a pinned manifest exists.
   Agent runs without a manifest use an agent result DTO instead of Flow

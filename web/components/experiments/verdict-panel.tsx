@@ -39,7 +39,9 @@ export interface JudgePanelLabels {
   settings: string;
 }
 
-function isTerminal(status: ExperimentComparisonDTO["experiment"]["status"]): boolean {
+function isTerminal(
+  status: ExperimentComparisonDTO["experiment"]["status"],
+): boolean {
   return status === "concluded" || status === "abandoned";
 }
 
@@ -104,7 +106,9 @@ export function VerdictPanel({
 
   async function submit(formEl: HTMLFormElement): Promise<void> {
     const form = new FormData(formEl);
-    const outcome = String(form.get("outcome")) as ExperimentHumanVerdict["outcome"];
+    const outcome = String(
+      form.get("outcome"),
+    ) as ExperimentHumanVerdict["outcome"];
     const winnerVariantKey =
       outcome === "winner" ? String(form.get("winnerVariantKey")) : undefined;
     const skippedOptionalCriteria = comparison.experiment.rubric.criteria
@@ -133,11 +137,13 @@ export function VerdictPanel({
     );
 
     if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as
-        | { message?: string; code?: string }
-        | null;
+      const body = (await res.json().catch(() => null)) as {
+        message?: string;
+        code?: string;
+      } | null;
 
       setError(body?.message ?? body?.code ?? labels.validationError);
+
       return;
     }
 
@@ -352,9 +358,10 @@ export function JudgePanel({
       );
 
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as
-          | { message?: string; code?: string }
-          | null;
+        const body = (await res.json().catch(() => null)) as {
+          message?: string;
+          code?: string;
+        } | null;
 
         setError(body?.message ?? body?.code ?? labels.unavailable);
 
@@ -375,7 +382,10 @@ export function JudgePanel({
       {!available ? (
         <p className="m-0 mt-2 text-sm text-mute">
           {labels.unavailable}{" "}
-          <Link className="text-amber" href={`/projects/${projectSlug}?tab=agents`}>
+          <Link
+            className="text-amber"
+            href={`/projects/${projectSlug}?tab=agents`}
+          >
             {labels.settings}
           </Link>
         </p>

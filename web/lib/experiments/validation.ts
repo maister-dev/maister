@@ -1,5 +1,6 @@
-import { MaisterError } from "@/lib/errors-core";
 import type { ExperimentImmutableDefinition } from "@/lib/experiments/types";
+
+import { MaisterError } from "@/lib/errors-core";
 
 function stableJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) {

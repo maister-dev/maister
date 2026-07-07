@@ -1,5 +1,11 @@
 import "server-only";
 
+import type {
+  ExperimentMemberRunProgress,
+  ExperimentMemberRunStatus,
+  ExperimentStatus,
+} from "@/lib/experiments/types";
+
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
@@ -10,15 +16,12 @@ import {
   deriveExperimentProgressStatus,
 } from "@/lib/experiments/fsm";
 import { experimentStatusTimestampPatch } from "@/lib/experiments/repository";
-import type {
-  ExperimentMemberRunProgress,
-  ExperimentMemberRunStatus,
-  ExperimentStatus,
-} from "@/lib/experiments/types";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { experiments, experimentRuns, runs } =
-  schemaModule as unknown as Record<string, any>;
+const { experiments, experimentRuns, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): pg|sqlite drizzle union.
 type Db = any;
@@ -136,19 +139,14 @@ export async function syncExperimentStatusForRun(args: {
       .select()
       .from(experimentRuns)
       .where(eq(experimentRuns.experimentId, experimentId))
-  ).filter(
-    (row: Record<string, unknown>) => row.experimentId === experimentId,
-  );
+  ).filter((row: Record<string, unknown>) => row.experimentId === experimentId);
   const memberRunIds = allMemberRows.map((row: Record<string, unknown>) =>
     String(row.runId),
   );
   const runRows =
     memberRunIds.length === 0
       ? []
-      : await args.db
-          .select()
-          .from(runs)
-          .where(inArray(runs.id, memberRunIds));
+      : await args.db.select().from(runs).where(inArray(runs.id, memberRunIds));
   const statusByRunId = new Map(
     (runRows as Array<Record<string, unknown>>).map((row) => [
       String(row.id),
@@ -185,10 +183,7 @@ export async function syncExperimentStatusForRun(args: {
     .update(experiments)
     .set(statusUpdateValues(fromStatus, toStatus, new Date()))
     .where(
-      and(
-        eq(experiments.id, experimentId),
-        eq(experiments.status, fromStatus),
-      ),
+      and(eq(experiments.id, experimentId), eq(experiments.status, fromStatus)),
     );
 
   if (typeof updateQuery.returning === "function") {

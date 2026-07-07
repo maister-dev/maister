@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 const loadRunnerCatalog = vi.hoisted(() => vi.fn());
 const loadFlowRunnerBindings = vi.hoisted(() => vi.fn());
+const loadProjectPlatformRunnerDefaults = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/acp-runners/catalog", () => ({
   loadRunnerCatalog,
   loadFlowRunnerBindings,
+  loadProjectPlatformRunnerDefaults,
 }));
 
 import {
@@ -94,6 +96,10 @@ describe("launchConsensusDraftRuns", () => {
       },
     ]);
     loadFlowRunnerBindings.mockResolvedValue([]);
+    loadProjectPlatformRunnerDefaults.mockResolvedValue({
+      project: { defaultRunnerId: null },
+      platform: { defaultRunnerId: null },
+    });
 
     const launchAgent = vi.fn(async () => ({
       runId: "agent-child",

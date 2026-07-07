@@ -104,10 +104,7 @@ async function takeProjectRelationLock(
       throw error;
     }
 
-    log.debug(
-      { projectId },
-      "relation advisory lock unavailable — skipping",
-    );
+    log.debug({ projectId }, "relation advisory lock unavailable — skipping");
   }
 }
 

@@ -71,15 +71,16 @@ describe("buildFilesMatrix", () => {
     expect(matrix.filters.different.map((row) => row.path)).toEqual([
       "different.ts",
     ]);
-    expect(matrix.rows.find((row) => row.path === "same.ts")?.touchedBy).toEqual([
-      "claude",
-      "codex",
-    ]);
+    expect(
+      matrix.rows.find((row) => row.path === "same.ts")?.touchedBy,
+    ).toEqual(["claude", "codex"]);
   });
 
   it("is empty for absent summaries", () => {
     expect(
-      buildFilesMatrix([{ variantKey: "claude", replicateOrdinal: 1, files: [] }]),
+      buildFilesMatrix([
+        { variantKey: "claude", replicateOrdinal: 1, files: [] },
+      ]),
     ).toEqual({ rows: [], filters: { all: [], different: [], same: [] } });
   });
 });

@@ -13,6 +13,8 @@ import {
   resolveRunner,
   resolveRunSessions,
   type RunnerCatalogEntry,
+  type RunnerResolutionTier,
+  type RunnerResolutionWarning,
   type RunSessionSlot,
 } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
@@ -68,6 +70,14 @@ type FlowLaunchIssue =
   | "unsupported_schema"
   | "incompatible";
 
+type SessionPreviewResolution = {
+  readonly sessionName: string;
+  readonly runnerId: string | null;
+  readonly tier: RunnerResolutionTier | null;
+  readonly warning: RunnerResolutionWarning | null;
+  readonly declaresRunner: boolean;
+};
+
 const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
   "Enabled",
   "UpdateAvailable",
@@ -110,6 +120,16 @@ function errorResponse(err: unknown): NextResponse {
     { code: "CRASH", message: "internal error" },
     { status: 500 },
   );
+}
+
+function runnerPreviewErrorFields(err: unknown): {
+  readonly code: string;
+  readonly message: string;
+} {
+  if (isMaisterError(err)) return { code: err.code, message: err.message };
+  if (err instanceof Error) return { code: "CRASH", message: err.message };
+
+  return { code: "CRASH", message: String(err) };
 }
 
 function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
@@ -376,25 +396,50 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             ).sessions.values(),
           ]
         : [];
-    const sessionResolutions = sessionSlots.map((session) => {
-      try {
-        const [resolution] = resolveRunSessions({
-          sessions: [session],
-          runnerProfiles,
-          bindings,
-          ...defaultChain,
-          runners: runnerCatalog,
-        });
+    const sessionResolutions: SessionPreviewResolution[] = sessionSlots.map(
+      (session) => {
+        const declaresRunner = session.runner !== undefined;
 
-        return {
-          sessionName: session.name,
-          runnerId: resolution.runnerId as string | null,
-          tier: resolution.runnerResolutionTier as string,
-        };
-      } catch {
-        return { sessionName: session.name, runnerId: null, tier: null };
-      }
-    });
+        try {
+          const [resolution] = resolveRunSessions({
+            sessions: [session],
+            runnerProfiles,
+            bindings,
+            ...defaultChain,
+            runners: runnerCatalog,
+          });
+
+          return {
+            sessionName: session.name,
+            runnerId: resolution.runnerId,
+            tier: resolution.runnerResolutionTier,
+            warning: resolution.resolutionWarning ?? null,
+            declaresRunner,
+          };
+        } catch (err) {
+          log.warn(
+            {
+              err: runnerPreviewErrorFields(err),
+              taskId: task.id,
+              projectId: project.id,
+              flowId: flow?.id ?? null,
+              revisionId: revision?.id ?? null,
+              sessionName: session.name,
+              declaresRunner,
+            },
+            "runner session preview resolution failed",
+          );
+
+          return {
+            sessionName: session.name,
+            runnerId: null,
+            tier: null,
+            warning: null,
+            declaresRunner,
+          };
+        }
+      },
+    );
     const defaultSession =
       sessionResolutions.find((s) => s.sessionName === "default") ??
       sessionResolutions[0];
@@ -403,11 +448,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         ? {
             runnerId: defaultSession.runnerId,
             runnerResolutionTier: defaultSession.tier,
+            warning: defaultSession.warning,
           }
+        : defaultSession?.declaresRunner
+          ? {
+              runnerId: null,
+              runnerResolutionTier: null,
+              warning: null,
+            }
         : {
             runnerId: fallbackResolution.runnerId,
-            runnerResolutionTier:
-              fallbackResolution.runnerResolutionTier as string,
+            runnerResolutionTier: fallbackResolution.runnerResolutionTier,
+            warning: null,
           };
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
@@ -524,6 +576,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               runnerId: session.runnerId,
               label: session.sessionName,
               overridable: true,
+              warning: session.warning,
             }))
           : [],
       task: {
@@ -572,6 +625,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       selectedFlowId: flow?.id ?? "",
       selectedRunnerId:
         (task.runnerId as string | null) ?? defaultResolution.runnerId,
+      selectedRunnerWarning: task.runnerId ? null : defaultResolution.warning,
       branches,
       defaultBaseBranch,
       defaultTargetBranch,

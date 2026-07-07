@@ -10,6 +10,7 @@ import type { Db, LoadedRun } from "../runner-core";
 
 import {
   loadFlowRunnerBindings,
+  loadProjectPlatformRunnerDefaults,
   loadRunnerCatalog,
 } from "@/lib/acp-runners/catalog";
 import { resolveRunnerSlot } from "@/lib/acp-runners/resolve";
@@ -64,17 +65,20 @@ export async function resolveConsensusRunnerSlot(args: {
   runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
   roleLabel: string;
 }): Promise<ResolvedRunnerSlot> {
-  const [runners, bindings] = await Promise.all([
+  const [runners, bindings, defaults] = await Promise.all([
     loadRunnerCatalog(args.db),
     args.flowRevisionId
       ? loadFlowRunnerBindings(args.db, args.projectId, args.flowRevisionId)
       : Promise.resolve([]),
+    loadProjectPlatformRunnerDefaults(args.db, args.projectId),
   ]);
   const resolved = resolveRunnerSlot({
     slotKey: args.slotKey,
     slot: args.slot,
     runnerProfiles: args.runnerProfiles,
     binding: bindings.find((binding) => binding.slotKey === args.slotKey),
+    project: defaults.project,
+    platform: defaults.platform,
     runners,
   });
 

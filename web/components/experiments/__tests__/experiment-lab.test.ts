@@ -150,7 +150,9 @@ function comparison(
   };
 }
 
-function render(status: ExperimentComparisonDTO["experiment"]["status"]): string {
+function render(
+  status: ExperimentComparisonDTO["experiment"]["status"],
+): string {
   return renderToStaticMarkup(
     createElement(ExperimentLab, {
       comparison: comparison(status),
@@ -202,10 +204,10 @@ describe("ExperimentLab", () => {
           ...labels,
           eyebrow: "Лаборатория",
           launch: "Запустить",
-      status: { ...labels.status, running: "В работе" },
-      launchVariants: "Варианты запуска",
-      launchReplicates: "Повторы",
-    },
+          status: { ...labels.status, running: "В работе" },
+          launchVariants: "Варианты запуска",
+          launchReplicates: "Повторы",
+        },
         canManage: true,
         canConclude: false,
         projectSlug: "proj",

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { PromotionHold } from "@/lib/auto-promotion/types";
+
 import { and, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -10,7 +12,6 @@ import {
   type AutoPromotionRunView,
 } from "@/lib/auto-promotion/evaluate";
 import { buildAutoPromotionReaders } from "@/lib/auto-promotion/readers";
-import type { PromotionHold } from "@/lib/auto-promotion/types";
 import { getDb } from "@/lib/db/client";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -238,11 +239,14 @@ export async function runAutoPromoteJob(
 // Cursor read/write target the seeded singleton row by its known id; an absent
 // row (the direct-call unit tests DELETE scheduler_jobs) reads null / no-ops the
 // write, so the sweep degrades to head-start with no persistence.
-async function readAutoPromoteCursor(db: Db): Promise<AutoPromoteCursor | null> {
+async function readAutoPromoteCursor(
+  db: Db,
+): Promise<AutoPromoteCursor | null> {
   const res = await db.execute(
     sql`SELECT target -> 'cursor' AS cursor FROM scheduler_jobs WHERE id = ${DEFAULT_AUTO_PROMOTE_JOB_ID}`,
   );
-  const raw = (res.rows?.[0]?.cursor ?? null) as Partial<AutoPromoteCursor> | null;
+  const raw = (res.rows?.[0]?.cursor ??
+    null) as Partial<AutoPromoteCursor> | null;
 
   return raw && typeof raw.sortKey === "string" && typeof raw.id === "string"
     ? { sortKey: raw.sortKey, id: raw.id }
@@ -272,8 +276,16 @@ async function promoteCandidate(args: {
   fileCount: number;
   summary: AutoPromoteSummary;
 }): Promise<void> {
-  const { db, promote, runId, projectId, taskId, evaluation, fileCount, summary } =
-    args;
+  const {
+    db,
+    promote,
+    runId,
+    projectId,
+    taskId,
+    evaluation,
+    fileCount,
+    summary,
+  } = args;
   const lane = evaluation.lane;
 
   try {

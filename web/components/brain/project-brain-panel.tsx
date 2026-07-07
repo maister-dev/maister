@@ -229,9 +229,9 @@ function SourceIndexedFilesCell({
         <div className="grid gap-1">
           {source.indexedFilePaths.map((path) => (
             <Link
+              key={path}
               className="truncate font-mono text-[11px] text-accent underline-offset-2 hover:underline"
               href={repoPathHref(slug, path)}
-              key={path}
             >
               {path}
             </Link>
@@ -391,8 +391,8 @@ function IndexStatusSection({
             <div className="divide-y divide-line">
               {indexStatus.activeJobs.map((job) => (
                 <div
-                  className="grid gap-2 py-2 md:grid-cols-[minmax(0,1fr)_auto]"
                   key={job.id}
+                  className="grid gap-2 py-2 md:grid-cols-[minmax(0,1fr)_auto]"
                 >
                   <div className="min-w-0">
                     <div className="truncate font-mono text-[11.5px] text-ink">

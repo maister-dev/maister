@@ -20,6 +20,7 @@ import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { RunnerResolutionWarning } from "@/lib/acp-runners/resolve";
 import type {
   BudgetBreachAvailableOption,
   BudgetBreachClaimStage,
@@ -92,6 +93,7 @@ const {
   tasks,
   users,
   workspaces,
+  runSessions,
 } = schema;
 
 const log = pino({
@@ -188,6 +190,10 @@ export interface RunDetail {
   // for first paint. `evaluation` is non-null only for Review flow runs; the GET
   // route computes the SAME object so the panel is byte-identical (INV-10).
   autoPromotion: RunAutoPromotionPanel;
+  runnerResolutionWarnings: Array<{
+    sessionName: string;
+    warning: RunnerResolutionWarning;
+  }>;
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
@@ -361,6 +367,19 @@ export const getRunDetail = cache(async function getRunDetail(
           flowId: row.flowId,
         })
       : null;
+  const runnerResolutionWarningRows = await client
+    .select({
+      sessionName: runSessions.sessionName,
+      warning: runSessions.resolutionWarning,
+    })
+    .from(runSessions)
+    .where(
+      and(
+        eq(runSessions.runId, runId),
+        isNotNull(runSessions.resolutionWarning),
+      ),
+    )
+    .orderBy(asc(runSessions.sessionName));
 
   // Derived run-scope budget warn signal (AC-BADGE-1). Fail-open fast path: only
   // query the live token sum when the run scope carries a positive maxTokens
@@ -453,6 +472,10 @@ export const getRunDetail = cache(async function getRunDetail(
       removedAt: row.removedAt,
       archivedBranch: row.archivedBranch,
     }),
+    runnerResolutionWarnings: runnerResolutionWarningRows.map((warningRow) => ({
+      sessionName: warningRow.sessionName,
+      warning: warningRow.warning as RunnerResolutionWarning,
+    })),
     autoPromotion,
     pendingHitl: pending
       ? {

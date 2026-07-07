@@ -1,11 +1,12 @@
 import "server-only";
 
+import type { ExperimentStatus } from "@/lib/experiments/types";
+
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { experiments } from "@/lib/db/schema";
 import { assertExperimentTransition } from "@/lib/experiments/fsm";
-import type { ExperimentStatus } from "@/lib/experiments/types";
 
 type DbTx = {
   update: (table: unknown) => {
@@ -51,11 +52,7 @@ export async function transitionExperimentStatus(
   const set = {
     status: args.toStatus,
     updatedAt: args.now,
-    ...experimentStatusTimestampPatch(
-      args.fromStatus,
-      args.toStatus,
-      args.now,
-    ),
+    ...experimentStatusTimestampPatch(args.fromStatus, args.toStatus, args.now),
   };
 
   log.info(

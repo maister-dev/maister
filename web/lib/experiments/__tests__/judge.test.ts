@@ -15,7 +15,10 @@ describe("launchExperimentJudge", () => {
   });
 
   it("dispatches the core judge through the standard manual agent path", async () => {
-    mocks.launchAgentRun.mockResolvedValue({ runId: "run-judge", status: "Running" });
+    mocks.launchAgentRun.mockResolvedValue({
+      runId: "run-judge",
+      status: "Running",
+    });
 
     const { launchExperimentJudge } = await import("@/lib/experiments/judge");
 

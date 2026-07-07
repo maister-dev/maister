@@ -285,7 +285,9 @@ async function getNodeAttempt(runId: string) {
     .from(schema.nodeAttempts)
     .where(eq(schema.nodeAttempts.runId, runId));
 
-  return attempts.find((attempt: { nodeId?: string }) => attempt.nodeId === "implement");
+  return attempts.find(
+    (attempt: { nodeId?: string }) => attempt.nodeId === "implement",
+  );
 }
 
 // A SupervisorApi spy. createSession returns a canned session and streamSession

@@ -40,8 +40,11 @@ machine ([runs.md](runs.md)), generic graph traversal
 - **`run_sessions` row** — the per-`(run, session)` runner state record
   and the sole source of truth: `id, run_id, session_name, runner_id,
   runner_resolution_tier, capability_agent, runner_snapshot, acp_session_id,
-  resolution_source`, timestamps, `UNIQUE(run_id, session_name)`. A non-flow run
-  (scratch / agent) has exactly one `default` row. (See
+  resolution_source, resolution_warning`, timestamps,
+  `UNIQUE(run_id, session_name)`. `resolution_warning` is nullable and stores a
+  secret-free soft model/provider mismatch warning when the slot launches on a
+  same-capability fallback. A non-flow run (scratch / agent) has exactly one
+  `default` row. (See
   [db/runs-domain.md](../db/runs-domain.md).)
 - **Runner slot** — the unit of binding, addressed by `slot_key ∈
   {session:<name>, consensus:<nodeId>:<participantId>,
@@ -111,11 +114,12 @@ sequenceDiagram
     participant WT as git worktree
     participant DB as database
     participant SUP as supervisor
-    U->>RES: resolve N sessions (binding → auto-match → default chain)
-    RES-->>U: N resolved runner snapshots
+    U->>RES: resolve N sessions (binding → exact intent → graded fallback/default chain)
+    RES-->>U: N resolved runner snapshots + optional warnings
     U->>WT: git worktree add (before tx)
-    U->>DB: one tx { insert runs + insert N run_sessions }
+    U->>DB: one tx { insert runs + insert N run_sessions incl. warnings }
     DB-->>U: commit
+    U->>U: append run.runner_resolution_warning events for warnings
     U->>SUP: POST /sessions (sessionName) for the first session
     SUP-->>U: supervisor sessionId
     U->>DB: persist run_sessions.acp_session_id
@@ -153,16 +157,23 @@ flowchart LR
 - A session switch MUST reuse checkpoint → `session/resume`; resume MUST use the ACP
   `session/resume` protocol call and MUST fail loud (`MaisterError("CHECKPOINT")`),
   never `session/new`, when the adapter lacks `sessionCapabilities.resume`.
-- Every runner slot whose config lacks a unique host auto-match MUST be bound
-  (`Pending → Mapped`) before the run can launch; slot enumeration and the binding
-  UI MUST NOT dedup by intent (identical-intent consensus participants are distinct
-  slots).
+- Every runner slot whose config has more than one exact host match MUST be bound
+  (`Pending → Mapped`) before the run can launch. A slot with no enabled+ready
+  runner for the requested `capability_agent` MUST fail with
+  `MaisterError("EXECUTOR_UNAVAILABLE")`. A slot whose capability matches but
+  whose soft `model` and/or `provider.kind` differs MAY launch on the resolver's
+  same-capability fallback and MUST persist `run_sessions.resolution_warning`.
+  Slot enumeration and the binding UI MUST NOT dedup by intent
+  (identical-intent consensus participants are distinct slots).
 - Binding rows MUST be keyed `(project_id, flow_revision_id, slot_key)` with
   `slot_key` one of the declared forms; a revision that introduces a new slot MUST
   re-prompt rather than silently inherit.
-- Per-session resolution MUST follow: binding → auto-match → (for the `default`
-  session with no explicit runner only) project-flow → platform-flow → project →
-  platform default; the ephemeral per-run override MUST NOT persist.
+- Per-session resolution MUST follow: binding → exact intent auto-match → graded
+  same-capability fallback → (for the `default` session with no explicit runner
+  only) project-flow → platform-flow → project → platform default. Soft fallback
+  priority is same base model, then project default of the same capability, then
+  platform default of the same capability. The ephemeral per-run override MUST
+  NOT persist.
 - `judge` MUST be an ordinary runner-bearing node resolved through its session
   runner; `judge.settings.model` MUST NOT exist (removed clean-cutover).
 - `POST /sessions` MUST carry `sessionName` so `cost.jsonl` and `run.events.jsonl`
@@ -180,10 +191,15 @@ flowchart LR
   top-level `sessions:` → `MaisterError("CONFIG")` at manifest load.
 - **Consensus inside `sessions:`** — a `consensus` node assigned to a named session
   → `MaisterError("CONFIG")` (consensus is excluded from `sessions:`).
-- **Unbound slot at launch** — a slot with no auto-match and no binding blocks
-  launch with `MaisterError("EXECUTOR_UNAVAILABLE")`.
+- **Capability absent at launch** — a slot with no enabled+ready runner for the
+  requested hard `capability_agent` blocks launch with
+  `MaisterError("EXECUTOR_UNAVAILABLE")`.
 - **Auto-match ambiguity** — more than one host runner matches a slot's intent →
-  treated as no-unique-match → the slot requires an explicit binding.
+  `MaisterError("CONFIG")` → the slot requires an explicit binding.
+- **Soft model/provider mismatch** — a slot with the required capability but a
+  different model variant and/or provider kind launches on the ranked fallback,
+  persists one warning in `run_sessions.resolution_warning`, and mirrors it to
+  `run.events.jsonl`.
 - **Adapter without resume on switch** — a session switch targeting an adapter that
   does not advertise `sessionCapabilities.resume` fails loud
   (`MaisterError("CHECKPOINT")`), never silently `session/new`.

@@ -17,6 +17,7 @@ import type { AcpSessionState, FlowContext, StepResult } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun, RunFlowOptions } from "./runner-core";
+import type { CapabilitySelection } from "@/lib/experiments/variant-config";
 
 import { randomUUID } from "node:crypto";
 import { access, readFile, stat, unlink } from "node:fs/promises";
@@ -186,7 +187,6 @@ import {
   loadExperimentOverlayForRun,
   persistExperimentMaterializationDelta,
 } from "@/lib/experiments/materialization-delta";
-import type { CapabilitySelection } from "@/lib/experiments/variant-config";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 
@@ -1639,7 +1639,10 @@ async function materializeNodeCapabilities(
   // profile. codex pins supervisor-side via setSessionModel, so a settings-less
   // codex node needs no materialization.
   const pinModelOnly =
-    !declares && !hasExperimentOverlay && agent === "claude" && !!executor.model;
+    !declares &&
+    !hasExperimentOverlay &&
+    agent === "claude" &&
+    !!executor.model;
 
   if (!declares && !pinModelOnly && !hasExperimentOverlay) return undefined;
 
@@ -4305,7 +4308,12 @@ export async function runGraph(
         .update(runs)
         // ADR-126 T8: stamp the auto-promotion grace anchor alongside the flip
         // (a column, NOT a run.review domain emit — D-3).
-        .set({ status: "Review", endedAt, reviewEnteredAt: endedAt, currentStepId: null })
+        .set({
+          status: "Review",
+          endedAt,
+          reviewEnteredAt: endedAt,
+          currentStepId: null,
+        })
         .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
         .returning({ projectId: runs.projectId });
 

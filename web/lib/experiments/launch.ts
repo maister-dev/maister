@@ -1,10 +1,15 @@
 import "server-only";
 
+import type { ProjectAction } from "@/lib/authz";
+import type { CapabilityAgent } from "@/lib/config.schema";
+import type {
+  ExperimentStatus,
+  ExperimentVariant,
+} from "@/lib/experiments/types";
+
 import { and, desc, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
-import type { ProjectAction } from "@/lib/authz";
-import type { CapabilityAgent } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
@@ -14,10 +19,6 @@ import {
   launchExperimentInputSchema,
   type LaunchExperimentInput,
 } from "@/lib/experiments/http-schemas";
-import type {
-  ExperimentStatus,
-  ExperimentVariant,
-} from "@/lib/experiments/types";
 import {
   assertOverlayRefsKnown,
   assertVariantOverlaySupported,
@@ -369,6 +370,7 @@ export async function launchExperimentVariants(
     experiment.variants as ExperimentVariant[],
     input.variants,
   );
+
   await validateVariantOverlayBatch({
     projectId: args.projectId,
     project,

@@ -13650,6 +13650,11 @@ components:
               runnerId: { type: string, nullable: true }
               label: { type: string, nullable: true }
               overridable: { type: boolean }
+              warning:
+                {
+                  $ref: "#/components/schemas/RunnerResolutionWarning",
+                  nullable: true,
+                }
         runners:
           type: array
           items:
@@ -13674,6 +13679,11 @@ components:
                     type: string
                     enum: [runner, flow, project-default, platform-default]
         selectedRunnerId: { type: string, nullable: true }
+        selectedRunnerWarning:
+          {
+            $ref: "#/components/schemas/RunnerResolutionWarning",
+            nullable: true,
+          }
         branches:
           type: array
           items: { type: string }
@@ -13689,6 +13699,39 @@ components:
             packages that have a newer cut and/or uncut Studio edits — the launch
             dialog's per-package keep/adopt/cut_and_adopt choices. Empty for
             projects with no such packages.
+    RunnerResolutionWarning:
+      type: object
+      additionalProperties: false
+      required: [code, slotKey, requested, launched, message]
+      description: |
+        Non-fatal runner intent warning emitted when a Flow runner slot's hard
+        `capability_agent` matches an enabled+ready host runner but soft intent
+        fields (`model` and/or `provider.kind`) differ. The object never exposes
+        provider secrets, env values, sidecar auth, or full provider objects.
+      properties:
+        code:
+          type: string
+          enum: [runner_intent_soft_mismatch]
+        slotKey: { type: string }
+        sessionName: { type: string }
+        requested:
+          type: object
+          additionalProperties: false
+          required: [capabilityAgent]
+          properties:
+            capabilityAgent: { type: string }
+            model: { type: string }
+            providerKind: { type: string }
+        launched:
+          type: object
+          additionalProperties: false
+          required: [runnerId, capabilityAgent, model, providerKind]
+          properties:
+            runnerId: { type: string }
+            capabilityAgent: { type: string }
+            model: { type: string }
+            providerKind: { type: string }
+        message: { type: string }
     LaunchAvailablePackageVersion:
       type: object
       required:

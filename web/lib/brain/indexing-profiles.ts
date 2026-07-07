@@ -115,7 +115,11 @@ export function brainSourceInputsForProfile(
       ? DOC_SOURCE_INPUTS
       : profile === "docs_source"
         ? [...DOC_SOURCE_INPUTS, ...CODE_SOURCE_INPUTS]
-        : [...DOC_SOURCE_INPUTS, ...CODE_SOURCE_INPUTS, ...INTERNAL_SOURCE_INPUTS];
+        : [
+            ...DOC_SOURCE_INPUTS,
+            ...CODE_SOURCE_INPUTS,
+            ...INTERNAL_SOURCE_INPUTS,
+          ];
   const seen = new Set<string>();
 
   return inputs.filter((source) => {

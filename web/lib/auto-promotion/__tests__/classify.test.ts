@@ -1,9 +1,10 @@
+import type { AutoPromotionConfig } from "@/lib/auto-promotion/config";
+import type { DiffChangeStatEntry } from "@/lib/worktree";
+
 import { describe, expect, it } from "vitest";
 
 import { classifyDiff } from "@/lib/auto-promotion/classify";
 import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
-import type { AutoPromotionConfig } from "@/lib/auto-promotion/config";
-import type { DiffChangeStatEntry } from "@/lib/worktree";
 
 function file(
   path: string,
@@ -17,7 +18,9 @@ const ALL_LANES: AutoPromotionConfig = { enabled: true, lanes: BUILT_IN_LANES };
 
 describe("classifyDiff — lane assignment", () => {
   it("docs-only ⇒ eligible docs", () => {
-    expect(classifyDiff([file("README.md"), file("docs/a.md")], ALL_LANES)).toEqual({
+    expect(
+      classifyDiff([file("README.md"), file("docs/a.md")], ALL_LANES),
+    ).toEqual({
       kind: "eligible",
       lane: "docs",
     });
@@ -57,7 +60,9 @@ describe("classifyDiff — lane assignment", () => {
   });
 
   it("tsconfig.json ⇒ no_lane (deliberately excluded from config lane)", () => {
-    expect(classifyDiff([file("tsconfig.json")], ALL_LANES).kind).toBe("no_lane");
+    expect(classifyDiff([file("tsconfig.json")], ALL_LANES).kind).toBe(
+      "no_lane",
+    );
   });
 
   it("Dockerfile ⇒ no_lane", () => {
@@ -100,7 +105,8 @@ describe("classifyDiff — deny-list defeats every lane (path + oldPath)", () =>
 
   it("rename INTO .claude/ (deny on new path) ⇒ denied", () => {
     expect(
-      classifyDiff([file(".claude/x.json", "R100", "docs/x.md")], ALL_LANES).kind,
+      classifyDiff([file(".claude/x.json", "R100", "docs/x.md")], ALL_LANES)
+        .kind,
     ).toBe("denied");
   });
 

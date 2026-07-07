@@ -1,5 +1,13 @@
 import "server-only";
 
+import type { TokenActor } from "@/lib/tokens/verify";
+import type {
+  ExperimentJudgeAdvisory,
+  ExperimentRubric,
+  ExperimentVariant,
+  ExperimentVerdictEnvelope,
+} from "@/lib/experiments/types";
+
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
@@ -11,13 +19,6 @@ import { MaisterError } from "@/lib/errors";
 import { EXPERIMENT_JUDGE_AGENT_ID } from "@/lib/experiments/constants";
 import { ExperimentNotFoundError } from "@/lib/experiments/errors";
 import { validateExperimentHumanVerdict } from "@/lib/experiments/rubric";
-import type { TokenActor } from "@/lib/tokens/verify";
-import type {
-  ExperimentJudgeAdvisory,
-  ExperimentRubric,
-  ExperimentVariant,
-  ExperimentVerdictEnvelope,
-} from "@/lib/experiments/types";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { experiments } = schemaModule as unknown as Record<string, any>;
@@ -31,7 +32,10 @@ const log = pino({
 
 export const experimentAdvisoryInputSchema = z
   .object({
-    scores: z.record(z.string().min(1), z.record(z.string().min(1), z.number())),
+    scores: z.record(
+      z.string().min(1),
+      z.record(z.string().min(1), z.number()),
+    ),
     summary: z.string().min(1).max(8000),
     confidence: z.number().min(0).max(1).optional(),
   })
@@ -54,7 +58,9 @@ export function isUnauthorizedExperimentAgentActor(
   );
 }
 
-function nextAdvisoryOrdinal(verdict: ExperimentVerdictEnvelope | null): number {
+function nextAdvisoryOrdinal(
+  verdict: ExperimentVerdictEnvelope | null,
+): number {
   const advisories = verdict?.judgeAdvisories ?? [];
 
   return (
@@ -97,8 +103,7 @@ export async function appendExperimentAdvisory(
         ),
     );
     const experiment = lockedRows.find(
-      (row) =>
-        row.id === args.experimentId && row.projectId === args.projectId,
+      (row) => row.id === args.experimentId && row.projectId === args.projectId,
     );
 
     if (!experiment) {
@@ -131,10 +136,7 @@ export async function appendExperimentAdvisory(
     };
     const verdict: ExperimentVerdictEnvelope = {
       ...currentVerdict,
-      judgeAdvisories: [
-        ...(currentVerdict.judgeAdvisories ?? []),
-        advisory,
-      ],
+      judgeAdvisories: [...(currentVerdict.judgeAdvisories ?? []), advisory],
     };
 
     await tx

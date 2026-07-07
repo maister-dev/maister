@@ -735,6 +735,7 @@ erDiagram
         jsonb runner_snapshot "M42: frozen launch profile"
         text acp_session_id "M42: per-session ACP session/resume handle"
         text resolution_source "M42: concrete source audit (slot_key | chain scope | launch-dialog)"
+        jsonb resolution_warning "nullable RunnerResolutionWarning for soft model/provider fallback"
         timestamp created_at
         timestamp updated_at
     }

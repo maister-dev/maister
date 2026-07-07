@@ -391,11 +391,7 @@ describe("experiment service reads", () => {
     };
 
     await expect(
-      service.getExperimentDetail(
-        "project-1",
-        "exp-foreign",
-        fakeDb(state),
-      ),
+      service.getExperimentDetail("project-1", "exp-foreign", fakeDb(state)),
     ).resolves.toBeNull();
   });
 });
@@ -488,7 +484,11 @@ describe("experiment service lifecycle", () => {
       experimentRuns: [
         { experimentId: "exp-1", runId: "run-winner", variantKey: "claude" },
         { experimentId: "exp-1", runId: "run-loser-live", variantKey: "codex" },
-        { experimentId: "exp-1", runId: "run-loser-settled", variantKey: "codex" },
+        {
+          experimentId: "exp-1",
+          runId: "run-loser-settled",
+          variantKey: "codex",
+        },
       ],
       runs: [
         { id: "run-winner", status: "Running" },

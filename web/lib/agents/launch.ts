@@ -2030,7 +2030,11 @@ export async function finalizeAgentRun(
     );
 
     if (finalizeResult.status !== "Done") {
-      await captureExperimentDiffSnapshotForRun({ db: _db, runId, force: true });
+      await captureExperimentDiffSnapshotForRun({
+        db: _db,
+        runId,
+        force: true,
+      });
     }
 
     if (ephemeralCleanup) {

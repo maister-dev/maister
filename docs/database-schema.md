@@ -1258,6 +1258,8 @@ stop, gate-chat, and diagnostics still target the correct ACP session).
   acpSessionId?,                 // per-session ACP session/resume handle
   resolutionSource?,             // concrete source audit: slot_key | chain scope
                                  //   | 'launch-dialog'
+  resolutionWarning?,            // jsonb RunnerResolutionWarning; nullable
+                                 //   soft model/provider mismatch audit
   createdAt, updatedAt
 }
 ```
@@ -1268,6 +1270,10 @@ stop, gate-chat, and diagnostics still target the correct ACP session).
   `runs.runner_id` FK / `runs_runner_idx`.
 - `step_runs.acp_session_id` is a SEPARATE per-step-run column and STAYS — it
   records which session a step used; it is not dropped or migrated.
+- `resolution_warning` is the durable source for non-fatal runner slot soft
+  mismatches. It stores only public capability/model/provider-kind metadata and
+  the selected runner id; provider secrets, env, auth tokens, API keys, sidecar
+  auth refs, and full provider objects are never stored.
 
 ### `flow_runner_remaps` per-slot binding refactor (M42)
 

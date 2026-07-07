@@ -165,7 +165,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
             eq(sibling.agentWorkspace, "worktree"),
             notInArray(sibling.status, [...TERMINAL_RUN_STATUSES]),
           ),
-      ),
+        ),
     ),
   );
   const experimentNotBlocked = notExists(

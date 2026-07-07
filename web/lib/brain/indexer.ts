@@ -404,12 +404,7 @@ async function persistChunkPlans(
 ): Promise<number> {
   await pruneSourceChunks(tx, source, plans);
 
-  const chunksEmbedded = await upsertChunkPlans(
-    tx,
-    source,
-    client,
-    plans,
-  );
+  const chunksEmbedded = await upsertChunkPlans(tx, source, client, plans);
 
   await markSourceIndexed(tx, source, sourceHash);
   await reanchorBrainEdgesForSource(tx, {
@@ -453,7 +448,10 @@ async function pruneChunkPaths(
   if (paths.length === 0) return;
 
   const stableIds = plans.map((plan) => plan.draft.stableId);
-  const pathList = sql.join(paths.map((path) => sql`${path}`), sql`, `);
+  const pathList = sql.join(
+    paths.map((path) => sql`${path}`),
+    sql`, `,
+  );
 
   if (stableIds.length === 0) {
     await tx.execute(sql`

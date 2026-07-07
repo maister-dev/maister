@@ -1,14 +1,19 @@
+import type { EffectiveLaneMode, LaneClass } from "./config";
+import type { DepsFile } from "./deps-check";
+import type { PromotionHold } from "./types";
+import type { DiffChangeStatEntry } from "@/lib/worktree";
+
 import pino from "pino";
 
 import { classifyDiff } from "./classify";
 import { resolveAutoPromotionConfig } from "./config";
 import { checkDepsDiff } from "./deps-check";
 import { autoPromotionEnabledFromEnv } from "./config";
-import type { EffectiveLaneMode, LaneClass } from "./config";
-import type { DepsFile } from "./deps-check";
-import type { PromotionHold } from "./types";
-import { checksFromSnapshot, promotionFromSnapshot } from "@/lib/runs/execution-policy";
-import type { DiffChangeStatEntry } from "@/lib/worktree";
+
+import {
+  checksFromSnapshot,
+  promotionFromSnapshot,
+} from "@/lib/runs/execution-policy";
 
 // ADR-126 §4.4: the ONE shared, fail-closed eligibility predicate. The sweep and
 // the run-detail panel both call this — the returned DTO IS the sweep decision,
@@ -71,7 +76,10 @@ export type AutoPromotionEvaluation =
 
 // The external_check gate state: `not_declared` (id absent from the compiled
 // FlowGraph — misconfig) vs `declared_not_passed` (present but no passing row).
-export type ExternalCheckState = "passed" | "declared_not_passed" | "not_declared";
+export type ExternalCheckState =
+  | "passed"
+  | "declared_not_passed"
+  | "not_declared";
 
 // The subset of the run row the predicate needs (terms 3-9, 12, 16).
 export interface AutoPromotionRunView {
@@ -133,7 +141,8 @@ export async function evaluateAutoPromotion(
   const resolved = resolveAutoPromotionConfig(project);
 
   if (resolved.source === "invalid") return ineligible("config_invalid");
-  if (!resolved.config.enabled) return { verdict: "disabled", scope: "project" };
+  if (!resolved.config.enabled)
+    return { verdict: "disabled", scope: "project" };
 
   // Terms 3-7: structural non-candidacy (permanent for this run — not_applicable,
   // so the panel never tells a user to "fix" a scratch/child/shared run).
@@ -165,9 +174,11 @@ export async function evaluateAutoPromotion(
   // Terms 10-11: deny-list first, then exactly-one-lane classification.
   const cls = classifyDiff(files, resolved.config);
 
-  if (cls.kind === "denied") return ineligible("deny_list", { files: cls.files });
+  if (cls.kind === "denied")
+    return ineligible("deny_list", { files: cls.files });
   if (cls.kind === "empty_diff") return ineligible("empty_diff");
-  if (cls.kind === "no_lane") return ineligible("no_lane", { files: cls.files });
+  if (cls.kind === "no_lane")
+    return ineligible("no_lane", { files: cls.files });
   if (cls.kind === "ambiguous_lane") {
     return ineligible("ambiguous_lane", { files: cls.files });
   }
@@ -219,7 +230,9 @@ export async function evaluateAutoPromotion(
   );
 
   if (now < eligibleAt) {
-    return ineligible("grace_pending", { eligibleAt: eligibleAt.toISOString() });
+    return ineligible("grace_pending", {
+      eligibleAt: eligibleAt.toISOString(),
+    });
   }
 
   log.debug(

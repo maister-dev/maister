@@ -12,8 +12,12 @@ info:
     supervisor appends to in lockstep with its own SSE side-channel.
     The durable event union matches the supervisor's SSE union
     (`session.line`, `session.update`, `session.permission_request`,
-    `session.exited`, `session.crashed`) plus one web-only synthetic
-    timeout event. A `session.update` may carry a supervisor-synthesized
+    `session.exited`, `session.crashed`) plus web-only synthetic/advisory
+    events. `run.runner_resolution_warning` is appended by the web tier after
+    launch commit when a Flow runner slot launches on a same-capability runner
+    with a soft model/provider mismatch; the persisted `run_sessions` warning is
+    the source of truth and the event is the timeline mirror. A `session.update`
+    may carry a supervisor-synthesized
     `model_advisory` informational payload (ADR-076, see
     `supervisor-sse.asyncapi.yaml#ModelAdvisoryUpdate`); the bridge forwards it
     unchanged and unknown-`sessionUpdate` consumers ignore it.
@@ -105,6 +109,7 @@ channels:
           - $ref: "#/components/messages/SessionChatTurn"
           - $ref: "#/components/messages/SessionHookTrip"
           - $ref: "#/components/messages/RunNeedsInput"
+          - $ref: "#/components/messages/RunRunnerResolutionWarning"
 components:
   messages:
     SessionLine:
@@ -185,6 +190,18 @@ components:
         read via `GET /api/runs/{runId}/transcript`.
       contentType: application/json
       payload: { $ref: "#/components/schemas/EventBase" }
+    RunRunnerResolutionWarning:
+      name: run.runner_resolution_warning
+      title: Durable runner-resolution soft mismatch warning
+      summary: |
+        Appended by the web tier after a launch transaction commits when a Flow
+        runner slot falls back to a same-capability runner because `model`
+        and/or `provider.kind` differs from the Flow intent. The event keeps the
+        logical `sessionName`; consumers should read `run_sessions` for the
+        durable source of truth. Warning payloads contain only public runner id,
+        model, capability, and provider kind metadata.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/RunRunnerResolutionWarningEvent" }
   schemas:
     EventBase:
       type: object
@@ -236,3 +253,47 @@ components:
         reason:
           type: string
           description: Human-readable cause (e.g. "no events within keepalive window").
+    RunnerResolutionWarning:
+      type: object
+      additionalProperties: false
+      required: [code, slotKey, requested, launched, message]
+      properties:
+        code:
+          type: string
+          const: runner_intent_soft_mismatch
+        slotKey: { type: string }
+        sessionName: { type: string }
+        requested:
+          type: object
+          additionalProperties: false
+          required: [capabilityAgent]
+          properties:
+            capabilityAgent: { type: string }
+            model: { type: string }
+            providerKind: { type: string }
+        launched:
+          type: object
+          additionalProperties: false
+          required: [runnerId, capabilityAgent, model, providerKind]
+          properties:
+            runnerId: { type: string }
+            capabilityAgent: { type: string }
+            model: { type: string }
+            providerKind: { type: string }
+        message: { type: string }
+    RunRunnerResolutionWarningEvent:
+      type: object
+      additionalProperties: false
+      required: [type, monotonicId, sessionName, warning]
+      properties:
+        type:
+          type: string
+          const: run.runner_resolution_warning
+        monotonicId:
+          type: integer
+          minimum: 1
+        sessionName:
+          type: string
+          description: Logical Flow session whose runner slot fell back.
+        warning:
+          $ref: "#/components/schemas/RunnerResolutionWarning"

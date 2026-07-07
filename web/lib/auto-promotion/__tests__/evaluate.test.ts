@@ -1,3 +1,10 @@
+import type {
+  AutoPromotionReaders,
+  AutoPromotionRunView,
+  EvaluateAutoPromotionInput,
+} from "@/lib/auto-promotion/evaluate";
+import type { DiffChangeStatEntry } from "@/lib/worktree";
+
 import { readFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,18 +15,18 @@ import {
   INELIGIBLE_REASONS,
   NOT_APPLICABLE_REASONS,
 } from "@/lib/auto-promotion/evaluate";
-import type {
-  AutoPromotionReaders,
-  AutoPromotionRunView,
-  EvaluateAutoPromotionInput,
-} from "@/lib/auto-promotion/evaluate";
-import type { DiffChangeStatEntry } from "@/lib/worktree";
 
 const NOW = new Date("2026-07-03T12:00:00Z");
 const GRACE_ELAPSED = new Date(NOW.getTime() - 20 * 60_000);
 
 function docFile(): DiffChangeStatEntry {
-  return { path: "README.md", status: "M", additions: 1, deletions: 0, binary: false };
+  return {
+    path: "README.md",
+    status: "M",
+    additions: 1,
+    deletions: 0,
+    binary: false,
+  };
 }
 
 function okReaders(): AutoPromotionReaders {
@@ -31,13 +38,15 @@ function okReaders(): AutoPromotionReaders {
   };
 }
 
-function baseInput(patch: {
-  run?: Partial<AutoPromotionRunView>;
-  project?: { id: string; autoPromotion?: unknown };
-  files?: DiffChangeStatEntry[];
-  readers?: Partial<AutoPromotionReaders>;
-  now?: Date;
-} = {}): EvaluateAutoPromotionInput {
+function baseInput(
+  patch: {
+    run?: Partial<AutoPromotionRunView>;
+    project?: { id: string; autoPromotion?: unknown };
+    files?: DiffChangeStatEntry[];
+    readers?: Partial<AutoPromotionReaders>;
+    now?: Date;
+  } = {},
+): EvaluateAutoPromotionInput {
   return {
     run: {
       id: "r1",
@@ -53,11 +62,10 @@ function baseInput(patch: {
       reviewEnteredAt: GRACE_ELAPSED,
       ...patch.run,
     },
-    project:
-      patch.project ?? {
-        id: "p1",
-        autoPromotion: { enabled: true, lanes: BUILT_IN_LANES },
-      },
+    project: patch.project ?? {
+      id: "p1",
+      autoPromotion: { enabled: true, lanes: BUILT_IN_LANES },
+    },
     files: patch.files ?? [docFile()],
     now: patch.now ?? NOW,
     readers: { ...okReaders(), ...patch.readers },
@@ -116,17 +124,24 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
       baseInput({ project: { id: "p1", autoPromotion: { enabled: "x" } } }),
     );
 
-    expect(v).toMatchObject({ verdict: "ineligible", reason: "config_invalid" });
+    expect(v).toMatchObject({
+      verdict: "ineligible",
+      reason: "config_invalid",
+    });
   });
 
   it("term 3 — status ≠ Review ⇒ not_applicable(status)", async () => {
-    const v = await evaluateAutoPromotion(baseInput({ run: { status: "Done" } }));
+    const v = await evaluateAutoPromotion(
+      baseInput({ run: { status: "Done" } }),
+    );
 
     expect(v).toEqual({ verdict: "not_applicable", reason: "status" });
   });
 
   it("term 4 — run_kind ≠ flow ⇒ not_applicable(run_kind)", async () => {
-    const v = await evaluateAutoPromotion(baseInput({ run: { runKind: "scratch" } }));
+    const v = await evaluateAutoPromotion(
+      baseInput({ run: { runKind: "scratch" } }),
+    );
 
     expect(v).toEqual({ verdict: "not_applicable", reason: "run_kind" });
   });
@@ -138,20 +153,32 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
   });
 
   it("term 6 — orchestrator child ⇒ not_applicable(orchestrator_child)", async () => {
-    const v = await evaluateAutoPromotion(baseInput({ run: { parentRunId: "parent" } }));
+    const v = await evaluateAutoPromotion(
+      baseInput({ run: { parentRunId: "parent" } }),
+    );
 
-    expect(v).toEqual({ verdict: "not_applicable", reason: "orchestrator_child" });
+    expect(v).toEqual({
+      verdict: "not_applicable",
+      reason: "orchestrator_child",
+    });
   });
 
   it("term 7 — shared workspace ⇒ not_applicable(shared_workspace)", async () => {
-    const v = await evaluateAutoPromotion(baseInput({ run: { workspaceMode: "shared" } }));
+    const v = await evaluateAutoPromotion(
+      baseInput({ run: { workspaceMode: "shared" } }),
+    );
 
-    expect(v).toEqual({ verdict: "not_applicable", reason: "shared_workspace" });
+    expect(v).toEqual({
+      verdict: "not_applicable",
+      reason: "shared_workspace",
+    });
   });
 
   it("term 8 — delivery trigger auto_on_ready ⇒ not_applicable(auto_on_ready)", async () => {
     const v = await evaluateAutoPromotion(
-      baseInput({ run: { deliveryPolicySnapshot: { trigger: "auto_on_ready" } } }),
+      baseInput({
+        run: { deliveryPolicySnapshot: { trigger: "auto_on_ready" } },
+      }),
     );
 
     expect(v).toEqual({ verdict: "not_applicable", reason: "auto_on_ready" });
@@ -161,7 +188,10 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
     const v = await evaluateAutoPromotion(
       baseInput({
         run: {
-          executionPolicy: { preset: "supervised", overrides: { promotion: "auto_on_ready" } },
+          executionPolicy: {
+            preset: "supervised",
+            overrides: { promotion: "auto_on_ready" },
+          },
         },
       }),
     );
@@ -171,7 +201,9 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
 
   it("term 9 — hold ⇒ held", async () => {
     const hold = { source: "user" as const, createdAt: NOW.toISOString() };
-    const v = await evaluateAutoPromotion(baseInput({ run: { promotionHold: hold } }));
+    const v = await evaluateAutoPromotion(
+      baseInput({ run: { promotionHold: hold } }),
+    );
 
     expect(v).toEqual({ verdict: "held", hold });
   });
@@ -197,7 +229,10 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
       baseInput({ files: [{ ...docFile(), path: "x/__tests__/n.md" }] }),
     );
 
-    expect(v).toMatchObject({ verdict: "ineligible", reason: "ambiguous_lane" });
+    expect(v).toMatchObject({
+      verdict: "ineligible",
+      reason: "ambiguous_lane",
+    });
   });
 
   it("term 11 — empty diff ⇒ ineligible(empty_diff)", async () => {
@@ -225,12 +260,18 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
     const v = await evaluateAutoPromotion(
       baseInput({
         run: {
-          executionPolicy: { preset: "supervised", overrides: { checks: "advisory" } },
+          executionPolicy: {
+            preset: "supervised",
+            overrides: { checks: "advisory" },
+          },
         },
       }),
     );
 
-    expect(v).toMatchObject({ verdict: "ineligible", reason: "checks_not_strict" });
+    expect(v).toMatchObject({
+      verdict: "ineligible",
+      reason: "checks_not_strict",
+    });
   });
 
   it("term 13 — open HITL ⇒ ineligible(pending_hitl)", async () => {
@@ -246,23 +287,39 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
       baseInput({ readers: { readinessGreen: async () => false } }),
     );
 
-    expect(v).toMatchObject({ verdict: "ineligible", reason: "readiness_not_green" });
+    expect(v).toMatchObject({
+      verdict: "ineligible",
+      reason: "readiness_not_green",
+    });
   });
 
   const withCheckLane = {
     id: "p1",
     autoPromotion: {
       enabled: true,
-      lanes: [{ class: "docs", enabled: true, delayMinutes: 10, requireExternalCheckId: "ci" }],
+      lanes: [
+        {
+          class: "docs",
+          enabled: true,
+          delayMinutes: 10,
+          requireExternalCheckId: "ci",
+        },
+      ],
     },
   };
 
   it("term 15 — external check not declared ⇒ ineligible(external_check_missing)", async () => {
     const v = await evaluateAutoPromotion(
-      baseInput({ project: withCheckLane, readers: { externalCheck: async () => "not_declared" } }),
+      baseInput({
+        project: withCheckLane,
+        readers: { externalCheck: async () => "not_declared" },
+      }),
     );
 
-    expect(v).toMatchObject({ verdict: "ineligible", reason: "external_check_missing" });
+    expect(v).toMatchObject({
+      verdict: "ineligible",
+      reason: "external_check_missing",
+    });
   });
 
   it("term 15 — external check declared but not passed ⇒ ineligible(external_check_not_passed)", async () => {
@@ -273,18 +330,28 @@ describe("evaluateAutoPromotion — one owning assertion per term", () => {
       }),
     );
 
-    expect(v).toMatchObject({ verdict: "ineligible", reason: "external_check_not_passed" });
+    expect(v).toMatchObject({
+      verdict: "ineligible",
+      reason: "external_check_not_passed",
+    });
   });
 
   it("term 16 — no review anchor ⇒ ineligible(no_review_anchor)", async () => {
-    const v = await evaluateAutoPromotion(baseInput({ run: { reviewEnteredAt: null } }));
+    const v = await evaluateAutoPromotion(
+      baseInput({ run: { reviewEnteredAt: null } }),
+    );
 
-    expect(v).toMatchObject({ verdict: "ineligible", reason: "no_review_anchor" });
+    expect(v).toMatchObject({
+      verdict: "ineligible",
+      reason: "no_review_anchor",
+    });
   });
 
   it("term 16 — grace not elapsed ⇒ ineligible(grace_pending) carrying eligibleAt", async () => {
     const recent = new Date(NOW.getTime() - 2 * 60_000);
-    const v = await evaluateAutoPromotion(baseInput({ run: { reviewEnteredAt: recent } }));
+    const v = await evaluateAutoPromotion(
+      baseInput({ run: { reviewEnteredAt: recent } }),
+    );
 
     expect(v).toMatchObject({ verdict: "ineligible", reason: "grace_pending" });
     expect(v.verdict === "ineligible" && v.eligibleAt).toBe(
@@ -306,8 +373,14 @@ describe("verdict reason-code i18n closure (EN+RU)", () => {
 
   it("every NotApplicableReason has a label in both locales", () => {
     for (const reason of NOT_APPLICABLE_REASONS) {
-      expect(en.autoPromotion?.notApplicable?.[reason], `en ${reason}`).toBeTruthy();
-      expect(ru.autoPromotion?.notApplicable?.[reason], `ru ${reason}`).toBeTruthy();
+      expect(
+        en.autoPromotion?.notApplicable?.[reason],
+        `en ${reason}`,
+      ).toBeTruthy();
+      expect(
+        ru.autoPromotion?.notApplicable?.[reason],
+        `ru ${reason}`,
+      ).toBeTruthy();
     }
   });
 });

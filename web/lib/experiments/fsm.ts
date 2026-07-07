@@ -1,9 +1,10 @@
-import { MaisterError } from "@/lib/errors-core";
 import type {
   ExperimentMemberRunProgress,
   ExperimentMemberRunStatus,
   ExperimentStatus,
 } from "@/lib/experiments/types";
+
+import { MaisterError } from "@/lib/errors-core";
 
 const TERMINAL_EXPERIMENT_STATUSES = new Set<ExperimentStatus>([
   "concluded",
@@ -28,9 +29,7 @@ const ALLOWED_TRANSITIONS = new Set<string>([
   "comparable->concluded",
 ]);
 
-export function isTerminalExperimentStatus(
-  status: ExperimentStatus,
-): boolean {
+export function isTerminalExperimentStatus(status: ExperimentStatus): boolean {
   return TERMINAL_EXPERIMENT_STATUSES.has(status);
 }
 

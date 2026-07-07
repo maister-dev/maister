@@ -1,3 +1,5 @@
+import type { ExperimentMaterializationDelta } from "@/lib/experiments/types";
+
 import { getTableName } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -6,7 +8,6 @@ import {
   loadExperimentOverlayForRun,
   persistExperimentMaterializationDelta,
 } from "@/lib/experiments/materialization-delta";
-import type { ExperimentMaterializationDelta } from "@/lib/experiments/types";
 
 type Row = Record<string, unknown>;
 type State = {

@@ -130,7 +130,10 @@ beforeEach(async () => {
     name: "P",
     repoPath: `/repos/${projectId}`,
     maisterYamlPath: "/tmp/m.yaml",
-    taskKey: `T${projectId.replace(/[^0-9A-Za-z]/g, "").slice(0, 7).toUpperCase()}`,
+    taskKey: `T${projectId
+      .replace(/[^0-9A-Za-z]/g, "")
+      .slice(0, 7)
+      .toUpperCase()}`,
     autoPromotion: { enabled: true, lanes: BUILT_IN_LANES },
   });
   await db
@@ -160,6 +163,7 @@ async function seedReviewRun(
 ): Promise<string> {
   const runId = randomUUID();
   const taskId = randomUUID();
+
   taskCounter += 1;
 
   await db.insert(tasks).values({
@@ -257,7 +261,9 @@ describe("runAutoPromoteJob — AC-5 readiness gate", () => {
 
 describe("runAutoPromoteJob — AC-6 conflict give-up", () => {
   it("on CONFLICT sets a system hold + exactly one comment; a second tick does nothing", async () => {
-    mocks.promoteRun.mockRejectedValue(new MaisterError("CONFLICT", "conflict"));
+    mocks.promoteRun.mockRejectedValue(
+      new MaisterError("CONFLICT", "conflict"),
+    );
     const { runId, taskId } = (await seedReviewRun()) as unknown as {
       runId: string;
       taskId: string;

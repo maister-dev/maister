@@ -13,8 +13,10 @@ import { describe, expect, it } from "vitest";
 // ADR-122 brain lineage (`brain-migrations/`) — hand-authored journals are the
 // MOST exposed to a non-monotonic `when` (nothing generates them).
 
+const MAIN_MIGRATIONS_DIR = join(__dirname, "../migrations");
+
 const LINEAGES = [
-  { name: "main", dir: join(__dirname, "../migrations") },
+  { name: "main", dir: MAIN_MIGRATIONS_DIR },
   { name: "brain", dir: join(__dirname, "../brain-migrations") },
 ] as const;
 
@@ -126,3 +128,32 @@ describe.each(LINEAGES)(
     });
   },
 );
+
+describe("main migration snapshot integrity", () => {
+  it("newest journal entry has a matching Drizzle snapshot", () => {
+    const newest = journalEntries(MAIN_MIGRATIONS_DIR).at(-1);
+
+    expect(newest, "main migration journal must have entries").toBeDefined();
+
+    if (!newest) {
+      return;
+    }
+
+    const prefix = newest.tag.slice(0, 4);
+    const snapshotPath = join(
+      MAIN_MIGRATIONS_DIR,
+      "meta",
+      `${prefix}_snapshot.json`,
+    );
+
+    expect(
+      prefix,
+      `journal tag "${newest.tag}" must start with 4 digits`,
+    ).toMatch(/^\d{4}$/);
+    expect(
+      existsSync(snapshotPath),
+      `newest journal tag "${newest.tag}" has no meta/${prefix}_snapshot.json; ` +
+        "run pnpm --filter maister-web db:generate or restore the generated snapshot",
+    ).toBe(true);
+  });
+});

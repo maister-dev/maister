@@ -1,3 +1,8 @@
+import type {
+  ExperimentMemberRunStatus,
+  ExperimentStatus,
+} from "@/lib/experiments/types";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -5,10 +10,6 @@ import {
   deriveExperimentProgressStatus,
   isExperimentTransitionAllowed,
 } from "@/lib/experiments/fsm";
-import type {
-  ExperimentMemberRunStatus,
-  ExperimentStatus,
-} from "@/lib/experiments/types";
 
 function member(
   variantKey: string,

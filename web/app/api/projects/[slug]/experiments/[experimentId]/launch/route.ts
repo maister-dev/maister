@@ -58,10 +58,7 @@ export async function POST(
       experimentId,
       actorUserId: user.id,
       input: parsed.data,
-      authorizeRunAction: async (
-        projectId: string,
-        action?: ProjectAction,
-      ) => {
+      authorizeRunAction: async (projectId: string, action?: ProjectAction) => {
         await requireProjectAction(projectId, action ?? "launchRun");
       },
     });

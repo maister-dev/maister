@@ -20,12 +20,9 @@ type RouteModule = typeof import("../route");
 let route: RouteModule;
 
 function request(): NextRequest {
-  return new Request(
-    "http://x/api/v1/ext/projects/demo/experiments/exp-1",
-    {
-      headers: { authorization: "Bearer token" },
-    },
-  ) as NextRequest;
+  return new Request("http://x/api/v1/ext/projects/demo/experiments/exp-1", {
+    headers: { authorization: "Bearer token" },
+  }) as NextRequest;
 }
 
 function params() {

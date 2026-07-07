@@ -61,7 +61,8 @@ export async function POST(
         return NextResponse.json(
           {
             code: "UNAUTHORIZED",
-            message: "experiment advisory is reserved for the experiment judge agent",
+            message:
+              "experiment advisory is reserved for the experiment judge agent",
           },
           { status: 403 },
         );

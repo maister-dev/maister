@@ -1,3 +1,5 @@
+import type { MaisterError } from "@/lib/errors";
+
 import { randomUUID } from "node:crypto";
 
 import {
@@ -24,7 +26,6 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
-import type { MaisterError } from "@/lib/errors";
 
 const promoteLocalMergeSpy = vi.fn(async () => undefined);
 
@@ -35,7 +36,8 @@ vi.mock("@/lib/worktree", async (orig) => ({
   resolveBaseCommit: vi.fn(async () => "targettip000000"),
   branchExists: vi.fn(async () => true),
   pushBranch: vi.fn(async () => undefined),
-  promoteLocalMerge: (...args: unknown[]) => promoteLocalMergeSpy(...(args as [])),
+  promoteLocalMerge: (...args: unknown[]) =>
+    promoteLocalMergeSpy(...(args as [])),
 }));
 
 let db: NodePgDatabase;
@@ -114,7 +116,10 @@ beforeEach(async () => {
     name: "P",
     repoPath: `/repos/${projectId}`,
     maisterYamlPath: "/tmp/m.yaml",
-    taskKey: `T${projectId.replace(/[^0-9A-Za-z]/g, "").slice(0, 7).toUpperCase()}`,
+    taskKey: `T${projectId
+      .replace(/[^0-9A-Za-z]/g, "")
+      .slice(0, 7)
+      .toUpperCase()}`,
     autoPromotion: { enabled: true, lanes: BUILT_IN_LANES },
   });
   await db
@@ -136,9 +141,14 @@ async function seedPromotableRun(): Promise<string> {
   const runId = randomUUID();
   const taskId = randomUUID();
 
-  await db
-    .insert(tasks)
-    .values({ id: taskId, projectId, number: 1, title: "t", prompt: "p", status: "InFlight" });
+  await db.insert(tasks).values({
+    id: taskId,
+    projectId,
+    number: 1,
+    title: "t",
+    prompt: "p",
+    status: "InFlight",
+  });
   await db.insert(runs).values({
     id: runId,
     projectId,

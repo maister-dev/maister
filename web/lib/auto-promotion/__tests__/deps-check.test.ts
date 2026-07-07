@@ -1,10 +1,11 @@
+import type { DepsFile } from "@/lib/auto-promotion/deps-check";
+
 import { describe, expect, it } from "vitest";
 
 import {
   checkDepsDiff,
   isRegistryVersionSpecifier,
 } from "@/lib/auto-promotion/deps-check";
-import type { DepsFile } from "@/lib/auto-promotion/deps-check";
 
 function manifest(
   base: Record<string, unknown> | null,
@@ -19,7 +20,10 @@ function manifest(
   };
 }
 
-const PKG = (deps: Record<string, string>, extra: Record<string, unknown> = {}) => ({
+const PKG = (
+  deps: Record<string, string>,
+  extra: Record<string, unknown> = {},
+) => ({
   name: "x",
   version: "1.0.0",
   ...extra,
@@ -111,7 +115,12 @@ describe("checkDepsDiff — manifest gate", () => {
 
   it("malformed JSON ⇒ deps_content, never throws", () => {
     const r = checkDepsDiff([
-      { path: "package.json", status: "M", base: "{ not json", branch: JSON.stringify(PKG({ a: "^1.0.0" })) },
+      {
+        path: "package.json",
+        status: "M",
+        base: "{ not json",
+        branch: JSON.stringify(PKG({ a: "^1.0.0" })),
+      },
     ]);
 
     expect(r.ok).toBe(false);
@@ -143,17 +152,13 @@ describe("checkDepsDiff — protocol-swap: one RED case per rejected family, bot
   ];
 
   it.each(bad)("new side swapped to %s ⇒ deps_content", (spec) => {
-    const r = checkDepsDiff([
-      manifest(PKG({ a: "^1.0.0" }), PKG({ a: spec })),
-    ]);
+    const r = checkDepsDiff([manifest(PKG({ a: "^1.0.0" }), PKG({ a: spec }))]);
 
     expect(r.ok).toBe(false);
   });
 
   it.each(bad)("base side is %s ⇒ deps_content", (spec) => {
-    const r = checkDepsDiff([
-      manifest(PKG({ a: spec }), PKG({ a: "^1.0.0" })),
-    ]);
+    const r = checkDepsDiff([manifest(PKG({ a: spec }), PKG({ a: "^1.0.0" }))]);
 
     expect(r.ok).toBe(false);
   });

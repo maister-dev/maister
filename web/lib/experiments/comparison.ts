@@ -1,5 +1,16 @@
 import "server-only";
 
+import type {
+  ExperimentDiffFileSummary,
+  ExperimentLaunchReason,
+  ExperimentMaterializationDelta,
+  ExperimentMemberRunProgress,
+  ExperimentMemberRunStatus,
+  ExperimentStatus,
+  ExperimentVariant,
+  ExperimentVerdictEnvelope,
+} from "@/lib/experiments/types";
+
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
@@ -15,16 +26,6 @@ import {
   deriveExperimentProgressStatus,
 } from "@/lib/experiments/fsm";
 import { experimentStatusTimestampPatch } from "@/lib/experiments/repository";
-import type {
-  ExperimentDiffFileSummary,
-  ExperimentLaunchReason,
-  ExperimentMaterializationDelta,
-  ExperimentMemberRunProgress,
-  ExperimentMemberRunStatus,
-  ExperimentStatus,
-  ExperimentVariant,
-  ExperimentVerdictEnvelope,
-} from "@/lib/experiments/types";
 import { runStatusTone, type RunStatusTone } from "@/lib/runs/run-status-tone";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.

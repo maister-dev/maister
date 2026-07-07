@@ -70,6 +70,39 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   remaps, active runs, historical run snapshots, scratch runs). The delete and
   disable guards key on this set.
 
+## Runner slot intent resolution
+
+Flow runner slots use the catalog as a hard-capability contract plus soft intent
+metadata:
+
+- `capability_agent` is hard. A slot that asks for `claude` may only resolve to
+  an enabled+ready `claude` runner; it must never fall back to `codex`,
+  `gemini`, `opencode`, or `mimo`.
+- `model` and `provider.kind` are soft. One enabled+ready exact match on
+  `(capability_agent, model, provider.kind)` resolves silently.
+- More than one exact match is configuration ambiguity and raises
+  `MaisterError("CONFIG")` so the project binds the slot explicitly.
+- No enabled+ready runner for the requested `capability_agent` raises
+  `MaisterError("EXECUTOR_UNAVAILABLE")`.
+- When capability matches but no exact runner exists, the resolver chooses a
+  same-capability fallback in this order: same base model after stripping one
+  trailing bracket suffix (`claude-opus-4-8[1m]` → `claude-opus-4-8`), project
+  default runner of that capability, then platform default runner of that
+  capability. Disabled/not-ready defaults and defaults with another capability
+  are skipped.
+
+A soft fallback emits one `RunnerResolutionWarning` with
+`code="runner_intent_soft_mismatch"`, `slotKey`, optional `sessionName`,
+requested `{ capabilityAgent, model?, providerKind? }`, launched
+`{ runnerId, capabilityAgent, model, providerKind }`, and an operator-facing
+message such as `flow requested model=X/provider=Y, launched on runner R
+(model=A/provider=B)`. The warning is returned by launch-options previews,
+persisted on `run_sessions.resolution_warning`, appended as
+`run.runner_resolution_warning` in the run event log after launch commit, and
+shown on the run detail page. Warning payloads and logs never include provider
+secrets, `env`, auth tokens, API keys, sidecar auth refs, or full provider
+objects.
+
 ## Gemini/OpenCode/MiMo adapter-family contract (Implemented with readiness gates, ADR-084/ADR-085)
 
 Gemini CLI, OpenCode, and MiMo Code widen the runner catalog without changing

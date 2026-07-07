@@ -26,7 +26,10 @@ describe("resolveAutoPromotionConfig", () => {
   it("valid stored config ⇒ source=stored, values preserved, delayMinutes defaulted", () => {
     const r = resolveAutoPromotionConfig({
       id: "p1",
-      autoPromotion: { enabled: true, lanes: [{ class: "docs", enabled: true }] },
+      autoPromotion: {
+        enabled: true,
+        lanes: [{ class: "docs", enabled: true }],
+      },
     });
 
     expect(r.source).toBe("stored");

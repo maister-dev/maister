@@ -1,5 +1,12 @@
 import "server-only";
 
+import type {
+  ExperimentHumanVerdict,
+  ExperimentMemberRunStatus,
+  ExperimentRubric,
+  ExperimentVariant,
+} from "@/lib/experiments/types";
+
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -25,12 +32,6 @@ import {
   type ConcludeExperimentInput,
   type CreateExperimentInput,
 } from "@/lib/experiments/http-schemas";
-import type {
-  ExperimentHumanVerdict,
-  ExperimentMemberRunStatus,
-  ExperimentRubric,
-  ExperimentVariant,
-} from "@/lib/experiments/types";
 import {
   DEFAULT_EXPERIMENT_RUBRIC,
   validateExperimentHumanVerdict,

@@ -495,6 +495,7 @@ export default async function ProjectBoardPage({
       {tab === "brain" ? (
         <ProjectBrainPanel
           canManageSources={isAdmin}
+          indexStatus={brainPanelData.indexStatus}
           labels={{
             title: tBrain("title"),
             memoryTitle: tBrain("memoryTitle"),
@@ -559,7 +560,6 @@ export default async function ProjectBoardPage({
             rejectReason: tBrain("rejectReason"),
             emptyProposals: tBrain("emptyProposals"),
           }}
-          indexStatus={brainPanelData.indexStatus}
           memory={brainPanelData.memory}
           proposalCapabilities={{
             canAcceptCatalog: isAdmin,

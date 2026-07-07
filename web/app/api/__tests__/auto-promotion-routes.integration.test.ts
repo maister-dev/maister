@@ -98,7 +98,13 @@ beforeEach(async () => {
 
   vi.clearAllMocks();
   mocks.diffChangeStats.mockResolvedValue([
-    { path: "README.md", status: "M", additions: 1, deletions: 0, binary: false },
+    {
+      path: "README.md",
+      status: "M",
+      additions: 1,
+      deletions: 0,
+      binary: false,
+    },
   ]);
   mocks.assertEvidenceReady.mockResolvedValue({ ready: true });
   mocks.requireActiveSession.mockResolvedValue({
@@ -123,7 +129,10 @@ beforeEach(async () => {
     name: "P",
     repoPath: `/repos/${projectId}`,
     maisterYamlPath: "/tmp/m.yaml",
-    taskKey: `T${projectId.replace(/[^0-9A-Za-z]/g, "").slice(0, 7).toUpperCase()}`,
+    taskKey: `T${projectId
+      .replace(/[^0-9A-Za-z]/g, "")
+      .slice(0, 7)
+      .toUpperCase()}`,
   });
   await db
     .insert(schema.platformAcpRunners)
@@ -199,9 +208,14 @@ async function seedRun(status = "Review"): Promise<string> {
   const runId = randomUUID();
   const taskId = randomUUID();
 
-  await db
-    .insert(tasks)
-    .values({ id: taskId, projectId, number: 1, title: "t", prompt: "p", status: "InFlight" });
+  await db.insert(tasks).values({
+    id: taskId,
+    projectId,
+    number: 1,
+    title: "t",
+    prompt: "p",
+    status: "InFlight",
+  });
   await db.insert(runs).values({
     id: runId,
     projectId,
@@ -244,16 +258,25 @@ describe("PUT/DELETE promotion-hold", () => {
     const runId = await seedRun();
 
     const put = await holdRoute.PUT(
-      new NextRequest("http://x", { method: "PUT", body: JSON.stringify({ reason: "wait" }) }),
+      new NextRequest("http://x", {
+        method: "PUT",
+        body: JSON.stringify({ reason: "wait" }),
+      }),
       { params: Promise.resolve({ runId }) },
     );
 
     expect(put.status).toBe(200);
-    expect(await runHold(runId)).toMatchObject({ source: "user", reason: "wait" });
-
-    const del = await holdRoute.DELETE(new NextRequest("http://x", { method: "DELETE" }), {
-      params: Promise.resolve({ runId }),
+    expect(await runHold(runId)).toMatchObject({
+      source: "user",
+      reason: "wait",
     });
+
+    const del = await holdRoute.DELETE(
+      new NextRequest("http://x", { method: "DELETE" }),
+      {
+        params: Promise.resolve({ runId }),
+      },
+    );
 
     expect(del.status).toBe(200);
     expect(await runHold(runId)).toBeNull();

@@ -13,7 +13,9 @@ const variants = [
 
 describe("experiment rubric single source", () => {
   it("defines the platform default criteria in request order", () => {
-    expect(DEFAULT_EXPERIMENT_RUBRIC.criteria.map((criterion) => criterion.id)).toEqual([
+    expect(
+      DEFAULT_EXPERIMENT_RUBRIC.criteria.map((criterion) => criterion.id),
+    ).toEqual([
       "correctness",
       "completeness",
       "consistency",
@@ -29,7 +31,9 @@ describe("experiment rubric single source", () => {
   });
 
   it("rejects empty criteria and negative weights", () => {
-    expect(experimentRubricSchema.safeParse({ criteria: [] }).success).toBe(false);
+    expect(experimentRubricSchema.safeParse({ criteria: [] }).success).toBe(
+      false,
+    );
     expect(
       experimentRubricSchema.safeParse({
         criteria: [
