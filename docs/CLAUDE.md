@@ -275,9 +275,10 @@ them.
 ### R8. Russian and English
 
 The product UI is bilingual (EN + RU). Documentation in `docs/` is
-**English only** — it is a contract for code and AI agents, both of
-which read English. Russian-language artifacts go in i18n message
-catalogs under `web/`, not here.
+**English by default** — it is a contract for code and AI agents, both of
+which read English. Russian-language product/operator guides may live under
+`docs/ru/` when explicitly requested by the user; UI copy still belongs in
+i18n message catalogs under `web/`.
 
 ### R9. Surgical edits
 
