@@ -142,6 +142,7 @@ on a different host than the web tier.
 | -------- | ---- | ----------- |
 | README | `README.md` | Landing page: quick start, key features, docs table |
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
+| Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
 | Database Schema | `docs/database-schema.md` | 8 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |

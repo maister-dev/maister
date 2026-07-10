@@ -102,6 +102,7 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | Guide | Description |
 | ----- | ----------- |
 | [Getting Started](docs/getting-started.md) | Install, dev workflow, first run |
+| [Russian Guide](docs/ru/README.md) | Purpose, first run, workflow, concepts, operator guide |
 | [Supervisor](docs/supervisor.md) | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
 | [Database Schema](docs/database-schema.md) | Drizzle/Postgres tables, FK cascade chain, indexes |
 | [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
