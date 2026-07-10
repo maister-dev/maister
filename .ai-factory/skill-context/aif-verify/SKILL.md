@@ -2,10 +2,11 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-06-17
+> Last updated: 2026-07-11
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
 > + /aif-evolve M11b/M11c adversarial-review batch (2026-06-01)
 > + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
+> + /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
 
 ## Rules
 
@@ -32,6 +33,10 @@ Mandatory gate: produce the list explicitly in the verification report (even if 
 - **DB cascade/default claims** must be derived from the migration SQL `ON DELETE` clause, not the plan prose (docs claimed "no cascade"; migration `0040` shipped `ON DELETE CASCADE`).
 - **Cross-file duplicated tables** (the same outcome strings in `readiness.md` AND `configuration.md`) re-drift — flag them to be collapsed per "cross-reference, do not duplicate," and verify the new value landed in EVERY copy (`system-analytics/` + `configuration.md` + `error-taxonomy.md` + every `.openapi.yaml`).
 - **Self-contradiction on a touched value:** grep for a headline default the change touched appearing with two values (`MAISTER_MAX_CONCURRENT_RUNS` was `6` at one line and "global cap = 3" at another). New schema (`runs.agent_workspace`, migration `0052`) must be added to the runs/agents domain docs + `database-schema.md` citing its migration.
+- **In-code SSOTs are contract surfaces**: grammar/prompt/assistant files shipped to agents (`flow-dsl-grammar.ts`, the `/flow-authoring` skill) and their drift-guard tests move with the DSL/schema change — a `docs/`-only sweep misses them.
+- **Route-tree ↔ OpenAPI grep before exit**: when a phase adds an HTTP route — including READ aggregators (`capability-catalog` was missed next to its documented `…/commands` sibling) — grep the route tree against the spec paths.
+- **Both directions, both cases**: sweep for phantom spec params the code never reads AND code fields the spec lost; docs greps for columns try snake_case AND the Drizzle camelCase field name (`database-schema.md` documents camelCase — a snake-only grep yields false "missing column" findings).
+**Source (additions)**: 2026-07-01-11.19, 2026-06-17-19.53, 2026-07-02-14.14, 2026-07-01-12.55
 
 ### Runtime parity gate — verify deployment can actually exercise the new path
 **Source**: M6 adversarial review pass-through (2026-05-28)
@@ -71,6 +76,9 @@ The verify report MUST contain an explicit "Failure-class regression coverage" s
 
 Reason: M7's first design described the three failure modes the Codex adversarial review found ONLY in the prose of the plan. None of the failure modes had a regression test, so an implementation following the prose could have shipped any of them. The fix added explicit test cases per failure class. The verify step's job is to make sure the test cases survived the implementation pass — they have a habit of being trimmed under deadline pressure. Re-derive the list from the plan + diff, not from the implementer's word.
 
+Degraded/temporal matrix additions (confirm coverage per applicable class): disabled-switch path (feature off → EVERY consumer no-ops); never-resolving external fetch (explicit `AbortSignal.timeout` exercised); concurrent double-fire; redelivery-after-alternate-branch (reinforce, not just insert); pause→resume round-trip PER run_kind that can reach the pause (a `runFlow` resume throws `PRECONDITION "flow not found"` for `flowId=null` agent/scratch runs — swallowed and stranded); BOTH branches of any changed validation predicate (where intentionally skipped AND where still required); broken-resource recovery separated from happy-path disable (register, remove from the tracked ref, then disable); the temporal stale-pass case (older `passed` attempt + newer LIVE `pending` ⇒ not passed); exact-failure-mode assertions (a broad `PRECONDITION` assert can pass on the WRONG precondition path — assert the specific message/evidence); and for any "could not complete the side effect" branch, assert the run CANNOT advance to success (assert the terminal status, not just absence of a happy-path artifact).
+**Source (additions)**: 2026-07-02-15.32, 2026-06-22-11.32, 2026-07-04-14.30, 2026-07-04-14.15, 2026-07-03-16.40, 2026-06-24-03.08, 2026-07-04-01.04
+
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
 
 ### "Logic exists + unit test passes" is NOT proof the behavior runs in production
@@ -95,7 +103,24 @@ Reason: M7's first design described the three failure modes the Codex adversaria
 
 9. **Probe the host before deferring; mind the vitest realm + glob.** Before deferring a Testcontainers lane as "unrunnable here," probe the HOST with the sandbox disabled (`docker info` against `~/.docker/run/docker.sock`) — "no container runtime" is usually a sandbox limit, not a host one. `vi.resetModules()` + a dynamically-imported SUT breaks `instanceof MaisterError` (fresh module realm) → status maps to 500 instead of 409. `.integration.test.ts` is for real external deps only; a pure-function test belongs in the unit project — after renaming across the unit/integration glob boundary, re-run BOTH projects and confirm per-project counts shifted (a file matching neither glob runs nowhere).
 
+10. **Integration lane is mandatory for schema/SQL claims.** "Gates green" means `pnpm test:integration` RAN, not just unit (a branch shipped "green" with a 76-file/439-test-red integration baseline); raw-SQL readers, null-column predicates, CAS/fence fixes, and burn/no-burn ordering have ZERO coverage from mocked-db unit tests — real Postgres only; prove a new regression by reverting the fix to reproduce the error.
+
+11. **Merge sign-off = FULL suites scoped by CONTRACT, not by diff.** A merge that widens a shared emit/DTO/required field (`parent_run_id` required on run-terminal `emitDomainEvent`) breaks exact-shape `toEqual` asserts in files the branch never opened — run full integration AND full unit before stamping a merge green (targeted runs are for iteration, not sign-off); also run the full unit project after touching shared services (fake-DB branch tests exercise paths real-PG integration never hits).
+
+12. **Cross-tier payloads test the REAL acceptor schema.** A web payload mocked at the supervisor-client boundary proves nothing and tsc can't help (the two sides' types are structurally unrelated) — feed a representative resolved payload through the actual `.strict()` acceptor (`StartSessionRequestSchema`).
+
+13. **Composition-root wiring.** A handler reading an OPTIONAL injected dependency with no fallback (`opts.spawnOverrides?.ccrManager` → 409) is certified by unit tests but dead in prod if the entrypoint never sets it — require a test on the real composition root (extract `buildRegisterRoutesOptions(deps)`), and treat a "409 when not configured" test passing with `boot(undefined)` as a smell that encodes broken prod as expected; grep every `opts.<dep>?` read for a fallback or a wiring test.
+
+14. **Guard-neutralize RED proof.** Prove a guard test non-vacuous by neutralizing the guard line and watching the test go RED, then restore; "no leak / size === 0" assertions must first ARRANGE a non-zero leakable state (assert the count was >0 before cleanup) or they pass vacuously.
+
+15. **Coverage-location honesty.** The test's ACTOR matches its stated intent ("manual/human" ⇒ a user actor + seeded `users` row, not the system/token entry point); user-facing FORM paths are covered, not only API routes hand-fed complete payloads (API tests supplied the `flowId` the real modal never sent); partial matchers (`objectContaining`/`toMatchObject`) on route responses verify presence never absence — require exact `toEqual` both-direction key equality; boolean→array contract changes need `toHaveLength`, not truthiness (an empty array is truthy).
+
+16. **Contract tests are written RED-first** against existing drift (the RED run enumerated 10 drifted tools no human spotted), and `Intl`-dependent formatting stubs the timezone (UTC CI flake).
+
+17. **Cover the divergent variant.** The adapter whose behavior differs (codex sigils, not just claude), the config axis that exits through a different status (`workspace: worktree` children exit `Review`; the e2e used `none` and masked the headline case), and per-discriminant arms (half-A + half-B ≠ A∘B).
+
 The verify report MUST state, for each applicable gate, the production call site / parse path / exact count / bare-exit-code check / real-executor effect it confirmed. A gate skipped is an automatic warning; a confirmed false-green (dead validation, literal-fed schema test, piped exit code hiding red, mock-asserted dispatch, vacuous "did-not-happen" test) is a blocking finding.
+**Source (additions)**: 2026-06-27-14.28, 2026-06-27-16.03, 2026-06-27-23.45, 2026-06-30-01.37, 2026-06-30-12.23, 2026-06-21-03.05, 2026-06-22-12.47, 2026-06-23-13.22, 2026-06-20-18.43, 2026-06-18-22.18, 2026-06-23-18.25, 2026-06-22-19.56, 2026-07-04-22.53, 2026-07-02-16.42, 2026-06-25-17.19, 2026-07-02-14.14, 2026-06-17-19.53, 2026-06-20-23.22, 2026-07-02-17.52
 
 ### ADR / migration numbers and journal integrity — re-grep main's HEAD at merge, never trust a checkbox
 **Source**: 2026-06-07-20.16, 2026-06-09-18.47, 2026-06-11-09.20, 2026-06-11-12.51, 2026-06-10-23.57, 2026-06-09-20.30
@@ -104,3 +129,10 @@ The verify report MUST state, for each applicable gate, the production call site
 - Verify each migration number against the JOURNAL, not the prose (`0029` documented in 5 places shipped as `0030`).
 - `pnpm validate:docs` only parses Mermaid; `validate-docs-adr-anchors.mjs` only checks an anchor RESOLVES, not that the visible `[ADR-NNN]` link text matches the `#adr-NNN-…` slug it targets — an over-reached `[ADR-072](#adr-071-…)` passes green. Verify link-text↔slug agreement manually.
 - Keep/confirm a `migration-journal-integrity` test asserting every tag↔file, unique `idx`, unique `tag` (Drizzle's `readMigrationFiles` ignores `idx`, iterates by array order, resolves `${tag}.sql`, dedups by `when` — so a reserved idx-gap is safe but an orphan/dup tag is not).
+- A new migration is a TRIPLE: SQL file + `_journal.json` entry + `meta/<NNNN>_snapshot.json` — the NEWEST journal entry MUST have a matching Drizzle snapshot (a missing snapshot silently starves future `db:generate`; newest-only so legacy gaps stay tolerated); journal `when` must never be future-dated (a later `Date.now()` migration would be silently skipped); hand-authored second lineages (brain) get the same journal lint, parameterized over BOTH lineages, and `pnpm db:generate` must report "No schema changes" after.
+- **Claims are not evidence**: "covered by suite X" → open X and confirm it actually imports/calls the SUT (directory adjacency ≠ coverage); a ✅-checked task whose plan listed explicit test cases stays PARTIAL until each listed case is found in the diff; an implementer deviating from a LOCKED plan decision without sign-off is a finding, not a silent pass — and an accepted deviation rewrites every stale plan/spec sibling in the same pass (one prominent superseding note naming them all suffices); when the test strategy changes (planned Playwright replaced by SSR/route coverage), the traceability matrix and acceptance rows are amended — never a checked task promising absent tests.
+**Source (additions)**: 2026-07-07-13.51, 2026-07-02-17.52, 2026-06-18-23.21, 2026-06-18-12.07, 2026-06-18-12.19, 2026-07-04-01.04, 2026-06-24-20.47
+
+### Tool authorities: what counts as build / binary / diagnostic evidence
+**Source**: 2026-06-29-01.37, 2026-06-24-19.45, 2026-06-22-12.47, 2026-06-29-01.03
+**Rule**: (1) Next.js 71007 "serializable props" warnings on `"use client"` files are LSP heuristics, distinct from real build failures — the only build authority is `pnpm build` (exit 0 + BUILD_ID generated); don't chase them as errors and don't accept them as evidence of breakage. (2) A fresh git worktree has no `node_modules` — a blizzard of "Cannot find module 'react'"/JSX-intrinsics diagnostics is pure env noise; run `pnpm install --frozen-lockfile` first, then trust real `tsc`/`eslint`/`vitest` over inline diagnostics. (3) Binary/NUL verification targets the WORKING TREE (`tr -cd '\000' < f | wc -c` or a python bytes count) — `git diff --stat` shows `Bin` when EITHER blob contains a NUL (HEAD still has it after the fix), and `grep -c $'\x00'` reads the pattern as EMPTY and counts every line (a false positive that looks like thousands of NULs). (4) For behavior-preserving refactors of a shared path, a characterization snapshot (byte-identical output before/after, e.g. the installed-source snapshot) is the cheapest non-regression proof — keep such snapshots.

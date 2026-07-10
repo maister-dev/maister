@@ -2,11 +2,12 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-06-17
+> Last updated: 2026-07-11
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
 > + M10 verify pass-through (2026-05-30); /aif-evolve patch analysis (2026-05-30,
 > 2026-06-01 — M11b/M11c adversarial-review batch)
 > + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
+> + /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
 
 ## Rules
 
@@ -45,6 +46,9 @@ Surfaces to enumerate (the right side names the spec file by default; add others
 | New Flow DSL step type / mode / field | `docs/flow-dsl.md` + the schema in `web/lib/config.schema.ts` |
 
 Reason: in M6 the `POST /sessions` body field `router: ccr` became load-bearing (could return 503 for missing config / token / health failures), but `docs/supervisor.md` (the supervisor's prose contract doc) was not on the plan's docs list and remained stale. Tracing each surface to a spec file at plan-write time prevents this.
+
+In-code SSOTs count as contract surfaces: grammar/prompt/assistant files shipped to agents every turn (`flow-dsl-grammar.ts`, also shipped as the `/flow-authoring` skill) and their drift-guard tests must be enumerated alongside `docs/` whenever the schema/DSL they teach changes — a docs-only surface sweep misses them.
+**Source (addition)**: 2026-07-01-11.19
 
 ### Plan MUST call out config-state symmetry for YAML→DB persistence tasks
 **Source**: M6 adversarial review pass-through (2026-05-28)
@@ -177,6 +181,11 @@ Plan acceptance criteria MUST name, for each executable hook the feature ships: 
 
 Reason: M11b's takeover *return* made two of four writes atomic and left the status flip + cursor repark as separate auto-commits; a crash between them stranded the run (`HumanWorking` with an ended ledger row had no rescuer; `Running` with the cursor still at the review node re-dispatched at the wrong node, skipping re-validation gates). M11c's duration-cap watchdog clobbered a concurrently-`Succeeded` attempt because the ledger write had no status predicate. "Two-phase commit" was reasoned about as exception-handling, never as process-crash windows.
 
+Compensation completeness: sequence durable/shared-state mutations as LATE as possible after all cheap deterministic preconditions, hoisting the dominant failure ahead of the mutation (`checkSupervisorHealth()` pre-adopt); when a mutation must precede fallible work, the compensation `try` spans the ENTIRE fallible remainder — not the convenient tail (the pin-advance boundary drawn at "after `addWorktree`" left refusals, health checks, preconditions, and `addWorktree` itself uncompensated) — and the mutator returns an UNDO handle (`AdoptRevert[]`, `[]` on no-op, never a boolean) applied on the throw path with per-revert catch+log. "Deterministic, the user chose it, they'll re-run" is NOT a reason to leave SHARED state (pins, defaults, enablement) mutated on failure — per-request determinism ≠ safe for shared state. Every accepted residual crash window is documented in the ADR; compensation reverts get their own failure-simulation test.
+
+Recovery predicates: a "the reconcile/crash sweep will handle it" justification must name the EXACT state the sweep filters on and assert reachability with a test — a `Running` run whose session is live-but-halted never reaches a sweep that reclaims `Running`-with-no-live-session. A crash-window composite persists a durable idempotency key BEFORE any unrollbackable external side effect (a deterministic `budget_restart` trigger payload lets a retry adopt the already-launched run instead of relaunching), and persists the recovery handle (preserved park ref) BEFORE the terminalization boundary so a retry is distinguishable from an unrecoverable half-step.
+**Source (additions)**: 2026-06-25-20.14, 2026-06-25-17.19, 2026-06-24-03.08, 2026-07-03-00.00-budget-breach-review-followup
+
 ### Plan MUST fan a new run status / enum value / state-changing route out to ALL consumers, and require allow-list guards
 **Source**: 2026-05-31-22.46 (#3/#4), 2026-05-31-23.49 (#1), 2026-06-01-12.55 (#3)
 **Rule**: Adding a `runs.status` value, an enum case, or a state-changing route, the plan's acceptance MUST enumerate the FULL consumer set — not only the narrative docs the contract-surface rule already covers, but every CODE consumer:
@@ -195,6 +204,9 @@ Two hard requirements on the guards themselves:
 
 Reason: a new enum/route was propagated to the surfaces named in the plan's file list but not to *every* consumer (a second read model, the scheduler, the API spec, a coarse guard). The plan/file-list was the checklist and predated the later-added surfaces; the plan must require grepping the new value into every consumer class above.
 
+Fanout extensions: a column going NULLABLE is a new-value fanout exactly like a new enum member — grep every consumer that branches on it (slot counters, per-project sweep candidate queries that structurally never see `IS NULL` rows, route authz gates that throw on null). Changing an identifier SCHEME whose prefix downstream code decodes is a grep-every-DECODER task — enumerate every reader of the id FIRST and pre-commit that gate in the plan (the launch resolver + attach gate + available-list all parse `<flowRefId>:<stem>`; the gate blocked a plausible false fix). Relocating a canonical path moves EVERY coupled consumer in the same pass (inventory moved while registration/effective-resolution/attach still read the old location = a visible-but-unusable surface). An "agent gains an op" change moves the route scope + scope→action map + `AGENT_TOKEN_SCOPES` grant list together.
+**Source (additions)**: 2026-06-27-23.45, 2026-06-23-18.38, 2026-07-02-11.12
+
 ### Plan MUST allocate ADR + migration numbers up front for parallel branches and budget a renumber pass
 **Source**: 2026-06-05-14.42, 2026-06-07-20.16, 2026-06-09-18.47, 2026-06-09-20.30, 2026-06-11-09.20, 2026-06-12-12.46, 2026-06-10-23.57, 2026-06-11-12.51
 **Rule**: ADR numbers (`### ADR-NNN` in `docs/decisions.md`) and Drizzle migration `idx`/`tag` (in `migrations/meta/_journal.json`) are a GLOBALLY sequential, shared namespace. Two branches forked from one base each grab "the next number" and the clash is invisible on each branch (every gate is green) until merge. For any plan that adds an ADR or a migration:
@@ -203,7 +215,30 @@ Reason: a new enum/route was propagated to the surfaces named in the plan's file
 2. **When milestones run in parallel, allocate both branches' ADR + migration numbers from a single source up front** so neither squats the other's number.
 3. **Budget an explicit renumber pass** (its own focused session, AFTER rebasing onto main) into every long-lived branch — it is a deliverable, not a merge-time surprise.
 4. `pnpm validate:docs` only parses Mermaid; it does NOT resolve `[ADR-NNN](decisions.md#...)` anchors. Plan a real anchor check (`scripts/validate-docs-adr-anchors.mjs`) and treat a green docs gate as non-evidence for ADR/migration numbering.
+5. A new migration is a TRIPLE — SQL file + `_journal.json` entry + `meta/<NNNN>_snapshot.json`; plan the integrity check that the NEWEST journal entry has a matching snapshot (a missing snapshot silently starves future `db:generate`). Budget prose-form greps (`pre-NNNN`, `since NNNN`, `as of NNNN`) into the renumber pass and prefer number-agnostic phrasing (`pre-ADR-118`) in long-lived comments. Migrations introduced mid-implementation beyond the plan's frozen preflight set are folded back into plan/preflight artifacts in the same pass.
+**Source (additions)**: 2026-07-07-13.51, 2026-06-30-00.47, 2026-07-04-01.04
 
 ### Plan MUST persist the launch-time decision the terminal path reads, and branch shared dispatch on run_kind
 **Source**: 2026-06-13-16.55, 2026-06-16-22.45
 **Rule**: When a launch resolves a field X from an "effective"/pinned/mutable source (a catalog projection, a package's newest revision, a policy snapshot), the plan MUST require persisting X on the run row at spawn (e.g. `runs.agent_workspace`, the runner snapshot, the delivery-policy snapshot) so the terminal/enforcement path acts on **what the run actually launched with**, never re-derives it from a projection that can drift after launch. The acceptance criteria must name: where X is snapshotted, and that the terminal path reads the snapshot (`row.x ?? wsCtx?.x`). Separately: any SHARED dispatch site that feeds a kind-specific mechanism (reconcile classifier, sweep, a composed/aggregating op switching on `run_kind`) MUST branch on `run_kind`/the discriminant BEFORE routing — a scratch/agent run driven into the flow-only resume driver replies context-less and `Crashed`s. Require a guard at the irreversible apply site in addition to the pure classifier, and a test per discriminant arm (half-A-tested + half-B-tested ≠ A∘B-tested).
+
+### Plan MUST design background automation for progress, bounded retries, and poison items
+**Source**: 2026-06-25-17.42, 2026-06-25-19.58, 2026-06-29-17.25, 2026-07-03-14.58, 2026-07-02-17.03
+**Rule**: For any timer/sweep/unattended launcher, the plan MUST specify:
+1. **Progress guarantee** for capped scans — a durable per-item attempt marker stamped on every attempt AND/OR a rotating keyset cursor persisted in the job's state, answering the reviewer question "if the first N rows are permanently ineligible and never change, does row N+1 ever get processed?".
+2. **Bounded retries with an intent-scoped budget** — an attempt cap filtered by `armed_at` (a deliberate re-arm earns a fresh budget) plus explicit backoff; auto-launchers never reuse a human-retry launchability classifier without re-deriving what each terminal state means for an unattended caller.
+3. **A poison-item policy** — deterministic per-item failure → permanent `failed` + recorded evidence; transient → bounded retry — so one bad row cannot stall the singleton job into platform-wide disablement.
+4. **A wiring-seam test** — for a new scheduler jobKind / dispatch arm / consumer registration, ONE end-to-end test drives the real claim→dispatch path (`runSchedulerTick({jobKind})`); a registration checklist nothing executes is an unverified claim (a missing `case "auto_promote"` left every direct-handler test green while production ticks never promoted).
+5. **Exactly one achievable validation gate**, naming the exact command — "validator-clean" AND "zero-new-vs-count-baseline" cannot both be the gate (a count delta masks a new error when a pre-existing one coincidentally resolves); pin baselines by enumerated `{ruleId, pointer}`.
+
+### Plan MUST treat statuses as signals and predicates as per-concern
+**Source**: 2026-06-20-23.22, 2026-06-22-11.08, 2026-07-01-12.55
+**Rule**: When a plan adds or uses a run status that gates a coordinator/loop, it MUST answer "what WAKES the waiter when a child reaches it?" — a status nothing emits on is a deadlock (Review children never woke `WaitingOnChildren`). Enumerated status sets in feature code are a smell: derive a `SETTLED`/`PENDING` predicate from ONE source (`run-status-sets.ts`) so every counter agrees. Never reuse a status set across CONCERNS without checking semantics align — "done writing" (writer-safety) ≠ "safe to auto-merge" (a `Failed|Crashed|Abandoned` sibling is settled-for-writing but its partial work is NOT auto-shippable); name predicates after the concern (`countFailureTerminalSharedSiblings` vs `countUnsettledSharedSiblings`). Slot-freed states (`NeedsInputIdle | WaitingOnChildren | Review`) reclaiming a slot on any transition back to live MUST be cap-gated or explicitly exempted with a recorded reason.
+
+### Plan MUST make migrations preserve live data or refuse loudly
+**Source**: 2026-06-27-16.03, 2026-06-24-18.55, 2026-06-29-17.25, 2026-07-04-01.04
+**Rule**: A migration that DROPs a column or re-keys a table holding LIVE state ships with either a backfill (`INSERT INTO … SELECT … ON CONFLICT DO NOTHING` before the drops) or an abort-guard (`RAISE EXCEPTION` if non-empty) — the plan states which and why; when the new key is not SQL-derivable from the old (multiple old rows collapse onto one slot), the loud guard is the honest choice, never a guessed mapping. A migration opening with `DELETE FROM <table>` whose FKs cascade over per-project attachments/config is acceptable only pre-release/single-operator — the plan flags the re-attach requirement or re-keys instead. A NOT-NULL-default column needing per-row computation plans the backfill explicitly — a constant default is a "looks populated but isn't" trap that permanently excludes pre-migration rows from sweeps (a NULL marker is the natural "never swept" seed). Migrations added mid-implementation beyond the frozen preflight set are folded back into the plan artifacts in the same pass.
+
+### Plan MUST carry launch preconditions into create/picker UIs and test policy-axis interactions
+**Source**: 2026-07-04-22.53-experiment-create-flow-advisory-json, 2026-06-20-18.20, 2026-07-02-17.03
+**Rule**: When a create UI feeds a later launch path, the plan requires the picker/inline-create payload to enforce the downstream launch preconditions (filter task options to tasks whose `flowId` is in the launchable set; require `flowId` on inline creation) — "creatable now, unlaunchable later" is a design defect. When two policy axes can act on the same site (`reworkExhaustion=escalate` × `humanGate=auto_pass`), the plan requires explicit interaction tests — full single-axis coverage with zero interaction coverage is how emergent, undocumented invariants ship one refactor away from a stuck run. Any feature that auto-actions dependency/lockfile diffs gates specifier SHAPE both-sided (`isRegistryVersionSpecifier` rejecting `file:` / `git` / `github:` / `http(s):` / `workspace:` / path forms) and disqualifies lockfile-only diffs; security-sensitive autopilot features budget an adversarial refute-the-design pass — completeness/consistency self-review passes miss this class.
