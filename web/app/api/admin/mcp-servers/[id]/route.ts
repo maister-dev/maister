@@ -43,6 +43,10 @@ const patchBodySchema = z
     headerKeys: z.array(envKeyRefSchema).optional(),
     supportedAgents: z.array(z.enum(ADAPTER_IDS)).min(1).optional(),
     enabled: z.boolean().optional(),
+    // ADR-129: platform trust is load-bearing at materialization.
+    trustStatus: z
+      .enum(["untrusted", "trusted", "trusted_by_policy"])
+      .optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
@@ -184,6 +188,9 @@ export async function PATCH(
       .update(platformMcpServers)
       .set({
         ...fields,
+        ...(parsed.data.trustStatus !== undefined
+          ? { trustStatus: parsed.data.trustStatus }
+          : {}),
         readinessStatus: readiness.status,
         readinessReasons: readiness.reasons,
         updatedAt: new Date(),

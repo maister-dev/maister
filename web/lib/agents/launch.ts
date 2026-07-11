@@ -2529,12 +2529,14 @@ export async function resolveAgentProfileMcpServers(args: {
 
   const [
     { loadSelectableCapabilities, resolveCapabilityProfile },
-    { gateStdioMcpsByExecTrust, mapProfileToAgentArtifacts },
+    { mapProfileToAgentArtifacts },
     { loadProjectMcpBindings },
+    { loadPlatformTrustByRef, mergeRunWithheldMcps, partitionWithheldMcps },
   ] = await Promise.all([
     import("@/lib/capabilities/resolver"),
     import("@/lib/capabilities/agent-map"),
     import("@/lib/mcp/binding-service"),
+    import("@/lib/mcp/materialization-gate"),
   ]);
   const catalog = await loadSelectableCapabilities(args.projectId, args.db);
   // ADR-129 (D5): an agent's declared capability_profile.mcps resolve through the
@@ -2558,17 +2560,35 @@ export async function resolveAgentProfileMcpServers(args: {
     profile,
     agent: args.capabilityAgent as never,
   });
-  const gated = gateStdioMcpsByExecTrust(mapped.mcpServers, args.execTrust);
-  const withheld = mapped.mcpServers.length - gated.length;
+  // ADR-129 (W-E): platform-trust + exec-trust in one structured withheld pass.
+  const mcpEntries = profile.supported
+    .filter((e) => e.kind === "mcp")
+    .map((e) => ({ refId: e.capabilityRefId, source: e.source }));
+  const { kept, withheld } = partitionWithheldMcps({
+    mcpServers: mapped.mcpServers,
+    sourceByRef: new Map(mcpEntries.map((e) => [e.refId, e.source])),
+    platformTrustedByRef: await loadPlatformTrustByRef(
+      mcpEntries,
+      args.db as never,
+    ),
+    execTrust: args.execTrust,
+  });
 
-  if (withheld > 0) {
+  if (withheld.length > 0) {
+    // Agent runs persist no materialization_plan — the run-level sink is the
+    // durable withheld record read by the run-detail panel.
+    await mergeRunWithheldMcps(args.db as never, args.runId, withheld);
     log.warn(
-      { runId: args.runId, withheld, execTrust: args.execTrust },
-      "agent profile stdio MCPs withheld — providing package is not exec-trusted",
+      {
+        runId: args.runId,
+        execTrust: args.execTrust,
+        withheld: withheld.map((w) => `${w.refId}:${w.reason}`),
+      },
+      "agent MCP servers withheld (trust/exec-trust) — persisted",
     );
   }
 
-  return gated;
+  return kept;
 }
 
 // MCP facade injection (ADR-089 D9): the agent's sanctioned write channel —

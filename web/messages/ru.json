@@ -2142,6 +2142,15 @@
       "origin": {
         "authored": "Авторский",
         "git": "Git"
+      },
+      "withheld": "Отклонённые MCP-серверы",
+      "provenance": {
+        "binding": "привязка",
+        "precedence": "приоритет"
+      },
+      "withheldReason": {
+        "platformUntrusted": "платформа не доверена",
+        "execUntrustedStdio": "stdio без exec-доверия"
       }
     },
     "dirtyTitle": "Незакоммиченные изменения в рабочей копии",

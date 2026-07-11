@@ -1146,11 +1146,22 @@ export async function getRunResolvedCapabilitySet(
   runId: string,
 ): Promise<ResolvedCapabilitySet | null> {
   const rows = await db()
-    .select({ resolved: runs.resolvedCapabilitySet })
+    .select({
+      resolved: runs.resolvedCapabilitySet,
+      withheld: runs.withheldMcps,
+    })
     .from(runs)
     .where(eq(runs.id, runId));
+  const row = rows[0];
 
-  return rows[0]?.resolved ?? null;
+  if (!row?.resolved) return null;
+
+  // ADR-129 (W-E): merge the run-level withheld-MCP sink into the read model so
+  // the run-detail panel surfaces trust/exec-trust withholds (visible but not
+  // executed) alongside the frozen resolved set.
+  return row.withheld && row.withheld.length > 0
+    ? { ...row.resolved, withheldMcps: row.withheld }
+    : row.resolved;
 }
 
 // null when the run has no such node (no capability materialization happened).

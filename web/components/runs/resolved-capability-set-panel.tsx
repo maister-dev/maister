@@ -9,6 +9,13 @@ export type ResolvedCapabilitySetLabels = {
   mcps: string;
   empty: string;
   origin: { authored: string; git: string };
+  // ADR-129 (W-E)
+  withheld: string;
+  provenance: { binding: string; precedence: string };
+  withheldReason: {
+    "platform-untrusted": string;
+    "exec-untrusted-stdio": string;
+  };
 };
 
 const ROW_CLS =
@@ -83,11 +90,40 @@ export function ResolvedCapabilitySetPanel({
             >
               <span className="break-all text-ink-2">{mcp.refId}</span>
               <span className="text-mute">{mcp.scope}</span>
+              {mcp.provenance ? (
+                <span
+                  className="text-mute"
+                  data-testid={`resolved-mcp-prov-${mcp.refId}`}
+                >
+                  {labels.provenance[mcp.provenance]}
+                </span>
+              ) : null}
               <span className="text-mute">{mcp.sha ?? "—"}</span>
             </li>
           ))}
         </ul>
       )}
+
+      {resolved.withheldMcps && resolved.withheldMcps.length > 0 ? (
+        <>
+          <h3 className={`${KEY_CLS} mt-4`}>{labels.withheld}</h3>
+          <ul className="m-0 list-none space-y-1 p-0">
+            {resolved.withheldMcps.map((mcp) => (
+              <li
+                key={`${mcp.refId}:${mcp.reason}`}
+                className={ROW_CLS}
+                data-testid={`withheld-mcp-${mcp.refId}`}
+              >
+                <span className="break-all text-ink-2">{mcp.refId}</span>
+                <span className="text-mute">{mcp.transport}</span>
+                <span className="text-amber-500">
+                  {labels.withheldReason[mcp.reason]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </section>
   );
 }

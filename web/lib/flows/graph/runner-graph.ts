@@ -100,7 +100,11 @@ import {
 } from "./mutation-check";
 
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
-import { gateStdioMcpsByExecTrust } from "@/lib/capabilities/agent-map";
+import {
+  loadPlatformTrustByRef,
+  mergeRunWithheldMcps,
+  partitionWithheldMcps,
+} from "@/lib/mcp/materialization-gate";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
   mergeRunnerAdapterLaunch,
@@ -1741,6 +1745,22 @@ async function materializeNodeCapabilities(
     },
   });
 
+  // ADR-129 (W-E): make platform trust load-bearing and unify it with the
+  // exec-trust stdio gate into ONE structured withheld pass. An untrusted
+  // platform MCP is withheld (visible-but-not-executable, `platform-untrusted`);
+  // a stdio MCP on an exec-untrusted revision is withheld (`exec-untrusted-stdio`).
+  // Persisted (matplan + run-level) — never silent warn-only. sse/http from a
+  // trusted platform pass (no local exec).
+  const mcpEntries = profile.supported
+    .filter((e) => e.kind === "mcp")
+    .map((e) => ({ refId: e.capabilityRefId, source: e.source }));
+  const { kept: mcpServers, withheld: withheldMcps } = partitionWithheldMcps({
+    mcpServers: m.mcpServers,
+    sourceByRef: new Map(mcpEntries.map((e) => [e.refId, e.source])),
+    platformTrustedByRef: await loadPlatformTrustByRef(mcpEntries, db),
+    execTrust: loaded.execTrust,
+  });
+
   const plan: MaterializationPlan = {
     profileDigest: profile.profileDigest,
     resolvedRevisions: profile.supported.map((e) => ({
@@ -1758,15 +1778,13 @@ async function materializeNodeCapabilities(
       .filter((e) => e.enforceability !== "enforced")
       .map((e) => e.capabilityRefId),
     refusedClasses: profile.refused.map((e) => e.capabilityRefId),
+    withheldMcps,
     cleanup: { status: "pending" },
   };
 
-  // M27/T-C8b: stdio MCP servers spawn a local command — withhold them unless
-  // the pinned flow revision is exec-trusted (T-B3). sse/http are remote (no
-  // local exec) and always pass. This is the only spawn surface (mcpServers
-  // reach the agent via createSession).
-  const mcpServers = gateStdioMcpsByExecTrust(m.mcpServers, loaded.execTrust);
-  const withheldStdio = m.mcpServers.length - mcpServers.length;
+  // ADR-129: the durable run-level sink read by the run-detail panel (both flow
+  // and agent). The per-node matplan above adds per-node granularity.
+  await mergeRunWithheldMcps(db, loaded.run.id, withheldMcps);
 
   if (materializationSelection) {
     await persistExperimentMaterializationDelta({
@@ -1777,10 +1795,14 @@ async function materializeNodeCapabilities(
     });
   }
 
-  if (withheldStdio > 0) {
+  if (withheldMcps.length > 0) {
     logger.warn(
-      { nodeId: node.id, execTrust: loaded.execTrust, withheldStdio },
-      "[runner.graph] stdio MCP servers withheld — flow revision not exec-trusted",
+      {
+        nodeId: node.id,
+        execTrust: loaded.execTrust,
+        withheld: withheldMcps.map((w) => `${w.refId}:${w.reason}`),
+      },
+      "[runner.graph] MCP servers withheld (trust/exec-trust) — persisted",
     );
   }
 

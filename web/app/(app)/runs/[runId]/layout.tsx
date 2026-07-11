@@ -583,6 +583,17 @@ export default async function RunDetailLayout({
       authored: t("resolvedSet.origin.authored"),
       git: t("resolvedSet.origin.git"),
     },
+    withheld: t("resolvedSet.withheld"),
+    provenance: {
+      binding: t("resolvedSet.provenance.binding"),
+      precedence: t("resolvedSet.provenance.precedence"),
+    },
+    withheldReason: {
+      "platform-untrusted": t("resolvedSet.withheldReason.platformUntrusted"),
+      "exec-untrusted-stdio": t(
+        "resolvedSet.withheldReason.execUntrustedStdio",
+      ),
+    },
   };
 
   const capabilityNodes: CapabilityProfileNodeView[] =

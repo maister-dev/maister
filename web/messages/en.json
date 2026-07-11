@@ -2142,6 +2142,15 @@
       "origin": {
         "authored": "Authored",
         "git": "Git"
+      },
+      "withheld": "Withheld MCP servers",
+      "provenance": {
+        "binding": "bound",
+        "precedence": "precedence"
+      },
+      "withheldReason": {
+        "platformUntrusted": "platform untrusted",
+        "execUntrustedStdio": "exec-untrusted stdio"
       }
     },
     "dirtyTitle": "Uncommitted changes in the worktree",

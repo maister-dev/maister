@@ -17,6 +17,12 @@ const labels: ResolvedCapabilitySetLabels = {
   mcps: "MCP servers",
   empty: "None",
   origin: { authored: "Authored", git: "Git" },
+  withheld: "Withheld MCP servers",
+  provenance: { binding: "bound", precedence: "precedence" },
+  withheldReason: {
+    "platform-untrusted": "platform untrusted",
+    "exec-untrusted-stdio": "exec-untrusted stdio",
+  },
 };
 
 function render(resolved: ResolvedCapabilitySet): string {
@@ -45,6 +51,36 @@ describe("ResolvedCapabilitySetPanel", () => {
     expect(html).toContain("deadbeef");
     expect(html).toContain('data-testid="resolved-mcp-github"');
     expect(html).toContain("project");
+  });
+
+  it("renders mcp provenance and the withheld section (W-E)", () => {
+    const html = render({
+      flowRevisionId: "rev-w",
+      flowOrigin: "git",
+      capabilities: [],
+      mcps: [
+        {
+          refId: "github",
+          sha: "s",
+          scope: "platform",
+          provenance: "binding",
+        },
+      ],
+      withheldMcps: [
+        {
+          refId: "serena",
+          transport: "stdio",
+          reason: "platform-untrusted",
+          scope: "platform",
+        },
+      ],
+    });
+
+    expect(html).toContain('data-testid="resolved-mcp-prov-github"');
+    expect(html).toContain("bound");
+    expect(html).toContain("Withheld MCP servers");
+    expect(html).toContain('data-testid="withheld-mcp-serena"');
+    expect(html).toContain("platform untrusted");
   });
 
   it("shows the empty label when there are no capabilities or mcps", () => {
