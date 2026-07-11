@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { loadRun } from "@/lib/flows/graph/runner-core";
 import {
   flows as flowsTable,
+  flowRevisions as flowRevisionsTable,
   projects as projectsTable,
   runSessions as runSessionsTable,
   runs as runsTable,
@@ -27,14 +28,17 @@ describe("loadRun — per-session set (M42)", () => {
     };
   }
 
-  function fakeDb(runSessionRows: Record<string, unknown>[]) {
+  function fakeDb(
+    runSessionRows: Record<string, unknown>[],
+    opts?: { pinned?: boolean; mutableManifest?: unknown },
+  ) {
     const run = {
       id: "run-1",
       taskId: "task-1",
       projectId: "project-1",
       flowId: "flow-1",
-      flowRevisionId: null,
-      flowRevision: "unknown",
+      flowRevisionId: opts?.pinned ? "revision-1" : null,
+      flowRevision: opts?.pinned ? "rev-pinned" : "unknown",
       runnerSnapshot: snapshot("runner-default", "claude-opus-4-8"),
       capabilityAgent: "claude",
       runnerResolutionTier: "platformDefault",
@@ -47,7 +51,7 @@ describe("loadRun — per-session set (M42)", () => {
         {
           id: "flow-1",
           flowRefId: "bugfix",
-          manifest: {
+          manifest: opts?.mutableManifest ?? {
             schemaVersion: 1,
             name: "Bugfix",
             nodes: [
@@ -59,6 +63,25 @@ describe("loadRun — per-session set (M42)", () => {
               },
             ],
           },
+        },
+      ],
+      [getTableName(flowRevisionsTable)]: [
+        {
+          id: "revision-1",
+          manifest: {
+            schemaVersion: 1,
+            name: "Pinned",
+            nodes: [
+              {
+                id: "pinned",
+                type: "cli",
+                action: { command: "true" },
+                transitions: { success: "done" },
+              },
+            ],
+          },
+          installedPath: "/cache/pinned",
+          execTrust: "trusted",
         },
       ],
       [getTableName(projectsTable)]: [{ slug: "demo" }],
@@ -112,5 +135,34 @@ describe("loadRun — per-session set (M42)", () => {
     await expect(loadRun(fakeDb([]) as never, "run-1")).rejects.toThrow(
       /no ACP runner snapshot/,
     );
+  });
+
+  it("uses the pinned revision when the mutable flow cache is legacy", async () => {
+    const loaded = await loadRun(
+      fakeDb(
+        [
+          {
+            sessionName: "default",
+            runnerSnapshot: snapshot("runner-default", "claude-opus-4-8"),
+            acpSessionId: null,
+            capabilityAgent: "claude",
+            runnerResolutionTier: "platformDefault",
+          },
+        ],
+        {
+          pinned: true,
+          mutableManifest: {
+            schemaVersion: 1,
+            name: "Legacy cache",
+            steps: [],
+          },
+        },
+      ) as never,
+      "run-1",
+    );
+
+    expect(loaded.manifest.nodes.map((node) => node.id)).toEqual(["pinned"]);
+    expect(loaded.flowInstallPath).toBe("/cache/pinned");
+    expect(loaded.execTrust).toBe("trusted");
   });
 });

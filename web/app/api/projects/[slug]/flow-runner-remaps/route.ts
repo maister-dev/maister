@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { RunnerSlotKind } from "@/lib/acp-runners/runner-slots";
 
 import { randomUUID } from "node:crypto";
@@ -143,7 +142,7 @@ function slotMetaByRevision(
     if (!flow.enabledRevisionId || !flow.manifest) continue;
 
     try {
-      const slots = enumerateRunnerSlots(flow.manifest as FlowYamlV1);
+      const slots = enumerateRunnerSlots(flow.manifest);
       const byKey = new Map<string, { kind: RunnerSlotKind; label: string }>();
 
       for (const slot of slots) {
@@ -297,7 +296,7 @@ export async function PATCH(
     }
 
     const declaredSlots = new Set(
-      enumerateRunnerSlots(flow.manifest as FlowYamlV1).map(
+      enumerateRunnerSlots(flow.manifest).map(
         (slot) => slot.slotKey,
       ),
     );

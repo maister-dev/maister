@@ -158,6 +158,7 @@ async function seedRunningNode(opts: {
   maxCostUsd?: number;
   attemptStartedAt: Date;
   acpSessionId: string | null;
+  manifest?: unknown;
 }): Promise<{ runId: string; supervisorSessionId: string }> {
   const flowId = randomUUID();
   const taskId = randomUUID();
@@ -167,14 +168,16 @@ async function seedRunningNode(opts: {
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
-    flowRefId: "g",
+    flowRefId: `g-${flowId.slice(0, 8)}`,
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: "/tmp/flows/g",
-    manifest: manifestWithLimits({
-      maxDurationMinutes: opts.maxDurationMinutes,
-      maxCostUsd: opts.maxCostUsd,
-    }),
+    manifest:
+      opts.manifest ??
+      manifestWithLimits({
+        maxDurationMinutes: opts.maxDurationMinutes,
+        maxCostUsd: opts.maxCostUsd,
+      }),
     schemaVersion: 1,
   });
   await db.insert(schema.tasks).values({
@@ -295,6 +298,24 @@ async function getAttempt(runId: string): Promise<any> {
 }
 
 describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
+  it("skips a legacy anomaly without aborting another capped candidate", async () => {
+    const legacy = await seedRunningNode({
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: null,
+      manifest: { schemaVersion: 1, name: "Legacy", steps: [] },
+    });
+    const capped = await seedRunningNode({
+      maxDurationMinutes: 10,
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: null,
+    });
+
+    await runSweepTick({ db });
+
+    expect((await getRun(legacy.runId)).status).toBe("Running");
+    expect((await getRun(capped.runId)).status).toBe("Failed");
+  }, 60_000);
+
   it("kills a run past maxDurationMinutes: deleteSession called, node Failed, run terminal Failed", async () => {
     const acp = "acp-over";
     const { runId, supervisorSessionId } = await seedRunningNode({

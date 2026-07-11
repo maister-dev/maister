@@ -8,6 +8,10 @@ import { sql } from "drizzle-orm";
 
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { getDb } from "@/lib/db/client";
+import {
+  GRAPH_ONLY_CUTOVER_REASON,
+  GRAPH_ONLY_CUTOVER_SOURCE,
+} from "@/lib/domain-events/cutover";
 
 export const RUNS_LIST_STATUSES = [
   "Pending",
@@ -337,8 +341,8 @@ function runsListQuery(args: {
       FROM domain_events de
       WHERE de.run_id = r.id
         AND de.kind = 'run.failed'
-        AND de.payload->>'reason' = 'legacy_steps_engine_3_cutover'
-        AND de.payload->>'source' = 'upgrade_cutover'
+        AND de.payload->>'reason' = ${GRAPH_ONLY_CUTOVER_REASON}
+        AND de.payload->>'source' = ${GRAPH_ONLY_CUTOVER_SOURCE}
       ORDER BY de.created_at DESC
       LIMIT 1
     ) cutover ON true

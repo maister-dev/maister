@@ -536,7 +536,7 @@ export async function getFlowRunnerBindingScope(
 
   if (flow?.manifest) {
     try {
-      for (const slot of enumerateRunnerSlots(flow.manifest as FlowYamlV1)) {
+      for (const slot of enumerateRunnerSlots(flow.manifest)) {
         slotLabels[slot.slotKey] = slot.label;
       }
     } catch {

@@ -1,42 +1,51 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  FLOW_STEP_TYPES,
+  FLOW_NODE_TYPES,
   flowYamlCompletions,
 } from "@/lib/flows/authored-complete";
 
 // Contract chosen (and asserted consistently below): flowYamlCompletions is a
-// prefix filter over the static flow.yaml vocab (step types + known top-level
+// prefix filter over the static flow.yaml vocab (node types + known top-level
 // manifest keys + static runner-profile keys). Case-insensitive. An empty
 // prefix returns the full vocab; a prefix with no match returns [].
 
-describe("FLOW_STEP_TYPES", () => {
-  it("is exactly the four step kinds", () => {
-    expect([...FLOW_STEP_TYPES].sort()).toEqual(
-      ["agent", "cli", "guard", "human"].sort(),
+describe("FLOW_NODE_TYPES", () => {
+  it("is exactly the graph node kinds", () => {
+    expect([...FLOW_NODE_TYPES].sort()).toEqual(
+      [
+        "ai_coding",
+        "orchestrator",
+        "consensus",
+        "judge",
+        "cli",
+        "check",
+        "human",
+        "form",
+      ].sort(),
     );
   });
 });
 
 describe("flowYamlCompletions", () => {
-  it("resolves a step-type prefix to the matching kind", () => {
-    expect(flowYamlCompletions("ag")).toContain("agent");
+  it("resolves a node-type prefix to the matching kind", () => {
+    expect(flowYamlCompletions("ai")).toContain("ai_coding");
     expect(flowYamlCompletions("hum")).toContain("human");
   });
 
   it("includes the known top-level flow.yaml manifest keys", () => {
     const all = flowYamlCompletions("");
 
-    for (const key of ["schemaVersion", "name", "steps", "nodes"]) {
+    for (const key of ["schemaVersion", "name", "nodes"]) {
       expect(all).toContain(key);
     }
   });
 
-  it("surfaces the four step types in the full vocab", () => {
+  it("surfaces graph node types in the full vocab", () => {
     const all = flowYamlCompletions("");
 
-    for (const stepType of FLOW_STEP_TYPES) {
-      expect(all).toContain(stepType);
+    for (const nodeType of FLOW_NODE_TYPES) {
+      expect(all).toContain(nodeType);
     }
   });
 

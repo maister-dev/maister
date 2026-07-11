@@ -22,8 +22,8 @@ import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 
-// FIXME(any): dual drizzle-orm peer-dep variants (see step-runs.ts / schema
-// integration test). Matches the existing store idiom.
+// FIXME(any): dual drizzle-orm peer-dep variants in the schema integration
+// seam. Matches the existing store idiom.
 const { nodeAttempts, gateResults } = schemaModule as unknown as Record<
   string,
   any

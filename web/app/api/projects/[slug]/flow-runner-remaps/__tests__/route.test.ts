@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const mocks = vi.hoisted(() => ({
   requireActiveSession: vi.fn(),
@@ -187,6 +188,30 @@ describe("project Flow runner remap API", () => {
     expect(res.status).toBe(409);
     expect(body.code).toBe("CONFLICT");
     expect(state.tables.flow_runner_remaps[0].status).toBe("Pending");
+  });
+
+  it("maps a legacy enabled manifest to 422 CONFIG without mutating remaps", async () => {
+    state.tables.flows[0].manifest = {
+      schemaVersion: 1,
+      name: "Legacy",
+      steps: [],
+    };
+
+    const res = await patch({
+      flowRevisionId: "revision-1",
+      slotKey: "session:default",
+      mappedRunnerId: "claude-code",
+    });
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CONFIG",
+      message: LEGACY_STEPS_REFUSAL_MESSAGE,
+    });
+    expect(state.tables.flow_runner_remaps[0]).toMatchObject({
+      mappedRunnerId: null,
+      status: "Pending",
+    });
   });
 
   it("rejects a revision not present in the project", async () => {

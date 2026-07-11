@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { buildAuthoredFlowDiff } from "@/lib/queries/authored-flow-diff";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 function flow(prompt: string): FlowYamlV1 {
   return flowYamlV1Schema.parse({
@@ -55,5 +56,15 @@ describe("buildAuthoredFlowDiff", () => {
     // every line is an addition — pure add, no removal markers
     expect(lines.every((l) => l.startsWith("+ "))).toBe(true);
     expect(lines.some((l) => l.startsWith("- "))).toBe(false);
+  });
+
+  it("refuses a legacy published side through the same CONFIG boundary", () => {
+    expect(() =>
+      buildAuthoredFlowDiff(
+        flow("new"),
+        { schemaVersion: 1, name: "Legacy", steps: [] },
+        1,
+      ),
+    ).toThrowError(LEGACY_STEPS_REFUSAL_MESSAGE);
   });
 });

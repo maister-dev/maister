@@ -20,9 +20,9 @@ export async function register(): Promise<void> {
   // `when`, never run, or partially applied — otherwise surfaces as a confusing
   // runtime "column does not exist" deep in a page. Catch it at boot instead.
   // A failed CHECK (DB unreachable) is tolerated; only a confirmed gap is loud.
-  // Dev throws (fail-fast); MAISTER_STRICT_MIGRATIONS=0 downgrades to a warning,
-  // =1 enforces in any env. Runs before the sweeps, which would fail anyway on a
-  // behind DB. See lib/db/check-migrations.ts + `pnpm db:check`.
+  // A confirmed gap always aborts boot. Runs before the sweeps, which would
+  // otherwise execute graph-only code against a pre-cut-over schema. See
+  // lib/db/check-migrations.ts + `pnpm db:check`.
   try {
     const { findPendingMigrations, findPendingBrainMigrations } = await import(
       "@/lib/db/check-migrations"
@@ -49,15 +49,10 @@ export async function register(): Promise<void> {
         );
 
       const msg = `[migrations] ${parts.join("; ")}.`;
-      const strict =
-        process.env.MAISTER_STRICT_MIGRATIONS === "1" ||
-        (process.env.NODE_ENV === "development" &&
-          process.env.MAISTER_STRICT_MIGRATIONS !== "0");
-
       // eslint-disable-next-line no-console
       console.error(`\n${"=".repeat(72)}\n${msg}\n${"=".repeat(72)}\n`);
 
-      if (strict) throw new Error(msg);
+      throw new Error(msg);
     }
   } catch (err) {
     // eslint-disable-next-line no-console

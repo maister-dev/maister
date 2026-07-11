@@ -74,16 +74,16 @@ export default async function FlowDetailPage({
   // the raw-YAML tab only.
   const te = await getTranslations("flowEditor");
   const editorLabels = buildFlowEditorTabsLabels(te);
-  const draftManifest = (detail.draft?.manifest ??
+  const draftManifest = detail.draft?.manifest ??
     detail.published?.manifest ??
-    null) as FlowYamlV1 | null;
-  const publishedManifest = (detail.published?.manifest ??
-    null) as FlowYamlV1 | null;
+    null;
+  const publishedManifest = detail.published?.manifest ?? null;
 
   let canvasAvailable = false;
   let topology: GraphTopology | null = null;
   let layout: FlowLayout | null = null;
   let flowDiff = "";
+  let canvasManifest: FlowYamlV1 | null = null;
 
   if (draftManifest) {
     try {
@@ -99,6 +99,7 @@ export default async function FlowDetailPage({
         publishedManifest,
         detail.capability.draftVersion,
       ).diff;
+      canvasManifest = draftManifest as FlowYamlV1;
       canvasAvailable = true;
     } catch {
       canvasAvailable = false;
@@ -128,7 +129,7 @@ export default async function FlowDetailPage({
           slug: detail.capability.slug,
           kind: "flow",
         }}
-        initialManifest={canvasAvailable ? draftManifest : null}
+        initialManifest={canvasAvailable ? canvasManifest : null}
         initialTitle={detail.capability.title}
         initialYaml={flowYaml}
         labels={editorLabels}

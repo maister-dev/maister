@@ -1,8 +1,7 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
-
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 import {
   presentationLayout,
   type FlowLayout,
@@ -29,9 +28,14 @@ export type AuthoredFlowGraph = {
  * manifest + draftVersion and feeds them in.
  */
 export function buildAuthoredFlowGraph(
-  manifest: FlowYamlV1,
+  storedManifest: unknown,
   draftVersion: number,
 ): AuthoredFlowGraph {
+  const manifest = parseGraphOnlyFlowManifest(storedManifest, {
+    code: "CONFIG",
+    surface: "authored-flow-graph",
+    manifestLabel: "authored flow manifest",
+  });
   const compiled = compileManifest(manifest);
   const topology = buildGraphTopology(compiled);
   const layout = presentationLayout(manifest);

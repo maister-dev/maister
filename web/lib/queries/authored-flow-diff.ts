@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
@@ -8,6 +7,7 @@ import { stringify as stringifyYaml } from "yaml";
 
 import { unifiedLineDiff } from "@/lib/flows/editor/text-diff";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 
@@ -35,10 +35,22 @@ export type AuthoredFlowDiff = {
  * a pure addition.
  */
 export function buildAuthoredFlowDiff(
-  draftManifest: FlowYamlV1,
-  publishedManifest: FlowYamlV1 | null,
+  storedDraftManifest: unknown,
+  storedPublishedManifest: unknown | null,
   draftVersion: number,
 ): AuthoredFlowDiff {
+  const draftManifest = parseGraphOnlyFlowManifest(storedDraftManifest, {
+    code: "CONFIG",
+    surface: "authored-flow-diff-draft",
+    manifestLabel: "authored draft flow manifest",
+  });
+  const publishedManifest = storedPublishedManifest
+    ? parseGraphOnlyFlowManifest(storedPublishedManifest, {
+        code: "CONFIG",
+        surface: "authored-flow-diff-published",
+        manifestLabel: "published flow manifest",
+      })
+    : null;
   const draftYaml = stringifyYaml(draftManifest);
   const publishedYaml = publishedManifest
     ? stringifyYaml(publishedManifest)

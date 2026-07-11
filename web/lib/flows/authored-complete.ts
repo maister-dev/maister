@@ -8,12 +8,20 @@ import type { Extension } from "@codemirror/state";
 
 import { autocompletion } from "@codemirror/autocomplete";
 
-export const FLOW_STEP_TYPES = ["cli", "agent", "guard", "human"] as const;
+export const FLOW_NODE_TYPES = [
+  "ai_coding",
+  "orchestrator",
+  "consensus",
+  "judge",
+  "cli",
+  "check",
+  "human",
+  "form",
+] as const;
 
 const FLOW_YAML_KEYS = [
   "schemaVersion",
   "name",
-  "steps",
   "nodes",
   "runner_profiles",
   "setup",
@@ -37,7 +45,7 @@ const FRONTMATTER_KEYS = [
 
 const VOCAB: readonly string[] = Array.from(
   new Set<string>([
-    ...FLOW_STEP_TYPES,
+    ...FLOW_NODE_TYPES,
     ...FLOW_YAML_KEYS,
     ...RUNNER_NAMES,
     ...FRONTMATTER_KEYS,

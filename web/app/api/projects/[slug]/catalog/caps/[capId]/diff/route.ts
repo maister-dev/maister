@@ -1,7 +1,5 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
-
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
@@ -60,9 +58,9 @@ export async function GET(
       );
     }
 
-    const draftManifest = (detail.draft?.manifest ??
+    const draftManifest = detail.draft?.manifest ??
       detail.published?.manifest ??
-      null) as FlowYamlV1 | null;
+      null;
 
     if (!draftManifest) {
       return NextResponse.json(
@@ -71,8 +69,7 @@ export async function GET(
       );
     }
 
-    const publishedManifest = (detail.published?.manifest ??
-      null) as FlowYamlV1 | null;
+    const publishedManifest = detail.published?.manifest ?? null;
 
     const result = buildAuthoredFlowDiff(
       draftManifest,

@@ -42,8 +42,8 @@ export type RunManifest = RunManifestIdentity &
  * Resolve a run's flow id, owning project id, and pinned manifest. Prefer the
  * immutable flow_revisions.manifest (launch-time snapshot); fall back to the
  * mutable flows.manifest for legacy rows. Returns null for a flow-less run
- * (e.g. scratch) or when no manifest is reachable. Mirrors the resolution in
- * lib/queries/run.ts getRunSettings.
+ * (e.g. scratch) or when no manifest is reachable. This is the sole read
+ * boundary for stored run manifests used by run-detail consumers.
  */
 export async function loadRunManifest(
   runId: string,
@@ -78,7 +78,7 @@ export async function loadRunManifest(
     manifest = revisionRows[0]?.manifest ?? null;
   }
 
-  if (!manifest) {
+  if (!manifest && !row.flowRevisionId) {
     const flowRows = await client
       .select({ manifest: flows.manifest })
       .from(flows)

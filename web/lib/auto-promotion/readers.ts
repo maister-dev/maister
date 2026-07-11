@@ -3,7 +3,6 @@ import type {
   ExternalCheckState,
 } from "@/lib/auto-promotion/evaluate";
 import type { DepsFile } from "@/lib/auto-promotion/deps-check";
-import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { DiffChangeStatEntry } from "@/lib/worktree";
 
 import { execFile } from "node:child_process";
@@ -12,16 +11,11 @@ import { promisify } from "node:util";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
-import {
-  flowRevisions,
-  flows,
-  gateResults,
-  hitlRequests,
-  runs,
-} from "@/lib/db/schema";
+import { gateResults, hitlRequests } from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { getNodeAttemptsForRun } from "@/lib/flows/graph/ledger";
+import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
   collapseLatestExternalPerGate,
   isExternalGateReady,
@@ -50,37 +44,11 @@ async function declaredExternalCheckGateIds(
   runId: string,
 ): Promise<Set<string>> {
   try {
-    const [run] = await db
-      .select({ flowId: runs.flowId, flowRevisionId: runs.flowRevisionId })
-      .from(runs)
-      .where(eq(runs.id, runId))
-      .limit(1);
+    const loaded = await loadRunManifest(runId, db);
 
-    if (!run) return new Set();
+    if (!loaded?.compatible) return new Set();
 
-    let manifest: FlowYamlV1 | null = null;
-
-    if (run.flowRevisionId) {
-      const [rev] = await db
-        .select({ manifest: flowRevisions.manifest })
-        .from(flowRevisions)
-        .where(eq(flowRevisions.id, run.flowRevisionId))
-        .limit(1);
-
-      manifest = (rev?.manifest ?? null) as FlowYamlV1 | null;
-    } else if (run.flowId) {
-      const [f] = await db
-        .select({ manifest: flows.manifest })
-        .from(flows)
-        .where(eq(flows.id, run.flowId))
-        .limit(1);
-
-      manifest = (f?.manifest ?? null) as FlowYamlV1 | null;
-    }
-
-    if (!manifest) return new Set();
-
-    const graph = compileManifest(manifest);
+    const graph = compileManifest(loaded.manifest);
     const ids = new Set<string>();
 
     for (const node of graph.nodes.values()) {

@@ -15,8 +15,8 @@ const { flowRevisions, flows } = schemaModule as unknown as Record<string, any>;
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-// Load the run's pinned manifest: `flow_revisions.manifest`, falling back to
-// live `flows.manifest`. Null when neither resolves.
+// Load the run's authoritative manifest. A revision pin never falls back to
+// mutable flow state; only unpinned historical rows may use `flows.manifest`.
 export async function resolveManifest(
   db: Db,
   run: { flowRevisionId: string | null; flowId: string | null },
@@ -41,7 +41,7 @@ export async function resolveManifest(
       : null;
   }
 
-  if (!manifest && run.flowId) {
+  if (!manifest && !run.flowRevisionId && run.flowId) {
     const flowRows = await db
       .select({ manifest: flows.manifest })
       .from(flows)

@@ -25,6 +25,7 @@ import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { markNodeFailed, markNodeNeedsInput } from "@/lib/flows/graph/ledger";
+import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
 import { cascadeAbandonRunTree } from "@/lib/orchestrator/cascade";
 import {
@@ -60,7 +61,7 @@ import {
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { flowRevisions, flows, hitlRequests, nodeAttempts, projects, runs } =
+const { hitlRequests, nodeAttempts, projects, runs } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -485,23 +486,9 @@ async function resolveRunManifest(
   db: Db,
   candidate: TimeLimitCandidate,
 ): Promise<FlowYamlV1 | null> {
-  if (candidate.flowRevisionId) {
-    const revRows = await db
-      .select({ manifest: flowRevisions.manifest })
-      .from(flowRevisions)
-      .where(eq(flowRevisions.id, candidate.flowRevisionId));
+  const loaded = await loadRunManifest(candidate.id, db);
 
-    if (revRows[0]?.manifest) return revRows[0].manifest as FlowYamlV1;
-  }
-
-  if (!candidate.flowId) return null;
-
-  const flowRows = await db
-    .select({ manifest: flows.manifest })
-    .from(flows)
-    .where(eq(flows.id, candidate.flowId));
-
-  return (flowRows[0]?.manifest ?? null) as FlowYamlV1 | null;
+  return loaded?.compatible ? loaded.manifest : null;
 }
 
 function maxDurationMinutesFor(

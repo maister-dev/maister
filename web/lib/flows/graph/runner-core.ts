@@ -46,8 +46,7 @@ export type RunFlowOptions = {
   // M19 crash-recover (ADR-034): set by driveResume when re-dispatching a
   // crashed `retry_safe` session-less node. The runner resumes FROM
   // `targetStepId` (re-runs that node once) under a single-winner claim that
-  // CAS-clears `resume_started_at`, instead of no-op'ing (graph) or restarting
-  // from step 0 (linear).
+  // CAS-clears `resume_started_at`, instead of no-op'ing.
   crashResume?: { targetStepId: string };
   // M37 (ADR-098) T5.2: set by the orchestrator-resume domain-event consumer
   // after it wins the WaitingOnChildren → Running CAS (markResumedFromWait —
@@ -284,14 +283,8 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     );
   }
 
-  let manifest = parseGraphOnlyFlowManifest(flow.manifest, {
-    code: "CONFIG",
-    surface: "graph-runner-flow",
-    manifestLabel: `flow ${flow.flowRefId}`,
-    flowRefId: flow.flowRefId,
-    revision: run.flowRevision,
-  });
-  let flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
+  let manifest: FlowYamlV1;
+  let flowInstallPath: string;
   // M27/T-C8b: a run with no pinned revision (legacy / pre-bridge) is treated as
   // exec-trusted (no stdio-MCP gate); a pinned revision carries its own axis.
   let execTrust: FlowRevisionExecTrust = "trusted";
@@ -327,6 +320,15 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     });
     flowInstallPath = revision.installedPath;
     execTrust = revision.execTrust;
+  } else {
+    manifest = parseGraphOnlyFlowManifest(flow.manifest, {
+      code: "CONFIG",
+      surface: "graph-runner-flow",
+      manifestLabel: `flow ${flow.flowRefId}`,
+      flowRefId: flow.flowRefId,
+      revision: run.flowRevision,
+    });
+    flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
   }
 
   return {

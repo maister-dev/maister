@@ -10,12 +10,14 @@ import {
 } from "@testcontainers/postgresql";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createAuthoredCapability } from "@/lib/catalog/authored-service";
 import * as schemaModule from "@/lib/db/schema";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -277,6 +279,39 @@ describe("GET /api/projects/[slug]/catalog/caps/[capId]/graph — RBAC (integrat
 });
 
 describe("GET /api/projects/[slug]/catalog/caps/[capId]/graph — DTO shape (integration)", () => {
+  it("maps a grandfathered legacy draft to 422 CONFIG", async () => {
+    sessionRef.value = { user: { id: "u-admin", role: "admin" } };
+    const [cap] = await db
+      .select({
+        revisionId: schema.authoredCapabilities.currentDraftRevisionId,
+      })
+      .from(schema.authoredCapabilities)
+      .where(eq(schema.authoredCapabilities.id, capIdInProjectA));
+
+    await db
+      .update(schema.authoredCapabilityRevisions)
+      .set({ manifest: { schemaVersion: 1, name: "Legacy", steps: [] } })
+      .where(eq(schema.authoredCapabilityRevisions.id, cap.revisionId));
+
+    try {
+      const res = await GET(
+        makeRequest(PROJECT_A_SLUG, capIdInProjectA),
+        params(PROJECT_A_SLUG, capIdInProjectA),
+      );
+
+      expect(res.status).toBe(422);
+      await expect(res.json()).resolves.toMatchObject({
+        code: "CONFIG",
+        message: LEGACY_STEPS_REFUSAL_MESSAGE,
+      });
+    } finally {
+      await db
+        .update(schema.authoredCapabilityRevisions)
+        .set({ manifest: FLOW_MANIFEST })
+        .where(eq(schema.authoredCapabilityRevisions.id, cap.revisionId));
+    }
+  });
+
   it("topology.nodes carries the compiled node for each manifest node", async () => {
     sessionRef.value = { user: { id: "u-admin", role: "admin" } };
 

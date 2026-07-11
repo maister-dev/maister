@@ -1,9 +1,10 @@
 import "server-only";
 
-import type { FlowYamlV1, RunnerSlot } from "@/lib/config.schema";
+import type { RunnerSlot } from "@/lib/config.schema";
 
 import { runnerSlotProfileRef } from "@/lib/config.schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 
 // M42 (ADR-114): a bindable runner slot in a flow revision. `slotKey` is the
 // stable per-slot binding key:
@@ -53,8 +54,13 @@ function slotFor(
 // consensus synthesizer. Order is deterministic (sessions first, then consensus
 // nodes in graph order).
 export function enumerateRunnerSlots(
-  manifest: FlowYamlV1,
+  storedManifest: unknown,
 ): RunnerSlotDescriptor[] {
+  const manifest = parseGraphOnlyFlowManifest(storedManifest, {
+    code: "CONFIG",
+    surface: "runner-slot-enumeration",
+    manifestLabel: "flow manifest",
+  });
   const graph = compileManifest(manifest);
   const slots: RunnerSlotDescriptor[] = [];
 

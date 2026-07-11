@@ -5,6 +5,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import { describe, expect, it } from "vitest";
 
 import { buildAuthoredFlowGraph } from "@/lib/queries/authored-flow-graph";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 // A minimal graph-form manifest with two nodes and a compat.engine_min
 // declaration. Keeps the fixture small: one agent node transitions to one
@@ -103,5 +104,14 @@ describe("buildAuthoredFlowGraph — shape contract (T-A1)", () => {
     expect(byId.get("implement")?.nodeRole).toBe("agent");
     expect(byId.get("review")?.nodeType).toBe("human");
     expect(byId.get("review")?.nodeRole).toBe("human");
+  });
+
+  it("refuses a stored legacy draft as typed CONFIG", () => {
+    expect(() =>
+      buildAuthoredFlowGraph(
+        { schemaVersion: 1, name: "Legacy", steps: [] },
+        1,
+      ),
+    ).toThrowError(LEGACY_STEPS_REFUSAL_MESSAGE);
   });
 });

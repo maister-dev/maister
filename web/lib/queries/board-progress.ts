@@ -1,4 +1,3 @@
-import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { NodeAttempt, RunStatus } from "@/lib/db/schema";
 import type {
   ActiveNodeState,
@@ -6,6 +5,7 @@ import type {
   SpineSegment,
 } from "@/lib/queries/board";
 
+import { flowYamlV1Schema } from "@/lib/config.schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 
 const LEGACY_SPINE_LENGTH = 7;
@@ -26,14 +26,6 @@ export interface FlightProgress {
   activeNode: ActiveNodeStatus | null;
   spine: SpineSegment[];
   stepLabel: string;
-}
-
-function hasRunnableManifest(manifest: unknown): manifest is FlowYamlV1 {
-  if (typeof manifest !== "object" || manifest === null) return false;
-
-  const candidate = manifest as { nodes?: unknown };
-
-  return Array.isArray(candidate.nodes) && candidate.nodes.length > 0;
 }
 
 function isLaterAttempt(
@@ -153,9 +145,11 @@ function nodeAttemptDone(status?: ProgressNodeAttempt["status"]): boolean {
 }
 
 function graphSpine(input: FlightProgressInput): FlightProgress | null {
-  if (!hasRunnableManifest(input.manifest)) return null;
+  const parsed = flowYamlV1Schema.safeParse(input.manifest);
 
-  const graph = compileManifest(input.manifest);
+  if (!parsed.success || parsed.data.nodes.length === 0) return null;
+
+  const graph = compileManifest(parsed.data);
   const latestByNode = latestAttemptByNode(input.nodeAttempts);
   const activeNode = activeNodeStatus(input, latestByNode);
   const nodeIds = graph.order.slice(0, LEGACY_SPINE_LENGTH);

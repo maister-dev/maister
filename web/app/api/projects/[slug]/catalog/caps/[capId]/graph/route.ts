@@ -1,7 +1,5 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
-
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
@@ -66,9 +64,9 @@ export async function GET(
       );
     }
 
-    const manifest = (detail.draft?.manifest ??
+    const manifest = detail.draft?.manifest ??
       detail.published?.manifest ??
-      null) as FlowYamlV1 | null;
+      null;
 
     if (!manifest) {
       return NextResponse.json(

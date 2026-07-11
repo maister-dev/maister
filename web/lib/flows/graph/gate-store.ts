@@ -18,7 +18,7 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
-// FIXME(any): dual drizzle-orm peer-dep variants (matches step-runs.ts idiom).
+// FIXME(any): dual drizzle-orm peer-dep variants in the graph-store seam.
 const { gateResults, runs } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({

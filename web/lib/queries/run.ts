@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
+import type { CapabilityAgent } from "@/lib/config.schema";
 import type {
   Assignment,
   AssignmentEvent,
@@ -70,6 +70,7 @@ import {
   type WorkbenchLifecycleAction,
 } from "@/lib/queries/portfolio";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
   queryRunTokens,
   reconcileRunCostRollups,
@@ -1049,27 +1050,9 @@ export async function getRunSettings(
 
   if (!row) return null;
 
-  let manifest: FlowYamlV1 | null = null;
+  const loadedManifest = await loadRunManifest(runId, client);
 
-  if (row.flowRevisionId) {
-    const revisionRows = await client
-      .select({ manifest: flowRevisions.manifest })
-      .from(flowRevisions)
-      .where(eq(flowRevisions.id, row.flowRevisionId));
-
-    manifest = (revisionRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
-  }
-
-  if (!manifest && row.flowId) {
-    const flowRows = await client
-      .select({ manifest: flows.manifest })
-      .from(flows)
-      .where(eq(flows.id, row.flowId));
-
-    manifest = (flowRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
-  }
-
-  if (!manifest) return null;
+  if (!loadedManifest?.compatible) return null;
 
   const attemptRows = await client
     .select({
@@ -1088,7 +1071,7 @@ export async function getRunSettings(
     }
   }
 
-  const graph = compileManifest(manifest);
+  const graph = compileManifest(loadedManifest.manifest);
   const nodes = [...graph.nodes.values()].map((n) => ({
     id: n.id,
     type: n.nodeType,
