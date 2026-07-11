@@ -389,7 +389,10 @@ beforeEach(async () => {
 
   // Default: no version-adopt (returns no reverts) so the other tests' select
   // sequence is unchanged; individual tests override per-case.
-  versionsMock.applyPackageVersionChoices.mockResolvedValue([]);
+  versionsMock.applyPackageVersionChoices.mockResolvedValue({
+    reverts: [],
+    tryOncePins: [],
+  });
   versionsMock.revertPackageVersionChoices.mockResolvedValue(undefined);
 
   seedSelects();
@@ -493,9 +496,12 @@ describe("launchRun — execution-control policy (T0.3)", () => {
 
 describe("launchRun — version-adopt compensation (ADR-107, finding #1)", () => {
   it("reverts the adopted pin when the adopted cut no longer ships the flow", async () => {
-    versionsMock.applyPackageVersionChoices.mockResolvedValue([
+    versionsMock.applyPackageVersionChoices.mockResolvedValue({
+      reverts: [
       { attachmentId: "att-1", priorInstallId: "prior-1" },
-    ]);
+      ],
+      tryOncePins: [],
+    });
     // tasks, projects, flows(initial), then the post-adopt flow reload returns
     // empty → the adopted cut dropped the flow → PRECONDITION inside the outer try.
     state.selectResults = [

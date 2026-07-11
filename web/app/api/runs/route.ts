@@ -42,8 +42,14 @@ const postBodySchema = z
     targetBranch: z.string().min(1).optional(),
     deliveryPolicy: storedDeliveryPolicySchema.optional(),
     executionPolicy: executionPolicySchema.optional(),
+    // ADR-129: `try_once` = ephemeral per-run pin to the newest cut — the
+    // attachment is never advanced. Offered exactly when `adopt` is offered;
+    // server-constrained like the other options (unoffered → CONFLICT).
     packageVersions: z
-      .record(z.string().min(1), z.enum(["keep", "adopt", "cut_and_adopt"]))
+      .record(
+        z.string().min(1),
+        z.enum(["keep", "adopt", "cut_and_adopt", "try_once"]),
+      )
       .optional(),
     // ADR-119: force-relaunch flag — selects the force launchability gate
     // (every run status launchable; task gates flagged/blocked still refuse) for

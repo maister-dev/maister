@@ -1763,8 +1763,10 @@
     "packageVersionOption": {
       "keep": "Keep pinned version",
       "adopt": "Adopt newer version",
-      "cut_and_adopt": "Cut latest & adopt"
+      "cut_and_adopt": "Cut latest & adopt",
+      "try_once": "Try newer once"
     },
+    "packageVersionTryOnceHint": "Runs this launch on the newer cut without changing the project's pinned version.",
     "deliveryPolicy": "Delivery policy",
     "strategy": "Strategy",
     "strategyMerge": "Merge",

@@ -108,6 +108,7 @@ const {
   experimentRuns,
   flowRevisions,
   flows,
+  packageInstalls,
   platformAcpRunners,
   platformRouterSidecars,
   platformRuntimeSettings,
@@ -303,7 +304,19 @@ export type LaunchRunInput = {
   // Applied BEFORE the enablement check so adopt/cut_and_adopt take effect for
   // this launch. Absent/keep = launch on the pin; server-constrained to the
   // launch-detected available set (unknown/ineligible → CONFLICT).
-  packageVersions?: Record<string, "keep" | "adopt" | "cut_and_adopt">;
+  packageVersions?: Record<
+    string,
+    "keep" | "adopt" | "cut_and_adopt" | "try_once"
+  >;
+  // ADR-129 §a: ephemeral per-run package pin. The task flow's revision
+  // resolves from THIS `package_installs` row (join on the flow's flowRefId +
+  // the install's resolvedRevision) instead of the attachment's enabled
+  // pointer; `project_package_attachments` is never mutated. Internal callers
+  // only (experiment variant fan-out; the try_once launch choice translates
+  // into it) — not exposed on the public POST /api/runs body. A caller never
+  // combines it with a non-keep `packageVersions` choice for the same package
+  // (try_once translation REMOVES the choice it converts).
+  packagePin?: { packageInstallId: string };
   // ADR-119: force-relaunch flag. When true, the launch gate uses
   // classifyForceRelaunchLaunchability (every RUN status is launchable; only the
   // TASK gates flagged/blocked refuse), allowing an additive concurrent run
@@ -511,6 +524,65 @@ export type LaunchRunContext = {
 // `precondition → worktree_created → materializing(<adapter>)` and then returns
 // the terminal `{runId, status, queuePosition?}`. `opts.signal` aborts at the
 // materialize boundary → the existing worktree compensation (pre-commit GC).
+// ADR-129 §a: the ephemeral-pin allow-list matrix — resolve the flow revision
+// an explicitly named `package_installs` row ships for `flow.flowRefId`.
+// Refusals: unknown install → CONFIG; not Installed / untrusted →
+// PRECONDITION; no member revision with the flow's ref id → CONFIG naming
+// both ids. Used by the direct `packagePin` input (experiments) and the
+// `try_once` launch-choice translation; the caller routes the returned row
+// through the same downstream revision guards as an enabled revision.
+async function resolvePinnedFlowRevision(
+  _db: any,
+  flow: Record<string, any>,
+  packageInstallId: string,
+): Promise<Record<string, any>> {
+  const pinInstallRows = await _db
+    .select()
+    .from(packageInstalls)
+    .where(eq(packageInstalls.id, packageInstallId));
+  const pinInstall = pinInstallRows[0];
+
+  if (!pinInstall) {
+    throw new MaisterError(
+      "CONFIG",
+      `packagePin install not found: ${packageInstallId}`,
+    );
+  }
+  if (pinInstall.packageStatus !== "Installed") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `packagePin install ${pinInstall.id} is ${pinInstall.packageStatus}, not Installed`,
+    );
+  }
+  if (pinInstall.trustStatus === "untrusted") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `packagePin install ${pinInstall.id} is untrusted — confirm trust before pinning a run to it`,
+    );
+  }
+
+  const pinRevisionRows = await _db
+    .select()
+    .from(flowRevisions)
+    .where(
+      and(
+        eq(flowRevisions.flowRefId, flow.flowRefId),
+        eq(flowRevisions.resolvedRevision, pinInstall.resolvedRevision),
+      ),
+    )
+    .limit(1);
+  const pinnedRevision = pinRevisionRows[0];
+
+  if (!pinnedRevision) {
+    throw new MaisterError(
+      "CONFIG",
+      `packagePin install ${pinInstall.id} does not ship a revision of flow "${flow.flowRefId}"`,
+    );
+  }
+
+  return pinnedRevision;
+}
+
 export async function* launchRunStaged(
   input: LaunchRunInput,
   ctx: LaunchRunContext,
@@ -713,6 +785,22 @@ export async function* launchRunStaged(
     );
   }
 
+  // ADR-129 §a: validate the ephemeral per-run package pin as a cheap
+  // deterministic precondition, hoisted BEFORE applyPackageVersionChoices so a
+  // refused pin never triggers the adopt/revert compensation window. The
+  // resolved revision then flows through the SAME downstream guards
+  // (packageStatus/setupStatus/schemaVersion/engine) as an enabled revision;
+  // the run snapshot columns point at it, and the attachment is never touched.
+  let pinnedRevision: Record<string, any> | null = null;
+
+  if (input.packagePin) {
+    pinnedRevision = await resolvePinnedFlowRevision(
+      _db,
+      flow,
+      input.packagePin.packageInstallId,
+    );
+  }
+
   // M39 Stream B (ADR-107): apply the launcher's version-adopt choices for the
   // project's attached centralized packages BEFORE the enablement check reads
   // flow.enabled_revision_id — adopt/cut_and_adopt advance the project
@@ -722,14 +810,15 @@ export async function* launchRunStaged(
   // `adoptReverts` re-pin the attachment if the launch fails after the adopt (see
   // the worktree-compensation catch below). Flow runs keep
   // runs.local_package_id NULL (no run override).
-  const adoptReverts = await applyPackageVersionChoices({
-    projectId: project.id,
-    projectSlug: project.slug,
-    workspaceRoot: project.repoPath,
-    choices: input.packageVersions,
-    db: _db as never,
-    signal: opts.signal,
-  });
+  const { reverts: adoptReverts, tryOncePins } =
+    await applyPackageVersionChoices({
+      projectId: project.id,
+      projectSlug: project.slug,
+      workspaceRoot: project.repoPath,
+      choices: input.packageVersions,
+      db: _db as never,
+      signal: opts.signal,
+    });
 
   // Hoisted above the outer try so the post-compensation tryStartRun / return
   // block can still read it (the try opens right after the adopt).
@@ -758,6 +847,36 @@ export async function* launchRunStaged(
         );
       }
       flow = reloadedFlow[0];
+    }
+
+    // ADR-129: translate try_once choices into the ephemeral per-run pin.
+    // Inside the compensation window on purpose — a refused translation after
+    // a same-launch adopt must revert that adopt (outer catch). The pin matrix
+    // re-validates the target cut; an install that does not ship THIS flow
+    // refuses CONFIG (acceptance #3), and two packages both shipping it is an
+    // ambiguity refusal rather than a silent first-wins.
+    if (tryOncePins.length > 0) {
+      if (pinnedRevision) {
+        throw new MaisterError(
+          "CONFLICT",
+          "packagePin and a try_once choice cannot target the same launch",
+        );
+      }
+      for (const tryOnce of tryOncePins) {
+        const revision = await resolvePinnedFlowRevision(
+          _db,
+          flow,
+          tryOnce.packageInstallId,
+        );
+
+        if (pinnedRevision) {
+          throw new MaisterError(
+            "CONFLICT",
+            `ambiguous try_once: more than one package ships flow "${flow.flowRefId}"`,
+          );
+        }
+        pinnedRevision = revision;
+      }
     }
 
     // Resolve the project-enabled package revision (M10, ADR-021) and refuse
@@ -796,13 +915,20 @@ export async function* launchRunStaged(
     // Installed revision for this flow_ref_id (a just-published authored revision
     // floats in via the bridge). The per-revision guards below still gate the
     // RESOLVED revision (packageStatus/setupStatus/engine/schema).
-    const effectiveRevisionId =
-      (await resolveEffectiveFlowRevision(_db, flow)) ?? flow.enabledRevisionId;
+    // ADR-129: an ephemeral packagePin overrides the resolution — the
+    // already-loaded pinned revision IS the effective revision (no re-select;
+    // launch-time decision, persisted via the snapshot columns below).
+    const effectiveRevisionId = pinnedRevision
+      ? pinnedRevision.id
+      : ((await resolveEffectiveFlowRevision(_db, flow)) ??
+        flow.enabledRevisionId);
 
-    const revisionRows = await _db
-      .select()
-      .from(flowRevisions)
-      .where(eq(flowRevisions.id, effectiveRevisionId));
+    const revisionRows = pinnedRevision
+      ? [pinnedRevision]
+      : await _db
+          .select()
+          .from(flowRevisions)
+          .where(eq(flowRevisions.id, effectiveRevisionId));
     const revision = revisionRows[0];
 
     if (!revision) {

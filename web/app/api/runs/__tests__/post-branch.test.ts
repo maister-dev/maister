@@ -175,6 +175,41 @@ describe("POST /api/runs — branch-targeting body schema (M18)", () => {
   });
 });
 
+describe("POST /api/runs — ADR-129 packageVersions try_once option", () => {
+  it("accepts try_once through the REAL body schema and forwards it to launchRun", async () => {
+    const res = await POST(
+      request({
+        taskId: "task-1",
+        packageVersions: { "install-1": "try_once" },
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    expect(mocks.launchRun).toHaveBeenCalledTimes(1);
+
+    const input = mocks.launchRun.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    expect(input).toMatchObject({
+      taskId: "task-1",
+      packageVersions: { "install-1": "try_once" },
+    });
+  });
+
+  it("rejects an option outside the enum with 400 CONFIG before launch", async () => {
+    const res = await POST(
+      request({
+        taskId: "task-1",
+        packageVersions: { "install-1": "adopt_forever" },
+      }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("CONFIG");
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /api/runs — ADR-119 allowConcurrent body flag", () => {
   it("parses allowConcurrent:true and forwards it to launchRun", async () => {
     const res = await POST(

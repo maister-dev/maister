@@ -1763,8 +1763,10 @@
     "packageVersionOption": {
       "keep": "Оставить закреплённую",
       "adopt": "Принять новую версию",
-      "cut_and_adopt": "Срезать и принять"
+      "cut_and_adopt": "Срезать и принять",
+      "try_once": "Попробовать новую один раз"
     },
+    "packageVersionTryOnceHint": "Этот запуск использует новую версию, не меняя закреплённую версию проекта.",
     "deliveryPolicy": "Политика доставки",
     "strategy": "Стратегия",
     "strategyMerge": "Merge",

@@ -227,7 +227,7 @@ describe("version-adopt launch (integration)", () => {
     expect(detected).toHaveLength(1);
     expect(detected[0].packageInstallId).toBe(pinInstallId);
     expect(detected[0].newerCutInstallId).toBe(cut2.installId);
-    expect(detected[0].offeredOptions).toEqual(["keep", "adopt"]);
+    expect(detected[0].offeredOptions).toEqual(["keep", "adopt", "try_once"]);
 
     const advanced = await applyPackageVersionChoices({
       projectId: project.id,
@@ -237,13 +237,52 @@ describe("version-adopt launch (integration)", () => {
       db,
     });
 
-    expect(advanced).toHaveLength(1);
+    expect(advanced.reverts).toHaveLength(1);
+    expect(advanced.tryOncePins).toEqual([]);
     expect(await attachmentInstall(attachmentId)).toBe(cut2.installId);
 
     // Idempotent: re-detect now sees no newer version (pin == newest cut).
     expect(
       await detectAvailablePackageVersions({ projectId: project.id, db }),
     ).toHaveLength(0);
+  });
+
+  it("`try_once` returns a per-run pin instruction — no revert, attachment untouched (ADR-129)", async () => {
+    const project = await createProject();
+    const { pkg, pinInstallId, attachmentId } = await forkCutAttach(
+      "srcpkg",
+      project,
+    );
+
+    await editCommit(pkg, "flows/flow-a/flow.yaml", FLOW_YAML("flow-a-v2"));
+    const cut2 = await cutLocalPackageVersion(pkg, { db });
+
+    const result = await applyPackageVersionChoices({
+      projectId: project.id,
+      projectSlug: project.slug,
+      workspaceRoot: project.repoPath,
+      choices: { [pinInstallId]: "try_once" },
+      db,
+    });
+
+    // No attachment advance happened and nothing needs compensation.
+    expect(result.reverts).toEqual([]);
+    expect(result.tryOncePins).toEqual([
+      {
+        packageInstallId: cut2.installId,
+        packageName: expect.any(String),
+      },
+    ]);
+    expect(await attachmentInstall(attachmentId)).toBe(pinInstallId);
+
+    // try_once is offered exactly when adopt is — still offered after the
+    // no-op (the pin never moved), unlike adopt which self-extinguishes.
+    const detected = await detectAvailablePackageVersions({
+      projectId: project.id,
+      db,
+    });
+
+    expect(detected[0]?.offeredOptions).toContain("try_once");
   });
 
   it("revert re-pins the attachment after a failed launch (adopt+launch atomic)", async () => {
@@ -256,7 +295,7 @@ describe("version-adopt launch (integration)", () => {
     await editCommit(pkg, "flows/flow-a/flow.yaml", FLOW_YAML("flow-a-v2"));
     const cut2 = await cutLocalPackageVersion(pkg, { db });
 
-    const reverts = await applyPackageVersionChoices({
+    const { reverts } = await applyPackageVersionChoices({
       projectId: project.id,
       projectSlug: project.slug,
       workspaceRoot: project.repoPath,
@@ -296,7 +335,7 @@ describe("version-adopt launch (integration)", () => {
       db,
     });
 
-    expect(advanced).toHaveLength(0);
+    expect(advanced.reverts).toHaveLength(0);
     expect(await attachmentInstall(attachmentId)).toBe(pinInstallId);
   });
 
@@ -326,7 +365,7 @@ describe("version-adopt launch (integration)", () => {
       db,
     });
 
-    expect(advanced).toHaveLength(1);
+    expect(advanced.reverts).toHaveLength(1);
     const newPin = await attachmentInstall(attachmentId);
 
     expect(newPin).not.toBe(pinInstallId);
@@ -374,7 +413,7 @@ describe("version-adopt launch (integration)", () => {
       db,
     });
 
-    expect(advanced).toHaveLength(0);
+    expect(advanced.reverts).toHaveLength(0);
   });
 
   it("`cut_and_adopt` on a package locked by another session → PRECONDITION", async () => {

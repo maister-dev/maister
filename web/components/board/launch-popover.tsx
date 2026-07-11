@@ -65,7 +65,9 @@ type LaunchFlowOption = {
 
 // M39 Stream B (ADR-107): a project's attached centralized package with a newer
 // cut and/or uncut Studio edits — the launch dialog's per-package choice.
-type VersionChoice = "keep" | "adopt" | "cut_and_adopt";
+// ADR-129: `try_once` = run this launch on the newer cut WITHOUT moving the
+// project pin (offered exactly when `adopt` is).
+type VersionChoice = "keep" | "adopt" | "cut_and_adopt" | "try_once";
 
 type AvailablePackageVersion = {
   packageInstallId: string;
@@ -1135,6 +1137,12 @@ export function LaunchPopover({
                                   }))
                                 }
                               />
+                              {packageVersions[pkg.packageInstallId] ===
+                              "try_once" ? (
+                                <span className="font-mono text-[10px] text-mute">
+                                  {t("packageVersionTryOnceHint")}
+                                </span>
+                              ) : null}
                             </label>
                           ))}
                         </div>

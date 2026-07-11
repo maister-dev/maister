@@ -505,7 +505,16 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 2 — W-A: ephemeral per-run package pin + try_once
 
-- [ ] **T4: Unit tests for pin resolution/refusals (TDD — written first, red)**
+- [x] **T4: Unit tests for pin resolution/refusals (TDD — written first, red)**
+  - RED evidence: 10/11 fail as wrong-code failures (launch succeeds where
+    the matrix demands refusal; enabled-revision snapshot written where the
+    pinned one is asserted); the 1 pass is the intentional
+    project-flow-gates regression pin. Harness discriminates the pin lookup
+    from the enabled-revision site by chain shape (`.where().limit(1)` vs
+    awaited `.where()`), mirroring the existing `runs` chain idiom.
+  - Existing-suite migration: NONE — runs-launch-gate.test.ts asserts the
+    classifier gate, orthogonal to pins; no assertion moves (plan
+    anticipated some; recon found none load-bearing).
   - Files: NEW `web/lib/services/__tests__/runs-launch-pin.test.ts` (unit
     project: `lib/**/__tests__/**/*.test.ts`); extend
     `web/lib/services/__tests__/runs-launch-gate.test.ts` (existing
@@ -525,7 +534,19 @@ Commit messages: NO Co-Authored-By trailer (project convention).
   - Acceptance: tests enumerate every row above; red before T5, green after.
   - Logging: assert typed `MaisterError.code`, never message-matching.
 
-- [ ] **T5: Implement the pin in `launchRunStaged` (core primitive)**
+- [x] **T5: Implement the pin in `launchRunStaged` (core primitive)**
+  - GREEN evidence: the T4 matrix 11/11 after implementing
+    `resolvePinnedFlowRevision` (shared helper — used by direct `packagePin`
+    AND the T6 try_once translation), hoisted before
+    `applyPackageVersionChoices`; the pinned revision routes through the
+    existing downstream guards (no re-select at the site). Full unit suite
+    596 files/6115 green; typecheck clean.
+  - `packagePin` is NOT exposed on the public POST /api/runs body (internal
+    callers only — experiments + try_once translation), matching the OpenAPI
+    (PostRunBody carries packageVersions only).
+  - `enabledRevisionId` consumer grep (PR obligation): only
+    `task-launch-config.ts` (pre-launch preview) + the launch gates
+    themselves — no run-read/terminal path re-derives from the attachment.
   - Files: `web/lib/services/runs.ts` (launch input gains
     `packagePin?: { packageInstallId: string }`; resolution override at the
     effective-revision site `runs.ts:795-802`: when pinned, resolve the
@@ -556,7 +577,25 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     enumerated assertion migrations.
   - Logging: typed `MaisterError` only.
 
-- [ ] **T6: `try_once` in the launch version-choice dialog**
+- [x] **T6: `try_once` in the launch version-choice dialog**
+  - RED evidence: version-adopt.integration.test.ts observed 6 failed /
+    7 passed against the target contract (offer set, `{reverts,
+    tryOncePins}` shape, new try_once case) before implementation; GREEN
+    13/13 after. Route-contract case added to post-branch.test.ts
+    (try_once accepted through the REAL body schema AND forwarded +
+    paired out-of-enum refusal) — 17/17.
+  - `applyPackageVersionChoices` returns `{reverts, tryOncePins}`;
+    try_once validates like adopt, mutates nothing, contributes no
+    AdoptRevert; translation to the pin happens INSIDE the compensation
+    window (a refused translation after a same-launch adopt reverts that
+    adopt); two packages both shipping the flow → CONFLICT ambiguous.
+  - Enumerated-migration deviation: launch-options route.test.ts has NO
+    offeredOptions assertions (plan anticipated some) — the offer contract
+    is pinned in version-adopt.integration.test.ts instead;
+    runs-launch-branch.test.ts mocks migrated to the new result shape.
+  - EN+RU keys landed together (launch.packageVersionOption.try_once +
+    launch.packageVersionTryOnceHint), JSON-validated; popover renders the
+    hint when try_once is selected.
   - Files: `web/lib/local-packages/versions.ts` (`VersionAdoptOption` at `:42`
     gains `"try_once"`; `detectAvailablePackageVersions` offers it exactly
     when `adopt` is offered (`:179-182`) and carries the target `installId`;
@@ -577,7 +616,13 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     the two migrated suites green.
   - Logging: typed errors; client dialog uses existing i18n error surface.
 
-- [ ] **T7: Integration proof — pin/try_once never mutate the attachment (real Postgres)**
+- [x] **T7: Integration proof — pin/try_once never mutate the attachment (real Postgres)**
+  - 3/3 green on testcontainers: (1) pinned launch → attachment full-row
+    byte-identical + run snapshot at the pinned revision; (2) try_once →
+    same invariants, snapshot at the newer cut; (3) refused pin (install
+    lacking the flow) → CONFIG, zero run rows, zero workspaces, addWorktree
+    never called, attachment identical. Fixtures are nodes[] DSL with
+    compat.engine_min (graph manifests refuse without it).
   - Files: NEW `web/lib/services/__tests__/runs-launch-pin.integration.test.ts`
     (integration project glob `lib/**/*.integration.test.ts`; testcontainers
     `PostgreSqlContainer("postgres:16-alpine")` per-test idiom as in

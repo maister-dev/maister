@@ -39,7 +39,13 @@ const pa = schema.projectPackageAttachments;
 const pi = schema.packageInstalls;
 const lp = schema.localPackages;
 
-export type VersionAdoptOption = "keep" | "adopt" | "cut_and_adopt";
+export type VersionAdoptOption =
+  | "keep"
+  | "adopt"
+  | "cut_and_adopt"
+  // ADR-129: ephemeral per-run pin to the newest cut — the attachment is
+  // never advanced; offered exactly when `adopt` is offered.
+  | "try_once";
 
 // The launch-time "version available" state for ONE attached centralized package.
 export type AvailablePackageVersion = {
@@ -178,7 +184,7 @@ export async function detectAvailablePackageVersions(opts: {
 
     const offeredOptions: VersionAdoptOption[] = ["keep"];
 
-    if (hasNewerCut) offeredOptions.push("adopt");
+    if (hasNewerCut) offeredOptions.push("adopt", "try_once");
     if (hasUncutEdits) offeredOptions.push("cut_and_adopt");
 
     out.push({
@@ -202,10 +208,24 @@ export async function detectAvailablePackageVersions(opts: {
 // attachment to its prior install if the launch fails after the adopt.
 export type AdoptRevert = { attachmentId: string; priorInstallId: string };
 
+// ADR-129: a `try_once` choice translated into an ephemeral per-run pin
+// instruction — the launch resolves the flow revision from this TARGET cut
+// install; no attachment mutation happened and no AdoptRevert exists.
+export type TryOncePin = { packageInstallId: string; packageName: string };
+
+export type PackageVersionChoicesResult = {
+  reverts: AdoptRevert[];
+  tryOncePins: TryOncePin[];
+};
+
+const NO_CHOICES: PackageVersionChoicesResult = { reverts: [], tryOncePins: [] };
+
 // Apply the launcher's per-package version choices BEFORE the enablement check in
 // `launchRunStaged`. Returns the per-attachment reverts it made (empty = nothing
 // advanced) so the caller can re-pin if the launch fails AFTER the adopt
-// (adopt+launch is atomic). `keep` / absent choices = no-op. A key not in the
+// (adopt+launch is atomic), plus the ADR-129 `try_once` pin instructions
+// (validated like `adopt` but with NO attachment write and NO compensation).
+// `keep` / absent choices = no-op. A key not in the
 // detected set, or an option not offered for that package, → CONFLICT (409); a
 // `cut_and_adopt` on a locked or invalid package → PRECONDITION (can still `keep`).
 export async function applyPackageVersionChoices(opts: {
@@ -215,10 +235,10 @@ export async function applyPackageVersionChoices(opts: {
   choices?: Record<string, VersionAdoptOption>;
   db?: Db;
   signal?: AbortSignal;
-}): Promise<AdoptRevert[]> {
+}): Promise<PackageVersionChoicesResult> {
   const choices = opts.choices;
 
-  if (!choices || Object.keys(choices).length === 0) return [];
+  if (!choices || Object.keys(choices).length === 0) return NO_CHOICES;
 
   const db = resolveDb(opts.db);
   const detected = await detectAvailablePackageVersions({
@@ -239,6 +259,7 @@ export async function applyPackageVersionChoices(opts: {
     adoptTargetInstallId: string | null;
   };
   const steps: AdoptStep[] = [];
+  const tryOncePins: TryOncePin[] = [];
 
   for (const [packageInstallId, choice] of Object.entries(choices)) {
     const avail = byInstall.get(packageInstallId);
@@ -256,11 +277,24 @@ export async function applyPackageVersionChoices(opts: {
       );
     }
     if (choice === "keep") continue;
-    if (choice === "adopt" && !avail.newerCutInstallId) {
+    if (
+      (choice === "adopt" || choice === "try_once") &&
+      !avail.newerCutInstallId
+    ) {
       throw new MaisterError(
         "CONFLICT",
-        `package "${avail.packageName}" has no newer cut to adopt`,
+        `package "${avail.packageName}" has no newer cut to ${choice === "adopt" ? "adopt" : "try"}`,
       );
+    }
+    // ADR-129: try_once validates like adopt but mutates NOTHING — it becomes
+    // an ephemeral per-run pin instruction the launch translates into the
+    // packagePin resolution (which re-validates the full pin matrix).
+    if (choice === "try_once") {
+      tryOncePins.push({
+        packageInstallId: avail.newerCutInstallId!,
+        packageName: avail.packageName,
+      });
+      continue;
     }
 
     steps.push({
@@ -345,7 +379,7 @@ export async function applyPackageVersionChoices(opts: {
     throw err;
   }
 
-  return reverts;
+  return { reverts, tryOncePins };
 }
 
 // Compensation for adopt-at-launch (ADR-107): re-pin each advanced attachment to
