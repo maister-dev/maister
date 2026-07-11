@@ -990,7 +990,27 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 6 — W-D: divergence view (fork vs source)
 
-- [ ] **T17: Divergence computation lib + route**
+- [x] **T17: Divergence computation lib + route**
+  - Empirically pinned `git diff --no-index` semantics first (scratchpad):
+    exit 1 = differences; headers carry `a<absDir>/rel` with the leading
+    slash merged into the prefix; ADDED files carry the RIGHT dir under
+    BOTH prefixes — so the relativizer rewrites all four dir×prefix combos,
+    on header-shaped lines only (content lines stay byte-exact).
+  - `gitDiffNoIndex` (exit 0/1 success, maxBuffer → partial text +
+    `truncated: true`); `divergence.ts` `computeUpstreamDivergence` — ours =
+    working dir or an OWN cut (foreign `sourceLocalPackageId` → CONFLICT;
+    id never a raw path), theirs = lineage install via a stat-guarded loader
+    (missing row/bytes/lineage → typed CONFIG); `.git/`+runtime dirs
+    block-filtered; `element` = relative-prefix scope; prepare failure
+    degrades to summary (diffWorkingDir idiom).
+  - Unit 7/7 (identical→empty · relative paths + .git excluded ·
+    element narrowing · cut arm · foreign-cut CONFLICT · no-lineage CONFIG ·
+    GC'd-bytes CONFIG) with an id-aware fake db (drizzle Param extraction —
+    the source and cut lookups need DIFFERENT rows); route 4/4
+    (passthrough, `..`-escape 422 at the boundary, CONFIG→422 per contract
+    — switched the route to `packageErrorResponse` and closed its
+    ACCOUNT_INACTIVE→500 gap to 403); fork-cut integration + divergence
+    chain case 14/14 (uncommitted fork delta vs source, relative paths).
   - Files: `web/lib/local-packages/git.ts` (NEW `gitDiffNoIndex(dirA, dirB)`
     on the private `git()` runner `:21-27` — `git diff --no-index` exits 1 on
     differences: treat 0/1 as success, parse like the existing
@@ -1017,7 +1037,26 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     degrades with a typed error the UI can render.
   - Logging: typed errors only.
 
-- [ ] **T18: Divergence UI (editor header + composition entries)**
+- [x] **T18: Divergence UI (editor header + composition entries)**
+  - `UpstreamDivergenceDrawer` (diff-drawer pattern minus commit/discard):
+    header cut-picker (working dir | each cut via new `listPackageCuts`),
+    base-version chip, shared `DiffView`, and a DEGRADED panel for the typed
+    CONFIG "source unavailable" refusal (distinct from generic failure).
+    Editor gets `divergence: {cuts} | null` from the edit page
+    (`pkg.sourceInstallId` gate) — "Compare with upstream" button renders
+    only with lineage. Per-element compare: `ElementCard.compare` slot
+    (server callers can't pass a callback → degrades to absent exactly where
+    lineage doesn't exist; clickable-card markup unchanged when absent) wired
+    through `PackageComposition.onCompareElement` for skills + subagents +
+    agents + rules (mcps have no content path → silently absent), opening
+    the drawer scoped to that element.
+  - Dom test 4/4 (clean+base chip · degraded-on-CONFIG · DiffView + cut
+    re-query · element in query). Test caught a real robustness gap: the
+    unstable-`t` mock exposed a render→load loop (t dropped from load deps;
+    render owns the localized headline) and a null-body 200 crash (now a
+    typed error state). i18n EN+RU (`studio.divergence.*`).
+  - **Phase 6 exit gate**: typecheck ✓ · unit 602 files / 6163 ✓ ·
+    integration 296 files / 2237 ✓.
   - Files: `web/components/studio/local-package-editor.tsx` — "Compare with
     upstream" button in the breadcrumb action cluster (`:735-801`, next to
     Commit-state/Publish; rendered only when lineage exists), opening a NEW

@@ -202,3 +202,42 @@ export async function gitDiscardPaths(
   await git(dir, ["checkout", "HEAD", "--", ...targets]);
   await git(dir, ["clean", "-fdq", "--", ...targets]);
 }
+
+// (ADR-129 T17) Two-directory unified diff outside any repo: `git diff
+// --no-index` exits 0 on identical trees and 1 on differences — BOTH are
+// success here; other exits (bad path etc.) throw. A diff cut at maxBuffer
+// degrades to the partial text with `truncated: true` (callers surface the
+// flag, never silently treat the prefix as complete).
+export async function gitDiffNoIndex(
+  dirA: string,
+  dirB: string,
+): Promise<{ text: string; truncated: boolean }> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--no-color", "--no-index", "--", dirA, dirB],
+      { timeout: GIT_TIMEOUT_MS, maxBuffer: EXEC_MAX_BUFFER },
+    );
+
+    return { text: stdout, truncated: false };
+  } catch (err) {
+    // execFile rejects with `code` = numeric exit status OR a string errno.
+    const e = err as { code?: string | number; message?: string; stdout?: string };
+
+    if (e.code === 1 && typeof e.stdout === "string") {
+      return { text: e.stdout, truncated: false };
+    }
+    if (
+      e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+      /maxBuffer length exceeded/i.test(e.message ?? "")
+    ) {
+      log.info(
+        { dirA, dirB, maxBuffer: EXEC_MAX_BUFFER },
+        "gitDiffNoIndex truncated — diff exceeded EXEC_MAX_BUFFER",
+      );
+
+      return { text: e.stdout ?? "", truncated: true };
+    }
+    throw err;
+  }
+}

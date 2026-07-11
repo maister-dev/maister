@@ -44,6 +44,10 @@ import {
 } from "@/components/studio/change-review-dialog";
 import { PublishDialog } from "@/components/studio/publish-dialog";
 import {
+  UpstreamDivergenceDrawer,
+  type DivergenceCutOption,
+} from "@/components/studio/upstream-divergence-drawer";
+import {
   StudioAiTab,
   type StudioAiTabLabels,
 } from "@/components/studio/studio-ai-tab";
@@ -190,6 +194,7 @@ export function LocalPackageEditor({
   filesLabels,
   fileKindLabels,
   mcpCatalog,
+  divergence,
 }: {
   packageId: string;
   canManage: boolean;
@@ -221,6 +226,9 @@ export function LocalPackageEditor({
   filesLabels: PackageFilesEditorLabels;
   fileKindLabels: Record<AuthoredFlowPackageFileKind, string>;
   mcpCatalog: PlatformMcpCatalogEntry[];
+  // ADR-129 (T18): non-null iff the package has upstream lineage — carries the
+  // cut-picker options; null hides every compare affordance.
+  divergence: { cuts: DivergenceCutOption[] } | null;
 }): ReactElement {
   const locale = useLocale();
   const router = useRouter();
@@ -266,6 +274,10 @@ export function LocalPackageEditor({
   const [changedCount, setChangedCount] = useState<number | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [divergenceOpen, setDivergenceOpen] = useState(false);
+  const [divergenceElement, setDivergenceElement] = useState<string | null>(
+    null,
+  );
   const [runnerSources, setRunnerSources] = useState<AssistantRunnerSource[]>(
     [],
   );
@@ -773,6 +785,21 @@ export function LocalPackageEditor({
               <span>{tPublish("openButton")}</span>
             </button>
           ) : null}
+          {divergence ? (
+            <button
+              className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber"
+              data-testid="local-editor-divergence"
+              title={tStudio("divergence.compareButton")}
+              type="button"
+              onClick={() => {
+                setDivergenceElement(null);
+                setDivergenceOpen(true);
+              }}
+            >
+              <span aria-hidden>⇄</span>
+              <span>{tStudio("divergence.compareButton")}</span>
+            </button>
+          ) : null}
           {flowPath !== null ? (
             <button
               aria-pressed={aiOpen}
@@ -873,6 +900,16 @@ export function LocalPackageEditor({
         />
       ) : null}
 
+      {divergenceOpen && divergence ? (
+        <UpstreamDivergenceDrawer
+          cuts={divergence.cuts}
+          diffViewLabels={labels.diffView}
+          element={divergenceElement}
+          packageId={packageId}
+          onClose={() => setDivergenceOpen(false)}
+        />
+      ) : null}
+
       {publishOpen ? (
         <PublishDialog
           packageId={packageId}
@@ -923,6 +960,14 @@ export function LocalPackageEditor({
             ) : (
               <PackageComposition
                 bom={bom}
+                onCompareElement={
+                  divergence
+                    ? (path: string) => {
+                        setDivergenceElement(path);
+                        setDivergenceOpen(true);
+                      }
+                    : undefined
+                }
                 dirty={packageFilesDirty}
                 draftFiles={draftFiles}
                 fileCount={draftFiles.length}

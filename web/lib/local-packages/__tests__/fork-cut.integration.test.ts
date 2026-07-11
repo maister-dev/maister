@@ -729,4 +729,41 @@ describe("cut version (integration)", () => {
     expect(pinByProject.get(projB.projectId)).toBe(cut2.installId);
     expect(pinByProject.get(projC.projectId)).toBe(sourceInstallId);
   });
+
+  // ADR-129 (T17): divergence = fork bytes (INCLUDING uncommitted edits) vs
+  // the lineage source install — package-relative paths, no absolute leaks.
+  it("divergence shows the fork's uncommitted delta against the source install", async () => {
+    const { computeUpstreamDivergence } = await import(
+      "@/lib/local-packages/divergence"
+    );
+
+    const { localPackageId } = await forkPackageToLocal({
+      sourceInstallId,
+      sourceRef: "srcpkg",
+      createdBy: userId,
+      forceNew: true,
+      db,
+    });
+    const pkg = await getLocalPackage(localPackageId, db);
+
+    // Uncommitted: one modified flow + one added file.
+    await writeWorkingDirFile(
+      pkg!,
+      "flows/flow-a/flow.yaml",
+      FLOW_YAML("diverged"),
+    );
+    await writeWorkingDirFile(pkg!, "notes/DIVERGED.md", "fork-only\n");
+
+    const divergence = await computeUpstreamDivergence({
+      localPackageId,
+      db,
+    });
+    const paths = divergence.files.map((f) => f.path).sort();
+
+    expect(paths).toEqual(["flows/flow-a/flow.yaml", "notes/DIVERGED.md"]);
+    expect(divergence.changedCount).toBe(2);
+    expect(divergence.base.installId).toBe(sourceInstallId);
+    expect(divergence.compared).toEqual({ kind: "working_dir" });
+    for (const p of paths) expect(p.startsWith("/")).toBe(false);
+  });
 });

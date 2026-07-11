@@ -123,6 +123,32 @@ export type AdoptTargetProject = {
   attachmentId: string;
 };
 
+// The package's OWN cuts (newest first) — the divergence drawer's picker
+// (ADR-129 T18). Client-safe pair only; installed paths stay server-side.
+export async function listPackageCuts(
+  localPackageId: string,
+  db?: Db,
+): Promise<{ installId: string; versionLabel: string }[]> {
+  const d = resolveDb(db);
+  const rows = await d
+    .select({
+      installId: pi.id,
+      versionLabel: pi.versionLabel,
+      createdAt: pi.createdAt,
+    })
+    .from(pi)
+    .where(
+      and(
+        eq(pi.sourceLocalPackageId, localPackageId),
+        eq(pi.packageStatus, "Installed"),
+      ),
+    );
+
+  return rows
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .map((r) => ({ installId: r.installId, versionLabel: r.versionLabel }));
+}
+
 export async function listAdoptTargetProjects(
   localPackageIds: string[],
   db?: Db,

@@ -478,6 +478,17 @@
       "importing": "Working…",
       "done": "Imported $count files.",
       "lockedByOther": "Another session is editing this package — try again later."
+    },
+    "divergence": {
+      "title": "Compare with upstream",
+      "compareButton": "Compare with upstream",
+      "compareElement": "Compare with upstream",
+      "sourcePick": "Compare source",
+      "sourceWorkingDir": "Working dir (incl. uncommitted)",
+      "base": "vs upstream {label}",
+      "clean": "No divergence — the fork matches its upstream install.",
+      "degraded": "Upstream source unavailable — the lineage install is missing or its bytes were removed. Divergence cannot be computed.",
+      "close": "Close"
     }
   },
   "flows": {

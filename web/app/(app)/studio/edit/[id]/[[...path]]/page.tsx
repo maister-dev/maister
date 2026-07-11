@@ -22,6 +22,7 @@ import {
   packageFilesEditorLabels,
 } from "@/lib/flows/editor/editor-labels";
 import { getLocalPackageBom } from "@/lib/local-packages/bom";
+import { listPackageCuts } from "@/lib/local-packages/versions";
 import { resolveSkillSubtreePrefix } from "@/lib/local-packages/composition";
 import { classifyLocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 import { readLockState } from "@/lib/local-packages/lock";
@@ -191,6 +192,11 @@ export default async function StudioEditPage({
     changeReview: buildChangeReviewLabels(ts),
   };
 
+  // ADR-129 (T18): compare affordances exist only for forks with lineage.
+  const divergence = pkg.sourceInstallId
+    ? { cuts: await listPackageCuts(pkg.id) }
+    : null;
+
   return (
     <div className="flex h-[calc(100vh-130px)] min-h-[560px] w-full flex-col">
       <LocalPackageEditor
@@ -199,6 +205,7 @@ export default async function StudioEditPage({
         bom={bom}
         canvasAvailable={canvasAvailable}
         diff=""
+        divergence={divergence}
         fileKindLabels={packageFileKindLabels(t)}
         files={files}
         filesLabels={packageFilesEditorLabels(t, te, true)}

@@ -94,6 +94,7 @@ export function PackageComposition({
   onDraftFilesChange,
   onSaveDraft,
   onCreateArtifact,
+  onCompareElement,
 }: {
   packageId: string;
   name: string;
@@ -116,6 +117,10 @@ export function PackageComposition({
     files: AuthoredFlowPackageFile[],
     navigate: string,
   ) => void;
+  // ADR-129 (T18): opens the divergence drawer scoped to one element path.
+  // Absent when the package has no upstream lineage — compare entries degrade
+  // silently to absent.
+  onCompareElement?: (path: string) => void;
 }): ReactElement {
   const t = useTranslations("studio");
   const tWorkbench = useTranslations("workbench");
@@ -151,6 +156,7 @@ export function PackageComposition({
   };
 
   const cards = buildCompositionCards({
+    onCompareElement,
     packageId,
     activeTab,
     bom,
@@ -246,6 +252,7 @@ function buildCompositionCards({
   onDraftFilesChange,
   onSaveDraft,
   onCreateArtifact,
+  onCompareElement,
 }: {
   packageId: string;
   activeTab: CompositionTabId;
@@ -268,6 +275,7 @@ function buildCompositionCards({
     files: AuthoredFlowPackageFile[],
     navigate: string,
   ) => void;
+  onCompareElement?: (path: string) => void;
 }): ReactNode {
   switch (activeTab) {
     case "files":
@@ -295,6 +303,14 @@ function buildCompositionCards({
           <ElementCard
             key={skill.id}
             clickableCard
+            compare={
+              onCompareElement
+                ? {
+                    label: t("divergence.compareElement"),
+                    onCompare: () => onCompareElement(`skills/${skill.id}`),
+                  }
+                : undefined
+            }
             description={skill.description || null}
             href={skillScreenHref(packageId, skill.id)}
             labels={cardLabels}
@@ -322,6 +338,7 @@ function buildCompositionCards({
           saveLabel={saveLabel}
           selectedId={selectedId}
           t={t}
+          onCompareElement={onCompareElement}
           onCreateArtifact={onCreateArtifact}
           onDraftFilesChange={onDraftFilesChange}
           onSaveDraft={onSaveDraft}
@@ -351,6 +368,7 @@ function InlineMasterDetail({
   onDraftFilesChange,
   onSaveDraft,
   onCreateArtifact,
+  onCompareElement,
 }: {
   packageId: string;
   kind: CompositionKind;
@@ -371,6 +389,7 @@ function InlineMasterDetail({
     files: AuthoredFlowPackageFile[],
     navigate: string,
   ) => void;
+  onCompareElement?: (path: string) => void;
 }): ReactElement {
   const items = inlineItems(kind, bom, t).filter((item) =>
     item.id.toLowerCase().includes(filter.trim().toLowerCase()),
@@ -389,6 +408,14 @@ function InlineMasterDetail({
           <ElementCard
             key={item.id}
             clickableCard
+            compare={
+              onCompareElement && item.path
+                ? {
+                    label: t("divergence.compareElement"),
+                    onCompare: () => onCompareElement(item.path!),
+                  }
+                : undefined
+            }
             description={item.description}
             href={inlineSelectHref(packageId, kind, item.id)}
             labels={cardLabels}
@@ -816,6 +843,9 @@ type InlineItem = {
   id: string;
   description: string | null;
   meta: string | null;
+  // Package-relative content path (ADR-129 T18 compare scope); null where the
+  // kind has no per-element path (mcps).
+  path: string | null;
 };
 
 function inlineItems(
@@ -829,20 +859,30 @@ function inlineItems(
         id: s.id,
         description: s.description || t("viewer.subagentNoDescription"),
         meta: s.path,
+        path: s.path,
       }));
     case "agents":
       return bom.platformAgents.map((a) => ({
         id: a.id,
         description: a.description || null,
         meta: a.path,
+        path: a.path,
       }));
     case "mcps":
-      return bom.mcps.map((m) => ({ id: m.id, description: null, meta: null }));
+      // MCPs have no per-element content path — the compare entry degrades
+      // silently to absent (ADR-129 T18).
+      return bom.mcps.map((m) => ({
+        id: m.id,
+        description: null,
+        meta: null,
+        path: null,
+      }));
     case "rules":
       return bom.rules.map((r) => ({
         id: r.id,
         description: null,
         meta: r.path,
+        path: r.path,
       }));
     default:
       return [];

@@ -38,6 +38,11 @@ export interface ElementCardProps {
   // user can still copy a meta/description field. Used by the local composition
   // view; the installed viewer keeps the explicit View button + fork control.
   clickableCard?: boolean;
+  // ADR-129 (T18): per-element "compare with upstream" entry. Only passed by
+  // CLIENT parents for elements with lineage + a content path — server callers
+  // omit it (a callback cannot cross the RSC boundary), so it degrades to
+  // absent exactly where element lineage does not exist.
+  compare?: { label: string; onCompare: () => void };
 }
 
 export function ElementCard({
@@ -50,7 +55,18 @@ export function ElementCard({
   forkPath,
   showFork = true,
   clickableCard = false,
+  compare,
 }: ElementCardProps): ReactElement {
+  const compareButton = compare ? (
+    <button
+      className="self-start rounded-[9px] border border-line bg-ivory px-2.5 py-1 text-[12px] font-semibold text-ink transition-colors hover:border-amber"
+      data-testid="element-card-compare"
+      type="button"
+      onClick={compare.onCompare}
+    >
+      {compare.label}
+    </button>
+  ) : null;
   const body = (
     <div className="min-w-0">
       <div className="truncate text-[14px] font-semibold text-ink">{name}</div>
@@ -66,7 +82,7 @@ export function ElementCard({
   );
 
   if (clickableCard) {
-    return (
+    const card = (
       <Link
         className="flex flex-col gap-2 rounded-[14px] border border-line bg-paper px-4 py-3.5 transition-colors hover:border-amber"
         data-testid="element-card"
@@ -74,6 +90,17 @@ export function ElementCard({
       >
         {body}
       </Link>
+    );
+
+    // The compare entry cannot nest inside the Link — wrap only when present
+    // so the plain clickable-card markup stays byte-identical.
+    if (!compareButton) return card;
+
+    return (
+      <div className="flex flex-col gap-1.5">
+        {card}
+        {compareButton}
+      </div>
     );
   }
 
@@ -110,6 +137,7 @@ export function ElementCard({
             </span>
           )
         ) : null}
+        {compareButton}
       </div>
     </div>
   );
