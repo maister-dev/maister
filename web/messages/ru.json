@@ -2837,6 +2837,15 @@
     "title": "MCP-серверы проекта",
     "count": "Серверов: {count}",
     "add": "Добавить MCP",
+    "requirements": "Требования MCP",
+    "testConnection": "Проверить соединение",
+    "classification": {
+      "bound": "привязан",
+      "auto": "авто",
+      "unbound": "не привязан",
+      "misconfigured": "ошибка конфигурации",
+      "not_ready": "не готов"
+    },
     "adminOnly": "Управление MCP-серверами проекта требует роли admin в проекте.",
     "empty": "MCP-серверы проекта ещё не настроены.",
     "colId": "ID",

@@ -2837,6 +2837,15 @@
     "title": "Project MCP servers",
     "count": "{count} servers",
     "add": "Add MCP",
+    "requirements": "MCP requirements",
+    "testConnection": "Test connection",
+    "classification": {
+      "bound": "bound",
+      "auto": "auto",
+      "unbound": "unbound",
+      "misconfigured": "misconfigured",
+      "not_ready": "not ready"
+    },
     "adminOnly": "Managing project MCP servers requires the admin project role.",
     "empty": "No project MCP servers configured yet.",
     "colId": "ID",
