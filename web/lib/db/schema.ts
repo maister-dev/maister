@@ -3125,6 +3125,15 @@ export type MaterializationPlan = {
   // ADR-129: per-node MCPs withheld from materialization (trust / exec-trust).
   // Optional so pre-migration plans deserialize without the field.
   withheldMcps?: WithheldMcp[];
+  // ADR-129: the derived capability-enforcement set delivered to the supervisor
+  // (jsonb, no migration). Null when the node enforces no strict tools/mcps. The
+  // write-once plan is the durable launch-time snapshot the resume path reads (D4).
+  enforcementProfile?: {
+    tools?: { allow: string[] };
+    mcps?: { allowServers: string[] };
+    enforcedClasses: ("tools" | "mcps")[];
+    escalationThreshold: number;
+  } | null;
   cleanup: {
     status: "pending" | "done" | "failed";
     error?: string;

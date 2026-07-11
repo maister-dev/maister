@@ -117,6 +117,12 @@ import {
   evaluateNodeEnforcement,
 } from "@/lib/flows/enforcement";
 import {
+  deriveSessionEnforcementProfile,
+  foldEnforcementProfileIntoDigest,
+  type SessionEnforcementProfile,
+} from "@/lib/flows/enforcement-profile";
+import { assertEnforcementEvidence } from "@/lib/flows/enforcement-evidence";
+import {
   loadSelectableCapabilities,
   pinCatalogToSnapshot,
   resolveCapabilityProfile,
@@ -1139,6 +1145,8 @@ async function executeNodeAction(
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     profileDigest?: string;
+    // ADR-129: derived capability-enforcement set delivered to the supervisor.
+    enforcementProfile?: SessionEnforcementProfile;
     nodeAttemptId: string;
     // 1-based ledger attempt number of THIS visit (ADR-072 gateAttempt source).
     nodeAttemptNumber: number;
@@ -1300,6 +1308,9 @@ async function executeNodeAction(
             ),
             mcpServers: ctx.mcpServers,
             profileDigest: ctx.profileDigest,
+            // ADR-129: derived capability-enforcement set for the capability_guard
+            // interceptor (absent → inert).
+            enforcementProfile: ctx.enforcementProfile,
             // B1 (execution-policy permissions=auto_approve): fail-closed to
             // `ask`; threaded to the supervisor session for inline L3 auto-approve.
             autoApprovePermissions:
@@ -1611,6 +1622,8 @@ async function materializeNodeCapabilities(
       // M29 (ADR-074, D-C2): the node's resolved restriction path sets,
       // threaded into GateRunContext for must_not_touch evaluation.
       restrictionPaths: RestrictionPathSet[];
+      // ADR-129: the derived capability-enforcement set delivered to the supervisor.
+      enforcementProfile?: SessionEnforcementProfile;
     }
   | undefined
 > {
@@ -1750,7 +1763,8 @@ async function materializeNodeCapabilities(
   // + exec-trust withhold (visible-but-not-executable, persisted to the run-level
   // sink), then per-binding NAME-only overlays on the executable set (wire shape
   // unchanged; the supervisor still resolves values from process.env). The
-  // per-node matplan below adds per-node withheld granularity.
+  // per-node matplan below adds per-node withheld granularity. This supersedes the
+  // old gateStdioMcpsByExecTrust (it already applies exec-trust withholding).
   const {
     mcpServers,
     withheld: withheldMcps,
@@ -1771,8 +1785,23 @@ async function materializeNodeCapabilities(
     );
   }
 
+  // ADR-129: derive the capability-enforcement set (allow-list, DES-7) from the
+  // node settings filtered to strict + enforceable tools/mcps. The mcps allow-set
+  // is the resolved (exec-trust-gated + overlaid) server namespaces. A strict tools
+  // class with no declared allow-set throws CONFIG here (never enforce-nothing).
+  const enforcementProfile = deriveSessionEnforcementProfile({
+    settings,
+    agent,
+    mcpServerNames: mcpServers.map((s) => s.name),
+  });
+
   const plan: MaterializationPlan = {
-    profileDigest: profile.profileDigest,
+    // Fold the enforcement profile into the digest so the long-lived-session
+    // consistency guard catches a mid-session enforcement change (D4).
+    profileDigest: foldEnforcementProfileIntoDigest(
+      profile.profileDigest,
+      enforcementProfile,
+    ),
     resolvedRevisions: profile.supported.map((e) => ({
       refId: e.capabilityRefId,
       kind: e.kind,
@@ -1789,6 +1818,8 @@ async function materializeNodeCapabilities(
       .map((e) => e.capabilityRefId),
     refusedClasses: profile.refused.map((e) => e.capabilityRefId),
     withheldMcps,
+    // ADR-129: the durable launch-time snapshot the resume path reads (D4).
+    enforcementProfile: enforcementProfile ?? null,
     cleanup: { status: "pending" },
   };
 
@@ -1832,6 +1863,7 @@ async function materializeNodeCapabilities(
       ...profile.enforced,
       ...profile.instructed,
     ]),
+    enforcementProfile,
   };
 }
 
@@ -2620,6 +2652,14 @@ export async function runGraph(
             { id: node.id, nodeType: node.nodeType, settings },
             nodeExecutor.agent,
           );
+          // ADR-129 (DES-6): a strict tools/mcps node launches only once the
+          // resolved adapter's capabilityEnforcement smoke is cached ok — else
+          // refuse (EXECUTOR_UNAVAILABLE) naming the missing evidence. Never a
+          // false-enforce (ADR-032). Runs before the agent session is spawned.
+          await assertEnforcementEvidence({
+            settings,
+            agent: nodeExecutor.agent,
+          });
         } catch (err) {
           const e = isMaisterError(err)
             ? err
@@ -2749,6 +2789,7 @@ export async function runGraph(
             mcpServers: AgentMcpServer[];
             plan: MaterializationPlan;
             restrictionPaths: RestrictionPathSet[];
+            enforcementProfile?: SessionEnforcementProfile;
           }
         | undefined;
 
@@ -2823,6 +2864,7 @@ export async function runGraph(
           adapterLaunch: materialized?.adapterLaunch,
           mcpServers: materialized?.mcpServers,
           profileDigest: materialized?.plan.profileDigest,
+          enforcementProfile: materialized?.enforcementProfile,
           nodeAttemptId,
           nodeAttemptNumber,
           attempt: nodeAttemptNumber,

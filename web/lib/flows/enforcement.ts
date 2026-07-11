@@ -28,56 +28,36 @@ export type OverlayClassSupportTable = Record<
   Record<OverlayCapabilityClass, boolean>
 >;
 
-// FROZEN M11c table (docs/system-analytics/flow-settings.md + ADR-032): every
-// cell is `instructed`. Nothing is hard-enforced per session yet, so a `strict`
-// intent on any class cannot be honored and MUST refuse the launch rather than
-// silently degrade to instruction (the silent-escape-hatch invariant).
+// ADR-129 (docs/system-analytics/flow-settings.md + capabilities.md): `tools`,
+// `mcps`, and `hooks` are `enforced` for ALL adapters via the adapter-agnostic
+// capability_guard seam interceptor; per-adapter admission is the async launch
+// evidence gate (`assertEnforcementEvidence`), NOT the static table. The four
+// remaining classes stay `instructed` — each lacks a tool-identity seam mechanism:
+//   skills          — instructions/materialized files, not tool calls
+//   restrictions    — path-based mustNotTouch deny-sets (mutation-check gate), not
+//                     tool identity (a deny-set is not an allow-list complement)
+//   permissionMode  — claude-only settings.local.json defaultMode, unverified;
+//                     a 3-valued ask|allow|deny intent is not a tool-identity allow-list
+//   workspaceAccess — not delivered to the seam on the flow path (follow-up)
+// The table is uniform across adapters (the interceptor is one code path). The
+// M14-deferred flip is complete — see ADR-129 §scope refinement for why the four
+// classes above stay instructed.
+const SEAM_ENFORCED_ROW: Record<CapabilityClass, Capability> = {
+  mcps: "enforced", // capability_guard MCP-server allow-list (evidence-gated at launch)
+  tools: "enforced", // capability_guard tool-name allow-list (evidence-gated at launch)
+  skills: "instructed", // not seam-interceptable (materialized files, not tool calls)
+  restrictions: "instructed", // path deny-set via mutation-check gate, not tool identity
+  permissionMode: "instructed", // claude-only defaultMode, unverified; not an allow-list
+  workspaceAccess: "instructed", // not delivered to the seam on the flow path (follow-up)
+  hooks: "enforced", // supervisor-enforced at the ACP seam since M40 (ADR-108); label corrected by ADR-129
+};
+
 export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
-  claude: {
-    mcps: "instructed", // TODO(M14): flip to "enforced" once mcps is materialized per session
-    tools: "instructed", // TODO(M14): flip to "enforced" once tools is materialized per session
-    skills: "instructed", // TODO(M14): flip to "enforced" once skills is materialized per session
-    restrictions: "instructed", // TODO(M14): flip to "enforced" once restrictions is materialized per session
-    permissionMode: "instructed", // TODO(M14): flip to "enforced" once permissionMode is materialized per session
-    workspaceAccess: "instructed", // TODO(M14): flip to "enforced" once workspaceAccess is materialized per session
-    hooks: "instructed", // ADR-108: supervisor-enforced at the ACP seam; kept instructed (ADR-041 frozen)
-  },
-  codex: {
-    mcps: "instructed", // TODO(M14): flip to "enforced" once mcps is materialized per session
-    tools: "instructed", // TODO(M14): flip to "enforced" once tools is materialized per session
-    skills: "instructed", // TODO(M14): flip to "enforced" once skills is materialized per session
-    restrictions: "instructed", // TODO(M14): flip to "enforced" once restrictions is materialized per session
-    permissionMode: "instructed", // TODO(M14): flip to "enforced" once permissionMode is materialized per session
-    workspaceAccess: "instructed", // TODO(M14): flip to "enforced" once workspaceAccess is materialized per session
-    hooks: "instructed", // ADR-108: supervisor-enforced at the ACP seam; kept instructed (ADR-041 frozen)
-  },
-  gemini: {
-    mcps: "instructed",
-    tools: "instructed",
-    skills: "instructed",
-    restrictions: "instructed",
-    permissionMode: "instructed",
-    workspaceAccess: "instructed",
-    hooks: "instructed",
-  },
-  opencode: {
-    mcps: "instructed",
-    tools: "instructed",
-    skills: "instructed",
-    restrictions: "instructed",
-    permissionMode: "instructed",
-    workspaceAccess: "instructed",
-    hooks: "instructed",
-  },
-  mimo: {
-    mcps: "instructed",
-    tools: "instructed",
-    skills: "instructed",
-    restrictions: "instructed",
-    permissionMode: "instructed",
-    workspaceAccess: "instructed",
-    hooks: "instructed",
-  },
+  claude: { ...SEAM_ENFORCED_ROW },
+  codex: { ...SEAM_ENFORCED_ROW },
+  gemini: { ...SEAM_ENFORCED_ROW },
+  opencode: { ...SEAM_ENFORCED_ROW },
+  mimo: { ...SEAM_ENFORCED_ROW },
 };
 
 export const OVERLAY_CLASS_SUPPORT_BY_AGENT: OverlayClassSupportTable = {

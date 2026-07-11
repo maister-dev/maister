@@ -473,7 +473,7 @@ arbitrated `toolCallId`s; a WRITE_KINDS `tool_call` update with an unseen id →
 
 ### Phase 3 — Web: profile derivation, delivery, evidence gate, table flip — Commit D
 
-**T3.1 · Derive `SessionEnforcementProfile` from settings (allow-list, DES-7; TDD).**
+**T3.1 · Derive `SessionEnforcementProfile` from settings (allow-list, DES-7; TDD).** — ✅ DONE (enforcement-profile.ts: deriveSessionEnforcementProfile allow-list + CONFIG-on-undeclared-tools + resolveEscalationThreshold + foldEnforcementProfileIntoDigest; 13 tests incl. D4 determinism)
 In the capability materialize/resolver path (`web/lib/capabilities/*` +
 `web/lib/flows/settings-view.ts` sourcing): produce the profile from the node/agent
 capability settings filtered to `enforcement.<class>: strict` **and** enforceable classes.
@@ -485,7 +485,7 @@ derivation is pure — delivery (T3.2) and the evidence gate (T3.3) are separate
 *Logging*: DEBUG — derived `enforcedClasses`, allow-set sizes, digest.
 *Verify (RED-first, edge cases enumerated)*: tools/mcps/tool-restriction derivation; strict + no declared allow-set for the resolved agent → **CONFIG** (never enforce-nothing); class **not** strict → absent from profile; **enforceable-but-unproven adapter** → still derives (the T3.3 gate refuses, not derivation); **two strict classes** → both present; digest changes when the allow-set changes, stable when it doesn't. Min-overlap, no trivial tests.
 
-**T3.2 · Thread the profile to `createSession` + record in ledgers (DES-2, D4).**
+**T3.2 · Thread the profile to `createSession` + record in ledgers (DES-2, D4).** — ✅ DONE (CreateSessionInput.enforcementProfile; derived in materializeNodeCapabilities → folded into plan.profileDigest + persisted in MaterializationPlan write-once; threaded executeNodeAction→ctx→both createInputs; materialization integration green)
 `web/lib/supervisor-client.ts` (`CreateSessionInput.enforcementProfile`),
 `web/lib/flows/graph/runner-graph.ts` (resolve once per node dispatch alongside `hooksConfig`
 at :1201) → `web/lib/flows/runner-agent.ts` `createInput` (:814-828). Record the profile in
@@ -494,7 +494,7 @@ fresh attempt computes fresh** (D4) — assert no resumed-attempt re-evaluation.
 *Logging*: DEBUG on delivery (`runId`, `nodeAttemptId`, `enforcedClasses`, digest).
 *Verify*: unit — profile present in `createInput`; snapshot persisted; resume reuses snapshot (regression test).
 
-**T3.3 · Async evidence gate `assertEnforcementEvidence` (mirror readOnly; DES-6).**
+**T3.3 · Async evidence gate `assertEnforcementEvidence` (mirror readOnly; DES-6).** — ✅ DONE (enforcement-evidence.ts: strict tools/mcps → require capabilityEnforcement smoke ok + no-skip-perms + diagnostics reachable; wired at runner-graph gate + runs.ts preflight; 6 tests)
 New async gate consulting `GET /diagnostics` (`checkSupervisorDiagnostics`) refusing a
 strict-enforced launch when the resolved adapter's `capabilityEnforcement` smoke ≠ `ok`,
 message naming the missing evidence. Also add the **skip-permissions incompatibility refusal**
@@ -503,7 +503,7 @@ and `services/runs.ts:1066`; agent path `launch.ts` alongside `assertReadOnlySes
 *Logging*: INFO on refusal (`agent`, `class`, smoke `status`).
 *Verify*: unit — pending/error smoke → refuse w/ evidence diagnostic; ok → pass; skip-permissions+strict → refuse.
 
-**T3.4 · Flip `ENFORCEABILITY_BY_AGENT` + remove all 12 `TODO(M14)` (grep-sentinel).**
+**T3.4 · Flip `ENFORCEABILITY_BY_AGENT` + remove all 12 `TODO(M14)` (grep-sentinel).** — ✅ DONE (tools/mcps/hooks→enforced all 5 adapters via SEAM_ENFORCED_ROW; skills/restrictions/permissionMode/workspaceAccess documented-instructed; grep TODO(M14)=0; migrated 4 frozen-table-mirror test files to the flip; 6121 web unit + typecheck green)
 `web/lib/flows/enforcement.ts`: `tools`/`mcps`/`restrictions`/`permissionMode`/`workspaceAccess`
 → `"enforced"` for all adapters (comment: seam-enforced, evidence-gated at launch); `hooks`
 → `"enforced"` (corrected); `skills` → `"instructed"` with a permanent documented comment

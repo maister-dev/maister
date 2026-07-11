@@ -41,10 +41,11 @@ function parsedAiCodingSettings(
   return node && node.type === "ai_coding" ? node.settings : undefined;
 }
 
-// FROZEN SPEC encoding — docs/system-analytics/flow-settings.md (M11c) +
-// ADR-032. These tests are the executable mirror of the two frozen tables:
-// `ENFORCEABILITY_BY_AGENT` (all-`instructed`) and the
-// `evaluateNodeEnforcement` truth table. They MUST NOT drift from the doc.
+// FROZEN SPEC encoding — docs/system-analytics/flow-settings.md + capabilities.md
+// (ADR-129) + ADR-032. These tests are the executable mirror of the two frozen
+// tables: `ENFORCEABILITY_BY_AGENT` (tools/mcps/hooks `enforced` for all adapters
+// via the adapter-agnostic capability_guard seam; the four other classes
+// `instructed`) and the `evaluateNodeEnforcement` truth table. MUST NOT drift.
 
 const ALL_CLASSES: CapabilityClass[] = [
   "mcps",
@@ -74,60 +75,34 @@ type EnforcementEntry = {
 // 1. ENFORCEABILITY_BY_AGENT frozen — every cell instructed, no `enforced`.
 // ---------------------------------------------------------------------------
 
-describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
-  it("is value-for-value `instructed` for all adapters × all 7 classes", () => {
+describe("ENFORCEABILITY_BY_AGENT — adapter-agnostic seam flip (ADR-129)", () => {
+  // tools/mcps/hooks enforced for every adapter; the four other classes stay
+  // instructed (skills/restrictions/permissionMode/workspaceAccess).
+  const expectedRow: Record<CapabilityClass, Capability> = {
+    mcps: "enforced",
+    tools: "enforced",
+    skills: "instructed",
+    restrictions: "instructed",
+    permissionMode: "instructed",
+    workspaceAccess: "instructed",
+    hooks: "enforced",
+  };
+
+  it("is value-for-value the seam-flip row for all adapters × all 7 classes", () => {
     const expected: Table = {
-      claude: {
-        mcps: "instructed",
-        tools: "instructed",
-        skills: "instructed",
-        restrictions: "instructed",
-        permissionMode: "instructed",
-        workspaceAccess: "instructed",
-        hooks: "instructed",
-      },
-      codex: {
-        mcps: "instructed",
-        tools: "instructed",
-        skills: "instructed",
-        restrictions: "instructed",
-        permissionMode: "instructed",
-        workspaceAccess: "instructed",
-        hooks: "instructed",
-      },
-      gemini: {
-        mcps: "instructed",
-        tools: "instructed",
-        skills: "instructed",
-        restrictions: "instructed",
-        permissionMode: "instructed",
-        workspaceAccess: "instructed",
-        hooks: "instructed",
-      },
-      opencode: {
-        mcps: "instructed",
-        tools: "instructed",
-        skills: "instructed",
-        restrictions: "instructed",
-        permissionMode: "instructed",
-        workspaceAccess: "instructed",
-        hooks: "instructed",
-      },
-      mimo: {
-        mcps: "instructed",
-        tools: "instructed",
-        skills: "instructed",
-        restrictions: "instructed",
-        permissionMode: "instructed",
-        workspaceAccess: "instructed",
-        hooks: "instructed",
-      },
+      claude: expectedRow,
+      codex: expectedRow,
+      gemini: expectedRow,
+      opencode: expectedRow,
+      mimo: expectedRow,
     };
 
     expect(ENFORCEABILITY_BY_AGENT).toEqual(expected);
   });
 
-  it("contains NO `enforced` cell (the M11c silent-escape-hatch invariant)", () => {
+  it("enforces exactly tools/mcps/hooks (the seam-coverable classes) for every adapter", () => {
+    const enforced = new Set(["tools", "mcps", "hooks"]);
+
     for (const agent of [
       "claude",
       "codex",
@@ -136,7 +111,9 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
       "mimo",
     ] as const) {
       for (const cls of ALL_CLASSES) {
-        expect(ENFORCEABILITY_BY_AGENT[agent][cls]).not.toBe("enforced");
+        expect(ENFORCEABILITY_BY_AGENT[agent][cls]).toBe(
+          enforced.has(cls) ? "enforced" : "instructed",
+        );
       }
     }
   });
@@ -146,10 +123,10 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
 // 1b. hooks capability class (ADR-108, M40) — 7th class, all `instructed`.
 // ---------------------------------------------------------------------------
 
-describe("hooks capability class — enforcement (ADR-108)", () => {
-  // NB: the per-agent `hooks=instructed` cells are already pinned by the
-  // full-table `toEqual` above; this block only covers hooks-specific behavior.
-  it("evaluateNodeEnforcement reports a refused verdict for strict hooks", () => {
+describe("hooks capability class — enforcement (ADR-108, corrected by ADR-129)", () => {
+  // hooks has been supervisor-enforced at the ACP seam since M40; ADR-129 corrects
+  // its label to `enforced`, so strict hooks now PASSES the launch gate.
+  it("evaluateNodeEnforcement reports an enforced verdict for strict hooks", () => {
     const result = evaluateNodeEnforcement(
       { enforcement: { hooks: "strict" } } as AiCodingSettings,
       "claude",
@@ -161,12 +138,12 @@ describe("hooks capability class — enforcement (ADR-108)", () => {
     expect(hooksEntry).toEqual({
       class: "hooks",
       declared: "strict",
-      capability: "instructed",
-      verdict: "refused",
+      capability: "enforced",
+      verdict: "enforced",
     });
   });
 
-  it("a strict hooks declaration is refused at launch (CONFIG)", () => {
+  it("a strict hooks declaration is now launchable (enforced, not refused)", () => {
     expect(() =>
       assertNodeLaunchable(
         {
@@ -178,7 +155,7 @@ describe("hooks capability class — enforcement (ADR-108)", () => {
         },
         "claude",
       ),
-    ).toThrow(/hooks/);
+    ).not.toThrow();
   });
 
   it("a hooks data field with no explicit intent → instructed (not refused)", () => {
@@ -318,27 +295,29 @@ describe("evaluateNodeEnforcement — FROZEN truth table", () => {
     });
   }
 
-  it("with the default (real, all-instructed) table: strict → refused, instruct → instructed", () => {
+  it("with the default (real ADR-129) table: strict skills → refused, strict tools → enforced", () => {
+    // skills stays instructed → strict skills refuses.
     const refused = evaluateNodeEnforcement(
-      settingsDeclaring("mcps", "strict"),
+      settingsDeclaring("skills", "strict"),
       "claude",
     );
 
-    expect(refused.find((e: EnforcementEntry) => e.class === "mcps")).toEqual({
-      class: "mcps",
+    expect(refused.find((e: EnforcementEntry) => e.class === "skills")).toEqual({
+      class: "skills",
       declared: "strict",
       capability: "instructed",
       verdict: "refused",
     });
 
-    const instructed = evaluateNodeEnforcement(
-      settingsDeclaring("mcps", "instruct"),
+    // tools flipped to enforced → strict tools resolves to the enforced verdict.
+    const enforced = evaluateNodeEnforcement(
+      settingsDeclaring("tools", "strict"),
       "claude",
     );
 
     expect(
-      instructed.find((e: EnforcementEntry) => e.class === "mcps")?.verdict,
-    ).toBe("instructed");
+      enforced.find((e: EnforcementEntry) => e.class === "tools")?.verdict,
+    ).toBe("enforced");
   });
 
   it("omits `off` classes from the result entirely", () => {
@@ -412,7 +391,8 @@ describe("evaluateNodeEnforcement — parsed-manifest sparse map", () => {
     const result = evaluateNodeEnforcement(settings, "claude");
 
     expect(result.map((e: EnforcementEntry) => e.class)).toEqual(["mcps"]);
-    expect(result[0].verdict).toBe("refused");
+    // mcps flipped to enforced (ADR-129) → strict mcps resolves to enforced.
+    expect(result[0].verdict).toBe("enforced");
   });
 
   it("a data field with no enforcement entry (parsed) still defaults to instruct at evaluation", () => {
@@ -449,8 +429,8 @@ function aiNode(
 }
 
 describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
-  it("strict on a class instructed-for-all-agents → throws MaisterError code=CONFIG (+ node id, class, agent in message)", () => {
-    const node = aiNode("implement", { mcps: "strict" });
+  it("strict on a class instructed-for-all-agents (skills) → throws MaisterError code=CONFIG (+ node id, class, agent in message)", () => {
+    const node = aiNode("implement", { skills: "strict" });
 
     let thrown: unknown;
 
@@ -465,8 +445,22 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
     const message = (thrown as Error).message;
 
     expect(message).toContain("implement");
-    expect(message).toContain("mcps");
+    expect(message).toContain("skills");
     expect(message).toContain("claude");
+  });
+
+  // ADR-129: strict tools/mcps now PASS the static launch gate (the evidence gate
+  // enforces per-adapter readiness at the real launch sites, not here).
+  it("strict tools → does NOT throw (enforced via capability_guard)", () => {
+    const node = aiNode("implement", { tools: "strict" });
+
+    expect(() => assertNodeLaunchable(node, "claude")).not.toThrow();
+  });
+
+  it("strict mcps → does NOT throw (enforced via capability_guard)", () => {
+    const node = aiNode("implement", { mcps: "strict" });
+
+    expect(() => assertNodeLaunchable(node, "codex")).not.toThrow();
   });
 
   it("strict on a class enforced for claude-only, resolved agent codex → code=EXECUTOR_UNAVAILABLE", () => {
@@ -512,11 +506,11 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
     expect(() => assertNodeLaunchable(node, "claude")).not.toThrow();
   });
 
-  it("applies to judge nodes too (capability-bearing shape) — strict mcps → CONFIG", () => {
+  it("applies to judge nodes too (capability-bearing shape) — strict skills → CONFIG", () => {
     const node: LaunchableNode = {
       id: "verdict",
       type: "judge",
-      settings: { enforcement: { mcps: "strict" } } as JudgeSettings,
+      settings: { enforcement: { skills: "strict" } } as JudgeSettings,
     };
 
     let thrown: unknown;
@@ -534,11 +528,11 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
 
   // M37 (ADR-098): orchestrator nodes inherit the ai_coding capability shape, so
   // they go through the same strict-enforcement refusal path.
-  it("applies to orchestrator nodes too — strict mcps → CONFIG", () => {
+  it("applies to orchestrator nodes too — strict skills → CONFIG", () => {
     const node: LaunchableNode = {
       id: "coordinate",
       type: "orchestrator",
-      settings: { enforcement: { mcps: "strict" } } as AiCodingSettings,
+      settings: { enforcement: { skills: "strict" } } as AiCodingSettings,
     };
 
     let thrown: unknown;

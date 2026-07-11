@@ -5,6 +5,7 @@ import type {
   PlatformUnavailableReason,
 } from "@/types/platform-status";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { SessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
 
 import { cache } from "react";
@@ -121,6 +122,10 @@ export type CreateSessionInput = {
   // interceptor (path_guard / repetition / no_progress) for this session; each
   // rule key is optional and an absent key means that rule is not armed.
   hooksConfig?: HooksConfig;
+  // ADR-129: derived capability-enforcement set. The supervisor arms the
+  // capability_guard interceptor (strict tools/mcps by tool identity) for this
+  // session; absent → capability_guard is inert.
+  enforcementProfile?: SessionEnforcementProfile;
 };
 
 export type CreateSessionResult = {

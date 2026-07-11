@@ -4,6 +4,7 @@ import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { GuardConfig } from "./guards";
+import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
@@ -104,6 +105,9 @@ export type RunAgentStepCtx = {
   // ADR-108 (M40): resolved guardrail rule set (resolveHooksConfig in runGraph),
   // threaded onto the supervisor session body so the hook interceptor arms.
   hooksConfig?: HooksConfig;
+  // ADR-129: derived capability-enforcement set (deriveSessionEnforcementProfile in
+  // runGraph), threaded onto the session body so the capability_guard interceptor arms.
+  enforcementProfile?: SessionEnforcementProfile;
   db?: DbClientLike;
 };
 
@@ -825,6 +829,7 @@ async function runNewSession(
       mcpServers: ctx.mcpServers,
       autoApprovePermissions: ctx.autoApprovePermissions,
       hooksConfig: ctx.hooksConfig,
+      enforcementProfile: ctx.enforcementProfile,
     };
 
     if (ctx.resumeSessionId) {
@@ -1025,6 +1030,7 @@ async function runSlashInExisting(
       mcpServers: ctx.mcpServers,
       autoApprovePermissions: ctx.autoApprovePermissions,
       hooksConfig: ctx.hooksConfig,
+      enforcementProfile: ctx.enforcementProfile,
     });
 
     ctx.sessionState.currentSessionId = session.sessionId;

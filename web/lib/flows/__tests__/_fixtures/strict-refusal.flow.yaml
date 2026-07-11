@@ -1,8 +1,9 @@
 schemaVersion: 1
 name: Strict Refusal (fixture)
-# M11c (ADR-032): an ai_coding node declaring `enforcement: strict` on a
-# capability class the static ENFORCEABILITY_BY_AGENT table can only INSTRUCT.
-# Launch MUST be refused with MaisterError("CONFIG"). Drives Verify #2/#3 + e2e.
+# ADR-129: an ai_coding node declaring `enforcement: strict` on a capability class
+# the ENFORCEABILITY_BY_AGENT table can only INSTRUCT (skills has no tool-identity
+# seam mechanism). Launch MUST be refused with MaisterError("CONFIG"). Drives
+# Verify #2/#3 + e2e. (tools/mcps flipped to enforced — they launch; skills does not.)
 compat:
   engine_min: 1.1.0
 nodes:
@@ -11,9 +12,9 @@ nodes:
     action:
       prompt: "/aif-implement"
     settings:
-      mcps: [github]
+      skills: [aif-implement]
       enforcement:
-        mcps: strict
+        skills: strict
     transitions:
       success: review
   - id: review

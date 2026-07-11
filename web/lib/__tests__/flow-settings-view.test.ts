@@ -127,14 +127,14 @@ describe("buildSettingsView — hooks capability class (M40)", () => {
     });
   });
 
-  it("enforcement.hooks: strict → refused (the frozen table cannot enforce it)", () => {
+  it("enforcement.hooks: strict → enforced (ADR-129 corrected the seam-enforced label)", () => {
     const node = aiNode("guarded", {
       enforcement: { hooks: "strict" },
     } as AiCodingSettings);
 
     const view = buildSettingsView([node], "claude") as NodeView[];
 
-    expect(classOf(find(view, "guarded")!, "hooks")?.verdict).toBe("refused");
+    expect(classOf(find(view, "guarded")!, "hooks")?.verdict).toBe("enforced");
   });
 
   it("enforcement.hooks: off omits the hooks class", () => {
@@ -150,11 +150,11 @@ describe("buildSettingsView — hooks capability class (M40)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. strict mcps against the real all-instructed table → `mcps` refused.
+// 2. strict mcps against the ADR-129 table → `mcps` enforced; strict skills refused.
 // ---------------------------------------------------------------------------
 
-describe("buildSettingsView — strict class against all-instructed table", () => {
-  it("marks `mcps` verdict `refused` (declared strict, capability instructed)", () => {
+describe("buildSettingsView — strict class against the ADR-129 table", () => {
+  it("marks `mcps` verdict `enforced` (declared strict, capability enforced)", () => {
     const node = aiNode("implement", {
       enforcement: { mcps: "strict" },
     } as AiCodingSettings);
@@ -166,7 +166,19 @@ describe("buildSettingsView — strict class against all-instructed table", () =
     const mcps = classOf(v!, "mcps");
 
     expect(mcps).toBeDefined();
-    expect(mcps!.verdict).toBe("refused");
+    expect(mcps!.verdict).toBe("enforced");
+  });
+
+  it("marks `skills` verdict `refused` (still instructed — not seam-enforceable)", () => {
+    const node = aiNode("implement", {
+      enforcement: { skills: "strict" },
+    } as AiCodingSettings);
+
+    const view = buildSettingsView([node], "claude") as NodeView[];
+
+    expect(classOf(find(view, "implement")!, "skills")?.verdict).toBe(
+      "refused",
+    );
   });
 });
 
@@ -207,7 +219,8 @@ describe("buildSettingsView — non-capability nodes excluded", () => {
 
     expect(v).toBeDefined();
     expect(v!.nodeType).toBe("judge");
-    expect(classOf(v!, "tools")?.verdict).toBe("refused");
+    // tools flipped to enforced (ADR-129).
+    expect(classOf(v!, "tools")?.verdict).toBe("enforced");
   });
 });
 

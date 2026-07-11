@@ -40,6 +40,7 @@ import {
   assertNodeLaunchable,
   capabilityBearingSettings,
 } from "@/lib/flows/enforcement";
+import { assertEnforcementEvidence } from "@/lib/flows/enforcement-evidence";
 import {
   isEngineCompatible,
   isSchemaVersionSupported,
@@ -1068,6 +1069,10 @@ export async function* launchRunStaged(
           { id: node.id, nodeType: node.nodeType, settings },
           capabilityAgent,
         );
+        // ADR-129 (DES-6): refuse a strict tools/mcps launch BEFORE run creation
+        // when the resolved adapter lacks cached capabilityEnforcement smoke
+        // evidence (EXECUTOR_UNAVAILABLE naming the missing evidence).
+        await assertEnforcementEvidence({ settings, agent: capabilityAgent });
       }
 
       // M27/T-C6 (C6-top, ADR-070): reject package-level required MCP refs
