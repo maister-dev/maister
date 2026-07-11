@@ -20,6 +20,10 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { buildRalphLoopConsumer } from "@/lib/runs/ralph-loop";
+import {
+  GRAPH_ONLY_CUTOVER_REASON,
+  GRAPH_ONLY_CUTOVER_SOURCE,
+} from "@/lib/domain-events/cutover";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -237,6 +241,29 @@ describe("ralph-loop consumer (execution-policy axis A2)", () => {
 
     await buildRalphLoopConsumer({ db, launch, maxAttempts: () => 5 }).handle([
       runFailedEvent(runId),
+    ]);
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it("suppresses graph-only cut-over failures even under ralph_loop", async () => {
+    const taskId = await seedTask({ attemptNumber: 2 });
+    const runId = await insertRun({
+      taskId,
+      status: "Failed",
+      startedAt: BASE,
+    });
+    const { calls, launch } = recordingLaunch();
+    const event = {
+      ...runFailedEvent(runId),
+      payload: {
+        reason: GRAPH_ONLY_CUTOVER_REASON,
+        source: GRAPH_ONLY_CUTOVER_SOURCE,
+      },
+    } as DomainEventRow;
+
+    await buildRalphLoopConsumer({ db, launch, maxAttempts: () => 5 }).handle([
+      event,
     ]);
 
     expect(calls).toHaveLength(0);

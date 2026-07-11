@@ -101,6 +101,16 @@ enum | array`.
   resolution may raise normal `permission`, `form`, or `human` HITL requests during the
   same run; it does not introduce a new HITL kind in this slice.
 
+## Graph-only upgrade cancellation
+
+Migration `0093` terminally closes unanswered HITL for each unfinished legacy
+`steps[]` Flow run before that run becomes `Failed`. The request receives
+`response = { cancelled: true, reason: "legacy_steps_engine_3_cutover", source:
+"upgrade_cutover" }` and `responded_at`; any linked open or claimed assignment
+becomes `cancelled` with a `system_closed` assignment event. This is terminal
+upgrade cleanup: it never replays the request and is distinct from checkpoint
+cancellation, where the same run may later resume.
+
 ## Three kinds — when to use which
 
 | Kind         | Trigger                                                                                                           | Form?               | Loop on reject?                                                                                                                                          | Wire                             |

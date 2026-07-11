@@ -6192,6 +6192,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "auto_promotion": {
+          "name": "auto_promotion",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "brain_enabled": {
           "name": "brain_enabled",
           "type": "boolean",
@@ -7461,6 +7467,18 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{\"preset\":\"supervised\"}'::jsonb"
+        },
+        "promotion_hold": {
+          "name": "promotion_hold",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "review_entered_at": {
+          "name": "review_entered_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "budget_state": {
           "name": "budget_state",
@@ -10605,6 +10623,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'none'"
+        },
+        "promotion_lane": {
+          "name": "promotion_lane",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "promotion_claimed_at": {
           "name": "promotion_claimed_at",

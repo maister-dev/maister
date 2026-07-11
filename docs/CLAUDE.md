@@ -70,7 +70,7 @@ cases, process flows. One file per domain.
 | ---- | ------ |
 | [`system-analytics/identity-access.md`](system-analytics/identity-access.md) | Users, Auth.js sessions, RBAC gates, account settings. |
 | [`system-analytics/projects.md`](system-analytics/projects.md) | Project registration, Flow plugin install. |
-| [`system-analytics/flows.md`](system-analytics/flows.md) | Flow plugin packaging, step DSL, executor override. |
+| [`system-analytics/flows.md`](system-analytics/flows.md) | Flow plugin packaging, typed-node graph DSL, runner resolution. |
 | [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) | Flow graph v1: node lifecycle, `node_attempts` ledger, gate execution, staleness, review-driven rework (M11a). |
 | [`system-analytics/tasks.md`](system-analytics/tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |
 | [`system-analytics/task-queue.md`](system-analytics/task-queue.md) | Priority-ordered dependency-draining admission (ADR-121): criticality dictionary, unified admission funnel, cap-safe resume, cycle-safe relations, advisory confidence, operator pause. |

@@ -41,8 +41,8 @@ For the full vision, product model, architecture, and roadmap see
   `maister-plugins` repo.
 - **Flow plugin engine**: Flows are git-repo plugins pinned by tag, installed
   to `~/.maister/flows/<id>@<tag>/` system cache and symlinked per project.
-  Each plugin carries a `flow.yaml` manifest with step DSL (`cli | agent |
-  guard | human`), optional `setup.sh`, shipped CLIs, skills, and agents.
+  Each plugin carries a graph-only `flow.yaml` manifest with typed `nodes[]`,
+  transitions, gates, optional `setup.sh`, shipped CLIs, skills, and agents.
 - **Multi-executor via ACP**: `claude` and `codex` are the ready default
   adapters; `gemini`, `opencode`, and `mimo` are code-owned adapter families
   whose launch/default readiness is gated by supervisor diagnostics and cached
@@ -69,7 +69,7 @@ For the full vision, product model, architecture, and roadmap see
   Backlog card has a **Launch** button; click runs
   preconditions and creates a Run via supervisor `POST /sessions`. A
   dedicated **Inbox** block beside the board lists pending HITL requests
-  with in-card form + send-back-with-comments for `human` step type.
+  with in-card form + send-back-with-comments for graph human-review nodes.
   Done/Abandoned in a filter tab.
 - **Backlog → Flow launch**: task created on the board with title + prompt +
   Flow dropdown (from project's `flows[]`) + optional executor override.
@@ -87,9 +87,8 @@ For the full vision, product model, architecture, and roadmap see
   One agent process per session. Spawned on Launch; permission HITL is
   resolved live. Checkpoint/idle resume is implemented.
 - **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
-  + artifact `input-<stepId>.json` for structured forms (JSON Schema) +
-  `human` step type with review comments. `on_reject.goto_step` is
-  designed but not executed today.
+  + artifact `input-<nodeId>.json` for structured forms (JSON Schema) + graph
+  human-review finishes with typed decisions and bounded rework targets.
 - **Live log streaming**: supervisor publishes ACP `session/update` →
   per-step log file on disk + SSE stream → Next.js Route Handler bridge
   (`/api/runs/[id]/stream`) with `lastEventId` reconnect.
@@ -178,13 +177,13 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
    IS the adapter interface. Override resolution: run launcher ->
    task override -> project per-flow override -> project default ->
    flow recommended. CCR bundled.
-5. **Flow Engine v2 plugin model**: Flows are git-tag-pinned plugin
-   bundles with `flow.yaml` manifest, `cli | agent | guard | human` step
-   DSL, optional `setup.sh`, shipped skills/CLIs. Installed to
+5. **Flow Engine 3 graph-only plugin model**: Flows are git-tag-pinned plugin
+   bundles with a typed `nodes[]` `flow.yaml` graph, optional `setup.sh`, and
+   shipped skills/CLIs. Installed to
    `~/.maister/flows/<id>@<tag>/`, symlinked per project. `maister.yaml`
    v2 carries `project` + `executors[]` + `flows[]`. Refuse to register
-   on `schemaVersion` mismatch (project or any flow manifest), duplicate
-   IDs, unknown executor reference, unknown `goto_step` target, slug
+   on `schemaVersion` mismatch (project or any flow manifest), legacy
+   `steps[]`, duplicate IDs, unknown runner reference, or unknown graph target, slug
    collision, or `repo_path` collision (one repo = one project).
 6. **Atomic writes** to `.maister/`: tmp + rename via `atomicWriteJson`.
    Never partial-write a JSON the Flow / agent will read.

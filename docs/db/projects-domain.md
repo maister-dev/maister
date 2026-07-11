@@ -240,7 +240,7 @@ mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
   the project default execution-control policy (`{preset, overrides?}`). Null
   resolves through launch override → task → project → `supervised`; the resolved
   policy is snapshotted on `runs.execution_policy` at launch.
-- `flows.manifest` stores the **parsed** `flow.yaml` — full step DSL,
+- `flows.manifest` stores the **parsed** graph-only `flow.yaml` — typed nodes,
   portable runner profiles, etc. Source of truth for the runtime step
   loader; the on-disk `flow.yaml` is only read on install / refresh.
 - `flows.version_binding` **(Designed, M27)**: `pinned` resolves `flows.enabled_revision_id`; `latest` picks the newest published `flow_revisions` row for the `flow_ref_id`, never a draft.

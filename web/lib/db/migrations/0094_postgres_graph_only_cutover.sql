@@ -238,4 +238,4 @@ SELECT
 FROM _m93_cutover_winners winner;
 --> statement-breakpoint
 
-DROP TABLE step_runs CASCADE;
+DROP TABLE IF EXISTS step_runs CASCADE;

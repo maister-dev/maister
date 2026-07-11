@@ -199,10 +199,10 @@ Runner resolution (highest priority wins):
 5. Project default (`projects.default_runner_id`).
 6. Platform default (`platform_runtime_settings.default_runner_id`).
 
-### 6. Flow Engine v2: plugin packaging + step DSL
+### 6. Flow Engine 3: plugin packaging + typed-node graph
 
 Flows are **plugin bundles** — git repos with a manifest (`flow.yaml`),
-shipped CLIs, optional `setup.sh`, skills, agents, and a step-typed YAML
+shipped CLIs, optional `setup.sh`, skills, agents, and a graph-only `nodes[]`
 DSL. Installed system-wide to `~/.maister/flows/<id>@<tag>/` and symlinked
 into each consuming project's `.maister/<slug>/flows/`. Version-pinned by
 git tag in the project's `maister.yaml`.
@@ -278,8 +278,8 @@ content-addressed, bridged into the same `flow_revisions` lineage) on the
 Project `slug` is derived from `project.name` (kebab-cased). Both `slug`
 and `repo_path` are unique across registered projects. Refuse to register
 on: `schemaVersion` mismatch (project file or any installed Flow's
-manifest), duplicate IDs within either file, unknown
-`executor`/`executor_override` reference, unknown `goto_step` target,
+manifest), legacy `steps[]`, duplicate IDs within either file, unknown
+runner reference, or unknown graph transition/rework target,
 slug collision, `repo_path` collision. Trust the Flow's `setup.sh` on
 first install. Current target trusts internal Flow sources; sandboxing +
 trust UI is Phase 2.
@@ -343,7 +343,7 @@ is canonical for the product framing; this note only mirrors it.
 - **Flow plugin engine**: install plugins from `git URL + tag` to
   `~/.maister/flows/<id>@<tag>/` system cache; symlink into each consuming
   project's `.maister/<slug>/flows/`. Manifest (`flow.yaml`) is the source
-  of step DSL. Trust internal Flow sources today.
+  of the typed-node graph DSL. Trust internal Flow sources today.
 - **Multi-executor via ACP**: `claude` and `codex` both required.
   Per-step executor override resolution per §5. CCR support bundled.
 - **`supervisor/` daemon**: separate Node process owning ACP sessions,

@@ -28,8 +28,8 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: container.getConnectionUri() });
   db = drizzle(pool);
 
-  // findPendingMigrations gates on a postgres DB_URL (it skips other dialects);
-  // point it at the container so the check runs.
+  // findPendingMigrations requires a postgres DB_URL; point it at the
+  // container so the check runs.
   prevDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 

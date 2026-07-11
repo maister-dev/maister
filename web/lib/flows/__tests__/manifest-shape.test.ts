@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { flowYamlV1Schema } from "@/lib/config.schema";
-import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
+import {
+  isEngineCompatible,
+  MAISTER_ENGINE_VERSION,
+} from "@/lib/flows/engine-version";
 import {
   classifyStoredFlowManifest,
   parseGraphOnlyFlowManifest,
@@ -52,6 +55,39 @@ describe("graph-only manifest shape contract", () => {
     expect(issueMessages({ ...baseManifest, nodes: [] })).toContain(
       "Array must contain at least 1 element(s)",
     );
+  });
+
+  it.each([
+    ["non-object root", "not-an-object"],
+    ["neither-key object", { ...baseManifest }],
+    [
+      "malformed graph node",
+      { ...baseManifest, nodes: [{ id: "broken", type: "unknown" }] },
+    ],
+  ])("classifies %s as invalid without the legacy refusal", (_label, value) => {
+    const result = classifyStoredFlowManifest(value);
+
+    expect(result.compatible).toBe(false);
+    if (result.compatible) return;
+    expect(result.reason.kind).toBe("invalid_manifest");
+    expect(result.reason.message).not.toBe(LEGACY_STEPS_REFUSAL_MESSAGE);
+  });
+
+  it("keeps an engine range excluding 3.0.0 distinct from legacy shape", () => {
+    const value = {
+      ...baseManifest,
+      compat: { engine_min: "4.0.0" },
+      nodes: [validNode],
+    };
+
+    expect(classifyStoredFlowManifest(value)).toMatchObject({
+      compatible: true,
+      manifestShape: "graph",
+    });
+    expect(isEngineCompatible(value.compat.engine_min)).toMatchObject({
+      compatible: false,
+      reason: expect.stringContaining("engine_min"),
+    });
   });
 
   it("accepts a valid nodes[] graph and preserves open-ended compatibility", () => {

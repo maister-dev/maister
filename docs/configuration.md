@@ -10,9 +10,9 @@ Platform runtime settings plus two manifests define how MAIster runs:
 - **`maister.yaml` v2** — per-project: project metadata, project default runner
   binding, Flow plugin bindings, Flow default runner bindings, capabilities,
   and role registries. Lives in the registered repo root.
-- **`flow.yaml` v1** — per-Flow-plugin: the step DSL (cli / agent / guard /
-  human), AI-coding runner targets, optional `setup.sh`. Lives in each plugin's
-  git repo.
+- **`flow.yaml` v1** — per-Flow-plugin: the typed `nodes[]` graph, transitions,
+  gates, runner targets, and optional `setup.sh`. Lives in each plugin's git
+  repo.
 
 Plus environment variables for the server tier itself.
 
@@ -879,8 +879,9 @@ enforcement needs the deferred policy layer. Consistent with the frozen table, a
 
 `loadFlowManifest()` runs:
 
-1. No duplicate step IDs.
-2. Every `on_reject.goto_step` must reference an existing step id.
+1. No duplicate node IDs.
+2. Every transition and bounded rework target references an existing node or
+   the terminal `done` target.
 
 For `runner_type: acp`, a top-level or node-level `runner` is a non-empty
 string. Its existence in platform runners is validated during platform Flow
@@ -1033,6 +1034,11 @@ injection body cap **is** a tunable env var — `MAISTER_ARTIFACT_INLINE_MAX_BYT
 prompt body only; it does NOT affect the artifact **payload API** route, which
 returns the full untruncated body. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
 
+**ADR-129 engine bump (Implemented).** Engine `3.0.0` is graph-only. A manifest
+containing top-level `steps[]` is refused with the locked upgrade remediation;
+`nodes[]` is the sole executable Flow shape. Existing graph manifests with an
+open-ended engine range remain compatible.
+
 ### Verdict calibration (M15)
 
 `ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing
@@ -1087,8 +1093,8 @@ usage records. Guards do not kill a run today; enforcement is Phase 2.
 
 ## `form_schema` versioning
 
-Every HITL `human` step's form payload includes a required `schemaVersion`
-integer. The runtime compares this against the version the agent step
+Every HITL form payload includes a required `schemaVersion` integer. The
+runtime compares this against the version the graph node
 expected; mismatch → `MaisterError({ code: "CONFIG" })`.
 
 ```ts
@@ -1130,7 +1136,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `SEED_ADMIN_EMAIL` | no | `admin@maister.local` | `pnpm db:seed` — email for the initial admin user. |
 | `SEED_ADMIN_PASSWORD` | no | `maister-admin` | `pnpm db:seed` — password for the initial admin user. Change before any shared use. |
 | `MAISTER_TEMP_PASSWORD_LENGTH` | no | `12` | Web tier. Length of admin-provisioned auto-generated one-time temp passwords (clamped to a minimum of 12). Governs GENERATED passwords only — admin-typed passwords keep the 12-character minimum. Read server-side by the web tier; never logged. |
-| `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
+| `DB_URL` | yes | — | `lib/db/client.ts`; accepts only `postgres://...` or `postgresql://...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `6` | Global Flow/scratch run concurrency cap (across all projects; counts `run_kind IN ('flow','scratch')`). M24 scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command` budgets. (M34 — owner-requested default bump `3 → 6`; env semantics unchanged.) |
 | `MAISTER_MAX_CONCURRENT_AGENTS` | no | `3` | **(M34 — Implemented, ADR-089.)** Separate concurrency budget for platform-agent runs (`run_kind='agent'`) enforced at `tryStartRun` with its own `Pending` FIFO — agent runs never consume Flow slots and vice versa. **M41 consensus** also uses this ceiling for ephemeral verification/synthesis ACP sessions through an internal limiter; tokens are released in `finally` and these sessions are not `runs` rows. Repurposed from the obsolete M24 meaning (SQL claim budget for `agent_tick` attempts — `agent_tick.dispatcher` is now a hardcoded-budget-1 singleton). |
@@ -1333,7 +1339,7 @@ is the next-intl default; ops documentation above records it for awareness.
 | Export | Signature | Throws on |
 | ------ | --------- | --------- |
 | `loadProjectConfig(path)` | `(string) => Promise<MaisterYamlV2>` | Missing file, invalid YAML, schema error, cross-ref failure. All → `MaisterError({ code: "CONFIG" })`. |
-| `loadFlowManifest(path)` | `(string) => Promise<FlowYamlV1>` | Missing file, invalid YAML, schema error, dup step ids, dangling `goto_step`. All → `MaisterError({ code: "CONFIG" })`. |
+| `loadFlowManifest(path)` | `(string) => Promise<FlowYamlV1>` | Missing file, invalid YAML, legacy `steps[]`, schema error, duplicate node IDs, or dangling transition/rework targets. All → `MaisterError({ code: "CONFIG" })`. |
 | `validateFormSchemaVersion(obj, expected)` | `(unknown, number) => void` | Malformed form schema OR version mismatch. → `MaisterError({ code: "CONFIG" })` with both versions in the message. |
 
 ### `lib/config.schema.ts`

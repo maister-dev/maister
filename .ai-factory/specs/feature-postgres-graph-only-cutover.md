@@ -267,7 +267,7 @@ dialect, converter, duplicated parser, new status or new error code are allowed.
 | UX-05 | 12 | D2 history component + Playwright | `pnpm --dir web exec playwright test m43-cutover-history.spec.ts` | persistent banner and absent actions |
 | MIG-01..MIG-04 | 11 | `migration-0093.integration.test.ts` real PG | `pnpm --filter maister-web exec vitest run --project integration lib/db/__tests__/migration-0093.integration.test.ts` | status/store/atomic/idempotent matrix |
 | MIG-05 | 11 | domain-event consumer unit + emit-site integration | `pnpm --filter maister-web exec vitest run --project unit lib/domain-events/__tests__/cutover.test.ts` | exact suppression predicate; consumer tests exercise fan-out |
-| DOC-01, DOC-02 | 1,14 | contract/docs/ADR/Mermaid/i18n validators | `CI=true pnpm validate:docs:all` | all current-state surfaces agree |
+| DOC-01, DOC-02 | 1,14 | contract/docs/ADR/Mermaid/i18n validators | `CI=true pnpm validate:docs:all && CI=true pnpm validate:contracts` plus i18n parity and scoped forbidden-current-doc audit | all current-state surfaces agree |
 | TEST-01, TEST-02 | 3,13,15,16 | Vitest list + forbidden-symbol audit | `pnpm --filter maister-web exec vitest list --project unit` | no dead/orphan/positive legacy test |
 
 Reverse mapping is the same table read from test/task columns to requirement
@@ -288,7 +288,7 @@ the diff:
 | GRAPH-01..GRAPH-05 | `manifest-shape.ts`, `manifest-parser.ts`, `config.schema.ts`, engine `3.0.0`, graph-only `runner.ts`, `context.ts` | 128 focused units; positive first-party graph fixtures; forbidden-symbol audit |
 | API-01..API-03 | shared parser at all intake/read boundaries; per-operation `x-maister-m43-legacy-steps` status/code/message/side-effect contracts | contract validator; route/read-model focused units; operation matrix audit |
 | MIG-01..MIG-04 | migration `0093`: precondition, one materialized candidate relation, lifecycle-store closure, eight-status CAS, winner-scoped event, then `DROP TABLE step_runs` | migration integration is discovered and SQL/snapshot/journal pass static integrity; execution requires a container-capable real-Postgres environment |
-| MIG-05 | `isGraphOnlyCutoverFailure` shared by Ralph, agents, Brain harvest/index and webhook filtering | five-case predicate unit plus consumer call-site audit |
+| MIG-05 | `isGraphOnlyCutoverFailure` shared by Ralph, agents, Brain harvest and source reindex | five-case predicate unit plus deletion-sensitive consumer integration tests |
 | UX-01..UX-05 | typed package/launch incompatibility, blocked Studio controls, `CutoverFailureBanner`, list/board/detail/inspector read models, EN/RU catalogs | focused UI/route tests green; Playwright test discovered as one Chromium scenario |
 | DOC-01..DOC-02 | ADR-129, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | 340 Mermaid blocks, 644 ADR links, all API contracts and EN/RU parity green |
 
@@ -301,14 +301,14 @@ remains.
 
 Environment-qualified release evidence is recorded without converting a
 sandbox limitation into a product exception: the complete web unit run has
-594 files / 6042 tests green, with only two pre-existing listener tests blocked
-by `listen EPERM`; supervisor listener suites and Playwright are blocked by the
-same socket policy; Testcontainers cannot find a container runtime. Focused M43
-tests, typecheck, lint (zero errors), contracts, docs, i18n, test discovery and
-Drizzle integrity are green. These environment-only gates must be rerun in the
-normal container/socket-enabled CI runner before merge.
-
-## Resolved questions and excluded work
+595 files / 6057 tests green, with two pre-existing listener tests blocked by
+`listen EPERM`; supervisor listener suites and Playwright are blocked by the
+same socket policy; all eight focused Postgres suites were discovered but
+Testcontainers could not find a container runtime. Focused M43 units,
+typecheck, contracts, all-doc Mermaid/ADR validation, i18n parity, test
+discovery and Drizzle journal integrity are green. The listener, Testcontainers
+and browser gates must be rerun in the normal container/socket-enabled CI
+runner before merge.
 
 ## Phase-0 adversarial review record
 
@@ -330,6 +330,8 @@ unit patterns (lib/components) or integration patterns (lib/app integration
 suffix). The Phase-0 unit baseline is 595 files / 6097 tests green when local
 listener permissions are available. The integration baseline completed against
 real Testcontainers Postgres. No RED test is committed at this gate.
+
+## Resolved questions and excluded work
 
 - D1 data loss and D2 failure are owner-approved and require no prompt during
   upgrade.

@@ -13,7 +13,7 @@ authored flow remains inert catalog content until a later packaging/publication
 milestone creates a real Flow package revision; this installer does not read or
 execute authored drafts.
 
-For what a Flow IS (entities, step DSL, lifecycle) see
+For what a Flow IS (entities, typed-node graph DSL, lifecycle) see
 [`docs/system-analytics/flows.md`](system-analytics/flows.md). For the
 planned package lifecycle product surface see
 [`docs/system-analytics/flow-packages.md`](system-analytics/flow-packages.md).
@@ -171,7 +171,7 @@ cause })`:
 | --- | --- |
 | Boundary validation (bad `flowId`, `version`, slug, source URL) | `Invalid <field>: <zod issues>` |
 | `git clone` non-zero exit / unreachable tag / network timeout | `git clone failed for <source>@<version>: <stderr>` |
-| `flow.yaml` invalid (schemaVersion mismatch, missing fields, dup step ids) | `flow.yaml invalid in <target>: <zod issues>` |
+| `flow.yaml` invalid (schemaVersion mismatch, legacy `steps[]`, missing fields, duplicate node ids) | `flow.yaml invalid in <target>: <zod issues>` |
 | Symlink path occupied by non-symlink | `refuse to overwrite non-symlink at <path>` |
 | DB upsert race / connection drop | `db upsert failed for flow <flowId>@<version>` |
 

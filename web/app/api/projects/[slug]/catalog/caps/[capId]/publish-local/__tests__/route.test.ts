@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
+
 const publishAuthoredCapabilityLocalMock = vi.hoisted(() => vi.fn());
 const authorizeCatalogRouteProjectMock = vi.hoisted(() => vi.fn());
 const bridgePublishedAuthoredFlowMock = vi.hoisted(() => vi.fn());
@@ -97,6 +99,48 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/publish-local", () => {
 
     expect(response.status).toBe(422);
     expect(body.code).toBe("CONFIG");
+  });
+
+  it("preserves the exact legacy refusal and creates no bridge projection", async () => {
+    publishAuthoredCapabilityLocalMock.mockImplementation(async (args) => {
+      args.validateDraftRevision({
+        id: "rev-legacy",
+        capabilityId: "cap-1",
+        projectId: "project-demo",
+        kind: "flow",
+        revisionNumber: 1,
+        lifecycle: "DRAFT",
+        draftVersion: 1,
+        title: "Legacy Flow",
+        body: {
+          flowYaml: "schemaVersion: 1\nname: legacy\nsteps: []\n",
+          packageMetadata: { slug: "legacy", name: "Legacy" },
+          files: [],
+        },
+        manifest: null,
+        schemaVersion: 1,
+        contentHash: "hash",
+        publishedAt: null,
+        archivedAt: null,
+        createdAt: new Date(),
+      });
+    });
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      new NextRequest(
+        "http://localhost/api/projects/demo/catalog/caps/cap-1/publish-local",
+        { method: "POST" },
+      ),
+      { params: Promise.resolve({ slug: "demo", capId: "cap-1" }) },
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "CONFIG",
+      message: LEGACY_STEPS_REFUSAL_MESSAGE,
+    });
+    expect(bridgePublishedAuthoredFlowMock).not.toHaveBeenCalled();
   });
 
   it("rejects body-controlled publish payloads", async () => {

@@ -139,9 +139,12 @@ async function seedFlow(args: {
   projectId: string;
   flowId: string;
   revisionId: string;
-  legacy: boolean;
+  legacy?: boolean;
+  revisionLegacy?: boolean;
+  cacheLegacy?: boolean;
 }): Promise<void> {
-  const manifest = args.legacy
+  const manifestFor = (legacy: boolean) =>
+    legacy
     ? { schemaVersion: 1, name: args.flowId, steps: [] }
     : {
         schemaVersion: 1,
@@ -155,6 +158,10 @@ async function seedFlow(args: {
           },
         ],
       };
+  const revisionManifest = manifestFor(
+    args.revisionLegacy ?? args.legacy ?? false,
+  );
+  const cacheManifest = manifestFor(args.cacheLegacy ?? args.legacy ?? false);
 
   await args.client.query(
     `INSERT INTO flow_revisions
@@ -168,7 +175,7 @@ async function seedFlow(args: {
       args.flowId,
       `sha-${args.flowId}`,
       `digest-${args.flowId}`,
-      JSON.stringify(manifest),
+      JSON.stringify(revisionManifest),
       `/tmp/${args.flowId}`,
     ],
   );
@@ -183,7 +190,7 @@ async function seedFlow(args: {
       args.flowId,
       `sha-${args.flowId}`,
       `/tmp/${args.flowId}`,
-      JSON.stringify(manifest),
+      JSON.stringify(cacheManifest),
       args.revisionId,
     ],
   );
@@ -196,7 +203,7 @@ async function seedRun(args: {
   flowId: string | null;
   revisionId: string | null;
   status: string;
-  runKind?: "flow" | "scratch";
+  runKind?: "flow" | "scratch" | "agent";
   endedAt?: string | null;
 }): Promise<void> {
   await args.client.query(
@@ -227,6 +234,8 @@ describe("migration 0093 — D2 before irreversible D1", () => {
     const legacyRevisionId = "legacy-revision";
     const graphFlowId = "graph-flow";
     const graphRevisionId = "graph-revision";
+    const pinnedGraphId = "pinned-graph-cache-legacy";
+    const pinnedLegacyId = "pinned-legacy-cache-graph";
     const terminalAt = "2026-01-02T03:04:05.000Z";
 
     try {
@@ -244,6 +253,22 @@ describe("migration 0093 — D2 before irreversible D1", () => {
         flowId: graphFlowId,
         revisionId: graphRevisionId,
         legacy: false,
+      });
+      await seedFlow({
+        client,
+        projectId,
+        flowId: pinnedGraphId,
+        revisionId: `${pinnedGraphId}-revision`,
+        revisionLegacy: false,
+        cacheLegacy: true,
+      });
+      await seedFlow({
+        client,
+        projectId,
+        flowId: pinnedLegacyId,
+        revisionId: `${pinnedLegacyId}-revision`,
+        revisionLegacy: true,
+        cacheLegacy: false,
       });
 
       for (const [index, status] of ACTIONABLE.entries()) {
@@ -275,6 +300,40 @@ describe("migration 0093 — D2 before irreversible D1", () => {
         flowId: graphFlowId,
         revisionId: graphRevisionId,
         status: "Running",
+      });
+      await seedRun({
+        client,
+        runId: "pinned-graph-running",
+        projectId,
+        flowId: pinnedGraphId,
+        revisionId: `${pinnedGraphId}-revision`,
+        status: "Running",
+      });
+      await seedRun({
+        client,
+        runId: "pinned-legacy-running",
+        projectId,
+        flowId: pinnedLegacyId,
+        revisionId: `${pinnedLegacyId}-revision`,
+        status: "Running",
+      });
+      await seedRun({
+        client,
+        runId: "scratch-legacy-reference",
+        projectId,
+        flowId: legacyFlowId,
+        revisionId: legacyRevisionId,
+        status: "Running",
+        runKind: "scratch",
+      });
+      await seedRun({
+        client,
+        runId: "agent-legacy-reference",
+        projectId,
+        flowId: legacyFlowId,
+        revisionId: legacyRevisionId,
+        status: "Running",
+        runKind: "agent",
       });
 
       await client.query(
@@ -358,9 +417,24 @@ describe("migration 0093 — D2 before irreversible D1", () => {
         .rows[0]?.status,
     ).toBe("Running");
     expect(
+      (
+        await pool.query(
+          `SELECT id, status FROM runs
+           WHERE id IN ('pinned-graph-running', 'pinned-legacy-running',
+                        'scratch-legacy-reference', 'agent-legacy-reference')
+           ORDER BY id`,
+        )
+      ).rows,
+    ).toEqual([
+      { id: "agent-legacy-reference", status: "Running" },
+      { id: "pinned-graph-running", status: "Running" },
+      { id: "pinned-legacy-running", status: "Failed" },
+      { id: "scratch-legacy-reference", status: "Running" },
+    ]);
+    expect(
       (await pool.query(`SELECT count(*)::int AS n FROM domain_events`)).rows[0]
         ?.n,
-    ).toBe(8);
+    ).toBe(9);
     await expect(
       getGraphOnlyCutoverFailure(drizzle(pool), "legacy-Pending"),
     ).resolves.toEqual({
@@ -385,7 +459,7 @@ describe("migration 0093 — D2 before irreversible D1", () => {
     expect(
       (await pool.query(`SELECT count(*)::int AS n FROM webhook_events`))
         .rows[0]?.n,
-    ).toBe(8);
+    ).toBe(9);
     expect(
       (
         await pool.query(
@@ -459,6 +533,20 @@ describe("migration 0093 — D2 before irreversible D1", () => {
       (await pool.query(`SELECT to_regclass('public.step_runs') AS table_name`))
         .rows[0]?.table_name,
     ).toBeNull();
+
+    await applyCutover(pool);
+    expect(
+      (await pool.query(`SELECT count(*)::int AS n FROM domain_events`)).rows[0]
+        ?.n,
+    ).toBe(9);
+    expect(
+      (await pool.query(`SELECT count(*)::int AS n FROM webhook_events`))
+        .rows[0]?.n,
+    ).toBe(9);
+    expect(
+      (await pool.query(`SELECT count(*)::int AS n FROM assignment_events`))
+        .rows[0]?.n,
+    ).toBe(1);
 
     await pool.end();
   }, 180_000);

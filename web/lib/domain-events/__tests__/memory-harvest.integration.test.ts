@@ -9,6 +9,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { harvestEvents } from "@/lib/domain-events/memory-harvest";
 import { MaisterError } from "@/lib/errors";
 import {
+  GRAPH_ONLY_CUTOVER_REASON,
+  GRAPH_ONLY_CUTOVER_SOURCE,
+} from "@/lib/domain-events/cutover";
+import {
   seedBrainProject,
   startBrainTestDb,
   stopBrainTestDb,
@@ -224,6 +228,26 @@ describe("memory_harvest consumer (T3.2)", () => {
       projectId,
       runId,
       payload: { runId },
+    });
+
+    await harvestEvents([event], {
+      db: ctx.db,
+      resolveClient: resolve(makeClient()),
+    });
+
+    expect(await activeCount(projectId)).toBe(0);
+  });
+
+  it("does not harvest graph-only cut-over failures", async () => {
+    const runId = await seedRun(projectId);
+    const event = await insertEvent({
+      kind: "run.failed",
+      projectId,
+      runId,
+      payload: {
+        reason: GRAPH_ONLY_CUTOVER_REASON,
+        source: GRAPH_ONLY_CUTOVER_SOURCE,
+      },
     });
 
     await harvestEvents([event], {

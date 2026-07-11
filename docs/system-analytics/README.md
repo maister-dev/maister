@@ -22,7 +22,7 @@ Every file in this folder follows the structure defined in
 | Identity and access | [`identity-access.md`](identity-access.md) | Users, Auth.js sessions, RBAC gates, user menu, personal settings, password changes. |
 | Projects | [`projects.md`](projects.md) | Registration, slug derivation, archival, Flow plugin install on register. |
 | Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback. |
-| Flows | [`flows.md`](flows.md) | Plugin packaging, step DSL (cli/agent/guard/human), executor override resolution. |
+| Flows | [`flows.md`](flows.md) | Plugin packaging, typed-node graph DSL, runner resolution. |
 | Flow settings | [`flow-settings.md`](flow-settings.md) | Typed node settings, launch refusal boundaries, and capability-materialization handoff. |
 | Consensus node | [`consensus.md`](consensus.md) | First-class `consensus` graph node: read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, HITL resolution, and synthesized plan artifact output. |
 | Capabilities | [`capabilities.md`](capabilities.md) | Capability registry refs, agent-aware mappings, and runner-owned materialization. |

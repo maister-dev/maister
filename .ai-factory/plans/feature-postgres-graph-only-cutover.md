@@ -733,6 +733,21 @@ D1/D2 manual SQL checks match the upgrade runbook.
 
 ## Final Verification Gates
 
+### Review remediation (2026-07-11)
+
+- [x] Route every stored-manifest read surface through a typed graph-only
+  boundary; restore pinned-revision authority and isolate watchdog anomalies.
+- [x] Reconcile admin install, authored publish, launch options, graph/status/
+  transcript and upgrade-preview API contracts with exact refusal semantics.
+- [x] Disable incompatible package controls, preserve package-wide Studio
+  blocking, focus typed alerts, and render cut-over timing in run history.
+- [x] Make migration `0093` raw-rerun-idempotent, discriminate pinned vs cache
+  manifests, exclude non-flow runs, and add deletion-sensitive consumer tests.
+- [x] Reconcile current docs, ADR supersession/indexing, HITL analytics,
+  positive fixtures, Drizzle snapshots, and graph-only authoring vocabulary.
+- [x] Run the complete verification gates below and record environment-qualified
+  results without converting unavailable infrastructure into a passing claim.
+
 - `pnpm install --frozen-lockfile`
 - `pnpm --filter maister-web typecheck`
 - `pnpm --filter maister-web test:unit`

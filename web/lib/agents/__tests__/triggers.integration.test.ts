@@ -15,6 +15,10 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  GRAPH_ONLY_CUTOVER_REASON,
+  GRAPH_ONLY_CUTOVER_SOURCE,
+} from "@/lib/domain-events/cutover";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -348,6 +352,38 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
     const runs = await pool.query(
       `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
       [narrowAgent],
+    );
+
+    expect(runs.rows[0].n).toBe(0);
+  });
+
+  it("does not launch an event agent for a graph-only cut-over failure", async () => {
+    const agent = await seedAgent({
+      id: "cutover-agent",
+      triggers: ["domain_event"],
+    });
+
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
+       VALUES ($1, $2, $3, 'event', '{"kinds":["run.failed"]}'::jsonb)`,
+      [randomUUID(), agent, projectId],
+    );
+
+    await triggers.buildAgentTriggersConsumer({ db }).handle([
+      fakeEvent({
+        id: 2100 as unknown as DomainEventRow["id"],
+        kind: "run.failed",
+        runId: randomUUID(),
+        payload: {
+          reason: GRAPH_ONLY_CUTOVER_REASON,
+          source: GRAPH_ONLY_CUTOVER_SOURCE,
+        },
+      }),
+    ]);
+
+    const runs = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
+      [agent],
     );
 
     expect(runs.rows[0].n).toBe(0);

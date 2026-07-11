@@ -12,6 +12,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 import {
+  GRAPH_ONLY_CUTOVER_REASON,
+  GRAPH_ONLY_CUTOVER_SOURCE,
+} from "@/lib/domain-events/cutover";
+import {
   BRAIN_SOURCE_MAX_GLOB_MATCHES,
   createBrainSource,
   enqueueBrainSourceReindex,
@@ -626,5 +630,35 @@ describe("Project Brain source indexer (ADR-127)", () => {
       reason: "event",
       status: "queued",
     });
+  });
+
+  it("does not enqueue reindex jobs for graph-only cut-over failures", async () => {
+    const source = await createBrainSource(ctx.db, {
+      projectId,
+      repoPath,
+      mainBranch: "main",
+      input: { path: "docs/README.md", kind: "markdown" },
+    });
+    const event = {
+      id: 987655,
+      kind: "run.failed",
+      projectId,
+      runId: "run-cutover",
+      taskId: null,
+      payload: {
+        reason: GRAPH_ONLY_CUTOVER_REASON,
+        source: GRAPH_ONLY_CUTOVER_SOURCE,
+      },
+    } as any;
+
+    await expect(
+      enqueueSourceReindexForEvents([event], { db: ctx.db as any }),
+    ).resolves.toBe(0);
+
+    const jobs = await ctx.db.execute(sql`
+      SELECT id FROM brain_index_jobs WHERE source_id = ${source.id}
+    `);
+
+    expect(jobs.rows).toHaveLength(0);
   });
 });

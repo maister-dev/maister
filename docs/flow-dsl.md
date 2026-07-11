@@ -314,9 +314,11 @@ name: bugfix
 mcps:
   - github          # capability ref-id; validated at publish/install time
   - filesystem
-steps:
+nodes:
   - id: implement
-    ...
+    type: ai_coding
+    action: { prompt: "Implement the task" }
+    transitions: { success: done }
 ```
 
 See `config.schema.ts:flowYamlV1Schema` (`mcps?` field) and

@@ -44,7 +44,7 @@
   - `lib/scheduler.ts` — global concurrency cap
     (`MAISTER_MAX_CONCURRENT_RUNS`), Pending queue, auto-promote.
   - `lib/db/` — Drizzle schema (`projects`, `executors`, `flows`, `tasks`,
-    `runs`, `workspaces`, `step_runs`, `hitl_requests`) + client.
+    `runs`, `workspaces`, `node_attempts`, `hitl_requests`) + client.
   - `lib/reconcile.ts` — startup hook: per-project `runs` vs
     `git worktree list`; orphaned `Running` → `Crashed`.
 

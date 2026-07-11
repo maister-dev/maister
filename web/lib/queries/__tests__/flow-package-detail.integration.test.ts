@@ -10,6 +10,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -25,6 +26,7 @@ let getFlowPackageDetail: typeof import("@/lib/queries/flow-packages").getFlowPa
 
 const PROJECT_ID = randomUUID();
 const REVISION_ID = randomUUID();
+const LEGACY_REVISION_ID = randomUUID();
 const MANIFEST = {
   schemaVersion: 1,
   name: "aif-dev",
@@ -76,6 +78,20 @@ beforeAll(async () => {
     packageStatus: "Installed",
     execTrust: "trusted",
   });
+  await db.insert(schema.flowRevisions).values({
+    id: LEGACY_REVISION_ID,
+    flowRefId: "aif-dev",
+    source: "/tmp/pkg/flows/dev",
+    versionLabel: "aif-v1.0.0",
+    resolvedRevision: randomUUID().replace(/-/g, ""),
+    manifestDigest: "legacy-digest",
+    manifest: { schemaVersion: 1, name: "aif-dev", steps: [] },
+    schemaVersion: 1,
+    installedPath: "/tmp/pkg/flows/dev-legacy",
+    setupStatus: "not_required",
+    packageStatus: "Installed",
+    execTrust: "trusted",
+  });
 
   await db.insert(schema.flows).values({
     id: randomUUID(),
@@ -103,6 +119,21 @@ describe("getFlowPackageDetail (integration)", () => {
     // Pre-fix the exact-source filter matched 0 rows → the viewer page 404'd
     // (`if (!revision) notFound()`). Post-fix the `file://` scheme is stripped
     // on both sides, so the same-path revision matches.
-    expect(detail?.revisions.map((r) => r.id)).toEqual([REVISION_ID]);
+    expect(detail?.revisions.map((r) => r.id)).toContain(REVISION_ID);
+  });
+
+  it("returns a typed incompatible DTO for a stored legacy revision", async () => {
+    const detail = await getFlowPackageDetail("flow-link-fix", "aif-dev");
+    const legacy = detail?.revisions.find(
+      (revision) => revision.id === LEGACY_REVISION_ID,
+    );
+
+    expect(legacy).toMatchObject({
+      compatible: false,
+      incompatibility: {
+        kind: "legacy_steps",
+        message: LEGACY_STEPS_REFUSAL_MESSAGE,
+      },
+    });
   });
 });

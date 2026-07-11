@@ -108,7 +108,7 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
 | [Configuration](docs/configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | [Flow Installer](docs/flow-installer.md) | `installFlowPlugin()` pipeline, system cache, symlink, DB upsert, ops CLI |
-| [Flow DSL](docs/flow-dsl.md) | Flow graph DSL (+ legacy step DSL) and runner behavior |
+| [Flow DSL](docs/flow-dsl.md) | Graph-only typed-node DSL and runner behavior |
 | [AIF Flow Plugin](docs/flow-aif-plugin.md) | Bundled `aif` Flow plugin walkthrough |
 | [Flow Studio](docs/system-analytics/flow-studio.md) | In-app flow authoring + visual graph editor |
 | [Observatory](docs/system-analytics/observatory.md) | Autonomy Score, correction-rate, signal clusters |

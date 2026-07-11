@@ -113,7 +113,7 @@ afterAll(async () => {
   await pool?.end();
   await container?.stop();
   for (const dir of [homeDir, workspaceRoot, pkgV1, pkgV2]) {
-    await rm(dir, { recursive: true, force: true });
+    if (dir) await rm(dir, { recursive: true, force: true });
   }
 });
 
