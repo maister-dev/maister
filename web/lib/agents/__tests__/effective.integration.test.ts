@@ -437,7 +437,7 @@ describe("resolveAgentProfileMcpServers (RD7)", () => {
     const none = await resolveAgentProfileMcpServers({
       db,
       projectId: p,
-      capabilityProfile: null,
+      capabilityProfile: undefined,
       capabilityAgent: "claude",
       execTrust: "trusted",
       runId: "run-x",

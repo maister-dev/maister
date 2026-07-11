@@ -48,7 +48,13 @@ export type AgentRegistrationSummary = {
   packageName: string;
   versionLabel: string;
   registered: string[];
-  invalid: { id: string; error: string }[];
+  invalid: AgentRegistrationIssue[];
+};
+
+export type AgentRegistrationIssue = {
+  readonly id: string;
+  readonly sourcePath: string;
+  readonly error: string;
 };
 
 async function listAgentFileStems(installedPath: string): Promise<string[]> {
@@ -171,7 +177,7 @@ export async function registerPackageAgents(
 
   const stems = await listAgentFileStems(install.installedPath);
   const registered: string[] = [];
-  const invalid: { id: string; error: string }[] = [];
+  const invalid: AgentRegistrationIssue[] = [];
 
   for (const stem of stems) {
     const sourcePath = join(
@@ -200,8 +206,18 @@ export async function registerPackageAgents(
     } catch (err) {
       invalid.push({
         id,
+        sourcePath,
         error: err instanceof Error ? err.message : String(err),
       });
+      log.warn(
+        {
+          agentId: id,
+          packageInstallId,
+          sourcePath,
+          issue: err instanceof Error ? err.message : String(err),
+        },
+        "invalid package agent definition preserved as report-only",
+      );
     }
   }
 
@@ -228,7 +244,7 @@ export async function registerPackageAgents(
 export type AgentResyncSummary = {
   ok: true;
   synced: number;
-  invalid: { id: string; error: string }[];
+  invalid: AgentRegistrationIssue[];
   missing: string[];
 };
 
@@ -263,13 +279,14 @@ export async function resyncAgents(db?: Db): Promise<AgentResyncSummary> {
   }
 
   const seen = new Set<string>();
-  const invalid: { id: string; error: string }[] = [];
+  const invalid: AgentRegistrationIssue[] = [];
   let synced = 0;
 
   for (const installId of newestByName.values()) {
     const summary = await registerPackageAgents(installId, _db);
 
     summary.registered.forEach((id) => seen.add(id));
+    summary.invalid.forEach((issue) => seen.add(issue.id));
     invalid.push(...summary.invalid);
     synced += summary.registered.length;
   }

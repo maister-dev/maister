@@ -565,7 +565,7 @@ Dependencies: Tasks 1.2 and 3.2.
 
 #### Task 4.1 - Reuse one canonical MCP-ref schema and typed launch input
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -594,7 +594,7 @@ Dependencies: Task 1.3.
 
 #### Task 4.2 - Make invalid legacy resync report-only
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -622,7 +622,7 @@ Dependencies: Tasks 1.3 and 4.1.
 
 #### Task 4.3 - Make Studio validation strict at the field and artifact gates
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 

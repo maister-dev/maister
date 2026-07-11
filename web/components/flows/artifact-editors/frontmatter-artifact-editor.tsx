@@ -5,7 +5,10 @@ import type { ReactElement } from "react";
 import { useState } from "react";
 
 import { CodeEditor } from "@/components/flows/code-editor";
-import { agentDefinitionFrontmatterSchema } from "@/lib/agents/definition";
+import {
+  agentDefinitionFrontmatterSchema,
+  capabilityProfileSchema,
+} from "@/lib/agents/definition";
 import { subagentFrontmatterSchema } from "@/lib/agents/subagent-definition";
 import {
   serializeFrontmatter,
@@ -205,11 +208,8 @@ interface CapabilityProfileFieldProps {
   onClear: () => void;
 }
 
-// `capability_profile` is an arbitrary JSON object. Edited as raw JSON with a
-// local draft so intermediate invalid text survives while typing: a valid object
-// commits to frontmatter, an invalid one shows a notice and is NOT saved (the
-// field stays editable — never blocks). The ContentEditor `key={file.path}`
-// remounts this on file switch, so the draft re-seeds for each artifact.
+// `capability_profile` uses the same strict schema as registration. A local
+// draft preserves intermediate text, while invalid content stays uncommitted.
 function CapabilityProfileField({
   label,
   invalidLabel,
@@ -236,17 +236,18 @@ function CapabilityProfileField({
     try {
       const parsed: unknown = JSON.parse(text);
 
-      if (
-        parsed === null ||
-        typeof parsed !== "object" ||
-        Array.isArray(parsed)
-      ) {
-        setError(invalidLabel);
+      const result = capabilityProfileSchema.safeParse(parsed);
+
+      if (!result.success) {
+        const issuePaths = result.error.issues
+          .map((issue) => issue.path.join(".") || "capability_profile")
+          .join(", ");
+        setError(`${invalidLabel}: ${issuePaths}`);
 
         return;
       }
       setError(null);
-      onCommit(parsed as Record<string, unknown>);
+      onCommit(result.data);
     } catch {
       setError(invalidLabel);
     }

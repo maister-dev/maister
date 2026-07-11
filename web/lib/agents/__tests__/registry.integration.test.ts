@@ -413,6 +413,47 @@ describe("registerPackageAgents", () => {
 });
 
 describe("resyncAgents", () => {
+  it("reports an invalid existing definition without mutating or disabling its last valid row", async () => {
+    const installId = await installPackageFixture({
+      name: "guarded",
+      versionLabel: "v1.0.0",
+      agents: { watcher: definitionMd() },
+    });
+
+    await registerPackageAgents(installId, db);
+    const before = await pool.query(
+      `SELECT "name", "enabled", "updated_at" FROM "agents" WHERE "id" = 'guarded:watcher'`,
+    );
+    const install = await pool.query(
+      `SELECT "installed_path" FROM "package_installs" WHERE "id" = $1`,
+      [installId],
+    );
+    const sourcePath = path.join(
+      install.rows[0].installed_path as string,
+      "maister-agents",
+      "watcher.md",
+    );
+
+    await writeFile(
+      sourcePath,
+      definitionMd().replace(
+        "triggers:\n  - manual",
+        "triggers:\n  - manual\ncapability_profile:\n  mcp: [legacy]",
+      ),
+    );
+
+    const summary = await resyncAgents(db);
+    const after = await pool.query(
+      `SELECT "name", "enabled", "updated_at" FROM "agents" WHERE "id" = 'guarded:watcher'`,
+    );
+
+    expect(summary.invalid).toEqual([
+      expect.objectContaining({ id: "guarded:watcher", sourcePath }),
+    ]);
+    expect(summary.missing).not.toContain("guarded:watcher");
+    expect(after.rows[0]).toEqual(before.rows[0]);
+  });
+
   it("projects the newest Installed install per package name and disables vanished agents", async () => {
     const older = new Date(Date.now() - 60_000);
 

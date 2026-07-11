@@ -2,6 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { capabilityProfileSchema } from "@/lib/agents/definition";
+
 import {
   FrontmatterArtifactEditor,
   applyFrontmatterFieldEdit,
@@ -191,12 +193,18 @@ describe("applyFrontmatterFieldEdit", () => {
     }
   });
 
-  it("round-trips a capability_profile object edit", () => {
+  it("rejects the legacy singular capability_profile.mcp key", () => {
+    expect(capabilityProfileSchema.safeParse({ mcp: ["linear"] }).success).toBe(
+      false,
+    );
+  });
+
+  it("round-trips a valid capability_profile object edit", () => {
     const next = applyFrontmatterFieldEdit(
       AGENT_CONTENT,
       "capability_profile",
       {
-        mcp: ["linear"],
+        mcps: ["linear"],
       },
     );
 
@@ -204,7 +212,7 @@ describe("applyFrontmatterFieldEdit", () => {
 
     expect(fm.ok).toBe(true);
     if (fm.ok) {
-      expect(fm.frontmatter?.capability_profile).toEqual({ mcp: ["linear"] });
+      expect(fm.frontmatter?.capability_profile).toEqual({ mcps: ["linear"] });
     }
   });
 });

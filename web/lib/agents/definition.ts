@@ -16,7 +16,11 @@ import type {
 
 import { z } from "zod";
 
-import { hooksSettingsSchema, type HooksSettings } from "@/lib/config.schema";
+import {
+  capabilityRefIdSchema,
+  hooksSettingsSchema,
+  type HooksSettings,
+} from "@/lib/config.schema";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 // errors-core, not @/lib/errors: this module is imported by the client-side
 // artifact validator (Studio editor bundle); the server re-export preserves
@@ -97,20 +101,10 @@ const flowRefValueSchema = z
     "flow must not be '.', '..' or contain '..'",
   );
 
-const capabilityProfileMcpRefSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9._-]+$/, "mcps must match /^[A-Za-z0-9._-]+$/")
-  .refine(
-    (s) => s !== "." && s !== ".." && !s.includes(".."),
-    "mcps must not be '.', '..' or contain '..'",
-  );
-
-const capabilityProfileSchema = z
+export const capabilityProfileSchema = z
   .object({
     mcps: z
-      .array(capabilityProfileMcpRefSchema)
+      .array(capabilityRefIdSchema)
       .max(32)
       .transform((items) => [...new Set(items)])
       .optional(),
