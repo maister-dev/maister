@@ -23,7 +23,7 @@ import {
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof schema>;
 
 // service.ts consumes PENDING_HITL_RUN_STATUS from @/lib/services/hitl, whose
 // module graph pulls authz (NextAuth), supervisor-client, and the flow runner.
@@ -48,7 +48,7 @@ beforeAll(async () => {
     .start();
 
   pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
+  db = drizzle(pool, { schema });
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 }, 180_000);

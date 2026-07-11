@@ -489,7 +489,7 @@ at a phase boundary.
 
 ### Phase 1 — Postgres-only database and test/runtime contract
 
-- [ ] **Task 4 — Make DB construction and every DB CLI Postgres-only/fail-fast.**
+- [x] **Task 4 — Make DB construction and every DB CLI Postgres-only/fail-fast.**
   Delete `better-sqlite3`/`drizzle-orm/better-sqlite3` imports and the `file:`
   branch; give `buildClient/getDb` an explicit PG database type; simplify
   `closeDb` to `Pool.end`; require postgres URLs in `migrate`, `migrate-brain`,
@@ -505,7 +505,7 @@ at a phase boundary.
   boot-level `instrumentation.register` failure (not only `buildClient`), GREEN
   with one shared resolver, REFACTOR to remove duplicate CLI prefix checks.
 
-- [ ] **Task 5 — Remove dialect gates and make Postgres semantics unconditional.**
+- [x] **Task 5 — Remove dialect gates and make Postgres semantics unconditional.**
   Delete `dbIsSqlite/dbIsPostgres/isPostgresDb`, optional `.for()` shims,
   SQLite JSON predicates, advisory-lock skips, and catch-and-continue lock
   fallbacks. Make scheduler and project-relation advisory locks unconditional;
@@ -522,7 +522,7 @@ at a phase boundary.
   remains actionable on Postgres. TDD partitions pure lock selection from
   real-PG serialization/race behavior; no mock-only concurrency claim counts.
 
-- [ ] **Task 6 — Remove SQLite dependencies and the union-caused type debt.**
+- [x] **Task 6 — Remove SQLite dependencies and the union-caused type debt.**
   Remove `better-sqlite3` and `@types/better-sqlite3` from `web/package.json`,
   remove `better-sqlite3` from `web/next.config.mjs`, refresh `pnpm-lock.yaml`,
   and delete only the 28-file `FIXME(any)` class caused by the pg|sqlite union,

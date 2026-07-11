@@ -12,8 +12,6 @@ import {
   type BrainTestDb,
 } from "./helpers";
 
-import { assertBrainProvisioned } from "@/lib/brain/guard";
-
 let ctx: BrainTestDb;
 
 function vectorLiteral(seed: number): string {
@@ -287,15 +285,5 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
     await expect(
       countRows("brain_proposal_decision_stats", projectId),
     ).resolves.toBe(0);
-  });
-
-  it("still fails closed under SQLite before any brain-table access", () => {
-    const previous = process.env.DB_URL;
-
-    process.env.DB_URL = "file:./dev.db";
-    expect(() => assertBrainProvisioned()).toThrow(/SQLite mode/);
-
-    if (previous === undefined) delete process.env.DB_URL;
-    else process.env.DB_URL = previous;
   });
 });

@@ -41,9 +41,8 @@ export async function startBrainTestDb(): Promise<BrainTestDb> {
     .withPassword("test")
     .start();
 
-  // Point DB_URL at the container so the dialect guard (isBrainProvisioned reads
-  // DB_URL, the same source of truth as buildClient) treats the Brain as
-  // provisioned. Restored in stopBrainTestDb.
+  // Point DB_URL at the container so application code and migrations use the
+  // same database. Restored in stopBrainTestDb.
   const prevDbUrl = process.env.DB_URL;
 
   process.env.DB_URL = container.getConnectionUri();

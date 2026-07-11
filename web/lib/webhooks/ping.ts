@@ -10,7 +10,7 @@ import { buildEnvelopePayload, finalizeEnvelope } from "./taxonomy";
 import { resolveEnvRef, resolveMaybeEnvRef } from "./signing";
 import { signAndSend } from "./send";
 
-// FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
+// FIXME(any): narrow this injected database seam to its operations.
 type Db = any;
 
 const DEFAULT_TIMEOUT_MS = 10_000;

@@ -3,6 +3,7 @@ import "server-only";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { AnyColumn, SQL } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import {
   and,
@@ -15,11 +16,10 @@ import {
 } from "drizzle-orm";
 
 import { runSessions } from "@/lib/db/schema";
+import * as schema from "@/lib/db/schema";
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union and callers also pass a
-// transaction handle; mirrors the `Db = any` already used by runner-core /
-// gate-chat. POC target = Postgres.
-type Db = any;
+type ReadDb = Pick<NodePgDatabase<typeof schema>, "select">;
+type WriteDb = Pick<NodePgDatabase<typeof schema>, "select" | "update">;
 
 // M42 (ADR-114): the per-session runner/resume state for one logical session.
 // After the contract migration drops the `runs.{runner_id,
@@ -94,7 +94,7 @@ export function activeSessionRunnerId(runIdCol: AnyColumn): SQL<string | null> {
 // the most-recently-updated row so the resolved `runner_snapshot` / agent stay
 // available, and to null only when the run has no sessions at all.
 export async function loadActiveRunSession(
-  db: Db,
+  db: ReadDb,
   runId: string,
 ): Promise<ActiveRunSession | null> {
   const live = await db
@@ -122,7 +122,7 @@ export async function loadActiveRunSession(
 // paths iterate this to close EVERY live ACP process + cancel its deferreds (a
 // run may hold N sessions; only the active one is live, the rest already exited).
 export async function loadRunSessions(
-  db: Db,
+  db: ReadDb,
   runId: string,
 ): Promise<ActiveRunSession[]> {
   const rows = await db
@@ -138,7 +138,7 @@ export async function loadRunSessions(
 // source of truth). The linear runner pins the run's single `default` session;
 // the graph runner persists per-node inline.
 export async function persistRunSessionAcpSessionId(
-  db: Db,
+  db: WriteDb,
   runId: string,
   sessionName: string,
   acpSessionId: string,
@@ -158,7 +158,7 @@ export async function persistRunSessionAcpSessionId(
 // "live handle wins, else newest" rule as `loadActiveRunSession`). Runs with no
 // `run_sessions` row are simply absent from the map.
 export async function loadActiveRunSessionsByRunId(
-  db: Db,
+  db: ReadDb,
   runIds: readonly string[],
 ): Promise<Map<string, ActiveRunSession>> {
   const out = new Map<string, ActiveRunSession>();

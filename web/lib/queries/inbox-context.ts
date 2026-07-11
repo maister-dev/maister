@@ -59,7 +59,6 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 type Db = NodePgDatabase<typeof schema>;
 
 export interface InboxGateChip {

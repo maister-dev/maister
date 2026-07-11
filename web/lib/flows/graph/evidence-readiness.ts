@@ -32,12 +32,6 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-function isPostgres(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
-}
-
 export type EvidenceReadinessResult = {
   ready: boolean;
   reasons: string[];
@@ -73,37 +67,16 @@ export async function assertEvidenceReady(
   const reasons: string[] = [];
 
   // Check 1 (per-def-current): the distinct def ids any row marks required for
-  // this phase. required_for is a JSONB array. Postgres filters server-side with
-  // the @> containment operator; SQLite (the ultra-light dev dialect) has no
-  // such operator, so fall back to fetching the run's rows and filtering in JS.
-  let requiredDefRows: Array<{ artifactDefId: string | null }>;
-
-  if (isPostgres()) {
-    requiredDefRows = await d
-      .select({ artifactDefId: artifactInstances.artifactDefId })
-      .from(artifactInstances)
-      .where(
-        and(
-          eq(artifactInstances.runId, runId),
-          sql`${artifactInstances.requiredFor} @> ${JSON.stringify([phase])}::jsonb`,
-        ),
-      );
-  } else {
-    const all: Array<{
-      artifactDefId: string | null;
-      requiredFor: string[] | null;
-    }> = await d
-      .select({
-        artifactDefId: artifactInstances.artifactDefId,
-        requiredFor: artifactInstances.requiredFor,
-      })
-      .from(artifactInstances)
-      .where(eq(artifactInstances.runId, runId));
-
-    requiredDefRows = all.filter(
-      (r) => Array.isArray(r.requiredFor) && r.requiredFor.includes(phase),
+  // this phase. required_for is a JSONB array filtered with containment.
+  const requiredDefRows: Array<{ artifactDefId: string | null }> = await d
+    .select({ artifactDefId: artifactInstances.artifactDefId })
+    .from(artifactInstances)
+    .where(
+      and(
+        eq(artifactInstances.runId, runId),
+        sql`${artifactInstances.requiredFor} @> ${JSON.stringify([phase])}::jsonb`,
+      ),
     );
-  }
 
   const requiredDefIds = new Set<string>();
 

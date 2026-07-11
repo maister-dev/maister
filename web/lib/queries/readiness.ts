@@ -2,7 +2,7 @@ import "server-only";
 
 import type { GateResultStatus } from "@/lib/db/schema";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -104,12 +104,6 @@ export type ReadinessDTO = {
   }[];
   reasons: string[];
 };
-
-function isPostgres(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
-}
 
 export async function getRunReadiness(
   runId: string,
@@ -217,46 +211,21 @@ export async function getRunReadiness(
     requiredFor: string[] | null;
   }>;
 
-  if (isPostgres()) {
-    const { sql } = await import("drizzle-orm");
-
-    requiredArtifactRows = await d
-      .select({
-        id: artifactInstances.id,
-        artifactDefId: artifactInstances.artifactDefId,
-        kind: artifactInstances.kind,
-        validity: artifactInstances.validity,
-        requiredFor: artifactInstances.requiredFor,
-      })
-      .from(artifactInstances)
-      .where(
-        and(
-          eq(artifactInstances.runId, runId),
-          sql`${artifactInstances.requiredFor} IS NOT NULL AND ${artifactInstances.requiredFor} != '[]'::jsonb`,
-        ),
-      );
-  } else {
-    const all: Array<{
-      id: string;
-      artifactDefId: string | null;
-      kind: string;
-      validity: string | null;
-      requiredFor: string[] | null;
-    }> = await d
-      .select({
-        id: artifactInstances.id,
-        artifactDefId: artifactInstances.artifactDefId,
-        kind: artifactInstances.kind,
-        validity: artifactInstances.validity,
-        requiredFor: artifactInstances.requiredFor,
-      })
-      .from(artifactInstances)
-      .where(eq(artifactInstances.runId, runId));
-
-    requiredArtifactRows = all.filter(
-      (r) => Array.isArray(r.requiredFor) && r.requiredFor.length > 0,
+  requiredArtifactRows = await d
+    .select({
+      id: artifactInstances.id,
+      artifactDefId: artifactInstances.artifactDefId,
+      kind: artifactInstances.kind,
+      validity: artifactInstances.validity,
+      requiredFor: artifactInstances.requiredFor,
+    })
+    .from(artifactInstances)
+    .where(
+      and(
+        eq(artifactInstances.runId, runId),
+        sql`${artifactInstances.requiredFor} IS NOT NULL AND ${artifactInstances.requiredFor} != '[]'::jsonb`,
+      ),
     );
-  }
 
   // Unique def ids from required artifacts.
   const requiredDefIds = new Set<string>();

@@ -35,8 +35,11 @@ const mocks = vi.hoisted(() => ({
 // Either terminal consumes exactly one positional `state.selectResults` slot.
 // It is a lazy thenable (NOT an eager Promise) so chained `.where()` selects do
 // not also consume a slot via an auto-scheduled `from()` microtask.
+type LockedResult = PromiseLike<Record<string, unknown>[]> & {
+  for: (mode: string) => Promise<Record<string, unknown>[]>;
+};
 type FromResult = PromiseLike<Record<string, unknown>[]> & {
-  where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
+  where: (predicate: unknown) => LockedResult;
 };
 // The M28/T2.1 latest-flow-run gate query (`runs` table) dispatches by TABLE
 // IDENTITY, not positionally — no prior runs here, so every task is a fresh
@@ -124,20 +127,32 @@ const fakeDb: FakeDb = {
         };
       }
       if (getTableName(table as never) === "experiments") {
+        const lockedResult: LockedResult = {
+          for: async () => state.experiments,
+          then: (onFulfilled, onRejected) =>
+            Promise.resolve(state.experiments).then(onFulfilled, onRejected),
+        };
+
         return {
-          then: (onFulfilled) =>
-            Promise.resolve(state.experiments).then(onFulfilled),
-          where: async () => state.experiments,
+          then: (onFulfilled, onRejected) =>
+            Promise.resolve(state.experiments).then(onFulfilled, onRejected),
+          where: () => lockedResult,
         };
       }
       if (getTableName(table as never) === "task_relations") {
         return relationJoinChain;
       }
 
+      const lockedResult: LockedResult = {
+        for: async () => nextSelectResult(),
+        then: (onFulfilled, onRejected) =>
+          Promise.resolve(nextSelectResult()).then(onFulfilled, onRejected),
+      };
+
       return {
-        then: (onFulfilled) =>
-          Promise.resolve(nextSelectResult()).then(onFulfilled),
-        where: async () => nextSelectResult(),
+        then: (onFulfilled, onRejected) =>
+          Promise.resolve(nextSelectResult()).then(onFulfilled, onRejected),
+        where: () => lockedResult,
       };
     },
   }),

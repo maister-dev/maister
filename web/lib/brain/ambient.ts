@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
-import { isBrainProvisioned, isProjectBrainEnabled } from "./guard";
+import { isProjectBrainEnabled } from "./guard";
 import {
   getBrainEmbeddingClient,
   type OpenAiCompatibleClient,
@@ -79,7 +79,6 @@ export async function getAmbientBrainProjection(
 ): Promise<BrainAmbientEntry[] | undefined> {
   // Opt-in: null (inherit) defaults OFF in Sub-project A.
   if (args.brainContext !== true) return undefined;
-  if (!isBrainProvisioned()) return undefined;
 
   const nowMs = args.nowMs ?? Date.now();
 

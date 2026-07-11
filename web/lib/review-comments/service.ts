@@ -7,6 +7,7 @@ import pino from "pino";
 
 import { compareThreadReplies, compareThreadRoots } from "./order";
 
+import * as schema from "@/lib/db/schema";
 import {
   hitlRequests,
   nodeAttempts,
@@ -55,7 +56,7 @@ export interface CreateReplyInput {
   body: string;
 }
 
-type Db = NodePgDatabase;
+type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ReviewGateRow = typeof hitlRequests.$inferSelect;
 

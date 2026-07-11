@@ -15,9 +15,13 @@ const mocks = vi.hoisted(() => ({
 }));
 
 type FakeDb = {
+  execute: (query: unknown) => Promise<void>;
   select: (fields?: unknown) => {
     from: (table: unknown) => {
-      where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
+      where: (predicate: unknown) => {
+        for: (mode: string) => Promise<Record<string, unknown>[]>;
+        then: PromiseLike<Record<string, unknown>[]>["then"];
+      };
     };
   };
   insert: (table: unknown) => {
@@ -55,9 +59,10 @@ function tableName(table: unknown): string | null {
 }
 
 const fakeDb: FakeDb = {
+  execute: async () => undefined,
   select: () => ({
-    from: (table: unknown) => ({
-      where: async () => {
+    from: (table: unknown) => {
+      const rows = async () => {
         const name = tableName(table);
 
         if (name === "runs") {
@@ -96,8 +101,23 @@ const fakeDb: FakeDb = {
         }
 
         return [];
-      },
-    }),
+      };
+      const query = {
+        for: async () => rows(),
+        then: <TResult1 = Record<string, unknown>[], TResult2 = never>(
+          onfulfilled?:
+            | ((
+                value: Record<string, unknown>[],
+              ) => TResult1 | PromiseLike<TResult1>)
+            | null,
+          onrejected?:
+            | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+            | null,
+        ) => rows().then(onfulfilled, onrejected),
+      };
+
+      return { where: () => query };
+    },
   }),
   insert: () => ({
     values: async (values: unknown) => {

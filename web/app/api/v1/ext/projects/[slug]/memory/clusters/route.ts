@@ -7,7 +7,7 @@ import { sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  assertBrainProvisioned,
+  assertBrainSchemaApplied,
   assertProjectBrainEnabled,
 } from "@/lib/brain/guard";
 import { listMemoryClusters } from "@/lib/brain/clusters";
@@ -96,7 +96,7 @@ export async function GET(
     },
     async (ctx: ExtCtx) => {
       try {
-        assertBrainProvisioned();
+        await assertBrainSchemaApplied(db);
         await assertProjectBrainEnabled(db, ctx.projectId);
 
         if (!(await agentAxisAllows(db, ctx.actor, ctx.projectId))) {

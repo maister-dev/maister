@@ -136,30 +136,13 @@ export const PENDING_HITL_RUN_STATUS = new Set([
   "NeedsInputIdle",
 ]);
 
-function isPostgres(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
-}
-
 // Acquire a row-level lock on the HITL request row inside a transaction.
-// Postgres: SELECT ... FOR UPDATE. SQLite: deferred-write semantics rely on
-// the single-writer lock so the no-op `.where()` is correct.
-
 async function lockHitlRow(tx: any, hitlRequestId: string): Promise<any> {
-  if (isPostgres()) {
-    const rows = await tx
-      .select()
-      .from(hitlRequests)
-      .where(eq(hitlRequests.id, hitlRequestId))
-      .for("update");
-
-    return rows[0];
-  }
   const rows = await tx
     .select()
     .from(hitlRequests)
-    .where(eq(hitlRequests.id, hitlRequestId));
+    .where(eq(hitlRequests.id, hitlRequestId))
+    .for("update");
 
   return rows[0];
 }
@@ -2340,13 +2323,11 @@ async function findExistingBudgetRestartRun(args: {
 }): Promise<BudgetRestartLaunchResult | null> {
   const predicates = [ne(runs.id, args.runId)];
 
-  if (isPostgres()) {
-    predicates.push(
-      sql`${runs.triggerPayload}->>'kind' = 'budget_restart'`,
-      sql`${runs.triggerPayload}->>'oldRunId' = ${args.runId}`,
-      sql`${runs.triggerPayload}->>'hitlRequestId' = ${args.hitlRequestId}`,
-    );
-  }
+  predicates.push(
+    sql`${runs.triggerPayload}->>'kind' = 'budget_restart'`,
+    sql`${runs.triggerPayload}->>'oldRunId' = ${args.runId}`,
+    sql`${runs.triggerPayload}->>'hitlRequestId' = ${args.hitlRequestId}`,
+  );
 
   if (args.runRow.taskId) {
     predicates.push(eq(runs.taskId, args.runRow.taskId));

@@ -10,7 +10,7 @@ import pino from "pino";
 import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
 import { createRetainSourceEdges } from "./edges";
-import { assertBrainProvisioned, assertProjectBrainEnabled } from "./guard";
+import { assertBrainSchemaApplied, assertProjectBrainEnabled } from "./guard";
 import { assertRetainHomeAllowsOwned } from "./home-resolution";
 import {
   getBrainEmbeddingClient,
@@ -78,9 +78,9 @@ export async function retain(
   provenance: RetainProvenance = {},
   opts: { db?: RetainDb; client?: OpenAiCompatibleClient } = {},
 ): Promise<RetainResult> {
-  assertBrainProvisioned();
-
   const db = opts.db ?? (getDb() as unknown as RetainDb);
+
+  await assertBrainSchemaApplied(db);
 
   // Enablement belt INSIDE the service (F1 recurrence-proof): every future
   // caller inherits the kill switch, and it runs before the paid embed call.

@@ -26,6 +26,7 @@ type Tables = {
   local_packages: Row[];
 };
 type FakeDb = {
+  execute: (query: unknown) => Promise<void>;
   select: () => ReturnType<typeof selectChain>;
   update: (table: unknown) => ReturnType<typeof updateChain>;
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
@@ -55,9 +56,22 @@ function tableOf(t: unknown): keyof Tables {
 }
 
 const selectChain = () => ({
-  from: (table: unknown) => ({
-    where: async () => dbState.tables[tableOf(table)],
-  }),
+  from: (table: unknown) => {
+    const rows = async () => dbState.tables[tableOf(table)];
+    const query = {
+      for: async () => rows(),
+      then: <TResult1 = Row[], TResult2 = never>(
+        onfulfilled?:
+          | ((value: Row[]) => TResult1 | PromiseLike<TResult1>)
+          | null,
+        onrejected?:
+          | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+          | null,
+      ) => rows().then(onfulfilled, onrejected),
+    };
+
+    return { where: () => query };
+  },
 });
 
 const updateChain = (table: unknown) => ({
@@ -71,6 +85,7 @@ const updateChain = (table: unknown) => ({
 });
 
 const fakeDb: FakeDb = {
+  execute: async () => undefined,
   select: selectChain,
   update: updateChain,
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>): Promise<T> =>

@@ -8,6 +8,7 @@ import {
   findPendingBrainMigrations,
   findPendingMigrations,
 } from "./check-migrations";
+import { resolvePostgresDbUrl } from "./postgres-url";
 
 const log = pino({ name: "db:check" });
 
@@ -15,13 +16,8 @@ const log = pino({ name: "db:check" });
 // migration EITHER journal expects (main lineage + the ADR-122 brain lineage).
 // Pair with `pnpm db:migrate` + `pnpm db:migrate:brain` on deploy so a
 // silently-skipped or un-run migration breaks the pipeline instead of the app.
-async function main() {
-  const url = process.env.DB_URL;
-
-  if (!url || !url.startsWith("postgres")) {
-    log.error({ url }, "DB_URL must point at Postgres for db:check");
-    process.exit(1);
-  }
+async function main(): Promise<void> {
+  const url = resolvePostgresDbUrl();
 
   const pool = new Pool({ connectionString: url });
   const db = drizzle(pool);

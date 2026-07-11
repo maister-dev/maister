@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { runs } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { extractAnchorContent } from "@/lib/review-comments/anchor";
@@ -88,13 +89,12 @@ function errorResponse(
   );
 }
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg.
-function db(): NodePgDatabase {
-  return getDb() as unknown as NodePgDatabase;
+function db(): NodePgDatabase<typeof schema> {
+  return getDb();
 }
 
 async function loadRun(
-  dbh: NodePgDatabase,
+  dbh: NodePgDatabase<typeof schema>,
   runId: string,
 ): Promise<(RunRow & { projectId: string }) | null> {
   const rows = await dbh.select().from(runs).where(eq(runs.id, runId));

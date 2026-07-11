@@ -14,13 +14,14 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
-// FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
+// FIXME(any): remove the schema-module bridge once Drizzle's generated table
+// types remain stable across route and integration-test boundaries.
 const { actorIdentities, assignments } = schemaModule as unknown as Record<
   string,
   any
 >;
 
-// FIXME(any): shared route helper accepts both pg and sqlite drizzle clients.
+// FIXME(any): narrow the shared route helper to its database operations.
 type Db = any;
 
 export type RouteParams = { params: Promise<{ assignmentId: string }> };

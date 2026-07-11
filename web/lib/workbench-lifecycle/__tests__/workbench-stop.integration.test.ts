@@ -40,6 +40,15 @@ vi.mock("@/lib/authz", () => ({
   })),
   requireProjectAction: vi.fn(async () => undefined),
 }));
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    listSessions: vi.fn(async () => []),
+  };
+});
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")

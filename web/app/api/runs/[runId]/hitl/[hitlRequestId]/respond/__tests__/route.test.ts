@@ -108,6 +108,7 @@ const selectChain = (cols?: Row) => ({
       where: () => query,
       orderBy: () => query,
       innerJoin: () => query,
+      for: () => query,
       limit: async (count: number) => project().slice(0, count),
       then: (
         onFulfilled?: ((value: Row[]) => unknown) | null,
@@ -180,12 +181,14 @@ const insertChain = (table: unknown) => {
 };
 
 const fakeDb = {
+  execute: async () => undefined,
   insert: insertChain,
   select: (cols?: Row) => selectChain(cols),
   update: updateChain,
 
   transaction: async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
     return await fn({
+      execute: async () => undefined,
       insert: insertChain,
       select: (cols?: Row) => selectChain(cols),
       update: updateChain,

@@ -90,9 +90,16 @@ const selectChain = (cols?: Row) => ({
           })
         : (dbState.tables[name] ?? []);
 
-    return {
-      where: async () => project(),
+    const query: any = {
+      where: () => query,
+      for: async () => project(),
+      then: (
+        onFulfilled?: ((value: Row[]) => unknown) | null,
+        onRejected?: ((reason: unknown) => unknown) | null,
+      ) => Promise.resolve(project()).then(onFulfilled, onRejected),
     };
+
+    return query;
   },
 });
 

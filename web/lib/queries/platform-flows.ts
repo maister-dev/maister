@@ -124,11 +124,7 @@ export async function getPlatformFlows(args: {
   userRole: GlobalRole;
   filters?: PlatformFlowFilters;
 }): Promise<PlatformFlowsView> {
-  // FIXME(any): getDb() returns a pg|sqlite drizzle union; this query module
-  // keeps the existing raw-SQL seam until the installed package read model can
-  // be shared across cross-project views. Re-check the db.execute()->rows shape
-  // before relying on this helper in the SQLite dev dialect.
-  const db = getDb() as unknown as QueryDb;
+  const db: QueryDb = getDb();
   const projects = await listAccessibleProjects(db, args);
 
   if (projects.length === 0) {

@@ -15,11 +15,12 @@ import {
   type DiffRunWorkspaceFileMetadata,
 } from "@/lib/worktree";
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
+// FIXME(any): remove the schema-module bridge once Drizzle's generated table
+// types remain stable across service and integration-test boundaries.
 const { experimentRuns, projects, workspaces } =
   schemaModule as unknown as Record<string, any>;
 
-// FIXME(any): pg|sqlite drizzle union.
+// FIXME(any): narrow this injected database seam to its operations.
 type Db = any;
 
 export const EXPERIMENT_DIFF_SNAPSHOT_MAX_BYTES = 512 * 1024;

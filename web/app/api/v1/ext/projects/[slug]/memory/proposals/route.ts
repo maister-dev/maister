@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  assertBrainProvisioned,
+  assertBrainSchemaApplied,
   assertProjectBrainEnabled,
 } from "@/lib/brain/guard";
 import { createBrainProposalWithAutonomy } from "@/lib/brain/proposals";
@@ -119,7 +119,7 @@ export async function POST(
     },
     async (ctx: ExtCtx) => {
       try {
-        assertBrainProvisioned();
+        await assertBrainSchemaApplied(db);
         await assertProjectBrainEnabled(db, ctx.projectId);
 
         if (!(await agentAxisAllows(db, ctx.actor, ctx.projectId))) {

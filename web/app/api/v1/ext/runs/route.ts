@@ -15,11 +15,11 @@ import {
 } from "@/lib/tokens/ext-handler";
 import { actorUserIdForToken, TokenAuthError } from "@/lib/tokens/verify";
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
+// FIXME(any): remove the schema-module bridge once Drizzle's generated table
+// types remain stable across route and integration-test boundaries.
 const { tasks } = schemaModule as unknown as Record<string, any>;
 
-// FIXME(any): dual drizzle-orm peer-dep variants — `.select` on the union of
-// node-postgres + better-sqlite3 handles is not call-compatible.
+// FIXME(any): narrow this route helper to its database operations.
 type Db = any;
 
 const ENDPOINT = "POST /api/v1/ext/runs";

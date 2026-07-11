@@ -4,11 +4,13 @@ import { isMaisterError } from "@/lib/errors";
 import {
   assertScratchCapacityAvailable,
   scratchCapacityDecision,
+  takeSchedulerLock,
 } from "@/lib/scheduler";
 
 type CountRow = { count: number };
 
 type MockTx = {
+  execute(query: unknown): Promise<unknown>;
   readonly updateCalls: number;
   select(fields: unknown): {
     from(table: unknown): {
@@ -52,6 +54,9 @@ function mockDb(liveCount: number): MockDb {
     get updateCalls() {
       return updateCalls;
     },
+    async execute() {
+      return { rows: [] };
+    },
     select() {
       return {
         from() {
@@ -78,6 +83,17 @@ function mockDb(liveCount: number): MockDb {
 }
 
 describe("scheduler scratch capacity gate", () => {
+  it("propagates an advisory-lock failure", async () => {
+    const failure = new Error("lock unavailable");
+    const tx = {
+      execute: async () => {
+        throw failure;
+      },
+    };
+
+    await expect(takeSchedulerLock(tx as never)).rejects.toBe(failure);
+  });
+
   it("allows scratch launch below the global live-session cap", async () => {
     process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";
     const db = mockDb(2);

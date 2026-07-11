@@ -5,13 +5,14 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import { assertBrainProvisioned } from "@/lib/brain/guard";
+import { assertBrainSchemaApplied } from "@/lib/brain/guard";
 import {
   ENV_REF_RE,
   getBrainSettings,
   MAX_EMBEDDING_DIMENSIONS,
   updateBrainSettings,
 } from "@/lib/brain/settings";
+import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
 // Admin-only platform Project-Brain embedding + distillation config (ADR-122),
@@ -92,8 +93,7 @@ const patchSchema = z
 export async function GET(): Promise<NextResponse> {
   try {
     await requireGlobalRole("admin");
-    // SQLite → 409 PRECONDITION (E-11) before touching the settings row.
-    assertBrainProvisioned();
+    await assertBrainSchemaApplied(getDb());
 
     return NextResponse.json(await getBrainSettings(), { status: 200 });
   } catch (err) {
@@ -104,7 +104,7 @@ export async function GET(): Promise<NextResponse> {
 export async function PATCH(req: NextRequest): Promise<NextResponse> {
   try {
     await requireGlobalRole("admin");
-    assertBrainProvisioned();
+    await assertBrainSchemaApplied(getDb());
 
     const body = await parseJson(req);
     const parsed = patchSchema.safeParse(body);

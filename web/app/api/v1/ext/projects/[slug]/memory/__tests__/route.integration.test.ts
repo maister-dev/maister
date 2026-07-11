@@ -634,33 +634,4 @@ describe("ext memory routes (T4.2)", () => {
 
     expect(res.status).toBe(422);
   });
-
-  it("SQLite dialect → fails closed with PRECONDITION (409)", async () => {
-    const projectId = await seedBrainProject(dbRef);
-    const slug = String(
-      (
-        await dbRef.execute(
-          sql`SELECT slug FROM projects WHERE id = ${projectId}`,
-        )
-      ).rows[0]?.slug,
-    );
-    const token = await issueToken(
-      { projectId, name: "r", scopes: ["memory:read"] },
-      dbRef,
-    );
-
-    const prev = process.env.DB_URL;
-
-    process.env.DB_URL = "file:./sqlite-mode.db";
-
-    try {
-      const res = await GET(getReq(slug, "q=x", token.secret), {
-        params: Promise.resolve({ slug }),
-      });
-
-      expect(res.status).toBe(409);
-    } finally {
-      process.env.DB_URL = prev;
-    }
-  });
 });

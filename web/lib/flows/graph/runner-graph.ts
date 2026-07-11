@@ -403,14 +403,6 @@ async function parkCoordinatorSession(
   }
 }
 
-// `.for("update")` is a Postgres-only row lock; SQLite relies on its
-// single-writer lock so the bare SELECT is correct there.
-function isPostgres(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
-}
-
 async function tryReadInputArtifact(
   inputPath: string,
 ): Promise<Record<string, unknown> | null> {
@@ -2056,9 +2048,11 @@ export async function runGraph(
     // loser's FOR UPDATE blocks until commit, re-checks
     // hasPendingTakeoverResume → now false (this attempt exists) → bails.
     const result = await db.transaction(async (tx: Db) => {
-      const locked: RunRow[] = isPostgres()
-        ? await tx.select().from(runs).where(eq(runs.id, runId)).for("update")
-        : await tx.select().from(runs).where(eq(runs.id, runId));
+      const locked: RunRow[] = await tx
+        .select()
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
       const fresh = locked[0];
 
       if (!fresh || fresh.status !== "Running") return null;

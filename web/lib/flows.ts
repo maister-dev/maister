@@ -46,7 +46,8 @@ import {
   versionTagSchema,
 } from "@/lib/flow-paths";
 
-// FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
+// FIXME(any): remove the schema-module bridge once Drizzle's generated table
+// types remain stable across service and integration-test boundaries.
 const { flows, flowRevisions } = schemaModule as unknown as Record<string, any>;
 
 const execFileAsync = promisify(execFile);
@@ -114,8 +115,7 @@ export type InstallFlowPluginArgs = {
   // cache key and `runs.flow_revision` pinning stays content-addressed.
   // Validated against flowRevisionSchema shape before use.
   resolvedRevisionOverride?: string;
-  // FIXME(any): dual drizzle-orm peer-dep variants. Caller may pass
-  // either a node-postgres or better-sqlite3 drizzle client.
+  // FIXME(any): narrow this injected database seam to the operations used here.
   db?: any;
   signal?: AbortSignal;
 };

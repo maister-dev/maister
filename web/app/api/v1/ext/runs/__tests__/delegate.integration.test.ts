@@ -44,6 +44,16 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
     tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
   };
 });
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: vi.fn(async () => ({ kind: "available" as const })),
+    listSessions: vi.fn(async () => []),
+  };
+});
 
 let issueOrchestratorRunToken: typeof import("@/lib/agents/tokens").issueOrchestratorRunToken;
 let delegatePost: typeof import("@/app/api/v1/ext/runs/delegate/route").POST;

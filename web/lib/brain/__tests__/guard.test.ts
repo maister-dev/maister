@@ -1,56 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  assertBrainProvisioned,
   assertBrainSchemaApplied,
   assertProjectBrainEnabled,
   brainSchemaMissingWarnOnce,
-  isBrainProvisioned,
   isBrainSchemaApplied,
   isProjectBrainEnabled,
   resetBrainSchemaProbe,
 } from "@/lib/brain/guard";
 import { isMaisterError } from "@/lib/errors";
-
-// T1.4 / E-11: the Brain is disabled in SQLite mode (D3). The dialect decision
-// is DB_URL-driven (mirrors buildClient); service entrypoints fail closed.
-describe("brain dialect guard (D3, E-11)", () => {
-  const original = process.env.DB_URL;
-
-  afterEach(() => {
-    if (original === undefined) delete process.env.DB_URL;
-    else process.env.DB_URL = original;
-  });
-
-  it("isBrainProvisioned is false under DB_URL=file: (SQLite)", () => {
-    process.env.DB_URL = "file:./dev.db";
-    expect(isBrainProvisioned()).toBe(false);
-  });
-
-  it("isBrainProvisioned is true under a postgres:// URL", () => {
-    process.env.DB_URL = "postgres://u:p@localhost:5432/db";
-    expect(isBrainProvisioned()).toBe(true);
-  });
-
-  it("assertBrainProvisioned throws PRECONDITION under SQLite", () => {
-    process.env.DB_URL = "file:./dev.db";
-    let thrown: unknown;
-
-    try {
-      assertBrainProvisioned();
-    } catch (err) {
-      thrown = err;
-    }
-
-    expect(isMaisterError(thrown)).toBe(true);
-    expect(isMaisterError(thrown) && thrown.code).toBe("PRECONDITION");
-  });
-
-  it("assertBrainProvisioned does not throw under Postgres", () => {
-    process.env.DB_URL = "postgres://u:p@localhost:5432/db";
-    expect(() => assertBrainProvisioned()).not.toThrow();
-  });
-});
 
 // The ONE kill-switch predicate (F1 recurrence-proof): every consumer derives
 // enablement from these two functions.
@@ -85,12 +43,8 @@ describe("project brain kill-switch guard", () => {
 // Postgres-with-no-brain-tables (an upgrade that ran db:migrate but not
 // db:migrate:brain) must be a first-class, quiet state — not recurring 42P01s.
 describe("brain schema-applied probe", () => {
-  const original = process.env.DB_URL;
-
   afterEach(() => {
     resetBrainSchemaProbe();
-    if (original === undefined) delete process.env.DB_URL;
-    else process.env.DB_URL = original;
   });
 
   function probeDb(applied: boolean, counter?: { n: number }) {

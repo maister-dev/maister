@@ -192,15 +192,7 @@ export type ScratchMessageResponse = {
   actionResult?: FlowActionResultPayload | null;
 };
 
-function isPostgresDb(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
-}
-
 async function lockRunRows(tx: Db, runId: string): Promise<void> {
-  if (!isPostgresDb()) return;
-
   await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
   await tx.execute(
     sql`SELECT run_id FROM scratch_runs WHERE run_id = ${runId} FOR UPDATE`,

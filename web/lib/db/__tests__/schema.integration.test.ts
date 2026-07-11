@@ -11,7 +11,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // FIXME(any): drizzle-orm@0.36 ships duplicate peer-dep variants in pnpm
-// (one with better-sqlite3, one without). Typed table imports from
+// (one from the runtime bundle and one from the test bundle). Typed table imports from
 // `@/lib/db/schema` clash with the test-file's own drizzle copy. Runtime
 // works; we cast to `any` to silence the type-only conflict.
 import * as fullSchema from "@/lib/db/schema";

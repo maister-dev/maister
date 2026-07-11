@@ -9,11 +9,7 @@ import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
 import { ensureEmbeddingIndex } from "./embedding-index";
 import { processSourceIndexJob, type SourceIndexerDb } from "./indexer";
-import {
-  brainSchemaMissingWarnOnce,
-  isBrainProvisioned,
-  isBrainSchemaApplied,
-} from "./guard";
+import { brainSchemaMissingWarnOnce, isBrainSchemaApplied } from "./guard";
 import {
   getBrainEmbeddingClient,
   type OpenAiCompatibleClient,
@@ -214,17 +210,6 @@ export async function runBrainReindexSweep(
     maxItemsPerJob?: number;
   } = {},
 ): Promise<BrainReindexSummary> {
-  // SQLite → Brain disabled (D3): the brain tables do not exist; no-op.
-  if (!isBrainProvisioned()) {
-    return {
-      ran: false,
-      jobsProcessed: 0,
-      jobsCompleted: 0,
-      itemsEmbedded: 0,
-      errors: [],
-    };
-  }
-
   const db = opts.db ?? (getDb() as unknown as ReindexDb);
   const maxItems = opts.maxItemsPerJob ?? REINDEX_MAX_ITEMS_PER_JOB;
   const errors: string[] = [];

@@ -19,24 +19,18 @@ import { sql, type SQL } from "drizzle-orm";
 //
 // ADR-122: the Project Brain lineage is a SEPARATE folder + a SEPARATE ledger
 // table (`drizzle.__drizzle_brain_migrations`), so it needs its own check —
-// `findPendingBrainMigrations`. Both lineages are Postgres-only; the brain
-// check additionally no-ops when the brain lineage is not provisioned in this
-// checkout (its journal file is absent).
+// `findPendingBrainMigrations`. The brain check additionally no-ops when the
+// brain lineage is not provisioned in this checkout (its journal file is
+// absent).
 
 const MAIN_MIGRATIONS_DIR = join(process.cwd(), "lib/db/migrations");
 const BRAIN_MIGRATIONS_DIR = join(process.cwd(), "lib/db/brain-migrations");
 
 type JournalEntry = { idx: number; tag: string; when: number };
 
-// The caller narrows the getDb() union to the Postgres branch (which has
-// `execute`) before passing — the check is Postgres-only regardless.
 type MigrationCheckDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
-
-function isPostgres(): boolean {
-  return (process.env.DB_URL ?? "").startsWith("postgres");
-}
 
 function readJournalTags(dir: string): string[] {
   const journal = JSON.parse(
@@ -56,7 +50,7 @@ function migrationHash(dir: string, tag: string): string {
 }
 
 // Shared core: return the journal tags in `dir` NOT present in the ledger read
-// by `ledgerQuery`. Empty = fully migrated. Postgres only (caller guards).
+// by `ledgerQuery`. Empty = fully migrated.
 async function collectPending(
   db: MigrationCheckDb,
   dir: string,
@@ -81,12 +75,10 @@ async function collectPending(
 }
 
 // Returns the tags of MAIN-lineage journal migrations NOT present in the DB's
-// ledger. Empty array = the database is fully migrated. Postgres only.
+// ledger. Empty array = the database is fully migrated.
 export async function findPendingMigrations(
   db: MigrationCheckDb,
 ): Promise<string[]> {
-  if (!isPostgres()) return [];
-
   return collectPending(
     db,
     MAIN_MIGRATIONS_DIR,
@@ -95,12 +87,11 @@ export async function findPendingMigrations(
 }
 
 // ADR-122: the BRAIN-lineage counterpart, reading the brain journal against the
-// brain ledger table. No-ops under SQLite (Brain disabled, D3) and when the
-// brain lineage is not provisioned in this checkout (journal file absent).
+// brain ledger table. No-ops when the brain lineage is not provisioned in this
+// checkout (journal file absent).
 export async function findPendingBrainMigrations(
   db: MigrationCheckDb,
 ): Promise<string[]> {
-  if (!isPostgres()) return [];
   if (!existsSync(join(BRAIN_MIGRATIONS_DIR, "meta/_journal.json"))) return [];
 
   return collectPending(

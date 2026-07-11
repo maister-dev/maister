@@ -141,7 +141,7 @@ export async function DELETE(
     // — so no runner can be bound between the usage-guard read and the delete.
     // Without it the sidecar_id FK (onDelete:"set null") would let a racing
     // bind be silently unbound by the delete. (`for("update")` is a
-    // Postgres-only row lock; SQLite relies on its own write serialization.)
+    // Serialize competing updates to the same sidecar row.
     await db.transaction(async (tx: any) => {
       const rows = await tx
         .select()

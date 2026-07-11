@@ -18,8 +18,8 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-// FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union. Mirrors
-// replay.ts / ping.ts / outbox.ts so the handle rides an optional caller tx.
+// FIXME(any): narrow the injected database seam while retaining transaction
+// compatibility across subscriptions, replay, ping, and outbox operations.
 type Db = any;
 
 const log = pino({

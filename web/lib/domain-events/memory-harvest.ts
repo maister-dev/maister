@@ -9,7 +9,7 @@ import pino from "pino";
 
 import { getBrainEmbeddingClient } from "@/lib/brain/openai-compatible";
 import { distill } from "@/lib/brain/distill";
-import { isBrainProvisioned, isProjectBrainEnabled } from "@/lib/brain/guard";
+import { isBrainSchemaApplied, isProjectBrainEnabled } from "@/lib/brain/guard";
 import { retain } from "@/lib/brain/retain";
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
@@ -137,10 +137,9 @@ export const memoryHarvestConsumer: DomainEventConsumer = {
   id: "memory_harvest",
   startFrom: "now",
   async handle(events: DomainEventRow[]): Promise<void> {
-    // SQLite → the Brain is disabled (D3); harvest is a no-op that advances.
-    if (!isBrainProvisioned()) return;
-
     const db = getDb() as unknown as HarvestDb;
+
+    if (!(await isBrainSchemaApplied(db))) return;
 
     await harvestEvents(events, {
       db,

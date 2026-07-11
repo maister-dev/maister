@@ -87,28 +87,11 @@ export function poolForRunKind(runKind: string): SchedulerPool {
 // tryStartRun and promoteNextPending take this lock at the start of
 // their transactions so the count-then-update pattern is serialized
 // across concurrent launches. Postgres releases it automatically when
-// the transaction ends (commit or rollback). On sqlite the lock call
-// is silently skipped — sqlite already serializes writes via a single
-// writer lock so the count+update is safe there too.
+// the transaction ends (commit or rollback).
 const SCHEDULER_LOCK_KEY = 0x6d61_6973;
 
-function isPostgresDb(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
-}
-
 export async function takeSchedulerLock(tx: Db): Promise<void> {
-  if (!isPostgresDb()) return;
-
-  try {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${SCHEDULER_LOCK_KEY})`);
-  } catch (err) {
-    log.warn(
-      { err: (err as Error).message },
-      "advisory-lock-failed (continuing without serialization)",
-    );
-  }
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${SCHEDULER_LOCK_KEY})`);
 }
 
 function parseCapEnv(raw: string | undefined, fallback: number): number {

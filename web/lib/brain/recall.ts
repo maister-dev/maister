@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 
 import { sha256 } from "./codec";
-import { assertBrainProvisioned, assertProjectBrainEnabled } from "./guard";
+import { assertBrainSchemaApplied, assertProjectBrainEnabled } from "./guard";
 import {
   getBrainEmbeddingClient,
   type OpenAiCompatibleClient,
@@ -47,9 +47,9 @@ export async function recall(
   queryText: string,
   opts: RecallOptions = {},
 ): Promise<RankedBrainItem[]> {
-  assertBrainProvisioned();
-
   const db = opts.db ?? (getDb() as unknown as RecallDb);
+
+  await assertBrainSchemaApplied(db);
 
   // Enablement belt INSIDE the service (F1 recurrence-proof): every future
   // caller inherits the kill switch, and it runs before the paid embed call.

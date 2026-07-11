@@ -9,11 +9,6 @@ import * as schema from "@/lib/db/schema";
 
 const { nodeAttempts, gateResults, artifactInstances, hitlRequests } = schema;
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
-function asPg(client: unknown): NodePgDatabase<typeof schema> {
-  return client as NodePgDatabase<typeof schema>;
-}
-
 export type EvidenceNodeKind =
   | "task-input"
   | "node-attempt"
@@ -53,9 +48,9 @@ const TASK_INPUT_ID = "task-input";
 
 export async function buildEvidenceGraph(
   runId: string,
-  db?: unknown,
+  db?: NodePgDatabase<typeof schema>,
 ): Promise<EvidenceGraph> {
-  const client = asPg(db ?? getDb());
+  const client: NodePgDatabase<typeof schema> = db ?? getDb();
 
   const attemptRows = await client
     .select({

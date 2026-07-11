@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { filterDiffByPath, prepareDiff } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
@@ -35,9 +36,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg.
-function db(): NodePgDatabase {
-  return getDb() as unknown as NodePgDatabase;
+function db(): NodePgDatabase<typeof schema> {
+  return getDb();
 }
 
 export interface RunDiffSourceRef {
@@ -73,7 +73,7 @@ export function reviewCommentScopeOrDefault(
 // `(root_run_id, workspace_mode='shared', agent_workspace='worktree')` so the
 // gate-diff renders the one shared diff. No FOR UPDATE — read-only.
 async function resolveSharedTreeWorkspaceForRead(
-  dbh: NodePgDatabase,
+  dbh: NodePgDatabase<typeof schema>,
   rootRunId: string,
 ): Promise<WorkspaceRow | undefined> {
   const rows = await dbh
@@ -92,7 +92,7 @@ async function resolveSharedTreeWorkspaceForRead(
 }
 
 async function loadReviewDiffRows(
-  dbh: NodePgDatabase,
+  dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
 ): Promise<ReviewDiffRows> {
   // RunDiffSourceRef carries only id+projectId — load the run row to learn
@@ -157,7 +157,7 @@ async function loadReviewDiffRows(
 // prepareDiff over the committed base..branch range) — computed at most ONCE
 // per request.
 export async function computeRunDiff(
-  dbh: NodePgDatabase,
+  dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
 ): Promise<DiffPrepResult> {
   const { workspace, project } = await loadReviewDiffRows(dbh, run);
@@ -179,7 +179,7 @@ export async function computeRunDiff(
 }
 
 async function computeUncommittedReviewDiff(
-  dbh: NodePgDatabase,
+  dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
 ): Promise<DiffPrepResult> {
   const { workspace } = await loadReviewDiffRows(dbh, run);
@@ -190,7 +190,7 @@ async function computeUncommittedReviewDiff(
 }
 
 export function computeReviewDiff(
-  dbh: NodePgDatabase,
+  dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
   scope: ReviewCommentScope,
 ): Promise<DiffPrepResult> {

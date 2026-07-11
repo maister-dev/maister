@@ -9,6 +9,7 @@ import { Pool } from "pg";
 import pino from "pino";
 
 import * as schemaModule from "./schema";
+import { resolvePostgresDbUrl } from "./postgres-url";
 
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { routerSidecarPresetRows } from "@/lib/acp-runners/presets";
@@ -72,13 +73,8 @@ async function ensurePlatformRuntimeDefaults(
   );
 }
 
-async function main() {
-  const url = process.env.DB_URL;
-
-  if (!url || !url.startsWith("postgres")) {
-    log.error({ url }, "DB_URL must point at Postgres for seed");
-    process.exit(1);
-  }
+async function main(): Promise<void> {
+  const url = resolvePostgresDbUrl();
 
   const pool = new Pool({ connectionString: url });
   const db = drizzle(pool);

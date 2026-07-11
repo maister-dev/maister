@@ -4,28 +4,6 @@ import { sql, type SQL } from "drizzle-orm";
 
 import { MaisterError } from "@/lib/errors";
 
-// Project Brain (ADR-122, D3): the Brain is Postgres + pgvector only. In SQLite
-// mode (`DB_URL=file:`) it is disabled — the brain migration lineage is never
-// provisioned, so every brain service entrypoint MUST fail closed rather than
-// query a table that does not exist. This mirrors the dialect decision in
-// `web/lib/db/client.ts` `buildClient` (DB_URL prefix is the source of truth).
-
-export function isBrainProvisioned(): boolean {
-  return (process.env.DB_URL ?? "").startsWith("postgres");
-}
-
-// Throw the fail-closed `PRECONDITION` at a brain service entrypoint when the
-// dialect is not Postgres. E-11: routes/services refuse `PRECONDITION`; MCP
-// memory tools fail closed (the facade still lists the tools statically).
-export function assertBrainProvisioned(): void {
-  if (!isBrainProvisioned()) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "Project Brain is disabled in SQLite mode — Postgres + pgvector is required (ADR-122, D3)",
-    );
-  }
-}
-
 type GuardDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
@@ -59,8 +37,8 @@ export async function assertProjectBrainEnabled(
   }
 }
 
-// The dialect guard says "this is Postgres"; this probe says "the brain
-// lineage has actually been APPLIED". An install that ran `db:migrate` but not
+// This probe says whether the separate brain lineage has actually been
+// applied. An install that ran `db:migrate` but not
 // `db:migrate:brain` is Postgres-with-no-brain-tables: the sweeps must quietly
 // no-op there (not 42P01-error on every scheduler tick, even for installs that
 // never enable the Brain), and the config surfaces must refuse with the exact

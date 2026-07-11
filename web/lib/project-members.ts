@@ -19,9 +19,8 @@ const log = pino({
 
 const { projectMembers, users } = schema;
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg.
 function db(): NodePgDatabase<typeof schema> {
-  return getDb() as unknown as NodePgDatabase<typeof schema>;
+  return getDb();
 }
 
 function isUniqueViolation(err: unknown): boolean {

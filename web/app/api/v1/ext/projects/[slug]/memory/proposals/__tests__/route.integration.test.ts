@@ -234,7 +234,7 @@ describe("ext memory proposals route (T10.1)", () => {
     });
   });
 
-  it("rejects invalid kinds and fails closed on missing write scope, agent axis, disabled Brain, and SQLite", async () => {
+  it("rejects invalid kinds and fails closed on missing write scope, agent axis, and disabled Brain", async () => {
     const projectId = await seedBrainProject(dbRef);
     const slug = await slugOf(projectId);
     const writer = await issueToken(
@@ -301,22 +301,5 @@ describe("ext memory proposals route (T10.1)", () => {
         )
       ).status,
     ).toBe(422);
-
-    const prev = process.env.DB_URL;
-
-    process.env.DB_URL = "file:./sqlite-mode.db";
-
-    try {
-      expect(
-        (
-          await POST(
-            postReq(slug, { kind: "rule", draft: {} }, writer.secret),
-            { params: Promise.resolve({ slug }) },
-          )
-        ).status,
-      ).toBe(409);
-    } finally {
-      process.env.DB_URL = prev;
-    }
   });
 });

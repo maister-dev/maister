@@ -45,6 +45,7 @@ import {
 } from "vitest";
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import * as schema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 
 const execFileAsync = promisify(execFile);
@@ -53,7 +54,7 @@ const execFileAsync = promisify(execFile);
 // run-diff-source for getReviewGateThreadCounts. computeRunDiff takes an
 // explicit db, but pointing the client at the same testcontainer keeps every
 // path on one DB.
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof schema>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/authz", () => ({
@@ -85,7 +86,7 @@ beforeAll(async () => {
     .start();
 
   pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
+  db = drizzle(pool, { schema });
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 }, 180_000);
 

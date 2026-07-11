@@ -24,9 +24,8 @@ const { localPackages, projects, runMessages, runs } = schema;
 
 type DbClient = NodePgDatabase<typeof schema>;
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): DbClient {
-  return getDb() as unknown as DbClient;
+  return getDb();
 }
 
 const log = pino({

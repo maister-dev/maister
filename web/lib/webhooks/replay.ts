@@ -6,7 +6,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 
-// FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
+// FIXME(any): narrow this injected database seam to its operations.
 type Db = any;
 
 const log = pino({

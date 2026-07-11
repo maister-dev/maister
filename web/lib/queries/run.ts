@@ -101,9 +101,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
-  return getDb() as unknown as NodePgDatabase<typeof schema>;
+  return getDb();
 }
 
 export interface RunPendingHitl {

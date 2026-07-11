@@ -187,7 +187,7 @@ describe("ext memory clusters route (T10.1)", () => {
     ]);
   });
 
-  it("fails closed on missing read scope, missing agent axis, disabled Brain, and SQLite", async () => {
+  it("fails closed on missing read scope, missing agent axis, and disabled Brain", async () => {
     const projectId = await seedBrainProject(dbRef);
     const slug = await slugOf(projectId);
     const writeOnly = await issueToken(
@@ -233,21 +233,5 @@ describe("ext memory clusters route (T10.1)", () => {
         })
       ).status,
     ).toBe(422);
-
-    const prev = process.env.DB_URL;
-
-    process.env.DB_URL = "file:./sqlite-mode.db";
-
-    try {
-      expect(
-        (
-          await GET(getReq(slug, "", agentSecret), {
-            params: Promise.resolve({ slug }),
-          })
-        ).status,
-      ).toBe(409);
-    } finally {
-      process.env.DB_URL = prev;
-    }
   });
 });

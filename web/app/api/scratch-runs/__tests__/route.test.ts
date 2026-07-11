@@ -32,9 +32,13 @@ const mocks = vi.hoisted(() => ({
 type InsertCall = { table: unknown; values: unknown };
 type UpdateCall = { table: unknown; values: unknown };
 type FakeDb = {
+  execute: (query: unknown) => Promise<void>;
   select: () => {
     from: (table: unknown) => {
-      where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
+      where: (predicate: unknown) => {
+        for: (mode: string) => Promise<Record<string, unknown>[]>;
+        then: PromiseLike<Record<string, unknown>[]>["then"];
+      };
       then: PromiseLike<Record<string, unknown>[]>["then"];
     };
   };
@@ -92,7 +96,19 @@ const fakeDb: FakeDb = {
       };
 
       return {
-        where: async () => nextRows(),
+        where: () => ({
+          for: async () => nextRows(),
+          then: <TResult1 = Record<string, unknown>[], TResult2 = never>(
+            onfulfilled?:
+              | ((
+                  value: Record<string, unknown>[],
+                ) => TResult1 | PromiseLike<TResult1>)
+              | null,
+            onrejected?:
+              | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+              | null,
+          ) => nextRows().then(onfulfilled, onrejected),
+        }),
         then: <TResult1 = Record<string, unknown>[], TResult2 = never>(
           onfulfilled?:
             | ((

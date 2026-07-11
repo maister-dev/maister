@@ -118,7 +118,7 @@ export async function POST(
       );
     }
 
-    // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
+    // FIXME(any): narrow the HITL service injection seam to its operations.
     const db = getDb() as any;
     const label = sessionUser.name ?? sessionUser.email ?? sessionUser.id;
 

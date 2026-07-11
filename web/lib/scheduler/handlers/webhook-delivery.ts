@@ -26,7 +26,7 @@ import {
 } from "@/lib/webhooks/signing";
 import { signAndSend, truncate } from "@/lib/webhooks/send";
 
-// FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
+// FIXME(any): narrow this scheduler injection seam to its database operations.
 type Db = any;
 
 export type WebhookDeliverySummary = {

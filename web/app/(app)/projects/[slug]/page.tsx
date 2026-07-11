@@ -36,7 +36,7 @@ import {
   getSessionUser,
   requireProjectAction,
 } from "@/lib/authz";
-import { isBrainProvisioned, isBrainSchemaApplied } from "@/lib/brain/guard";
+import { isBrainSchemaApplied } from "@/lib/brain/guard";
 import {
   loadProjectBrainPanelData,
   type BrainUiDb,
@@ -244,7 +244,7 @@ export default async function ProjectBoardPage({
     ? repoBranches
     : [currentRef, ...repoBranches];
   const brainPanelData =
-    tab === "brain" && isBrainProvisioned()
+    tab === "brain"
       ? await (async () => {
           const db = getDb() as unknown as BrainUiDb;
 

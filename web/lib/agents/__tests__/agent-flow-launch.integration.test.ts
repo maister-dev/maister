@@ -44,6 +44,15 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
     tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
   };
 });
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: vi.fn(async () => ({ kind: "available" as const })),
+  };
+});
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;

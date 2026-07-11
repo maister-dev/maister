@@ -29,13 +29,10 @@ export async function register(): Promise<void> {
     );
     const { getDb } = await import("@/lib/db/client");
     const db = getDb();
-    // The drift check is Postgres-only; the SQLite getDb() branch has no
-    // `execute`, so narrow to the Postgres client before checking. ADR-122: the
-    // brain lineage has its OWN journal + ledger table, so it is checked
-    // separately and reported with its own `db:migrate:brain` command.
-    const pending = "execute" in db ? await findPendingMigrations(db) : [];
-    const pendingBrain =
-      "execute" in db ? await findPendingBrainMigrations(db) : [];
+    // ADR-122: the brain lineage has its OWN journal + ledger table, so it is
+    // checked separately and reported with its own `db:migrate:brain` command.
+    const pending = await findPendingMigrations(db);
+    const pendingBrain = await findPendingBrainMigrations(db);
 
     if (pending.length > 0 || pendingBrain.length > 0) {
       const parts: string[] = [];
@@ -63,13 +60,13 @@ export async function register(): Promise<void> {
       if (strict) throw new Error(msg);
     }
   } catch (err) {
-    if (err instanceof Error && err.message.startsWith("[migrations]"))
-      throw err;
     // eslint-disable-next-line no-console
     console.error(
-      "[migrations] could not verify applied migrations (continuing boot):",
+      "[migrations] database initialization failed; aborting boot:",
       err instanceof Error ? err.message : String(err),
     );
+
+    throw err;
   }
 
   try {

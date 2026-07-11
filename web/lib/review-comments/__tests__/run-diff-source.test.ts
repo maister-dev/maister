@@ -25,6 +25,7 @@ import type { ReviewComment } from "@/lib/review-comments/service";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as schema from "@/lib/db/schema";
 import { prepareDiff } from "@/lib/diff/prepare";
 import {
   diffRunWorkspace,
@@ -188,7 +189,7 @@ beforeEach(() => {
 describe("computeReviewDiff", () => {
   it("uses the working-tree diff for uncommitted review anchors", async () => {
     const prepared = await computeReviewDiff(
-      fakeDb as unknown as NodePgDatabase,
+      fakeDb as unknown as NodePgDatabase<typeof schema>,
       { id: "run-1", projectId: "p-1" },
       "uncommitted",
     );

@@ -3,11 +3,7 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
-import {
-  brainSchemaMissingWarnOnce,
-  isBrainProvisioned,
-  isBrainSchemaApplied,
-} from "./guard";
+import { brainSchemaMissingWarnOnce, isBrainSchemaApplied } from "./guard";
 import { BRAIN_POLICY } from "./policy";
 
 import { getDb } from "@/lib/db/client";
@@ -50,11 +46,6 @@ type DecayDb = {
 export async function runBrainDecaySweep(
   opts: { db?: DecayDb; nowMs?: number; force?: boolean } = {},
 ): Promise<BrainDecaySummary> {
-  // SQLite → Brain disabled (D3): the brain tables do not exist; no-op.
-  if (!isBrainProvisioned()) {
-    return { ran: false, expired: 0, prunedSnapshots: 0, errors: [] };
-  }
-
   const nowMs = opts.nowMs ?? Date.now();
 
   if (

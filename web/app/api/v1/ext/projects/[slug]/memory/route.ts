@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  assertBrainProvisioned,
+  assertBrainSchemaApplied,
   assertProjectBrainEnabled,
 } from "@/lib/brain/guard";
 import { recall, writeBrainSnapshot } from "@/lib/brain/recall";
@@ -115,9 +115,7 @@ export async function GET(
     },
     async (ctx: ExtCtx) => {
       try {
-        // SQLite → 409 PRECONDITION (E-11) BEFORE any brain-table/projects
-        // query on a handle that has no `.execute`.
-        assertBrainProvisioned();
+        await assertBrainSchemaApplied(db);
         await assertProjectBrainEnabled(db, ctx.projectId);
 
         if (!(await agentAxisAllows(db, ctx.actor, ctx.projectId, "read"))) {
@@ -286,9 +284,7 @@ export async function POST(
     },
     async (ctx: ExtCtx) => {
       try {
-        // SQLite → 409 PRECONDITION (E-11) BEFORE any brain-table/projects
-        // query on a handle that has no `.execute`.
-        assertBrainProvisioned();
+        await assertBrainSchemaApplied(db);
         await assertProjectBrainEnabled(db, ctx.projectId);
 
         if (!(await agentAxisAllows(db, ctx.actor, ctx.projectId, "write"))) {

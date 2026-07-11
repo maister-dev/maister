@@ -6,10 +6,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import {
-  assertBrainProvisioned,
-  assertBrainSchemaApplied,
-} from "@/lib/brain/guard";
+import { assertBrainSchemaApplied } from "@/lib/brain/guard";
 import { saveBrainAutonomyConfig } from "@/lib/brain/autonomy";
 import {
   getBrainSettings,
@@ -33,8 +30,8 @@ import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
 import { taskQueueSettingsSchema } from "@/lib/tasks/queue-settings";
 import { autoPromotionConfigSchema } from "@/lib/auto-promotion/config";
 
-// FIXME(any): Drizzle's mixed Postgres/SQLite schema export loses table typing at
-// this route boundary; route writes stay constrained by the imported table names.
+// FIXME(any): remove the schema-module bridge once Drizzle's generated table
+// types remain stable across route and integration-test boundaries.
 const { platformAcpRunners, projects } = schemaModule as unknown as Record<
   string,
   any
@@ -186,10 +183,8 @@ export async function PATCH(
       body.projectionFlowId !== undefined ||
       body.autonomyDefaults !== undefined
     ) {
-      // SQLite → 409 PRECONDITION (E-11) before the settings query; a Postgres
-      // that never ran `db:migrate:brain` refuses with the exact command
+      // A Postgres database that never ran `db:migrate:brain` refuses with the exact command
       // instead of letting harvest/recall hit raw 42P01s post-enable.
-      assertBrainProvisioned();
       await assertBrainSchemaApplied(db);
     }
 

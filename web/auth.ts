@@ -22,10 +22,8 @@ const credentialsSchema = z.object({
   password: z.string().min(1),
 });
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg for the
-// Auth.js adapter and credential lookups. POC runs on Postgres.
 function db(): NodePgDatabase<typeof schema> {
-  return getDb() as unknown as NodePgDatabase<typeof schema>;
+  return getDb();
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth(() => ({

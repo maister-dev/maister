@@ -95,12 +95,6 @@ function errorResponse(err: unknown, ctx: { runId: string }): NextResponse {
   );
 }
 
-function isPostgres(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
-}
-
 type RouteParams = { params: Promise<{ runId: string }> };
 
 export async function POST(
@@ -137,9 +131,11 @@ export async function POST(
     // FOR UPDATE on the run row: assert HumanWorking AND owner == session user.
     // The owner is the recorded `owner_user_id` on the active takeover row.
     const intent = await db.transaction(async (tx: Db) => {
-      const rows = isPostgres()
-        ? await tx.select().from(runs).where(eq(runs.id, runId)).for("update")
-        : await tx.select().from(runs).where(eq(runs.id, runId));
+      const rows = await tx
+        .select()
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
       const fresh = rows[0];
 
       if (!fresh) {

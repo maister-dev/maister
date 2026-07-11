@@ -15,9 +15,8 @@ import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const { hitlRequests, runs, stepRuns, workspaces } = schema;
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
-  return getDb() as unknown as NodePgDatabase<typeof schema>;
+  return getDb();
 }
 
 export type ActivityAgent = AdapterId | "dev";

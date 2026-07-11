@@ -14,11 +14,11 @@ import { resolveGateExternalConfig } from "@/lib/queries/readiness";
 import { recordTokenAudit } from "@/lib/tokens/audit";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
+// FIXME(any): remove the schema-module bridge once Drizzle's generated table
+// types remain stable across route and integration-test boundaries.
 const { gateResults, runs } = schemaModule as unknown as Record<string, any>;
 
-// FIXME(any): dual drizzle-orm peer-dep variants — `.select`/`.transaction` on
-// the union of node-postgres + better-sqlite3 handles is not call-compatible.
+// FIXME(any): narrow this route helper to its database operations.
 type Db = any;
 
 const ENDPOINT = "POST /api/v1/ext/runs/[runId]/gates/[gateId]/report";
@@ -53,12 +53,6 @@ class RunNotReportableError extends Error {
     this.httpStatus = httpStatus;
     this.code = code;
   }
-}
-
-function isPostgres(): boolean {
-  const url = process.env.DB_URL ?? "";
-
-  return url.startsWith("postgres://") || url.startsWith("postgresql://");
 }
 
 type RouteParams = { params: Promise<{ runId: string; gateId: string }> };
@@ -165,13 +159,10 @@ export async function POST(
         artifactId = await db.transaction(async (tx: typeof db) => {
           // Serialize concurrent reports for this run so a double-delivered CI
           // webhook for the SAME commit updates one row in place instead of
-          // appending duplicate superseding rows. Postgres-only row lock;
-          // SQLite's single-writer lock makes the bare path correct there.
-          if (isPostgres()) {
-            await tx.execute(
-              sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`,
-            );
-          }
+          // appending duplicate superseding rows.
+          await tx.execute(
+            sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`,
+          );
 
           // Authoritative existence + terminal guard, re-read under the lock:
           // the pre-check above goes stale if the run finalizes before this

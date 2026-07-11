@@ -14,9 +14,8 @@ import * as schema from "@/lib/db/schema";
 
 const { runSchedules, runs, tasks } = schema;
 
-// FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
-  return getDb() as unknown as NodePgDatabase<typeof schema>;
+  return getDb();
 }
 
 export type ScheduleDTO = {

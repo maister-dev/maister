@@ -8,7 +8,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
-import { isBrainProvisioned } from "@/lib/brain/guard";
+import { isBrainSchemaApplied } from "@/lib/brain/guard";
 
 const log = pino({
   name: "brain:index-triggers",
@@ -79,7 +79,10 @@ export const sourceReindexConsumer: DomainEventConsumer = {
   id: "brain_source_reindex",
   startFrom: "now",
   async handle(events: DomainEventRow[]): Promise<void> {
-    if (!isBrainProvisioned()) return;
+    const db = getDb() as unknown as TriggerDb;
+
+    if (!(await isBrainSchemaApplied(db))) return;
+
     await enqueueSourceReindexForEvents(events);
   },
 };

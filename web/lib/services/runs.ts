@@ -96,7 +96,8 @@ import {
   resolveBaseCommit,
 } from "@/lib/worktree";
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
+// FIXME(any): remove the schema-module bridge once Drizzle's generated table
+// types remain stable across the service and integration-test boundaries.
 const {
   capabilityRecords,
   experiments,
@@ -233,7 +234,7 @@ function assertCompiledFlowRolesLaunchable(args: {
   }
 }
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
+// FIXME(any): narrow this injected database seam to the operations used here.
 type Db = any;
 
 const log = pino({
@@ -519,7 +520,7 @@ export async function* launchRunStaged(
   { runId: string; status: string; queuePosition?: number },
   void
 > {
-  // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
+  // FIXME(any): narrow this injected database seam to the operations used here.
   const _db = (db ?? getDb()) as unknown as {
     select: any;
     insert: any;
