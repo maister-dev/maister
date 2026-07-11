@@ -262,6 +262,22 @@ The error message names the offending node id + class + resolved agent + the
 code** (ADR-008 closed union) — `capability_guard` reuses `CONFIG` /
 `EXECUTOR_UNAVAILABLE`.
 
+### Run-detail UX (ADR-129)
+
+The run-detail settings panel (`FlowSettingsPanel`) and the capability-profile panel
+render each class's verdict tone by branching on the typed verdict (never string
+match): **`enforced`** (accent) now means live seam enforcement (the honesty caption
+is corrected — no longer "recorded only, not enforced"), **`instructed`** (amber) is
+declared intent, **`refused`** (red) is a launch refusal. Three additional surfaces:
+a **`capability_guard` `hook_trip` inbox card** (the N-deny escalation, rendered via
+`hookTripFromSchema` with the offending tool identity + resume/abort); the structured
+per-call **deny reason** in the run transcript (via the `hookTripNotice` rule×disposition
+select, now including `capability_guard`); and the **launch-refusal diagnostic** — an
+`EXECUTOR_UNAVAILABLE` message that names the missing `capabilityEnforcement` evidence
+and the actionable smoke ritual (`pnpm -C supervisor smoke:acp --capability-enforcement`),
+distinguishing "awaiting adapter evidence" from a generic refusal. Every new string has
+EN + RU keys.
+
 ## Hook engine capability class (Designed — ADR-108)
 
 The **seventh** capability class `hooks` ([ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation),

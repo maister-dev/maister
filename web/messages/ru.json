@@ -1092,7 +1092,7 @@
     "copied": "скопировано",
     "toolCount": "{name} ×{count}",
     "clearedHistory": "Очищенная история · {count, plural, one {# элемент} few {# элемента} many {# элементов} other {# элемента}}",
-    "hookTripNotice": "Гардрейл · {rule, select, path_guard {защита путей} repetition {повтор} no_progress {нет прогресса} other {срабатывание}} — {disposition, select, deny {запись отклонена, продолжаем} halt {запуск остановлен} other {сработал}}",
+    "hookTripNotice": "Гардрейл · {rule, select, path_guard {защита путей} repetition {повтор} no_progress {нет прогресса} capability_guard {контроль возможностей} other {срабатывание}} — {disposition, select, deny {запись отклонена, продолжаем} halt {запуск остановлен} other {сработал}}",
     "tokens": "Токены контекста",
     "status": {
       "Starting": "Запускается",
@@ -2004,7 +2004,7 @@
     "checkoutContext": "Локальный чекаут",
     "copy": "Копировать",
     "settingsTitle": "Настройки узла",
-    "settingsDeclaredIntentNote": "Заявленное намерение, показано для наглядности. В этой сборке настройки только фиксируются — они пока не применяются и не передаются агенту (материализация в M14).",
+    "settingsDeclaredIntentNote": "Заявленное намерение, показано для наглядности. Классы `Enforced` (tools/mcps/hooks) применяются на стыке supervisor↔ACP через capability_guard, с проверкой по адаптеру (ADR-129); классы `Instructed` — только заявленное намерение.",
     "settingsVerdictEnforced": "Принудительно",
     "settingsVerdictInstructed": "Инструктивно",
     "settingsVerdictRefused": "Отклонено",
@@ -2019,7 +2019,7 @@
     "settingsRefusalReason": "Запуск отклонён",
     "settingsRefusedHint": "Настройки отклонены при запуске",
     "capabilityTitle": "Профиль возможностей",
-    "capabilitySubtitle": "Возможности материализованы для каждого ИИ-узла (зафиксированы; принудительное применение ожидает проверки в реальном запуске).",
+    "capabilitySubtitle": "Возможности материализованы для каждого ИИ-узла. Классы `Enforced` применяются на стыке ACP (capability_guard, с проверкой по адаптеру); классы `Instructed` — только заявленное намерение.",
     "capabilityDigest": "Дайджест профиля",
     "capabilityRevision": "Разрешённые ревизии",
     "capabilityEnforced": "Принудительно (план)",
@@ -2110,7 +2110,8 @@
     "hookTripAbort": "Прекратить",
     "hookTripRule": {
       "repetition": "повторение",
-      "no_progress": "нет прогресса"
+      "no_progress": "нет прогресса",
+      "capability_guard": "контроль возможностей"
     },
     "consensusTitle": "Решение консенсуса",
     "consensusRound": "Раунд $n",

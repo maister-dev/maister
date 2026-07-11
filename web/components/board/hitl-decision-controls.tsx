@@ -87,6 +87,8 @@ export interface HitlDecisionControlsLabels {
   hookTripSummary?: string;
   "hookTripRule.repetition"?: string;
   "hookTripRule.no_progress"?: string;
+  // ADR-129: the capability_guard breaker (Nth consecutive out-of-profile deny).
+  "hookTripRule.capability_guard"?: string;
   hookTripToolCall?: string;
   hookTripResume?: string;
   hookTripAbort?: string;

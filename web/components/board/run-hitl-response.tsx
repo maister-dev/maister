@@ -394,6 +394,7 @@ export function RunHitlResponse({
     hookTripSummary: t("hookTripSummary"),
     "hookTripRule.repetition": t("hookTripRule.repetition"),
     "hookTripRule.no_progress": t("hookTripRule.no_progress"),
+    "hookTripRule.capability_guard": t("hookTripRule.capability_guard"),
     hookTripToolCall: t("hookTripToolCall"),
     hookTripResume: t("hookTripResume"),
     hookTripAbort: t("hookTripAbort"),

@@ -4,9 +4,10 @@ import clsx from "clsx";
 
 export interface CapabilityProfilePanelLabels {
   title: string;
-  // Honesty caption: the plan is RECORDED at launch; nothing here is verified as
-  // live-enforced yet (ADR-041 — all enforcement_snapshot verdicts are still
-  // `instructed` until a live spike). Threaded so EN/RU stay in one catalog.
+  // Honesty caption (ADR-129): `enforced` classes (tools/mcps/hooks) ARE enforced
+  // at the supervisor↔ACP seam by capability_guard, evidence-gated per adapter;
+  // `instructed` classes are declared intent only. Threaded so EN/RU stay in one
+  // catalog.
   subtitle: string;
   digestLabel: string;
   revisionLabel: string;

@@ -1274,6 +1274,7 @@ const HOOK_TRIP_LABELS = {
   hookTripSummary: '"$rule" guardrail tripped — resume the run or abort.',
   "hookTripRule.repetition": "repetition",
   "hookTripRule.no_progress": "no progress",
+  "hookTripRule.capability_guard": "capability guard",
   hookTripToolCall: "Last tool: $title",
   hookTripResume: "Resume",
   hookTripAbort: "Abort",
@@ -1327,6 +1328,23 @@ describe("HitlDecisionControls — hook_trip card (M40)", () => {
     expect(html).toContain('data-testid="hook-trip-card"');
     expect(html).toContain("no progress");
     expect(html).not.toContain('data-testid="hook-trip-tool-call"');
+  });
+
+  it("localizes a capability_guard trip + shows the offending tool identity (ADR-129)", () => {
+    const html = render({
+      kind: "hook_trip",
+      schema: {
+        kind: "hook_trip",
+        rule: "capability_guard",
+        decisions: ["resume", "abort"],
+        toolCall: { title: "mcp__gitlab__create_issue" },
+      },
+      labels: HOOK_TRIP_LABELS,
+    });
+
+    expect(html).toContain('data-testid="hook-trip-card"');
+    expect(html).toContain("capability guard");
+    expect(html).toContain("Last tool: mcp__gitlab__create_issue");
   });
 
   it("never renders a confidence input for hook_trip", () => {

@@ -516,7 +516,7 @@ strict.
 
 ### Phase 4 — UI + i18n — Commit E
 
-**T4.1 · UI/UX maturity: enforced / evidence-pending / deny surfacing.**
+**T4.1 · UI/UX maturity: enforced / evidence-pending / deny surfacing.** — ✅ DONE ((a) fixed stale capability-profile-panel comment + settingsDeclaredIntentNote/capabilitySubtitle honesty captions; enforced auto-flows via evaluateNodeEnforcement; (c) capability_guard hook_trip card renders via hookTripRule.capability_guard label; (d) launch-refusal EXECUTOR_UNAVAILABLE names missing evidence + smoke ritual; (e) transcript deny via hookTripNotice select; (f) flow-settings.md Run-detail UX note; renderToStaticMarkup test added)
 A real UX pass (per `web/CLAUDE.md` affordance conventions — icon or icon+label buttons, green
 check for success, branch on typed status never string-match):
 - **(a)** Confirm `settings-view.ts:54` → `flow-settings-panel.tsx` + `capability-profile-panel.tsx`
@@ -536,7 +536,7 @@ check for success, branch on typed status never string-match):
 *Files*: `flow-settings-panel.tsx`, `capability-profile-panel.tsx`, `flight-card.tsx`, `hitl-decision-controls.tsx`, `settings-view.ts`, transcript renderer. *Logging*: n/a (client).
 *Verify*: `renderToStaticMarkup` tests extended (`flow-settings-panel.test.ts`, `flight-card-refused.test.ts`, `capability-profile-panel.test.ts`) for enforced + evidence-pending + hook_trip-card states.
 
-**T4.2 · EN+RU strings for every new diagnostic/reason.**
+**T4.2 · EN+RU strings for every new diagnostic/reason.** — ✅ DONE (hookTripRule.capability_guard + hookTripNotice select + settingsDeclaredIntentNote + capabilitySubtitle in en.json + ru.json; i18n-parity green; wired hookTripRule.capability_guard through run-hitl-response)
 Deny reasons, evidence-gate refusals, skip-permissions refusal, `capability_guard` hook_trip
 prompt — add EN+RU keys.
 *Verify*: i18n parity check green; no hard-coded strings.
