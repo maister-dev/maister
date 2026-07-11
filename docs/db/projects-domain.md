@@ -126,7 +126,9 @@ erDiagram
 
     PACKAGE_SOURCES {
         text id PK
-        text url UK "git monorepo URL"
+        text url UK "git URL, or abs host path for kind local"
+        text kind "git or local; NOT NULL DEFAULT git (ADR-129, 0093)"
+        text base_branch "nullable; publish PR base, git sources only (ADR-129, 0093)"
         boolean enabled "DEFAULT true"
         text note "nullable"
         jsonb discovered "cached: [{name, tags[]}] DEFAULT []"
@@ -166,13 +168,14 @@ erDiagram
         text slug UK "kebab; working-dir name"
         text working_dir "abs path under localPackagesRoot(); server-only"
         text status "active|archived (DEFAULT active)"
-        text source_install_id FK "nullable; fork lineage (SET NULL)"
-        text source_repo_url "nullable; fork git source (Phase-2 PR)"
-        text source_ref "nullable; base commit/tag forked from"
+        text source_install_id FK "nullable; fork lineage (SET NULL); advanced by sync (ADR-129)"
+        text source_repo_url "nullable; fork git source (ADR-113 publish preselect)"
+        text source_ref "nullable; base commit/tag forked from; advanced by sync"
         text branch_name "nullable; fork branch in working_dir"
         text last_cut_install_id FK "nullable; latest cut revision (SET NULL)"
         text last_pushed_branch "nullable; PR-to-source publish branch (ADR-113)"
         text last_pr_url "nullable; opened PR URL (ADR-113)"
+        jsonb sync_state "nullable; durable upstream-sync intent (ADR-129, 0093)"
         text locked_by_user_id FK "nullable; current editor (SET NULL)"
         text locked_by_session "nullable; session holding the lock"
         timestamp lock_expires_at "nullable; lock TTL (mirrors runs.keepalive_until)"
@@ -182,13 +185,17 @@ erDiagram
     }
 ```
 
-Editable **local packages** **(Designed, ADR-096 — Phase C)** add a platform-scoped,
+Editable **local packages** **(Implemented, ADR-096 — Phase C)** add a platform-scoped,
 git-backed working directory you author/fork artifacts in and **cut versions** from
 (the cut exports the dir cleanly and calls the same installer →
 a `local-<digest>` `package_installs` revision, which a project `member` then
 attaches). `working_dir` is server-only; the `locked_*`/`lock_expires_at` columns
 mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
-`branch_name` capture fork lineage for the Phase-2 PR-back.
+`branch_name` capture fork lineage — the base for the ADR-113 PR-to-source
+publish and the ADR-129 divergence/sync (an upstream sync advances
+`source_install_id`/`source_ref` and drives the `sync_state` jsonb:
+`{targetInstallId, targetRef, conflictedFiles, startedAt}`, NULL = no sync in
+flight).
 
 ## Constraints
 
@@ -209,10 +216,11 @@ mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
 - **(Designed, ADR-129)** `project_mcp_bindings` UNIQUE on `(project_id, ref_id)`
   — exactly one binding per ref per project; `target_kind` carries a CHECK
   (`platform|project|package`); `project_id` FK CASCADE.
-- **(Designed, ADR-096)** `local_packages.slug` UNIQUE — platform-scoped
+- **(Implemented, ADR-096)** `local_packages.slug` UNIQUE — platform-scoped
   working-package identity; the working-dir name derives from it. `working_dir`
   is never exposed to the client; `source_install_id` / `last_cut_install_id`
-  FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing).
+  FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing —
+  ADR-129 divergence/sync degrade to a typed `CONFIG` when it is gone).
 - **(M36, migration `0058`)** `local_packages_default_per_project` — a
   **partial-unique** index on `(project_id) WHERE is_default` enforcing at most
   one default "virtual" local package per project. `project_id` (FK `projects`,

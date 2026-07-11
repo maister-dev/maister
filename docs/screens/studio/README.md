@@ -156,8 +156,13 @@ palette (muted, not rainbow); these are roles, not hex.
 
 ### 2. Sources — `/studio/sources` (Implemented — Phase A; relocated panel)
 
-- **JTBD:** "When I administer the instance, I want to register git monorepo
-  sources, discover their packages, and install one by tag."
+Dedicated doc: [`sources.md`](sources.md) — including the ADR-129 additions
+(kind toggle `git | local`, local-path validation errors, per-source base
+branch, per-source re-check button).
+
+- **JTBD:** "When I administer the instance, I want to register package
+  sources — git monorepos and local host directories — discover their
+  packages, and install a version."
 - **Roles:** global admin only (`requireGlobalRole("admin")`); others get no nav
   entry and an `UNAUTHORIZED` route.
 - **Layout:** the existing `PackageSourcesPanel` (sources table + add/edit modal +
@@ -165,8 +170,8 @@ palette (muted, not rainbow); these are roles, not hex.
   (tag picker) — surfaced in Studio instead of buried in the `/settings` stack.
 - **Data & APIs:** `POST/PATCH/DELETE /api/admin/package-sources`,
   `POST /api/admin/package-sources/{id}/refresh`,
-  `GET/POST /api/admin/package-installs` — unchanged from
-  [`packages.md`](../../system-analytics/packages.md).
+  `GET/POST /api/admin/package-installs` — see
+  [`packages.md`](../../system-analytics/packages.md) + [`sources.md`](sources.md).
 
 ### 3. Packages — `/studio/packages` (Implemented — Phase A; reuses install data)
 

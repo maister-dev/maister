@@ -113,6 +113,19 @@ The board is a horizontally scrollable set of columns:
   disclosure toggle. The flow preview card surface is described in
   [`../studio/package-viewer.md`](../studio/package-viewer.md).
 
+  The **Add package** picker (ADR-129) lists, beside upstream installs,
+  **local-cut installs** (Studio cuts — `package_installs` with
+  `sourceLocalPackageId` set), each labeled `local-<digest12>` with a
+  local-cut badge. When the selected install's package name equals an
+  existing attachment's `packageName`, a **pre-flight explainer** renders
+  BEFORE submit: "the fork shares its upstream's package name — rename the
+  fork (Studio → manifest `name` → commit → cut) to attach it beside the
+  upstream", with a link to the fork's editor. Submitting anyway surfaces the
+  server's 409 `CONFLICT` naming the colliding `packageName` and the rename
+  path (never an opaque DB error). There is no auto-rename and no
+  attachment-level aliasing — the per-project name unique stays
+  authoritative.
+
 ## States
 
 ```mermaid
@@ -160,7 +173,9 @@ Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, and
 ## Linked Artifacts
 
 - ADRs: [#adr-018](../../decisions.md#adr-018-task--run-cardinality-is-1n),
-  [#adr-083](../../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+  [#adr-083](../../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
+  [#adr-129](../../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
+  (local-cut attach picker + name-collision explainer).
 - Source: `web/components/board/board.tsx`,
   `web/components/board/task-card.tsx`,
   `web/components/board/task-card-editing.tsx`,

@@ -156,6 +156,7 @@
 | [ADR-129](#adr-129-mcp-management-v2--requirements--bindings-per-project-overlay-trust--health-activation) | MCP management v2: requirements & bindings across package/platform/project, per-project env-slot overlay (names-only), load-bearing trust, supervisor health probe | Accepted | 2026-07-11 |
 | [ADR-130](#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) | Adapter-agnostic capability enforcement at the ACP seam: derived-only `capability_guard` interceptor, evidence-gated per-adapter flip of `tools`/`mcps` to `enforced`, `hooks` label corrected, no migration / no engine bump | Accepted | 2026-07-11 |
 | [ADR-131](#adr-131-postgres-only-and-graph-only-engine-300-cut-over) | Postgres-only and graph-only engine 3.0.0 cut-over | Accepted | 2026-07-11 |
+| [ADR-132](#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync) | Forked-package loop — ephemeral pins, package experiment axis, local sources, upstream sync | Accepted | 2026-07-11 |
 
 ---
 
@@ -11301,6 +11302,280 @@ screen states, observability rules and traceability live in
 > `0093` (MCP v2), and the engine `3.0.0` bump is independent, so only the ADR
 > number moved.
 
+### ADR-132: Forked-package loop — ephemeral pins, package experiment axis, local sources, upstream sync
+
+**Date:** 2026-07-11
+**Status:** Accepted
+
+> Renumbered at the rebase onto main (2026-07-12): authored as ADR-129 /
+> migration 0093, but sibling branches landed first — main already carried
+> ADR-129 (MCP v2) / ADR-130 / ADR-131 and migrations `0093`–`0096`. This ADR
+> became **ADR-132** and its migration **0097** (`0097_*`, idx 97). Only the
+> numbers moved; the three additive columns are unchanged.
+
+**Context:** ADR-088 made packages the distribution unit, ADR-096/105 gave
+Studio editable local packages with fork lineage, ADR-113 added PR-to-source
+publish, and ADR-124 added pinned-base comparison experiments. The loop between
+them is open: a fork can be edited and cut, but (a) running a task *once*
+against a different package version requires mutating the project attachment,
+(b) an experiment cannot vary the package version between variants, (c) the
+catalog only ingests git repos, so a local checkout (e.g. a `maister-plugins`
+clone) cannot be a source, (d) a fork cannot re-synchronize with a moved
+upstream, and (e) publish guesses the PR base branch and surfaces non-FF
+rejection as an opaque error. This ADR closes the entire fork → edit → attach →
+run fork-vs-upstream → compare → sync-with-moved-upstream → PR-back loop.
+
+One ADR, not two: the pieces interlock (the pin references installs the sync
+advances; publish refusal points at sync; the experiment axis rides the pin) and
+they share the single migration 0097.
+
+**Decision:**
+
+Exactly one migration (**0097**), three additive columns:
+`package_sources.kind` (`'git' | 'local'`, NOT NULL DEFAULT `'git'`),
+`package_sources.base_branch` (text NULL), `local_packages.sync_state`
+(jsonb NULL). No `experiments` migration (variant `packagePin` lives in the
+existing `experiments.variants` jsonb), no `runs` migration (provenance rides
+the existing `runs.flow_revision_id` / `runs.flow_revision` snapshot), no new
+`MaisterError` codes (`CONFIG | PRECONDITION | CONFLICT` reused), no manifest
+schema change (no engine bump).
+
+#### (a) Ephemeral per-run package pin
+
+- `launchRunStaged` accepts `packagePin?: { packageInstallId }`. When pinned,
+  the task-flow's effective revision resolves from the **named
+  `package_installs` row** instead of
+  `resolveEffectiveFlowRevision(...) ?? flow.enabledRevisionId`, and the
+  adopt/cut mutation path (`applyPackageVersionChoices`) is skipped for that
+  package. `project_package_attachments` is **never** mutated by a pinned
+  launch.
+- A project attachment is **not required** (D1): the pin targets an install;
+  the only binding requirement is that the pinned install carries a flow
+  revision with the SAME `flowRefId` as the task's flow. Project-flow gates
+  (the project `flows` row's enablement + trust) still apply unchanged.
+- Validation matrix (allow-list; checked BEFORE any side effect, hoisted above
+  the adopt/revert compensation window):
+
+  | Condition on the pinned install | Refusal |
+  | --- | --- |
+  | `packageInstallId` unknown | `CONFIG` |
+  | `packageStatus !== 'Installed'` | `PRECONDITION` |
+  | `trustStatus === 'untrusted'` | `PRECONDITION` |
+  | no member flow revision with the task's `flowRefId` (join `flow_revisions.flow_ref_id = flow.flow_ref_id AND resolved_revision = install.resolved_revision`) | `CONFIG` naming both ids |
+  | revision `schemaVersion` unsupported | `CONFIG` |
+  | engine min/max incompatible | `CONFIG` |
+  | revision `setupStatus` pending/failed | `PRECONDITION` |
+
+- The run snapshot columns (`flow_version` / `flow_revision` /
+  `flow_revision_id`) are written from the pinned revision at launch — the
+  existing columns, no new ones. Terminal/recovery/resume paths keep reading
+  the snapshot; nothing re-derives the revision from the attachment after
+  launch (launch-time decision persisted).
+- **`try_once` launch choice:** the launch version-choice dialog gains
+  `try_once` beside `keep | adopt | cut_and_adopt`, offered **exactly when
+  `adopt` is offered** (a newer cut of the attached package exists). It
+  translates into a per-run pin on the newer install and contributes **no**
+  adopt-revert compensation (nothing to compensate — the attachment is
+  untouched).
+
+#### (b) Package experiment axis (amends ADR-124)
+
+- The closed variant-config registry gains
+  `packagePin?: { packageInstallId }` beside `runnerId?`, `executionPolicy?`,
+  and `capabilityOverlay?`. Replicates, judge, rubric, verdict, membership,
+  and evidence machinery are unchanged.
+- Create-time batch validation mirrors the overlay idiom: every pinned install
+  must exist, be `Installed`, be trusted, and carry the task-flow's
+  `flowRefId` — an experiment that is creatable now but unlaunchable later is
+  a design defect, so create refuses early. Launch (fan-out →
+  `launchRun`) stays authoritative and re-validates.
+- **Auto-promotion exclusion, now enforced.** ADR-124 stated "active
+  experiment membership becomes an auto-promotion guard" but no code enforced
+  it — a lane-enabled project would auto-promote a member run. Two arms land
+  with this ADR: the ADR-126 sweep's candidate SQL gains a
+  `NOT EXISTS (SELECT 1 FROM experiment_runs er WHERE er.run_id = runs.id)`
+  prefilter, and `evaluateAutoPromotion` gains a `not_applicable` term keyed
+  on experiment membership (the guard at the irreversible apply site, since
+  `promoteRun` evaluation can be reached outside the sweep). Winner promotion
+  remains the explicit human path.
+
+#### (c) Local catalog sources (extends ADR-088)
+
+- `package_sources.kind: 'git' | 'local'`. `url` keeps holding the location
+  string — a git URL for `kind: 'git'`, an **absolute host directory path**
+  for `kind: 'local'`. Registration of a local source validates server-side:
+  path is absolute, exists, and contains `maister-package.yaml` at the root
+  OR ≥ 1 `packages/*/maister-package.yaml` (monorepo layout).
+- **Digest-as-version:** a local source's discovered "version" is always the
+  present content digest of the package dir, labeled `local-<digest12>` (the
+  same sentinel family as Studio cuts). Installing an older digest is not
+  possible; on-demand re-check (the existing `/{id}/refresh` route) re-digests
+  and surfaces drift as update-available. No scheduler wiring (D7) — re-check
+  is on-demand only.
+- **Update-available carve is by source kind:** for attachments whose install
+  belongs to a `kind: 'local'` source, discovered digest ≠ pinned digest ⇒
+  update available with upgrade target `local-<newDigest12>`. Studio-cut
+  installs (no source row) keep the existing skip.
+- **Boundary statement:** Studio local packages (`local_packages`) are
+  maister-managed git-backed working dirs; `kind: 'local'` sources are
+  arbitrary read-only host directories. Both funnel through the existing
+  `isLocalPackageSource` resolution in the installer; neither ever appears as
+  a publish target (`getPublishOptions` filters `kind === 'git'` —
+  allow-list).
+- **Trust:** local sources inherit the existing `resolveTrust` policy mapping
+  `file://`/absolute-path sources to `trusted_by_policy`. This is deliberate:
+  the gate is **admin-only registration** (`requireGlobalRole("admin")`), and
+  the fetch → trust → execute ordering is preserved unchanged (`setup.sh`
+  still never runs at install; setup stays gated on
+  `trustStatus !== 'untrusted'`).
+
+#### (d) Fork upstream sync + publish base (amends ADR-113)
+
+- **Synthetic 3-way merge on install bytes ONLY** (D5): base = the fork's
+  lineage source install bytes (`local_packages.source_install_id`), theirs =
+  the new-tag install bytes (installed through the normal
+  `installPackageRevision` path into the content-addressed cache), ours = the
+  fork working dir at HEAD. No git-remote fetch for comparison (D3) — purely
+  local bytes.
+- **Merge-shaped, NOT rebase-shaped:** fork repos are fresh `git init` with
+  zero shared git ancestry with upstream — there are no commits to replay.
+  Sync lands as AT MOST one commit on top of the fork's history (clean case:
+  the auto-commit `Sync from upstream <tag>`, skipped when the merge changed
+  no bytes; conflict case: the user's
+  resolution commit). Local fork commits are never rewritten.
+- **Clean-tree precondition:** sync REQUIRES a clean working tree; uncommitted
+  edits refuse with `PRECONDITION` ("commit or discard first"; no auto-stash).
+  This makes "local edits are never silently lost" structural — the pre-merge
+  state is always a commit — and makes abort trivial
+  (`git reset --hard HEAD`).
+- **`local_packages.sync_state` jsonb contract:**
+  `{ targetInstallId, targetRef, conflictedFiles: string[], startedAt }` —
+  the durable intent + conflicted-file list. `NULL` = no sync in flight.
+- **Order of operations + crash windows (two-phase; `sync_state` is the
+  single discriminant — no third partial state exists):**
+
+  1. tx: persist `sync_state = { targetInstallId, targetRef,
+     conflictedFiles: [], startedAt }` — durable intent BEFORE any disk
+     write.
+  2. disk: 3-way merge writes into the fork working dir.
+  3. clean case: commit `Sync from upstream <tag>` (only when the merge
+     changed bytes — a no-change merge skips the commit), then ONE tx:
+     advance
+     lineage (`source_install_id` / `source_ref` → the new install/tag) +
+     clear `sync_state`.
+  4. conflict case: tx updates `sync_state.conflictedFiles = [...]`; the
+     working dir holds standard conflict markers (uncommitted).
+
+  **Resume is `POST /sync` re-invocation with the SAME `targetInstallId`:**
+  the no-pending-sync precondition refuses only a pending sync for a
+  DIFFERENT target; a same-target re-POST re-runs the idempotent merge from
+  step 2 (window 1 → performs the merge; post-commit window → no-change
+  merge → completion tx). There is no separate resume route.
+
+  | Crash window | Observable state | Recovery (user-driven, no sweep) |
+  | --- | --- | --- |
+  | after 1, before 2 | `sync_state` pending, tree clean | editor banner offers Resume (same-target `POST /sync` re-invocation; idempotent — inputs unchanged) or Abort |
+  | after 2, before 3/4 | `sync_state` pending, tree dirty with merged content | banner shows conflicted/in-review; Resolve validates + completes; Abort resets |
+
+- `/resolve` preconditions: session lock + pending `sync_state` + something
+  to resolve (`conflictedFiles` non-empty OR a dirty tree — the
+  window-1 state of pending + empty list + clean tree refuses with
+  `PRECONDITION` "nothing to resolve — resume the sync", so resolve can
+  never advance lineage past a merge that never ran) + no conflict
+  markers remain in the UNION of the listed files' current bytes and every
+  dirty working-tree file (`sync_state.conflictedFiles` alone is NOT the
+  scan boundary — a crash before the conflict-stamp tx leaves the list
+  empty while markers sit on disk, and a user commit can bake markers into
+  a listed file the dirty set no longer covers) + tree committed (or
+  committed as part
+  of resolve). Completion is the SAME single tx as step 3 (advance lineage +
+  clear). Idempotent retry: lineage already advanced and state cleared →
+  no-op success.
+- The clean case commits ONLY when the merge changed bytes; a no-change
+  merge (re-sync to the same tag, or a Resume after the sync commit already
+  landed pre-crash) skips the commit and still runs the completion tx
+  (advance lineage + clear). An abort issued in that window keeps the landed
+  commit (`reset --hard HEAD` is a no-op on a clean tree) and clears the
+  state; re-running sync is then a no-change merge that advances lineage.
+- `/abort`: session lock + pending state → `git reset --hard HEAD` (the tree
+  was clean pre-merge, so nothing user-authored is lost, structurally) + tx
+  clear `sync_state`. Never force-overwrites commits.
+- After completion the divergence view compares against the NEW base (lineage
+  advanced).
+- **Publish base branch:** the PR base resolves as
+  `package_sources.base_branch ?? gitRemoteDefaultBranch(...) ?? "main"`,
+  replacing ADR-113's guess-only chain. `base_branch` is per-source operator
+  config (git sources only).
+- **Non-FF publish refusal:** a rejected push surfaces as
+  `MaisterError({ code: "CONFLICT", details: { reason: "upstream_moved",
+  canSync, localPackageId } })` — "upstream moved — sync first" with a sync
+  CTA when fork lineage exists, manual-reconcile guidance when not. Package
+  publish **NEVER retries with force** (regression-pinned; the force
+  capability stays quarantined to its existing non-package call sites).
+
+#### Non-goals
+
+Background auto-adopt of new cuts · cross-task or cross-base-commit
+experiments · marketplace/reputation/signed packages/sandboxing · direct push
+to the upstream default branch (contribution stays PR-shaped) ·
+auto-resolution of merge conflicts · richer merge UI (conflict markers + a
+conflicted-file list this milestone) · package-content diffs inside the
+experiment UI beyond provenance · M24 scheduler wiring for local-source
+re-check (D7) · clone-with-history forks (D5, rejected below).
+
+**Consequences:**
+
+- The fork loop closes end-to-end with zero new tables and three additive
+  columns; every existing fork keeps working (lineage columns reused, sync is
+  opt-in per fork).
+- The pin makes "run once against version X" side-effect-free on shared
+  project state, which is what makes the experiment axis safe: variants A/B
+  differ only in the resolved flow revision recorded on each run's snapshot.
+- Run provenance in the comparison lab is derived by joining
+  `runs.flow_revision` to `package_installs.resolved_revision` — a
+  revision-string join, not an FK; a package install and its member flow
+  revisions share `resolvedRevision` by construction. If that invariant ever
+  changes, the provenance resolver is the single seam.
+- The previously-declared-but-unenforced ADR-124 auto-promotion guard becomes
+  code; experiment member runs can no longer reach `promoteRun` through the
+  ADR-126 lanes.
+- `kind: 'local'` sources make a host checkout a first-class catalog citizen
+  at the cost of a trust posture that leans entirely on admin-only
+  registration — recorded here as an explicit, deliberate decision.
+- Sync recovery is user-driven through the editor banner; there is no sweep,
+  no timer, and only two enumerated crash windows because the durable intent
+  is written before the first disk write.
+
+**Alternatives Considered:**
+
+- _Two ADRs (comparison loop vs sources/sync)_: rejected — single migration,
+  one interlocking loop contract (pin ⇄ sync ⇄ publish reference each other),
+  and a four-way parallel-branch number contest gets strictly worse with two
+  numbers to defend.
+- _Clone-with-history forks (real git ancestry, native `git merge`)_:
+  rejected, not deferred — it creates a second sync path to test forever,
+  breaks `forkPackageToLocal`'s dedup/lineage assumptions, and byte-level
+  3-way over install bytes covers the need for all existing forks
+  identically.
+- _Rebase-shaped sync_: rejected — forks share no git ancestry with upstream,
+  so there is nothing to replay; rewriting fork history would break the
+  cut/attach lineage.
+- _Auto-stash dirty trees on sync_: rejected — the clean-tree refusal makes
+  "no silent loss" structural instead of best-effort.
+- _Force-push on publish rejection (with confirmation)_: rejected — the
+  remote `maister/<slug>` branch may carry review state; the correct move is
+  always to reconcile locally (sync) and re-publish fast-forward.
+- _Attachment-required pins_: rejected — the pin's whole point is running an
+  install the project has NOT adopted; the `flowRefId` match is the real
+  safety property.
+- _Scheduler-wired local-source re-check_: rejected this milestone (D7) — it
+  drags in the background-automation contract (progress/backoff/poison rules)
+  for no core value; refresh is on-demand.
+- _Silent multi-adopt of upstream-pinned projects on cut_: rejected — the
+  cut dialog's multi-adopt lists ONLY projects whose current attachment is
+  already a cut of this local package; switching an upstream consumer to a
+  fork stays an explicit per-project action.
+
 ---
 
 ## Template for New Decisions
@@ -11357,3 +11632,9 @@ _Decisions are numbered sequentially. Do not reuse numbers._
   added the ADR-098/099/100 bodies but not their `## Index` rows; the shared-worktree branch
   (ADR-102) backfilled them during its rebase onto the cost-budget-merged main — the Index now lists
   097 → 098 → 099 → 100 → 101 → 102 with correct anchor slugs.
+- **`web.openapi.yaml` pre-existing redocly errors (filed 2026-07-11).** Two
+  `nullable-type-sibling` errors: the experiment `verdict` fields
+  (`ExperimentDetail` + `ExperimentComparison`) declare `nullable: true`
+  beside an `allOf` ref, which OpenAPI 3.0 ignores without a sibling `type`.
+  Pre-dates the forked-package-loop branch (ADR-132, baseline-verified); fix
+  when the experiment schemas are next reworked.

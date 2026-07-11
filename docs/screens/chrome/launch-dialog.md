@@ -10,7 +10,8 @@ compatibility.
 
 - **Type:** chrome (launch surface reachable from the rail and a global
   shortcut).
-- **Status:** Implemented (WI-4 restyle, WI-5 Cmd/Ctrl+K shortcut).
+- **Status:** Implemented (WI-4 restyle, WI-5 Cmd/Ctrl+K shortcut); `try_once`
+  package-version option (ADR-129).
 - **Source:** `web/components/chrome/scratch-launch-popover.tsx`,
   `web/components/scratch/scratch-launcher.tsx`,
   `web/components/chrome/launch-hotkey-hint.tsx`,
@@ -69,7 +70,14 @@ rail. It preloads launch options from the selected task and shows:
   selectors;
 - budget inputs for run/task/tree token, failure, warning-percent, and
   wall-clock ceilings. Empty budget fields mean unlimited, and the budget fields
-  are visible by default rather than hidden behind a generic advanced toggle.
+  are visible by default rather than hidden behind a generic advanced toggle;
+- a **package version choice** per backing package when launch detection
+  reports newer state: `keep | adopt | cut_and_adopt | try_once` (ADR-129).
+  `try_once` is offered exactly when `adopt` is offered (a newer cut exists)
+  and carries a hint — "run this launch on the newer cut without changing the
+  project's pin". Picking an option the server did not offer refuses with a
+  409 rendered through the existing localized error surface; the next launch
+  re-detects and re-offers.
 
 ## States
 
@@ -108,12 +116,16 @@ Task run behavior lives in
 
 `scratch` (composer + dialog labels), `portfolio` (`launchRun`, `launchHint`,
 `launchUnavailableHint`, `esTip1`), and `launch` (task-scoped run launch
-dialog). The shortcut glyph is OS-derived, not translated.
+dialog, incl. `launch.packageVersionOption.try_once` + its hint key,
+ADR-129). The shortcut glyph is OS-derived, not translated.
 
 ## Linked artifacts
 
 - Behavior: [`../../system-analytics/scratch-runs.md`](../../system-analytics/scratch-runs.md).
 - Task run behavior: [`../../system-analytics/runs.md`](../../system-analytics/runs.md).
+- Package version choice (`keep | adopt | cut_and_adopt | try_once`):
+  [`../../system-analytics/local-packages.md`](../../system-analytics/local-packages.md)
+  §Version-adopt launch.
 - Source: `web/components/chrome/scratch-launch-popover.tsx`,
   `web/components/scratch/scratch-launcher.tsx`,
   `web/components/chrome/launch-hotkey-hint.tsx`,

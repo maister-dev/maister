@@ -22,9 +22,12 @@ budgets, and a second review-comment surface.
   joining one `runs.id` to one experiment with `variant_key`,
   `replicate_ordinal`, `launch_reason`, capped `diff_snapshot`, structured
   truncation fields, `diff_files_summary`, and applied `materialization_delta`.
-- **Variant** — immutable JSON entry `{key, label, config}`. Phase 1 config is
-  a closed registry: `runnerId?`, `executionPolicy?`, and
-  `capabilityOverlay?` over rules, skills, MCPs, and subagents.
+- **Variant** — immutable JSON entry `{key, label, config}`. Config is a
+  closed registry: `runnerId?`, `executionPolicy?`, `capabilityOverlay?` over
+  rules, skills, MCPs, and subagents, and `packagePin?: {packageInstallId}`
+  (ADR-129) — an ephemeral per-run package pin resolving the task-flow's
+  revision from the named `package_installs` row without touching
+  `project_package_attachments`.
 - **Rubric** — immutable JSON criteria snapshot. The default template contains
   exactly `correctness`, `completeness`, `consistency`, `code_quality`,
   `cost_efficiency`, and optional `specs_traceability`.
@@ -36,7 +39,12 @@ budgets, and a second review-comment surface.
   `experiment_advise`; it never concludes.
 - **Comparison DTO** — explicit public projection combining experiment fields,
   member run statuses, gate results, cost rollups, diff snapshots, files
-  summaries, materialization deltas, and verdict/advisory state.
+  summaries, materialization deltas, and verdict/advisory state. Each member
+  run additionally carries a `provenance` object (ADR-129) —
+  `{packageName, versionLabel, kind: "local_cut" | "upstream",
+  installDigest12}` or `null` — derived by joining the run's snapshotted
+  `runs.flow_revision` to `package_installs.resolved_revision`, plus a
+  cross-variant `flowRevisionDelta` marker beside the materialization delta.
 
 ## State machine
 
@@ -97,7 +105,7 @@ sequenceDiagram
     U->>R: variants all or list, replicates
     R->>E: manageExperiments guard
     E->>DB: admission transaction locks experiment row and validates status before batch fan-out
-    E->>E: validate full batch overlays and base_commit exists
+    E->>E: validate full batch overlays, packagePins, and base_commit exists
     loop each variant x replicate
         E->>L: standard launch with pinned baseCommit and variant overrides
         L->>DB: lock experiment row before worktree side effects
@@ -164,7 +172,17 @@ runs after the verdict transaction through the standard dispatcher.
   contexts and in the same transaction as the new run row; request bodies MUST
   never carry an experiment id for membership.
 - The launch route MUST validate the whole variant batch, including overlay
-  refs and class-adapter compatibility, before the first side effect.
+  refs, class-adapter compatibility, and every `packagePin` install
+  (exists, `Installed`, trusted, carries the task-flow's `flowRefId` — the
+  ADR-129 pin matrix), before the first side effect; experiment create MUST
+  run the same pin batch validation so an unlaunchable pin refuses at create.
+- A `packagePin` variant launch MUST leave `project_package_attachments`
+  byte-identical; the pinned revision is recorded only on the run snapshot
+  columns (`flow_revision_id` / `flow_revision` / `flow_version`). (ADR-129)
+- Experiment member runs MUST never auto-promote (ADR-124 invariant, enforced
+  by ADR-129): the auto-promotion sweep's candidate query excludes runs with
+  an `experiment_runs` row, and `evaluateAutoPromotion` returns a
+  `not_applicable` term on membership at the apply site.
 - Each member launch MUST lock and validate the experiment row before attempt
   allocation or worktree creation, then re-check inside the run insert
   transaction before writing membership.
@@ -226,6 +244,18 @@ runs after the verdict transaction through the standard dispatcher.
   `MaisterError("CONFIG")` before any launch side effect.
 - **Unsupported/non-Postgres `DB_URL`** — boot fails with
   `MaisterError("CONFIG")` before a connection is attempted.
+- **Pinned install degraded between create and launch** — a `packagePin`
+  install that is no longer `Installed` (or lost trust) at fan-out refuses
+  with `MaisterError("PRECONDITION")`; an install row that vanished refuses
+  with `MaisterError("CONFIG")` naming the install id. Nothing launches for
+  that variant; the attachment is untouched. (ADR-132)
+- **Member run reaches Review in an auto-promotion-enabled project** — the
+  ADR-126 sweep never selects it (candidate prefilter) and a direct
+  evaluate/promote call path reports `not_applicable`; only the explicit
+  human winner-promotion applies. (ADR-132)
+- **Provenance lookup finds no matching install** — the comparison DTO
+  carries `provenance: null` for that run (degradation, not an error); the
+  lab renders the run without package badges. (ADR-132)
 - **Experiment abandon with live runs** — abandon flips the experiment terminal
   under row lock, then stops live member runs through the standard dispatcher;
   stop failures are logged per run and do not resurrect the experiment.
@@ -235,7 +265,9 @@ runs after the verdict transaction through the standard dispatcher.
 
 ## Linked artifacts
 
-- ADR: [`ADR-124`](../decisions.md#adr-124-experiment-comparison-studio-for-pinned-base-comparison-runs).
+- ADR: [`ADR-124`](../decisions.md#adr-124-experiment-comparison-studio-for-pinned-base-comparison-runs);
+  package pin axis, provenance, and the enforced auto-promotion exclusion:
+  [`ADR-129`](../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync).
 - Database narrative: [`../database-schema.md`](../database-schema.md).
 - ERD: [`../db/erd.md`](../db/erd.md).
 - Web API contract: [`../api/web.openapi.yaml`](../api/web.openapi.yaml).

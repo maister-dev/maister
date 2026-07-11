@@ -23,6 +23,19 @@ When I am working on package content locally, I want a simple list of editable
 local packages so I can create one, import content, open the editor, or remove
 throwaway packages that are not attached anywhere.
 
+## Fork lifecycle (concepts)
+
+A local package forked from an installed git package carries lineage and
+participates in the full fork loop (ADR-129): edit → commit → cut → attach or
+run `try_once`/experiment variants → **compare with upstream** (divergence
+drawer) → **update fork from upstream** when a new tag lands (synthetic 3-way
+sync; conflicts resolve in the editor) → **publish** back as a PR on the
+per-source base branch. A publish rejected because the upstream branch moved
+surfaces the "upstream moved — sync first" refusal, pointing back at the sync
+entry — never a force push. All of these live on the editor screen
+([`editor.md`](editor.md) §"Fork ↔ upstream surface"); this list screen only
+opens the editor.
+
 ## Layout
 
 - Header with back-link to Studio, title, and short description.

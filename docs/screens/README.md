@@ -175,6 +175,7 @@ flowchart TD
 | [`projects/project-settings-brain.md`](projects/project-settings-brain.md) | Project Settings → Brain (enablement, home resolution, projection flow) | `/projects/{slug}?tab=settings` | Implemented (ADR-127/128) |
 | [`projects/project-brain.md`](projects/project-brain.md) | Project Brain (memory search, sources, proposals) | `/projects/{slug}?tab=brain` | Implemented (ADR-127/128) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented; standalone artifact pickers / move-to-package planned |
+| [`studio/sources.md`](studio/sources.md) | Package sources (admin: kind toggle git/local, local-path validation, per-source base branch, re-check) | `/studio/sources` | Implemented (Phase A); kinds/base-branch/re-check ADR-129 |
 | [`studio/package-viewer.md`](studio/package-viewer.md) | Package viewer (BoM tabs, wide flow previews, flow/skill/agent detail) | `/studio/packages/{ref}` | Implemented |
 | [`studio/local-workspace.md`](studio/local-workspace.md) | Local packages workspace (create/import/edit/delete) | `/studio/local` | Implemented |
 | [`studio/editor.md`](studio/editor.md) | Local package editor (canvas + properties + files/YAML/diff) | `/studio/edit/{localPackageId}/[[...path]]` | Implemented |

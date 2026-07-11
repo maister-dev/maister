@@ -166,6 +166,53 @@ correctness and first-class kinds (behavior SSOT:
   Platform Agent / Subagent / Skill, with seeded templates) are **deferred** (#134,
   A4); `newSubagentTemplate` exists but is not yet wired into a create flow.
 
+### Fork ↔ upstream surface (ADR-129)
+
+For a local package **with fork lineage** (`source_install_id` set), the
+breadcrumb action cluster (next to Commit-state / Publish) gains two entries;
+neither renders for lineage-less packages:
+
+- **Compare with upstream** — opens a read-only `UpstreamDivergenceDrawer`
+  (pattern: the diff drawer minus the commit/discard bar) rendering the shared
+  `DiffView` of the fork against its lineage source install. A header
+  **cut picker** selects "ours": the working dir (default) or any cut of this
+  package. The composition view's element cards add a per-element "compare"
+  entry only where element lineage exists (silently absent otherwise).
+  Drawer states: loading · empty (no divergence) · diff · **degraded** — the
+  lineage source install is missing/GC'd (`MaisterError("CONFIG")` "source
+  install unavailable") renders an explanatory panel, never a crash.
+- **Update fork from upstream** — the sync entry: an upstream **tag picker**
+  fed from the lineage source's discovered tags; "install & sync" installs
+  the chosen tag through the normal install path, then runs the ADR-129
+  synthetic 3-way merge.
+
+**Sync banner.** While `local_packages.sync_state` is pending, the editor
+shows a persistent banner with two shapes:
+
+- **Pending (clean tree)** — a sync started but no merge output landed
+  (crash-window 1): offers **Resume** (idempotent re-merge) and **Abort**.
+- **Conflicted** — lists `sync_state.conflictedFiles` (the invalid-artifact
+  list idiom); each entry opens the file in the editor showing standard
+  conflict markers. Actions: **Resolve** (validates markers gone + committed,
+  then completes) and **Abort** (`git reset --hard HEAD`).
+
+Refusal surfaces render through the localized error surface: dirty tree →
+"commit or discard first" (`PRECONDITION`); a pending sync for a different
+target → `CONFLICT`; lineage/source bytes missing → the degraded `CONFIG`
+panel; Resolve with markers still present in a listed or dirty file →
+`PRECONDITION` naming the file; Resolve with nothing to resolve
+(crash-window 1) → `PRECONDITION` pointing at Resume.
+Behavior SSOT:
+[`../../system-analytics/local-packages.md`](../../system-analytics/local-packages.md)
+§"Fork ↔ upstream loop".
+
+**Publish refusal (ADR-129).** When publish is rejected non-fast-forward, the
+`PublishDialog` renders the typed "upstream moved — sync first" refusal: with
+fork lineage (`details.canSync`) it offers a **Sync from upstream** CTA
+linking the sync entry above; without lineage it shows manual-reconcile
+guidance (inspect/delete the remote `maister/<slug>` branch). Publish never
+offers force.
+
 ### Consensus node properties (M41 — Implemented)
 
 The `consensus` node is authorable through the same canvas and right-panel
@@ -292,7 +339,13 @@ The local editor works against the local-package working-dir seam:
   session is read-only until it acquires the lock.
 - The local-workspace and Studio-overview **Cut version** controls use
   `POST /api/studio/local-packages/{id}/cut-version` to install the working dir
-  as a `local-<digest>` `package_installs` revision a member can then attach.
+  as a `local-<digest>` `package_installs` revision a member can then attach;
+  its dialog offers the ADR-132 multi-select "adopt in attached projects now"
+  (only projects already on a cut of THIS package are listed).
+- Divergence reads `GET /api/studio/local-packages/{id}/divergence`
+  (`?cutInstallId=`, `?element=`); sync uses
+  `POST /api/studio/local-packages/{id}/sync`, `POST .../sync/resolve`, and
+  `POST .../sync/abort` (ADR-132).
 
 Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md)
 (authored-flow lifecycle, hard-gate, CAS) — not restated here (R7).
@@ -306,7 +359,9 @@ labels, the existing node-form / toolbar / validation keys, the M38
 reference-picker keys under `flowEditor.nodeForm.schemaRef*`, and the
 `flowEditor.nodeForm.{promptComposer,multiSelect,stringList}*` structured-control
 keys),
-`flows` (page header + save hint). EN + RU parity required.
+`flows` (page header + save hint), and the ADR-129 `studio.divergence.*` +
+`studio.sync.*` namespaces (drawer, banner, conflict list, refusals). EN + RU
+parity required.
 
 ## Linked artifacts
 
@@ -316,7 +371,9 @@ keys),
   [#adr-103](../../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170)
   (M38 `decide` routing panel + outcome-labeled edges),
   [#adr-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)
-  (M41 consensus node).
+  (M41 consensus node),
+  [#adr-129](../../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
+  (divergence drawer, sync banner, publish sync-first refusal).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-editor.md`](../../../.ai-factory/specs/feature-flow-studio-editor.md).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-reference-pickers.md`](../../../.ai-factory/specs/feature-flow-studio-reference-pickers.md)
   (Implemented reference picker polish).

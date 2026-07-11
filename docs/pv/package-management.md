@@ -1,7 +1,9 @@
 # Package management — package repos, platform catalog, local versions
 
 > **Status:** P0–P2 SHIPPED (M33, `feature/package-management`, 2026-06-12 —
-> ADR-088, migration `0048`); P3–P6 remain follow-up planning briefs in §8.
+> ADR-088, migration `0048`); P4 is CLOSED by the Studio local-package line
+> (ADR-096/105/107/113) + the fork-loop completion (ADR-129 — see the
+> loop-closure note in §8); P3/P5/P6 remain follow-up planning briefs in §8.
 > As-built deltas: file-edit gates use vacuous-presence `artifact_required`
 > on commit nodes (§6 note); the discovery staleness knob is
 > `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` (env, default 24); compose stays
@@ -254,15 +256,21 @@ be planned cold; pointers: this doc, `docs/system-analytics/flow-packages.md`,
   tasks → runs → promotion `pull_request` (M18). Deliverable is a
   documented workflow (+ optionally a maister.yaml for that repo), zero
   platform code. Unblocked immediately after P0.
-- **P4 — Studio package editing + propose-upstream.** Extend authored
-  catalog + Flow Studio from single-flow to package granularity: fork an
-  installed package revision into an editable draft set (per-kind editors
-  exist since M29), edit flows/skills/agents/mcps, validate, then a baked
-  feature-branch protocol: export package bytes → clone package repo →
-  branch → commit → push (`pushBranch`) → PR (`PrAdapter`). "Fix a
-  version" = the PR proposes the bump; the maintainer tags on merge.
-  Studio forks should also be installable as **local versions** (P2
-  primitive) for test runs before proposing.
+- **P4 — Studio package editing + propose-upstream. CLOSED — the fork loop
+  is complete (ADR-096/105/107/113 + ADR-129).** The shipped shape: fork an
+  installed package into a git-backed local package → edit in Studio
+  (per-kind editors, commit-gated validation) → **cut** `local-<digest>`
+  installs and attach them per-project (or adopt across attached projects
+  from the cut dialog) → run **fork-vs-upstream experiments** on an
+  ephemeral per-run pin (`try_once` / experiment `packagePin` — the
+  attachment is never mutated) with per-run provenance in the comparison
+  lab → **divergence view** against the lineage source → **upstream sync**
+  (synthetic 3-way on install bytes; conflicts resolve in-app; lineage
+  advances) when the upstream re-tags → **publish** (`PublishDialog`,
+  PR on the per-source base branch; non-FF refuses "upstream moved — sync
+  first", never force). Arbitrary host checkouts join the catalog as
+  `kind: local` sources with digest-as-version (ADR-129 §c), which covers
+  the "test locally before proposing" leg without git round-trips.
 - **P5 — Agent-assisted package editing.** Natural-language package
   editing ("remove X from node Y, add a gate Z") driven by an agent that
   edits the Studio draft set; review stays human. Builds on P4's draft

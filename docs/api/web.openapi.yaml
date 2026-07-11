@@ -2661,6 +2661,11 @@ paths:
         are explicit DTOs and never include worktree paths, adapter argv/env, or
         internal materialization paths.
 
+        (ADR-129) Variant `config.packagePin` is batch-validated at create —
+        every pinned install must exist (`CONFIG`), be `Installed` + trusted
+        (`PRECONDITION`), and carry the task-flow's `flowRefId` (`CONFIG`) —
+        so an unlaunchable pin refuses here, not at fan-out.
+
         Audit/debug fields: `projectId`, `experimentId`, `taskId`, `actorType`,
         `actorId`, `baseBranch`, `baseCommit`, `requestId`.
       operationId: createProjectExperiment
@@ -2726,7 +2731,10 @@ paths:
         `comparable`; unknown variant keys are `CONFIG`; terminal states are
         `PRECONDITION`. The whole batch is validated before the first side
         effect: pinned `baseCommit` exists, overlay refs resolve, class x
-        adapter compatibility holds, and runner/policy settings are valid.
+        adapter compatibility holds, runner/policy settings are valid, and
+        (ADR-129) every variant `config.packagePin` re-validates against the
+        pin matrix (launch stays authoritative; the pin is threaded into
+        `launchRun` and never mutates `project_package_attachments`).
         Each member run then goes through standard `launchRun`; the
         `experiment_runs` membership row is inserted in the same transaction as
         the run insert, and replicate uniqueness races map to `409 CONFLICT`.
@@ -7938,9 +7946,16 @@ paths:
       tags: [flow-packages, admin]
       summary: (ADR-088 — Implemented) Add a platform package source
       description: |
-        (ADR-088 — Implemented.) Admin-only. Creates a `package_sources` row.
-        `url` is the git monorepo URL (`packages/<name>/maister-package.yaml`
-        layout). A duplicate `url` returns 409 (`CONFLICT`), never a raw 500.
+        (ADR-088 — Implemented; `kind`/`baseBranch` ADR-129.) Admin-only.
+        Creates a `package_sources` row.
+        For `kind: git` (default), `url` is the git monorepo URL
+        (`packages/<name>/maister-package.yaml` layout). For `kind: local`
+        (ADR-129), `url` is an ABSOLUTE host directory path validated
+        server-side BEFORE persistence: it must exist and contain
+        `maister-package.yaml` at the root or ≥1
+        `packages/*/maister-package.yaml` — a relative path, missing
+        directory, or missing manifest is 422 (`CONFIG`) naming the failed
+        check. A duplicate `url` returns 409 (`CONFLICT`), never a raw 500.
         No discovery happens inline — call `/refresh` after creation.
       operationId: postAdminPackageSource
       requestBody:
@@ -7969,8 +7984,11 @@ paths:
       tags: [flow-packages, admin]
       summary: (ADR-088 — Implemented) Update a platform package source
       description: |
-        (ADR-088 — Implemented.) Admin-only. Mutable fields: `enabled`, `note`.
-        The `url` is immutable (delete + re-add to change identity). `id` is
+        (ADR-088 — Implemented; `baseBranch` ADR-129.) Admin-only. Mutable
+        fields: `enabled`, `note`, `baseBranch` (git sources; `null` clears
+        back to auto-detect).
+        The `url` and `kind` are immutable (delete + re-add to change
+        identity). `id` is
         a url-param resolved to the server row (404 on miss).
       operationId: patchAdminPackageSource
       parameters:
@@ -7989,6 +8007,11 @@ paths:
               properties:
                 enabled: { type: boolean }
                 note: { type: string }
+                baseBranch:
+                  type: string
+                  nullable: true
+                  minLength: 1
+                  description: "(ADR-129) Publish PR base override; null clears to auto-detect."
       responses:
         "200": { $ref: "#/components/responses/OkResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -8023,9 +8046,17 @@ paths:
       tags: [flow-packages, admin]
       summary: (ADR-088 — Implemented) Refresh package discovery for a source
       description: |
-        (ADR-088 — Implemented.) Admin-only. Runs `git ls-remote --tags` plus a
+        (ADR-088 — Implemented; `kind: local` semantics ADR-129.) Admin-only.
+        For `kind: git`: runs `git ls-remote --tags` plus a
         shallow default-branch scan of `packages/*/maister-package.yaml`,
-        rewrites the source's `discovered` snapshot + `lastCheckedAt`. A git
+        rewrites the source's `discovered` snapshot + `lastCheckedAt`. For
+        `kind: local` (ADR-129): walks the host directory (no git),
+        re-digests each package dir, and writes `discovered` entries with
+        `tags: []` + a digest-derived `digestVersionLabel`
+        (`local-<digest12>`) — an unchanged dir re-digests to the same label
+        (idempotent re-check); a changed dir flips `updateAvailable` for
+        attachments pinned to the old digest. Re-check is on-demand only
+        (no scheduler wiring — ADR-129 D7). A git
         or scan failure degrades: the stale snapshot is kept and the response
         carries `degraded: true` (HTTP 200 — degradation is a result, not an
         error). The same routine runs at web startup for enabled sources
@@ -8281,6 +8312,14 @@ paths:
         `package_installs` revision (`trusted_by_policy`); optionally attaches it
         to a project the caller is a **member** of (`manageLocalPackages`).
         Stamps `last_cut_install_id` after success.
+
+        (ADR-129) `adoptInProjectIds` additionally advances already-attached
+        projects to the new cut. Two-phase: authz + eligibility for EVERY id
+        is validated BEFORE the irreversible cut (an ineligible or
+        upstream-pinned project id → 409, no cut); after the cut, adopts are
+        idempotent per-project after-writes reported in
+        `CutVersionResult.adoptions` — a crash between cut and adopts leaves
+        the cut in place and the adopts re-runnable from the dialog.
       operationId: cutStudioLocalPackageVersion
       x-maister-m43-legacy-steps:
         status: 409
@@ -8333,13 +8372,24 @@ paths:
       tags: [flow-packages]
       summary: (ADR-113 — Implemented) Publish the package to a registered source as a PR
       description: |
-        (ADR-113 — Implemented.) Pushes the local package's committed working tree to a
+        (ADR-113 — Implemented; base branch + typed refusal ADR-129.) Pushes
+        the local package's committed working tree to a
         **registered** `package_sources` target (server-side allow-list — never a
-        body-supplied raw URL) on a stable, reusable `maister/<pkg-slug>` branch, then
+        body-supplied raw URL; only `kind: git` sources are offered) on a
+        stable, reusable `maister/<pkg-slug>` branch, then
         opens or updates a pull request when a provider CLI + host token is detected
         (gh/glab/Gitea/Gitverse); otherwise push-only with a best-effort compare URL.
+        The PR base resolves as `package_sources.base_branch ??
+        gitRemoteDefaultBranch(...) ?? "main"` (ADR-129).
         Two-phase: `last_pushed_branch`/`last_pr_url` are written only after the push
         acks. Member-gated (`manageLocalPackages`).
+
+        (ADR-129) A non-fast-forward push (the upstream `maister/<slug>`
+        branch moved) refuses with 409 `CONFLICT` whose details are
+        `{reason: "upstream_moved", canSync: <fork lineage present>,
+        localPackageId}` — the UI renders "upstream moved — sync first" with
+        a sync CTA when `canSync`, manual-reconcile guidance otherwise. The
+        push is NEVER retried with force.
       operationId: publishStudioLocalPackage
       requestBody:
         required: true
@@ -8355,8 +8405,197 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Typed refusal: target not in the allow-list, invalid branch, or
+            (ADR-129) the non-fast-forward `upstream_moved` shape with
+            `details: {reason: "upstream_moved", canSync, localPackageId}`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              example:
+                code: CONFLICT
+                message: "upstream moved — sync first"
+                details:
+                  reason: upstream_moved
+                  canSync: true
+                  localPackageId: lp-1
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/divergence:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [flow-packages]
+      summary: (ADR-129) Fork-vs-upstream divergence diff
+      description: |
+        (ADR-129.) Read-only, viewer-permitted (like `/diff`). Diffs "ours" —
+        the fork working dir (default) or a chosen cut's bundle
+        (`cutInstallId`) — against "theirs" — the fork's lineage source
+        install bytes — via `git diff --no-index` (exit 0/1 both success),
+        excluding `.git/`, into the shared diff DTO. Purely local bytes; no
+        git-remote fetch. `cutInstallId` is validated against the package's
+        OWN cut lineage (`package_installs.source_local_package_id = id`) —
+        a foreign install id → 409 `CONFLICT`. An optional `element` scope
+        narrows to one composition element where element lineage exists
+        (degrades to package-level otherwise). A missing lineage source row
+        or missing bundle bytes → 422 `CONFIG` "source install unavailable"
+        (the UI renders a degraded panel).
+      operationId: getStudioLocalPackageDivergence
+      parameters:
+        - name: cutInstallId
+          in: query
+          required: false
+          schema: { type: string, minLength: 1 }
+          description: "Compare a specific cut of this package instead of the working dir."
+        - name: element
+          in: query
+          required: false
+          schema: { type: string, minLength: 1 }
+          description: "Narrow the diff to one composition element (where element lineage exists)."
+      responses:
+        "200":
+          description: Divergence diff (shared DiffView DTO + summary).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageDivergence" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/sync:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-129) Start an upstream sync (synthetic 3-way merge)
+      description: |
+        (ADR-129.) Merges a newer upstream install into the fork working dir:
+        base = the lineage source install bytes, theirs = the target install
+        bytes, ours = the working dir at HEAD. Precondition allow-list
+        (violations in order): live session edit-lock (else 409 `CONFLICT`) ·
+        package `status = active` (else 409 `PRECONDITION`) · lineage present
+        with bundle bytes on disk (else 422 `CONFIG` "source install
+        unavailable") · NO pending `sync_state` for a DIFFERENT
+        `targetInstallId` — a same-target re-POST is **Resume**, the
+        idempotent crash-window re-merge; a different-target pending sync
+        refuses (else 409 `CONFLICT` "sync in
+        progress") · clean working tree (else 409 `PRECONDITION` "commit or
+        discard first"; no auto-stash) · `targetInstallId` is an `Installed`
+        install of the SAME package name + source URL as the lineage (else
+        409 `CONFLICT`). Two-phase: `sync_state` is persisted in a
+        transaction BEFORE the first disk write; a clean merge auto-commits
+        `Sync from upstream <tag>` (only when the merge changed bytes — a
+        no-change merge skips the commit) and advances the lineage
+        (`source_install_id`/`source_ref`) + clears `sync_state` in ONE
+        transaction; a conflicted merge stamps
+        `sync_state.conflictedFiles` and leaves standard conflict markers
+        uncommitted in the working dir. Fork commits are never rewritten.
+      operationId: syncStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [targetInstallId]
+              properties:
+                targetInstallId:
+                  type: string
+                  minLength: 1
+                  description: "The newer upstream `package_installs` id to sync onto (installed via the normal install path first)."
+              example: { targetInstallId: "install-2" }
+      responses:
+        "200":
+          description: Sync outcome (clean or conflicted).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageSyncResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/sync/resolve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-129) Complete a conflicted upstream sync
+      description: |
+        (ADR-129.) Preconditions: live session edit-lock · pending
+        `sync_state` (else 409 `CONFLICT`) · something to resolve —
+        `conflictedFiles` non-empty OR a dirty tree; the crash-window-1
+        state (empty list + clean tree, merge never ran) refuses with 409
+        `PRECONDITION` "nothing to resolve — resume the sync" · no conflict
+        markers remain in the UNION of the listed files' current bytes and
+        every dirty working-tree file (`sync_state.conflictedFiles` alone is
+        not the scan boundary; else 409 `PRECONDITION` naming the
+        file) · working tree committed, or committed as part of resolve with
+        the supplied message. Completion is the SAME single transaction as
+        the clean case: advance lineage + clear `sync_state`. Idempotent
+        retry: lineage already advanced and state cleared → 200 no-op.
+      operationId: resolveStudioLocalPackageSync
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                commitMessage:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  description: "Commit the resolved tree with this message as part of resolve (when the tree is still uncommitted)."
+      responses:
+        "200":
+          description: Sync completed (lineage advanced, sync_state cleared).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageSyncResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/sync/abort:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-129) Abort a pending upstream sync
+      description: |
+        (ADR-129.) Preconditions: live session edit-lock · pending
+        `sync_state` (else 409 `CONFLICT`). Runs `git reset --hard HEAD`
+        (structurally safe — the tree was clean pre-merge, so nothing
+        user-authored is lost) and clears `sync_state` in a transaction.
+        Never force-overwrites commits.
+      operationId: abortStudioLocalPackageSync
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /api/studio/local-packages/{id}/import:
     parameters:
@@ -8942,15 +9181,29 @@ paths:
       tags: [flow-packages, projects]
       summary: (ADR-088 — Implemented) Attach a package install to a project
       description: |
-        (ADR-088 — Implemented.) Admin-only (`managePackages`). One transaction
+        (ADR-088 — Implemented; local-cut picker + typed name collision
+        ADR-129.) Admin-only (`managePackages`). One transaction
         writes member `flows` rows + `capability_imports` + MCP/restriction
         ingestion + the attachment + group FK links. Identifiers: `slug` =
         url-param → project row; `packageInstallId` = body id resolved to a
-        server row (404 on miss). A manifest flow id colliding with an
+        server row (404 on miss) — Studio local cuts (installs with
+        `source_local_package_id` set) are valid values (ADR-129). A manifest
+        flow id colliding with an
         existing standalone flow (`flows_project_ref_uq`) → 409 (`CONFLICT`),
         no partial group. A same-`(kind, id)` MCP/restriction record already
         provided by another attached package → 409 (`CONFLICT`) as well
-        (same-id different-kind records coexist). The `maister.yaml
+        (same-id different-kind records coexist).
+
+        (ADR-129) A package-NAME collision — the install's `name` equals an
+        existing attachment's `package_name`
+        (`project_package_attachments_project_name_uq`) — is a typed 409
+        `CONFLICT` whose `details` name the colliding `packageName` and the
+        rename path (`{reason: "package_name_taken", packageName}`): "rename
+        the fork (Studio → manifest `name` → commit → cut) to attach it
+        beside the upstream" — never an opaque DB error. There is no
+        auto-rename and no attachment-level aliasing.
+
+        The `maister.yaml
         packages[]` pin is written back AFTER commit; a write-back failure is
         reported as `writeBack: "failed"`, never a rollback.
       operationId: attachProjectPackage
@@ -8985,7 +9238,20 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: |
+            Typed conflicts: standalone flow-id collision, cross-package
+            `(kind, id)` record collision, or (ADR-129) the package-name
+            collision with rename guidance in `details`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              example:
+                code: CONFLICT
+                message: "package name already attached — rename the fork and re-cut"
+                details:
+                  reason: package_name_taken
+                  packageName: aif
         "422": { $ref: "#/components/responses/Config" }
 
   /api/projects/{slug}/packages/{attachmentId}:
@@ -12875,6 +13141,25 @@ components:
           $ref: "#/components/schemas/ExecutionPolicy"
         capabilityOverlay:
           $ref: "#/components/schemas/ExperimentCapabilityOverlay"
+        packagePin:
+          type: object
+          additionalProperties: false
+          required: [packageInstallId]
+          properties:
+            packageInstallId:
+              type: string
+              format: uuid
+          description: |
+            (ADR-129) Ephemeral per-run package pin for this variant: the
+            variant's runs resolve the task-flow's revision from this
+            `package_installs` row (upstream install or local cut carrying the
+            flow's `flowRefId`) without touching
+            `project_package_attachments`. Validated at create time (exists +
+            Installed + trusted + carries the flowRefId — the ADR-129 pin
+            matrix; violations are `CONFIG`/`PRECONDITION`) and re-validated
+            at launch fan-out. Composes with `runnerId` and `executionPolicy`
+            on the same variant.
+          example: { packageInstallId: "2c2f0f9e-6c1e-4d7a-9b1a-0e6cf4b1a111" }
     ExperimentVariant:
       type: object
       additionalProperties: false
@@ -13247,10 +13532,36 @@ components:
           type: object
           nullable: true
           additionalProperties: true
+        provenance:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [packageName, versionLabel, kind, installDigest12]
+          properties:
+            packageName: { type: string }
+            versionLabel:
+              type: string
+              description: "`local-<digest12>` for cuts, the raw tag for upstream installs."
+            kind:
+              type: string
+              enum: [local_cut, upstream]
+            installDigest12: { type: string }
+          description: |
+            (ADR-129) Package provenance of the run's snapshotted flow
+            revision, derived by joining `runs.flow_revision` to
+            `package_installs.resolved_revision` (two arms: local cut via
+            `local_packages` lineage, or upstream install). `null` when no
+            install matches (degradation — the lab renders the run without
+            package badges).
+          example:
+            packageName: aif
+            versionLabel: local-1a2b3c4d5e6f
+            kind: local_cut
+            installDigest12: 1a2b3c4d5e6f
     ExperimentComparison:
       type: object
       additionalProperties: false
-      required: [experiment, variants, runs, verdict, generatedAt]
+      required: [experiment, variants, runs, verdict, generatedAt, flowRevisionDelta]
       properties:
         experiment:
           $ref: "#/components/schemas/ExperimentDetail"
@@ -13266,6 +13577,13 @@ components:
         generatedAt:
           type: string
           format: date-time
+        flowRevisionDelta:
+          type: boolean
+          description: |
+            (ADR-129) `true` when the member runs span more than one distinct
+            snapshotted `runs.flow_revision` — rendered as a marker beside the
+            materialization delta so a package-version difference between
+            variants is visible at a glance.
     PostRunBody:
       type: object
       required: [taskId]
@@ -13358,17 +13676,24 @@ components:
           type: object
           additionalProperties:
             type: string
-            enum: [keep, adopt, cut_and_adopt]
+            enum: [keep, adopt, cut_and_adopt, try_once]
           description: |
-            (M39 Stream B, ADR-107 — Implemented) Per-package version-adopt decision
+            (M39 Stream B, ADR-107 — Implemented; `try_once` ADR-129) Per-package
+            version-adopt decision
             for the centralized Studio packages backing the task's flow. Keys are
             `package_installs` ids (the project's currently-attached cut); each
             value is `keep` (launch on the pin), `adopt` (advance the project
-            attachment to the package's newest cut), or `cut_and_adopt` (mint a
-            fresh cut from uncut Studio edits via the cut gate, then adopt).
+            attachment to the package's newest cut), `cut_and_adopt` (mint a
+            fresh cut from uncut Studio edits via the cut gate, then adopt), or
+            `try_once` (ADR-129 — run THIS launch on the newest cut as an
+            ephemeral per-run pin: the run's `flow_revision_id`/`flow_revision`
+            snapshot points at the newer cut while
+            `project_package_attachments` stays byte-identical; offered exactly
+            when `adopt` is offered).
             Server-constrained to the launch-detected available-version set — an
             unknown key or an option not offered for that package → `CONFLICT`
             (409). Flow runs keep `runs.local_package_id` NULL.
+          example: { "pkg-install-1": "try_once" }
         brainContext:
           type: boolean
           nullable: true
@@ -14170,7 +14495,11 @@ components:
           description: "The local package has committed edits beyond its newest cut."
         offeredOptions:
           type: array
-          items: { type: string, enum: [keep, adopt, cut_and_adopt] }
+          items: { type: string, enum: [keep, adopt, cut_and_adopt, try_once] }
+          description: |
+            (ADR-129) `try_once` is offered exactly when `adopt` is offered (a
+            newer cut exists): an ephemeral per-run pin to the newest cut that
+            never mutates the attachment.
     ScratchLaunchOptionsResponse:
       type: object
       required:
@@ -15796,6 +16125,14 @@ components:
           type: string
           enum: [non_fast_forward]
         canForce: { type: boolean }
+        details:
+          type: object
+          additionalProperties: true
+          description: |
+            (ADR-093, additive) Thrower-set client-facing context — e.g. the
+            publish `{reason: "upstream_moved", canSync, localPackageId}`
+            (ADR-129) or the commit gate's `{invalidArtifacts: [...]}`.
+            Never a server-only handle.
 
     CloneFailureReason:
       type: string
@@ -16687,6 +17024,23 @@ components:
             minLength: 1,
             description: "Attach the cut version to this project id (caller must be a member; manageLocalPackages). Validated server-side before any irreversible side-effect.",
           }
+        adoptInProjectIds:
+          type: array
+          items: { type: string, minLength: 1 }
+          maxItems: 100
+          description: |
+            (ADR-129) Advance these projects' attachments to the new cut in
+            the same request. Eligibility is server-checked BEFORE the
+            irreversible cut: each project must grant the caller
+            `manageLocalPackages` AND its CURRENT attachment for this package
+            must already point at a cut of THIS local package
+            (`package_installs.source_local_package_id = <id>`). Any
+            ineligible id → 409 `CONFLICT` pre-cut, nothing mutated.
+            Projects attached to the upstream install of the same name are
+            never listed and never silently migrated. After the cut, adopts
+            run per-project via `upgradeAttachment` and report individually —
+            an adopt failure never rolls the cut back (re-runnable).
+          example: ["proj-1", "proj-2"]
     CutVersionResult:
       type: object
       required: [installId, versionLabel]
@@ -16702,6 +17056,18 @@ components:
             type: string,
             description: "Present only when attachToProjectId was supplied and the attach succeeded.",
           }
+        adoptions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [projectId, status]
+            properties:
+              projectId: { type: string }
+              status: { type: string, enum: [adopted, failed] }
+              error: { type: string, nullable: true }
+          description: "(ADR-129) Per-project adopt outcomes for `adoptInProjectIds`; present only when it was supplied. Failed adopts are retryable from the dialog."
+          example: [{ projectId: "proj-1", status: adopted }]
     PublishLocalPackageBody:
       type: object
       required: [targetSourceId, branchName]
@@ -16758,6 +17124,11 @@ components:
             properties:
               id: { type: string }
               url: { type: string }
+              baseBranch:
+                type: string
+                nullable: true
+                description: "(ADR-129) The source's configured publish PR base; null = auto-detect."
+          description: "(ADR-129) Only `kind: git` sources — local sources are never publish targets (allow-list filter)."
         preselectedSourceId:
           type: string
           nullable: true
@@ -16765,6 +17136,70 @@ components:
         defaultBranch:
           type: string
           description: "Prefilled stable `maister/<slug>` branch."
+    LocalPackageDivergence:
+      type: object
+      required: [ours, theirs, changedCount, truncated, files]
+      description: |
+        (ADR-129) Fork-vs-source divergence as the shared `@git-diff-view`
+        DTO shape (same as `/diff`), plus which two inputs were compared.
+      properties:
+        ours:
+          type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [working_dir, cut] }
+            cutInstallId: { type: string, nullable: true }
+            versionLabel: { type: string, nullable: true }
+        theirs:
+          type: object
+          additionalProperties: false
+          required: [installId, versionLabel]
+          properties:
+            installId:
+              type: string
+              description: "The lineage source install (`local_packages.source_install_id`)."
+            versionLabel: { type: string }
+        element:
+          type: string
+          nullable: true
+          description: "Present when the diff was narrowed to one composition element."
+        changedCount: { type: integer, minimum: 0 }
+        truncated: { type: boolean }
+        files: { type: array, items: { type: object } }
+      example:
+        ours: { kind: working_dir, cutInstallId: null, versionLabel: null }
+        theirs: { installId: install-1, versionLabel: "aif/v2.0.0" }
+        element: null
+        changedCount: 2
+        truncated: false
+        files: []
+    LocalPackageSyncResult:
+      type: object
+      required: [outcome, conflictedFiles, targetInstallId, targetRef]
+      description: |
+        (ADR-129) Outcome of `/sync` or `/sync/resolve`. `clean` = merged +
+        committed + lineage advanced + `sync_state` cleared; `conflicted` =
+        markers written, `sync_state.conflictedFiles` stamped, resolution
+        pending; `completed` = a resolve finished (incl. the idempotent
+        already-completed retry).
+      properties:
+        outcome:
+          type: string
+          enum: [clean, conflicted, completed]
+        conflictedFiles:
+          type: array
+          items: { type: string }
+          description: "Working-dir-relative conflicted paths; empty unless `conflicted`."
+        targetInstallId: { type: string }
+        targetRef:
+          type: string
+          description: "The upstream version label synced onto (e.g. the new tag)."
+      example:
+        outcome: conflicted
+        conflictedFiles: ["flows/plan/flow.yaml"]
+        targetInstallId: install-2
+        targetRef: "aif/v2.1.0"
     ForkElementBody:
       type: object
       required: [elementPath, elementName]
@@ -16800,12 +17235,14 @@ components:
     PackageSource:
       type: object
       description: |
-        (ADR-088 — Implemented) A `package_sources` row with the cached
+        (ADR-088 — Implemented; `kind`/`baseBranch` ADR-129) A
+        `package_sources` row with the cached
         discovery snapshot. Discovery failures keep the stale snapshot.
       required:
         [
           id,
           url,
+          kind,
           enabled,
           discovered,
           lastCheckedAt,
@@ -16818,8 +17255,16 @@ components:
         url:
           {
             type: string,
-            description: "Git monorepo URL (packages/<name>/ layout).",
+            description: "Git monorepo URL (packages/<name>/ layout) for kind `git`; the absolute host directory path for kind `local`.",
           }
+        kind:
+          type: string
+          enum: [git, local]
+          description: "(ADR-129) Source kind. `local` = an admin-registered host directory with digest-as-version discovery."
+        baseBranch:
+          type: string
+          nullable: true
+          description: "(ADR-129) Per-source publish PR base (git sources only). `null` = auto-detect the remote default branch, fallback `main`."
         enabled: { type: boolean }
         note: { type: string, nullable: true }
         discovered:
@@ -16837,22 +17282,48 @@ components:
 
     DiscoveredPackage:
       type: object
-      description: (ADR-088 — Implemented) One package found in a source's default branch.
+      description: |
+        (ADR-088 — Implemented) One package found in a source. Git sources
+        list per-package tags; `kind: local` sources (ADR-129) list one
+        digest-derived version instead — `tags` stays `[]`, `dir` names the
+        package directory, and `digestVersionLabel` carries
+        `local-<digest12>` of the CURRENT bytes (digest-as-version;
+        installing an older digest is not possible).
       required: [name, tags]
       properties:
         name: { type: string }
         tags:
           type: array
           items: { type: string }
-          description: "Per-package tags (<name>/vX.Y.Z), newest first."
+          description: "Per-package tags (<name>/vX.Y.Z), newest first. Empty for local sources."
+        dir:
+          type: string
+          description: "The `packages/<dir>` subdir in the source (may differ from `name`; pre-existing field, documented with ADR-129)."
+        digestVersionLabel:
+          type: string
+          nullable: true
+          description: "(ADR-129) `local-<digest12>` of the package dir's current bytes (local sources only; absent/null on git sources)."
 
     PackageSourceBody:
       type: object
       required: [url]
       properties:
-        url: { type: string, minLength: 1 }
+        url:
+          type: string
+          minLength: 1
+          description: "Git URL, or (kind `local`) an absolute host directory path — server-validated before persistence."
+        kind:
+          type: string
+          enum: [git, local]
+          default: git
+          description: "(ADR-129) `local` requires `url` to be an absolute existing directory containing `maister-package.yaml` at the root or ≥1 `packages/*/maister-package.yaml`; violations are 422 `CONFIG` naming the failed check."
+        baseBranch:
+          type: string
+          minLength: 1
+          description: "(ADR-129) Publish PR base for git sources; ignored for local sources."
         note: { type: string }
         enabled: { type: boolean, default: true }
+      example: { url: "/Users/dev/maister-plugins", kind: local }
 
     PackageInstallSummary:
       type: object

@@ -22,13 +22,21 @@ domain covers platform package sources, version discovery, package
 installation, per-project attachment/detach/upgrade, package-level trust, local
 versions, and the `maister.yaml packages[]` bootstrap + write-back contract
 (ADR-088). Everything below is **(Implemented)** — shipped by the
-`feature/package-management` plan (M33); per-revision install/trust mechanics stay in
+`feature/package-management` plan (M33) — except the pieces tagged
+**(ADR-129)**: source kinds (`git | local`), digest-as-version discovery for
+local sources, the by-kind update-available carve, and the per-source publish
+base branch. Per-revision install/trust mechanics stay in
 [`flow-packages.md`](flow-packages.md) and are referenced, not restated.
 
 ## Domain entities
 
-- **Package source** — a configured git monorepo URL (`package_sources` row,
-  platform scope): enabled flag, cached `discovered` snapshot, `last_checked_at`.
+- **Package source** — a configured package location (`package_sources` row,
+  platform scope): `kind` (`'git' | 'local'`, ADR-129), `url` holding the
+  location string (git URL for `kind: 'git'`; **absolute host directory
+  path** for `kind: 'local'`), optional per-source `base_branch` (git
+  sources only — the publish PR base, ADR-129), enabled flag, cached
+  `discovered` snapshot, `last_checked_at`. Local sources never appear as
+  publish targets and are admin-registered only.
 - **Default package source** — a `package_sources` row ensured at web boot from
   `MAISTER_DEFAULT_PACKAGE_SOURCES` (unset → the built-in maister-plugins github
   repo; see [`../configuration.md`](../configuration.md)). Insert-only and
@@ -99,6 +107,25 @@ Expectations), then runs the same refresh for enabled sources whose
 `last_checked_at` is null or older than `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`
 (default 24), sequentially, fire-and-forget. Freshly-seeded default rows (null
 `last_checked_at`) are therefore swept on the same boot.
+
+### Local source discovery (ADR-129 — `kind: 'local'`)
+
+A `kind: 'local'` source mirrors git discovery semantics over a host
+directory, without git: registration validates server-side that the path is
+absolute, exists, and contains `maister-package.yaml` at the root OR ≥ 1
+`packages/*/maister-package.yaml` (monorepo layout) — violations are
+`MaisterError("CONFIG")` naming the failed check. Refresh (the same
+`/{id}/refresh` route) walks the directory, re-digests each package dir
+(content digest), and writes `discovered` entries `{name, dir, tags: []}`
+with a digest-derived version label `local-<digest12>` (the same sentinel
+family as Studio cuts).
+
+**Digest-as-version:** the "version" a local source offers is always its
+PRESENT content digest — installing an older digest is not possible; re-check
+surfaces drift instead. Re-check is **on-demand only** (refresh button); no
+scheduler wiring (ADR-129 D7). Install resolves through the existing
+`isLocalPackageSource` branch of the installer (the stored path is used only
+through server-state resolution, never a client-supplied path).
 
 ### Install + attach
 
@@ -195,6 +222,21 @@ sequenceDiagram
 - `packages[].version` accepts `/` (tag form `<name>/vX.Y.Z`); member
   sub-installs receive the path-safe label (`/` → `-`) because
   `versionTagSchema` forbids slashes.
+- (ADR-129) The update-available carve is by SOURCE KIND: for attachments
+  whose install belongs to a `kind: 'local'` source, discovered digest ≠
+  pinned digest ⇒ update available with upgrade target `local-<newDigest12>`;
+  Studio-cut installs (no source row) keep the existing `local-*` skip. Kind
+  guards are allow-lists (`kind === 'local'` / `kind === 'git'`), never
+  `!== 'git'` complements.
+- (ADR-129) `kind: 'local'` source registration MUST be
+  `requireGlobalRole("admin")`-gated and MUST validate the path server-side
+  (absolute + exists + manifest layout) BEFORE persistence; local sources
+  resolve `trusted_by_policy` (deliberate — the admin gate is the trust
+  boundary), and the fetch → trust → execute ordering is unchanged.
+- (ADR-129) `getPublishOptions` MUST offer only `kind: 'git'` sources as
+  publish targets; `package_sources.base_branch` (git sources only) feeds the
+  publish PR base
+  (`package_sources.base_branch ?? gitRemoteDefaultBranch(...) ?? "main"`).
 
 ## Edge cases
 
@@ -219,11 +261,23 @@ sequenceDiagram
   "failed"` + WARN; DB remains the runtime truth.
 - **Registration `packages[]` id colliding with `flows[]` /
   `capability_imports[]` ids** → `MaisterError("CONFIG")` at config load.
+- **(ADR-129) Local source path relative / missing / no manifest at root nor
+  `packages/*/`** → `MaisterError("CONFIG")` naming the failed validation;
+  nothing persisted.
+- **(ADR-129) Local source dir mutated after install** → the pinned install is
+  untouched (content-addressed); on-demand re-check re-digests and flips
+  `updateAvailable` for attachments on that source; a refresh with no byte
+  change is idempotent (digest stable).
+- **(ADR-129) Publish attempted against a `kind: 'local'` source** → not
+  offered by `getPublishOptions`; a forged `targetSourceId` fails the
+  allow-list with `MaisterError("CONFLICT")`.
 
 ## Linked artifacts
 
 - Decision: [`../decisions.md` ADR-088](../decisions.md#adr-088-multi-flow-package-management)
-  (+ amended [ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)).
+  (+ amended [ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility);
+  source kinds + digest-as-version + publish base:
+  [ADR-129](../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)).
 - Design: `docs/pv/package-management.md` (owner-approved target picture).
 - Revision substrate: [`flow-packages.md`](flow-packages.md);
   flow entity/install pipeline: [`flows.md`](flows.md),

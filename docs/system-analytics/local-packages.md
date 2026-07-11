@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-116 — Implemented (web-only, no migration).** Surface:
+> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-116 — Implemented (web-only, no migration); the fork loop — `try_once` per-run pin, upstream divergence view, upstream sync, publish base branch + sync-first refusal — is ADR-129 (migration 0093).** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -21,17 +21,21 @@ pipeline as git packages (Variant B), without re-scoping the project-keyed
 `authored_capabilities` drafts table.
 
 Boundary: this domain owns the `local_packages` table, its working directory,
-the session edit-lock, and the cut/move operations. It does NOT own the
-install/attach/trust machinery (that is [`packages.md`](packages.md), reused) nor
-git write-back to an upstream source (a PR from the fork branch — **Phase 2**).
+the session edit-lock, the cut/move operations, the fork↔upstream loop
+(divergence view, upstream sync, PR-to-source publish — ADR-113/129), and the
+per-run `try_once` pin choice at launch. It does NOT own the
+install/attach/trust machinery (that is [`packages.md`](packages.md), reused).
 
 ## Domain entities
 
 - **`local_packages`** (persisted — [`../db/projects-domain.md`](../db/projects-domain.md)):
   one row per local package, pointing at a `working_dir`. Carries fork lineage
   (`source_install_id`, `source_repo_url`, `source_ref`, `branch_name`), the most
-  recent cut (`last_cut_install_id`), and the session lock (`locked_by_user_id`,
-  `locked_by_session`, `lock_expires_at`).
+  recent cut (`last_cut_install_id`), the session lock (`locked_by_user_id`,
+  `locked_by_session`, `lock_expires_at`), and the durable upstream-sync intent
+  `sync_state` (jsonb NULL, ADR-129 —
+  `{targetInstallId, targetRef, conflictedFiles: string[], startedAt}`;
+  `NULL` = no sync in flight).
 - **Per-project default ("virtual") local package** (M36, ADR-096): a
   `local_packages` row with `is_default = true` and a non-NULL `project_id`. It
   is the landing spot for **element-level forks** — a member who forks one flow /
@@ -315,14 +319,15 @@ stateDiagram-v2
 
 **Choice table (exactly as the code gates).** For each backing package P, let
 `hasNewerCut` mean `P.last_cut_install_id` differs from the attached install, and
-`hasUncutEdits` mean P's working dir is dirty versus the pin's `source_commit_sha`:
+`hasUncutEdits` mean P's working dir is dirty versus the pin's `source_commit_sha`.
+`try_once` (ADR-129) is offered **exactly when `adopt` is offered**:
 
-| Detected state | Offered options | `keep` | `adopt` | `cut_and_adopt` |
-| --- | --- | --- | --- | --- |
-| neither (up to date, clean) | `keep` only | launch on pin | not offered (409) | not offered (409) |
-| `hasNewerCut` only | `keep`, `adopt` | launch on pin | `upgradeAttachment(last_cut)` then launch | not offered (409) |
-| `hasUncutEdits` only | `keep`, `cut_and_adopt` | launch on pin | not offered (409) | cut gate then `upgradeAttachment(new cut)` then launch |
-| both | `keep`, `adopt`, `cut_and_adopt` | launch on pin | adopt the existing newest cut | mint a fresh cut from the edits, then adopt |
+| Detected state | Offered options | `keep` | `adopt` | `try_once` | `cut_and_adopt` |
+| --- | --- | --- | --- | --- | --- |
+| neither (up to date, clean) | `keep` only | launch on pin | not offered (409) | not offered (409) | not offered (409) |
+| `hasNewerCut` only | `keep`, `adopt`, `try_once` | launch on pin | `upgradeAttachment(last_cut)` then launch | pin THIS run to `last_cut`, attachment untouched | not offered (409) |
+| `hasUncutEdits` only | `keep`, `cut_and_adopt` | launch on pin | not offered (409) | not offered (409) | cut gate then `upgradeAttachment(new cut)` then launch |
+| both | `keep`, `adopt`, `try_once`, `cut_and_adopt` | launch on pin | adopt the existing newest cut | pin THIS run to the newest cut, attachment untouched | mint a fresh cut from the edits, then adopt |
 
 `adopt`/`cut_and_adopt` advance the project's `project_package_attachments` +
 `flows.enabled_revision_id` (via the existing `upgradeAttachment`) **before** the
@@ -330,6 +335,14 @@ enablement check re-reads the flow, so the very launch uses the adopted cut. The
 advance is its own transaction; the run-insert tx is unchanged (a board launch carries
 no `trigger_event_id` and never conflicts on the dedup). Multi-package = one choice per
 backing package.
+
+**`try_once` (ADR-129)** validates like `adopt` (unknown install / unoffered
+option → 409 `CONFLICT`) but translates into an **ephemeral per-run pin**: the
+run's flow revision resolves from the newer cut's install and is snapshotted on
+the run's existing `flow_revision_id`/`flow_revision`/`flow_version` columns;
+`project_package_attachments` is byte-identical before/after, and the choice
+contributes NO adopt-revert compensation (nothing to compensate). The next
+launch re-detects and re-offers.
 
 ### Cross-project version reuse
 
@@ -354,7 +367,10 @@ stateDiagram-v2
 committed working tree upstream. The target is resolved from the **registered
 `package_sources` allow-list** (server-state — never a body-supplied raw URL); the
 branch is a stable, reusable **`maister/<pkg-slug>`** (re-publish updates it and the
-existing PR, never duplicates).
+existing PR, never duplicates). Only `kind: 'git'` sources are publish targets
+(ADR-129 — `getPublishOptions` filters by kind, allow-list). The PR base
+resolves as `package_sources.base_branch ?? gitRemoteDefaultBranch(...) ??
+"main"` (ADR-129 — `base_branch` is per-source operator config).
 
 ```mermaid
 stateDiagram-v2
@@ -377,17 +393,144 @@ stateDiagram-v2
 
 | Failure | Code | Marker | Caller action |
 | --- | --- | --- | --- |
-| `targetSourceId` not in `package_sources` | `CONFLICT` (409) | unset | pick a registered source |
+| `targetSourceId` not in `package_sources` (or `kind: 'local'`) | `CONFLICT` (409) | unset | pick a registered git source |
 | invalid branch name (`branchNameSchema`) | `PRECONDITION` (409) | unset | fix the branch name |
-| non-fast-forward push | `CONFLICT` (409) | unset | retry (updates the stable branch) |
+| non-fast-forward push (upstream `maister/<slug>` moved) | `CONFLICT` (409) with `details.reason: "upstream_moved"`, `details.canSync`, `details.localPackageId` (ADR-129) | unset | `canSync: true` → "Sync from upstream" CTA, then re-publish; `canSync: false` (no lineage) → manual reconcile guidance (inspect/delete the remote branch) |
 | auth / no remote reachable | `PRECONDITION` (409) | unset | configure host credentials |
 | no source url / unsupported provider for the PR | `CONFIG` / push-only | branch only | open the PR from the compare URL |
 | push ok, provider + token | — | `last_pushed_branch` + `last_pr_url` | PR opened/updated |
 | push ok, no provider/token | — | `last_pushed_branch` (+ compare URL shown) | open the PR manually |
 
+Package publish **NEVER retries with force** (ADR-129, regression-pinned): the
+force capability stays quarantined to its existing non-package call sites; a
+rejected push is always the typed `upstream_moved` refusal above.
+
 PR automation needs the provider CLI (`gh`/`glab`) + a host-ambient token
 (`GH_TOKEN` / `GITLAB_TOKEN` / `GITEA_TOKEN` / `GITVERSE_TOKEN`); absent → the push-only
 fallback. See [`../configuration.md`](../configuration.md).
+
+## Fork ↔ upstream loop — divergence view + upstream sync (ADR-129)
+
+Closes the fork loop for a local package with lineage
+(`source_install_id` set): the member can **see** how the fork diverged from
+its source, and **re-synchronize** the fork when the upstream releases a new
+tag. Both operate on **local install bytes only** — no git-remote fetch for
+comparison (D3); "install the new tag" goes through the normal
+`installPackageRevision` path first, so the bytes land in the
+content-addressed cache like any install.
+
+### Divergence view (read-only)
+
+`GET /api/studio/local-packages/{id}/divergence` (viewer-permitted, like
+`/diff`) diffs **ours** — the fork working dir (default) or a chosen cut's
+`installedPath` (`cutInstallId` query param, validated against the package's
+own cut lineage `package_installs.source_local_package_id = id`) — against
+**theirs** — the lineage source install's `installedPath` — via
+`git diff --no-index` (exit 0/1 both success), excluding `.git/`, into the
+shared `DiffView` DTO. An optional `element` scope narrows to one composition
+element where element lineage exists (degrades to package-level otherwise).
+
+Degradation: lineage source row missing (`ON DELETE SET NULL`) or its on-disk
+bundle gone → typed `MaisterError("CONFIG")` "source install unavailable" —
+the editor renders a degraded panel, never a crash. After a completed sync the
+view automatically compares against the NEW base (lineage advanced).
+
+### Upstream sync — synthetic 3-way merge
+
+Mechanism (ADR-129 §d): **base** = the original lineage source install bytes,
+**theirs** = the new-tag install bytes, **ours** = fork working dir at HEAD.
+Merge-shaped, never rebase-shaped — the fork is a fresh `git init` with no
+shared ancestry; sync lands as AT MOST one commit on top of fork history
+(clean: auto-commit `Sync from upstream <tag>`, skipped when the merge
+changed no bytes; conflict: the user's
+resolution commit). Fork commits are never rewritten.
+
+Sync state machine (persisted discriminant: `local_packages.sync_state`;
+`idle` = `sync_state IS NULL`, `syncing`/`conflicted` = pending `sync_state`
+with empty/non-empty `conflictedFiles`; completion always returns to `idle`):
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> syncing: POST /sync (all preconditions pass;<br/>tx persists sync_state BEFORE disk writes)
+    syncing --> syncing: POST /sync SAME target (Resume)<br/>idempotent re-merge for crash-window recovery
+    syncing --> idle: clean merge (commit "Sync from upstream tag"<br/>when bytes changed + ONE tx advance lineage + clear sync_state)
+    syncing --> conflicted: merge conflicts (tx stamps conflictedFiles;<br/>markers in working dir, uncommitted)
+    conflicted --> idle: POST /sync/resolve (markers gone + committed;<br/>SAME single tx advance lineage + clear)
+    conflicted --> idle: POST /sync/abort (git reset --hard HEAD + tx clear)
+    syncing --> idle: POST /sync/abort (crash-window recovery;<br/>reset + clear)
+```
+
+**`POST /sync` precondition allow-list (refusals exactly as the code gates):**
+
+| # | Precondition | On violation |
+| --- | --- | --- |
+| 1 | caller session holds the live edit-lock (`assertHoldsLock`) | `CONFLICT` |
+| 2 | package `status = active` | `PRECONDITION` |
+| 3 | fork lineage present: `source_install_id` row exists AND its bundle bytes exist on disk | `CONFIG` ("source install unavailable") |
+| 4 | NO pending `sync_state` for a DIFFERENT `targetInstallId` — a same-target re-POST is **Resume** (idempotent re-merge from step 2); a different-target pending sync refuses | `CONFLICT` ("sync in progress") |
+| 5 | working tree clean (`git status --porcelain` empty) — Resume re-entry with a dirty tree is the conflicted state and routes through Resolve/Abort instead | `PRECONDITION` ("commit or discard first"; no auto-stash) |
+| 6 | body `targetInstallId` is an `Installed` install of the SAME package name + `sourceUrl` as the lineage source (server-state comparison) | `CONFLICT` |
+
+**Order of operations + crash windows (two-phase; `sync_state` is the single
+discriminant — no third partial state exists):**
+
+1. tx: persist `sync_state = {targetInstallId, targetRef, conflictedFiles: [],
+   startedAt}` — durable intent BEFORE any disk write.
+2. disk: 3-way merge writes into the working dir.
+3. clean case: commit `Sync from upstream <tag>` (only when the merge changed
+   bytes — a no-change merge skips the commit), then ONE tx: advance lineage
+   (`source_install_id`/`source_ref` → the new install/tag) + clear
+   `sync_state`.
+4. conflict case: tx update `sync_state.conflictedFiles = [...]`; working dir
+   holds standard conflict markers (uncommitted).
+
+**Resume = `POST /sync` re-invocation with the SAME `targetInstallId`**
+(precondition 4 above): the merge re-runs idempotently from step 2 — in
+crash-window 1 it performs the merge for the first time; after a landed sync
+commit it is a no-change merge that just completes. There is no separate
+resume route.
+
+| Crash window | Observable state | Recovery (user-driven via the editor banner; NO sweep) |
+| --- | --- | --- |
+| after 1, before 2 | `sync_state` pending, tree clean | banner offers Resume (same-target `POST /sync` — idempotent, inputs unchanged) or Abort |
+| after 2, before 3/4 | `sync_state` pending, tree dirty with merged content | banner shows conflicted/in-review; Resolve validates + completes; Abort resets |
+
+**`POST /sync/resolve` allow-list:** live edit-lock · pending `sync_state` ·
+something to resolve — `conflictedFiles` non-empty OR a dirty tree (the
+window-1 state of pending + empty list + clean tree refuses with
+`PRECONDITION` "nothing to resolve — resume the sync", so resolve can never
+advance lineage past a merge that never ran) ·
+no conflict markers remain in the UNION of the listed files' current bytes
+and every dirty working-tree file (`conflictedFiles` alone is not the scan
+boundary — a
+crash before the conflict-stamp tx leaves the list empty while markers sit on
+disk, and a user commit can bake markers into a listed file the dirty set no
+longer covers) · tree committed
+(or committed as part of resolve with the user's message) → completion is the
+SAME single tx as step 3 (advance lineage + clear). Idempotent retry: lineage
+already advanced and state cleared → success no-op.
+
+**No-change merges:** the clean case commits ONLY when the merge changed
+bytes. A no-change merge — re-sync to the same tag, or Resume after the sync
+commit already landed pre-crash — skips the commit and still runs the
+completion tx (advance lineage + clear `sync_state`).
+
+**`POST /sync/abort` allow-list:** live edit-lock · pending `sync_state` →
+`git reset --hard HEAD` (structurally safe: the tree was clean pre-merge, so
+nothing user-authored is lost) + tx clear `sync_state`. Never force-overwrites
+commits.
+
+Merge case table (implemented in `sync-merge.ts` exactly as enumerated):
+unchanged ours + changed theirs → take theirs · changed ours + unchanged
+theirs → keep ours · both changed same → keep · both changed different →
+`git merge-file` (clean or markers) · added in theirs only → add · added in
+ours only → keep · added both identical → keep · added both different →
+merge-file with empty base (add/add conflict) · deleted in theirs + ours
+unchanged → delete · deleted in theirs + ours changed → modify/delete conflict
+(keep ours, list as conflicted) · deleted in ours + theirs changed →
+delete/modify conflict (list; do NOT resurrect) · binary (NUL-sniff) differing
+→ conflict entry "binary", ours kept.
 
 ## Composition view — tabbed local-package editor (ADR-116 — Implemented)
 
@@ -644,6 +787,27 @@ tab surfaces one shared **Import** button wired to the existing
   stable `maister/<pkg-slug>` branch, and write `last_pushed_branch`/`last_pr_url` only
   AFTER a successful push (two-phase). `source_repo_url`/`source_ref`/`branch_name` feed
   the source preselect.
+- (ADR-129) A `try_once` choice MUST leave `project_package_attachments`
+  byte-identical, contribute NO adopt-revert compensation, and be offered
+  exactly when `adopt` is offered; an unoffered/unknown option → 409
+  `CONFLICT`.
+- (ADR-129) Sync MUST refuse on a dirty working tree with
+  `MaisterError("PRECONDITION")` (no auto-stash) and MUST persist `sync_state`
+  in a transaction BEFORE the first disk write; lineage advance + `sync_state`
+  clear MUST be ONE transaction; abort MUST `git reset --hard HEAD` and MUST
+  NEVER rewrite or force-overwrite fork commits.
+- (ADR-129) Sync, resolve, and abort MUST require the live session edit-lock;
+  a second sync while `sync_state` is pending MUST refuse with
+  `MaisterError("CONFLICT")`.
+- (ADR-129) The divergence view MUST compare local bytes only (fork working
+  dir or a cut vs the lineage source install), MUST exclude `.git/`, and MUST
+  degrade a missing source install to `MaisterError("CONFIG")` rather than
+  throwing; a `cutInstallId` not in the package's own cut lineage MUST refuse.
+- (ADR-129) Package publish MUST resolve its PR base as
+  `package_sources.base_branch ?? gitRemoteDefaultBranch(...) ?? "main"` and
+  MUST surface a non-fast-forward push as `MaisterError("CONFLICT")` with
+  `details.reason: "upstream_moved"` + `details.canSync`; it MUST NEVER pass
+  force to the push.
 
 ## Edge cases
 
@@ -673,22 +837,52 @@ tab surfaces one shared **Import** button wired to the existing
   add a flow before cutting.
 - The lock holder's session dies → the lock simply expires at `lock_expires_at`;
   the next opener takes over lazily (no sweeper).
+- (ADR-129) Sync crash windows — only two exist, discriminated by
+  `sync_state` + tree dirtiness: pending + clean tree → Resume (idempotent
+  re-merge) or Abort; pending + dirty tree → conflicted/in-review banner,
+  Resolve or Abort. No sweep touches `sync_state`; recovery is user-driven.
+- (ADR-129) Lineage source install GC'd/`SET NULL` or bundle bytes missing →
+  divergence and sync refuse with `MaisterError("CONFIG")` "source install
+  unavailable"; the editor shows the degraded panel (fork remains fully
+  editable/cuttable).
+- (ADR-129) Re-sync to the SAME tag after completion → precondition 6 still
+  passes but the merge is a no-change merge (base = theirs): no commit, the
+  completion tx still runs; a second sync WHILE one is
+  pending → `MaisterError("CONFLICT")` "sync in progress".
+- (ADR-129) Resolve called with conflict markers still present in a listed
+  or dirty file (union scan) → `MaisterError("PRECONDITION")` naming the
+  file; resolve in the window-1 state (empty list + clean tree) →
+  `MaisterError("PRECONDITION")` "nothing to resolve — resume the sync";
+  resolve after
+  lineage already advanced (crash between tx and response) → idempotent
+  success no-op.
+- (ADR-129) Crash between the sync commit and the completion tx →
+  observationally crash-window 1 (pending + clean tree); Resume re-merges as
+  a no-change merge and completes; Abort keeps the landed commit
+  (`reset --hard HEAD` is a no-op on a clean tree) and clears the state —
+  re-running sync then advances lineage via the no-change path. No
+  user-authored bytes are at risk in either branch.
 
 ## Linked artifacts
 
 - **ADRs:** ADR-096 (this domain), ADR-105 (Stream A — first-class kinds + centralized
   model), ADR-107 (Stream B — version-adopt launch), ADR-113 (Stream B — PR-to-source),
   ADR-116 (composition-view tabbed editor IA + shared package-BOM source abstraction —
-  Implemented), ADR-092 (unified Studio + editable-local-package direction), ADR-088 (package
+  Implemented),
+  [`ADR-129`](../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
+  (fork loop: `try_once` pin, divergence, upstream sync, publish base +
+  sync-first refusal — migration 0093), ADR-092 (unified Studio +
+  editable-local-package direction), ADR-088 (package
   management), ADR-021 (fetch-then-execute trust separation) — see
   [`../decisions.md`](../decisions.md).
 - **ERD:** [`../db/projects-domain.md`](../db/projects-domain.md),
   [`../database-schema.md`](../database-schema.md).
 - **API:** [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
   (`/api/studio/local-packages*` incl. `/files/{path}` CRUD + `/cut-version` +
-  `/publish` [Stream B]; `/api/studio/packages/{ref}/fork` + `/fork-element`;
-  `POST /api/runs` `packageVersions` [Stream B]; `POST /api/projects/{slug}/packages`
-  attach-a-version).
+  `/publish` [Stream B] + `/divergence` + `/sync` + `/sync/resolve` +
+  `/sync/abort` [ADR-129]; `/api/studio/packages/{ref}/fork` + `/fork-element`;
+  `POST /api/runs` `packageVersions` [Stream B; `try_once` ADR-129];
+  `POST /api/projects/{slug}/packages` attach-a-version).
 - **Reused behavior:** [`packages.md`](packages.md) (install/attach/trust),
   [`flow-studio.md`](flow-studio.md) (editor seam, fork),
   [`mcp-management.md`](mcp-management.md) (the MCP catalog the template editor
