@@ -92,7 +92,18 @@ async function seedProject(slug: string): Promise<{
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: "/tmp/flows/test-flow",
-    manifest: { schemaVersion: 1, name: "Test", steps: [] },
+    manifest: {
+      schemaVersion: 1,
+      name: "Test",
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
     schemaVersion: 1,
   });
 

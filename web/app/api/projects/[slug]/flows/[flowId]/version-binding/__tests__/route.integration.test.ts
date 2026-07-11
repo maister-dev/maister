@@ -142,7 +142,18 @@ beforeAll(async () => {
     version: "v1.0.0",
     revision: "abc123",
     installedPath: `/tmp/flows/bugfix@abc123`,
-    manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+    manifest: {
+      schemaVersion: 1,
+      name: "Bugfix",
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
     schemaVersion: 1,
   });
 
@@ -157,7 +168,18 @@ beforeAll(async () => {
     version: "v0.4.1",
     revision: "def456",
     installedPath: `/tmp/flows/spec-kit@def456`,
-    manifest: { schemaVersion: 1, name: "Spec Kit", steps: [] },
+    manifest: {
+      schemaVersion: 1,
+      name: "Spec Kit",
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
     schemaVersion: 1,
   });
 

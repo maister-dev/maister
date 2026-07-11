@@ -104,7 +104,18 @@ beforeEach(async () => {
       source: "github.com/acme/aif",
       version: "v1.0.0",
       installedPath: "/tmp/flows/aif",
-      manifest: { schemaVersion: 1, name: "aif", steps: [] },
+      manifest: {
+        schemaVersion: 1,
+        name: "aif",
+        nodes: [
+          {
+            id: "run",
+            type: "cli",
+            action: { command: "true" },
+            transitions: { success: "done" },
+          },
+        ],
+      },
       schemaVersion: 1,
       enablementState: "Enabled",
       trustStatus: "trusted",
@@ -116,7 +127,18 @@ beforeEach(async () => {
       source: "github.com/acme/aif-hidden",
       version: "v1.0.0",
       installedPath: "/tmp/flows/aif-hidden",
-      manifest: { schemaVersion: 1, name: "aif-hidden", steps: [] },
+      manifest: {
+        schemaVersion: 1,
+        name: "aif-hidden",
+        nodes: [
+          {
+            id: "run",
+            type: "cli",
+            action: { command: "true" },
+            transitions: { success: "done" },
+          },
+        ],
+      },
       schemaVersion: 1,
       enablementState: "Enabled",
       trustStatus: "trusted",

@@ -9,6 +9,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
 import { isBrainSchemaApplied } from "@/lib/brain/guard";
+import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 
 const log = pino({
   name: "brain:index-triggers",
@@ -31,6 +32,13 @@ export async function enqueueSourceReindexForEvents(
   let inserted = 0;
 
   for (const event of events) {
+    if (isGraphOnlyCutoverFailure(event)) {
+      log.debug(
+        { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
+        "Brain source reindex skipped terminal upgrade cut-over",
+      );
+      continue;
+    }
     if (!isSourceReindexTrigger(event.kind)) continue;
 
     const domainEventId = String(event.id);

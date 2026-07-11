@@ -365,6 +365,11 @@ function RunRow({
         >
           {t(`status.${row.status}`)}
         </span>
+        {row.cutoverFailedAt ? (
+          <div className="mt-2 max-w-[170px] font-mono text-[9.5px] font-semibold text-danger">
+            {t("cutoverFailure")}
+          </div>
+        ) : null}
       </td>
       <td className="px-4 py-3.5">
         <div className="font-mono text-[11px] text-ink-2">

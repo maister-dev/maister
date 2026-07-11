@@ -9,9 +9,7 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
-import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
-import { markStepSucceeded } from "@/lib/flows/step-runs";
+import { markNodeSucceeded } from "@/lib/flows/graph/ledger";
 import {
   cancelPermission,
   deleteSession,
@@ -28,8 +26,10 @@ import {
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { flows, hitlRequests, runs, stepRuns } =
-  schemaModule as unknown as Record<string, any>;
+const { hitlRequests, nodeAttempts, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -177,188 +177,54 @@ async function markIntentAbandoned(
     .where(eq(hitlRequests.id, intent.id));
 }
 
-type RunRow = {
-  id: string;
-  flowId: string;
-  currentStepId: string | null;
-  acpSessionId: string | null;
-};
-
-type FlowManifest = {
-  steps?: Array<{ id: string }>;
-};
-
-async function loadRunForCompletion(
+async function findOpenNodeAttempt(
   db: Db,
   runId: string,
-): Promise<{
-  run: RunRow & { acpSessionId: string | null };
-  manifest: FlowManifest;
-} | null> {
-  const runRows = await db
-    .select({
-      id: runs.id,
-      flowId: runs.flowId,
-      currentStepId: runs.currentStepId,
-    })
-    .from(runs)
-    .where(eq(runs.id, runId));
-  const baseRun = runRows[0] as RunRow | undefined;
-
-  if (!baseRun) return null;
-
-  // M42 (ADR-114): the resumed step's session handle comes from the run's ACTIVE
-  // logical session (recorded onto the step_run for attribution).
-  const active = await loadActiveRunSession(db, runId);
-  const run = {
-    ...baseRun,
-    acpSessionId: active?.acpSessionId ?? null,
-  } as RunRow & { acpSessionId: string | null };
-
-  const flowRows = await db
-    .select({ manifest: flows.manifest })
-    .from(flows)
-    .where(eq(flows.id, run.flowId));
-  const manifest = (flowRows[0]?.manifest as FlowManifest) ?? { steps: [] };
-
-  return { run, manifest };
-}
-
-async function findOpenStepRunForStep(
-  db: Db,
-  runId: string,
-  stepId: string,
+  nodeId: string,
 ): Promise<{ id: string } | null> {
   const rows = await db
-    .select({ id: stepRuns.id })
-    .from(stepRuns)
+    .select({ id: nodeAttempts.id })
+    .from(nodeAttempts)
     .where(
       and(
-        eq(stepRuns.runId, runId),
-        eq(stepRuns.stepId, stepId),
-        isNull(stepRuns.endedAt),
+        eq(nodeAttempts.runId, runId),
+        eq(nodeAttempts.nodeId, nodeId),
+        isNull(nodeAttempts.endedAt),
       ),
     );
 
-  return rows[0] ?? null;
+  return rows.at(-1) ?? null;
 }
 
-// M8 review pass 2 finding #3: complete the resumed step
-// properly and hand off back to runFlow for any remaining steps. The
-// previous driver wrote `runs.status = Review` directly, which
-// skipped step_run persistence and would have left flow continuation
-// behind for multi-step flows.
-async function completeResumedStepAndHandoff(
+async function completeResumedNodeAndHandoff(
   db: Db,
   runId: string,
-  resumedStepId: string,
+  resumedNodeId: string,
   capturedStdout: string,
-): Promise<{ handedOff: boolean; lastStep: boolean }> {
-  const loaded = await loadRunForCompletion(db, runId);
+): Promise<boolean> {
+  const [openAttempt, activeSession] = await Promise.all([
+    findOpenNodeAttempt(db, runId, resumedNodeId),
+    loadActiveRunSession(db, runId),
+  ]);
 
-  if (!loaded) {
+  if (!openAttempt) {
     log.warn(
-      { runId },
-      "completeResumedStep: run row vanished — cannot continue flow",
+      { runId, resumedNodeId },
+      "completeResumedNode: no open node attempt; refusing continuation",
     );
 
-    return { handedOff: false, lastStep: false };
+    return false;
   }
 
-  // Record the step_run completion so analytics + post-step handling
-  // see the resumed step as Succeeded with its captured stdout.
-  const openStepRun = await findOpenStepRunForStep(db, runId, resumedStepId);
-
-  if (openStepRun) {
-    await markStepSucceeded(
-      openStepRun.id,
-      {
-        stdout: capturedStdout,
-        vars: {},
-        exitCode: 0,
-        acpSessionId: loaded.run.acpSessionId ?? undefined,
-      },
-      db,
-    );
-  } else {
-    log.warn(
-      { runId, resumedStepId },
-      "completeResumedStep: no open step_run for resumed step — proceeding without step_run update",
-    );
-  }
-
-  const steps = loaded.manifest.steps ?? [];
-  const currentIdx = steps.findIndex((s) => s.id === resumedStepId);
-  const nextStep = currentIdx >= 0 ? steps[currentIdx + 1] : undefined;
-
-  if (!nextStep) {
-    // Last step. Transition Review terminally — same final state
-    // runFlow would have written if it had executed the last step.
-    const rows = await db.transaction(async (tx: Db) => {
-      // ADR-126 T8: one instant shared by endedAt + the grace anchor.
-      const reviewAt = new Date();
-      const updatedRows = await tx
-        .update(runs)
-        .set({
-          status: "Review",
-          endedAt: reviewAt,
-          reviewEnteredAt: reviewAt,
-          currentStepId: null,
-        })
-        .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-        .returning({ id: runs.id, projectId: runs.projectId });
-
-      if (updatedRows.length > 0) {
-        await syncExperimentStatusForRun({ db: tx, runId });
-        await emitWebhookEvent({
-          db: tx,
-          type: "run.review",
-          projectId: updatedRows[0].projectId,
-          runId,
-          data: { source: "runner" },
-        });
-      }
-
-      return updatedRows;
-    });
-
-    log.info(
-      { runId, resumedStepId },
-      "completeResumedStep: resumed step was the last step — Review",
-    );
-
-    // M8 Codex review fix #3: promote next Pending if Review terminal
-    // write actually happened (status-guard could have lost the race).
-    if (rows.length > 0) {
-      await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
-      await promoteAfterResumeTerminal(db, runId, "Review");
-    }
-
-    return { handedOff: false, lastStep: true };
-  }
-
-  // More steps to run. Advance currentStepId to the next step and
-  // leave the row in NeedsInput so runFlow's resume-claim path picks
-  // up cleanly from there. Schedule runFlow via queueMicrotask so
-  // route latency stays bounded.
-  const updated = await db
-    .update(runs)
-    .set({ currentStepId: nextStep.id })
-    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-    .returning({ id: runs.id });
-
-  if (updated.length === 0) {
-    log.warn(
-      { runId, resumedStepId, nextStepId: nextStep.id },
-      "completeResumedStep: status-guard mismatch — concurrent transition won",
-    );
-
-    return { handedOff: false, lastStep: false };
-  }
-
-  log.info(
-    { runId, resumedStepId, nextStepId: nextStep.id },
-    "completeResumedStep: advanced currentStepId — scheduling runFlow continuation",
+  await markNodeSucceeded(
+    openAttempt.id,
+    {
+      stdout: capturedStdout,
+      vars: {},
+      exitCode: 0,
+      acpSessionId: activeSession?.acpSessionId ?? undefined,
+    },
+    db,
   );
 
   queueMicrotask(() => {
@@ -366,7 +232,10 @@ async function completeResumedStepAndHandoff(
       try {
         const { runFlow } = await import("@/lib/flows/runner");
 
-        await runFlow(runId, { db });
+        await runFlow(runId, {
+          db,
+          completedResume: { targetStepId: resumedNodeId },
+        });
       } catch (err) {
         log.error(
           {
@@ -379,7 +248,7 @@ async function completeResumedStepAndHandoff(
     })();
   });
 
-  return { handedOff: true, lastStep: false };
+  return true;
 }
 
 // M8 Codex review fix #3: every resume-driver terminal transition
@@ -436,10 +305,8 @@ export async function runResumedSession(
   // a closure assignment — TS otherwise narrows `consumerError` to
   // `null` because it can't see closure mutations.
   const consumerErrorRef: { current: Error | null } = { current: null };
-  // M8 review pass 2 finding #3: capture session.update text
-  // chunks so completeResumedStepAndHandoff can persist the resumed
-  // step's stdout in step_runs — mirroring how runner-agent's normal
-  // path stores consumer.snapshot() in markStepSucceeded.
+  // Capture session output so the resumed node attempt keeps the same durable
+  // evidence contract as a normal graph dispatch.
   const stdoutChunks: string[] = [];
   const STDOUT_CAP_BYTES = 1024 * 1024;
   let stdoutLen = 0;
@@ -719,14 +586,10 @@ export async function runResumedSession(
     }
 
     if (stopReason === "end_turn") {
-      // M8 review pass 2 finding #3: do NOT directly transition
-      // to Review — that would skip step_run persistence and any
-      // remaining flow steps. Instead, mark the resumed step's
-      // step_run Succeeded with the captured stdout and either
-      // (a) hand off to runFlow for the next step, or
-      // (b) transition Review terminally if this was the last step.
+      // Persist the completed node attempt, then let the graph runner claim the
+      // parked run and continue from the node's success edge.
       const capturedStdout = stdoutChunks.join("\n");
-      const handoff = await completeResumedStepAndHandoff(
+      const handedOff = await completeResumedNodeAndHandoff(
         db,
         runId,
         stepId,
@@ -737,11 +600,10 @@ export async function runResumedSession(
         {
           runId,
           supervisorSessionId,
-          handedOff: handoff.handedOff,
-          lastStep: handoff.lastStep,
+          handedOff,
           latencyMs: Date.now() - startedAt,
         },
-        "runResumedSession: step completed; flow continuation handed off",
+        "runResumedSession: node completed; graph continuation handed off",
       );
 
       return;

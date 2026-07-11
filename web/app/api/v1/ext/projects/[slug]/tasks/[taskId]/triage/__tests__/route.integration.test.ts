@@ -107,7 +107,18 @@ beforeAll(async () => {
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: "/tmp/flows/bugfix",
-    manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+    manifest: {
+      schemaVersion: 1,
+      name: "Bugfix",
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
     schemaVersion: 1,
     enablementState: "Enabled",
     trustStatus: "trusted",
@@ -122,7 +133,18 @@ beforeAll(async () => {
     source: "github.com/x/z",
     version: "v1.0.0",
     installedPath: "/tmp/flows/disabled",
-    manifest: { schemaVersion: 1, name: "Disabled", steps: [] },
+    manifest: {
+      schemaVersion: 1,
+      name: "Disabled",
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
     schemaVersion: 1,
   });
   await db.insert(schema.platformAcpRunners).values({

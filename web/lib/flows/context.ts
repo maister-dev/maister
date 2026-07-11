@@ -4,7 +4,6 @@ import type {
   ArtifactInstance as ArtifactInstanceRow,
   NodeAttempt as NodeAttemptRow,
   Run as RunRow,
-  StepRun as StepRunRow,
   Task as TaskRow,
 } from "@/lib/db/schema";
 import type { CapabilityAgent } from "@/lib/config.schema";
@@ -86,43 +85,11 @@ function truncateOutput(s: string | null, cap: number): string {
   return s.slice(0, cap);
 }
 
-function reduceStepRuns(
-  stepRuns: StepRunRow[],
-  cap: number,
-): FlowContext["steps"] {
-  const byStep = new Map<string, StepRunRow>();
-
-  for (const sr of stepRuns) {
-    const existing = byStep.get(sr.stepId);
-
-    if (!existing || sr.attempt > existing.attempt) {
-      byStep.set(sr.stepId, sr);
-    }
-  }
-
-  const out: FlowContext["steps"] = {};
-
-  for (const [stepId, sr] of byStep.entries()) {
-    out[stepId] = {
-      output: truncateOutput(sr.stdout, cap),
-      vars: (sr.vars ?? {}) as Record<string, unknown>,
-      exitCode: sr.exitCode ?? undefined,
-    };
-  }
-
-  return out;
-}
-
-// M11a (ADR-027): templating highest-attempt-wins union. The step_runs map is
-// the base (legacy rows); node_attempts (graph runner) overlay it and WIN per
-// id (a graph run has no step_runs; a legacy run has no node_attempts — so they
-// are disjoint in practice, but the union is correct for any mix).
 export function reduceLedger(
-  stepRuns: StepRunRow[],
   nodeAttempts: NodeAttemptRow[],
   cap: number,
 ): FlowContext["steps"] {
-  const out = reduceStepRuns(stepRuns, cap);
+  const out: FlowContext["steps"] = {};
 
   const byNode = new Map<string, NodeAttemptRow>();
 
@@ -152,11 +119,7 @@ export type BuildContextArgs = {
     model: string;
     router?: "ccr" | null;
   };
-  stepRuns: StepRunRow[];
-  // M11a: graph runner passes node_attempts; they overlay step_runs in the
-  // highest-attempt-wins union (ADR-027). Optional so linear callers are
-  // unchanged.
-  nodeAttempts?: NodeAttemptRow[];
+  nodeAttempts: NodeAttemptRow[];
   projectSlug: string;
   // M11a: extra top-level template vars injected for the rework target (e.g.
   // the review `commentsVar`). Reserved keys (task/run/executor/steps/env)
@@ -224,7 +187,8 @@ export function buildContext(args: BuildContextArgs): FlowContext {
     {
       runId: args.run.id,
       envKeys: Object.keys(env),
-      stepCount: args.stepRuns.length,
+      nodeAttemptCount: args.nodeAttempts.length,
+      source: "node_attempts",
       contentIds: args.artifactContents
         ? Object.keys(args.artifactContents)
         : [],
@@ -252,7 +216,7 @@ export function buildContext(args: BuildContextArgs): FlowContext {
       model: args.executor.model,
       router: args.executor.router ?? undefined,
     },
-    steps: reduceLedger(args.stepRuns, args.nodeAttempts ?? [], cap),
+    steps: reduceLedger(args.nodeAttempts, cap),
     env,
     artifacts: reduceArtifacts(args.artifacts ?? [], args.artifactContents),
   };

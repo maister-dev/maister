@@ -81,6 +81,7 @@ describe("runs list query", () => {
             cache_creation_tokens: 2,
             cache_read_tokens: 3,
             capability_agent: "claude",
+            cutover_failed_at: "2026-06-20T10:05:00.000Z",
             ended_at: "2026-06-20T10:05:00.000Z",
             flow_ref_id: "aif-implement",
             flow_version: "v1.2.0",
@@ -122,6 +123,7 @@ describe("runs list query", () => {
     expect(page.rows).toEqual([
       expect.objectContaining({
         branch: "maister/TASK-7",
+        cutoverFailedAt: new Date("2026-06-20T10:05:00.000Z"),
         durationMs: 300_000,
         flowLabel: "aif-implement · v1.2.0",
         href: "/runs/run-1",

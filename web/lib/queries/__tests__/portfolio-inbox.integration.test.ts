@@ -126,7 +126,18 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
       version: "v1.0.0",
       revision: "abc123",
       installedPath: "/tmp/flows/test",
-      manifest: { schemaVersion: 1, name: "Test Flow", steps: [] },
+      manifest: {
+        schemaVersion: 1,
+        name: "Test Flow",
+        nodes: [
+          {
+            id: "run",
+            type: "cli",
+            action: { command: "true" },
+            transitions: { success: "done" },
+          },
+        ],
+      },
       schemaVersion: 1,
     });
 

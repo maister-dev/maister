@@ -62,6 +62,10 @@ import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
 import { getInboxCardContext } from "@/lib/queries/inbox-context";
 import {
+  getGraphOnlyCutoverFailure,
+  type GraphOnlyCutoverFailure,
+} from "@/lib/queries/run-cutover";
+import {
   lifecycleActionsForWorkspace,
   type WorkbenchLifecycleAction,
 } from "@/lib/queries/portfolio";
@@ -193,6 +197,7 @@ export interface RunDetail {
     sessionName: string;
     warning: RunnerResolutionWarning;
   }>;
+  cutoverFailure: GraphOnlyCutoverFailure | null;
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
@@ -397,6 +402,10 @@ export const getRunDetail = cache(async function getRunDetail(
           ceilingOverride,
         })
       : null;
+  const cutoverFailure =
+    row.status === "Failed" && row.runKind === "flow"
+      ? await getGraphOnlyCutoverFailure(client, row.runId)
+      : null;
 
   // ADR-126: the auto-promotion panel object for first paint. Best-effort — a
   // git/diff failure inside computeRunAutoPromotion degrades to a null evaluation
@@ -452,6 +461,7 @@ export const getRunDetail = cache(async function getRunDetail(
     deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
     executionPolicy: row.executionPolicy ?? null,
     budgetStatus,
+    cutoverFailure,
     agent: runnerAgentFromFields({
       capabilityAgent: row.capabilityAgent,
       runnerSnapshot: row.runnerSnapshot,

@@ -83,7 +83,7 @@ beforeAll(async () => {
   await mkdir(join(pkgDir, "flows/reg-flow"), { recursive: true });
   await writeFile(
     join(pkgDir, "flows/reg-flow/flow.yaml"),
-    "schemaVersion: 1\nname: reg-flow\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n",
+    "schemaVersion: 1\nname: reg-flow\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
   );
   await mkdir(join(pkgDir, "capability/skills/skill-one"), { recursive: true });
   await mkdir(join(pkgDir, "capability/agents"), { recursive: true });

@@ -78,7 +78,7 @@ beforeAll(async () => {
   await mkdir(join(pkgDir, "flows/route-flow"), { recursive: true });
   await writeFile(
     join(pkgDir, "flows/route-flow/flow.yaml"),
-    "schemaVersion: 1\nname: route-flow\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n",
+    "schemaVersion: 1\nname: route-flow\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
   );
   await writeFile(
     join(pkgDir, "maister-package.yaml"),

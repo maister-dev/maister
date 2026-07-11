@@ -65,7 +65,18 @@ test.beforeAll(async () => {
         ids.flow,
         ids.project,
         `/tmp/maister-e2e/flows/aif@v1.0.0`,
-        JSON.stringify({ schemaVersion: 1, name: "AIF", steps: [] }),
+        JSON.stringify({
+          schemaVersion: 1,
+          name: "AIF",
+          nodes: [
+            {
+              id: "run",
+              type: "cli",
+              action: { command: "true" },
+              transitions: { success: "done" },
+            },
+          ],
+        }),
       ],
     );
     await pool.query(

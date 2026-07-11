@@ -462,14 +462,15 @@ type RegistrationFixture = {
   duplicateSlug: string;
 };
 
-const LINEAR_MANIFEST = {
+const ACCEPTANCE_MANIFEST = {
   schemaVersion: 1,
   name: "Acceptance Flow",
-  steps: [
+  nodes: [
     {
       id: "review",
       type: "human",
-      prompt: "Review acceptance fixture.",
+      finish: { human: { decisions: ["approve"] } },
+      transitions: { approve: "done" },
     },
   ],
 };
@@ -1365,10 +1366,14 @@ function createLocalFlowSource(flowPath: string): void {
     `
 schemaVersion: 1
 name: Acceptance Flow
-steps:
+nodes:
   - id: review
     type: human
-    prompt: Review acceptance fixture.
+    finish:
+      human:
+        decisions: [approve]
+    transitions:
+      approve: done
 `,
   );
 }
@@ -2391,7 +2396,7 @@ async function seedLaunchableProjectFixture(
       flowSource,
       randomUUID().replace(/-/g, "").padEnd(40, "0").slice(0, 40),
       `sha256:${ids.revision}`,
-      JSON.stringify(LINEAR_MANIFEST),
+      JSON.stringify(ACCEPTANCE_MANIFEST),
       flowSource,
     ],
   );
@@ -2406,7 +2411,7 @@ async function seedLaunchableProjectFixture(
       ids.project,
       flowSource,
       ids.revision.replace(/-/g, "").padEnd(40, "0").slice(0, 40),
-      JSON.stringify(LINEAR_MANIFEST),
+      JSON.stringify(ACCEPTANCE_MANIFEST),
       ids.revision,
     ],
   );
@@ -4887,6 +4892,88 @@ async function seedM22Fixture(
   };
 }
 
+type M43CutoverFixtureRecord = {
+  runId: string;
+};
+
+async function seedM43CutoverFixture(
+  pool: Pool,
+  m22: M22FixtureRecord,
+): Promise<M43CutoverFixtureRecord> {
+  const ids = {
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    session: randomUUID(),
+  };
+  const project = await pool.query<{ id: string; repo_path: string }>(
+    `SELECT id, repo_path FROM projects WHERE slug = $1`,
+    [m22.projectSlug],
+  );
+  const projectRow = project.rows[0];
+
+  if (!projectRow) throw new Error("M43 fixture requires the M22 project");
+
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'legacy-cutover', 'e2e', 'v2.9.0', '/tmp/legacy-cutover',
+       '{"schemaVersion":1,"name":"Legacy cut-over","steps":[]}'::jsonb, 1)`,
+    [ids.flow, projectRow.id],
+  );
+  await pool.query(
+    `INSERT INTO tasks
+       (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2,
+       (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2),
+       'Legacy run closed by engine 3.0', 'Retained cut-over history', $3,
+       'Done', 'Backlog')`,
+    [ids.task, projectRow.id, ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs
+       (id, task_id, project_id, flow_id, status, flow_version, ended_at)
+     VALUES ($1, $2, $3, $4, 'Failed', 'v2.9.0', now())`,
+    [ids.run, ids.task, projectRow.id, ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO run_sessions
+       (id, run_id, session_name, runner_id, runner_resolution_tier,
+        capability_agent, runner_snapshot, acp_session_id, resolution_source)
+     SELECT $1, $2, session_name, runner_id, runner_resolution_tier,
+       capability_agent, runner_snapshot, NULL, resolution_source
+     FROM run_sessions
+     WHERE run_id = $3
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [ids.session, ids.run, m22.runId],
+  );
+  await pool.query(
+    `INSERT INTO workspaces
+       (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+        base_branch, target_branch)
+     VALUES ($1, $2, $3, 'main', $4, $4, 'main', 'main')`,
+    [ids.workspace, ids.run, projectRow.id, projectRow.repo_path],
+  );
+  await pool.query(
+    `INSERT INTO domain_events
+       (kind, project_id, task_id, run_id, actor_type, payload, occurred_at)
+     VALUES ('run.failed', $1, $2, $3, 'system',
+       jsonb_build_object(
+         'runId', $3,
+         'taskId', $2,
+         'flowId', $4,
+         'runKind', 'flow',
+         'reason', 'legacy_steps_engine_3_cutover',
+         'source', 'upgrade_cutover'
+       ), now())`,
+    [projectRow.id, ids.task, ids.run, ids.flow],
+  );
+
+  return { runId: ids.run };
+}
+
 // --- Scratch detail fixture (M35 T3.5) -------------------------------------
 // A scratch run on the shared run shell: WaitingForUser (composer enabled), a
 // committed branch diff (change size + Diff tab), tracked files (Files tab),
@@ -6014,7 +6101,7 @@ async function seedOrchestratorE2EFixture(
     },
   });
 
-  // Override the default LINEAR_MANIFEST with the orchestrator-node graph on
+  // Override the default acceptance manifest with the orchestrator-node graph on
   // BOTH the revision and the project flow row (loadRun reads flows.manifest;
   // the launch precondition compiles the revision manifest).
   await pool.query(
@@ -6146,7 +6233,7 @@ async function seedM38DecideFixture(
       "utf8",
     );
 
-    // Override the LINEAR_MANIFEST default with the M38 graph on the enabled
+    // Override the default acceptance manifest with the M38 graph on the enabled
     // revision (compiled by the launch precondition + read at runtime) and the
     // project flow row (read by loadRun + the board).
     await pool.query(
@@ -6469,6 +6556,7 @@ async function main(): Promise<void> {
     const m18 = await seedM18Fixture(pool, admin.id);
     const m27 = await seedM27Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
+    const m43Cutover = await seedM43CutoverFixture(pool, m22);
     const scratchDetail = await seedScratchDetailFixture(pool, admin.id);
     const m23 = await seedM23Fixture(pool, admin.id);
     const m27Editor = await seedM27FlowEditorFixture(pool, admin.id);
@@ -6531,6 +6619,7 @@ async function main(): Promise<void> {
         m18,
         m27,
         m22,
+        m43Cutover,
         scratchDetail,
         m23,
         m27Editor,

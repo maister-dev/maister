@@ -20,11 +20,13 @@ runner_profiles:
     model: claude-sonnet-4-6
     provider:
       kind: anthropic
-steps:
+nodes:
   - id: plan
-    type: agent
-    mode: new-session
-    prompt: "/plan {{ task.prompt }}"
+    type: ai_coding
+    action:
+      prompt: "/plan {{ task.prompt }}"
+    transitions:
+      success: done
 `;
 
 const VALID_FLOW_YAML_V11 = `schemaVersion: 1
@@ -37,20 +39,24 @@ runner_profiles:
     provider:
       kind: anthropic_compatible
       requires_auth_token: true
-steps:
+nodes:
   - id: plan
-    type: agent
-    mode: new-session
-    prompt: "/plan {{ task.prompt }}"
+    type: ai_coding
+    action:
+      prompt: "/plan {{ task.prompt }}"
+    transitions:
+      success: done
 `;
 
 const INVALID_FLOW_YAML = `schemaVersion: 99
 name: Broken Flow
-steps:
+nodes:
   - id: plan
-    type: agent
-    mode: new-session
-    prompt: "/plan {{ task.prompt }}"
+    type: ai_coding
+    action:
+      prompt: "/plan {{ task.prompt }}"
+    transitions:
+      success: done
 `;
 
 async function gitRun(cwd: string, args: string[]): Promise<void> {

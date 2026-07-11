@@ -8,6 +8,7 @@ import pino from "pino";
 
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
+import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { nextFireAt } from "@/lib/run-schedules/cron";
@@ -178,6 +179,14 @@ export function buildAgentTriggersConsumer(
       const launch = opts.launch ?? launchAgentRun;
 
       for (const event of events) {
+        if (isGraphOnlyCutoverFailure(event)) {
+          log.debug(
+            { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
+            "agent trigger skipped terminal upgrade cut-over",
+          );
+          continue;
+        }
+
         const rows: EventMatchRow[] = await _db
           .select({
             scheduleId: agentSchedules.id,

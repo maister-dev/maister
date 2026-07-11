@@ -69,7 +69,18 @@ beforeAll(async () => {
       source: "github.com/x/y",
       version: "v1.0.0",
       installedPath: `/cache/${slug}`,
-      manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+      manifest: {
+        schemaVersion: 1,
+        name: "Bugfix",
+        nodes: [
+          {
+            id: "run",
+            type: "cli",
+            action: { command: "true" },
+            transitions: { success: "done" },
+          },
+        ],
+      },
       schemaVersion: 1,
     });
   }

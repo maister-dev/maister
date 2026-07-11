@@ -130,6 +130,7 @@ import { DirtyResolutionBanner } from "@/components/runs/dirty-resolution-banner
 import { DeliveryPolicyCancelButton } from "@/components/runs/delivery-policy-cancel-button";
 import { GateChatPanel } from "@/components/runs/gate-chat-panel";
 import { AutoPromotionPanel } from "@/components/runs/auto-promotion-panel";
+import { CutoverFailureBanner } from "@/components/runs/cutover-failure-banner";
 
 type LayoutProps = {
   children: ReactNode;
@@ -958,6 +959,18 @@ export default async function RunDetailLayout({
   const wallClockLabel = t("wallClock");
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
+    ...(detail.cutoverFailure
+      ? [
+          {
+            label: t("cutoverFailureReasonFact"),
+            value: detail.cutoverFailure.reason,
+          },
+          {
+            label: t("cutoverFailureTimeFact"),
+            value: detail.cutoverFailure.occurredAt.toISOString(),
+          },
+        ]
+      : []),
     { label: t("agentCenterRunner"), value: detail.agent },
     { label: t("inspectorRunKind"), value: detail.runKind },
     { label: t("headerBranch"), value: detail.branch },
@@ -1073,6 +1086,7 @@ export default async function RunDetailLayout({
       : showReview
         ? "local"
         : null;
+  const isCutoverHistory = detail.cutoverFailure !== null;
   const policyActions = deriveInspectorActions({
     runId: detail.runId,
     runKind: detail.runKind,
@@ -1094,21 +1108,24 @@ export default async function RunDetailLayout({
     disabled: !action.enabled,
     disabledReason: action.enabled ? null : t("inspectorDisabled"),
   }));
-  const visiblePolicyActions = policyActions.filter(
-    (action) =>
-      !action.disabled ||
-      (detail.status === "Crashed" && action.id === "recover"),
+  const visiblePolicyActions = policyActions.filter((action) =>
+    isCutoverHistory
+      ? action.id === "archive" || action.id === "drop"
+      : !action.disabled ||
+        (detail.status === "Crashed" && action.id === "recover"),
   );
-  const pendingInputActions: RunInspectorAction[] = detail.pendingHitl
-    ? [
-        {
-          id: "openPendingInput",
-          label: t("inspectorActionOpenPendingInput"),
-          href: "#pending-input",
-        },
-      ]
-    : [];
+  const pendingInputActions: RunInspectorAction[] =
+    detail.pendingHitl && !isCutoverHistory
+      ? [
+          {
+            id: "openPendingInput",
+            label: t("inspectorActionOpenPendingInput"),
+            href: "#pending-input",
+          },
+        ]
+      : [];
   const gateChatActions: RunInspectorAction[] =
+    !isCutoverHistory &&
     detail.pendingHitl &&
     (detail.pendingHitl.kind === "human" || detail.pendingHitl.kind === "form")
       ? [
@@ -1294,6 +1311,21 @@ export default async function RunDetailLayout({
             />
           </div>
 
+          {detail.cutoverFailure ? (
+            <CutoverFailureBanner
+              labels={{
+                title: t("cutoverFailureTitle"),
+                reason: t("cutoverFailureReason"),
+                history: t("cutoverFailureHistory"),
+                evidence: t("cutoverFailureEvidence"),
+                worktree: t("cutoverFailureWorktree"),
+              }}
+              locale={locale}
+              occurredAt={detail.cutoverFailure.occurredAt}
+              runId={detail.runId}
+            />
+          ) : null}
+
           {detail.lifecycleActions.length > 0 ? (
             <WorkbenchLifecycleActions
               actions={detail.lifecycleActions}
@@ -1418,7 +1450,7 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
-          {detail.pendingHitl ? (
+          {detail.pendingHitl && !isCutoverHistory ? (
             (() => {
               const staleText = staleSummaryText(
                 detail.pendingHitl.assignmentStaleEvidenceSummary,
@@ -1598,7 +1630,7 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
-          {flowGraphData || showAgentCenter ? (
+          {flowGraphData || showAgentCenter || isCutoverHistory ? (
             <section className="min-w-0 max-w-full" data-testid="run-workbench">
               <WorkbenchPanel
                 diff={

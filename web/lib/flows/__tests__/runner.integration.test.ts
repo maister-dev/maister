@@ -32,7 +32,6 @@ const {
   nodeAttempts,
   projects,
   runs,
-  stepRuns,
   tasks,
   workspaces,
 } = schema;
@@ -55,10 +54,13 @@ const AIF_FIXTURE_PATH = resolve(__dirname, "_fixtures/aif-flow");
 
 const CLI_FLOW_YAML = `schemaVersion: 1
 name: cli-only
-steps:
+nodes:
   - id: hello
     type: cli
-    command: "echo hello {{ task.prompt }}"
+    action:
+      command: "echo hello {{ task.prompt }}"
+    transitions:
+      success: done
 `;
 
 async function setupCliFlowPlugin(): Promise<void> {
@@ -220,8 +222,8 @@ async function seedRun(args: {
   return { runId, taskId };
 }
 
-describe("runFlow integration — cli step end-to-end", () => {
-  it("runs a single cli step and lands in Review", async () => {
+describe("runFlow integration — cli node end-to-end", () => {
+  it("runs a single cli node and lands in Review", async () => {
     const { runId } = await seedRun({
       flowId: cliFlowId,
       taskPrompt: "world",
@@ -242,14 +244,14 @@ describe("runFlow integration — cli step end-to-end", () => {
     expect(after[0].currentStepId).toBeNull();
     expect(after[0].endedAt).not.toBeNull();
 
-    const srRows = await db
+    const attemptRows = await db
       .select()
-      .from(stepRuns)
-      .where(eq(stepRuns.runId, runId));
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, runId));
 
-    expect(srRows.length).toBe(1);
-    expect(srRows[0].status).toBe("Succeeded");
-    expect(String(srRows[0].stdout ?? "")).toContain("hello world");
+    expect(attemptRows).toHaveLength(1);
+    expect(attemptRows[0].status).toBe("Succeeded");
+    expect(String(attemptRows[0].stdout ?? "")).toContain("hello world");
   });
 });
 
@@ -290,14 +292,6 @@ describe("runFlow integration — aif graph dispatch (M11a)", () => {
 
     expect(na.length).toBeGreaterThan(0);
     expect(na.some((r: { nodeId: string }) => r.nodeId === "plan")).toBe(true);
-
-    // Linear-only step_runs must NOT be written for a graph flow.
-    const sr = await db
-      .select()
-      .from(stepRuns)
-      .where(eq(stepRuns.runId, runId));
-
-    expect(sr.length).toBe(0);
   });
 });
 
@@ -377,7 +371,7 @@ describe("installFlowPlugin — local source path", () => {
 describe("runFlow — workspace ownership regression (Codex critical)", () => {
   it("queued run promoted via promoteNextPending writes only inside its own worktree", async () => {
     // Build two queued runs against the cli-only flow with task-specific
-    // prompts so each step's stdout is distinct. Both runs should write
+    // prompts so each node's stdout is distinct. Both runs should write
     // their hello-world echoes into their own per-run worktree, never
     // into the other run's worktree. This is the regression for the
     // pre-fix bug where promoteNextPending passed the prev run's
@@ -392,8 +386,8 @@ describe("runFlow — workspace ownership regression (Codex critical)", () => {
     });
 
     // Inspect each run's workspace row to know which worktree should
-    // see each prompt's stdout (the cli step writes to `cwd`, but the
-    // step_runs.stdout column captures stdout regardless — we use it
+    // see each prompt's stdout (the CLI node writes to `cwd`, while the
+    // node_attempts stdout captures output regardless — we use it
     // as the proxy for "did the right run run in the right context").
     const wsA = await db
       .select()
@@ -424,20 +418,20 @@ describe("runFlow — workspace ownership regression (Codex critical)", () => {
 
     await runFlow(runIdB, { db, runtimeRoot: workspaceRoot });
 
-    const srA = await db
+    const attemptsA = await db
       .select()
-      .from(stepRuns)
-      .where(eq(stepRuns.runId, runIdA));
-    const srB = await db
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, runIdA));
+    const attemptsB = await db
       .select()
-      .from(stepRuns)
-      .where(eq(stepRuns.runId, runIdB));
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, runIdB));
 
-    expect(srA.length).toBe(1);
-    expect(srB.length).toBe(1);
+    expect(attemptsA).toHaveLength(1);
+    expect(attemptsB).toHaveLength(1);
 
-    const stdoutA = String(srA[0].stdout ?? "");
-    const stdoutB = String(srB[0].stdout ?? "");
+    const stdoutA = String(attemptsA[0].stdout ?? "");
+    const stdoutB = String(attemptsB[0].stdout ?? "");
 
     // Each run sees ONLY its own prompt — no cross-talk.
     expect(stdoutA).toContain("hello alpha");
@@ -445,9 +439,8 @@ describe("runFlow — workspace ownership regression (Codex critical)", () => {
     expect(stdoutB).toContain("hello bravo");
     expect(stdoutB).not.toContain("alpha");
 
-    // And the acpSessionId namespace is per-run (no leak in step_runs
-    // rows, since cli steps don't touch ACP at all).
-    expect(srA[0].acpSessionId).toBeNull();
-    expect(srB[0].acpSessionId).toBeNull();
+    // CLI nodes do not attach an ACP session.
+    expect(attemptsA[0].acpSessionId).toBeNull();
+    expect(attemptsB[0].acpSessionId).toBeNull();
   });
 });

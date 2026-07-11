@@ -10,6 +10,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import { ralphMaxAttempts } from "@/lib/instance-config";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { crashRetryFromSnapshot } from "@/lib/runs/execution-policy";
@@ -59,6 +60,13 @@ export function buildRalphLoopConsumer(
 
       for (const event of events) {
         if (event.kind !== "run.failed" || !event.runId) continue;
+        if (isGraphOnlyCutoverFailure(event)) {
+          log.debug(
+            { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
+            "ralph relaunch skipped terminal upgrade cut-over",
+          );
+          continue;
+        }
 
         try {
           const runRows = await _db

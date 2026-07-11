@@ -1770,9 +1770,8 @@ export const experimentRuns = pgTable(
 // a run's runner(s). One row per logical session (`default` / solo / named) for a
 // flow run; exactly one `default` row for a scratch/agent run. The run-level
 // runner columns (runs.{runner_id, runner_resolution_tier, capability_agent,
-// runner_snapshot, acp_session_id}) are dropped in the M42 contract migration
-// once every reader is migrated to this table (expand-contract cutover). Note:
-// `step_runs.acp_session_id` is a SEPARATE per-step-run column and STAYS.
+// runner_snapshot, acp_session_id}) were dropped in the M42 contract migration
+// after every reader moved to this table.
 export const runSessions = pgTable(
   "run_sessions",
   {
@@ -2250,51 +2249,6 @@ export const scratchCapabilityProfiles = pgTable(
   },
 );
 
-export const stepRuns = pgTable(
-  "step_runs",
-  {
-    id: text("id").primaryKey(),
-    runId: text("run_id")
-      .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
-    stepId: text("step_id").notNull(),
-    stepType: text("step_type", {
-      enum: ["cli", "agent", "guard", "human"],
-    }).notNull(),
-    mode: text("mode", { enum: ["new-session", "slash-in-existing"] }),
-    attempt: integer("attempt").notNull().default(1),
-    status: text("status", {
-      enum: [
-        "Pending",
-        "Running",
-        "Succeeded",
-        "Failed",
-        "Skipped",
-        "NeedsInput",
-      ],
-    })
-      .notNull()
-      .default("Pending"),
-    acpSessionId: text("acp_session_id"),
-    stdout: text("stdout"),
-    vars: jsonb("vars").$type<Record<string, unknown>>().notNull().default({}),
-    exitCode: integer("exit_code"),
-    errorCode: text("error_code"),
-    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-    endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
-  },
-  (t) => ({
-    uniqRunStepAttempt: unique("step_runs_run_step_attempt_uq").on(
-      t.runId,
-      t.stepId,
-      t.attempt,
-    ),
-    idxRun: index("step_runs_run_idx").on(t.runId),
-  }),
-);
-
 // --- M11a: Flow graph v1 execution ledger (ADR-027 / ADR-028) -------------
 
 // M11c (ADR-032): one resolved verdict per declared capability class, captured
@@ -2314,9 +2268,7 @@ export type EnforcementSnapshotEntry = {
 };
 
 // Append-only per-node-attempt ledger written by the graph runner. `attempt`
-// auto-increments per (run, node); rework never mutates a prior row. Linear
-// `steps[]` flows compile to nodes and write here too; `step_runs` is retained
-// for legacy reads (templating highest-attempt-wins union).
+// auto-increments per (run, node); rework never mutates a prior row.
 export const nodeAttempts = pgTable(
   "node_attempts",
   {
@@ -2325,9 +2277,7 @@ export const nodeAttempts = pgTable(
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
     nodeId: text("node_id").notNull(),
-    // `guard` is an internal compiled-linear node type (a legacy `guard` step
-    // compiles to a guard node); manifest `nodes[]` use the other five. The DB
-    // column is plain text (no CHECK), so this enum is TS-level only.
+    // The DB column is plain text (no CHECK), so this enum is TS-level only.
     nodeType: text("node_type", {
       enum: [
         "ai_coding",
@@ -2335,15 +2285,13 @@ export const nodeAttempts = pgTable(
         "check",
         "judge",
         "human",
-        "guard",
         "form",
         "orchestrator",
         "consensus",
       ],
     }).notNull(),
     attempt: integer("attempt").notNull().default(1),
-    // PascalCase node-lifecycle vocabulary: extends step_runs (adds
-    // Reworked/Stale, omits Skipped). Distinct from gate_results.status.
+    // PascalCase node-lifecycle vocabulary. Distinct from gate_results.status.
     status: text("status", {
       enum: [
         "Pending",
@@ -3410,7 +3358,6 @@ export type ScratchAttachment = typeof scratchAttachments.$inferSelect;
 export type ScratchCapabilityProfile =
   typeof scratchCapabilityProfiles.$inferSelect;
 export type HitlRequest = typeof hitlRequests.$inferSelect;
-export type StepRun = typeof stepRuns.$inferSelect;
 export type NodeAttempt = typeof nodeAttempts.$inferSelect;
 export type NodeAttemptStatus = NodeAttempt["status"];
 export type NodeAttemptType = NodeAttempt["nodeType"];

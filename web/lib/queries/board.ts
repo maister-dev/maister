@@ -2,7 +2,7 @@ import "server-only";
 
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { BoardColumn, CrashAction } from "@/lib/board";
-import type { RunStatus, StepRun } from "@/lib/db/schema";
+import type { RunStatus } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskRelationView } from "@/lib/social/relations";
@@ -39,7 +39,6 @@ const {
   nodeAttempts,
   projects,
   runs,
-  stepRuns,
   taskRelations,
   tasks,
   users,
@@ -432,22 +431,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   }
 
   const latestRunIds = [...latestRunByTask.values()].map((r) => r.runId);
-  const stepsByRun = new Map<string, StepRun[]>();
   const nodeAttemptsByRun = new Map<string, ProgressNodeAttempt[]>();
 
   if (latestRunIds.length > 0) {
-    const stepRows = await client
-      .select()
-      .from(stepRuns)
-      .where(inArray(stepRuns.runId, latestRunIds));
-
-    for (const step of stepRows) {
-      const list = stepsByRun.get(step.runId) ?? [];
-
-      list.push(step);
-      stepsByRun.set(step.runId, list);
-    }
-
     const nodeAttemptRows = await client
       .select({
         attempt: nodeAttempts.attempt,
@@ -600,14 +586,12 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       continue;
     }
 
-    const steps = stepsByRun.get(run.runId) ?? [];
     const cardStatus = runStatusToCard(run.status);
     const progress = buildFlightProgress({
       currentStepId: run.currentStepId,
       manifest: task.flowManifest,
       nodeAttempts: nodeAttemptsByRun.get(run.runId) ?? [],
       runStatus: run.status,
-      stepRuns: steps,
     });
     const takeover =
       cardStatus === "humanworking"

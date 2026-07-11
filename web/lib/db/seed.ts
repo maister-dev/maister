@@ -139,7 +139,18 @@ async function main(): Promise<void> {
       source: "github.com/maister/maister-flow-bugfix",
       version: "v0.0.1",
       installedPath: "/home/maister/.maister/flows/bugfix@v0.0.1",
-      manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+      manifest: {
+        schemaVersion: 1,
+        name: "Bugfix",
+        nodes: [
+          {
+            id: "run",
+            type: "cli",
+            action: { command: "true" },
+            transitions: { success: "done" },
+          },
+        ],
+      },
       schemaVersion: 1,
     });
     log.info({ table: "flows", id: flowId, refId: "bugfix" }, "inserted");

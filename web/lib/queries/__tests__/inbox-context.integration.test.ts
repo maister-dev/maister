@@ -41,15 +41,6 @@ const TWO_NODE_MANIFEST = {
   ],
 };
 
-const LEGACY_LINEAR_MANIFEST = {
-  schemaVersion: 1,
-  name: "legacy-linear",
-  steps: [
-    { id: "build", type: "cli" },
-    { id: "review", type: "human" },
-  ],
-};
-
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("inbox_context_test")
@@ -234,30 +225,6 @@ describe("getInboxCardContext (integration)", () => {
 
     expect(withFlow.progress).toEqual({ done: 1, total: 2 });
     expect(degraded.progress).toBeNull();
-  });
-
-  it("counts succeeded step_runs (not node_attempts) for legacy linear runs", async () => {
-    const seed = await seedRun({
-      manifest: LEGACY_LINEAR_MANIFEST,
-      currentStepId: "review",
-    });
-
-    // Legacy `steps[]` runs ledger progress in step_runs; a legacy run has no
-    // node_attempts, so counting only that table would render 0/2.
-    await db.insert(schema.stepRuns).values({
-      id: randomUUID(),
-      runId: seed.runId,
-      stepId: "build",
-      stepType: "cli",
-      attempt: 1,
-      status: "Succeeded",
-      startedAt: new Date("2026-06-01T09:00:00.000Z"),
-      endedAt: new Date("2026-06-01T09:01:00.000Z"),
-    });
-
-    const ctx = await loadContext({ ...seed, currentStepId: "review" });
-
-    expect(ctx.progress).toEqual({ done: 1, total: 2 });
   });
 
   it("returns the trailing agent message from run.events.jsonl", async () => {

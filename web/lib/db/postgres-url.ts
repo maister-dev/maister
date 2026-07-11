@@ -1,4 +1,4 @@
-import { MaisterError } from "../errors";
+import { MaisterError } from "../errors-core";
 
 const POSTGRES_PROTOCOLS = new Set(["postgres:", "postgresql:"]);
 

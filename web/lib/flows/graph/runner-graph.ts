@@ -1897,6 +1897,9 @@ export async function runGraph(
   );
   const isNeedsInputResume =
     loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
+  const isExternallyCompletedResume =
+    isNeedsInputResume &&
+    opts.completedResume?.targetStepId === loaded.run.currentStepId;
 
   // M11b (ADR-030, 3.3 CRITICAL): a takeover RETURN flips the run to `Running`
   // (the AFTER-side marker) and parks `current_step_id` at the
@@ -2192,7 +2195,12 @@ export async function runGraph(
   // paths return BEFORE that section, so the token survives WaitingOnChildren.
   let orchestratorTokenIssued = false;
 
-  let currentNodeId: string | null = resumeNodeId ?? graph.entry;
+  const completedResumeNode = isExternallyCompletedResume
+    ? graph.nodes.get(resumeNodeId as string)
+    : null;
+  let currentNodeId: string | null = completedResumeNode
+    ? resolveTransition(completedResumeNode, "success")
+    : (resumeNodeId ?? graph.entry);
   // M30 (ADR-080): set when a failed attempt schedules an auto-retry — the
   // next iteration of the SAME node appends its attempt with auto_retry=true.
   let pendingAutoRetryNodeId: string | null = null;
@@ -2708,7 +2716,6 @@ export async function runGraph(
         run: loaded.run,
         // M42 (ADR-114): `{{ executor.* }}` reflects the node's session runner.
         executor: nodeExecutor,
-        stepRuns: [],
         nodeAttempts: attempts,
         projectSlug: loaded.projectSlug,
         extraVars: { ...declaredCommentsVars, ...(pendingInjectedVars ?? {}) },

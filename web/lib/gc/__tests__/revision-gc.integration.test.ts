@@ -48,7 +48,18 @@ let executorId: string;
 let flowId: string;
 let userId: string;
 
-const MANIFEST = { schemaVersion: 1, name: "revgc", steps: [] };
+const MANIFEST = {
+  schemaVersion: 1,
+  name: "revgc",
+  nodes: [
+    {
+      id: "run",
+      type: "cli",
+      action: { command: "true" },
+      transitions: { success: "done" },
+    },
+  ],
+};
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")

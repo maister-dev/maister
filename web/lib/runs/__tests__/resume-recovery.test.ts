@@ -20,7 +20,6 @@ vi.mock("@/lib/db/schema", () => ({
     updatedAt: { _t: "run_sessions.updatedAt" },
   },
   flows: { _t: "flows" },
-  stepRuns: { _t: "step_runs" },
   // M11b: resume-recovery now also references these tags for the
   // takeover-return stranded-Running sweep (runTakeoverReturnRecoverySweep).
   // The Codex-fix-#2 sweep under test never touches them, but the

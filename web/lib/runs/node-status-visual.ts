@@ -7,9 +7,7 @@
 // keys NODE_STATUS_TONE_CLASS for the icon color; `i18nKey` resolves the
 // localized status label for the accessible tooltip name.
 
-// Canonical node-attempt status vocabulary (node_attempts.status:
-// Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale) plus the legacy
-// linear `Skipped` (step_runs) which RunNodeStatuses can surface.
+// Canonical node-attempt status vocabulary (node_attempts.status).
 export const NODE_STATUS_KEYS = [
   "Pending",
   "Running",
@@ -18,7 +16,6 @@ export const NODE_STATUS_KEYS = [
   "NeedsInput",
   "Reworked",
   "Stale",
-  "Skipped",
 ] as const;
 
 export type NodeStatusKey = (typeof NODE_STATUS_KEYS)[number];
@@ -30,8 +27,7 @@ export type NodeStatusTone =
   | "failed"
   | "needs"
   | "rework"
-  | "stale"
-  | "skipped";
+  | "stale";
 
 export interface NodeStatusVisual {
   // @heroicons/react/24/outline export name resolved by the render site.
@@ -54,7 +50,6 @@ const NODE_STATUS_VISUALS: Record<
   NeedsInput: { iconName: "HandRaisedIcon", tone: "needs" },
   Reworked: { iconName: "ArrowUturnLeftIcon", tone: "rework" },
   Stale: { iconName: "ExclamationTriangleIcon", tone: "stale" },
-  Skipped: { iconName: "MinusCircleIcon", tone: "skipped" },
 };
 
 // Unknown/absent status → neutral pending visual, never a throw.
@@ -84,5 +79,4 @@ export const NODE_STATUS_TONE_CLASS: Record<NodeStatusTone, string> = {
   needs: "text-amber",
   rework: "text-amber",
   stale: "text-amber",
-  skipped: "text-mute",
 };

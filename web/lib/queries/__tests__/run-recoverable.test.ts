@@ -87,13 +87,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
   });
 
   it("every session-less node kind is recoverable ONLY when retry_safe", () => {
-    const sessionLess: NodeAttemptType[] = [
-      "cli",
-      "check",
-      "judge",
-      "human",
-      "guard",
-    ];
+    const sessionLess: NodeAttemptType[] = ["cli", "check", "judge", "human"];
 
     for (const kind of sessionLess) {
       expect(

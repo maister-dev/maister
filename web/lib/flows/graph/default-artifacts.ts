@@ -72,8 +72,7 @@ async function safeHeadRef(workspace: WorkspaceRow): Promise<string> {
 
 export type RecordDefaultArtifactsArgs = {
   runId: string;
-  nodeAttemptId?: string;
-  stepRunId?: string;
+  nodeAttemptId: string;
   nodeId: string;
   attempt: number;
   projectSlug: string;
@@ -89,9 +88,7 @@ export type RecordDefaultArtifactsArgs = {
 //   (runId, nodeId) → kind "human_note", locator hitl-response
 // - diff: always → kind "diff", locator git-range
 //
-// Deterministic id: run:<nodeAttemptId>:default:<kind> when nodeAttemptId
-// present; else (linear) run:<stepRunId>:default:<kind> with
-// node_attempt_id column = NULL, node_id = <nodeId>.
+// Deterministic id: run:<nodeAttemptId>:default:<kind>.
 export async function recordDefaultArtifacts(
   args: RecordDefaultArtifactsArgs,
   db: Db,
@@ -99,7 +96,6 @@ export async function recordDefaultArtifacts(
   const {
     runId,
     nodeAttemptId,
-    stepRunId,
     nodeId,
     attempt,
     workspace,
@@ -109,16 +105,13 @@ export async function recordDefaultArtifacts(
 
   const runDir = path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
 
-  // Deterministic id prefix: either nodeAttemptId (graph) or stepRunId (linear).
-  const idBase = nodeAttemptId ?? stepRunId ?? `noid-${nodeId}`;
-
   function makeId(kind: string): string {
-    return `run:${idBase}:default:${kind}`;
+    return `run:${nodeAttemptId}:default:${kind}`;
   }
 
   const baseArgs = {
     runId,
-    nodeAttemptId: nodeAttemptId ?? null,
+    nodeAttemptId,
     nodeId,
     attempt,
     producer: "runner" as const,

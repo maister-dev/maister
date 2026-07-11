@@ -67,6 +67,7 @@ export type RunsListRow = {
   status: RunStatus;
   taskLabel: string;
   tokensTotal: number | null;
+  cutoverFailedAt: Date | null;
 };
 
 export type RunsListPage = {
@@ -126,6 +127,7 @@ type RawRunsListRow = {
     | "webhook"
     | "flow"
     | null;
+  cutover_failed_at: Date | string | null;
 };
 
 type RawRunsListCountRow = {
@@ -317,6 +319,7 @@ function runsListQuery(args: {
       c.output_tokens,
       c.cache_read_tokens,
       c.cache_creation_tokens
+      , cutover.failed_at AS cutover_failed_at
     FROM runs r
     INNER JOIN projects p ON p.id = r.project_id
     LEFT JOIN tasks t ON t.id = r.task_id
@@ -329,6 +332,16 @@ function runsListQuery(args: {
       LIMIT 1
     ) w ON true
     LEFT JOIN run_cost_rollups c ON c.run_id = r.id
+    LEFT JOIN LATERAL (
+      SELECT de.created_at AS failed_at
+      FROM domain_events de
+      WHERE de.run_id = r.id
+        AND de.kind = 'run.failed'
+        AND de.payload->>'reason' = 'legacy_steps_engine_3_cutover'
+        AND de.payload->>'source' = 'upgrade_cutover'
+      ORDER BY de.created_at DESC
+      LIMIT 1
+    ) cutover ON true
     LEFT JOIN LATERAL (
       SELECT s.id, s.name
       FROM run_schedules s
@@ -479,6 +492,7 @@ function toRunsListRow(row: RawRunsListRow): RunsListRow {
     status: row.status,
     taskLabel: taskLabel(row),
     tokensTotal: tokensTotal(row),
+    cutoverFailedAt: coerceNullableDate(row.cutover_failed_at ?? null),
   };
 }
 

@@ -134,7 +134,7 @@ describe("installFlowPlugin (integration)", () => {
     await mkdir(localDir, { recursive: true });
     await writeFile(
       join(localDir, "flow.yaml"),
-      "schemaVersion: 1\nname: Local Override Flow\nsteps:\n  - id: step1\n    type: cli\n    command: echo hi\n",
+      "schemaVersion: 1\nname: Local Override Flow\nnodes:\n  - id: step1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
       "utf8",
     );
 

@@ -132,7 +132,7 @@ export async function appendNodeAttempt(args: {
   return { id, attempt };
 }
 
-// Status-only transition (mirrors the linear markStepRunning). The per-attempt
+// Status-only transition. The per-attempt
 // acpSessionId is recorded by markNodeSucceeded when the action returns one, so
 // re-entering/resuming an attempt never clobbers a previously recorded id.
 export async function markNodeRunning(

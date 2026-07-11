@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { isMaisterError } from "@/lib/errors";
-
 import { maskDbUrl, resolvePostgresDbUrl } from "../postgres-url";
+
+import { isMaisterError } from "@/lib/errors";
 
 describe("Postgres DB URL boundary", () => {
   it.each([

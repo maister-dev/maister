@@ -99,7 +99,14 @@ async function seedProject(slug: string) {
     manifest: {
       schemaVersion: 1,
       name: "Bugfix",
-      steps: [{ id: "review", type: "human_review" }],
+      nodes: [
+        {
+          id: "review",
+          type: "human",
+          finish: { human: { decisions: ["approve"] } },
+          transitions: { approve: "done" },
+        },
+      ],
     },
     schemaVersion: 1,
   });

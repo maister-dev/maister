@@ -50,7 +50,6 @@ const {
   projects,
   runCostRollups,
   runs,
-  stepRuns,
   workspaces,
 } = schema;
 
@@ -233,15 +232,6 @@ async function countSucceededNodes(client: Db, runId: string): Promise<number> {
   return new Set(rows.map((r) => r.nodeId)).size;
 }
 
-async function countSucceededSteps(client: Db, runId: string): Promise<number> {
-  const rows = await client
-    .select({ stepId: stepRuns.stepId })
-    .from(stepRuns)
-    .where(and(eq(stepRuns.runId, runId), eq(stepRuns.status, "Succeeded")));
-
-  return new Set(rows.map((r) => r.stepId)).size;
-}
-
 async function loadProgress(
   client: Db,
   run: InboxContextRun,
@@ -257,13 +247,7 @@ async function loadProgress(
 
     if (total === 0) return null;
 
-    // Graph (`nodes[]`) runs ledger progress in node_attempts; legacy linear
-    // (`steps[]`) runs record it in step_runs (runner.ts:184 dispatch). Counting
-    // only node_attempts would render every legacy run as 0/N.
-    const isLinear = Array.isArray(manifest.steps) && manifest.steps.length > 0;
-    const done = isLinear
-      ? await countSucceededSteps(client, run.id)
-      : await countSucceededNodes(client, run.id);
+    const done = await countSucceededNodes(client, run.id);
 
     return { done: Math.min(done, total), total };
   } catch (err) {

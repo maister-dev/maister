@@ -1,5 +1,5 @@
 import type { FlowYamlV1 } from "@/lib/config.schema";
-import type { NodeAttempt, RunStatus, StepRun } from "@/lib/db/schema";
+import type { NodeAttempt, RunStatus } from "@/lib/db/schema";
 import type {
   ActiveNodeState,
   ActiveNodeStatus,
@@ -15,14 +15,11 @@ export type ProgressNodeAttempt = Pick<
   "attempt" | "nodeId" | "startedAt" | "status"
 >;
 
-export type ProgressStepRun = Pick<StepRun, "startedAt" | "status" | "stepId">;
-
 export interface FlightProgressInput {
   currentStepId: string | null;
   manifest: unknown;
   nodeAttempts: ProgressNodeAttempt[];
   runStatus: RunStatus;
-  stepRuns: ProgressStepRun[];
 }
 
 export interface FlightProgress {
@@ -34,12 +31,9 @@ export interface FlightProgress {
 function hasRunnableManifest(manifest: unknown): manifest is FlowYamlV1 {
   if (typeof manifest !== "object" || manifest === null) return false;
 
-  const candidate = manifest as { nodes?: unknown; steps?: unknown };
+  const candidate = manifest as { nodes?: unknown };
 
-  return (
-    (Array.isArray(candidate.nodes) && candidate.nodes.length > 0) ||
-    (Array.isArray(candidate.steps) && candidate.steps.length > 0)
-  );
+  return Array.isArray(candidate.nodes) && candidate.nodes.length > 0;
 }
 
 function isLaterAttempt(
@@ -185,59 +179,18 @@ function graphSpine(input: FlightProgressInput): FlightProgress | null {
   };
 }
 
-function stepRunTone(status: ProgressStepRun["status"]): ActiveNodeState {
-  return status === "NeedsInput" ? "needs" : "running";
-}
-
-function legacyStepSegment(step: ProgressStepRun): SpineSegment {
-  if (step.status === "Succeeded") return { state: "done" };
-  if (step.status === "Skipped") return { state: "skip" };
-  if (step.status === "Running" || step.status === "NeedsInput") {
-    return { state: "active", tone: stepRunTone(step.status) };
-  }
-
-  return { state: "todo" };
-}
-
-function legacyActiveNode(
-  input: FlightProgressInput,
-  ordered: ProgressStepRun[],
-): ActiveNodeStatus | null {
-  const activeStep = ordered.find(
-    (step) => step.status === "Running" || step.status === "NeedsInput",
-  );
-
-  if (!activeStep) return null;
-
+function unavailableGraphProgress(input: FlightProgressInput): FlightProgress {
   return {
-    label: activeStep.stepId,
-    state: stepRunTone(activeStep.status),
-  };
-}
-
-function legacyStepProgress(input: FlightProgressInput): FlightProgress {
-  const ordered = [...input.stepRuns].sort(
-    (a, b) => a.startedAt.getTime() - b.startedAt.getTime(),
-  );
-  const activeNode = legacyActiveNode(input, ordered);
-  const spine = ordered
-    .slice(0, LEGACY_SPINE_LENGTH)
-    .map((step) => legacyStepSegment(step));
-
-  while (spine.length < LEGACY_SPINE_LENGTH) {
-    spine.push({ state: "todo" });
-  }
-
-  return {
-    activeNode,
-    spine,
-    stepLabel:
-      activeNode?.label ?? input.currentStepId ?? input.runStatus.toLowerCase(),
+    activeNode: null,
+    spine: Array.from({ length: LEGACY_SPINE_LENGTH }, () => ({
+      state: "todo" as const,
+    })),
+    stepLabel: input.currentStepId ?? input.runStatus.toLowerCase(),
   };
 }
 
 export function buildFlightProgress(
   input: FlightProgressInput,
 ): FlightProgress {
-  return graphSpine(input) ?? legacyStepProgress(input);
+  return graphSpine(input) ?? unavailableGraphProgress(input);
 }

@@ -254,7 +254,7 @@ describe("local-package git diff/commit/discard (integration)", () => {
     await writeWorkingDirFile(
       pkg,
       "flows/ok/flow.yaml",
-      "schemaVersion: 1\nname: ok\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n",
+      "schemaVersion: 1\nname: ok\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
     );
 
     await commitWorkingDir(pkg, "add valid flow");

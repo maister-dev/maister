@@ -22,7 +22,6 @@ const EXPECTED_TONE: Record<NodeStatusKey, NodeStatusTone> = {
   NeedsInput: "needs",
   Reworked: "rework",
   Stale: "stale",
-  Skipped: "skipped",
 };
 
 describe("nodeStatusVisual", () => {

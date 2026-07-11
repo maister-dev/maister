@@ -161,7 +161,14 @@ async function seedProject(slug: string) {
     manifest: {
       schemaVersion: 1,
       name: "Bugfix",
-      steps: [{ id: "run", type: "cli", command: "echo ok" }],
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "echo ok" },
+          transitions: { success: "done" },
+        },
+      ],
     },
     schemaVersion: 1,
     packageStatus: "Installed",
@@ -178,7 +185,14 @@ async function seedProject(slug: string) {
     manifest: {
       schemaVersion: 1,
       name: "Bugfix",
-      steps: [{ id: "run", type: "cli", command: "echo ok" }],
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "echo ok" },
+          transitions: { success: "done" },
+        },
+      ],
     },
     schemaVersion: 1,
     enabledRevisionId: revisionId,

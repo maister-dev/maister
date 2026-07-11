@@ -4,8 +4,8 @@
 //     close the stored intent (no markIntentAbandoned) and MUST roll
 //     the run back to NeedsInputIdle so the next /respond retry can
 //     re-resume.
-//   * #3: on the happy path the driver hands off to runFlow for any
-//     remaining steps instead of directly transitioning to Review.
+//   * #3: on the happy path the driver records the node attempt and lets the
+//     graph runner continue from its success edge.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -57,11 +57,11 @@ vi.mock("@/lib/experiments/status-sync", () => ({
 const { rollbackResumedRunSpy, crashResumedRunSpy, failResumedRunSpy } =
   stateTransitionSpies;
 
-const markStepSucceededSpy = vi.fn();
+const markNodeSucceededSpy = vi.fn();
 
-vi.mock("@/lib/flows/step-runs", () => ({
-  markStepSucceeded: (...args: unknown[]) =>
-    markStepSucceededSpy(...(args as unknown[])),
+vi.mock("@/lib/flows/graph/ledger", () => ({
+  markNodeSucceeded: (...args: unknown[]) =>
+    markNodeSucceededSpy(...(args as unknown[])),
 }));
 
 // runFlow continuation hook — spy to assert hand-off happens.
@@ -81,13 +81,17 @@ vi.mock("@/lib/scheduler", () => ({
     promoteNextPendingSpy(...(args as unknown[])),
 }));
 
+vi.mock("@/lib/webhooks/outbox", () => ({
+  emitWebhookEvent: vi.fn(async () => undefined),
+}));
+
 // Db chain mocks.
 type Row = Record<string, unknown>;
 const dbState: {
   hitlRow: Row | null;
   runRow: Row | null;
-  flowManifest: { steps?: Array<{ id: string }> };
-  openStepRun: Row | null;
+  runSession: Row | null;
+  openNodeAttempt: Row | null;
   updateWhereCalls: number;
   updateReturningCount: number;
   hitlRespondedAt: Date | null;
@@ -95,8 +99,8 @@ const dbState: {
 } = {
   hitlRow: null,
   runRow: null,
-  flowManifest: { steps: [] },
-  openStepRun: null,
+  runSession: null,
+  openNodeAttempt: null,
   updateWhereCalls: 0,
   updateReturningCount: 1,
   hitlRespondedAt: null,
@@ -104,20 +108,25 @@ const dbState: {
 };
 
 // Tagged schema mocks — the driver does `import * as schemaModule
-// from "@/lib/db/schema"; const {hitlRequests, runs, flows, stepRuns}
+// from "@/lib/db/schema"; const {hitlRequests, nodeAttempts, runs}
 // = schemaModule as ...`. By mocking schemaModule we get to control
 // what the driver sees, and the fake db chain can dispatch off the
 // tag to return the right rows.
 const TABLE_HITL = { _t: "hitl_requests" } as const;
 const TABLE_RUNS = { _t: "runs" } as const;
-const TABLE_FLOWS = { _t: "flows" } as const;
-const TABLE_STEPRUNS = { _t: "step_runs" } as const;
+const TABLE_NODE_ATTEMPTS = { _t: "node_attempts" } as const;
+const TABLE_RUN_SESSIONS = {
+  _t: "run_sessions",
+  runId: { _t: "run_sessions.runId" },
+  acpSessionId: { _t: "run_sessions.acpSessionId" },
+  updatedAt: { _t: "run_sessions.updatedAt" },
+} as const;
 
 vi.mock("@/lib/db/schema", () => ({
   hitlRequests: TABLE_HITL,
   runs: TABLE_RUNS,
-  flows: TABLE_FLOWS,
-  stepRuns: TABLE_STEPRUNS,
+  nodeAttempts: TABLE_NODE_ATTEMPTS,
+  runSessions: TABLE_RUN_SESSIONS,
 }));
 
 const selectChainFactory = () => {
@@ -132,11 +141,11 @@ const selectChainFactory = () => {
         if (tableTag === "runs") {
           return dbState.runRow ? [dbState.runRow] : [];
         }
-        if (tableTag === "flows") {
-          return [{ manifest: dbState.flowManifest }];
+        if (tableTag === "run_sessions") {
+          return dbState.runSession ? [dbState.runSession] : [];
         }
-        if (tableTag === "step_runs") {
-          return dbState.openStepRun ? [dbState.openStepRun] : [];
+        if (tableTag === "node_attempts") {
+          return dbState.openNodeAttempt ? [dbState.openNodeAttempt] : [];
         }
 
         return [];
@@ -150,7 +159,7 @@ const selectChainFactory = () => {
           // explicit `.then` AND `.limit`. The `.then` follows the
           // PromiseLike contract: call onFulfilled with the value
           // and return undefined.
-          return {
+          const query = {
             then(
               onFulfilled: (rows: Row[]) => unknown,
               onRejected?: (err: unknown) => unknown,
@@ -165,7 +174,10 @@ const selectChainFactory = () => {
               }
             },
             limit: async () => resolveRows(),
+            orderBy: () => query,
           };
+
+          return query;
         },
       };
     },
@@ -245,8 +257,15 @@ beforeEach(async () => {
     currentStepId: "review",
     acpSessionId: "acp-1",
   };
-  dbState.flowManifest = { steps: [{ id: "review" }] };
-  dbState.openStepRun = { id: "step-run-1" };
+  dbState.runSession = {
+    sessionName: "default",
+    acpSessionId: "acp-1",
+    runnerSnapshot: null,
+    capabilityAgent: "claude",
+    runnerId: "runner-1",
+    runnerResolutionTier: "projectDefault",
+  };
+  dbState.openNodeAttempt = { id: "node-attempt-1" };
   dbState.updateWhereCalls = 0;
   dbState.updateReturningCount = 1;
   dbState.hitlRespondedAt = null;
@@ -260,7 +279,7 @@ beforeEach(async () => {
   rollbackResumedRunSpy.mockReset();
   crashResumedRunSpy.mockReset();
   failResumedRunSpy.mockReset();
-  markStepSucceededSpy.mockReset();
+  markNodeSucceededSpy.mockReset();
   runFlowSpy.mockReset();
   promoteNextPendingSpy.mockReset();
   promoteNextPendingSpy.mockResolvedValue({ promotedRunId: null });
@@ -342,7 +361,12 @@ describe("runResumedSession — promoteNextPending on terminal transitions (Code
   it("crashResumedRun (no permission watchdog) calls promoteNextPending", async () => {
     streamSessionSpy.mockReturnValue(asyncIter([]));
     // No permission_request event arrives — but prompt resolves cleanly.
-    sendPromptSpy.mockResolvedValue({ stopReason: "end_turn" });
+    sendPromptSpy.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ stopReason: "end_turn" }), 0);
+        }),
+    );
     crashResumedRunSpy.mockResolvedValue({ ok: true });
 
     await runResumedSession({
@@ -403,16 +427,43 @@ describe("runResumedSession — promoteNextPending on terminal transitions (Code
   });
 });
 
-// [FIX-PASS2-F3] flow continuation hand-off (markStepSucceeded +
-// runFlow scheduling on end_turn) is exercised via the
-// `completeResumedStepAndHandoff` helper and the runFlow microtask.
-// Local unit-testing the happy path requires faithfully simulating
-// the abort-signal interaction with the consumer's for-await loop —
-// the runner-agent's existing testbed (a real testcontainer postgres
-// + mock-acp-adapter) is the right venue, and the M8 spike
-// integration test in `supervisor/src/__tests__/m8-resume-spike.integration.test.ts`
-// already verifies the wire-level cancel→checkpoint→resume→re-issue
-// contract this driver depends on. The completion handoff itself is
-// covered by the F3 regression line in the patches log and the
-// Codex follow-up integration test queued for the Docker-enabled CI
-// run.
+describe("runResumedSession — graph-only completion handoff", () => {
+  it("persists the open node attempt and continues from its success edge", async () => {
+    streamSessionSpy.mockReturnValue(
+      asyncIter([
+        {
+          type: "session.permission_request",
+          requestId: "req-reissued",
+        },
+      ]),
+    );
+    deliverPermissionSpy.mockResolvedValue(undefined);
+    sendPromptSpy.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ stopReason: "end_turn" }), 0);
+        }),
+    );
+    markNodeSucceededSpy.mockResolvedValue(undefined);
+    runFlowSpy.mockResolvedValue(undefined);
+
+    await runResumedSession({
+      runId: "run-1",
+      supervisorSessionId: "sup-2",
+      acpSessionId: "acp-1",
+      stepId: "review",
+      db: fakeDb,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(markNodeSucceededSpy).toHaveBeenCalledWith(
+      "node-attempt-1",
+      expect.objectContaining({ acpSessionId: "acp-1", exitCode: 0 }),
+      fakeDb,
+    );
+    expect(runFlowSpy).toHaveBeenCalledWith("run-1", {
+      db: fakeDb,
+      completedResume: { targetStepId: "review" },
+    });
+  });
+});

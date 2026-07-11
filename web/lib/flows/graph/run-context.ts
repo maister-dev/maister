@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { GateResult, NodeAttempt, StepRun } from "@/lib/db/schema";
+import type { GateResult, NodeAttempt } from "@/lib/db/schema";
 import type { Db } from "./runner-core";
 
 import { execFile } from "node:child_process";
@@ -52,7 +52,6 @@ export type BuildRunContextArgs = {
   taskPrompt: string;
   nodeAttempts: NodeAttempt[];
   gateResults: GateResult[];
-  stepRuns?: StepRun[];
   outputTruncationBytes?: number;
   // ADR-122: ambient brain projection (already recalled). Absent = no ambient.
   brain?: BrainAmbientEntry[];
@@ -64,7 +63,7 @@ export type BuildRunContextArgs = {
 // are last-wins by `reduceLedger` node-iteration order).
 export function buildRunContext(args: BuildRunContextArgs): RunContextFile {
   const cap = args.outputTruncationBytes ?? DEFAULT_OUTPUT_TRUNCATION;
-  const ledger = reduceLedger(args.stepRuns ?? [], args.nodeAttempts, cap);
+  const ledger = reduceLedger(args.nodeAttempts, cap);
 
   const nodes: RunContextFile["nodes"] = {};
   const promoted: Record<string, unknown> = {};

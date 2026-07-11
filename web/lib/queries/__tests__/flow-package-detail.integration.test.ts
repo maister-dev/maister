@@ -25,7 +25,18 @@ let getFlowPackageDetail: typeof import("@/lib/queries/flow-packages").getFlowPa
 
 const PROJECT_ID = randomUUID();
 const REVISION_ID = randomUUID();
-const MANIFEST = { schemaVersion: 1, name: "aif-dev", steps: [] };
+const MANIFEST = {
+  schemaVersion: 1,
+  name: "aif-dev",
+  nodes: [
+    {
+      id: "run",
+      type: "cli",
+      action: { command: "true" },
+      transitions: { success: "done" },
+    },
+  ],
+};
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")

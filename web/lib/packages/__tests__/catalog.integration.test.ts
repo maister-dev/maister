@@ -66,7 +66,7 @@ beforeAll(async () => {
   );
   await writeFile(
     join(fixtureRepo, "packages/aif/flows/dev/flow.yaml"),
-    "schemaVersion: 1\nname: aif-dev\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n",
+    "schemaVersion: 1\nname: aif-dev\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
   );
   await git(fixtureRepo, "add", "-A");
   await git(fixtureRepo, "commit", "-m", "init");

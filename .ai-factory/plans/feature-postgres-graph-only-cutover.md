@@ -615,7 +615,7 @@ in-code grammar drift guard, i18n parity, typecheck,
 
 ### Phase 3 — D1/D2 destructive migration and graph-only read models
 
-- [ ] **Task 11 — Implement migration 0093 with D2 before D1.**
+- [x] **Task 11 — Implement migration 0093 with D2 before D1.**
   Generate the migration triple, then hand-audit SQL order. In one transaction:
   abort on ambiguous actionable rows; materialize the exact legacy candidate
   relation from key-presence in pinned revision manifest with unpinned-flow
@@ -639,7 +639,7 @@ in-code grammar drift guard, i18n parity, typecheck,
   real-PG migration integration is the primary owner—RED per invariant cluster,
   GREEN SQL, REFACTOR only after full transaction/idempotency matrix is green.
 
-- [ ] **Task 12 — Delete the step store/read-unions and mature D2 history UX.**
+- [x] **Task 12 — Delete the step store/read-unions and mature D2 history UX.**
   Delete `web/lib/flows/step-runs.ts` and schema/type exports. Remove step-run
   joins/unions from board, progress, activity, inbox context, Flow context,
   graph run context, node-status visuals, and resume driver. Derive every live
@@ -658,7 +658,7 @@ in-code grammar drift guard, i18n parity, typecheck,
   the query integration from component control/banner tests and one seeded E2E
   history check.
 
-- [ ] **Task 13 — Migrate the fixture/test surface and delete linear-only tests.**
+- [x] **Task 13 — Migrate the fixture/test surface and delete linear-only tests.**
   Change `build-flow-plugin.ts`, DB seeds, E2E seed, local-package scaffold, and
   generic test manifests to minimal valid nodes graphs. Delete tests whose sole
   contract is linear execution/on_reject/guard/slash-in-existing/step-run

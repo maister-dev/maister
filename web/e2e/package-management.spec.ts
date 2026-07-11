@@ -41,7 +41,7 @@ function buildPackageRepo(): string {
   );
   writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
-    `schemaVersion: 1\nname: ${RUN_TAG}-flow\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n`,
+    `schemaVersion: 1\nname: ${RUN_TAG}-flow\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
   );
   git(repo, "add", "-A");
   git(repo, "commit", "-m", "init");

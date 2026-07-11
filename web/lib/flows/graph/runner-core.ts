@@ -40,6 +40,9 @@ export type RunFlowOptions = {
   db?: Db;
   runtimeRoot?: string;
   supervisorApi?: SupervisorApi;
+  // A detached ACP resume driver already completed this node. Claim the
+  // NeedsInput run and continue at its success edge without re-dispatching it.
+  completedResume?: { targetStepId: string };
   // M19 crash-recover (ADR-034): set by driveResume when re-dispatching a
   // crashed `retry_safe` session-less node. The runner resumes FROM
   // `targetStepId` (re-runs that node once) under a single-winner claim that

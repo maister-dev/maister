@@ -1,5 +1,5 @@
 import type { FlowYamlV1 } from "@/lib/config.schema";
-import type { NodeAttempt, StepRun } from "@/lib/db/schema";
+import type { NodeAttempt } from "@/lib/db/schema";
 
 import { describe, expect, it } from "vitest";
 
@@ -9,8 +9,6 @@ type AttemptSeed = Pick<
   NodeAttempt,
   "attempt" | "nodeId" | "startedAt" | "status"
 >;
-
-type StepSeed = Pick<StepRun, "startedAt" | "status" | "stepId">;
 
 const graphManifest: FlowYamlV1 = {
   schemaVersion: 1,
@@ -47,15 +45,6 @@ function attempt(over: Partial<AttemptSeed>): AttemptSeed {
   };
 }
 
-function step(over: Partial<StepSeed>): StepSeed {
-  return {
-    startedAt: new Date("2026-06-01T10:00:00.000Z"),
-    status: "Succeeded",
-    stepId: "plan",
-    ...over,
-  };
-}
-
 describe("buildFlightProgress", () => {
   it("separates graph-wide progress from the active node state", () => {
     const progress = buildFlightProgress({
@@ -66,7 +55,6 @@ describe("buildFlightProgress", () => {
         attempt({ nodeId: "implement", status: "Running" }),
       ],
       runStatus: "Running",
-      stepRuns: [],
     });
 
     expect(progress.stepLabel).toBe("implement");
@@ -94,7 +82,6 @@ describe("buildFlightProgress", () => {
         }),
       ],
       runStatus: "Crashed",
-      stepRuns: [],
     });
 
     expect(progress.stepLabel).toBe("implement");
@@ -109,30 +96,19 @@ describe("buildFlightProgress", () => {
     ]);
   });
 
-  it("keeps the legacy step-run fallback for manifests without a graph", () => {
+  it("renders a stable unavailable projection for incompatible stored manifests", () => {
     const progress = buildFlightProgress({
       currentStepId: "review",
       manifest: {},
       nodeAttempts: [],
       runStatus: "NeedsInput",
-      stepRuns: [
-        step({ stepId: "plan", status: "Succeeded" }),
-        step({
-          startedAt: new Date("2026-06-01T10:01:00.000Z"),
-          status: "NeedsInput",
-          stepId: "review",
-        }),
-      ],
     });
 
-    expect(progress.activeNode).toEqual({
-      label: "review",
-      state: "needs",
-    });
-    expect(progress.spine.slice(0, 3)).toEqual([
-      { state: "done" },
-      { state: "active", tone: "needs" },
-      { state: "todo" },
-    ]);
+    expect(progress.activeNode).toBeNull();
+    expect(progress.stepLabel).toBe("review");
+    expect(progress.spine).toHaveLength(7);
+    expect(progress.spine.every((segment) => segment.state === "todo")).toBe(
+      true,
+    );
   });
 });

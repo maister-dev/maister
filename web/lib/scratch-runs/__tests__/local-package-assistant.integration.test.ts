@@ -808,10 +808,13 @@ function assistantActionMarkdown(args: {
 function validFlowYaml(name: string): string {
   return `schemaVersion: 1
 name: ${name}
-steps:
+nodes:
   - id: s1
     type: cli
-    command: echo hi
+    action:
+      command: echo hi
+    transitions:
+      success: done
 `;
 }
 

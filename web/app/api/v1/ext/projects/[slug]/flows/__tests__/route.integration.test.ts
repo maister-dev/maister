@@ -84,7 +84,14 @@ async function seedFlow(
   const manifest: Record<string, unknown> = {
     schemaVersion: 1,
     name: opts.flowRefId,
-    steps: [],
+    nodes: [
+      {
+        id: "run",
+        type: "cli",
+        action: { command: "true" },
+        transitions: { success: "done" },
+      },
+    ],
   };
 
   if (opts.metadata !== undefined) manifest.metadata = opts.metadata;

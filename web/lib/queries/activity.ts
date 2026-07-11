@@ -13,7 +13,7 @@ import {
 } from "@/lib/runs/active-run-session";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
-const { hitlRequests, runs, stepRuns, workspaces } = schema;
+const { hitlRequests, nodeAttempts, runs, workspaces } = schema;
 
 function db(): NodePgDatabase<typeof schema> {
   return getDb();
@@ -97,39 +97,39 @@ export async function getActivityFeed(
   }
 
   if (runIds.length > 0) {
-    const stepRows = await client
+    const attemptRows = await client
       .select({
-        id: stepRuns.id,
-        runId: stepRuns.runId,
-        stepId: stepRuns.stepId,
-        status: stepRuns.status,
-        endedAt: stepRuns.endedAt,
-        startedAt: stepRuns.startedAt,
+        id: nodeAttempts.id,
+        runId: nodeAttempts.runId,
+        nodeId: nodeAttempts.nodeId,
+        status: nodeAttempts.status,
+        endedAt: nodeAttempts.endedAt,
+        startedAt: nodeAttempts.startedAt,
         branch: workspaces.branch,
         capabilityAgent: activeSessionCapabilityAgent(runs.id),
         runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       })
-      .from(stepRuns)
-      .innerJoin(runs, eq(runs.id, stepRuns.runId))
+      .from(nodeAttempts)
+      .innerJoin(runs, eq(runs.id, nodeAttempts.runId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-      .where(inArray(stepRuns.runId, runIds))
-      .orderBy(desc(stepRuns.startedAt))
+      .where(inArray(nodeAttempts.runId, runIds))
+      .orderBy(desc(nodeAttempts.startedAt))
       .limit(FEED_LIMIT);
 
-    for (const step of stepRows) {
-      const at = step.endedAt ?? step.startedAt;
+    for (const attempt of attemptRows) {
+      const at = attempt.endedAt ?? attempt.startedAt;
       const agent = runnerAgentFromFields({
-        capabilityAgent: step.capabilityAgent,
-        runnerSnapshot: step.runnerSnapshot,
-        context: step.runId,
+        capabilityAgent: attempt.capabilityAgent,
+        runnerSnapshot: attempt.runnerSnapshot,
+        context: attempt.runId,
       });
 
       events.push({
-        id: `step-${step.id}`,
+        id: `node-${attempt.id}`,
         agent,
-        title: `${agent} ${step.status.toLowerCase()} step`,
-        code: step.stepId,
-        meta: `${step.branch} · ${step.stepId}`,
+        title: `${agent} ${attempt.status.toLowerCase()} node`,
+        code: attempt.nodeId,
+        meta: `${attempt.branch} · ${attempt.nodeId}`,
         time: relativeTime(at, now),
         at,
       });

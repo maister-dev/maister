@@ -13,6 +13,7 @@ import { isBrainSchemaApplied, isProjectBrainEnabled } from "@/lib/brain/guard";
 import { retain } from "@/lib/brain/retain";
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
+import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 
 // Project Brain (ADR-122) harvest consumer. Rides the domain_events dispatcher
 // (startFrom "now", idempotent). Predicate = RUN_TERMINAL_EVENT_KINDS +
@@ -80,6 +81,13 @@ export async function harvestEvents(
   let client: OpenAiCompatibleClient | null = null;
 
   for (const event of events) {
+    if (isGraphOnlyCutoverFailure(event)) {
+      log.debug(
+        { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
+        "Brain harvest skipped terminal upgrade cut-over",
+      );
+      continue;
+    }
     if (!isHarvestable(event.kind)) continue;
 
     if (!(await isProjectBrainEnabled(db, event.projectId))) {

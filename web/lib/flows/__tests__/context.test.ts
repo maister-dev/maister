@@ -1,6 +1,6 @@
 import type {
+  NodeAttempt,
   Run as RunRow,
-  StepRun as StepRunRow,
   Task as TaskRow,
 } from "@/lib/db/schema";
 
@@ -24,14 +24,13 @@ const executor = {
   router: null,
 } as const;
 
-function makeStepRun(
-  partial: Partial<StepRunRow> & { stepId: string; attempt: number },
-): StepRunRow {
+function makeNodeAttempt(
+  partial: Partial<NodeAttempt> & { nodeId: string; attempt: number },
+): NodeAttempt {
   return {
-    id: `${partial.stepId}-${partial.attempt}`,
+    id: `${partial.nodeId}-${partial.attempt}`,
     runId: "run-1",
-    stepType: "cli",
-    mode: null,
+    nodeType: "cli",
     status: "Succeeded",
     acpSessionId: null,
     stdout: null,
@@ -41,7 +40,7 @@ function makeStepRun(
     startedAt: new Date(),
     endedAt: null,
     ...partial,
-  } as StepRunRow;
+  } as NodeAttempt;
 }
 
 describe("buildContext — FlowContext builder", () => {
@@ -50,7 +49,7 @@ describe("buildContext — FlowContext builder", () => {
       task,
       run,
       executor,
-      stepRuns: [],
+      nodeAttempts: [],
       projectSlug: "demo",
       envSource: { PATH: "/usr/bin" },
     });
@@ -81,7 +80,7 @@ describe("buildContext — FlowContext builder", () => {
       task,
       run,
       executor,
-      stepRuns: [],
+      nodeAttempts: [],
       projectSlug: "demo",
       envSource: {
         PATH: "/usr/bin",
@@ -106,7 +105,7 @@ describe("buildContext — FlowContext builder", () => {
       task,
       run,
       executor,
-      stepRuns: [],
+      nodeAttempts: [],
       projectSlug: "demo",
       envSource: { CUSTOM_FOO: "bar", BAR: "skipped" },
       envWhitelist: [/^CUSTOM_/],
@@ -116,26 +115,26 @@ describe("buildContext — FlowContext builder", () => {
     expect("BAR" in ctx.env).toBe(false);
   });
 
-  it("steps keyed by stepId; multiple attempts resolve to highest attempt", () => {
-    const stepRuns: StepRunRow[] = [
-      makeStepRun({
-        stepId: "plan",
+  it("steps namespace is keyed by nodeId and uses the highest attempt", () => {
+    const nodeAttempts: NodeAttempt[] = [
+      makeNodeAttempt({
+        nodeId: "plan",
         attempt: 1,
         stdout: "old plan stdout",
       }),
-      makeStepRun({
-        stepId: "plan",
+      makeNodeAttempt({
+        nodeId: "plan",
         attempt: 2,
         stdout: "new plan stdout",
         exitCode: 0,
       }),
-      makeStepRun({ stepId: "impl", attempt: 1, stdout: "impl stdout" }),
+      makeNodeAttempt({ nodeId: "impl", attempt: 1, stdout: "impl stdout" }),
     ];
     const ctx = buildContext({
       task,
       run,
       executor,
-      stepRuns,
+      nodeAttempts,
       projectSlug: "demo",
       envSource: {},
     });
@@ -147,14 +146,14 @@ describe("buildContext — FlowContext builder", () => {
 
   it("output is truncated to outputTruncationBytes (default 8 KiB)", () => {
     const big = "x".repeat(20_000);
-    const stepRuns: StepRunRow[] = [
-      makeStepRun({ stepId: "big", attempt: 1, stdout: big }),
+    const nodeAttempts: NodeAttempt[] = [
+      makeNodeAttempt({ nodeId: "big", attempt: 1, stdout: big }),
     ];
     const ctx = buildContext({
       task,
       run,
       executor,
-      stepRuns,
+      nodeAttempts,
       projectSlug: "demo",
       envSource: {},
     });
@@ -163,9 +162,9 @@ describe("buildContext — FlowContext builder", () => {
   });
 
   it("vars from jsonb pass through as-is", () => {
-    const stepRuns: StepRunRow[] = [
-      makeStepRun({
-        stepId: "x",
+    const nodeAttempts: NodeAttempt[] = [
+      makeNodeAttempt({
+        nodeId: "x",
         attempt: 1,
         vars: { foo: "bar", num: 42 },
       }),
@@ -174,7 +173,7 @@ describe("buildContext — FlowContext builder", () => {
       task,
       run,
       executor,
-      stepRuns,
+      nodeAttempts,
       projectSlug: "demo",
       envSource: {},
     });
@@ -187,7 +186,7 @@ describe("buildContext — FlowContext builder", () => {
       task,
       run,
       executor: { ...executor, router: null },
-      stepRuns: [],
+      nodeAttempts: [],
       projectSlug: "demo",
       envSource: {},
     });
@@ -200,7 +199,7 @@ describe("buildContext — FlowContext builder", () => {
       task: { ...task, attemptNumber: 5 },
       run,
       executor,
-      stepRuns: [],
+      nodeAttempts: [],
       projectSlug: "demo",
       envSource: {},
     });

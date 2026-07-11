@@ -156,7 +156,6 @@ async function renderTargetPrompt(
     },
     run: { id: "r1" },
     executor: { id: "e1", agent: "claude", model: "m" },
-    stepRuns: [],
     nodeAttempts,
     projectSlug: "test",
     extraVars: { ...declaredCommentsVars, ...(injected ?? {}) },
