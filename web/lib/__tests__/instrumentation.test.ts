@@ -36,7 +36,6 @@ vi.mock("@/lib/packages/catalog", () => ({
 import { register } from "../../instrumentation";
 
 const originalRuntime = process.env.NEXT_RUNTIME;
-const originalStrictMigrations = process.env.MAISTER_STRICT_MIGRATIONS;
 
 describe("instrumentation DB boot boundary", () => {
   beforeEach(() => {
@@ -52,9 +51,6 @@ describe("instrumentation DB boot boundary", () => {
   afterEach(() => {
     if (originalRuntime === undefined) delete process.env.NEXT_RUNTIME;
     else process.env.NEXT_RUNTIME = originalRuntime;
-    if (originalStrictMigrations === undefined)
-      delete process.env.MAISTER_STRICT_MIGRATIONS;
-    else process.env.MAISTER_STRICT_MIGRATIONS = originalStrictMigrations;
   });
 
   it("rejects boot when DB client initialization fails", async () => {
@@ -65,8 +61,7 @@ describe("instrumentation DB boot boundary", () => {
     await expect(register()).rejects.toThrow("database unavailable");
   });
 
-  it("rejects boot on a confirmed pending migration even when the old opt-out is set", async () => {
-    process.env.MAISTER_STRICT_MIGRATIONS = "0";
+  it("rejects boot on a confirmed pending migration", async () => {
     findPendingMigrations.mockResolvedValue([
       "0093_postgres_graph_only_cutover",
     ]);

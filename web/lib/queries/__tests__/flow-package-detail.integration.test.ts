@@ -124,7 +124,7 @@ describe("getFlowPackageDetail (integration)", () => {
 
   it("returns a typed incompatible DTO for a stored legacy revision", async () => {
     const detail = await getFlowPackageDetail("flow-link-fix", "aif-dev");
-    const legacy = detail?.revisions.find(
+    const legacy = detail?.dto.revisions.find(
       (revision) => revision.id === LEGACY_REVISION_ID,
     );
 
@@ -135,5 +135,7 @@ describe("getFlowPackageDetail (integration)", () => {
         message: LEGACY_STEPS_REFUSAL_MESSAGE,
       },
     });
+    expect(legacy).not.toHaveProperty("manifest");
+    expect(legacy).not.toHaveProperty("installedPath");
   });
 });

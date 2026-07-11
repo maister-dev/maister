@@ -45,6 +45,16 @@ describe("buildAuthoredFlowGraph — shape contract (T-A1)", () => {
     expect(result.draftVersion).toBe(3);
   });
 
+  it("returns the validated manifest for canvas consumers", () => {
+    const result = buildAuthoredFlowGraph(manifest, 3);
+
+    expect(result.manifest.name).toBe("authored-test-flow");
+    expect(result.manifest.nodes.map((node) => node.id)).toEqual([
+      "implement",
+      "review",
+    ]);
+  });
+
   it("topology.nodes contains an entry for each manifest node", () => {
     const result = buildAuthoredFlowGraph(manifest, 1);
     const nodeIds = result.topology.nodes.map((n) => n.id);

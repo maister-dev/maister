@@ -1,14 +1,16 @@
 import { describe, it, expect } from "vitest";
 
-import { groupPackages } from "./group-packages";
+import { groupPackages, type PackageInstallLike } from "./group-packages";
 
-function base() {
+function base(): PackageInstallLike {
   return {
     id: "i1",
     name: "aif",
     sourceUrl: "github.com/org/aif",
     versionLabel: "v1.0.0",
     trustStatus: "trusted_by_policy",
+    compatible: true,
+    incompatibilityReason: null,
     counts: {
       flows: 2,
       skills: 1,
@@ -20,7 +22,7 @@ function base() {
   };
 }
 
-const inst = (o: Partial<ReturnType<typeof base>> = {}) => ({
+const inst = (o: Partial<PackageInstallLike> = {}): PackageInstallLike => ({
   ...base(),
   ...o,
 });
@@ -47,6 +49,31 @@ describe("groupPackages", () => {
       rules: 0,
     });
     expect(groups[0].attachedProjectCount).toBe(1);
+    expect(groups[0].versions[0]).toMatchObject({
+      compatible: true,
+      incompatibilityReason: null,
+    });
+  });
+
+  it("preserves the newest version's incompatibility for Studio actions", () => {
+    const groups = groupPackages({
+      installs: [
+        inst({ id: "older", versionLabel: "v1.0.0" }),
+        inst({
+          id: "newer",
+          versionLabel: "v1.1.0",
+          compatible: false,
+          incompatibilityReason: "Package flow manifest is invalid.",
+        }),
+      ],
+      attachments: [],
+    });
+
+    expect(groups[0].versions[0]).toMatchObject({
+      installId: "newer",
+      compatible: false,
+      incompatibilityReason: "Package flow manifest is invalid.",
+    });
   });
 
   it("flags a local source with the isLocal badge", () => {

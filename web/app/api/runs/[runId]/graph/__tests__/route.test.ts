@@ -140,6 +140,7 @@ describe("GET /api/runs/[runId]/graph", () => {
     expect(Array.isArray(body.topology?.edges)).toBe(true);
     expect(body.topology).toEqual(TOPOLOGY);
     expect(body.layout).toEqual(LAYOUT);
+    expect(body).toMatchObject({ compatible: true, incompatibility: null });
   });
 
   it("authorizes the run's server-derived project before reading graph data", async () => {
@@ -177,6 +178,32 @@ describe("GET /api/runs/[runId]/graph", () => {
       incompatibility: {
         kind: "legacy_steps",
         message: "republish with nodes[]",
+      },
+      topology: null,
+      layout: null,
+    });
+    expect(buildGraphTopology).not.toHaveBeenCalled();
+  });
+
+  it("preserves an engine-incompatible reason without compiling the graph", async () => {
+    vi.mocked(loadRunManifest).mockResolvedValueOnce({
+      flowId: "flow-1",
+      projectId: "project-1",
+      compatible: false,
+      manifest: null,
+      incompatibility: {
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 > engine_max 2.2.0",
+      },
+    } as never);
+
+    const res = await invokeGet("engine-incompatible-run");
+
+    await expect(res.json()).resolves.toEqual({
+      compatible: false,
+      incompatibility: {
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 > engine_max 2.2.0",
       },
       topology: null,
       layout: null,

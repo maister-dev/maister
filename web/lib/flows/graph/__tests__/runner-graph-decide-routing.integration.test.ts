@@ -23,6 +23,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { closeDb } from "@/lib/db/client";
+import { appendNodeAttempt, markNodeSucceeded } from "@/lib/flows/graph/ledger";
 import { runFlow } from "@/lib/flows/runner";
 
 // M38 (ADR-103) runtime routing — from:output, the allow-list guard, and the
@@ -211,6 +212,108 @@ function makeAgentSupervisor(text: string): SupervisorApi {
 const SCHEMA = "./schemas/result.json";
 
 describe("runGraph — M38 decide routing (from: output)", () => {
+  it("re-enters a detached completed action through structured output, gates, and decide without re-dispatching it", async () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.7.0" },
+      nodes: [
+        {
+          id: "classify",
+          type: "ai_coding",
+          action: { prompt: "This action must not be dispatched again." },
+          output: { result: { schema: SCHEMA, required: true } },
+          pre_finish: {
+            gates: [
+              {
+                id: "completion-gate",
+                kind: "command_check",
+                mode: "blocking",
+                command: "true",
+              },
+            ],
+          },
+          decide: { from: "output.verdict" },
+          transitions: { bug: "fixit", feature: "designit" },
+        },
+        {
+          id: "fixit",
+          type: "cli",
+          action: { command: "echo fixing" },
+          transitions: { success: "done" },
+        },
+        {
+          id: "designit",
+          type: "cli",
+          action: { command: "echo designing" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(manifest);
+    const completed = await appendNodeAttempt({
+      runId: seeded.runId,
+      nodeId: "classify",
+      nodeType: "ai_coding",
+      db,
+    });
+
+    await markNodeSucceeded(
+      completed.id,
+      {
+        stdout: `Detached ACP completion.\n\`\`\`json maister:output\n{"verdict":"bug","score":1}\n\`\`\``,
+        vars: {},
+        exitCode: 0,
+        acpSessionId: "acp-completed",
+      },
+      db,
+    );
+    await db
+      .update(schema.runs)
+      .set({ status: "NeedsInput", currentStepId: "classify" })
+      .where(eq(schema.runs.id, seeded.runId));
+
+    let actionDispatches = 0;
+    const api = {
+      ...makeAgentSupervisor(""),
+      createSession: (async () => {
+        actionDispatches += 1;
+        throw new Error("completed action must not be dispatched");
+      }) as SupervisorApi["createSession"],
+    };
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: api,
+      completedResume: { targetStepId: "classify" },
+    });
+
+    expect(actionDispatches).toBe(0);
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const attempts = await getAttempts(seeded.runId);
+    const classify = attempts.find((attempt) => attempt.nodeId === "classify");
+
+    expect(classify?.vars).toEqual({ verdict: "bug", score: 1 });
+    expect(
+      attempts.filter((attempt) => attempt.nodeId === "classify"),
+    ).toHaveLength(1);
+    expect(attempts.find((attempt) => attempt.nodeId === "fixit")?.status).toBe(
+      "Succeeded",
+    );
+    expect(
+      attempts.find((attempt) => attempt.nodeId === "designit"),
+    ).toBeUndefined();
+
+    const gates = await db
+      .select()
+      .from(schema.gateResults)
+      .where(eq(schema.gateResults.nodeAttemptId, completed.id));
+
+    expect(gates).toHaveLength(1);
+  }, 60_000);
+
   it("routes to the branch named by the output value", async () => {
     const manifest = {
       schemaVersion: 1,

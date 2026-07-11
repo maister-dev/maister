@@ -7,6 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 import {
   classifyStoredFlowManifest,
+  getFlowManifestIncompatibility,
+  parseExecutableStoredFlowManifest,
   parseGraphOnlyFlowManifest,
 } from "@/lib/flows/manifest-parser";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
@@ -81,13 +83,45 @@ describe("graph-only manifest shape contract", () => {
     };
 
     expect(classifyStoredFlowManifest(value)).toMatchObject({
-      compatible: true,
+      compatible: false,
+      manifest: null,
       manifestShape: "graph",
+      reason: {
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 < engine_min 4.0.0",
+      },
     });
     expect(isEngineCompatible(value.compat.engine_min)).toMatchObject({
       compatible: false,
       reason: expect.stringContaining("engine_min"),
     });
+
+    expect(
+      parseGraphOnlyFlowManifest(value, {
+        code: "CONFIG",
+        surface: "intake-shape",
+        manifestLabel: "flow.yaml",
+      }),
+    ).toMatchObject({ nodes: [validNode] });
+
+    try {
+      parseExecutableStoredFlowManifest(value, {
+        code: "CONFIG",
+        surface: "stored-runtime",
+        manifestLabel: "flow revision rev-engine-max",
+      });
+      expect.unreachable("engine-incompatible stored manifest must be refused");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "CONFIG",
+        message:
+          "flow manifest in flow revision rev-engine-max is incompatible with this MAIster engine: engine 3.0.0 < engine_min 4.0.0",
+      });
+      expect(getFlowManifestIncompatibility(error)).toEqual({
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 < engine_min 4.0.0",
+      });
+    }
   });
 
   it("accepts a valid nodes[] graph and preserves open-ended compatibility", () => {
@@ -116,6 +150,10 @@ describe("graph-only manifest shape contract", () => {
     } catch (error) {
       expect(error).toMatchObject({
         code: "FLOW_INSTALL",
+        message: LEGACY_STEPS_REFUSAL_MESSAGE,
+      });
+      expect(getFlowManifestIncompatibility(error)).toEqual({
+        kind: "legacy_steps",
         message: LEGACY_STEPS_REFUSAL_MESSAGE,
       });
     }

@@ -129,7 +129,11 @@ describe("GET /api/runs/[runId]/graph-status", () => {
     const body = (await res.json()) as typeof SNAPSHOT;
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ compatible: true, ...SNAPSHOT });
+    expect(body).toEqual({
+      compatible: true,
+      incompatibility: null,
+      ...SNAPSHOT,
+    });
     expect(getRunNodeStatuses).toHaveBeenCalledWith("run-1");
   });
 
@@ -168,6 +172,31 @@ describe("GET /api/runs/[runId]/graph-status", () => {
       incompatibility: {
         kind: "legacy_steps",
         message: "republish with nodes[]",
+      },
+      nodes: {},
+    });
+    expect(getRunNodeStatuses).not.toHaveBeenCalled();
+  });
+
+  it("preserves an engine-incompatible reason without reading node statuses", async () => {
+    vi.mocked(loadRunManifest).mockResolvedValueOnce({
+      flowId: "flow-1",
+      projectId: "project-1",
+      compatible: false,
+      manifest: null,
+      incompatibility: {
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 > engine_max 2.2.0",
+      },
+    } as never);
+
+    const res = await invokeGet("engine-incompatible-run");
+
+    await expect(res.json()).resolves.toEqual({
+      compatible: false,
+      incompatibility: {
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 > engine_max 2.2.0",
       },
       nodes: {},
     });

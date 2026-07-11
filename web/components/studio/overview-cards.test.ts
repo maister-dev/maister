@@ -134,6 +134,11 @@ describe("OverviewCards", () => {
               versionLabel: "v1.2.3",
             },
             lastCutInstallId: null,
+            cutCompatibility: {
+              compatible: false,
+              incompatibilityReason:
+                "A flow manifest is invalid. Fix it before cutting a version.",
+            },
             updatedAt: "2026-06-27T10:00:00.000Z",
           },
         ],
@@ -145,6 +150,11 @@ describe("OverviewCards", () => {
     expect(html).toContain("local.originForked:openspec:v1.2.3");
     expect(html).toContain("/studio/edit/lp-1");
     expect(html).toContain('aria-label="continueWorkCut"');
+    expect(html).toContain('data-testid="continue-work-cut-incompatible"');
+    expect(html).toContain(
+      "A flow manifest is invalid. Fix it before cutting a version.",
+    );
+    expect(html).toMatch(/data-testid="continue-work-cut"[^>]*disabled=""/);
     expect(html).not.toContain("continueWorkOpen");
     expect(html).not.toContain("continueWorkImport");
   });

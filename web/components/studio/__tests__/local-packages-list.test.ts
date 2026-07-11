@@ -21,6 +21,10 @@ const ACTIVE: LocalPackageListItem = {
   slug: "my-pack",
   isDefault: false,
   status: "active",
+  cutCompatibility: {
+    compatible: true,
+    incompatibilityReason: null,
+  },
   origin: {
     kind: "forked",
     packageName: "openspec",
@@ -33,6 +37,10 @@ const ARCHIVED: LocalPackageListItem = {
   slug: "old-pack",
   isDefault: false,
   status: "archived",
+  cutCompatibility: {
+    compatible: true,
+    incompatibilityReason: null,
+  },
   origin: { kind: "local" },
 };
 
@@ -70,12 +78,35 @@ describe("LocalPackagesList", () => {
         slug: "scratch-pack",
         isDefault: false,
         status: "active",
+        cutCompatibility: {
+          compatible: true,
+          incompatibilityReason: null,
+        },
         origin: { kind: "local" },
       },
     ]);
 
     expect(html).toContain("local.originForked:openspec:v1.2.3");
     expect(html).toContain("local.originLocal");
+  });
+
+  it("explains and disables Cut for an incompatible local package", () => {
+    const html = render([
+      {
+        ...ACTIVE,
+        cutCompatibility: {
+          compatible: false,
+          incompatibilityReason:
+            "A flow manifest is invalid. Fix it before cutting a version.",
+        },
+      } as unknown as LocalPackageListItem,
+    ]);
+
+    expect(html).toContain('data-testid="local-cut-incompatible"');
+    expect(html).toContain(
+      "A flow manifest is invalid. Fix it before cutting a version.",
+    );
+    expect(html).toMatch(/data-testid="local-cut"[^>]*disabled=""/);
   });
 
   it("shows the empty state when there are no packages", () => {

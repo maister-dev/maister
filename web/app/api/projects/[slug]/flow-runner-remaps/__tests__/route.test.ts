@@ -84,6 +84,16 @@ async function patch(body: unknown) {
   return PATCH(request(body), { params: Promise.resolve({ slug: "demo" }) });
 }
 
+async function patchMalformedBody() {
+  const { PATCH } = await import("../route");
+  const req = new Request("http://x/api/projects/demo/flow-runner-remaps", {
+    method: "PATCH",
+    body: "{",
+  }) as NextRequest;
+
+  return PATCH(req, { params: Promise.resolve({ slug: "demo" }) });
+}
+
 async function get(query = "") {
   const { GET } = await import("../route");
 
@@ -314,5 +324,18 @@ describe("project Flow runner remap API", () => {
     expect(res.status).toBe(403);
     expect(body.code).toBe("UNAUTHORIZED");
     expect(state.tables.flow_runner_remaps[0].status).toBe("Pending");
+  });
+
+  it("authenticates before parsing a malformed PATCH body", async () => {
+    mocks.requireActiveSession.mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "sign in"),
+    );
+
+    const res = await patchMalformedBody();
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(401);
+    expect(body.code).toBe("UNAUTHENTICATED");
+    expect(mocks.requireProjectAction).not.toHaveBeenCalled();
   });
 });

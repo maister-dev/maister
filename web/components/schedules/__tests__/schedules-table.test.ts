@@ -66,8 +66,8 @@ describe("SchedulesTable", () => {
         name: "Weekly dependency bump",
         cronExpr: "0 9 * * 1",
         enabled: false,
-        lastFireOutcome: "launch_failed",
-        lastFireError: "branch already exists",
+        lastFireOutcome: "incompatible_disabled",
+        lastFireError: "CONFIG: legacy steps[] flow",
       }),
     ]);
 
@@ -81,8 +81,8 @@ describe("SchedulesTable", () => {
     expect(markup).toContain("Running");
     expect(markup).toContain("enabledBadge");
     expect(markup).toContain("pausedBadge");
-    expect(markup).toContain("outcome.launch_failed");
-    expect(markup).toContain("branch already exists");
+    expect(markup).toContain("outcome.incompatible_disabled");
+    expect(markup).toContain("CONFIG: legacy steps[] flow");
   });
 
   it("renders the empty state when there are no schedules", () => {

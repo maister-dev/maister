@@ -18,11 +18,15 @@ import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import {
+  GRAPH_ONLY_CUTOVER_REASON,
+  GRAPH_ONLY_CUTOVER_SOURCE,
+} from "@/lib/domain-events/cutover";
 import { MaisterError } from "@/lib/errors";
 import { promoteNextPending } from "@/lib/scheduler";
 
 const schema = fullSchema as unknown as Record<string, any>;
-const { runs, tasks } = schema;
+const { domainEvents, runs, tasks } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -128,6 +132,49 @@ async function seedBacklogTask(
   });
 
   return taskId;
+}
+
+async function seedTerminalFlowRun(
+  projectId: string,
+  taskId: string,
+  status: "Failed" | "Abandoned",
+  endedAt: Date,
+): Promise<string> {
+  const runId = randomUUID();
+
+  await db.insert(runs).values({
+    id: runId,
+    projectId,
+    taskId,
+    runKind: "flow",
+    status,
+    flowVersion: "v1",
+    flowRevision: "manual",
+    startedAt: new Date(endedAt.getTime() - 60_000),
+    endedAt,
+  });
+
+  return runId;
+}
+
+async function seedGraphOnlyCutoverFailure(
+  projectId: string,
+  taskId: string,
+  runId: string,
+  occurredAt: Date,
+): Promise<void> {
+  await db.insert(domainEvents).values({
+    kind: "run.failed",
+    projectId,
+    taskId,
+    runId,
+    actorType: "system",
+    payload: {
+      reason: GRAPH_ONLY_CUTOVER_REASON,
+      source: GRAPH_ONLY_CUTOVER_SOURCE,
+    },
+    occurredAt,
+  });
 }
 
 async function seedPendingRun(
@@ -481,6 +528,76 @@ describe("ADR-121 unified admission gate — C2 slot-free mint (T13)", () => {
 
     expect(trows[0].ts).toBe("flagged");
     expect(trows[0].lm).toBeNull();
+  });
+
+  it("repairs the give-up asymmetry: the slot-free gate flags a task at the failed-attempt cap", async () => {
+    const projectId = await seedProject();
+    const taskId = await seedBacklogTask(projectId, "normal");
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+
+    await seedTerminalFlowRun(projectId, taskId, "Failed", past);
+    await seedTerminalFlowRun(projectId, taskId, "Failed", past);
+    await seedTerminalFlowRun(projectId, taskId, "Failed", past);
+
+    const launch = recordingLaunch();
+
+    await promoteNextPending({ db, launchRun: launch.fn });
+
+    expect(launch.calls).toEqual([]);
+    const [task] = await db
+      .select({
+        triageStatus: tasks.triageStatus,
+        launchMode: tasks.launchMode,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId));
+
+    expect(task).toEqual({ triageStatus: "flagged", launchMode: null });
+  });
+
+  it("holds a latest D2 graph-only cutover failure in the slot-free gate and permits a newer re-triage arm", async () => {
+    const projectId = await seedProject();
+    const taskId = await seedBacklogTask(projectId, "normal");
+    const cutoverAt = new Date(Date.now() - 5 * 60 * 1000);
+    const runId = await seedTerminalFlowRun(
+      projectId,
+      taskId,
+      "Failed",
+      cutoverAt,
+    );
+
+    await seedGraphOnlyCutoverFailure(projectId, taskId, runId, cutoverAt);
+
+    const first = recordingLaunch();
+
+    await promoteNextPending({ db, launchRun: first.fn });
+
+    expect(first.calls).toEqual([]);
+    expect(await claimOf(taskId)).toBeNull();
+    const [held] = await db
+      .select({
+        triageStatus: tasks.triageStatus,
+        launchMode: tasks.launchMode,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId));
+
+    expect(held).toEqual({ triageStatus: "flagged", launchMode: null });
+
+    await db
+      .update(tasks)
+      .set({
+        triageStatus: "triaged",
+        launchMode: "auto",
+        launchArmedAt: new Date(cutoverAt.getTime() + 60_000),
+      })
+      .where(eq(tasks.id, taskId));
+
+    const retry = recordingLaunch();
+
+    await promoteNextPending({ db, launchRun: retry.fn });
+
+    expect(retry.calls).toEqual([taskId]);
   });
 });
 

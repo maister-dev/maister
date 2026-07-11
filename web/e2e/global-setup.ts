@@ -107,12 +107,6 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     env,
   });
 
-  // The webServer's strict instrumentation hook (lib/db/check.ts) also requires
-  // the brain lineage; resetSchema drops it, so re-apply after the main migrate
-  // (ADR-122 — the brain merge added the check + schema-drop but not this step).
-  console.log("global-setup: applying brain migrations…");
-  execSync("pnpm exec tsx lib/db/migrate-brain.ts", { stdio: "inherit", env });
-
   console.log("global-setup: seeding review→rework fixture…");
   execSync("pnpm exec tsx e2e/_seed/seed-e2e.ts", { stdio: "inherit", env });
 

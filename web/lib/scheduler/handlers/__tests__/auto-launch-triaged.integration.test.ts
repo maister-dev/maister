@@ -32,6 +32,10 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import {
+  GRAPH_ONLY_CUTOVER_REASON,
+  GRAPH_ONLY_CUTOVER_SOURCE,
+} from "@/lib/domain-events/cutover";
 import { MaisterError } from "@/lib/errors";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -248,6 +252,28 @@ async function seedTerminalFlowRun(
   return runId;
 }
 
+async function seedGraphOnlyCutoverFailure(
+  taskId: string,
+  runId: string,
+  occurredAt: Date,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO "domain_events"
+       ("kind", "project_id", "task_id", "run_id", "actor_type", "payload", "occurred_at")
+     VALUES ('run.failed', $1, $2, $3, 'system', $4::jsonb, $5)`,
+    [
+      projectId,
+      taskId,
+      runId,
+      JSON.stringify({
+        reason: GRAPH_ONLY_CUTOVER_REASON,
+        source: GRAPH_ONLY_CUTOVER_SOURCE,
+      }),
+      occurredAt,
+    ],
+  );
+}
+
 async function triageStatusOf(taskId: string): Promise<string | null> {
   const r = await pool.query(
     `SELECT "triage_status" FROM "tasks" WHERE "id" = $1`,
@@ -282,6 +308,15 @@ async function launchModeOf(taskId: string): Promise<string | null> {
   );
 
   return r.rows[0].launch_mode;
+}
+
+async function launchArmedAtOf(taskId: string): Promise<Date | null> {
+  const r = await pool.query(
+    `SELECT "launch_armed_at" FROM "tasks" WHERE "id" = $1`,
+    [taskId],
+  );
+
+  return r.rows[0].launch_armed_at;
 }
 
 async function activityKinds(taskId: string): Promise<string[]> {
@@ -453,6 +488,43 @@ describe("auto_launch_triaged tick", () => {
     expect(await commentCount(taskId)).toBe(1);
   });
 
+  it("holds a latest D2 graph-only cutover failure without retrying, then accepts a later re-triage arm", async () => {
+    const armedBeforeCutover = new Date(Date.now() - 10 * 60 * 1000);
+    const taskId = await seedTriagedAutoTask({
+      launchArmedAt: armedBeforeCutover,
+    });
+    const cutoverAt = new Date(Date.now() - 5 * 60 * 1000);
+    const runId = await seedTerminalFlowRun(taskId, "Failed", cutoverAt);
+
+    await seedGraphOnlyCutoverFailure(taskId, runId, cutoverAt);
+
+    const first = recordingLaunch();
+    const firstSummary = await runAutoLaunchTriagedJob({ launch: first.fn });
+
+    // The D2 terminal run is not a normal retryable failure. No post-upgrade
+    // automatic launch is allowed before a human explicitly re-triages it.
+    expect(first.calls).toEqual([]);
+    expect(firstSummary.gaveUp).toBe(1);
+    expect(await triageStatusOf(taskId)).toBe("flagged");
+    expect(await launchModeOf(taskId)).toBeNull();
+    expect(await commentCount(taskId)).toBe(1);
+
+    // applyTriageVerdict(enqueue:true) writes this same fresh arm after a human
+    // re-triage. It must not be clobbered by the older D2 event.
+    await pool.query(
+      `UPDATE "tasks"
+       SET "triage_status" = 'triaged', "launch_mode" = 'auto', "launch_armed_at" = $2
+       WHERE "id" = $1`,
+      [taskId, new Date(cutoverAt.getTime() + 60_000)],
+    );
+
+    const retry = recordingLaunch();
+
+    await runAutoLaunchTriagedJob({ launch: retry.fn });
+
+    expect(retry.calls).toEqual([taskId]);
+  });
+
   it("backs off after a recent failure (stays auto), then launches once the window passes", async () => {
     const taskId = await seedTriagedAutoTask();
     // One failure that just ended → within the 60s backoff window for failures=1.
@@ -559,6 +631,31 @@ describe("auto_launch_triaged tick", () => {
     expect(summary.skipped).toBe(1);
     expect(await triageStatusOf(taskId)).toBeNull();
     expect(await launchModeOf(taskId)).toBeNull();
+    expect(await commentCount(taskId)).toBe(0);
+  });
+
+  it("give-up preserves a fresh re-triage arm when the selected legacy task had no arm", async () => {
+    const taskId = await seedTriagedAutoTask({ launchArmedAt: null });
+    const freshArm = new Date();
+    const racing = {
+      fn: vi.fn(async (input: { taskId: string }) => {
+        await pool.query(
+          `UPDATE "tasks"
+           SET "launch_armed_at" = $2
+           WHERE "id" = $1`,
+          [input.taskId, freshArm],
+        );
+        throw new MaisterError("PRECONDITION", `flow "x" no longer launchable`);
+      }),
+    };
+
+    const summary = await runAutoLaunchTriagedJob({ launch: racing.fn });
+
+    expect(summary.gaveUp).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(await triageStatusOf(taskId)).toBe("triaged");
+    expect(await launchModeOf(taskId)).toBe("auto");
+    expect(await launchArmedAtOf(taskId)).toEqual(freshArm);
     expect(await commentCount(taskId)).toBe(0);
   });
 

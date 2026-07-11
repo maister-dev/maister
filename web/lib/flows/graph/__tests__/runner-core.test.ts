@@ -30,7 +30,11 @@ describe("loadRun — per-session set (M42)", () => {
 
   function fakeDb(
     runSessionRows: Record<string, unknown>[],
-    opts?: { pinned?: boolean; mutableManifest?: unknown },
+    opts?: {
+      pinned?: boolean;
+      mutableManifest?: unknown;
+      pinnedManifest?: unknown;
+    },
   ) {
     const run = {
       id: "run-1",
@@ -68,7 +72,7 @@ describe("loadRun — per-session set (M42)", () => {
       [getTableName(flowRevisionsTable)]: [
         {
           id: "revision-1",
-          manifest: {
+          manifest: opts?.pinnedManifest ?? {
             schemaVersion: 1,
             name: "Pinned",
             nodes: [
@@ -164,5 +168,44 @@ describe("loadRun — per-session set (M42)", () => {
     expect(loaded.manifest.nodes.map((node) => node.id)).toEqual(["pinned"]);
     expect(loaded.flowInstallPath).toBe("/cache/pinned");
     expect(loaded.execTrust).toBe("trusted");
+  });
+
+  it("refuses a pinned graph revision whose engine range excludes this host", async () => {
+    await expect(
+      loadRun(
+        fakeDb(
+          [
+            {
+              sessionName: "default",
+              runnerSnapshot: snapshot("runner-default", "claude-opus-4-8"),
+              acpSessionId: null,
+              capabilityAgent: "claude",
+              runnerResolutionTier: "platformDefault",
+            },
+          ],
+          {
+            pinned: true,
+            pinnedManifest: {
+              schemaVersion: 1,
+              name: "Future engine",
+              compat: { engine_min: "4.0.0" },
+              nodes: [
+                {
+                  id: "pinned",
+                  type: "cli",
+                  action: { command: "true" },
+                  transitions: { success: "done" },
+                },
+              ],
+            },
+          },
+        ) as never,
+        "run-1",
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message:
+        "flow manifest in flow revision revision-1 is incompatible with this MAIster engine: engine 3.0.0 < engine_min 4.0.0",
+    });
   });
 });

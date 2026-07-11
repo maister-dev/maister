@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors-core";
+import { flowManifestIncompatibilityDetails } from "@/lib/flows/manifest-parser";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -378,11 +379,11 @@ describe("dispatchDueSchedules", () => {
     expect(launch).toHaveBeenCalledTimes(1);
   });
 
-  it("launch_failed: a MaisterError from launchRun is recorded (code: message, bounded) and the dispatcher does not throw", async () => {
+  it("launch_failed: an untyped CONFIG refusal remains retryable and is recorded (code: message, bounded)", async () => {
     const seed = await seedBase();
     const id = await seedSchedule(seed);
     const launch = vi.fn(async () => {
-      throw new MaisterError("PRECONDITION", "parent repo is dirty".repeat(60));
+      throw new MaisterError("CONFIG", "other configuration issue".repeat(60));
     });
 
     const summary = await dispatch.dispatchDueSchedules({ launch });
@@ -392,10 +393,41 @@ describe("dispatchDueSchedules", () => {
     const row = await scheduleRow(id);
 
     expect(row.lastFireOutcome).toBe("launch_failed");
-    expect(row.lastFireError).toMatch(/^PRECONDITION: /);
+    expect(row.enabled).toBe(true);
+    expect(row.lastFireError).toMatch(/^CONFIG: /);
     expect(row.lastFireError!.length).toBeLessThanOrEqual(500);
     expect(row.lastRunId).toBeNull();
   });
+
+  it.each(["legacy_steps", "invalid_manifest", "engine_incompatible"] as const)(
+    "auto-disables a schedule after a typed %s graph-only incompatibility so cron cannot retry it",
+    async (kind) => {
+      const seed = await seedBase();
+      const id = await seedSchedule(seed, { queueOnePending: true });
+      const launch = vi.fn(async () => {
+        throw new MaisterError("CONFIG", `refused ${kind}`, {
+          details: flowManifestIncompatibilityDetails({
+            kind,
+            message: `manifest ${kind}`,
+          }),
+        });
+      });
+
+      const summary = await dispatch.dispatchDueSchedules({ launch });
+
+      expect(summary.incompatibleDisabled).toBe(1);
+      expect(summary.launchFailed).toBe(0);
+
+      const row = await scheduleRow(id);
+
+      expect(row.enabled).toBe(false);
+      expect(row.queueOnePending).toBe(false);
+      expect(row.queuedFireAt).toBeNull();
+      expect(row.lastFireOutcome).toBe("incompatible_disabled");
+      expect(row.lastFireError).toBe(`CONFIG: refused ${kind}`);
+      expect(row.lastRunId).toBeNull();
+    },
+  );
 
   it("W1 remnant: a stale 'dispatching' row is overwritten by the next due fire", async () => {
     const seed = await seedBase();
@@ -774,6 +806,37 @@ describe("dispatchScheduleNow", () => {
 
     expect(row.lastFireOutcome).toBe("launch_failed");
     expect(row.lastFireError).toBe("EXECUTOR_UNAVAILABLE: supervisor down");
+  });
+
+  it("returns incompatible_disabled for a typed graph-only refusal and pauses the schedule", async () => {
+    const seed = await seedBase();
+    const id = await seedSchedule(seed, {
+      nextFireAt: new Date(Date.now() + 60 * MIN),
+    });
+    const launch = vi.fn(async () => {
+      throw new MaisterError("CONFIG", "legacy manifest", {
+        details: flowManifestIncompatibilityDetails({
+          kind: "legacy_steps",
+          message: "legacy steps[] flow",
+        }),
+      });
+    });
+
+    const result = await dispatch.dispatchScheduleNow(id, {
+      actorUserId: seed.userId,
+      launch,
+    });
+
+    expect(result).toEqual({
+      outcome: "incompatible_disabled",
+      errorCode: "CONFIG",
+    });
+
+    const row = await scheduleRow(id);
+
+    expect(row.enabled).toBe(false);
+    expect(row.lastFireOutcome).toBe("incompatible_disabled");
+    expect(row.lastFireError).toBe("CONFIG: legacy manifest");
   });
 
   it("racing the tick on the same due row produces exactly one launch", async () => {

@@ -10,9 +10,19 @@ import type { NodeAttemptType } from "@/lib/db/schema";
 
 import { describe, expect, it } from "vitest";
 
-import { isRunRecoverable } from "@/lib/queries/run";
+import {
+  isRunRecoverable,
+  shouldResolveRunRecoverTarget,
+} from "@/lib/queries/run";
 
 describe("isRunRecoverable — run-detail recoverability (M19)", () => {
+  it("skips graph recover-target reads for D2-retained terminal history", () => {
+    expect(shouldResolveRunRecoverTarget("Failed")).toBe(false);
+    expect(shouldResolveRunRecoverTarget("Done")).toBe(false);
+    expect(shouldResolveRunRecoverTarget("Abandoned")).toBe(false);
+    expect(shouldResolveRunRecoverTarget("Crashed")).toBe(true);
+  });
+
   it("Crashed + acpSessionId + agent node → recoverable (resume-agent, retry_safe ignored)", () => {
     for (const retrySafe of [false, true]) {
       expect(

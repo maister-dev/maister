@@ -1,6 +1,11 @@
-id: demo-flow
-version: 1
+schemaVersion: 1
+name: Demo flow
+compat:
+  engine_min: 3.0.0
 nodes:
   - id: plan
-    type: agent
-    prompt: Make a plan.
+    type: ai_coding
+    action:
+      prompt: Make a plan.
+    transitions:
+      success: done

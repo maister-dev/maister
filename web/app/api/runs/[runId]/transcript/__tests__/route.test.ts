@@ -102,6 +102,7 @@ describe("GET /api/runs/[runId]/transcript", () => {
     expect(res.status).toBe(200);
     expect(projectRunTranscript).toHaveBeenCalledWith(RUN_ID);
     expect(getRunNodeTranscript).toHaveBeenCalledWith(RUN_ID, "implement");
+    expect(body).toMatchObject({ compatible: true, incompatibility: null });
     expect(body.messages).toHaveLength(1);
     expect(body.usage).toMatchObject({ used: 100 });
   });
@@ -171,6 +172,30 @@ describe("GET /api/runs/[runId]/transcript", () => {
       incompatibility: {
         kind: "legacy_steps",
         message: "republish with nodes[]",
+      },
+      messages: [],
+      usage: null,
+    });
+    expect(projectRunTranscript).not.toHaveBeenCalled();
+  });
+
+  it("preserves an engine-incompatible reason without projecting a transcript", async () => {
+    vi.mocked(loadRunManifest).mockResolvedValueOnce({
+      compatible: false,
+      manifest: null,
+      incompatibility: {
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 > engine_max 2.2.0",
+      },
+    } as unknown as Awaited<ReturnType<typeof loadRunManifest>>);
+
+    const res = await invoke(RUN_ID, "implement");
+
+    await expect(res.json()).resolves.toEqual({
+      compatible: false,
+      incompatibility: {
+        kind: "engine_incompatible",
+        message: "engine 3.0.0 > engine_max 2.2.0",
       },
       messages: [],
       usage: null,

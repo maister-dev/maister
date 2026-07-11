@@ -20,6 +20,7 @@ import {
 
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors-core";
+import { flowManifestIncompatibilityDetails } from "@/lib/flows/manifest-parser";
 
 const mocks = vi.hoisted(() => ({
   launchRun: vi.fn(),
@@ -253,6 +254,43 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
 
     expect(attempt.status).toBe("Succeeded");
     expect(attempt.summary.launchFailed).toBe(1);
+
+    const jobRows = await db
+      .select({ failures: schema.schedulerJobs.consecutiveFailures })
+      .from(schema.schedulerJobs)
+      .where(eq(schema.schedulerJobs.id, DISPATCHER_ID));
+
+    expect(jobRows[0]?.failures).toBe(0);
+  });
+
+  it("persists incompatibleDisabled analytics while pausing one incompatible schedule", async () => {
+    const seed = await seedBase();
+    const id = await seedSchedule(seed);
+
+    mocks.launchRun.mockRejectedValue(
+      new MaisterError("CONFIG", "engine range excluded", {
+        details: flowManifestIncompatibilityDetails({
+          kind: "engine_incompatible",
+          message: "engine 3.0.0 < engine_min 4.0.0",
+        }),
+      }),
+    );
+
+    const summary = await runTick();
+
+    expect(summary.succeededCount).toBe(1);
+    expect(summary.failedCount).toBe(0);
+
+    const row = await scheduleRow(id);
+
+    expect(row.enabled).toBe(false);
+    expect(row.lastFireOutcome).toBe("incompatible_disabled");
+    expect(row.lastFireError).toBe("CONFIG: engine range excluded");
+
+    const attempt = await latestDispatcherAttempt();
+
+    expect(attempt.status).toBe("Succeeded");
+    expect(attempt.summary.incompatibleDisabled).toBe(1);
 
     const jobRows = await db
       .select({ failures: schema.schedulerJobs.consecutiveFailures })

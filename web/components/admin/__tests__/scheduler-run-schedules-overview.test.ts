@@ -64,4 +64,24 @@ describe("SchedulerRunSchedulesOverview", () => {
     expect(markup).toContain("Running");
     expect(markup).not.toContain('href="/runs/run-9"');
   });
+
+  it("renders the terminal incompatible-disabled outcome with its bounded reason", () => {
+    const markup = renderToStaticMarkup(
+      createElement(SchedulerRunSchedulesOverview, {
+        schedules: [
+          schedule({
+            enabled: false,
+            lastFireOutcome: "incompatible_disabled",
+            lastFireError: "CONFIG: flow manifest is incompatible",
+            lastRunId: null,
+            lastRunStatus: null,
+          }),
+        ],
+      }),
+    );
+
+    expect(markup).toContain("schedules.outcome.incompatible_disabled");
+    expect(markup).toContain("CONFIG: flow manifest is incompatible");
+    expect(markup).toContain("state.disabled");
+  });
 });

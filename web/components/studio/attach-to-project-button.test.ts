@@ -46,4 +46,24 @@ describe("AttachToProjectButton", () => {
 
     expect(html).toContain('data-testid="attach-empty"');
   });
+
+  it("explains and disables attach when the newest package version is incompatible", () => {
+    const html = renderToStaticMarkup(
+      createElement(AttachToProjectButton, {
+        compatibility: {
+          compatible: false,
+          incompatibilityReason: "Package flow manifest is invalid.",
+        },
+        defaultOpen: true,
+        installId: "inst-1",
+        triggerClassName: "x",
+        targets: [{ slug: "beta", name: "Beta", attached: false }],
+      } as never),
+    );
+
+    expect(html).toContain('data-testid="attach-incompatible"');
+    expect(html).toContain("Package flow manifest is invalid.");
+    expect(html).toMatch(/data-testid="attach-to-project"[^>]*disabled=""/);
+    expect(html).toMatch(/data-testid="attach-do-beta"[^>]*disabled=""/);
+  });
 });

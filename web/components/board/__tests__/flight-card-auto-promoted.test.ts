@@ -74,6 +74,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     keyRef: "TST-1",
     title: "Bump docs",
     flowRef: "bugfix",
+    flowIncompatibility: null,
     taskPriority: "normal",
     queuePaused: false,
     runCount: 1,

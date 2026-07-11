@@ -36,6 +36,7 @@ let container: StartedPostgreSqlContainer;
 let adminPool: Pool;
 let migrationRoot: string;
 let migration0093: string;
+let migration0094: string;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -47,6 +48,10 @@ beforeAll(async () => {
   migrationRoot = await buildPreCutoverMigrationRoot();
   migration0093 = await readFile(
     resolve(__dirname, "../migrations/0093_postgres_graph_only_cutover.sql"),
+    "utf8",
+  );
+  migration0094 = await readFile(
+    resolve(__dirname, "../migrations/0094_close-m43-cutover-task-claims.sql"),
     "utf8",
   );
 }, 180_000);
@@ -66,7 +71,13 @@ async function buildPreCutoverMigrationRoot(): Promise<string> {
   await mkdir(join(target, "meta"), { recursive: true });
 
   for (const name of await readdir(source)) {
-    if (!/^\d{4}_.+\.sql$/.test(name) || name.startsWith("0093_")) continue;
+    if (
+      !/^\d{4}_.+\.sql$/.test(name) ||
+      name.startsWith("0093_") ||
+      name.startsWith("0094_")
+    ) {
+      continue;
+    }
     await writeFile(
       join(target, name),
       await readFile(join(source, name), "utf8"),
@@ -109,11 +120,19 @@ async function preparedDatabase(label: string): Promise<Pool> {
 }
 
 async function applyCutover(pool: Pool): Promise<void> {
+  await applyMigrationSql(pool, migration0093);
+}
+
+async function applyM43TaskClaimClosure(pool: Pool): Promise<void> {
+  await applyMigrationSql(pool, migration0094);
+}
+
+async function applyMigrationSql(pool: Pool, migration: string): Promise<void> {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
-    await client.query(migration0093);
+    await client.query(migration);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -145,19 +164,19 @@ async function seedFlow(args: {
 }): Promise<void> {
   const manifestFor = (legacy: boolean) =>
     legacy
-    ? { schemaVersion: 1, name: args.flowId, steps: [] }
-    : {
-        schemaVersion: 1,
-        name: args.flowId,
-        nodes: [
-          {
-            id: "run",
-            type: "cli",
-            action: { command: "true" },
-            transitions: { success: "done" },
-          },
-        ],
-      };
+      ? { schemaVersion: 1, name: args.flowId, steps: [] }
+      : {
+          schemaVersion: 1,
+          name: args.flowId,
+          nodes: [
+            {
+              id: "run",
+              type: "cli",
+              action: { command: "true" },
+              transitions: { success: "done" },
+            },
+          ],
+        };
   const revisionManifest = manifestFor(
     args.revisionLegacy ?? args.legacy ?? false,
   );
@@ -199,6 +218,7 @@ async function seedFlow(args: {
 async function seedRun(args: {
   client: PoolClient;
   runId: string;
+  taskId?: string | null;
   projectId: string;
   flowId: string | null;
   revisionId: string | null;
@@ -208,14 +228,15 @@ async function seedRun(args: {
 }): Promise<void> {
   await args.client.query(
     `INSERT INTO runs
-       (id, run_kind, project_id, flow_id, flow_revision_id, status,
+       (id, run_kind, task_id, project_id, flow_id, flow_revision_id, status,
         flow_version, flow_revision, ended_at, current_step_id,
         resume_started_at, resume_requested_at, resume_target_step_id)
-     VALUES ($1, $2, $3, $4, $5, $6, 'v1', 'sha', $7, 'legacy-node',
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'v1', 'sha', $8, 'legacy-node',
              now(), now(), 'legacy-node')`,
     [
       args.runId,
       args.runKind ?? "flow",
+      args.taskId ?? null,
       args.projectId,
       args.flowId,
       args.revisionId,
@@ -225,7 +246,31 @@ async function seedRun(args: {
   );
 }
 
-describe("migration 0093 — D2 before irreversible D1", () => {
+async function seedTask(args: {
+  client: PoolClient;
+  taskId: string;
+  projectId: string;
+  flowId: string;
+  number: number;
+  queueClaimedAt: string | null;
+}): Promise<void> {
+  await args.client.query(
+    `INSERT INTO tasks
+       (id, project_id, number, title, prompt, flow_id, status, stage,
+        triage_status, launch_mode, queue_claimed_at)
+     VALUES ($1, $2, $3, 'D2 task', 'Close stale C2 claim', $4, 'InFlight',
+             'Backlog', 'triaged', 'auto', $5)`,
+    [
+      args.taskId,
+      args.projectId,
+      args.number,
+      args.flowId,
+      args.queueClaimedAt,
+    ],
+  );
+}
+
+describe("migrations 0093/0094 — D2 before irreversible D1", () => {
   it("terminalizes exactly the eight legacy actionable statuses and preserves history", async () => {
     const pool = await preparedDatabase("matrix");
     const client = await pool.connect();
@@ -547,6 +592,119 @@ describe("migration 0093 — D2 before irreversible D1", () => {
       (await pool.query(`SELECT count(*)::int AS n FROM assignment_events`))
         .rows[0]?.n,
     ).toBe(1);
+
+    await pool.end();
+  }, 180_000);
+
+  it("clears only C2 claims that predate the D2 transition", async () => {
+    const pool = await preparedDatabase("task-claims");
+    const client = await pool.connect();
+    const projectId = "p-task-claims";
+    const flowId = "legacy-task-claims-flow";
+    const revisionId = "legacy-task-claims-revision";
+    const staleTaskId = "task-stale-claim";
+    const laterTaskId = "task-later-claim";
+    const staleClaimAt = "2020-01-01T00:00:00.000Z";
+    const laterClaimAt = "2099-01-01T00:00:00.000Z";
+
+    try {
+      await seedProject(client, projectId);
+      await seedFlow({
+        client,
+        projectId,
+        flowId,
+        revisionId,
+        legacy: true,
+      });
+      await seedTask({
+        client,
+        taskId: staleTaskId,
+        projectId,
+        flowId,
+        number: 1,
+        queueClaimedAt: staleClaimAt,
+      });
+      await seedTask({
+        client,
+        taskId: laterTaskId,
+        projectId,
+        flowId,
+        number: 2,
+        queueClaimedAt: null,
+      });
+      await seedRun({
+        client,
+        runId: "legacy-stale-claim",
+        taskId: staleTaskId,
+        projectId,
+        flowId,
+        revisionId,
+        status: "Pending",
+      });
+      await seedRun({
+        client,
+        runId: "legacy-later-claim",
+        taskId: laterTaskId,
+        projectId,
+        flowId,
+        revisionId,
+        status: "Running",
+      });
+    } finally {
+      client.release();
+    }
+
+    await applyCutover(pool);
+
+    const claimsAfterD2 = await pool.query<{
+      id: string;
+      queue_claimed_at: Date | null;
+    }>(
+      `SELECT id, queue_claimed_at
+       FROM tasks
+       WHERE id IN ($1, $2)
+       ORDER BY id`,
+      [laterTaskId, staleTaskId],
+    );
+
+    expect(claimsAfterD2.rows).toEqual([
+      { id: laterTaskId, queue_claimed_at: null },
+      { id: staleTaskId, queue_claimed_at: new Date(staleClaimAt) },
+    ]);
+
+    // A newer C2 claim can exist when 0093 was applied before the follow-up
+    // migration. It is not stale and must survive 0094.
+    await pool.query(`UPDATE tasks SET queue_claimed_at = $2 WHERE id = $1`, [
+      laterTaskId,
+      laterClaimAt,
+    ]);
+
+    await applyM43TaskClaimClosure(pool);
+
+    const claimsAfter0094 = await pool.query<{
+      id: string;
+      queue_claimed_at: Date | null;
+    }>(
+      `SELECT id, queue_claimed_at
+       FROM tasks
+       WHERE id IN ($1, $2)
+       ORDER BY id`,
+      [laterTaskId, staleTaskId],
+    );
+
+    expect(claimsAfter0094.rows).toEqual([
+      { id: laterTaskId, queue_claimed_at: new Date(laterClaimAt) },
+      { id: staleTaskId, queue_claimed_at: null },
+    ]);
+
+    await applyM43TaskClaimClosure(pool);
+    expect(
+      (
+        await pool.query<{
+          queue_claimed_at: Date | null;
+        }>(`SELECT queue_claimed_at FROM tasks WHERE id = $1`, [laterTaskId])
+      ).rows[0]?.queue_claimed_at,
+    ).toEqual(new Date(laterClaimAt));
 
     await pool.end();
   }, 180_000);
