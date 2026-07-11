@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   READ_ONLY_SMOKE_PROBE_VERSION,
   invalidateAdapterReadOnlySmokeCache,
+  readAdapterSmokeCache,
   smokeDiagnosticForAdapter,
   writeAdapterSmokeCache,
   type AdapterSmokeCacheRead,
@@ -289,4 +290,44 @@ describe("adapter smoke diagnostics", () => {
 
     expect(cache.adapters.opencode.readOnlySession.status).toBe("error");
   });
+
+  it.each([
+    ["invalid JSON", "{", "cannot be read"],
+    [
+      "schema-invalid v2",
+      JSON.stringify({
+        version: 2,
+        adapters: { opencode: { status: "ok" } },
+      }),
+      "malformed",
+    ],
+  ])(
+    "fails closed for %s cache content",
+    async (_caseName, content, expectedReason) => {
+      const directory = await mkdtemp(join(tmpdir(), "maister-smoke-cache-"));
+      const cachePath = join(directory, "adapter-smoke-cache.json");
+
+      await writeFile(cachePath, content, "utf8");
+
+      const cache = await readAdapterSmokeCache(cachePath);
+
+      expect(cache.entries).toEqual({});
+      expect(cache.error).toContain(expectedReason);
+
+      const diagnostic = smokeDiagnosticForAdapter(
+        "opencode",
+        cache,
+        evaluatedAt,
+      );
+
+      expect(diagnostic).toMatchObject({
+        status: "error",
+        reason: cache.error,
+        readOnlySession: {
+          status: "error",
+          reason: cache.error,
+        },
+      });
+    },
+  );
 });

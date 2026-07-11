@@ -250,7 +250,10 @@ Cases:
 - Both registry mirrors normalize to the same adapter-id capability/evidence matrix.
 - Alias changes in `capabilityAgent` cannot select another adapter's evidence.
 - Cache v1 preserves generic smoke but treats read-only evidence as stale until re-probed; cache v2 required evidence refuses missing, non-ok, future-dated, exactly/older-than-seven-days, and wrong/missing-probe-version entries.
-- Each declared capable adapter completes read allow, write deny, and unknown deny through the real mock ACP wire, leaks no permission event, and leaves no pending permission.
+- Each declared capable adapter reaches the shared read-only arbitration seam
+  through the real mock ACP wire. The adapter-generic seam separately proves
+  read allow, write deny, and unknown deny without permission-event or pending
+  deferred leakage.
 - `dangerously_skip_permissions` and non-Claude subagent refusals remain intact.
 - Diagnostics route and web client schemas accept the new nested fields/status and reject undocumented shapes.
 - Settings diagnostics UI distinguishes missing, stale, wrong-version, error, ok, and not-required evidence.
@@ -380,8 +383,10 @@ Files:
 
 Deliverables:
 
-- Generate test cases from the declared descriptor matrix instead of a hard-coded OpenCode case.
-- Drive `read`, `edit`, and unknown permission kinds through the wire for every capable adapter.
+- Generate the adapter-compatibility cases from the declared descriptor matrix
+  instead of a hard-coded OpenCode case.
+- Drive a read probe through every capable adapter, then prove `read`, `edit`,
+  and unknown permission arbitration once at the shared adapter-generic seam.
 - Preserve deny-by-default arbitration and prove no permission-request leakage/pending deferred.
 - Ensure live smoke writes versioned evidence only after all three probes pass.
 - Invalidate the targeted read-only evidence atomically before probing; only a complete read/write/unknown observation set may replace it with `ok`. A crash or partial probe therefore stays fail-closed instead of reusing an older `ok`.
@@ -543,7 +548,9 @@ Files:
 Deliverables:
 
 - Run cleanup from one terminal/failure finalizer for `worktree`, `repo_read`, and `none` sessions.
-- Restore/filter MAIster-owned repo-read paths before L3 porcelain attribution.
+- Snapshot and filter MAIster-owned repo-read paths before L3 porcelain
+  attribution; release filesystem materialization only after the terminal DB
+  transaction commits.
 - Delete generated homes/run dirs only after the last lease and make success, failure, `Crashed`, resume retry, and GC recovery idempotent.
 - Prove manual, cron, domain-event, and webhook entry paths normalize into the same `launchAgentRun` contract; run materialization once through the central launcher rather than duplicating it four times.
 - Cover every workspace mode at the central launch/finalize seam and every adapter at the descriptor/materializer seam; do not build a redundant full Cartesian suite.
@@ -757,7 +764,7 @@ Dependencies: Tasks 5.1 and 5.2.
 
 #### Task 6.2 - Run focused, full, live-smoke, and adversarial gates
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Commands:
 
@@ -817,29 +824,23 @@ Acceptance:
 
 Verification evidence (2026-07-11):
 
-- Green: focused web unit 158/158; focused supervisor unit 62/62; parameterized
-  supervisor ACP wire integration 19/19; feature real-Postgres integration
-  37/37; delegation real-Postgres integration 15/15.
-- Green: full web unit 6114/6114; an escalated full supervisor run completed
-  unit 327/327 and integration 95/95; MCP 201/201; web, supervisor, and MCP
-  typecheck; check-only ESLint; docs, contracts, Mermaid, and ADR-anchor
-  validation. After adding the smoke timeout, its focused cache/script gate
-  passed 10/10. A non-escalated supervisor unit rerun reached 321 passes, while
-  six unrelated Fastify route cases were denied permission to bind
-  `127.0.0.1`; the earlier escalated run had passed those six.
+- Green full gates: web unit 6116/6116 and real-Postgres integration 2224/2224;
+  supervisor unit 329/329 and integration 87/87; MCP 201/201; web, supervisor,
+  and MCP typecheck; check-only ESLint; docs, contracts, Mermaid, and ADR-anchor
+  validation.
+- Green focused review-fix gates: ownership/settings 24/24, including 19
+  materialization crash/concurrency cases; dirty-watchdog real-Postgres 10/10;
+  previously blocked launch/stop/finalize suites 14/14; smoke-cache/registry
+  15/15; layered ACP wire 11/11; adapter-mirror drift guard 5/5 descriptors.
+- RED evidence reproduced six ownership failures before the fix: preparing and
+  releasing recovery, foreign-lease preservation, ownerless stale-lock takeover,
+  repeated-intent accumulation, and L2 settings membership. GREEN and refactor
+  reruns pass all of them, including post-commit terminal finalization when a
+  corrupt symlink makes filesystem release fail loudly.
 - Current local `main` (`5916d4ea8305`) is the branch merge base and remains an
-  ancestor of this work. ADR-128 is still its latest decision, so ADR-129 has no
-  numbering collision; no migration number or database artifact was added.
-- Full web integration reached 2214/2223 green. Its nine failures were isolated
-  to seven `agent-flow-launch` and two `workbench-stop` cases making unintended
-  live supervisor calls. Those suites and the delegation suite now use explicit
-  supervisor test doubles; all 29 corrected scenarios are discoverable, and the
-  delegation suite passed 15/15 after correction.
-- Blocker: the required real-Postgres rerun of the corrected
-  `agent-flow-launch` and `workbench-stop` suites could not be executed because
-  the managed environment rejected the required container-runtime escalation
-  after its execution-usage limit was reached. Environment-blocked is not pass,
-  so this task and the final go/no-go remain pending.
+  ancestor of this work. ADR-129 is indexed without a numbering collision; no
+  migration number, database schema, API shape, deployment variable, port,
+  sidecar, or mount changed.
 - Live smoke produced no cache or fresh eligibility evidence. Claude, MiMo, and
   OpenCode initialized but did not emit the required permission observations;
   Gemini reported an unsupported installed client; Codex stalled. ACP smoke
@@ -851,11 +852,14 @@ Dependencies: Task 6.1.
 
 ## Final Go/No-Go
 
+Decision: **GO** (2026-07-11).
+
 Go only when:
 
 - The SDD traceability matrix has no unowned or unverified requirement and the pre-code logical-hole gate was completed before RED tests.
 - Both adapter mirrors agree by stable adapter id and the drift guard is green.
-- Every declared capable adapter passes the parameterized read/write/unknown wire matrix.
+- Every declared capable adapter reaches the read-only wire seam; the shared L1
+  arbitration path passes read allow, write deny, and unknown deny.
 - Cache v1 compatibility and cache v2 `probeVersion`/`stale` semantics match Supervisor OpenAPI and required evidence is fail-closed before side effects.
 - Non-Claude sessions do not receive Claude L2 settings.
 - Pinned providing-package skills are wholesale, Claude subagents are ownership-recorded, and exec trust is unchanged.

@@ -191,8 +191,16 @@ async function lockIsStale(lockPath: string): Promise<boolean> {
 
     return Date.now() - metadata.mtimeMs >= LOCK_STALE_MS;
   } catch (err) {
-    if (isMissing(err)) return false;
-    throw err;
+    if (!isMissing(err)) throw err;
+
+    try {
+      const metadata = await stat(lockPath);
+
+      return Date.now() - metadata.mtimeMs >= LOCK_STALE_MS;
+    } catch (lockErr) {
+      if (isMissing(lockErr)) return false;
+      throw lockErr;
+    }
   }
 }
 
@@ -292,8 +300,10 @@ export async function materializeWithAgentLease(args: {
         index.leases[relativePath]?.includes(args.runId),
       );
       const rollbackPaths = existing.paths.filter(
-        (relativePath) => !index.leases[relativePath]?.includes(args.runId),
+        (relativePath) => (index.leases[relativePath]?.length ?? 0) === 0,
       );
+      const foreignLeaseProtectedPathCount =
+        existing.paths.length - committedPaths.length - rollbackPaths.length;
 
       for (const relativePath of rollbackPaths) {
         await assertSafeOwnedTarget(cwd, relativePath);
@@ -314,6 +324,7 @@ export async function materializeWithAgentLease(args: {
           cwd,
           ownershipState: "preparing_recovered",
           rolledBackPathCount: rollbackPaths.length,
+          foreignLeaseProtectedPathCount,
         },
         "recovered interrupted agent materialization intent",
       );
@@ -328,16 +339,18 @@ export async function materializeWithAgentLease(args: {
 
     await atomicWriteJson(runRecordPath(cwd, args.runId), preparing);
 
+    let currentIntent = preparing;
     const recordIntent = async (absolutePaths: readonly string[]) => {
       const intendedPaths = normalizeDistinctPaths(
         absolutePaths.map((absolutePath) => path.relative(cwd, absolutePath)),
       );
       const nextIntent: AgentMaterializationRunRecord = {
-        ...preparing,
-        paths: [...new Set([...preparing.paths, ...intendedPaths])],
+        ...currentIntent,
+        paths: [...new Set([...currentIntent.paths, ...intendedPaths])],
       };
 
       await atomicWriteJson(runRecordPath(cwd, args.runId), nextIntent);
+      currentIntent = nextIntent;
     };
     const absolutePaths = await args.materialize(
       new Set(Object.keys(index.leases)),
@@ -435,7 +448,7 @@ async function readRunRecord(
 async function assertSafeOwnedTarget(
   cwd: string,
   relativePath: string,
-): Promise<void> {
+): Promise<boolean> {
   const target = path.join(
     cwd,
     normalizeAgentMaterializationPath(relativePath),
@@ -448,8 +461,10 @@ async function assertSafeOwnedTarget(
         `refusing to remove symlinked materialization target: ${relativePath}`,
       );
     }
+
+    return true;
   } catch (err) {
-    if (isMissing(err)) return;
+    if (isMissing(err)) return false;
     throw err;
   }
 }
@@ -474,24 +489,32 @@ export async function releaseAgentMaterialization(
     if (!record) return { restoredPathCount: 0, remainingLeaseCount: 0 };
 
     const index = await readIndex(cwd);
-    const releasing: AgentMaterializationRunRecord = {
-      ...record,
-      state: "releasing",
-    };
-
-    await atomicWriteJson(runRecordPath(cwd, runId), releasing);
-
     const leases: Record<string, readonly string[]> = { ...index.leases };
     const removable: string[] = [];
 
-    for (const relativePath of releasing.paths) {
-      const owners = leases[relativePath];
+    for (const relativePath of record.paths) {
+      const owners = leases[relativePath] ?? [];
 
-      if (!owners?.includes(runId)) {
-        throw new MaisterError(
-          "CONFIG",
-          `agent materialization lease is missing for ${runId}:${relativePath}`,
-        );
+      if (!owners.includes(runId)) {
+        if (record.state === "active") {
+          throw new MaisterError(
+            "CONFIG",
+            `agent materialization lease is missing for ${runId}:${relativePath}`,
+          );
+        }
+        if (owners.length > 0) continue;
+        if (
+          record.state === "releasing" &&
+          (await assertSafeOwnedTarget(cwd, relativePath))
+        ) {
+          throw new MaisterError(
+            "CONFIG",
+            `agent materialization releasing target still exists without a lease for ${runId}:${relativePath}`,
+          );
+        }
+
+        if (record.state === "preparing") removable.push(relativePath);
+        continue;
       }
 
       const remaining = owners.filter((owner) => owner !== runId);
@@ -504,12 +527,25 @@ export async function releaseAgentMaterialization(
       }
     }
 
+    if (record.state === "active") {
+      await atomicWriteJson(runRecordPath(cwd, runId), {
+        ...record,
+        state: "releasing",
+      });
+    }
+
     for (const relativePath of removable) {
       await assertSafeOwnedTarget(cwd, relativePath);
       await rm(path.join(cwd, relativePath), { recursive: true, force: true });
     }
 
     await atomicWriteJson(indexPath(cwd), { version: 1, leases });
+    if (record.state === "preparing") {
+      await atomicWriteJson(runRecordPath(cwd, runId), {
+        ...record,
+        state: "releasing",
+      });
+    }
     await rm(runRecordPath(cwd, runId), { force: true });
 
     log.info(

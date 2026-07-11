@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -27,6 +35,7 @@ import {
   materializeAgentReadOnlySettings,
 } from "@/lib/agents/dirty-watchdog";
 import { finalizeAgentRun } from "@/lib/agents/launch";
+import { AGENT_MATERIALIZATION_ROOT_RELATIVE } from "@/lib/agents/materialization-manifest";
 import { isMaisterError } from "@/lib/errors";
 
 const exec = promisify(execFile);
@@ -330,6 +339,78 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
     expect(
       await statSafe(path.join(repoPath, ".claude/settings.local.json")),
     ).toBe(false);
+  });
+
+  it("commits a none-workspace terminal status when post-commit cleanup refuses a symlink", async () => {
+    const { runId } = await seedWorld();
+    const worktreesTmp = await mkdtemp(
+      path.join(os.tmpdir(), "maister-none-finalize-"),
+    );
+    const outside = await mkdtemp(
+      path.join(os.tmpdir(), "maister-none-owned-target-"),
+    );
+    const originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
+
+    try {
+      process.env.MAISTER_WORKTREES_ROOT = worktreesTmp;
+      await pool.query(
+        `UPDATE "agents" SET "workspace" = 'none' WHERE "id" = 'watchdog-agent'`,
+      );
+      await pool.query(
+        `UPDATE "runs" SET "agent_workspace" = 'none' WHERE "id" = $1`,
+        [runId],
+      );
+
+      const slugRow = await pool.query(`SELECT "slug" FROM "projects" LIMIT 1`);
+      const { agentWorkdirPath } = await import("@/lib/agents/launch");
+      const cwd = agentWorkdirPath(slugRow.rows[0].slug as string, runId);
+      const relativePath = ".claude/skills/linked";
+      const ownershipRoot = path.join(cwd, AGENT_MATERIALIZATION_ROOT_RELATIVE);
+
+      await writeFile(path.join(outside, "KEEP"), "user-owned");
+      await mkdir(path.join(cwd, ".claude", "skills"), { recursive: true });
+      await symlink(outside, path.join(cwd, relativePath));
+      await mkdir(path.join(ownershipRoot, "runs"), { recursive: true });
+      await writeFile(
+        path.join(ownershipRoot, "index.json"),
+        JSON.stringify({
+          version: 1,
+          leases: { [relativePath]: [runId] },
+        }),
+      );
+      await writeFile(
+        path.join(ownershipRoot, "runs", `${runId}.json`),
+        JSON.stringify({
+          version: 1,
+          runId,
+          state: "active",
+          paths: [relativePath],
+        }),
+      );
+
+      await expect(finalizeAgentRun(runId, "Done", { db })).resolves.toEqual({
+        finalized: true,
+        status: "Done",
+      });
+
+      const run = await pool.query(
+        `SELECT "status" FROM "runs" WHERE "id" = $1`,
+        [runId],
+      );
+
+      expect(run.rows[0].status).toBe("Done");
+      expect(await readFile(path.join(outside, "KEEP"), "utf8")).toBe(
+        "user-owned",
+      );
+    } finally {
+      if (originalWorktreesRoot === undefined) {
+        delete process.env.MAISTER_WORKTREES_ROOT;
+      } else {
+        process.env.MAISTER_WORKTREES_ROOT = originalWorktreesRoot;
+      }
+      await rm(worktreesTmp, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 

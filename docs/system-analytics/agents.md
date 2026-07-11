@@ -204,9 +204,14 @@ manifest with a cwd ownership index plus per-run records under
 `.maister/agent-materialization/`. Records transition
 `preparing -> active -> releasing` under a bounded cross-process lock. Paths are
 normalized and confined to descriptor-approved roots; corrupt, traversal, or
-symlink-escaping records preserve files and fail loudly. Cleanup is idempotent
-across terminal retry/GC and never removes a user-owned entry or an entry still
-leased by another run.
+symlink-escaping records preserve files and fail loudly. An ownerless stale
+lock is recovered from the lock-directory timestamp. Preparing recovery rolls
+back only intent paths with no lease and preserves paths leased by another run;
+releasing recovery finishes an already-committed index update idempotently.
+Terminal DB state commits before filesystem release. A release refusal is
+structured-ERROR logged with run/workspace/cwd context and cannot roll the run
+back; ownership evidence and user content remain available for repair. Cleanup
+never removes a user-owned entry or an entry still leased by another run.
 
 ### (c) Optional-flow enrichment — "agent drives a flow" (Implemented — ADR-106)
 

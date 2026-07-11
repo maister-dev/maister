@@ -5,6 +5,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,10 +15,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   filterManifestPorcelain,
+  materializeAgentReadOnlySettings,
   restoreAgentMaterialization,
 } from "@/lib/agents/dirty-watchdog";
 import {
   AGENT_MATERIALIZATION_ROOT_RELATIVE,
+  materializeWithAgentLease,
   normalizeAgentMaterializationPath,
 } from "@/lib/agents/materialization-manifest";
 import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
@@ -195,6 +198,211 @@ describe("package skill materialization manifest", () => {
     );
     await restoreAgentMaterialization(root, "run-1");
     await expect(stat(targetSkill)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("releases an interrupted preparing intent without a committed lease", async () => {
+    const relativePath = ".claude/skills/interrupted";
+    const target = path.join(root, relativePath);
+    const ownershipRoot = path.join(root, AGENT_MATERIALIZATION_ROOT_RELATIVE);
+    const runRecord = path.join(ownershipRoot, "runs", "run-1.json");
+
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "SKILL.md"), "partial");
+    await mkdir(path.dirname(runRecord), { recursive: true });
+    await writeFile(
+      path.join(ownershipRoot, "index.json"),
+      JSON.stringify({ version: 1, leases: {} }),
+    );
+    await writeFile(
+      runRecord,
+      JSON.stringify({
+        version: 1,
+        runId: "run-1",
+        state: "preparing",
+        paths: [relativePath],
+      }),
+    );
+
+    await restoreAgentMaterialization(root, "run-1");
+
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(runRecord)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("finishes a releasing record whose index update already committed", async () => {
+    const relativePath = ".claude/skills/released";
+    const ownershipRoot = path.join(root, AGENT_MATERIALIZATION_ROOT_RELATIVE);
+    const runRecord = path.join(ownershipRoot, "runs", "run-1.json");
+
+    await mkdir(path.dirname(runRecord), { recursive: true });
+    await writeFile(
+      path.join(ownershipRoot, "index.json"),
+      JSON.stringify({ version: 1, leases: {} }),
+    );
+    await writeFile(
+      runRecord,
+      JSON.stringify({
+        version: 1,
+        runId: "run-1",
+        state: "releasing",
+        paths: [relativePath],
+      }),
+    );
+
+    await restoreAgentMaterialization(root, "run-1");
+
+    await expect(stat(runRecord)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps an active target when its ownership index is corrupt", async () => {
+    const relativePath = ".claude/skills/unindexed";
+    const target = path.join(root, relativePath);
+    const ownershipRoot = path.join(root, AGENT_MATERIALIZATION_ROOT_RELATIVE);
+
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "SKILL.md"), "preserve");
+    await mkdir(path.join(ownershipRoot, "runs"), { recursive: true });
+    await writeFile(
+      path.join(ownershipRoot, "index.json"),
+      JSON.stringify({ version: 1, leases: {} }),
+    );
+    await writeFile(
+      path.join(ownershipRoot, "runs", "run-1.json"),
+      JSON.stringify({
+        version: 1,
+        runId: "run-1",
+        state: "active",
+        paths: [relativePath],
+      }),
+    );
+
+    await expect(restoreAgentMaterialization(root, "run-1")).rejects.toThrow(
+      /lease is missing/,
+    );
+    expect(await readFile(path.join(target, "SKILL.md"), "utf8")).toBe(
+      "preserve",
+    );
+  });
+
+  it("preserves a foreign-leased path while recovering another run's intent", async () => {
+    const relativePath = ".claude/skills/shared";
+    const target = path.join(root, relativePath);
+    const ownershipRoot = path.join(root, AGENT_MATERIALIZATION_ROOT_RELATIVE);
+
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "SKILL.md"), "run-a");
+    await mkdir(path.join(ownershipRoot, "runs"), { recursive: true });
+    await writeFile(
+      path.join(ownershipRoot, "index.json"),
+      JSON.stringify({
+        version: 1,
+        leases: { [relativePath]: ["run-a"] },
+      }),
+    );
+    await writeFile(
+      path.join(ownershipRoot, "runs", "run-a.json"),
+      JSON.stringify({
+        version: 1,
+        runId: "run-a",
+        state: "active",
+        paths: [relativePath],
+      }),
+    );
+    await writeFile(
+      path.join(ownershipRoot, "runs", "run-b.json"),
+      JSON.stringify({
+        version: 1,
+        runId: "run-b",
+        state: "preparing",
+        paths: [relativePath],
+      }),
+    );
+
+    await materializeWithAgentLease({
+      cwd: root,
+      runId: "run-b",
+      materialize: async () => {
+        expect(await readFile(path.join(target, "SKILL.md"), "utf8")).toBe(
+          "run-a",
+        );
+
+        return [target];
+      },
+    });
+
+    const index = JSON.parse(
+      await readFile(path.join(ownershipRoot, "index.json"), "utf8"),
+    ) as { readonly leases: Record<string, readonly string[]> };
+
+    expect(index.leases[relativePath]).toEqual(["run-a", "run-b"]);
+  });
+
+  it("takes over a stale ownerless materialization lock", async () => {
+    const lockPath = path.join(
+      root,
+      AGENT_MATERIALIZATION_ROOT_RELATIVE,
+      "lock",
+    );
+    const staleAt = new Date(Date.now() - 10_000);
+
+    await mkdir(lockPath, { recursive: true });
+    await utimes(lockPath, staleAt, staleAt);
+
+    await expect(
+      materializeWithAgentLease({
+        cwd: root,
+        runId: "run-1",
+        materialize: async () => [],
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it("accumulates repeated intents for crash rollback", async () => {
+    const first = path.join(root, ".claude/skills/first");
+    const second = path.join(root, ".claude/skills/second");
+
+    await expect(
+      materializeWithAgentLease({
+        cwd: root,
+        runId: "run-1",
+        materialize: async (_ownedPaths, recordIntent) => {
+          await recordIntent([first]);
+          await mkdir(first, { recursive: true });
+          await recordIntent([second]);
+          await mkdir(second, { recursive: true });
+          throw new Error("simulated materializer crash");
+        },
+      }),
+    ).rejects.toThrow("simulated materializer crash");
+
+    await materializeWithAgentLease({
+      cwd: root,
+      runId: "run-1",
+      materialize: async () => {
+        await expect(stat(first)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(stat(second)).rejects.toMatchObject({ code: "ENOENT" });
+
+        return [];
+      },
+    });
+  });
+
+  it("reports L2 settings as materialized when the run already owns package paths", async () => {
+    const packageRoot = path.join(root, "package");
+    const sourceSkill = path.join(packageRoot, "skills", "aif-review");
+
+    await mkdir(sourceSkill, { recursive: true });
+    await writeFile(path.join(sourceSkill, "SKILL.md"), "materialized");
+    await materializeAdapterCapabilityHome({
+      agent: "claude",
+      worktreePath: root,
+      runId: "run-1",
+      installedPaths: [packageRoot],
+    });
+
+    await expect(
+      materializeAgentReadOnlySettings(root, "claude", "run-1"),
+    ).resolves.toEqual({ materialized: true });
   });
 
   it("filters MAIster-owned package skill paths from porcelain only when listed", () => {

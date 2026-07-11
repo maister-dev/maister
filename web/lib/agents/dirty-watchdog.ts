@@ -125,7 +125,12 @@ export async function materializeAgentReadOnlySettings(
     },
   });
 
-  const materialized = leased.length === 2;
+  const leasedPaths = new Set(
+    leased.map((leasedPath) => path.resolve(leasedPath)),
+  );
+  const materialized = [settingsPath, markerPath].every((requiredPath) =>
+    leasedPaths.has(path.resolve(requiredPath)),
+  );
 
   if (materialized) {
     log.info(
@@ -236,13 +241,6 @@ export async function checkRepoReadDirt(
     repoPath,
     runId,
   );
-
-  await restoreAgentMaterialization(repoPath, runId).catch((err: unknown) => {
-    log.warn(
-      { repoPath, err: err instanceof Error ? err.message : String(err) },
-      "L2 restore failed — porcelain filter still excludes manifest paths",
-    );
-  });
 
   const porcelain = await statusPorcelain({ worktreePath: repoPath });
   const meaningful = filterManifestPorcelain(

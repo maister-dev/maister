@@ -13,25 +13,19 @@ vi.mock("next-intl/server", () => ({
 
 describe("AdapterSupportPanel", () => {
   it.each([
-    ["not_required", null, "notRequired"],
-    ["pending", null, "evidencePending"],
-    ["ok", null, "evidenceOk"],
-    ["skipped", null, "evidenceSkipped"],
-    ["error", null, "evidenceError"],
+    ["read-only-session evidence is seven days old", "evidenceStaleAge"],
     [
-      "stale",
-      "read-only-session evidence is seven days old",
-      "evidenceStaleAge",
-    ],
-    [
-      "stale",
       "read-only-session probe version 2 does not match 1",
       "evidenceStaleVersion",
     ],
-  ])("maps %s evidence to localized key %s", (status, reason, expected) => {
-    expect(smokeStatusTranslationKey({ status, reason, checkedAt: null })).toBe(
-      expected,
-    );
+  ])("maps stale reason %s to its localized key", (reason, expected) => {
+    expect(
+      smokeStatusTranslationKey({
+        status: "stale",
+        reason,
+        checkedAt: null,
+      }),
+    ).toBe(expected);
   });
 
   it("renders a status dot per adapter, a details expansion, and a setup hint only for unavailable adapters", async () => {

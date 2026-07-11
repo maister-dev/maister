@@ -1951,6 +1951,10 @@ export async function finalizeAgentRun(
   // terminal flip; a failure leaves a stale dir the next spawn recreates).
   let ephemeralCleanup: { repoPath: string; worktreePath: string } | null =
     null;
+  let materializationCleanup: {
+    cwd: string;
+    workspace: "none" | "repo_read" | "worktree";
+  } | null = null;
 
   const finalizeResult = await _db.transaction(async (tx: Db) => {
     // M37 (ADR-102): read the shared-tree axes up front for the finalize
@@ -2067,6 +2071,8 @@ export async function finalizeAgentRun(
         const l3Target = usedEphemeral ? ephemeralPath : wsCtx.repoPath;
         const verdict = await checkRepoReadDirt(l3Target, runId);
 
+        materializationCleanup = { cwd: l3Target, workspace: ranAs };
+
         if (verdict.dirty) {
           await quarantineAgentInTx({
             tx,
@@ -2085,10 +2091,10 @@ export async function finalizeAgentRun(
           };
         }
       } else if (wsCtx && ranAs === "none") {
-        await restoreAgentMaterialization(
-          agentWorkdirPath(wsCtx.slug, runId),
-          runId,
-        );
+        materializationCleanup = {
+          cwd: agentWorkdirPath(wsCtx.slug, runId),
+          workspace: ranAs,
+        };
       } else if (wsCtx && ranAs === "worktree") {
         const worktreePath =
           workspaceRows[0]?.worktreePath ??
@@ -2096,7 +2102,7 @@ export async function finalizeAgentRun(
             ? sharedAgentWorktreePath(wsCtx.slug, preRows[0].rootRunId)
             : agentWorkdirPath(wsCtx.slug, runId));
 
-        await restoreAgentMaterialization(worktreePath, runId);
+        materializationCleanup = { cwd: worktreePath, workspace: ranAs };
       }
     }
 
@@ -2185,6 +2191,27 @@ export async function finalizeAgentRun(
   });
 
   if (finalizeResult !== false) {
+    if (materializationCleanup) {
+      const cleanup = materializationCleanup as {
+        cwd: string;
+        workspace: "none" | "repo_read" | "worktree";
+      };
+
+      await restoreAgentMaterialization(cleanup.cwd, runId).catch(
+        (err: unknown) => {
+          log.error(
+            {
+              runId,
+              cwd: cleanup.cwd,
+              workspace: cleanup.workspace,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            "post-commit agent materialization release failed",
+          );
+        },
+      );
+    }
+
     log.info(
       { runId, outcome, status: finalizeResult.status, reason: opts.reason },
       "agent run finalized",
