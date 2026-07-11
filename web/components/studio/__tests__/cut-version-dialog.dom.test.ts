@@ -112,7 +112,9 @@ describe("CutVersionDialog", () => {
 
     expect(body).toEqual({ adoptInProjectIds: ["p1", "p2"] });
     expect(onCut).toHaveBeenCalledWith("local-aaa");
-    expect(host.querySelector('[data-testid="cut-adopt-adopted"]')).not.toBeNull();
+    expect(
+      host.querySelector('[data-testid="cut-adopt-adopted"]'),
+    ).not.toBeNull();
     expect(
       host.querySelector('[data-testid="cut-adopt-failed"]')?.textContent,
     ).toContain("worktree busy");

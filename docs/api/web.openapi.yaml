@@ -2703,7 +2703,7 @@ paths:
   /api/projects/{slug}/experiments/pin-options:
     get:
       tags: [experiments]
-      summary: (ADR-129) Eligible package-pin installs for a task's flow
+      summary: (ADR-129 — Implemented) Eligible package-pin installs for a task's flow
       description: |
         (ADR-129 §b.) The variant-editor package-pin picker feed — the
         server-filtered eligible install set for the task's flow: `Installed`
@@ -8484,7 +8484,7 @@ paths:
         schema: { type: string }
     get:
       tags: [flow-packages]
-      summary: (ADR-129) Fork-vs-upstream divergence diff
+      summary: (ADR-129 — Implemented) Fork-vs-upstream divergence diff
       description: |
         (ADR-129.) Read-only, viewer-permitted (like `/diff`). Diffs "ours" —
         the fork working dir (default) or a chosen cut's bundle
@@ -8530,7 +8530,7 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-129) Start an upstream sync (synthetic 3-way merge)
+      summary: (ADR-129 — Implemented) Start an upstream sync (synthetic 3-way merge)
       description: |
         (ADR-129.) Merges a newer upstream install into the fork working dir:
         base = the lineage source install bytes, theirs = the target install
@@ -8592,7 +8592,7 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-129) Complete a conflicted upstream sync
+      summary: (ADR-129 — Implemented) Complete a conflicted upstream sync
       description: |
         (ADR-129.) Preconditions: live session edit-lock · pending
         `sync_state` (else 409 `CONFLICT`) · something to resolve —
@@ -8645,7 +8645,7 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-129) Abort a pending upstream sync
+      summary: (ADR-129 — Implemented) Abort a pending upstream sync
       description: |
         (ADR-129.) Preconditions: live session edit-lock · pending
         `sync_state` (else 409 `CONFLICT`). Runs `git reset --hard HEAD`

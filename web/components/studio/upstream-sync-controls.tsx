@@ -2,7 +2,7 @@
 
 import type { ReactElement } from "react";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -64,11 +64,26 @@ export function UpstreamSyncButton({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!open) return;
+
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   async function runSync(targetInstallId: string): Promise<void> {
-    const res = await postJson(
-      `/api/studio/local-packages/${packageId}/sync`,
-      { sessionId, targetInstallId },
-    );
+    const res = await postJson(`/api/studio/local-packages/${packageId}/sync`, {
+      sessionId,
+      targetInstallId,
+    });
 
     if (!res.ok) {
       setError(await readApiError(res, tApiErrors));
@@ -143,9 +158,6 @@ export function UpstreamSyncButton({
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           role="dialog"
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && !busy) setOpen(false);
-          }}
         >
           <div className="flex w-full max-w-[480px] flex-col gap-4 rounded-[16px] border border-line bg-paper p-6 shadow-xl">
             <h3

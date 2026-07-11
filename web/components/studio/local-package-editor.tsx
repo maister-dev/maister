@@ -986,14 +986,6 @@ export function LocalPackageEditor({
             ) : (
               <PackageComposition
                 bom={bom}
-                onCompareElement={
-                  divergence
-                    ? (path: string) => {
-                        setDivergenceElement(path);
-                        setDivergenceOpen(true);
-                      }
-                    : undefined
-                }
                 dirty={packageFilesDirty}
                 draftFiles={draftFiles}
                 fileCount={draftFiles.length}
@@ -1018,6 +1010,14 @@ export function LocalPackageEditor({
                 packageId={packageId}
                 readOnly={readOnly}
                 saveLabel={labels.home.save}
+                onCompareElement={
+                  divergence
+                    ? (path: string) => {
+                        setDivergenceElement(path);
+                        setDivergenceOpen(true);
+                      }
+                    : undefined
+                }
                 onCreateArtifact={createArtifact}
                 onDraftFilesChange={handleDraftFilesChange}
                 onSaveDraft={saveDraft}

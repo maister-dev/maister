@@ -254,11 +254,7 @@ describe("mergeTrees case table", () => {
 
     const first = await run();
 
-    expect(first.cleanFiles.sort()).toEqual([
-      "add.txt",
-      "del.txt",
-      "take.txt",
-    ]);
+    expect(first.cleanFiles.sort()).toEqual(["add.txt", "del.txt", "take.txt"]);
     expect(first.conflictedFiles).toEqual([]);
 
     const second = await run();

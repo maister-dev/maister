@@ -91,7 +91,9 @@ describe("UpstreamDivergenceDrawer", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/studio/local-packages/lp1/divergence",
     );
-    expect(host.querySelector('[data-testid="divergence-clean"]')).not.toBeNull();
+    expect(
+      host.querySelector('[data-testid="divergence-clean"]'),
+    ).not.toBeNull();
     expect(
       host.querySelector('[data-testid="divergence-base"]')?.textContent,
     ).toContain("studio.divergence.base");

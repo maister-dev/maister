@@ -1253,7 +1253,33 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 8 — e2e + final gates + docs truing
 
-- [ ] **T22: E2E — the full loop through the UI (mock ACP adapter)**
+- [x] **T22: E2E — the full loop through the UI (mock ACP adapter)**
+  - GREEN: `forked-package-loop.spec.ts` — 3 serial tests + setup,
+    **4 passed (33.9s)** on the shared e2e infra (stem ADDED to
+    `AUTHED_SPEC`). Journey: source→discovery→install v1 (UI) → attach
+    upstream + trust (API plumbing) → fork (viewer UI) → CodeMirror edit +
+    commit (UI) → cut via the T16 dialog (asserts the upstream-pinned
+    project is NOT offered as an adopt target) → task+experiment
+    A=upstream/B=cut (API) → lab renders per-variant provenance chips
+    ("local cut"/"upstream" + `name · local-<digest>`) + the
+    "package versions differ" delta + all six `role=tab`s → attach picker
+    collision explainer + disabled Attach → manifest rename (name+flow id)
+    via lock-session API → re-cut → attach beside upstream (both links) →
+    upstream v2 re-tag + source refresh → editor "Install & sync — v2.0.0"
+    → conflict notice + banner with `docs/README.md` → API-resolve (leave
+    the editor first — its keepalive re-steals the same-user lock) → banner
+    Resolve → publish to a bare source with base_branch=develop →
+    publish-result → move remote branch (`commit-tree`+`update-ref`) →
+    second publish shows "upstream moved — sync first" + the canSync CTA,
+    remote SHA untouched.
+  - Iteration findings baked into the spec: `createTask` wants the flows
+    ROW id (not flowRefId — resolved via `withE2EDb`); comparison tabs are
+    `role=tab` not buttons; the flow editor needs an explicit
+    `flow-tab-yaml` click; the sources modal label is "Publish base
+    branch"; test 3 reuses fork1 (a post-cut `/studio/packages/<name>`
+    viewer fork is ambiguous — the name now resolves multiple installs);
+    ★scope playwright by EXPLICIT FILE PATH — a bare name fragment ran the
+    whole 153-test suite on this setup.
   - Files: NEW `web/e2e/forked-package-loop.spec.ts` + **mandatory**: add the
     spec stem to the `AUTHED_SPEC` regex in `web/playwright.config.ts:26`
     (runnability rule — a spec outside the regex runs unauthenticated and
@@ -1281,7 +1307,31 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     Docker up.
   - Logging: n/a (test).
 
-- [ ] **T23: Final gates + docs checkpoint (mandatory)**
+- [x] **T23: Final gates + docs checkpoint (mandatory)**
+  - **Gates (final runs, idle machine):** typecheck ✓ · unit **605 files /
+    6194 ✓** · integration **297 files / 2244 ✓** (requires the live dev
+    supervisor on :7777 — a mid-session drift found 4 suites/11 tests
+    silently depend on its /health; identical on main, restart =
+    `pnpm --filter @maister/supervisor dev`) · e2e:
+    `forked-package-loop.spec.ts` **4 passed (33.9s)**; full suite
+    baseline-proved — branch 36 failed vs **main 34 failed on the same
+    machine/fresh schema** (34 shared pre-existing failures incl. a
+    FORMATTING_ERROR "Page {page}" class crashing studio pages; the 2
+    branch-only diffs — package-management + multi-run-cost-policy — pass
+    in isolation: **5 passed (20.3s)**, the known shared-DB interference
+    class) · validate:docs:all ✓ (343 mermaid / 653 ADR anchors) ·
+    `eslint .` check-only **0 errors** (3 dialog-overlay a11y errors found
+    and fixed via the document-listener Escape idiom; remaining warnings =
+    repo baseline; NEVER ran bare `pnpm lint`).
+  - **Docs truing:** local-packages.md header + docs/CLAUDE.md index row →
+    "ADR-129, Implemented"; five new OpenAPI summaries → "(ADR-129 —
+    Implemented)"; database-schema/erd/projects-domain rows verified;
+    error-taxonomy verified UNTOUCHED (only CONFLICT/CONFIG/PRECONDITION
+    thrown across all new sites); Contract Surfaces table cross-checked
+    against `git diff --name-only` (all rows moved; runs-domain.md
+    exception recorded in T2b — no local_packages block exists there).
+  - **Numbering re-grep:** ADR-129 still the max (…127, 128, 129); journal
+    max = 0093 with intact triple — NO contest, NO renumber needed.
   - Run and record: `pnpm --filter maister-web typecheck` · `pnpm --filter
     maister-web test:unit` (includes `lib/__tests__/i18n-parity.test.ts` —
     EN+RU key parity is enforced here) · `pnpm --filter maister-web

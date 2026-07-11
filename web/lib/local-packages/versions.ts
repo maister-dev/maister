@@ -359,7 +359,10 @@ export type PackageVersionChoicesResult = {
   tryOncePins: TryOncePin[];
 };
 
-const NO_CHOICES: PackageVersionChoicesResult = { reverts: [], tryOncePins: [] };
+const NO_CHOICES: PackageVersionChoicesResult = {
+  reverts: [],
+  tryOncePins: [],
+};
 
 // Apply the launcher's per-package version choices BEFORE the enablement check in
 // `launchRunStaged`. Returns the per-attachment reverts it made (empty = nothing

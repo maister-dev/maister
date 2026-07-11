@@ -223,7 +223,6 @@ export default async function StudioEditPage({
         canvasAvailable={canvasAvailable}
         diff=""
         divergence={divergence}
-        sync={sync}
         fileKindLabels={packageFileKindLabels(t)}
         files={files}
         filesLabels={packageFilesEditorLabels(t, te, true)}
@@ -246,6 +245,7 @@ export default async function StudioEditPage({
         mcpCatalog={mcpCatalog}
         packageId={id}
         skillId={skillId || null}
+        sync={sync}
         topology={topology}
       />
     </div>

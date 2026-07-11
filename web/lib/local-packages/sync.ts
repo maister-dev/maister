@@ -201,7 +201,10 @@ export async function syncFromUpstream(opts: {
 
   // Phase 3 (clean): at most one commit — a no-change merge skips it.
   if (merged.cleanFiles.length > 0) {
-    await gitCommitWorkingDir(pkg.workingDir, `Sync from upstream ${targetRef}`);
+    await gitCommitWorkingDir(
+      pkg.workingDir,
+      `Sync from upstream ${targetRef}`,
+    );
   }
   await d
     .update(lp)

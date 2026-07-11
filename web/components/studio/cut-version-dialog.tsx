@@ -57,8 +57,22 @@ export function CutVersionDialog({
     adoptTargets.map((tgt) => [tgt.projectId, tgt.name]),
   );
 
+  const onCloseRef = useRef(onClose);
+
+  onCloseRef.current = onClose;
   useEffect(() => {
     dialogRef.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   function toggle(projectId: string): void {
@@ -87,7 +101,10 @@ export function CutVersionDialog({
       );
 
       if (!res.ok) {
-        setStep({ kind: "error", message: await readApiError(res, tApiErrors) });
+        setStep({
+          kind: "error",
+          message: await readApiError(res, tApiErrors),
+        });
 
         return;
       }
@@ -112,7 +129,9 @@ export function CutVersionDialog({
 
   const failedIds =
     step.kind === "done"
-      ? step.adoptions.filter((a) => a.status === "failed").map((a) => a.projectId)
+      ? step.adoptions
+          .filter((a) => a.status === "failed")
+          .map((a) => a.projectId)
       : [];
 
   return (
@@ -121,9 +140,6 @@ export function CutVersionDialog({
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       role="dialog"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy) onClose();
-      }}
     >
       <div
         ref={dialogRef}

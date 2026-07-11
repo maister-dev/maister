@@ -263,7 +263,11 @@ export async function gitDiffNoIndex(
     return { text: stdout, truncated: false };
   } catch (err) {
     // execFile rejects with `code` = numeric exit status OR a string errno.
-    const e = err as { code?: string | number; message?: string; stdout?: string };
+    const e = err as {
+      code?: string | number;
+      message?: string;
+      stdout?: string;
+    };
 
     if (e.code === 1 && typeof e.stdout === "string") {
       return { text: e.stdout, truncated: false };

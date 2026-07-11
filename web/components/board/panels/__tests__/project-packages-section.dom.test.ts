@@ -131,9 +131,7 @@ describe("ProjectPackagesSection name-collision pre-flight", () => {
 
     await selectOption(host, "inst-3");
 
-    expect(host.textContent).not.toContain(
-      "packages.attachNameTakenExplainer",
-    );
+    expect(host.textContent).not.toContain("packages.attachNameTakenExplainer");
     expect(attachButton(host).disabled).toBe(false);
   });
 });

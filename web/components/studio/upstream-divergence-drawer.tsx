@@ -7,7 +7,7 @@ import type {
 } from "@/components/workbench/diff-view";
 import type { ReactElement } from "react";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { DiffView } from "@/components/workbench/diff-view";
@@ -54,6 +54,21 @@ export function UpstreamDivergenceDrawer({
   const t = useTranslations("studio");
   const [source, setSource] = useState<string>("working_dir");
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const onCloseRef = useRef(onClose);
+
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     setState({ kind: "loading" });
@@ -112,9 +127,6 @@ export function UpstreamDivergenceDrawer({
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       role="dialog"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
-      }}
     >
       <div className="flex max-h-[85vh] w-full max-w-[980px] flex-col gap-3 rounded-[16px] border border-line bg-paper p-5 shadow-xl">
         <div className="flex shrink-0 flex-wrap items-center gap-2">

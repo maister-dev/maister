@@ -49,7 +49,11 @@ export async function loadInstallDir(
   d: Db,
   installId: string,
   context: string,
-): Promise<{ installedPath: string; versionLabel: string; row: Record<string, unknown> }> {
+): Promise<{
+  installedPath: string;
+  versionLabel: string;
+  row: Record<string, unknown>;
+}> {
   const rows = await d.select().from(pi).where(eq(pi.id, installId));
   const install = rows[0] as
     | { installedPath?: string; versionLabel?: string }
