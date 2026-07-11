@@ -1,5 +1,11 @@
 # Full database ERD
 
+## M43 ERD transition (Designed)
+
+Migration 0093 removes STEP_RUNS after terminalizing unfinished legacy runs.
+The implemented ERD will contain NODE_ATTEMPTS as the sole execution-attempt
+ledger; RUNS and all retained evidence/workspace relationships remain.
+
 All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
 `VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), the two **M11a (Implemented)**
 execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),

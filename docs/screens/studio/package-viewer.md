@@ -1,5 +1,11 @@
 # Package viewer — `/studio/packages/{ref}` + detail surfaces
 
+## M43 stored legacy package state (Designed)
+
+Legacy installed/stored content remains read-only and inspectable with an
+“Incompatible with engine 3.0.0” badge and nodes[] republish remediation.
+Attach, enable, upgrade-to and launch controls are disabled.
+
 - **Type:** per-screen template (the Studio package detail + its flow / skill /
   agent / subagent detail sub-surfaces).
 - **Routes:**

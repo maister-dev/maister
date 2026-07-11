@@ -1,5 +1,11 @@
 # Run inspector
 
+## M43 terminalized legacy state (Designed)
+
+The inspector repeats the persistent Failed cut-over banner and reason used by
+the run detail/list. Evidence and worktree inspection remain available.
+Recover, Resume, Respond, Promote and retry are absent.
+
 - **Type:** block.
 - **Routes:** shared by `/runs/{runId}` and `/scratch-runs/{runId}`.
 - **Status:** Implemented for `/runs/{runId}` as the run shell sidebar.

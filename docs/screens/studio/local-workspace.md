@@ -1,5 +1,11 @@
 # Local packages workspace — `/studio/local`
 
+## M43 compatibility state (Designed)
+
+The workspace lists a legacy package with an incompatible badge while keeping
+Open YAML available. Commit, cut and publish are blocked by full-tree
+validation; no export, install, version stamp or attachment occurs.
+
 - **Type:** screen template.
 - **Route:** `/studio/local`.
 - **Status:** Implemented.

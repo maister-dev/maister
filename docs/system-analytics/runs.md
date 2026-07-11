@@ -1,5 +1,15 @@
 # Runs domain
 
+## M43 upgrade terminalization (Designed)
+
+Migration 0093 changes legacy Flow runs in Pending, Running, NeedsInput,
+NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, or Crashed to Failed
+in one transaction. The terminal event has reason
+legacy_steps_engine_3_cutover and source upgrade_cutover. Done, Failed and
+Abandoned history, graph runs, workspaces, evidence and run rows are retained.
+The transition releases scheduler capacity and removes recovery, resume,
+response, promotion and retry actions.
+
 > **M42 — Unified runner & session model (Implemented).** Run runner state
 > (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`,
 > `acp_session_id`) moved OFF the `runs` row (dropped in migration `0082`) into the per-session `run_sessions`

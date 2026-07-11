@@ -1,5 +1,11 @@
 # Launch dialog
 
+## M43 incompatible revision state (Designed)
+
+An incompatible stored revision remains visible with its exact graph-only
+reason, but launchable is false. Runner overrides and the submit control are
+absent, so no selection can bypass compatibility.
+
 - **Type:** chrome (launch surface reachable from the rail and a global
   shortcut).
 - **Status:** Implemented (WI-4 restyle, WI-5 Cmd/Ctrl+K shortcut).

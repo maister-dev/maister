@@ -1,5 +1,11 @@
 # Outbound webhooks domain
 
+## M43 webhook behavior (Designed)
+
+D2 uses the existing run.failed webhook event. Public data stays exactly
+errorCode=CONFIG; internal reason/source fields are not added to the AsyncAPI
+envelope. One outbox record is inserted per migration CAS winner.
+
 ## Purpose
 
 Outbound webhooks (**Implemented**, ADR-077) is MAIster's generic, vendor-neutral

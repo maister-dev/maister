@@ -1,5 +1,15 @@
 # Flows domain
 
+## M43 graph-only compatibility contract (Designed)
+
+Engine 3.0.0 accepts only manifests with a non-empty nodes array and no
+top-level steps key. A present steps key, including an empty array or a
+manifest that also contains nodes, is the typed incompatibility “legacy
+steps[] flows are not supported since engine 3.0.0; republish the package with
+nodes[]”. Stored legacy revisions remain inspectable but cannot be enabled,
+selected by lifecycle mutation, or launched. Malformed graph data and
+engine-bound incompatibility remain distinct CONFIG classifications.
+
 ## Purpose
 
 A **Flow** is a versioned plugin bundle that describes how to execute

@@ -292,6 +292,85 @@ project repos / `.maister/` run artifacts as needed.
 
 ## Operational caveats
 
+## 13. Engine 3.0.0 Postgres/graph-only upgrade
+
+This upgrade is intentionally non-rolling and irreversible after migration
+0093 drops step_runs. Complete these steps in order:
+
+1. Inventory every cached, stored and first-party Flow manifest. Republish any
+   attached/enabled steps[] Flow as nodes[]; do not convert it in place.
+2. List unfinished legacy runs and finish them or explicitly accept that the
+   upgrade will mark them Failed.
+3. Back up Postgres and verify the dump can be read.
+4. Stop both web and supervisor. Do not migrate while either process can write.
+5. Run the main migration through 0093, then run/check the separate Brain
+   migration lineage.
+6. Start supervisor and web. Verify there is no actionable legacy run, every
+   active package is graph-compatible, and the scheduler admits graph work.
+7. Retain the pre-upgrade backup. Restore it with both processes stopped if the
+   release must be rolled back; there is no down-migration or reconstructed
+   step history.
+
+The following read-only SQL identifies the D2 actionable set. Pinned revision
+manifests are authoritative; only unpinned rows use the flows cache.
+
+~~~sql
+WITH authoritative AS (
+  SELECT
+    r.id,
+    r.status,
+    CASE
+      WHEN r.flow_revision_id IS NOT NULL THEN fr.manifest
+      ELSE f.manifest
+    END AS manifest
+  FROM runs r
+  LEFT JOIN flow_revisions fr ON fr.id = r.flow_revision_id
+  LEFT JOIN flows f ON f.id = r.flow_id
+  WHERE r.run_kind = 'flow'
+)
+SELECT id, status
+FROM authoritative
+WHERE manifest ? 'steps'
+  AND status IN (
+    'Pending', 'Running', 'NeedsInput', 'NeedsInputIdle',
+    'HumanWorking', 'WaitingOnChildren', 'Review', 'Crashed'
+  )
+ORDER BY status, id;
+~~~
+
+The D1 impact query reports terminal legacy run count and step-detail rows that
+will be lost:
+
+~~~sql
+WITH authoritative AS (
+  SELECT
+    r.id,
+    r.status,
+    CASE
+      WHEN r.flow_revision_id IS NOT NULL THEN fr.manifest
+      ELSE f.manifest
+    END AS manifest
+  FROM runs r
+  LEFT JOIN flow_revisions fr ON fr.id = r.flow_revision_id
+  LEFT JOIN flows f ON f.id = r.flow_id
+  WHERE r.run_kind = 'flow'
+),
+terminal_legacy AS (
+  SELECT id
+  FROM authoritative
+  WHERE manifest ? 'steps'
+    AND status IN ('Done', 'Failed', 'Abandoned')
+)
+SELECT
+  count(DISTINCT terminal_legacy.id) AS completed_legacy_runs,
+  count(step_runs.id) AS step_detail_rows_lost
+FROM terminal_legacy
+LEFT JOIN step_runs ON step_runs.run_id = terminal_legacy.id;
+~~~
+
+Inventory logs contain counts and identifiers only. Never print manifest bodies
+or database credentials.
+
 - **Supervisor restart orphans live runs** until M19 reconciliation. `Restart=always` recovers the process, not in-flight sessions.
 - **Single host only.** Multi-host (supervisor on a separate machine) needs durable HTTP replay from `run.events.jsonl` — deferred ([ADR-022](decisions.md#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.

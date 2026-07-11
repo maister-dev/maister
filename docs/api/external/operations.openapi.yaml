@@ -1091,6 +1091,10 @@ paths:
         or `Running` if a slot was free). Writes a `token_audit_log` row with
         scope `runs:launch` after success.
       operationId: extLaunchRun
+      x-maister-m43-legacy-steps:
+        status: 422
+        code: CONFIG
+        sideEffects: none
       security:
         - projectToken: []
       requestBody:

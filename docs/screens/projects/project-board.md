@@ -1,5 +1,12 @@
 # Project board
 
+## M43 incompatible task state (Designed)
+
+A task bound to a legacy revision stays visible and shows “Incompatible with
+engine 3.0.0” plus republish guidance. Launch is unavailable. For D2 runs the
+board shows terminal Failed state and never offers Recover, Resume, Respond,
+Promote or retry.
+
 - **Route:** `/projects/{slug}`
 - **Status:** Implemented
 - **Source:** `web/components/board/board.tsx`,

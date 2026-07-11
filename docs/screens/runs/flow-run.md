@@ -1,5 +1,12 @@
 # Flow run detail
 
+## M43 terminalized legacy run (Designed)
+
+A migration-terminalized run shows a persistent Failed cut-over banner with
+timestamp, reason legacy_steps_engine_3_cutover, and links to retained
+timeline, evidence and worktree history. Recover, Resume, Respond, Promote and
+retry controls are absent on every tab.
+
 - **Type:** screen.
 - **Route:** `/runs/{runId}` for `flow` and `agent` workspace-backed runs
   (session-required).

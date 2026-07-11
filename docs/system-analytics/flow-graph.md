@@ -1,5 +1,13 @@
 # Flow graph domain
 
+## M43 graph-only execution contract (Designed)
+
+Engine 3.0.0 removes linear compilation, linear guards and the linear runner.
+node_attempts becomes the sole execution ledger. Graph node gates,
+pre_finish.gates, readiness gates and gate-result history are unchanged. The
+public template namespace steps.<nodeId>.* remains an authoring name and is
+resolved only from node attempts.
+
 > **Status: Implemented (M11a).** Everything in this file is the M11a Flow graph
 > v1 execution model, shipped on the `feature/m11a-flow-graph-lifecycle` branch.
 > Sub-parts owned by

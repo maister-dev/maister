@@ -956,6 +956,11 @@ paths:
         (`promotion_mode` → strategy). Secret provider fields and server
         filesystem paths are never returned.
       operationId: getRunLaunchOptions
+      x-maister-m43-legacy-steps:
+        status: 200
+        flowIssue: incompatible
+        launchable: false
+        sideEffects: none
       parameters:
         - name: taskId
           in: query
@@ -1195,6 +1200,10 @@ paths:
 
         Source: `web/app/api/projects/route.ts`.
       operationId: postProject
+      x-maister-m43-legacy-steps:
+        status: 502
+        code: FLOW_INSTALL
+        sideEffects: compensated-registration
       requestBody:
         required: true
         content:
@@ -3559,6 +3568,10 @@ paths:
         caller gets the unchanged JSON 202. Preconditions throw BEFORE the stream
         opens either way → JSON error with the HTTP status below.
       operationId: postRun
+      x-maister-m43-legacy-steps:
+        status: 400
+        code: CONFIG
+        sideEffects: none-before-json-or-stream-open
       requestBody:
         required: true
         content:
@@ -7243,6 +7256,10 @@ paths:
         For non-flow kinds the response shape is the same as M25
         (`revision` only, no `flowRowId`/`revisionId`).
       operationId: publishLocalAuthoredCapability
+      x-maister-m43-legacy-steps:
+        status: 422
+        code: CONFIG
+        sideEffects: no-published-revision-or-bridge
       parameters:
         - name: slug
           in: path
@@ -7653,6 +7670,10 @@ paths:
         `source`/`version` are body-controlled, validated downstream.
         Source: `web/app/api/projects/[slug]/flow-packages/install/route.ts`.
       operationId: installFlowPackage
+      x-maister-m43-legacy-steps:
+        status: 502
+        code: FLOW_INSTALL
+        sideEffects: no-installed-or-enabled-revision
       parameters:
         - {
             name: slug,
@@ -7689,6 +7710,10 @@ paths:
         AND the project's declared source (cross-source enable is rejected).
         Source: `.../flow-packages/[flowRefId]/enable/route.ts`.
       operationId: enableFlowRevision
+      x-maister-m43-legacy-steps:
+        status: 422
+        code: CONFIG
+        sideEffects: enabled-pointer-unchanged
       parameters:
         - {
             name: slug,
@@ -7753,6 +7778,10 @@ paths:
         declared flow source (re-sourcing is install/re-install).
         Source: `.../flow-packages/[flowRefId]/upgrade/route.ts`.
       operationId: upgradeFlowPackage
+      x-maister-m43-legacy-steps:
+        status: 422
+        code: CONFIG
+        sideEffects: enabled-pointer-unchanged
       parameters:
         - {
             name: slug,
@@ -7797,6 +7826,10 @@ paths:
         mutates completed/active run history. Source:
         `.../flow-packages/[flowRefId]/rollback/route.ts`.
       operationId: rollbackFlowPackage
+      x-maister-m43-legacy-steps:
+        status: 422
+        code: CONFIG
+        sideEffects: enabled-pointer-unchanged
       parameters:
         - {
             name: slug,
@@ -8234,6 +8267,11 @@ paths:
         to a project the caller is a **member** of (`manageLocalPackages`).
         Stamps `last_cut_install_id` after success.
       operationId: cutStudioLocalPackageVersion
+      x-maister-m43-legacy-steps:
+        status: 409
+        code: PRECONDITION
+        details: invalidArtifacts
+        sideEffects: no-export-install-stamp-or-attach
       requestBody:
         required: false
         content:
@@ -8811,6 +8849,10 @@ paths:
         here (post-trust setup path only). Manifest failures → 422 (`CONFIG`);
         clone/copy failures → 502 (`FLOW_INSTALL`).
       operationId: postAdminPackageInstall
+      x-maister-m43-legacy-steps:
+        status: 422
+        code: CONFIG
+        sideEffects: no-usable-member-projection
       requestBody:
         required: true
         content:

@@ -1,5 +1,11 @@
 # Runs ledger
 
+## M43 terminalized legacy row (Designed)
+
+The row is a terminal Failed result with an engine-3 cut-over reason and
+timestamp, not a recoverable crash. It links to retained history and exposes no
+recovery or retry action.
+
 - **Type:** screen.
 - **Route:** `/runs` (session-required).
 - **Status:** Implemented as the platform/project-visible run ledger reached

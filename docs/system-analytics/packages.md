@@ -1,5 +1,13 @@
 # Packages domain
 
+## M43 package compatibility (Designed)
+
+Direct Flow-package installation maps legacy members to FLOW_INSTALL/502.
+Admin package ingestion maps member-manifest validation to CONFIG/422 while
+transport clone/copy failures remain FLOW_INSTALL. Enable, upgrade and
+rollback refuse a legacy target with CONFIG/422 and never change the enabled
+revision pointer or cached manifest. Reads return typed incompatibility.
+
 ## Purpose
 
 Packages are the multi-flow distribution unit above the per-revision install

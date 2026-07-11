@@ -1,5 +1,12 @@
 # Runs domain ERD
 
+## M43 runs-domain transition (Designed)
+
+The post-0093 runs domain has no STEP_RUNS entity or fallback join.
+NODE_ATTEMPTS exclusively supplies graph progress, activity, templating and
+resume context. Legacy run rows remain and obtain their durable cut-over reason
+from the run.failed domain-event ledger.
+
 Tables for the execution lifecycle: tasks (board), runs (Flow attempts and
 scratch sessions), workspaces (worktrees), scratch dialog metadata, messages,
 attachments, and capability snapshots, plus the **ADR-078 (Implemented,

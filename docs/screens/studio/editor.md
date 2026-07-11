@@ -1,5 +1,12 @@
 # Flow editor (Studio)
 
+## M43 local legacy manifest state (Designed)
+
+Raw YAML containing steps[] remains open for manual rewriting. A focused,
+blocking validation panel carries the exact engine-3 remediation. Canvas,
+commit, cut and publish are disabled until the file is a valid nodes[] graph.
+No automatic conversion action exists.
+
 - **Type:** screen (artifact editor).
 - **Route(s):** `/studio/edit/{localPackageId}/[[...path]]` (implemented local
   package editor over a git-backed working dir, ADR-096). The legacy

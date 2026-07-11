@@ -1,5 +1,12 @@
 # Project Brain domain (A+B+C: Foundation, Consultant, Improvement Bridge)
 
+## M43 Postgres-only provisioning and event filter (Designed)
+
+Brain stays separately provisioned through its own Postgres migration lineage.
+Engine 3 removes the SQLite/dialect availability check but retains the
+schema-applied assertion. A run.failed event with the M43 cut-over reason and
+source is not harvested and does not enqueue source reindex work.
+
 ## Purpose
 
 The **Project Brain** (ADR-122, ADR-127, ADR-128) is MAIster's per-project,

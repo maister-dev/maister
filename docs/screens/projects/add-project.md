@@ -1,5 +1,12 @@
 # Add project
 
+## M43 legacy Flow refusal (Designed)
+
+If any package member contains steps[], registration preserves every entered
+field and focuses a role=alert summary with FLOW_INSTALL and the engine-3
+republish-with-nodes remediation. No converter is offered and no partial
+project remains.
+
 - **Type:** screen (admin).
 - **Route:** `/projects/new` (global admin only).
 - **Status:** Implemented (M21 URL-clone) · onboarding modes + prefill + classified

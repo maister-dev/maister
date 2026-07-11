@@ -11200,6 +11200,84 @@ identity is a per-adapter empirical question (the "tool-identity spike").
 
 ---
 
+### ADR-130: Postgres-only and graph-only engine 3.0.0 cut-over
+
+**Date:** 2026-07-11
+**Status:** Accepted
+
+**Context:** MAIster still carries two compatibility layers that no longer
+serve the production architecture: a SQLite dialect branch and the pre-M11a
+linear Flow `steps[]` runner. They multiply database types, weaken locking and
+JSON semantics, allow stored revisions to bypass the graph compiler, duplicate
+execution ledgers, and make upgrade behavior ambiguous. Current first-party
+execution is Postgres-backed and graph-based. The owner accepts two destructive
+upgrade outcomes: D1 loses old `step_runs` detail, and D2 converts unfinished
+legacy linear runs to an explained terminal failure.
+
+**Decision:** Engine `3.0.0` is one release-level hard cut-over.
+
+- `DB_URL` is required and accepts only `postgres://` or `postgresql://`.
+  Web boot and every DB CLI fail fast; advisory/row locks and JSONB behavior are
+  unconditional. Brain keeps its separate schema/migration check but no
+  database-dialect branch.
+- Flow manifests require a non-empty `nodes[]`. Presence of a top-level
+  `steps` key is refused with: `legacy steps[] flows are not supported since
+  engine 3.0.0; republish the package with nodes[]`. There is no converter,
+  compatibility flag or dual parser. Stored legacy revisions remain readable
+  as typed incompatible history but cannot be enabled, upgraded-to or launched.
+- The linear runner, linear `pre_guards`/`post_guards`, SQLite dependencies and
+  dialect/type branches are removed. Graph gates remain. The author-facing
+  `steps.<nodeId>.*` template namespace remains and is populated solely from
+  `node_attempts`.
+- Migration `0093_postgres_graph_only_cutover` executes D2 then D1 in one
+  Postgres transaction while web and supervisor are stopped. It identifies
+  legacy Flow runs by manifest key presence, terminalizes every non-final
+  legacy status to `Failed`, closes open lifecycle stores, clears resumable
+  handles, and emits one existing `run.failed` event/outbox record per CAS
+  winner with durable reason `legacy_steps_engine_3_cutover` and source
+  `upgrade_cutover`. It then drops `step_runs` without export or backfill.
+- D2 is filtered from Ralph relaunch, configured-agent triggers, Brain harvest
+  and source reindex. Cost reconciliation may consume it and graph parents may
+  observe a failed child. The external webhook shape stays
+  `{errorCode:"CONFIG"}`.
+- Upgrade order is audit/republish, finish-or-accept-failure, backup, stop both
+  processes, migrate main and Brain schemas, restart, verify. After the table
+  drop, rollback means restoring the backup; there is no down-migration or
+  fabricated step history.
+
+The normative behavior, API status matrix, migration status/store matrix,
+screen states, observability rules and traceability live in
+`.ai-factory/specs/feature-postgres-graph-only-cutover.md`.
+
+**Consequences:**
+
+- Database behavior becomes deterministic and the Drizzle client has one strict
+  type; production and tests exercise the same Postgres semantics.
+- Flow intake, stored revisions, launch and Studio share one graph-only
+  classifier. Users get actionable refusal states instead of runtime crashes.
+- Old run-level history remains, but pre-M11a per-step detail is irreversibly
+  lost. Unfinished linear runs cannot be recovered after upgrade and show a
+  persistent explained Failed state.
+- Operators must complete the inventory and backup gates before deploying
+  engine 3.0.0. A rolling mixed-version migration is unsupported.
+
+**Alternatives Considered:**
+
+- _Keep SQLite for ultra-light development_: rejected; it masks production
+  locks, JSONB, migrations and Brain behavior while imposing union types.
+- _Auto-convert `steps[]` to `nodes[]`_: rejected; routing, guards and session
+  semantics cannot be inferred without silently changing behavior.
+- _Retain a read-only linear engine or feature flag_: rejected; an executable
+  compatibility path perpetuates the duplicated runtime and upgrade ambiguity.
+- _Backfill `step_runs` into `node_attempts`_: rejected; historical attempt and
+  graph identity are not reliably derivable. Retaining run-level history while
+  explicitly accepting D1 is more honest.
+- _Add a `runs.failure_reason` column_: rejected; the existing terminal event
+  ledger already provides a durable typed explanation without widening every
+  run writer.
+
+---
+
 ## Template for New Decisions
 
 ```markdown

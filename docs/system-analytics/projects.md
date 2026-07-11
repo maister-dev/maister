@@ -1,5 +1,13 @@
 # Projects domain
 
+## M43 registration cut-over (Designed)
+
+Project registration classifies every installed Flow member before finalizing
+the project. A legacy steps[] member maps to FLOW_INSTALL/502 with the engine-3
+remediation. Registration compensation removes project, membership and flow
+projections plus slug-scoped artifacts; shared-cache compensation retains its
+existing semantics. No project is left partially usable.
+
 ## Purpose
 
 A **project** is a single registered git repository that MAIster
