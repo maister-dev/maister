@@ -63,7 +63,19 @@ test("scenario A — node settings are visible on the run-detail panel", async (
 
   await page.goto(`/runs/${fx.runId}`);
 
-  // The settings panel renders under its title (i18n run.settingsTitle).
+  // T-C1 relocated the node-settings block out of the run-detail center into the
+  // run-inspector "Flow" tab, where it renders as a collapsed <details>. The
+  // inspector is open by default (RunShell defaultInspectorOpen); select the Flow
+  // tab and expand the disclosure so the panel — and its <h2> title heading
+  // (i18n run.settingsTitle) — enter the accessibility tree.
+  const inspector = page.getByTestId("run-inspector");
+
+  await inspector.getByRole("tab", { name: "Flow", exact: true }).click();
+  await page
+    .getByTestId("flow-extras")
+    .locator("summary", { hasText: "Node settings" })
+    .click();
+
   const panel = page.getByRole("heading", {
     name: "Node settings",
     exact: true,
@@ -103,7 +115,7 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
 
   // ADR-087 launch popover: the card button opens a dialog; the POST fires
   // from its confirm button.
-  const launch = card.getByRole("button", { name: "Run again", exact: true });
+  const launch = card.getByRole("button", { name: "Launch", exact: true });
 
   await expect(launch).toBeVisible();
   await expect(launch).toBeEnabled();
@@ -153,7 +165,7 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
 
   await expect(reloadedCard).toBeVisible();
   await expect(
-    reloadedCard.getByRole("button", { name: "Run again", exact: true }),
+    reloadedCard.getByRole("button", { name: "Launch", exact: true }),
   ).toBeVisible();
   await expect(page.locator('[data-board] a[href^="/runs/"]')).toHaveCount(0);
 });

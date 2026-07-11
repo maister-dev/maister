@@ -92,7 +92,12 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   console.log("global-setup: resetting e2e schema…");
   await resetSchema(E2E_DB_URL);
 
-  const env = { ...process.env, DB_URL: E2E_DB_URL };
+  // NODE_ENV=test makes migrate.ts's `@/lib/load-env` SKIP `.env.local` (Next.js
+  // parity), so a dev machine's `.env.local` DB_URL can't override E2E_DB_URL and
+  // send these migrations to the dev DB (seed reads DB_URL directly, no load-env).
+  // The webServer's env is configured separately in playwright.config.ts and is
+  // unaffected — the app under test still runs in development.
+  const env = { ...process.env, DB_URL: E2E_DB_URL, NODE_ENV: "test" as const };
 
   console.log("global-setup: applying migrations…");
   execSync("pnpm exec tsx lib/db/migrate.ts", { stdio: "inherit", env });
