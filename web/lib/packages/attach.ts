@@ -24,6 +24,7 @@ import {
   runRevisionSetup,
   type InstallResult,
 } from "@/lib/flows";
+import { loadFlowManifest } from "@/lib/config";
 import { resolvePackageSource } from "@/lib/packages/install";
 import { redactUrl } from "@/lib/repo-source";
 
@@ -180,6 +181,14 @@ export async function installPackageRevision(opts: {
 
   try {
     const name = resolved.manifest.name;
+
+    for (const flow of resolved.manifest.flows) {
+      await loadFlowManifest(join(resolved.pkgRoot, flow.path, "flow.yaml"), {
+        errorCode: "CONFIG",
+        surface: "admin-package-install-member",
+      });
+    }
+
     const [existing] = await db
       .select()
       .from(packageInstalls)

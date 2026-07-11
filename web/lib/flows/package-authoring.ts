@@ -32,6 +32,7 @@ import { MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
 import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const log = pino({
   name: "flow-package-authoring",
@@ -174,8 +175,14 @@ export function assertPublishableAuthoredFlowPackage(args: {
 
   if (validated.validation.status === "valid") return validated;
 
+  if (
+    validated.validation.issues.some((issue) => issue.code === "legacy_steps")
+  ) {
+    throw new MaisterError("CONFIG", LEGACY_STEPS_REFUSAL_MESSAGE);
+  }
+
   const issues = validated.validation.issues
-    .map((issue) => `${issue.path}: ${issue.code}`)
+    .map((issue) => `${issue.path}: ${issue.message}`)
     .join("; ");
 
   log.warn(
@@ -522,7 +529,10 @@ function parseAndValidateManifest(
 
   if (!compatibility.compatible) {
     issues.push({
-      code: "schema",
+      code:
+        compatibility.reason.kind === "legacy_steps"
+          ? "legacy_steps"
+          : "schema",
       path: "flow.yaml:(root)",
       message: compatibility.reason.message,
     });

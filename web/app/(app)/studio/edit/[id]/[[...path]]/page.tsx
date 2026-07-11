@@ -115,7 +115,19 @@ export default async function StudioEditPage({
   let topology: GraphTopology | null = null;
   let layout: FlowLayout | null = null;
   let initialYaml = "";
-  let blockingValidationMessage: string | null = null;
+  const blockingValidationMessage = files.some((file) => {
+    if (!isFlowPath(file.path)) return false;
+
+    try {
+      const shape = classifyFlowManifestShape(parseYaml(file.content));
+
+      return shape === "legacy_steps" || shape === "mixed";
+    } catch {
+      return false;
+    }
+  })
+    ? LEGACY_STEPS_REFUSAL_MESSAGE
+    : null;
 
   if (flowPath) {
     const selected = files.find((f) => f.path === flowPath);
@@ -123,12 +135,7 @@ export default async function StudioEditPage({
     initialYaml = selected?.content ?? "";
     try {
       const rawManifest = parseYaml(initialYaml);
-      const shape = classifyFlowManifestShape(rawManifest);
       const parsed = flowYamlV1Schema.safeParse(rawManifest);
-
-      if (shape === "legacy_steps" || shape === "mixed") {
-        blockingValidationMessage = LEGACY_STEPS_REFUSAL_MESSAGE;
-      }
 
       if (parsed.success) {
         const graph = buildAuthoredFlowGraph(parsed.data, 0);

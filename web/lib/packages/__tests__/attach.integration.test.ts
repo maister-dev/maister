@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 import {
   attachPackage,
   detachPackage,
@@ -120,6 +121,36 @@ describe("package attach lifecycle (integration)", () => {
   let installV1: string;
   let installV2: string;
   let attachmentId: string;
+
+  it("refuses a legacy member as CONFIG before creating an install row", async () => {
+    const legacyPackage = await mkdtemp(join(tmpdir(), "attach-int-legacy-"));
+
+    try {
+      await buildPackage(legacyPackage, ["legacy-flow"]);
+      await writeFile(
+        join(legacyPackage, "flows/legacy-flow/flow.yaml"),
+        "schemaVersion: 1\nname: legacy-flow\nsteps: []\n",
+      );
+      const before = await db.select().from(schema.packageInstalls);
+
+      await expect(
+        installPackageRevision({
+          source: legacyPackage,
+          version: "attpkg/v0.9.0",
+          db,
+        }),
+      ).rejects.toMatchObject({
+        code: "CONFIG",
+        message: LEGACY_STEPS_REFUSAL_MESSAGE,
+      });
+
+      const after = await db.select().from(schema.packageInstalls);
+
+      expect(after).toHaveLength(before.length);
+    } finally {
+      await rm(legacyPackage, { recursive: true, force: true });
+    }
+  });
 
   it("installPackageRevision: two-phase install + idempotent reuse", async () => {
     const first = await installPackageRevision({

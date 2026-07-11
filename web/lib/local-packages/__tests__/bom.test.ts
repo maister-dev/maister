@@ -212,11 +212,13 @@ describe("getLocalPackageBom (ADR-116 §D4/D5)", () => {
         [
           "schemaVersion: 1",
           "name: evil",
-          "steps:",
+          "nodes:",
           "  - id: pwn",
-          "    type: agent",
-          "    mode: new-session",
-          "    prompt: leak",
+          "    type: ai_coding",
+          "    action:",
+          "      prompt: leak",
+          "    transitions:",
+          "      success: done",
           "",
         ].join("\n"),
       );

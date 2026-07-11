@@ -8,6 +8,8 @@ import type { PackageInstallManifest } from "@/lib/packages/attach";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
+import { join } from "node:path";
+
 import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
@@ -46,6 +48,11 @@ export type {
 const { packageInstalls, packageSources, projectPackageAttachments } =
   schemaModule as unknown as Record<string, any>;
 
+export type ProjectPackageVersionTarget = PackageVersionTarget & {
+  compatible: boolean;
+  incompatibilityReason: string | null;
+};
+
 export type ProjectPackageAttachmentView = {
   id: string;
   packageInstallId: string;
@@ -58,8 +65,8 @@ export type ProjectPackageAttachmentView = {
   // The single newest strictly-newer installed version (default one-click
   // upgrade), and all strictly-older installed versions (explicit downgrade
   // path). An older version is NEVER surfaced as an upgrade.
-  upgradeTarget: PackageVersionTarget | null;
-  downgradeTargets: PackageVersionTarget[];
+  upgradeTarget: ProjectPackageVersionTarget | null;
+  downgradeTargets: ProjectPackageVersionTarget[];
   flows: string[];
 };
 
@@ -70,7 +77,45 @@ export type AvailablePackageInstallView = {
   resolvedRevision: string;
   trustStatus: string;
   flows: string[];
+  compatible: boolean;
+  incompatibilityReason: string | null;
 };
+
+type PackageCompatibility = Pick<
+  AvailablePackageInstallView,
+  "compatible" | "incompatibilityReason"
+>;
+
+const UNKNOWN_PACKAGE_COMPATIBILITY: PackageCompatibility = {
+  compatible: false,
+  incompatibilityReason: "Package flow manifest compatibility is unavailable",
+};
+
+async function packageCompatibility(
+  install: any,
+): Promise<PackageCompatibility> {
+  const manifest = install.manifest as PackageInstallManifest | undefined;
+
+  try {
+    for (const flow of manifest?.spec.flows ?? []) {
+      await loadFlowManifest(
+        join(install.installedPath, flow.path, "flow.yaml"),
+        {
+          errorCode: "CONFIG",
+          surface: "project-package-compatibility",
+        },
+      );
+    }
+
+    return { compatible: true, incompatibilityReason: null };
+  } catch (err) {
+    return {
+      compatible: false,
+      incompatibilityReason:
+        err instanceof Error ? err.message : "Package flow manifest is invalid",
+    };
+  }
+}
 
 // DTO projections for the project packages tab (ADR-088). `installed_path`
 // never leaves the server.
@@ -113,6 +158,15 @@ export async function getProjectPackageAttachments(
       ),
     );
 
+  const compatibilityByInstallId = new Map<string, PackageCompatibility>(
+    await Promise.all(
+      siblingInstalls.map(
+        async (install: any) =>
+          [install.id as string, await packageCompatibility(install)] as const,
+      ),
+    ),
+  );
+
   return attachments.map((att: any) => {
     const install = installById.get(att.packageInstallId);
     const manifest = install?.manifest as PackageInstallManifest | undefined;
@@ -151,8 +205,18 @@ export async function getProjectPackageAttachments(
             discovered: discoveredByUrl.get(install.sourceUrl) ?? [],
           })
         : false,
-      upgradeTarget: upgrade,
-      downgradeTargets: downgrade,
+      upgradeTarget: upgrade
+        ? {
+            ...upgrade,
+            ...(compatibilityByInstallId.get(upgrade.installId) ??
+              UNKNOWN_PACKAGE_COMPATIBILITY),
+          }
+        : null,
+      downgradeTargets: downgrade.map((target) => ({
+        ...target,
+        ...(compatibilityByInstallId.get(target.installId) ??
+          UNKNOWN_PACKAGE_COMPATIBILITY),
+      })),
       flows: manifest?.spec.flows.map((f) => f.id) ?? [],
     };
   });
@@ -167,18 +231,22 @@ export async function getAvailablePackageInstalls(): Promise<
     .from(packageInstalls)
     .where(eq(packageInstalls.packageStatus, "Installed"));
 
-  return installs.map((install: any) => {
-    const manifest = install.manifest as PackageInstallManifest | undefined;
+  return Promise.all(
+    installs.map(async (install: any) => {
+      const manifest = install.manifest as PackageInstallManifest | undefined;
+      const compatibility = await packageCompatibility(install);
 
-    return {
-      id: install.id,
-      name: install.name,
-      versionLabel: install.versionLabel,
-      resolvedRevision: install.resolvedRevision,
-      trustStatus: install.trustStatus,
-      flows: manifest?.spec.flows.map((f) => f.id) ?? [],
-    };
-  });
+      return {
+        id: install.id,
+        name: install.name,
+        versionLabel: install.versionLabel,
+        resolvedRevision: install.resolvedRevision,
+        trustStatus: install.trustStatus,
+        flows: manifest?.spec.flows.map((f) => f.id) ?? [],
+        ...compatibility,
+      };
+    }),
+  );
 }
 
 // The set of project ids that have the named package attached (any version) —

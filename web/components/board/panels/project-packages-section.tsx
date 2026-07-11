@@ -6,7 +6,7 @@ import type {
 } from "@/lib/queries/packages";
 import type { ReactElement } from "react";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -64,12 +64,18 @@ export function ProjectPackagesSection({
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedInstall, setSelectedInstall] = useState("");
+  const noticeRef = useRef<HTMLParagraphElement>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
   const attachedNames = new Set(attachments.map((a) => a.packageName));
   const attachable = availableInstalls.filter(
     (i) => !attachedNames.has(i.name),
   );
+  const selected = attachable.find((install) => install.id === selectedInstall);
+
+  useEffect(() => {
+    if (notice) noticeRef.current?.focus();
+  }, [notice]);
 
   function surface(result: {
     ok: boolean;
@@ -140,6 +146,7 @@ export function ProjectPackagesSection({
               {t("attachPackage")}
             </label>
             <select
+              aria-describedby="attach-package-compatibility"
               className="h-9 rounded-[8px] border border-line bg-paper px-2 font-mono text-[12px] text-ink"
               id="attach-package-select"
               value={selectedInstall}
@@ -147,19 +154,34 @@ export function ProjectPackagesSection({
             >
               <option value="">{t("attachPick")}</option>
               {attachable.map((install) => (
-                <option key={install.id} value={install.id}>
+                <option
+                  key={install.id}
+                  disabled={!install.compatible}
+                  value={install.id}
+                >
                   {install.name}@{install.versionLabel}
                 </option>
               ))}
             </select>
             <button
               className="h-9 rounded-[8px] border border-amber bg-amber px-3 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-50"
-              disabled={busy === "attach" || !selectedInstall}
+              disabled={
+                busy === "attach" || !selectedInstall || !selected?.compatible
+              }
               type="button"
               onClick={attach}
             >
               {t("attachPackage")}
             </button>
+            <span className="sr-only" id="attach-package-compatibility">
+              {attachable
+                .filter((install) => !install.compatible)
+                .map(
+                  (install) =>
+                    `${install.name}@${install.versionLabel}: ${install.incompatibilityReason}`,
+                )
+                .join("; ")}
+            </span>
           </div>
         ) : null}
       </div>
@@ -167,7 +189,9 @@ export function ProjectPackagesSection({
       {notice ? (
         <p
           className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
+          ref={noticeRef}
           role="alert"
+          tabIndex={-1}
         >
           {notice}
         </p>
@@ -237,7 +261,14 @@ export function ProjectPackagesSection({
                             {upgradeTarget ? (
                               <button
                                 className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
-                                disabled={busy === `switch:${att.id}`}
+                                disabled={
+                                  busy === `switch:${att.id}` ||
+                                  !upgradeTarget.compatible
+                                }
+                                title={
+                                  upgradeTarget.incompatibilityReason ??
+                                  undefined
+                                }
                                 type="button"
                                 onClick={() =>
                                   switchVersion(att, upgradeTarget.installId)
@@ -260,7 +291,11 @@ export function ProjectPackagesSection({
                                 {att.downgradeTargets.map((tgt) => (
                                   <option
                                     key={tgt.installId}
+                                    disabled={!tgt.compatible}
                                     value={tgt.installId}
+                                    title={
+                                      tgt.incompatibilityReason ?? undefined
+                                    }
                                   >
                                     {tgt.versionLabel}
                                   </option>

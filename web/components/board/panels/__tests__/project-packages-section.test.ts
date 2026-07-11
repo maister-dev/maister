@@ -21,8 +21,18 @@ const attachment = {
   trustStatus: "untrusted",
   attachedAt: "2026-06-12T10:00:00.000Z",
   updateAvailable: true,
-  upgradeTarget: { installId: "inst-2", versionLabel: "aif/v2.0.0" },
-  downgradeTargets: [] as { installId: string; versionLabel: string }[],
+  upgradeTarget: {
+    installId: "inst-2",
+    versionLabel: "aif/v2.0.0",
+    compatible: true,
+    incompatibilityReason: null,
+  },
+  downgradeTargets: [] as {
+    installId: string;
+    versionLabel: string;
+    compatible: boolean;
+    incompatibilityReason: string | null;
+  }[],
   flows: ["aif-dev", "aif-bugfix"],
 };
 
@@ -34,6 +44,8 @@ const installs = [
     resolvedRevision: "a".repeat(40),
     trustStatus: "untrusted",
     flows: ["aif-dev", "aif-bugfix"],
+    compatible: true,
+    incompatibilityReason: null,
   },
   {
     id: "inst-2",
@@ -42,6 +54,8 @@ const installs = [
     resolvedRevision: "b".repeat(40),
     trustStatus: "untrusted",
     flows: ["aif-dev"],
+    compatible: true,
+    incompatibilityReason: null,
   },
   {
     id: "inst-3",
@@ -50,6 +64,8 @@ const installs = [
     resolvedRevision: "c".repeat(40),
     trustStatus: "trusted_by_policy",
     flows: ["triager"],
+    compatible: true,
+    incompatibilityReason: null,
   },
 ];
 
@@ -84,7 +100,14 @@ describe("ProjectPackagesSection", () => {
       versionLabel: "aif/v2.1.0",
       updateAvailable: false,
       upgradeTarget: null,
-      downgradeTargets: [{ installId: "inst-2", versionLabel: "aif/v2.0.0" }],
+      downgradeTargets: [
+        {
+          installId: "inst-2",
+          versionLabel: "aif/v2.0.0",
+          compatible: true,
+          incompatibilityReason: null,
+        },
+      ],
     };
 
     const markup = renderToStaticMarkup(
@@ -118,6 +141,41 @@ describe("ProjectPackagesSection", () => {
     // Trust is platform-scoped (global admin); project admins keep the rest.
     expect(markup).not.toContain(">trust<");
     expect(markup).toContain("detach");
+  });
+
+  it("disables incompatible attach and upgrade targets with the refusal reason", () => {
+    const reason = "Legacy steps manifests are not supported";
+    const incompatibleInstalls = installs.map((install) =>
+      install.id === "inst-3"
+        ? { ...install, compatible: false, incompatibilityReason: reason }
+        : install,
+    );
+    const incompatibleAttachment = {
+      ...attachment,
+      upgradeTarget: {
+        ...attachment.upgradeTarget,
+        compatible: false,
+        incompatibilityReason: reason,
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(ProjectPackagesSection, {
+        slug: "demo",
+        isAdmin: true,
+        canTrust: true,
+        attachments: [incompatibleAttachment],
+        availableInstalls: incompatibleInstalls,
+      }),
+    );
+
+    expect(markup).toMatch(/<option[^>]*disabled=""[^>]*value="inst-3"/);
+    expect(markup).toMatch(
+      /<button[^>]*disabled=""[^>]*title="Legacy steps manifests are not supported"/,
+    );
+    expect(markup).toContain(
+      "core@core/v0.1.0: Legacy steps manifests are not supported",
+    );
   });
 
   it("hides admin controls for non-admin viewers and shows the empty state", () => {

@@ -149,6 +149,31 @@ describe("GET /api/runs/[runId]/graph-status", () => {
     expect(getRunNodeStatuses).not.toHaveBeenCalled();
   });
 
+  it("returns the typed incompatible branch without reading node statuses", async () => {
+    vi.mocked(loadRunManifest).mockResolvedValueOnce({
+      flowId: "flow-1",
+      projectId: "project-1",
+      compatible: false,
+      manifest: null,
+      incompatibility: {
+        kind: "legacy_steps",
+        message: "republish with nodes[]",
+      },
+    } as never);
+
+    const res = await invokeGet("legacy-run");
+
+    await expect(res.json()).resolves.toEqual({
+      compatible: false,
+      incompatibility: {
+        kind: "legacy_steps",
+        message: "republish with nodes[]",
+      },
+      nodes: {},
+    });
+    expect(getRunNodeStatuses).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when the session is not authenticated", async () => {
     vi.mocked(requireActiveSession).mockRejectedValueOnce(
       new MaisterError("UNAUTHENTICATED", "sign in"),

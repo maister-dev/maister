@@ -2,7 +2,7 @@
 
 import type { ReactElement } from "react";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -96,11 +96,21 @@ export function CloneErrorBlock({
   repoUrl: string;
 }): ReactElement | null {
   const t = useTranslations("projects");
+  const alertRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (errorCode) alertRef.current?.focus();
+  }, [errorCode]);
 
   if (!errorCode) return null;
 
   return (
-    <div className="flex flex-col gap-1.5" role="alert">
+    <div
+      className="flex flex-col gap-1.5"
+      ref={alertRef}
+      role="alert"
+      tabIndex={-1}
+    >
       <p className="text-[11.5px] leading-[1.5] text-[#d9534f]">
         {errorCode === "PRECONDITION" && cloneReason
           ? t(REASON_KEY[cloneReason] ?? "errorClone")

@@ -154,6 +154,30 @@ describe("GET /api/runs/[runId]/transcript", () => {
     expect(projectRunTranscript).not.toHaveBeenCalled();
   });
 
+  it("returns the typed incompatible branch without projecting a transcript", async () => {
+    vi.mocked(loadRunManifest).mockResolvedValueOnce({
+      compatible: false,
+      manifest: null,
+      incompatibility: {
+        kind: "legacy_steps",
+        message: "republish with nodes[]",
+      },
+    } as unknown as Awaited<ReturnType<typeof loadRunManifest>>);
+
+    const res = await invoke(RUN_ID, "implement");
+
+    await expect(res.json()).resolves.toEqual({
+      compatible: false,
+      incompatibility: {
+        kind: "legacy_steps",
+        message: "republish with nodes[]",
+      },
+      messages: [],
+      usage: null,
+    });
+    expect(projectRunTranscript).not.toHaveBeenCalled();
+  });
+
   it("does not leak internal handles in the payload", async () => {
     vi.mocked(getRunNodeTranscript).mockResolvedValue({
       messages: [

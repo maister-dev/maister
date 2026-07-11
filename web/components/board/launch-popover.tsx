@@ -983,44 +983,44 @@ export function LaunchPopover({
                     ) : null}
 
                     <div className="grid gap-3 md:grid-cols-2">
-                      {options.runners.length > 0 ? (
-                        <label className="flex flex-col gap-1">
-                          <span className={fieldLabelClass}>
-                            {t("flow")}
-                            {flowId !== options.selectedFlowId ? (
-                              <b className="ml-2 text-amber">{t("override")}</b>
-                            ) : null}
-                          </span>
-                          <LaunchSelect
-                            label={t("flow")}
-                            options={flowOptions}
-                            value={flowId}
-                            onChange={setFlowId}
-                          />
-                        </label>
-                      ) : null}
-
                       <label className="flex flex-col gap-1">
                         <span className={fieldLabelClass}>
-                          {t("runnerModel")}
-                          {runnerId !== (options.selectedRunnerId ?? "") ? (
+                          {t("flow")}
+                          {flowId !== options.selectedFlowId ? (
                             <b className="ml-2 text-amber">{t("override")}</b>
                           ) : null}
                         </span>
                         <LaunchSelect
-                          label={t("runnerModel")}
-                          options={runnerOptions}
-                          value={runnerId}
-                          onChange={setRunnerId}
+                          label={t("flow")}
+                          options={flowOptions}
+                          value={flowId}
+                          onChange={setFlowId}
                         />
-                        <span className="font-mono text-[10px] text-mute">
-                          {t("pinnedModel", {
-                            model:
-                              options.runners.find((r) => r.id === runnerId)
-                                ?.pinnedModel.model ?? "-",
-                          })}
-                        </span>
                       </label>
+
+                      {options.runners.length > 0 ? (
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {t("runnerModel")}
+                            {runnerId !== (options.selectedRunnerId ?? "") ? (
+                              <b className="ml-2 text-amber">{t("override")}</b>
+                            ) : null}
+                          </span>
+                          <LaunchSelect
+                            label={t("runnerModel")}
+                            options={runnerOptions}
+                            value={runnerId}
+                            onChange={setRunnerId}
+                          />
+                          <span className="font-mono text-[10px] text-mute">
+                            {t("pinnedModel", {
+                              model:
+                                options.runners.find((r) => r.id === runnerId)
+                                  ?.pinnedModel.model ?? "-",
+                            })}
+                          </span>
+                        </label>
+                      ) : null}
 
                       <label className="flex flex-col gap-1">
                         <span className={fieldLabelClass}>

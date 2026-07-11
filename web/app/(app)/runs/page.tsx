@@ -367,7 +367,13 @@ function RunRow({
         </span>
         {row.cutoverFailedAt ? (
           <div className="mt-2 max-w-[170px] font-mono text-[9.5px] font-semibold text-danger">
-            {t("cutoverFailure")}
+            {t("cutoverFailure")} ·{" "}
+            <time dateTime={row.cutoverFailedAt.toISOString()}>
+              {new Intl.DateTimeFormat(locale, {
+                dateStyle: "short",
+                timeStyle: "short",
+              }).format(row.cutoverFailedAt)}
+            </time>
           </div>
         ) : null}
       </td>

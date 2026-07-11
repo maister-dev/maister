@@ -2,7 +2,7 @@
 
 import type { ReactElement } from "react";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -46,6 +46,11 @@ export function PackageSourcesPanel({
   const [editing, setEditing] = useState<PackageSourceRow | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (notice) noticeRef.current?.focus();
+  }, [notice]);
 
   const refresh = (): void => startTransition(() => router.refresh());
 
@@ -137,7 +142,9 @@ export function PackageSourcesPanel({
       {notice ? (
         <p
           className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
+          ref={noticeRef}
           role="alert"
+          tabIndex={-1}
         >
           {notice}
         </p>

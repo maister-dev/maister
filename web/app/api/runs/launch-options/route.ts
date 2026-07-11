@@ -224,18 +224,18 @@ function projectFlowLaunchIssue(args: {
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const parsed = querySchema.safeParse({
-    taskId: req.nextUrl.searchParams.get("taskId"),
-  });
-
-  if (!parsed.success) {
-    return errorResponse(
-      new MaisterError("CONFIG", `invalid query: ${parsed.error.message}`),
-    );
-  }
-
   try {
     await requireActiveSession();
+    const parsed = querySchema.safeParse({
+      taskId: req.nextUrl.searchParams.get("taskId"),
+    });
+
+    if (!parsed.success) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid query: ${parsed.error.message}`,
+      );
+    }
 
     const db = getDb() as any;
     const taskRows = await db

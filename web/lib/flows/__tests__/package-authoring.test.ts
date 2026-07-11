@@ -10,12 +10,33 @@ import {
 } from "@/lib/flows";
 import {
   createAuthoredFlowPackageBody,
+  assertPublishableAuthoredFlowPackage,
   readAuthoredFlowPackageDirectory,
   validateAuthoredFlowPackageBody,
   writeAuthoredFlowPackageDirectory,
 } from "@/lib/flows/package-authoring";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 describe("authored Flow package body validation", () => {
+  it("preserves the exact legacy refusal when publish validates the draft", () => {
+    const body = createAuthoredFlowPackageBody({
+      flowYaml: "schemaVersion: 1\nname: legacy\nsteps: []\n",
+      packageMetadata: { slug: "legacy", name: "Legacy" },
+      files: [],
+    });
+
+    expect(() =>
+      assertPublishableAuthoredFlowPackage({
+        body,
+        context: {
+          projectSlug: "demo",
+          slug: "legacy",
+          action: "publish",
+        },
+      }),
+    ).toThrowError(LEGACY_STEPS_REFUSAL_MESSAGE);
+  });
+
   it("normalizes a valid authored Flow package body", () => {
     const body = validateAuthoredFlowPackageBody(
       createAuthoredFlowPackageBody({

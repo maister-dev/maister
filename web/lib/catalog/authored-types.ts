@@ -35,6 +35,7 @@ export type AuthoredFlowPackageMetadata = {
 
 export type AuthoredFlowPackageValidationIssueCode =
   | "yaml_parse"
+  | "legacy_steps"
   | "schema"
   | "graph"
   | "unsafe_path"

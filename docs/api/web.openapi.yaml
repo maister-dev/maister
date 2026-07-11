@@ -13920,6 +13920,7 @@ components:
           required: [launchable, reason]
           properties:
             launchable: { type: boolean }
+            incompatibilityReason: { type: string, nullable: true }
             reason:
               type: string
               enum:
@@ -13957,6 +13958,7 @@ components:
           required: [launchable, reason]
           properties:
             launchable: { type: boolean }
+            incompatibilityReason: { type: string, nullable: true }
             reason:
               type: string
               enum:
@@ -13979,15 +13981,22 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [id, refId, name, enabled, isTaskDefault]
+            required:
+              [id, refId, name, version, enabled, disabledReason, disabledReasonMessage, isTaskDefault]
             properties:
               id: { type: string, format: uuid }
               refId: { type: string }
               name: { type: string }
               version: { type: string, nullable: true }
               enabled: { type: boolean }
+              disabledReason:
+                type: string
+                nullable: true
+                enum:
+                  [unconfigured, flow_missing, no_revision, not_enabled, not_installed, setup_failed, setup_pending, unsupported_schema, incompatible, null]
+              disabledReasonMessage: { type: string, nullable: true }
               isTaskDefault: { type: boolean }
-        selectedFlowId: { type: string, format: uuid }
+        selectedFlowId: { type: string }
         sessions:
           type: array
           description: |
@@ -14013,14 +14022,24 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [id, label, model, readinessStatus, pinnedModel]
+            required:
+              [id, label, adapter, capabilityAgent, model, providerKind, permissionPolicy, sidecarId, readinessStatus, readinessReasons, enabled, pinnedModel]
             properties:
               id: { type: string }
               label: { type: string }
+              adapter: { type: string }
+              capabilityAgent: { type: string }
               model: { type: string }
+              providerKind: { type: string }
+              permissionPolicy: { type: string }
+              sidecarId: { type: string, nullable: true }
               readinessStatus:
                 type: string
                 enum: [Unknown, Ready, NotReady]
+              readinessReasons:
+                type: array
+                items: { type: string }
+              enabled: { type: boolean }
               pinnedModel:
                 type: object
                 nullable: true
@@ -15106,19 +15125,35 @@ components:
           description: |
             (Implemented, ADR-066) Removed-line count for this file, computed
             server-side (`-` lines, excluding the `---` file header).
-    RunGraphResponse:
+    FlowManifestIncompatibility:
       type: object
-      required: [topology, layout]
+      additionalProperties: false
+      required: [kind, message]
       properties:
-        topology: { $ref: "#/components/schemas/GraphTopology" }
-        layout:
-          type: object
-          description: |
-            (ADR-064) Authored layout from the manifest `presentation` section,
-            keyed by node id; a node absent from the map is dagre-seeded
-            client-side.
-          additionalProperties:
-            { $ref: "#/components/schemas/GraphNodePosition" }
+        kind: { type: string, enum: [legacy_steps, invalid_manifest] }
+        message: { type: string }
+    RunGraphResponse:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [compatible, incompatibility, topology, layout]
+          properties:
+            compatible: { type: boolean, enum: [true] }
+            incompatibility: { type: object, nullable: true, enum: [null] }
+            topology: { $ref: "#/components/schemas/GraphTopology" }
+            layout:
+              type: object
+              additionalProperties:
+                { $ref: "#/components/schemas/GraphNodePosition" }
+        - type: object
+          additionalProperties: false
+          required: [compatible, incompatibility, topology, layout]
+          properties:
+            compatible: { type: boolean, enum: [false] }
+            incompatibility:
+              { $ref: "#/components/schemas/FlowManifestIncompatibility" }
+            topology: { type: object, nullable: true, enum: [null] }
+            layout: { type: object, nullable: true, enum: [null] }
     GraphTopology:
       type: object
       required: [nodes, edges]
@@ -15190,15 +15225,27 @@ components:
         x: { type: number }
         y: { type: number }
     RunGraphStatusResponse:
-      type: object
-      required: [currentStepId, runStatus, nodes]
-      properties:
-        currentStepId: { type: string, nullable: true }
-        runStatus: { type: string }
-        nodes:
-          type: object
-          description: Per-node status map keyed by node id.
-          additionalProperties: { $ref: "#/components/schemas/GraphNodeStatus" }
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [compatible, currentStepId, runStatus, nodes]
+          properties:
+            compatible: { type: boolean, enum: [true] }
+            currentStepId: { type: string, nullable: true }
+            runStatus: { type: string }
+            nodes:
+              type: object
+              description: Per-node status map keyed by node id.
+              additionalProperties:
+                { $ref: "#/components/schemas/GraphNodeStatus" }
+        - type: object
+          additionalProperties: false
+          required: [compatible, incompatibility, nodes]
+          properties:
+            compatible: { type: boolean, enum: [false] }
+            incompatibility:
+              { $ref: "#/components/schemas/FlowManifestIncompatibility" }
+            nodes: { type: object, additionalProperties: false }
     GraphNodeStatus:
       type: object
       required: [status, attempt, gates, rollup, gateSummary]
@@ -15280,20 +15327,32 @@ components:
         content: { type: string }
         createdAt: { type: string, format: date-time }
     RunTranscriptResponse:
-      type: object
-      required: [messages, usage]
-      properties:
-        messages:
-          type: array
-          items: { $ref: "#/components/schemas/TranscriptMessage" }
-        usage:
-          nullable: true
-          description: Latest usage reported by the node's most recent attempt.
-          type: object
-          required: [used, size]
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [compatible, messages, usage]
           properties:
-            used: { type: integer }
-            size: { type: integer }
+            compatible: { type: boolean, enum: [true] }
+            messages:
+              type: array
+              items: { $ref: "#/components/schemas/TranscriptMessage" }
+            usage:
+              nullable: true
+              description: Latest usage reported by the node's most recent attempt.
+              type: object
+              required: [used, size]
+              properties:
+                used: { type: integer }
+                size: { type: integer }
+        - type: object
+          additionalProperties: false
+          required: [compatible, incompatibility, messages, usage]
+          properties:
+            compatible: { type: boolean, enum: [false] }
+            incompatibility:
+              { $ref: "#/components/schemas/FlowManifestIncompatibility" }
+            messages: { type: array, maxItems: 0, items: {} }
+            usage: { type: object, nullable: true, enum: [null] }
     NotFoundBody:
       type: object
       required: [message]
@@ -16115,22 +16174,29 @@ components:
     UpgradePreview:
       type: object
       required:
+        - compatible
+        - incompatibility
         - fromRevisionId
         - toRevisionId
         - schemaVersionChanged
         - setupChanged
-        - steps
+        - nodes
         - gates
         - artifacts
         - capabilities
         - externalOps
         - agents
       properties:
+        compatible: { type: boolean }
+        incompatibility:
+          oneOf:
+            - { $ref: "#/components/schemas/FlowManifestIncompatibility" }
+            - { type: object, nullable: true, enum: [null] }
         fromRevisionId: { type: string, format: uuid, nullable: true }
         toRevisionId: { type: string, format: uuid }
         schemaVersionChanged: { type: boolean }
         setupChanged: { type: boolean }
-        steps: { $ref: "#/components/schemas/ContractDiff" }
+        nodes: { $ref: "#/components/schemas/ContractDiff" }
         gates: { $ref: "#/components/schemas/ContractDiff" }
         artifacts: { $ref: "#/components/schemas/ContractDiff" }
         capabilities: { $ref: "#/components/schemas/ContractDiff" }
