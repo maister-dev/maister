@@ -326,7 +326,7 @@ export async function spawnSession(
     // Counters start fresh (in-memory; a resume rebuilds this record from zero).
     enforcementProfile: request.enforcementProfile,
     capabilityDenyCount: 0,
-    capabilityArbitratedToolCallIds: new Set<string>(),
+    capabilityPendingWriteIds: new Set<string>(),
     repeatCount: 0,
     turnsSinceProgress: 0,
   };

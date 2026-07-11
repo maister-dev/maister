@@ -151,9 +151,41 @@ class GuardrailAgent {
     this.outcomes.push(res.outcome.outcome);
   }
 
-  // ADR-129 D5: a WRITE_KINDS tool_call session/update with NO preceding
-  // requestPermission — the adapter executed a write without asking (always-ask
-  // bypass) → the sentinel must halt.
+  // ADR-129 D5: the real claude ordering for an ARBITRATED write — the pending
+  // `tool_call` (status:"pending") STREAMS first, THEN requestPermission
+  // (canUseTool) reaches the seam, THEN the execution `tool_call_update`
+  // (status:"completed"). The sentinel must NOT halt: the write reached the seam.
+  async arbitratedWrite(sessionId, name, id) {
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: id,
+        kind: "edit",
+        title: name,
+        status: "pending",
+      },
+    });
+    const res = await this.connection.requestPermission({
+      sessionId,
+      toolCall: { toolCallId: id, kind: "edit", title: name },
+      options: OPTIONS,
+    });
+
+    this.outcomes.push(res.outcome.outcome);
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: id,
+        status: "completed",
+      },
+    });
+  }
+
+  // ADR-129 D5: a write that EXECUTES (tool_call_update status:"completed") after
+  // being announced (pending tool_call) but WITHOUT any requestPermission — the
+  // adapter ran a write without ever asking (always-ask bypass) → sentinel halts.
   async unarbitratedWrite(sessionId, id) {
     await this.connection.sessionUpdate({
       sessionId,
@@ -163,6 +195,14 @@ class GuardrailAgent {
         kind: "edit",
         title: `unarbitrated ${id}`,
         status: "pending",
+      },
+    });
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: id,
+        status: "completed",
       },
     });
   }
@@ -229,8 +269,14 @@ class GuardrailAgent {
         await this.requestTool(sessionId, "WebFetch", `tc-cap-rep-${i}`);
       }
     } else if (scenario === "capability_sentinel") {
-      // A WRITE_KINDS tool_call update with no preceding permission → sentinel halt.
+      // A WRITE that executes (tool_call_update) after being announced (pending)
+      // but with no requestPermission in between → sentinel halt.
       await this.unarbitratedWrite(sessionId, "tc-cap-unarbitrated");
+    } else if (scenario === "capability_arbitrated_write") {
+      // The real claude ordering: streamed pending tool_call → requestPermission →
+      // execution tool_call_update. The write reaches the seam, so the sentinel
+      // must NOT halt (regression guard for the pending-notification false-halt).
+      await this.arbitratedWrite(sessionId, "Edit", "tc-cap-arbitrated");
     } else if (scenario === "deferred_cancel") {
       // Open a REAL HITL deferred (autoApprove OFF, only no_progress armed → the
       // write falls through to the deferred), THEN trip no_progress with M idle

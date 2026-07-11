@@ -493,7 +493,7 @@ describe("capability_guard interceptor (ADR-129)", () => {
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 
-  it("D5 sentinel: an unarbitrated WRITE_KINDS tool_call update halts", async () => {
+  it("D5 sentinel: a WRITE that executes without reaching the seam halts", async () => {
     const { url, registry, runtimeRoot } = await boot([
       "--scenario",
       "capability_sentinel",
@@ -512,6 +512,31 @@ describe("capability_guard interceptor (ADR-129)", () => {
       rule: "capability_guard",
       disposition: "halt",
     });
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("D5 sentinel: an ARBITRATED write (streamed pending → requestPermission → execution) does NOT halt", async () => {
+    // Regression for the pending-notification false-halt: the claude adapter
+    // streams the pending tool_call BEFORE requestPermission, so keying the
+    // sentinel off the pending event halted every legitimate write on its first.
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_arbitrated_write",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      // "Edit" is in-profile, so capability_guard auto-allows the write AND the
+      // sentinel must not fire → zero trips.
+      enforcementProfile: {
+        tools: { allow: ["Edit"] },
+        enforcedClasses: ["tools"],
+        escalationThreshold: 3,
+      },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 

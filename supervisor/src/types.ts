@@ -524,14 +524,23 @@ export type SessionRecord = {
   // capability_guard interceptor; absent → capability_guard is inert. Mirrors
   // StartSessionRequest.enforcementProfile.
   enforcementProfile?: SessionEnforcementProfile;
-  // ADR-129: consecutive out-of-profile denial counter — reset on any in-profile
-  // call; the Nth (enforcementProfile.escalationThreshold) latches a halt.
-  // In-memory only (lost on crash, reset on resume) — mirrors the M40 counters.
+  // ADR-129: out-of-profile denial counter — reset only by an in-profile ALLOW
+  // (a governed call that cleared the allow-list). An UNGOVERNED pass_through call
+  // does NOT reset it (deliberate: an agent must not evade the breaker by
+  // interleaving reads between forbidden calls). The Nth
+  // (enforcementProfile.escalationThreshold) latches a halt. In-memory only (lost
+  // on crash, reset on resume) — mirrors the M40 counters.
   capabilityDenyCount?: number;
-  // ADR-129: D5 always-ask sentinel — the toolCallIds capability_guard has
-  // arbitrated this session; a WRITE_KINDS session/update with an unseen id means
-  // the adapter stopped honoring always-ask → fail-closed halt.
-  capabilityArbitratedToolCallIds?: Set<string>;
+  // ADR-129: D5 always-ask sentinel — WRITE_KINDS toolCallIds announced by a
+  // streaming `tool_call` (status:"pending") that have NOT yet reached the
+  // always-ask seam. An id is added when the pending write streams and removed
+  // when it reaches `requestPermission` (arbitrated). The sentinel halts iff such
+  // an id is still present when its execution `tool_call_update`
+  // (status completed|failed) arrives — i.e. the adapter ran a write without ever
+  // asking. Keyed off the EXECUTION event (which post-dates requestPermission),
+  // NOT the pre-permission pending notification, so a legitimately arbitrated
+  // write never false-halts on its own streamed announcement.
+  capabilityPendingWriteIds?: Set<string>;
   // ADR-108 (M40): in-memory guardrail counters — lost on supervisor crash (run
   // reconciled Crashed) and reset on resume (a respawn builds a fresh record).
   lastToolCallSig?: string;

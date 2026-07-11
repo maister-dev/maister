@@ -1071,8 +1071,13 @@ export async function* launchRunStaged(
         );
         // ADR-129 (DES-6): refuse a strict tools/mcps launch BEFORE run creation
         // when the resolved adapter lacks cached capabilityEnforcement smoke
-        // evidence (EXECUTOR_UNAVAILABLE naming the missing evidence).
-        await assertEnforcementEvidence({ settings, agent: capabilityAgent });
+        // evidence (EXECUTOR_UNAVAILABLE), OR uses dangerously_skip_permissions
+        // (the seam is structurally inert under skip-perms → never a false-enforce).
+        await assertEnforcementEvidence({
+          settings,
+          agent: capabilityAgent,
+          permissionPolicy: runnerResolution.runnerSnapshot.permissionPolicy,
+        });
       }
 
       // M27/T-C6 (C6-top, ADR-070): reject package-level required MCP refs

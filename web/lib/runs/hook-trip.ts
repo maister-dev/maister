@@ -32,10 +32,13 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// The liveness breakers (repetition / no_progress) and the ADR-129 capability_guard
-// N-deny breaker HALT and reach the escalate path; a per-call `path_guard` /
-// `capability_guard` deny is deny-and-continue (never escalates).
-export type HookTripHaltRule = "repetition" | "no_progress" | "capability_guard";
+// The halt-rule type + mapper live in a pure module (no server-only / DB deps) so
+// consumers can use them without the escalation machinery. Re-exported here for the
+// existing import surface.
+export { haltRuleFromEvent } from "./hook-trip-rule";
+export type { HookTripHaltRule } from "./hook-trip-rule";
+
+import type { HookTripHaltRule } from "./hook-trip-rule";
 
 export type EscalateHookTripArgs = {
   db: Db;

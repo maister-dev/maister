@@ -1,16 +1,19 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import type {
   AiCodingSettings,
   CapabilityAgent,
   JudgeSettings,
 } from "@/lib/config.schema";
 
-import { MaisterError } from "@/lib/errors";
+import { createHash } from "node:crypto";
 
-import { ENFORCEABILITY_BY_AGENT, type EnforceabilityTable } from "./enforcement";
+import {
+  ENFORCEABILITY_BY_AGENT,
+  type EnforceabilityTable,
+} from "./enforcement";
+
+import { MaisterError } from "@/lib/errors";
 
 // ADR-129: the web-derived capability-enforcement set delivered to the supervisor
 // on `enforcementProfile` (structurally validated by the supervisor's zod schema).
@@ -86,6 +89,11 @@ export function deriveSessionEnforcementProfile(args: {
     settings.enforcement?.mcps === "strict" &&
     table[agent].mcps === "enforced"
   ) {
+    // ASYMMETRY WITH tools (intentional): an empty resolved server set is NOT a
+    // CONFIG refusal here. Empty `tools.allow` means "no tools" — a useless agent,
+    // so it refuses (above). Empty `allowServers` means "no MCP server is allowed"
+    // — a valid lock-down (the seam denies every `mcp__*` call). The supervisor
+    // schema mirrors this (`allowServers` has no `.min(1)`, `tools.allow` does).
     mcps = { allowServers: [...args.mcpServerNames] };
     enforcedClasses.push("mcps");
   }
@@ -98,6 +106,26 @@ export function deriveSessionEnforcementProfile(args: {
     enforcedClasses,
     escalationThreshold:
       args.escalationThreshold ?? resolveEscalationThreshold(),
+  };
+}
+
+// ADR-129: admit a system-injected MCP server (the maister delegation facade)
+// into an enforced mcps allow-list. The facade is appended to a session's
+// mcpServers AFTER capability derivation, so without this an
+// `enforcement.mcps: strict` orchestrator would deny its own `mcp__<facade>__*`
+// delegation channel and halt with no author remedy. No-op when mcps is not
+// governed or the server is already admitted.
+export function admitFacadeServer(
+  profile: SessionEnforcementProfile,
+  facadeName: string,
+): SessionEnforcementProfile {
+  if (!profile.mcps || profile.mcps.allowServers.includes(facadeName)) {
+    return profile;
+  }
+
+  return {
+    ...profile,
+    mcps: { allowServers: [...profile.mcps.allowServers, facadeName] },
   };
 }
 

@@ -95,6 +95,7 @@ import {
   type SupervisorEvent,
 } from "@/lib/supervisor-client";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
+import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addDetachedWorktree,
@@ -3108,14 +3109,9 @@ export async function consumeAgentSession(args: {
       // deny-and-continue).
       case "session.hook_trip": {
         if (event.disposition === "halt") {
-          // ADR-129: capability_guard also halts (Nth deny) — pass it through so the
-          // hook_trip HITL carries the real rule (not mislabeled repetition).
-          const haltRule =
-            event.rule === "no_progress"
-              ? "no_progress"
-              : event.rule === "capability_guard"
-                ? "capability_guard"
-                : "repetition";
+          // ADR-129: capability_guard also halts (Nth deny) — carry the real rule
+          // (not mislabeled repetition) via the single exhaustive mapper.
+          const haltRule = haltRuleFromEvent(event.rule);
 
           try {
             await escalateHookTrip({

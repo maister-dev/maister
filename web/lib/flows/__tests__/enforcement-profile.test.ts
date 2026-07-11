@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { isMaisterError } from "@/lib/errors";
 import {
+  admitFacadeServer,
   deriveSessionEnforcementProfile,
   foldEnforcementProfileIntoDigest,
   resolveEscalationThreshold,
@@ -48,6 +49,21 @@ describe("deriveSessionEnforcementProfile", () => {
     });
   });
 
+  it("strict mcps with NO resolved servers derives an empty allow-list (deny-all-MCP lock-down, NOT a CONFIG refusal — unlike tools)", () => {
+    const profile = deriveSessionEnforcementProfile({
+      settings: { mcps: [], enforcement: { mcps: "strict" } },
+      agent: "claude",
+      mcpServerNames: [],
+      escalationThreshold: 3,
+    });
+
+    expect(profile).toEqual({
+      mcps: { allowServers: [] },
+      enforcedClasses: ["mcps"],
+      escalationThreshold: 3,
+    });
+  });
+
   it("derives BOTH classes when tools and mcps are strict", () => {
     const profile = deriveSessionEnforcementProfile({
       settings: {
@@ -70,7 +86,10 @@ describe("deriveSessionEnforcementProfile", () => {
 
     try {
       deriveSessionEnforcementProfile({
-        settings: { tools: { codex: ["Bash"] }, enforcement: { tools: "strict" } },
+        settings: {
+          tools: { codex: ["Bash"] },
+          enforcement: { tools: "strict" },
+        },
         agent: "claude", // claude has no tools entry
         mcpServerNames: [],
         escalationThreshold: 3,
@@ -193,5 +212,40 @@ describe("foldEnforcementProfileIntoDigest", () => {
 
     expect(a).toBe(aAgain);
     expect(a).not.toBe(b);
+  });
+});
+
+describe("admitFacadeServer", () => {
+  it("admits the facade into a governed mcps allow-list (orchestrator delegation)", () => {
+    const admitted = admitFacadeServer(
+      {
+        mcps: { allowServers: ["github"] },
+        enforcedClasses: ["mcps"],
+        escalationThreshold: 3,
+      },
+      "maister",
+    );
+
+    expect(admitted.mcps).toEqual({ allowServers: ["github", "maister"] });
+  });
+
+  it("is a no-op when mcps is not governed (tools-only profile)", () => {
+    const profile = {
+      tools: { allow: ["Read"] },
+      enforcedClasses: ["tools"] as Array<"tools" | "mcps">,
+      escalationThreshold: 3,
+    };
+
+    expect(admitFacadeServer(profile, "maister")).toBe(profile);
+  });
+
+  it("is idempotent when the facade is already admitted", () => {
+    const profile = {
+      mcps: { allowServers: ["github", "maister"] },
+      enforcedClasses: ["mcps"] as Array<"tools" | "mcps">,
+      escalationThreshold: 3,
+    };
+
+    expect(admitFacadeServer(profile, "maister")).toBe(profile);
   });
 });

@@ -442,41 +442,56 @@ export async function createAcpConnection(
         }
       }
 
-      // ADR-129 D5: always-ask sentinel. For an enforced session, a WRITE_KINDS
-      // tool_call update whose toolCallId was never arbitrated by capability_guard
-      // means the adapter executed a write WITHOUT asking (stopped honoring
-      // always-ask mid-session) → fail-closed halt.
+      // ADR-129 D5: always-ask sentinel. A WRITE that EXECUTES without ever
+      // reaching the always-ask seam (requestPermission) means the adapter stopped
+      // honoring always-ask → fail-closed halt. The claude adapter STREAMS the
+      // pending `tool_call` BEFORE it calls requestPermission (canUseTool runs
+      // after the assistant message completes), so a write's id is announced here
+      // first, removed from the pending set when it reaches requestPermission
+      // (arbitration), and only halts if it is STILL pending when its execution
+      // `tool_call_update` (status completed|failed) arrives. Keying off the
+      // pending notification instead would false-halt every legitimate write.
       if (record.enforcementProfile && !record.hookHalted) {
         const u = params.update as {
           sessionUpdate?: string;
           kind?: string;
+          status?: string;
           toolCallId?: string;
         } | null;
+        const id = typeof u?.toolCallId === "string" ? u.toolCallId : null;
 
         if (
           u?.sessionUpdate === "tool_call" &&
           typeof u.kind === "string" &&
-          WRITE_KINDS.has(u.kind)
+          WRITE_KINDS.has(u.kind) &&
+          id
         ) {
-          const id = typeof u.toolCallId === "string" ? u.toolCallId : null;
+          // Streaming announcement of a write — track until it reaches the seam
+          // (requestPermission removes it) or executes (below).
+          record.capabilityPendingWriteIds?.add(id);
+        } else if (
+          u?.sessionUpdate === "tool_call_update" &&
+          (u.status === "completed" || u.status === "failed") &&
+          id &&
+          record.capabilityPendingWriteIds?.delete(id)
+        ) {
+          // A tracked write executed while still un-arbitrated → never reached the
+          // seam. Fail-closed halt.
+          record.hookHalted = true;
+          emitHookTrip("capability_guard", params.update, "halt");
 
-          if (!id || !record.capabilityArbitratedToolCallIds?.has(id)) {
-            record.hookHalted = true;
-            emitHookTrip("capability_guard", params.update, "halt");
-
-            for (const requestId of pendingPermissions.requestIds(sessionId)) {
-              pendingPermissions.cancel(
-                sessionId,
-                requestId,
-                "hook_trip:capability_guard",
-              );
-            }
-
-            logger.warn(
-              { sessionId, toolCallId: id, kind: u.kind },
-              "[guardrail] capability_guard always-ask sentinel halt (unarbitrated write)",
+          for (const requestId of pendingPermissions.requestIds(sessionId)) {
+            pendingPermissions.cancel(
+              sessionId,
+              requestId,
+              "hook_trip:capability_guard",
             );
           }
+
+          logger.warn(
+            { sessionId, toolCallId: id },
+            "[guardrail] capability_guard always-ask sentinel halt (write executed without reaching the seam)",
+          );
         }
       }
     },
@@ -687,9 +702,10 @@ export async function createAcpConnection(
           return { outcome: { outcome: "cancelled" } };
         }
 
-        // D5 sentinel bookkeeping: this call reached the seam (was arbitrated).
+        // D5 sentinel bookkeeping: this call reached the always-ask seam, so it
+        // is no longer an un-arbitrated pending write (clears any streamed id).
         if (tc.toolCallId) {
-          record.capabilityArbitratedToolCallIds?.add(tc.toolCallId);
+          record.capabilityPendingWriteIds?.delete(tc.toolCallId);
         }
 
         let decision;

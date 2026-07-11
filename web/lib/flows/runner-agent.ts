@@ -41,6 +41,7 @@ import {
 } from "@/lib/supervisor-client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
+import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -547,14 +548,9 @@ function startEventConsumer(
         if (ev.type === "session.hook_trip" && permissionCtx) {
           if (ev.disposition === "halt" && !hookEscalated) {
             hookEscalated = true;
-            // ADR-129: capability_guard also halts (Nth deny) — pass it through so
-            // the hook_trip HITL carries the real rule (not mislabeled repetition).
-            const haltRule =
-              ev.rule === "no_progress"
-                ? "no_progress"
-                : ev.rule === "capability_guard"
-                  ? "capability_guard"
-                  : "repetition";
+            // ADR-129: capability_guard also halts (Nth deny) — carry the real rule
+            // (not mislabeled repetition) via the single exhaustive mapper.
+            const haltRule = haltRuleFromEvent(ev.rule);
 
             pendingWork.push(
               escalateHookTrip({

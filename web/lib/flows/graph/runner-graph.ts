@@ -117,6 +117,7 @@ import {
   evaluateNodeEnforcement,
 } from "@/lib/flows/enforcement";
 import {
+  admitFacadeServer,
   deriveSessionEnforcementProfile,
   foldEnforcementProfileIntoDigest,
   type SessionEnforcementProfile,
@@ -1818,7 +1819,10 @@ async function materializeNodeCapabilities(
       .map((e) => e.capabilityRefId),
     refusedClasses: profile.refused.map((e) => e.capabilityRefId),
     withheldMcps,
-    // ADR-129: the durable launch-time snapshot the resume path reads (D4).
+    // ADR-129: durable launch-time AUDIT snapshot of the delivered profile. Not
+    // read on resume — a fresh attempt re-derives it (deterministic on stable
+    // inputs); the graph forces new-session so no cross-attempt consistency guard
+    // reads it back.
     enforcementProfile: enforcementProfile ?? null,
     cleanup: { status: "pending" },
   };
@@ -2659,6 +2663,7 @@ export async function runGraph(
           await assertEnforcementEvidence({
             settings,
             agent: nodeExecutor.agent,
+            permissionPolicy: nodeRunnerSnapshot.permissionPolicy,
           });
         } catch (err) {
           const e = isMaisterError(err)
@@ -2825,12 +2830,22 @@ export async function runGraph(
               db,
             });
 
+            const facade = agentFacadeMcpServer(issued.secret);
+
             materialized = {
               ...materialized,
-              mcpServers: [
-                ...materialized.mcpServers,
-                agentFacadeMcpServer(issued.secret),
-              ],
+              mcpServers: [...materialized.mcpServers, facade],
+              // ADR-129: the maister delegation facade is system-injected AFTER
+              // capability derivation. An `enforcement.mcps: strict` orchestrator
+              // would otherwise deny its own `mcp__maister__*` delegation calls and
+              // halt with no author remedy — admit the facade into the mcps
+              // allow-list (governs author intent, not the platform's own channel).
+              enforcementProfile: materialized.enforcementProfile
+                ? admitFacadeServer(
+                    materialized.enforcementProfile,
+                    facade.name,
+                  )
+                : materialized.enforcementProfile,
             };
             orchestratorTokenIssued = true;
           }

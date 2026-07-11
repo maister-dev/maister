@@ -53,6 +53,7 @@ describe("assertEnforcementEvidence", () => {
     await assertEnforcementEvidence({
       settings: { tools: { claude: ["Read"] } } as AiCodingSettings, // instruct default
       agent: "claude",
+      permissionPolicy: "default",
       checkDiagnostics: check,
     });
 
@@ -64,6 +65,7 @@ describe("assertEnforcementEvidence", () => {
       assertEnforcementEvidence({
         settings: strictTools,
         agent: "claude",
+        permissionPolicy: "default",
         checkDiagnostics: diagnostics("ok"),
       }),
     ).resolves.toBeUndefined();
@@ -74,12 +76,15 @@ describe("assertEnforcementEvidence", () => {
       assertEnforcementEvidence({
         settings: strictTools,
         agent: "claude",
+        permissionPolicy: "default",
         checkDiagnostics: diagnostics("pending"),
       }),
     );
 
     expect(isMaisterError(err) && err.code).toBe("EXECUTOR_UNAVAILABLE");
-    expect((err as Error).message).toMatch(/capabilityEnforcement smoke is pending/);
+    expect((err as Error).message).toMatch(
+      /capabilityEnforcement smoke is pending/,
+    );
   });
 
   it("refuses EXECUTOR_UNAVAILABLE when the smoke evidence is missing", async () => {
@@ -87,6 +92,7 @@ describe("assertEnforcementEvidence", () => {
       assertEnforcementEvidence({
         settings: strictTools,
         agent: "claude",
+        permissionPolicy: "default",
         checkDiagnostics: diagnostics(undefined),
       }),
     );
@@ -116,6 +122,7 @@ describe("assertEnforcementEvidence", () => {
       assertEnforcementEvidence({
         settings: strictTools,
         agent: "claude",
+        permissionPolicy: "default",
         checkDiagnostics: async () => ({
           kind: "unavailable",
           reason: "http",

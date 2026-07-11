@@ -7,14 +7,14 @@ import type {
 } from "@/lib/config.schema";
 import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
 
-import { MaisterError } from "@/lib/errors";
-import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
-
 import {
   ENFORCEABILITY_BY_AGENT,
   evaluateNodeEnforcement,
   type EnforceabilityTable,
 } from "./enforcement";
+
+import { MaisterError } from "@/lib/errors";
+import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 // ADR-129 (DES-6): the async launch evidence gate for strict tools/mcps. Mirrors
 // `assertReadOnlySessionEvidence`. It admits a strict-enforced launch only when the
@@ -25,7 +25,11 @@ import {
 export async function assertEnforcementEvidence(args: {
   settings: AiCodingSettings | JudgeSettings | undefined;
   agent: CapabilityAgent;
-  permissionPolicy?: string;
+  // REQUIRED (not optional): the resolved runner's permission policy. The
+  // skip-perms refusal is dead if a caller forgets to pass it (the seam is inert
+  // under skip-perms → silent false-enforce, ADR-032). Required-ness makes a
+  // dropped caller a compile error, not a runtime hole.
+  permissionPolicy: string;
   table?: EnforceabilityTable;
   checkDiagnostics?: () => Promise<SupervisorDiagnosticsStatus>;
 }): Promise<void> {

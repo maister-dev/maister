@@ -3127,7 +3127,8 @@ export type MaterializationPlan = {
   withheldMcps?: WithheldMcp[];
   // ADR-129: the derived capability-enforcement set delivered to the supervisor
   // (jsonb, no migration). Null when the node enforces no strict tools/mcps. The
-  // write-once plan is the durable launch-time snapshot the resume path reads (D4).
+  // Durable launch-time AUDIT snapshot of what was delivered. Not read back on
+  // resume — a fresh attempt re-derives it (deterministic on stable inputs).
   enforcementProfile?: {
     tools?: { allow: string[] };
     mcps?: { allowServers: string[] };
