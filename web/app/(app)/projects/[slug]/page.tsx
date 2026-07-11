@@ -62,6 +62,7 @@ import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { reposRoot } from "@/lib/instance-config";
 import { formatProjectRepoPath } from "@/lib/project-path-display";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
+import { getProjectMcpEffectiveCount } from "@/lib/mcp/hub-service";
 import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
 import { listProjectSchedules } from "@/lib/run-schedules/queries";
@@ -171,6 +172,8 @@ export default async function ProjectBoardPage({
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   const isAdmin = role === "owner" || role === "admin";
+  // ADR-129 (W-D): project-effective MCP count for the board-header metacell.
+  const mcpEffectiveCount = await getProjectMcpEffectiveCount(project.id);
   // Package trust fans out to every attached project — global admin only.
   const canTrustPackages = user.role === "admin";
   const canReadRepoFiles =
@@ -381,7 +384,11 @@ export default async function ProjectBoardPage({
           sub={pageData.flows.map((f) => f.ref).join(" · ") || undefined}
           value={String(pageData.flows.length)}
         />
-        <MetaCell dot="bg-accent-3" label={t("mcps")} value="—" />
+        <MetaCell
+          dot="bg-accent-3"
+          label={t("mcps")}
+          value={String(mcpEffectiveCount)}
+        />
         <MetaCell
           dot="bg-accent-4"
           label={t("team")}

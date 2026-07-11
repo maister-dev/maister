@@ -59,6 +59,11 @@ describe("McpServersPanel", () => {
     expect(markup).toContain("remote");
     // The http target column shows the URL, not a command.
     expect(markup).toContain("https://mcp.example.com/sse");
+    // ADR-129 (W-D/W-E): trust action + used-by columns.
+    expect(markup).toContain("colTrust");
+    expect(markup).toContain("colUsedBy");
+    expect(markup).toContain("needsTrust"); // both seeded servers are untrusted
+    expect(markup).toContain("trustAction");
   });
 
   it("renders the empty state when there are no servers", () => {

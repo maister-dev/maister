@@ -25,6 +25,10 @@ function readinessClass(status: string): string {
   return "border-line text-mute";
 }
 
+function isTrusted(status: string): boolean {
+  return status === "trusted" || status === "trusted_by_policy";
+}
+
 export function McpServersPanel({ servers }: Props): ReactElement {
   const t = useTranslations("settings");
   const router = useRouter();
@@ -33,6 +37,25 @@ export function McpServersPanel({ servers }: Props): ReactElement {
   const [editing, setEditing] = useState<McpServerRow | null>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
+
+  // ADR-129 (W-E/W-D): flip platform trust. Load-bearing at materialization.
+  const toggleTrust = (server: McpServerRow): void => {
+    startTransition(async () => {
+      await fetch(
+        `/api/admin/mcp-servers/${encodeURIComponent(server.id)}/trust`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            trustStatus: isTrusted(server.trustStatus)
+              ? "untrusted"
+              : "trusted",
+          }),
+        },
+      );
+      router.refresh();
+    });
+  };
 
   return (
     <PanelSection
@@ -61,6 +84,8 @@ export function McpServersPanel({ servers }: Props): ReactElement {
                 <th className="px-4 py-3">{t("colTarget")}</th>
                 <th className="px-4 py-3">{t("colAgents")}</th>
                 <th className="px-4 py-3">{t("colReadiness")}</th>
+                <th className="px-4 py-3">{t("colTrust")}</th>
+                <th className="px-4 py-3">{t("colUsedBy")}</th>
                 <th className="px-4 py-3">{t("colEnabled")}</th>
                 <th className="px-4 py-3 text-right">{t("colActions")}</th>
               </tr>
@@ -91,6 +116,25 @@ export function McpServersPanel({ servers }: Props): ReactElement {
                     >
                       {server.readinessStatus}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      className="rounded-full border border-line px-2 py-1 text-[11px] font-semibold text-ink-2 hover:border-amber"
+                      title={
+                        isTrusted(server.trustStatus)
+                          ? t("untrustAction")
+                          : t("trustAction")
+                      }
+                      type="button"
+                      onClick={() => toggleTrust(server)}
+                    >
+                      {isTrusted(server.trustStatus)
+                        ? t("trust")
+                        : t("needsTrust")}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-ink-2">
+                    {t("usedBy", { count: server.usedByCount ?? 0 })}
                   </td>
                   <td className="px-4 py-3 text-ink-2">
                     {server.enabled ? "✓" : "—"}

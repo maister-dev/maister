@@ -31,6 +31,7 @@ export interface McpServerRow {
   trustStatus: string;
   readinessStatus: string;
   enabled: boolean;
+  usedByCount?: number;
 }
 
 export interface McpServerModalProps {

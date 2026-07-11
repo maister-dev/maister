@@ -3,6 +3,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
+import { sql } from "drizzle-orm";
 import { getTranslations } from "next-intl/server";
 
 import { McpServersPanel } from "@/components/settings/mcp-servers-panel";
@@ -38,6 +39,22 @@ export default async function McpsPage(): Promise<ReactElement> {
     })
     .from(platformMcpServers);
 
+  // ADR-129 (W-D): "used by N projects" — distinct projects materializing each
+  // platform server (a projected capability_records row).
+  const usedByRows = (
+    await db.execute(sql`
+      SELECT capability_ref_id AS id, count(DISTINCT project_id)::text AS n
+      FROM capability_records
+      WHERE kind = 'mcp' AND source = 'platform' AND disabled_at IS NULL
+      GROUP BY capability_ref_id
+    `)
+  ).rows as Array<{ id: string; n: string }>;
+  const usedBy = new Map(usedByRows.map((r) => [r.id, Number(r.n)]));
+  const serversWithUsage = servers.map((s) => ({
+    ...s,
+    usedByCount: usedBy.get(s.id) ?? 0,
+  }));
+
   return (
     <div className="w-full">
       <header className="mb-7">
@@ -53,7 +70,7 @@ export default async function McpsPage(): Promise<ReactElement> {
       </header>
 
       <div className="rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
-        <McpServersPanel servers={servers} />
+        <McpServersPanel servers={serversWithUsage} />
       </div>
     </div>
   );
