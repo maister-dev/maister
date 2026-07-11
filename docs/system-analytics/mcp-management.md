@@ -1,14 +1,21 @@
 # MCP capability management domain
 
 > **Status: mixed.** The platform CRUD + M14 materialization surface is
-> **Implemented** (M27, [ADR-070](../decisions.md#adr-070)). The **requirements
-> & bindings** layer, **per-project config overlay**, **load-bearing trust**,
-> and **health probe** are **Designed** (MCP Management v2,
-> [ADR-129](../decisions.md#adr-129); acceptance SSOT
-> [`.ai-factory/specs/feature-mcp-management-v2.md`](../../.ai-factory/specs/feature-mcp-management-v2.md)).
-> Each piece below carries its own status tag. Extends the M14 materialization
-> surface in [capabilities.md](capabilities.md) and the M25 authored catalog in
-> [capability-catalog.md](capability-catalog.md).
+> **Implemented** (M27, [ADR-070](../decisions.md#adr-070)). MCP Management v2
+> ([ADR-129](../decisions.md#adr-129)) is **Implemented** at the backend +
+> read-model + admin/board-surface layers: the `project_mcp_bindings` table +
+> migration `0093`, the binding-aware resolver with `provenance`, load-bearing
+> trust + withheld persistence, the per-project env-slot overlay (names-only),
+> the supervisor `POST /mcp-probe` + web proxy with the D4 trust gate, the hub
+> read model + requirements ledger, the board-header metacell, the admin trust
+> action + used-by column, and the board requirements-ledger + test-connection.
+> **Follow-up (Designed, routes-ready):** the board match/connect/overlay
+> dialogs, the shared node/scratch MCP-select unification (W-G), and the seeded
+> hub e2e. Acceptance SSOT
+> [`.ai-factory/specs/feature-mcp-management-v2.md`](../../.ai-factory/specs/feature-mcp-management-v2.md);
+> individual pieces below keep their original tags. Extends the M14
+> materialization surface in [capabilities.md](capabilities.md) and the M25
+> authored catalog in [capability-catalog.md](capability-catalog.md).
 
 ## Purpose
 

@@ -1,6 +1,6 @@
 # Spec — MCP Management v2: requirements & bindings, per-project overlay, trust & health activation
 
-Status: approved (owner lock 2026-07-11) — **Designed** unless a piece is tagged `(Implemented)`.
+Status: approved (owner lock 2026-07-11) — **Implemented** at the backend + read-model + admin/board-surface layers (bindings/resolver/trust/overlay/probe/hub, migration 0093); **follow-up (Designed, routes-ready):** board match/connect/overlay dialogs, shared node/scratch MCP-select (W-G), seeded hub e2e.
 Owner surface: `web/` (Next.js routes + services + Drizzle) + `supervisor/` (probe route).
 Scope axis: **all three MCP scopes** — package (requirement/template), platform (catalog), project (bindings).
 Decision record: ADR-129 (nominal; renumber at merge). Amends ADR-070 (platform MCP CRUD) + ADR-043 (M14 materialization visibility); extends ADR-088 (package manifest); fulfills ADR-128 (Serena trust-gate precondition).

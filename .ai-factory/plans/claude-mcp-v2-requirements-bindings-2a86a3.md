@@ -197,10 +197,10 @@ Logging convention (verbose): every service/route/resolver/probe fn logs entry w
 - [ ] **T7.3 — Selector tests.** renderToStaticMarkup snapshot per source-group + badge; node free-add preserved; scratch defaults preserved; agent effective list resolves through bindings. Runner: `web/components/**/__tests__` (confirm glob).
 
 ### Phase 8 — i18n parity + docs reconcile + numbering renumber + verification
-- [ ] **T8.1 — EN+RU i18n parity.** Add every new key to BOTH `web/messages/en.json` and `web/messages/ru.json` (namespaces `mcpPanel` extended, new `mcpHub`, `mcps` admin trust/used-by, run-detail withheld labels). `web/lib/__tests__/i18n-parity.test.ts` MUST pass. Log: n/a.
-- [ ] **T8.2 — Docs reconcile (as-built deltas only).** Reconcile the Phase-0 specs with any implementation deltas (Phase 0 was leading SOT; this only patches drift). Flip Designed→Implemented tags on shipped pieces. Update OpenAPI examples to final shapes.
+- [x] **T8.1 — EN+RU i18n parity.** Add every new key to BOTH `web/messages/en.json` and `web/messages/ru.json` (namespaces `mcpPanel` extended, new `mcpHub`, `mcps` admin trust/used-by, run-detail withheld labels). `web/lib/__tests__/i18n-parity.test.ts` MUST pass. Log: n/a.
+- [x] **T8.2 — Docs reconcile (as-built deltas only).** Reconcile the Phase-0 specs with any implementation deltas (Phase 0 was leading SOT; this only patches drift). Flip Designed→Implemented tags on shipped pieces. Update OpenAPI examples to final shapes.
 - [ ] **T8.3 — Full green + contract cross-check.** `pnpm --filter maister-web lint` (use `eslint .` check-only to avoid whole-repo reformat), typecheck, `pnpm test:unit && pnpm test:integration`, supervisor tests, e2e, `pnpm validate:docs:all`. Every phase's suite stays green; no quarantined red without a tracked reason.
-- [ ] **T8.4 — ADR + migration renumber pass (own focused step, AFTER rebase onto main).** Re-grep `git show main:docs/decisions.md` + `_journal.json` for the true next-free; reassign ADR-129→actual, migration 0093→actual (rename SQL + `_journal.json` tag + snapshot + every prose citation `pre-ADR-129`/`since 0093`); run `scripts/validate-docs-adr-anchors.mjs`; re-verify newest-journal ⇄ snapshot integrity. Prefer number-agnostic phrasing in long-lived comments.
+- [x] **T8.4 — ADR + migration renumber pass (own focused step, AFTER rebase onto main).** Re-grep `git show main:docs/decisions.md` + `_journal.json` for the true next-free; reassign ADR-129→actual, migration 0093→actual (rename SQL + `_journal.json` tag + snapshot + every prose citation `pre-ADR-129`/`since 0093`); run `scripts/validate-docs-adr-anchors.mjs`; re-verify newest-journal ⇄ snapshot integrity. Prefer number-agnostic phrasing in long-lived comments.
 
 ---
 
