@@ -60,6 +60,10 @@ export async function GET(
     const discoveredByUrl = new Map<string, DiscoveredPackageEntry[]>(
       sources.map((s: any) => [s.url, s.discovered ?? []]),
     );
+    // ADR-129: update-available carve is by SOURCE KIND.
+    const kindByUrl = new Map<string, "git" | "local">(
+      sources.map((s: any) => [s.url, (s.kind ?? "git") as "git" | "local"]),
+    );
 
     const dto = attachments.map((att: any) => {
       const install = installById.get(att.packageInstallId) as any;
@@ -76,6 +80,7 @@ export async function GET(
               packageName: att.packageName,
               versionLabel: install.versionLabel,
               discovered: discoveredByUrl.get(install.sourceUrl) ?? [],
+              sourceKind: kindByUrl.get(install.sourceUrl),
             })
           : false,
         flows: manifest?.spec.flows.map((f) => f.id) ?? [],

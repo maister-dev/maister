@@ -772,7 +772,20 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 4 — W-F: local catalog sources (G4)
 
-- [ ] **T12: Kind-aware source CRUD + local discovery/refresh**
+- [x] **T12: Kind-aware source CRUD + local discovery/refresh**
+  - RED→GREEN: `catalog.test.ts` validation matrix (relative path CONFIG /
+    missing dir CONFIG / plain file CONFIG / no-manifest CONFIG / monorepo
+    ok / root-manifest ok) + local refresh re-digest observed failing on
+    wrong-code (kind column absent → schema refusal; then refresh taking the
+    git-clone arm for a directory path) before `assertValidLocalPackage-
+    SourcePath` + `discoverLocalSourcePackages` + the kind-aware refresh
+    branch landed. Bonus real bug caught: an empty walk silently overwrote
+    `discovered` with `[]` → now throws CONFIG and refresh degrades keeping
+    the stale snapshot. Regression pinned: git source failing the
+    trusted-prefix policy still installs with setup DEFERRED.
+  - GREEN: `local-source.integration.test.ts` (2 tests — re-digest changes
+    label on file change, idempotent on no-op re-check) + 30 catalog unit
+    tests.
   - Files: `web/lib/packages/catalog.ts` (`createPackageSource:160-190` /
     `updatePackageSource:192-218` accept `kind` + `baseBranch`; for
     `kind: "local"`: validate absolute path exists (stat) and contains
@@ -802,7 +815,17 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     maister-plugins clone); re-check is on-demand only (D7).
   - Logging: typed `CONFIG` errors naming the failed validation.
 
-- [ ] **T13: Digest-as-version semantics + publish-picker exclusion**
+- [x] **T13: Digest-as-version semantics + publish-picker exclusion**
+  - RED→GREEN: by-kind carve arms observed failing while `deriveUpdate-
+    Available`/`classifyVersionTargets` still blanket-skipped `local-*`
+    labels (local drift reported no update); `publish.test.ts` picker case
+    observed offering a kind:local source before the `kind === "git"`
+    allow-list filter landed (fake-db chain extended with positional
+    select slots for the kind/baseBranch projection).
+  - Semantics pinned: local upgrade target = the discovered-digest install
+    only; `downgrade = []` (installing an older digest impossible — D7
+    re-check surfaces drift instead); Studio-cut installs (no source row →
+    `sourceKind undefined`) keep the legacy skip arm.
   - Files: `web/lib/packages/catalog.ts` — `deriveUpdateAvailable:93-107` and
     `classifyVersionTargets:117-150` currently skip ALL `local-*` labels
     (`:98`); carve by SOURCE KIND instead: for attachments whose install's
@@ -824,7 +847,19 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     host dir changes + re-check; publish dialog never offers a local source.
   - Logging: none new.
 
-- [ ] **T14: Admin sources UI + end-to-end integration**
+- [x] **T14: Admin sources UI + end-to-end integration**
+  - GREEN: `local-source-attach.integration.test.ts` full chain on real PG +
+    tmp host dir — register kind:local → discover (`{name, dir}`) → install
+    (digest label == discovered `digestVersionLabel`) → attach to project →
+    `updateAvailable=false` → mutate host dir → re-check re-digests →
+    `updateAvailable=true` → installing the fresh digest surfaces it as the
+    one-click `upgradeTarget`. Passed first run (2.4s).
+  - UI: modal kind radio (create-only) + localPath label switch + baseBranch
+    field (git-only, SET/CLEAR via `null`), panel kind badge + digest
+    install chip for tagless local entries; `loadPackageSourcesView`
+    projects `kind`/`baseBranch`; admin install route derives `version:
+    "local"` server-side and handles root-manifest (`dir: "."`) paths.
+    47 components/settings tests + i18n EN/RU parity green.
   - Files: `web/components/settings/package-source-modal.tsx` (kind toggle
     git|local; for local: absolute-path field, server validation errors
     surfaced via the existing `apiErrors` idiom; baseBranch field for git

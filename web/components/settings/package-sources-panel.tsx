@@ -171,6 +171,11 @@ export function PackageSourcesPanel({
                 <tr key={source.id} className="border-b border-line/60">
                   <td className="break-all px-4 py-3 font-mono text-[12.5px] text-ink">
                     {source.url}
+                    <span className="ml-2 inline-block rounded-full border border-line bg-ivory px-2 py-0.5 align-middle font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                      {source.kind === "local"
+                        ? t("pkgSourceKindLocal")
+                        : t("pkgSourceKindGit")}
+                    </span>
                     {source.builtIn ? (
                       <span
                         className="ml-2 inline-block rounded-full border border-line bg-ivory px-2 py-0.5 align-middle font-mono text-[10px] uppercase tracking-[0.08em] text-mute"
@@ -246,7 +251,35 @@ export function PackageSourcesPanel({
                         {pkg.name}
                       </td>
                       <td className="px-4 py-3">
-                        {pkg.tags.length === 0 ? (
+                        {pkg.tags.length === 0 && pkg.digestVersionLabel ? (
+                          // ADR-129: a local source offers exactly its CURRENT
+                          // digest — one install chip, no tag list.
+                          <button
+                            className="h-8 rounded-[8px] border border-line px-3 font-mono text-[11.5px] text-ink hover:bg-ivory disabled:opacity-50"
+                            disabled={
+                              installedKeys.has(
+                                `${pkg.name}@${pkg.digestVersionLabel}`,
+                              ) ||
+                              busyKey ===
+                                `install:${pkg.name}@${pkg.digestVersionLabel}`
+                            }
+                            type="button"
+                            onClick={() =>
+                              installTag(
+                                source.id,
+                                pkg.name,
+                                pkg.digestVersionLabel!,
+                              )
+                            }
+                          >
+                            {pkg.digestVersionLabel}
+                            {installedKeys.has(
+                              `${pkg.name}@${pkg.digestVersionLabel}`,
+                            )
+                              ? ` · ${t("pkgInstalled")}`
+                              : ` · ${t("pkgInstall")}`}
+                          </button>
+                        ) : pkg.tags.length === 0 ? (
                           <span className="text-[12px] text-mute">
                             {t("pkgNoTags")}
                           </span>

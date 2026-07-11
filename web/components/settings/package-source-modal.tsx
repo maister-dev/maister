@@ -8,9 +8,19 @@ import { useTranslations } from "next-intl";
 export interface PackageSourceRow {
   id: string;
   url: string;
+  // ADR-129: source kind — `local` = an admin-registered host directory with
+  // digest-as-version discovery; `baseBranch` = the publish PR base override
+  // (git sources only).
+  kind: "git" | "local";
+  baseBranch: string | null;
   enabled: boolean;
   note: string | null;
-  discovered: Array<{ name: string; dir: string; tags: string[] }>;
+  discovered: Array<{
+    name: string;
+    dir: string;
+    tags: string[];
+    digestVersionLabel?: string;
+  }>;
   lastCheckedAt: string | null;
   builtIn: boolean;
 }
@@ -63,6 +73,8 @@ export function PackageSourceModal({
 }: PackageSourceModalProps): ReactElement {
   const t = useTranslations("settings");
   const [url, setUrl] = useState(source?.url ?? "");
+  const [kind, setKind] = useState<"git" | "local">(source?.kind ?? "git");
+  const [baseBranch, setBaseBranch] = useState(source?.baseBranch ?? "");
   const [note, setNote] = useState(source?.note ?? "");
   const [enabled, setEnabled] = useState(source?.enabled ?? true);
   const [busy, setBusy] = useState(false);
@@ -132,16 +144,24 @@ export function PackageSourceModal({
     setBusy(true);
     setError(null);
 
+    const trimmedBase = baseBranch.trim();
     const result =
       mode === "create"
         ? await sendJson("/api/admin/package-sources", "POST", {
             url,
+            kind,
+            ...(kind === "git" && trimmedBase ? { baseBranch: trimmedBase } : {}),
             ...(note ? { note } : {}),
             enabled,
           })
         : await sendJson(`/api/admin/package-sources/${source!.id}`, "PATCH", {
             enabled,
             note,
+            // ADR-129 SET/CLEAR symmetry: empty field clears back to
+            // auto-detect (explicit null), git sources only.
+            ...(source!.kind === "git"
+              ? { baseBranch: trimmedBase ? trimmedBase : null }
+              : {}),
           });
 
     setBusy(false);
@@ -196,16 +216,59 @@ export function PackageSourceModal({
         </h3>
 
         <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <span className={fieldLabel}>{t("pkgSourceKind")}</span>
+            <div className="flex gap-2" role="radiogroup">
+              {(["git", "local"] as const).map((option) => (
+                <button
+                  key={option}
+                  aria-checked={kind === option}
+                  className={`h-9 rounded-[8px] border px-3 font-mono text-[12px] font-semibold ${
+                    kind === option
+                      ? "border-amber bg-amber/10 text-ink"
+                      : "border-line text-mute hover:bg-ivory"
+                  } disabled:opacity-60`}
+                  disabled={mode === "edit"}
+                  role="radio"
+                  type="button"
+                  onClick={() => setKind(option)}
+                >
+                  {option === "git"
+                    ? t("pkgSourceKindGit")
+                    : t("pkgSourceKindLocal")}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <label className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("pkgSourceUrl")}</span>
+            <span className={fieldLabel}>
+              {kind === "local" ? t("pkgSourceLocalPath") : t("pkgSourceUrl")}
+            </span>
             <input
               className={inputClass}
               disabled={mode === "edit"}
-              placeholder="github.com/org/maister-plugins"
+              placeholder={
+                kind === "local"
+                  ? "/Users/dev/maister-plugins"
+                  : "github.com/org/maister-plugins"
+              }
               value={url}
               onChange={(e) => setUrl(e.target.value)}
             />
           </label>
+
+          {kind === "git" ? (
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("pkgSourceBaseBranch")}</span>
+              <input
+                className={inputClass}
+                placeholder={t("pkgSourceBaseBranchHint")}
+                value={baseBranch}
+                onChange={(e) => setBaseBranch(e.target.value)}
+              />
+            </label>
+          ) : null}
 
           <label className="flex flex-col gap-1.5">
             <span className={fieldLabel}>{t("pkgSourceNote")}</span>

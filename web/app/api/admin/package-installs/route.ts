@@ -121,12 +121,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // Discovery records the packages/<dir> coordinate (dir may differ from
       // the manifest name); fall back to packages/<name> pre-discovery.
       const entry = (source.discovered ?? []).find(
-        (d: { name: string }) => d.name === body.name,
+        (d: { name: string; dir: string }) => d.name === body.name,
       );
+      // ADR-129: a kind:local source installs its CURRENT bytes — the version
+      // label is server-derived from the content digest (`local-<digest12>`),
+      // never the client-echoed body value; a root-manifest source (dir ".")
+      // installs from the source root.
+      const isLocalSource = source.kind === "local";
+      const packagePath =
+        entry?.dir === "." ? undefined : `packages/${entry?.dir ?? body.name!}`;
       const result = await installPackageRevision({
         source: source.url,
-        version: body.version!,
-        path: `packages/${entry?.dir ?? body.name!}`,
+        version: isLocalSource ? "local" : body.version!,
+        path: packagePath,
         trustStatus: resolveTrust(source.url),
         db,
       });

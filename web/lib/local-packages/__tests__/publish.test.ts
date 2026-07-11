@@ -1,7 +1,9 @@
+import { getTableName } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { isMaisterError } from "@/lib/errors";
 import {
+  getPublishOptions,
   buildCompareUrl,
   preselectPublishSourceId,
   publishLocalPackage,
@@ -115,5 +117,84 @@ describe("publishLocalPackage — branch validation", () => {
     ).rejects.toSatisfy(
       (e: unknown) => isMaisterError(e) && e.code === "PRECONDITION",
     );
+  });
+});
+
+describe("getPublishOptions — kind allow-list (ADR-129)", () => {
+  type Row = Record<string, unknown>;
+
+  function chain(rows: Row[]): PromiseLike<Row[]> & {
+    where: () => ReturnType<typeof chain>;
+    limit: (n: number) => Promise<Row[]>;
+  } {
+    return {
+      then: (onFulfilled) => Promise.resolve(rows).then(onFulfilled),
+      where: () => chain(rows),
+      limit: async (n: number) => rows.slice(0, n),
+    };
+  }
+
+  function fakeDb(state: { localPackages: Row[]; packageSources: Row[] }): any {
+    return {
+      select: () => ({
+        from: (table: unknown) => {
+          const name = getTableName(table as never);
+
+          if (name === "local_packages") return chain(state.localPackages);
+          if (name === "package_sources") return chain(state.packageSources);
+
+          return chain([]);
+        },
+      }),
+    };
+  }
+
+  it("offers only enabled kind:git sources (local sources are never publish targets) and exposes baseBranch", async () => {
+    const db = fakeDb({
+      localPackages: [
+        {
+          id: "lp-1",
+          slug: "fork",
+          status: "active",
+          sourceRepoUrl: "https://github.com/org/repo",
+          workingDir: "/x",
+        },
+      ],
+      packageSources: [
+        {
+          id: "s-git",
+          url: "https://github.com/org/repo",
+          enabled: true,
+          kind: "git",
+          baseBranch: "develop",
+        },
+        {
+          id: "s-local",
+          url: "/Users/dev/maister-plugins",
+          enabled: true,
+          kind: "local",
+          baseBranch: null,
+        },
+        {
+          id: "s-disabled",
+          url: "https://github.com/org/other",
+          enabled: false,
+          kind: "git",
+          baseBranch: null,
+        },
+      ],
+    });
+
+    const options = await getPublishOptions("lp-1", db);
+
+    expect(options.sources).toEqual([
+      {
+        id: "s-git",
+        url: "https://github.com/org/repo",
+        baseBranch: "develop",
+      },
+    ]);
+    expect(options.preselectedSourceId).toBe("s-git");
+    expect(options.defaultBranch).toBe("maister/fork");
   });
 });

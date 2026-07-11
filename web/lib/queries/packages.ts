@@ -248,6 +248,11 @@ export async function getProjectPackageAttachments(
   const discoveredByUrl = new Map<string, DiscoveredPackageEntry[]>(
     sources.map((s: any) => [s.url, s.discovered ?? []]),
   );
+  // ADR-129: the update-available carve is by SOURCE KIND — thread it (an
+  // install with no source row, e.g. a Studio cut, has no kind).
+  const kindByUrl = new Map<string, "git" | "local">(
+    sources.map((s: any) => [s.url, (s.kind ?? "git") as "git" | "local"]),
+  );
 
   const attachedNames = [
     ...new Set(attachments.map((a: any) => a.packageName as string)),
@@ -274,6 +279,12 @@ export async function getProjectPackageAttachments(
   return attachments.map((att: any) => {
     const install = installById.get(att.packageInstallId);
     const manifest = install?.manifest as PackageInstallManifest | undefined;
+    const sourceKind = install ? kindByUrl.get(install.sourceUrl) : undefined;
+    const discoveredEntry = install
+      ? (discoveredByUrl.get(install.sourceUrl) ?? []).find(
+          (d) => d.name === att.packageName,
+        )
+      : undefined;
     const { upgrade, downgrade } = classifyVersionTargets({
       currentVersionLabel: install?.versionLabel ?? "",
       candidates: install
@@ -289,6 +300,8 @@ export async function getProjectPackageAttachments(
               versionLabel: s.versionLabel as string,
             }))
         : [],
+      sourceKind,
+      discoveredDigestLabel: discoveredEntry?.digestVersionLabel ?? null,
     });
 
     return {
@@ -307,6 +320,7 @@ export async function getProjectPackageAttachments(
             packageName: att.packageName,
             versionLabel: install.versionLabel,
             discovered: discoveredByUrl.get(install.sourceUrl) ?? [],
+            sourceKind,
           })
         : false,
       upgradeTarget: upgrade
@@ -448,6 +462,8 @@ export async function loadPackageSourcesView(): Promise<{
     sources: pkgSources.map((s: any) => ({
       id: s.id,
       url: s.url,
+      kind: (s.kind ?? "git") as "git" | "local",
+      baseBranch: s.baseBranch ?? null,
       enabled: s.enabled,
       note: s.note ?? null,
       discovered: s.discovered ?? [],

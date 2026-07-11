@@ -1,7 +1,12 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   classifyVersionTargets,
+  createPackageSource,
   deriveUpdateAvailable,
   packageSourceCreateBodySchema,
   packageSourceUpdateBodySchema,
@@ -294,5 +299,187 @@ describe("defaultPackageSourceUrls (default-source env parse)", () => {
           "https://a.example/x,,  ,https://b.example/y",
       } as unknown as NodeJS.ProcessEnv),
     ).toEqual(["https://a.example/x", "https://b.example/y"]);
+  });
+});
+
+describe("createPackageSource kind:local path validation (ADR-129)", () => {
+  function recordingDb(): { db: any; inserted: Record<string, unknown>[] } {
+    const inserted: Record<string, unknown>[] = [];
+
+    return {
+      inserted,
+      db: {
+        insert: () => ({
+          values: (values: Record<string, unknown>) => {
+            inserted.push(values);
+
+            return {
+              onConflictDoNothing: () => ({
+                returning: async () => [{ id: values.id }],
+              }),
+            };
+          },
+        }),
+      },
+    };
+  }
+
+  it("refuses a relative path with CONFIG before any persistence", async () => {
+    const { db, inserted } = recordingDb();
+
+    await expect(
+      createPackageSource({ url: "relative/dir", kind: "local", db }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    expect(inserted).toHaveLength(0);
+  });
+
+  it("refuses a missing directory with CONFIG", async () => {
+    const { db, inserted } = recordingDb();
+
+    await expect(
+      createPackageSource({
+        url: join(tmpdir(), `nope-${Date.now()}`),
+        kind: "local",
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    expect(inserted).toHaveLength(0);
+  });
+
+  it("refuses a directory without any maister-package.yaml with CONFIG", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "src-empty-"));
+    const { db, inserted } = recordingDb();
+
+    try {
+      await expect(
+        createPackageSource({ url: dir, kind: "local", db }),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+      expect(inserted).toHaveLength(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a root-manifest dir and persists kind local", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "src-root-"));
+
+    await writeFile(join(dir, "maister-package.yaml"), "schemaVersion: 1\n");
+    const { db, inserted } = recordingDb();
+
+    try {
+      await createPackageSource({ url: dir, kind: "local", db });
+      expect(inserted[0]).toMatchObject({ url: dir, kind: "local" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a packages/*/maister-package.yaml monorepo layout", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "src-mono-"));
+
+    await mkdir(join(dir, "packages/aif"), { recursive: true });
+    await writeFile(
+      join(dir, "packages/aif/maister-package.yaml"),
+      "schemaVersion: 1\n",
+    );
+    const { db, inserted } = recordingDb();
+
+    try {
+      await createPackageSource({ url: dir, kind: "local", db });
+      expect(inserted[0]).toMatchObject({ url: dir, kind: "local" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a git source keeps the unvalidated fast path (no fs probe on URLs)", async () => {
+    const { db, inserted } = recordingDb();
+
+    await createPackageSource({
+      url: "https://example.com/org/repo",
+      kind: "git",
+      db,
+    });
+    expect(inserted[0]).toMatchObject({ kind: "git" });
+  });
+});
+
+describe("digest-as-version carve by SOURCE KIND (ADR-129)", () => {
+  const localDiscovered = [
+    {
+      name: "aif",
+      dir: "aif",
+      tags: [],
+      digestVersionLabel: "local-aaaaaaaaaaaa",
+    },
+  ];
+
+  it("deriveUpdateAvailable flags a kind:local attachment whose discovered digest drifted", () => {
+    expect(
+      deriveUpdateAvailable({
+        packageName: "aif",
+        versionLabel: "local-000000000000",
+        discovered: localDiscovered,
+        sourceKind: "local",
+      }),
+    ).toBe(true);
+  });
+
+  it("deriveUpdateAvailable stays quiet when the pinned digest IS the discovered digest", () => {
+    expect(
+      deriveUpdateAvailable({
+        packageName: "aif",
+        versionLabel: "local-aaaaaaaaaaaa",
+        discovered: localDiscovered,
+        sourceKind: "local",
+      }),
+    ).toBe(false);
+  });
+
+  it("Studio-cut installs (no source row → no kind) keep the existing local-* skip", () => {
+    expect(
+      deriveUpdateAvailable({
+        packageName: "aif",
+        versionLabel: "local-000000000000",
+        discovered: localDiscovered,
+      }),
+    ).toBe(false);
+  });
+
+  it("classifyVersionTargets offers the discovered-digest install as the upgrade for kind:local (no ordered downgrades)", () => {
+    const result = classifyVersionTargets({
+      currentVersionLabel: "local-000000000000",
+      candidates: [
+        { installId: "i-new", versionLabel: "local-aaaaaaaaaaaa" },
+        { installId: "i-old", versionLabel: "local-bbbbbbbbbbbb" },
+      ],
+      sourceKind: "local",
+      discoveredDigestLabel: "local-aaaaaaaaaaaa",
+    });
+
+    expect(result.upgrade).toEqual({
+      installId: "i-new",
+      versionLabel: "local-aaaaaaaaaaaa",
+    });
+    expect(result.downgrade).toEqual([]);
+  });
+
+  it("classifyVersionTargets returns no upgrade when the discovered digest is the current pin or not installed", () => {
+    expect(
+      classifyVersionTargets({
+        currentVersionLabel: "local-aaaaaaaaaaaa",
+        candidates: [{ installId: "i-x", versionLabel: "local-bbbbbbbbbbbb" }],
+        sourceKind: "local",
+        discoveredDigestLabel: "local-aaaaaaaaaaaa",
+      }).upgrade,
+    ).toBeNull();
+    expect(
+      classifyVersionTargets({
+        currentVersionLabel: "local-000000000000",
+        candidates: [{ installId: "i-x", versionLabel: "local-bbbbbbbbbbbb" }],
+        sourceKind: "local",
+        discoveredDigestLabel: "local-aaaaaaaaaaaa",
+      }).upgrade,
+    ).toBeNull();
   });
 });

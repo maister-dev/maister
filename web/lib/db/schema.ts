@@ -3179,6 +3179,9 @@ export type DiscoveredPackageEntry = {
   // packages/<dir> subdir in the source monorepo (may differ from name).
   dir: string;
   tags: string[];
+  // ADR-129: `local-<digest12>` of the package dir's CURRENT bytes — local
+  // sources only (digest-as-version; git sources keep tags).
+  digestVersionLabel?: string;
 };
 
 // Immutable installed package revision (two-phase Installing → Installed).

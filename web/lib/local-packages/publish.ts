@@ -49,7 +49,13 @@ export type PublishResult = {
   crossRepo: boolean;
 };
 
-export type PublishSourceOption = { id: string; url: string };
+// ADR-129: `baseBranch` = the source's configured publish PR base
+// (null = auto-detect the remote default branch, fallback DEFAULT_PR_BASE).
+export type PublishSourceOption = {
+  id: string;
+  url: string;
+  baseBranch?: string | null;
+};
 
 export type PublishOptions = {
   sources: PublishSourceOption[];
@@ -131,11 +137,19 @@ export async function getPublishOptions(
     throw new MaisterError("PRECONDITION", "local package not found");
   }
   const rows = await d
-    .select({ id: ps.id, url: ps.url, enabled: ps.enabled })
+    .select({
+      id: ps.id,
+      url: ps.url,
+      enabled: ps.enabled,
+      kind: ps.kind,
+      baseBranch: ps.baseBranch,
+    })
     .from(ps);
+  // ADR-129 §c: only kind:git sources are publish targets (allow-list — a
+  // local source is a read-only host directory, never a push destination).
   const sources = rows
-    .filter((r) => r.enabled)
-    .map((r) => ({ id: r.id, url: r.url }));
+    .filter((r) => r.enabled && r.kind === "git")
+    .map((r) => ({ id: r.id, url: r.url, baseBranch: r.baseBranch ?? null }));
 
   return {
     sources,
@@ -172,16 +186,23 @@ export async function publishLocalPackage(
   }
 
   // Resolve the target ONLY from the registered allow-list (server-state) — a
-  // body-supplied raw URL is never accepted.
+  // body-supplied raw URL is never accepted, and (ADR-129) only kind:git
+  // sources are valid push destinations.
   const [source] = await d
-    .select({ id: ps.id, url: ps.url, enabled: ps.enabled })
+    .select({
+      id: ps.id,
+      url: ps.url,
+      enabled: ps.enabled,
+      kind: ps.kind,
+      baseBranch: ps.baseBranch,
+    })
     .from(ps)
     .where(eq(ps.id, opts.targetSourceId));
 
-  if (!source || !source.enabled) {
+  if (!source || !source.enabled || source.kind !== "git") {
     throw new MaisterError(
       "CONFLICT",
-      "target source is not a registered, enabled package source",
+      "target source is not a registered, enabled git package source",
     );
   }
   const sourceUrl = source.url;

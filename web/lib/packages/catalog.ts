@@ -4,9 +4,9 @@ import type { DiscoveredPackageEntry } from "@/lib/db/schema";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
@@ -16,6 +16,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { localDirectoryContentDigest } from "@/lib/flows";
 import { loadMaisterPackageManifest } from "@/lib/packages/manifest";
 import { redactUrl } from "@/lib/repo-source";
 
@@ -88,16 +89,29 @@ function compareTagsDesc(a: string, b: string): number {
   return 0;
 }
 
-// A newer matching tag exists in the source's discovered snapshot. Local
-// versions (`local-*` labels) are intentionally off-catalog → never flagged.
+// A newer matching tag exists in the source's discovered snapshot.
+// ADR-129: the local-* carve is by SOURCE KIND — for a `kind: 'local'`
+// source, a discovered digest ≠ the pinned digest IS an update
+// (digest-as-version); Studio-cut installs (no source row → no kind) keep
+// the off-catalog skip.
 export function deriveUpdateAvailable(opts: {
   packageName: string;
   versionLabel: string;
   discovered: DiscoveredPackageEntry[];
+  sourceKind?: "git" | "local";
 }): boolean {
+  const entry = opts.discovered.find((d) => d.name === opts.packageName);
+
+  if (opts.sourceKind === "local") {
+    const discoveredLabel = entry?.digestVersionLabel;
+
+    return (
+      discoveredLabel !== undefined && discoveredLabel !== opts.versionLabel
+    );
+  }
+
   if (opts.versionLabel.startsWith("local-")) return false;
 
-  const entry = opts.discovered.find((d) => d.name === opts.packageName);
   const newest = entry?.tags[0];
 
   if (!newest) return false;
@@ -117,11 +131,28 @@ export type PackageVersionTarget = { installId: string; versionLabel: string };
 export function classifyVersionTargets(opts: {
   currentVersionLabel: string;
   candidates: PackageVersionTarget[];
+  // ADR-129: for kind:local sources the only meaningful target is the
+  // install matching the CURRENT discovered digest — digests are unordered,
+  // so there is no downgrade list.
+  sourceKind?: "git" | "local";
+  discoveredDigestLabel?: string | null;
 }): {
   upgrade: PackageVersionTarget | null;
   downgrade: PackageVersionTarget[];
 } {
   const current = opts.currentVersionLabel;
+
+  if (opts.sourceKind === "local") {
+    const target =
+      opts.discoveredDigestLabel && opts.discoveredDigestLabel !== current
+        ? (opts.candidates.find(
+            (candidate) =>
+              candidate.versionLabel === opts.discoveredDigestLabel,
+          ) ?? null)
+        : null;
+
+    return { upgrade: target, downgrade: [] };
+  }
 
   if (current.startsWith("local-") || !current.includes("/v")) {
     return { upgrade: null, downgrade: [] };
@@ -184,6 +215,80 @@ export async function listPackageSources(opts?: { db?: any }): Promise<any[]> {
   return db.select().from(packageSources);
 }
 
+// ADR-129 §c: a `kind: 'local'` source path is server-validated BEFORE
+// persistence (allow-list: absolute + existing directory + a
+// maister-package.yaml at the root OR ≥1 packages/*/maister-package.yaml).
+// Every violation is a typed CONFIG naming the failed check — the stored path
+// is later used only through the installer's server-state resolution.
+async function assertValidLocalPackageSourcePath(path: string): Promise<void> {
+  if (!isAbsolute(path)) {
+    throw new MaisterError(
+      "CONFIG",
+      "local package source path must be absolute",
+    );
+  }
+
+  let rootStat;
+
+  try {
+    rootStat = await stat(path);
+  } catch {
+    throw new MaisterError(
+      "CONFIG",
+      `local package source directory does not exist: ${path}`,
+    );
+  }
+  if (!rootStat.isDirectory()) {
+    throw new MaisterError(
+      "CONFIG",
+      `local package source path is not a directory: ${path}`,
+    );
+  }
+
+  if (await isFile(join(path, "maister-package.yaml"))) return;
+
+  const monorepoDirs = await listPackageDirsWithManifest(path);
+
+  if (monorepoDirs.length > 0) return;
+
+  throw new MaisterError(
+    "CONFIG",
+    `no maister-package.yaml at the root nor packages/*/maister-package.yaml under: ${path}`,
+  );
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// packages/<dir> entries carrying a maister-package.yaml (the monorepo
+// layout, mirroring scanDefaultBranchManifests over a plain directory walk).
+async function listPackageDirsWithManifest(root: string): Promise<string[]> {
+  let entries: string[] = [];
+
+  try {
+    entries = (await readdir(join(root, "packages"), { withFileTypes: true }))
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return [];
+  }
+
+  const withManifest: string[] = [];
+
+  for (const entry of entries) {
+    if (await isFile(join(root, "packages", entry, "maister-package.yaml"))) {
+      withManifest.push(entry);
+    }
+  }
+
+  return withManifest;
+}
+
 export async function createPackageSource(opts: {
   url: string;
   kind?: PackageSourceKind;
@@ -192,6 +297,10 @@ export async function createPackageSource(opts: {
   enabled?: boolean;
   db?: any;
 }): Promise<{ id: string }> {
+  if ((opts.kind ?? "git") === "local") {
+    await assertValidLocalPackageSourcePath(opts.url);
+  }
+
   const db = opts.db ?? getDb();
   const id = randomUUID();
 
@@ -364,6 +473,55 @@ async function scanDefaultBranchManifests(
   }
 }
 
+// ADR-129 §c: discover a local source's packages — root manifest (single
+// package) or packages/*/ (monorepo) — each with a digest-derived version
+// label `local-<digest12>` of the package dir's CURRENT bytes.
+async function discoverLocalSourcePackages(
+  root: string,
+): Promise<DiscoveredPackageEntry[]> {
+  if (await isFile(join(root, "maister-package.yaml"))) {
+    const manifest = await loadMaisterPackageManifest(root);
+    const digest = await localDirectoryContentDigest(root);
+
+    return [
+      {
+        name: manifest.name,
+        dir: ".",
+        tags: [],
+        digestVersionLabel: `local-${digest.slice(0, 12)}`,
+      },
+    ];
+  }
+
+  const dirs = await listPackageDirsWithManifest(root);
+  const discovered: DiscoveredPackageEntry[] = [];
+
+  for (const dir of dirs.sort()) {
+    const pkgRoot = join(root, "packages", dir);
+    const manifest = await loadMaisterPackageManifest(pkgRoot);
+    const digest = await localDirectoryContentDigest(pkgRoot);
+
+    discovered.push({
+      name: manifest.name,
+      dir,
+      tags: [],
+      digestVersionLabel: `local-${digest.slice(0, 12)}`,
+    });
+  }
+
+  // Registration required >=1 manifest, so an empty walk means the directory
+  // vanished/moved — degrade (keep the stale snapshot), never overwrite the
+  // cached discovery with [].
+  if (discovered.length === 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `local package source has no maister-package.yaml anymore: ${root}`,
+    );
+  }
+
+  return discovered;
+}
+
 // Refresh one source: ls-remote tags + a shallow default-branch manifest scan.
 // ANY git/scan failure degrades to the cached snapshot (WARN) — the catalog
 // surface is never blocked by a dead remote.
@@ -379,6 +537,38 @@ export async function refreshPackageSource(opts: {
     .where(eq(packageSources.id, opts.id));
 
   if (!source) return null;
+
+  // ADR-129 §c: a `kind: 'local'` source refreshes by directory walk +
+  // re-digest — no git. Digest-as-version: the discovered "version" is always
+  // the PRESENT content digest (`local-<digest12>`); an unchanged dir
+  // re-digests to the same label (idempotent re-check). On-demand only (D7).
+  if (source.kind === "local") {
+    try {
+      const discovered = await discoverLocalSourcePackages(source.url);
+
+      await db
+        .update(packageSources)
+        .set({ discovered, lastCheckedAt: new Date(), updatedAt: new Date() })
+        .where(eq(packageSources.id, opts.id));
+
+      log.info(
+        { id: opts.id, url: redactUrl(source.url), packages: discovered.length },
+        "local package source refreshed (re-digest)",
+      );
+
+      return { degraded: false, packages: discovered };
+    } catch (err) {
+      log.warn(
+        { id: opts.id, url: redactUrl(source.url), cause: (err as Error).name },
+        "local package source refresh degraded — keeping stale snapshot",
+      );
+
+      return {
+        degraded: true,
+        packages: (source.discovered ?? []) as DiscoveredPackageEntry[],
+      };
+    }
+  }
 
   try {
     const [tagStdout, manifestNames] = await Promise.all([

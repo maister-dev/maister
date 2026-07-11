@@ -19,6 +19,8 @@ import {
 const source: PackageSourceRow = {
   id: "src-1",
   url: "github.com/org/maister-plugins",
+  kind: "git" as const,
+  baseBranch: null,
   enabled: true,
   note: "main plugins repo",
   discovered: [
