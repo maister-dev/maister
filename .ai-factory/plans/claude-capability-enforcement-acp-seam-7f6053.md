@@ -434,7 +434,7 @@ existing M40 native-hook live-verification residual into this same checklist.
 
 ### Phase 2 — Supervisor: capability_guard evaluator + interceptor + sentinel — Commit C
 
-**T2.1 · Wire type + record + rule-kind widening (TDD).**
+**T2.1 · Wire type + record + rule-kind widening (TDD).** — ✅ DONE (SessionEnforcementProfileSchema + StartSessionRequestSchema.enforcementProfile; SessionRecord.enforcementProfile/capabilityDenyCount/arbitratedIds; HookRule widened; spawn seeding; escalationThreshold on profile + docs; 12 schema tests)
 `supervisor/src/types.ts`: `StartSessionRequestSchema.enforcementProfile` (zod, strict,
 optional, DES-2 shape); `SessionRecord.enforcementProfile` + `capabilityDenyCount?`; widen
 `HookRule` with `"capability_guard"`; `emitHookTrip` disposition extension (DES-5).
@@ -442,7 +442,7 @@ optional, DES-2 shape); `SessionRecord.enforcementProfile` + `capabilityDenyCoun
 *Logging*: DEBUG on spawn: `enforcedClasses`, profile digest.
 *Verify*: unit — `StartSessionRequestSchema` accepts/rejects the profile shape; record seeded.
 
-**T2.2 · `resolveCapabilityGuardDecision` evaluator (pure, TDD-first).**
+**T2.2 · `resolveCapabilityGuardDecision` evaluator (pure, TDD-first).** — ✅ DONE (pure evaluator: allow-list, AND-of-allows two-strict precedence, fail-closed missing-identity, execute/bash by-name, MCP-namespace, pass_through; HOOK_RULE_META entry; 10 tests, RED→GREEN)
 `supervisor/src/guardrail-hooks.ts`: widen `GuardrailToolCall` to read tool identity (name +
 MCP namespace, from the wire field Spike #1 proved) + keep `kind`/`locations`. New pure
 evaluator `(profile, toolCall) → { decision: "allow" | "deny" | "pass_through"; reason?; governedClass? }`.
@@ -452,7 +452,7 @@ SOLID: single-responsibility (evaluate only — no I/O, no `record` mutation). D
 the identity extractor + `WRITE_KINDS`.
 *Logging*: n/a (pure; caller logs). *Verify (RED-first, edge cases enumerated)*: in-profile allow; out-of-profile deny (tools + mcps + tool-restriction); ungoverned → pass_through; **MCP-namespace extraction** (`mcp__github__create_issue` → server `github`); **call governed by TWO strict classes** → defined precedence; **missing/malformed identity** → conservative deny; `execute`(bash) not name-matchable → defined behavior; tool-name case handling; path-shaped restriction delegated to `path_guard` (not here). Min-overlap, no trivial tests.
 
-**T2.3 · Interceptor integration in `requestPermission` (DES-3, deferred-release).**
+**T2.3 · Interceptor integration in `requestPermission` (DES-3, deferred-release).** — ✅ DONE (block after path_guard before B1; in-profile auto-allow, out-of-profile deny+continue, Nth halt+cancel-deferreds, hookHalted short-circuit for capability-only sessions, throw→deny; emitHookTrip disposition override; integration tests prove deny-wins-over-B1 + breaker + no leaked deferred)
 `supervisor/src/acp-client.ts`: insert the `capability_guard` block after `path_guard`,
 before B1. In-profile → return `{selected, allowOption}` inline (reset counter);
 out-of-profile → `emitHookTrip("capability_guard", tc)` deny + `{cancelled}` + increment;
@@ -462,7 +462,7 @@ unresolved RPC).
 *Logging*: DEBUG per decision (`toolIdentity`, `kind`, `governedClass`, `decision`, `reason`, `denyCount`); INFO on halt.
 *Verify*: unit — waterfall ordering (readOnly/readOnlyTurn/path_guard still win above; capability_guard wins over B1); breaker at N; no deferred leaked on the auto-decided path.
 
-**T2.4 · D5 always-ask sentinel.**
+**T2.4 · D5 always-ask sentinel.** — ✅ DONE (session/update handler: unarbitrated WRITE_KINDS tool_call → fail-closed halt; integration test)
 `supervisor/src/acp-client.ts` `session/update` handler: for an enforced session, track
 arbitrated `toolCallId`s; a WRITE_KINDS `tool_call` update with an unseen id → `hookHalted` +
 `capability_guard` halt escalation (fail-closed).

@@ -65,6 +65,7 @@ async function boot(
 
 type SessionOpts = {
   hooksConfig?: unknown;
+  enforcementProfile?: unknown;
   autoApprovePermissions?: boolean;
   worktreePath: string;
 };
@@ -81,6 +82,9 @@ async function createSession(url: string, opts: SessionOpts): Promise<string> {
       executor: { agent: "claude", model: "claude-sonnet-4-6" },
       autoApprovePermissions: opts.autoApprovePermissions ?? true,
       ...(opts.hooksConfig ? { hooksConfig: opts.hooksConfig } : {}),
+      ...(opts.enforcementProfile
+        ? { enforcementProfile: opts.enforcementProfile }
+        : {}),
     }),
   });
 
@@ -381,6 +385,150 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
     });
     // 3 denials (maxTurns - 1) precede the no_progress halt.
     expect(trips.filter((t) => t.rule === "path_guard")).toHaveLength(3);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+});
+
+describe("capability_guard interceptor (ADR-129)", () => {
+  const toolsProfile = {
+    tools: { allow: ["Read"] },
+    enforcedClasses: ["tools"],
+    escalationThreshold: 3,
+  };
+
+  it("in-profile: auto-allows inline (zero HITL) even with autoApprove OFF", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_allow",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      // autoApprove OFF → the ONLY way this in-profile call resolves without a
+      // hanging HITL deferred is capability_guard's inline auto-allow.
+      autoApprovePermissions: false,
+      enforcementProfile: toolsProfile,
+    });
+
+    await sendPrompt(url, sessionId);
+
+    expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("out-of-profile: denies at the seam (wins over B1 auto-approve), run continues", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_deny",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      // autoApprove ON → if capability_guard did NOT run before B1, this would
+      // auto-approve with no trip. The deny trip proves the before-B1 ordering.
+      autoApprovePermissions: true,
+      enforcementProfile: toolsProfile,
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({
+      rule: "capability_guard",
+      lifecycle: "pre_tool_call",
+      disposition: "deny",
+    });
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("out-of-profile MCP server: denied by the mcps allow-list", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_deny_mcp",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      enforcementProfile: {
+        mcps: { allowServers: ["github"] },
+        enforcedClasses: ["mcps"],
+        escalationThreshold: 3,
+      },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({
+      rule: "capability_guard",
+      disposition: "deny",
+    });
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("breaker: the Nth consecutive out-of-profile deny halts (once)", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_deny_repeat",
+      "--count",
+      "5",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      enforcementProfile: toolsProfile, // escalationThreshold 3
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+    const halts = trips.filter((t) => t.disposition === "halt");
+    const denies = trips.filter((t) => t.disposition === "deny");
+
+    // 5 denials, threshold 3: denies 1 & 2 continue, the 3rd halts; calls 4 & 5
+    // are cancelled inline by hookHalted with no further trips.
+    expect(halts).toHaveLength(1);
+    expect(halts[0]).toMatchObject({ rule: "capability_guard" });
+    expect(denies).toHaveLength(2);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("D5 sentinel: an unarbitrated WRITE_KINDS tool_call update halts", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_sentinel",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      enforcementProfile: toolsProfile,
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({
+      rule: "capability_guard",
+      disposition: "halt",
+    });
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("no enforcementProfile: capability_guard is inert (auto-approves via B1)", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_deny",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      autoApprovePermissions: true,
+      // No enforcementProfile → capability_guard never runs.
+    });
+
+    await sendPrompt(url, sessionId);
+
+    expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 });

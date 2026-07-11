@@ -165,6 +165,31 @@ export const McpServerInputSchema = z
     }
   });
 
+// ADR-129: derived capability-enforcement set for the capability_guard seam
+// interceptor. Present iff the resolved node/agent declares strict tools/mcps on an
+// enforceable adapter. Seeded onto SessionRecord like hooksConfig; read at the
+// requestPermission seam. `tools.allow` is never empty (a strict class with no
+// declared allow-set is a web-side CONFIG refusal). `escalationThreshold` (N) is
+// web-resolved and delivered here so the supervisor stays config-free.
+export const SessionEnforcementProfileSchema = z
+  .object({
+    tools: z
+      .object({ allow: z.array(z.string().min(1)).min(1) })
+      .strict()
+      .optional(),
+    mcps: z
+      .object({ allowServers: z.array(z.string().min(1)) })
+      .strict()
+      .optional(),
+    enforcedClasses: z.array(z.enum(["tools", "mcps"])).min(1),
+    escalationThreshold: z.number().int().min(1),
+  })
+  .strict();
+
+export type SessionEnforcementProfile = z.infer<
+  typeof SessionEnforcementProfileSchema
+>;
+
 export const StartSessionRequestSchema = z
   .object({
     runId: z
@@ -251,6 +276,9 @@ export const StartSessionRequestSchema = z
       .partial()
       .strict()
       .optional(),
+    // ADR-129: derived capability-enforcement set (capability_guard). Optional;
+    // present only for a session enforcing strict tools/mcps.
+    enforcementProfile: SessionEnforcementProfileSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -343,7 +371,11 @@ export type HooksConfig = NonNullable<StartSessionRequest["hooksConfig"]>;
 
 // ADR-108 (M40): a guardrail rule and its frozen lifecycle/disposition — see the
 // rule × lifecycle matrix in docs/system-analytics/guardrail-hooks.md.
-export type HookRule = "path_guard" | "repetition" | "no_progress";
+export type HookRule =
+  | "path_guard"
+  | "repetition"
+  | "no_progress"
+  | "capability_guard";
 export type HookLifecycle = "pre_tool_call" | "post_turn";
 export type HookDisposition = "deny" | "halt";
 
@@ -488,6 +520,18 @@ export type SessionRecord = {
   // universal supervisor interceptor; absent → the interceptor is a no-op
   // (byte-identical to a pre-hook run). Mirrors StartSessionRequest.hooksConfig.
   hooksConfig?: HooksConfig;
+  // ADR-129: the derived capability-enforcement set for this session. Arms the
+  // capability_guard interceptor; absent → capability_guard is inert. Mirrors
+  // StartSessionRequest.enforcementProfile.
+  enforcementProfile?: SessionEnforcementProfile;
+  // ADR-129: consecutive out-of-profile denial counter — reset on any in-profile
+  // call; the Nth (enforcementProfile.escalationThreshold) latches a halt.
+  // In-memory only (lost on crash, reset on resume) — mirrors the M40 counters.
+  capabilityDenyCount?: number;
+  // ADR-129: D5 always-ask sentinel — the toolCallIds capability_guard has
+  // arbitrated this session; a WRITE_KINDS session/update with an unseen id means
+  // the adapter stopped honoring always-ask → fail-closed halt.
+  capabilityArbitratedToolCallIds?: Set<string>;
   // ADR-108 (M40): in-memory guardrail counters — lost on supervisor crash (run
   // reconciled Crashed) and reset on resume (a respawn builds a fresh record).
   lastToolCallSig?: string;

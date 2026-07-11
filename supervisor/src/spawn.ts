@@ -322,6 +322,11 @@ export async function spawnSession(
     // resolved rule set. Counters start fresh (in-memory only; a resume rebuilds
     // this record, so a resumed run counts from zero).
     hooksConfig: request.hooksConfig,
+    // ADR-129: arm the capability_guard interceptor with the web-derived profile.
+    // Counters start fresh (in-memory; a resume rebuilds this record from zero).
+    enforcementProfile: request.enforcementProfile,
+    capabilityDenyCount: 0,
+    capabilityArbitratedToolCallIds: new Set<string>(),
     repeatCount: 0,
     turnsSinceProgress: 0,
   };

@@ -66,7 +66,10 @@ optional claude-native backend delivered through a clean seam.
   is also recorded in `node_attempts.enforcement_snapshot` +
   `materialization_plan` (existing jsonb) and folded into the launch `profileDigest`
   (mid-session drift guard). Shape: `{ tools?: { allow: string[] }; mcps?: {
-  allowServers: string[] }; enforcedClasses: ("tools"|"mcps")[] }`. Distinct from
+  allowServers: string[] }; enforcedClasses: ("tools"|"mcps")[]; escalationThreshold:
+  number }` (`escalationThreshold` = N, web-resolved from
+  `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`, delivered on the profile so the
+  supervisor stays config-free — the M40 `repetition.max` pattern). Distinct from
   the M14 `capabilityProfilePath` (child-env only) and the platform-agent
   `capability_profile` frontmatter — the name collision is deliberately avoided.
 - **`capabilityDenyCount`** _(capability_guard — ADR-129)_ — a per-session counter
@@ -169,7 +172,8 @@ a launch-time `CONFIG` refusal (never enforce-nothing).
 {
   "tools": { "allow": ["Read", "Edit", "Bash", "mcp__github__create_issue"] },
   "mcps": { "allowServers": ["github", "maister"] },
-  "enforcedClasses": ["tools", "mcps"]
+  "enforcedClasses": ["tools", "mcps"],
+  "escalationThreshold": 3
 }
 ```
 
@@ -180,6 +184,8 @@ a launch-time `CONFIG` refusal (never enforce-nothing).
   gated at `session/new`); this enforces per-**call** for a tool named
   `mcp__<server>__<tool>` whose `<server>` ∉ the set.
 - **`enforcedClasses`** — audit list folded into the enforcement snapshot + logs.
+- **`escalationThreshold`** — N, the consecutive-deny count before the seam halts
+  (web-resolved from `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`, default 3).
 
 The supervisor enforces exactly what it is given (no policy interpretation
 supervisor-side); the profile is a data input, not a policy grammar.

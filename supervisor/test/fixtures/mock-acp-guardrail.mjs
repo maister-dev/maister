@@ -139,6 +139,34 @@ class GuardrailAgent {
     });
   }
 
+  // ADR-129: a permission request carrying a tool NAME via `title` (the identity
+  // capability_guard extracts). `kind` defaults to a write-class "edit".
+  async requestTool(sessionId, name, id, kind = "edit") {
+    const res = await this.connection.requestPermission({
+      sessionId,
+      toolCall: { toolCallId: id, kind, title: name },
+      options: OPTIONS,
+    });
+
+    this.outcomes.push(res.outcome.outcome);
+  }
+
+  // ADR-129 D5: a WRITE_KINDS tool_call session/update with NO preceding
+  // requestPermission — the adapter executed a write without asking (always-ask
+  // bypass) → the sentinel must halt.
+  async unarbitratedWrite(sessionId, id) {
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: id,
+        kind: "edit",
+        title: `unarbitrated ${id}`,
+        status: "pending",
+      },
+    });
+  }
+
   async prompt(params) {
     const sessionId = params.sessionId;
 
@@ -181,6 +209,28 @@ class GuardrailAgent {
       for (let i = 0; i < count - 1; i += 1) {
         await this.idleTurn(sessionId, `tc-npr-b-${i}`);
       }
+    } else if (scenario === "capability_allow") {
+      // One in-profile tool call (name in the tools allow-list) → auto-allowed.
+      await this.requestTool(sessionId, "Read", "tc-cap-allow");
+    } else if (scenario === "capability_deny") {
+      // One out-of-profile tool call (name NOT in the allow-list) → denied.
+      await this.requestTool(sessionId, "WebFetch", "tc-cap-deny");
+    } else if (scenario === "capability_deny_mcp") {
+      // An MCP call to a server outside mcps.allowServers → denied by mcps.
+      await this.requestTool(
+        sessionId,
+        "mcp__gitlab__create_issue",
+        "tc-cap-mcp",
+        "other",
+      );
+    } else if (scenario === "capability_deny_repeat") {
+      // N out-of-profile calls → the Nth consecutive deny halts.
+      for (let i = 0; i < count; i += 1) {
+        await this.requestTool(sessionId, "WebFetch", `tc-cap-rep-${i}`);
+      }
+    } else if (scenario === "capability_sentinel") {
+      // A WRITE_KINDS tool_call update with no preceding permission → sentinel halt.
+      await this.unarbitratedWrite(sessionId, "tc-cap-unarbitrated");
     } else if (scenario === "deferred_cancel") {
       // Open a REAL HITL deferred (autoApprove OFF, only no_progress armed → the
       // write falls through to the deferred), THEN trip no_progress with M idle

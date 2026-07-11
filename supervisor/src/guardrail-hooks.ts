@@ -3,6 +3,7 @@ import type {
   HookLifecycle,
   HookRule,
   HooksConfig,
+  SessionEnforcementProfile,
 } from "./types";
 
 import path from "node:path";
@@ -86,6 +87,70 @@ export function extractToolIdentity(toolCall: unknown): ToolIdentity {
   const name = metaName ?? titleName;
 
   return { name, mcpServer: name ? mcpServerFromToolName(name) : null };
+}
+
+// ADR-129: the pure capability_guard decision. SOLID single-responsibility —
+// evaluate only, no I/O, no record mutation. `pass_through` means no strict class
+// governs this call (fall through to B1/HITL unchanged). Governance is by field
+// PRESENCE (`profile.tools`/`profile.mcps`), never `enforcedClasses` (audit-only).
+export type CapabilityGuardDecision =
+  | { readonly decision: "allow" }
+  | {
+      readonly decision: "deny";
+      readonly reason: string;
+      readonly governedClass: "tools" | "mcps";
+    }
+  | { readonly decision: "pass_through" };
+
+export function resolveCapabilityGuardDecision(
+  profile: SessionEnforcementProfile,
+  toolCall: GuardrailToolCall,
+): CapabilityGuardDecision {
+  const identity = extractToolIdentity(toolCall);
+  const isMcpCall = identity.mcpServer !== null;
+
+  // `tools` governs EVERY call reaching the seam (matched by name). `mcps` governs
+  // only MCP calls (matched by server namespace).
+  const governedByTools = profile.tools !== undefined;
+  const governedByMcps = profile.mcps !== undefined && isMcpCall;
+
+  if (!governedByTools && !governedByMcps) {
+    return { decision: "pass_through" };
+  }
+
+  // tools allow-list over tool NAME. Missing identity for a governed call →
+  // fail-closed deny (never a silent allow).
+  if (governedByTools && profile.tools) {
+    if (identity.name === null) {
+      return {
+        decision: "deny",
+        reason: "capability_guard: tool identity unresolved (fail-closed)",
+        governedClass: "tools",
+      };
+    }
+
+    if (!profile.tools.allow.includes(identity.name)) {
+      return {
+        decision: "deny",
+        reason: `capability_guard: tool "${identity.name}" not in the tools allow-list`,
+        governedClass: "tools",
+      };
+    }
+  }
+
+  // mcps allow-list over the server namespace (AND-of-allows: a call governed by
+  // both classes must clear both — most-restrictive wins).
+  if (governedByMcps && profile.mcps && identity.mcpServer) {
+    if (!profile.mcps.allowServers.includes(identity.mcpServer)) {
+      return {
+        decision: "deny",
+        reason: `capability_guard: MCP server "${identity.mcpServer}" not in the mcps allow-list`,
+        governedClass: "mcps",
+      };
+    }
+  }
+
+  return { decision: "allow" };
 }
 
 // Adapter-agnostic write-path extraction (SDD spec §1.1). `path` is undefined
@@ -263,4 +328,7 @@ export const HOOK_RULE_META: Record<
   path_guard: { lifecycle: "pre_tool_call", disposition: "deny" },
   repetition: { lifecycle: "pre_tool_call", disposition: "halt" },
   no_progress: { lifecycle: "post_turn", disposition: "halt" },
+  // ADR-129: dual-disposition. The frozen value is the per-call `deny`; the
+  // Nth-consecutive-deny `halt` is emitted with an explicit disposition override.
+  capability_guard: { lifecycle: "pre_tool_call", disposition: "deny" },
 };

@@ -1307,7 +1307,7 @@ components:
         enforcementProfile:
           type: object
           additionalProperties: false
-          required: [enforcedClasses]
+          required: [enforcedClasses, escalationThreshold]
           description: |
             (Designed — ADR-129) Resolved, derived capability-enforcement set for the
             `capability_guard` seam interceptor. Present iff the resolved node/agent
@@ -1359,6 +1359,14 @@ components:
               description: |
                 Audit list of the classes this profile enforces (folded into the
                 enforcement snapshot + logs).
+            escalationThreshold:
+              type: integer
+              minimum: 1
+              description: |
+                N — the number of consecutive out-of-profile denials before the seam
+                halts the session and escalates a `hook_trip` HITL. Web-resolved from
+                `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD` (default 3) and
+                delivered on the profile so the supervisor stays config-free.
     AdapterLaunch:
       type: object
       additionalProperties: false

@@ -21,9 +21,11 @@ import {
 } from "./adapter-registry";
 import {
   classifyProgressUpdate,
+  extractToolIdentity,
   HOOK_RULE_META,
   noProgressTick,
   repetitionTick,
+  resolveCapabilityGuardDecision,
   resolvePathGuardDecision,
   toolCallSignature,
   WRITE_KINDS,
@@ -40,6 +42,7 @@ import {
   isSupervisorError,
   SupervisorError,
   type ExecutorAgent,
+  type HookDisposition,
   type HookRule,
   type McpServerInput,
   type PermissionOptionDescriptor,
@@ -354,7 +357,13 @@ export async function createAcpConnection(
   // ADR-108 (M40): emit a session.hook_trip stamped with the rule's frozen
   // lifecycle/disposition. The web tier escalates on `halt`; `deny` is
   // record-only there. `toolCall` is the pre_tool_call call (null for no_progress).
-  const emitHookTrip = (rule: HookRule, toolCall: unknown): void => {
+  // ADR-129: `capability_guard` is dual-disposition (per-call `deny`, Nth-deny
+  // `halt`), so the caller may override the frozen `HOOK_RULE_META` disposition.
+  const emitHookTrip = (
+    rule: HookRule,
+    toolCall: unknown,
+    dispositionOverride?: HookDisposition,
+  ): void => {
     record.monotonicId += 1;
     const meta = HOOK_RULE_META[rule];
     const event: SessionEvent = {
@@ -363,7 +372,7 @@ export async function createAcpConnection(
       monotonicId: record.monotonicId,
       rule,
       lifecycle: meta.lifecycle,
-      disposition: meta.disposition,
+      disposition: dispositionOverride ?? meta.disposition,
       toolCall,
     };
 
@@ -428,6 +437,44 @@ export async function createAcpConnection(
                 maxTurns: record.hooksConfig.noProgress.maxTurns,
               },
               "[guardrail] no_progress halt",
+            );
+          }
+        }
+      }
+
+      // ADR-129 D5: always-ask sentinel. For an enforced session, a WRITE_KINDS
+      // tool_call update whose toolCallId was never arbitrated by capability_guard
+      // means the adapter executed a write WITHOUT asking (stopped honoring
+      // always-ask mid-session) → fail-closed halt.
+      if (record.enforcementProfile && !record.hookHalted) {
+        const u = params.update as {
+          sessionUpdate?: string;
+          kind?: string;
+          toolCallId?: string;
+        } | null;
+
+        if (
+          u?.sessionUpdate === "tool_call" &&
+          typeof u.kind === "string" &&
+          WRITE_KINDS.has(u.kind)
+        ) {
+          const id = typeof u.toolCallId === "string" ? u.toolCallId : null;
+
+          if (!id || !record.capabilityArbitratedToolCallIds?.has(id)) {
+            record.hookHalted = true;
+            emitHookTrip("capability_guard", params.update, "halt");
+
+            for (const requestId of pendingPermissions.requestIds(sessionId)) {
+              pendingPermissions.cancel(
+                sessionId,
+                requestId,
+                "hook_trip:capability_guard",
+              );
+            }
+
+            logger.warn(
+              { sessionId, toolCallId: id, kind: u.kind },
+              "[guardrail] capability_guard always-ask sentinel halt (unarbitrated write)",
             );
           }
         }
@@ -625,6 +672,126 @@ export async function createAcpConnection(
 
           return { outcome: { outcome: "cancelled" } };
         }
+      }
+
+      // ADR-129: capability_guard — enforce strict tools/mcps by tool identity.
+      // Runs AFTER path_guard and BEFORE B1 so an out-of-profile call is denied even
+      // on unattended/auto-approve sessions. Armed only when the session carries a
+      // derived enforcementProfile. In-profile → auto-allow inline (zero HITL);
+      // out-of-profile → deny-and-continue; Nth consecutive deny → halt.
+      if (record.enforcementProfile) {
+        // A prior halt (capability_guard or M40) fired → cancel every further call
+        // (mirrors the M40 hooksConfig hookHalted short-circuit, for a session that
+        // carries an enforcementProfile but no hooksConfig).
+        if (record.hookHalted) {
+          return { outcome: { outcome: "cancelled" } };
+        }
+
+        // D5 sentinel bookkeeping: this call reached the seam (was arbitrated).
+        if (tc.toolCallId) {
+          record.capabilityArbitratedToolCallIds?.add(tc.toolCallId);
+        }
+
+        let decision;
+
+        try {
+          decision = resolveCapabilityGuardDecision(
+            record.enforcementProfile,
+            tc,
+          );
+        } catch (err) {
+          // Deferred-release invariant: a throw in evaluation falls through to a
+          // logged deny (never an unresolved RPC).
+          logger.warn(
+            {
+              sessionId,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "[guardrail] capability_guard evaluation threw — deny (fail-closed)",
+          );
+          decision = {
+            decision: "deny" as const,
+            reason: "capability_guard: evaluation error (fail-closed)",
+            governedClass: "tools" as const,
+          };
+        }
+
+        if (decision.decision === "deny") {
+          const identity = extractToolIdentity(tc);
+
+          record.capabilityDenyCount = (record.capabilityDenyCount ?? 0) + 1;
+
+          // Nth consecutive out-of-profile deny → halt (mirror no_progress): cancel
+          // every pending deferred, reset the counter, emit an explicit `halt`.
+          if (
+            record.capabilityDenyCount >=
+            record.enforcementProfile.escalationThreshold
+          ) {
+            record.hookHalted = true;
+            record.capabilityDenyCount = 0;
+            emitHookTrip("capability_guard", params.toolCall, "halt");
+
+            for (const requestId of pendingPermissions.requestIds(sessionId)) {
+              pendingPermissions.cancel(
+                sessionId,
+                requestId,
+                "hook_trip:capability_guard",
+              );
+            }
+
+            logger.info(
+              {
+                sessionId,
+                toolIdentity: identity.name,
+                governedClass: decision.governedClass,
+                threshold: record.enforcementProfile.escalationThreshold,
+              },
+              "[guardrail] capability_guard halt (Nth consecutive deny)",
+            );
+
+            return { outcome: { outcome: "cancelled" } };
+          }
+
+          emitHookTrip("capability_guard", params.toolCall, "deny");
+          logger.debug(
+            {
+              sessionId,
+              toolIdentity: identity.name,
+              kind: tc.kind,
+              governedClass: decision.governedClass,
+              decision: "deny",
+              reason: decision.reason,
+              denyCount: record.capabilityDenyCount,
+            },
+            "[guardrail] capability_guard deny (run continues)",
+          );
+
+          return { outcome: { outcome: "cancelled" } };
+        }
+
+        if (decision.decision === "allow") {
+          // In-profile → the supervisor is the permission authority: auto-allow
+          // inline (zero added HITL) and reset the consecutive-deny counter.
+          record.capabilityDenyCount = 0;
+
+          const allowOption = resolveAutoApproveOption(options);
+
+          if (allowOption) {
+            logger.debug(
+              { sessionId, toolIdentity: extractToolIdentity(tc).name },
+              "[guardrail] capability_guard allow (in-profile)",
+            );
+
+            return {
+              outcome: {
+                outcome: "selected",
+                optionId: allowOption.optionId,
+              },
+            };
+          }
+          // No allow-shaped option → fall through to HITL (defensive).
+        }
+        // pass_through (no strict class governs this call) → fall through unchanged.
       }
 
       // B1 (execution-policy permissions=auto_approve, L3): a session launched

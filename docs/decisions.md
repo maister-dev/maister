@@ -11048,6 +11048,7 @@ identity is a per-adapter empirical question (the "tool-identity spike").
     tools?: { allow: string[] };        // allow-list of tool NAMES for the resolved adapter
     mcps?: { allowServers: string[] };  // allow-list of MCP server namespaces
     enforcedClasses: Array<"tools" | "mcps">;  // audit
+    escalationThreshold: number;        // N, web-resolved from the env var, delivered on the profile (M40 pattern)
   };
   ```
 - **Interceptor semantics** (`requestPermission`, only when
