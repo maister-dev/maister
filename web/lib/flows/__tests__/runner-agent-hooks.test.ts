@@ -4,6 +4,11 @@
 // NeedsInput, not NeedsInputIdle); a path_guard deny is record-only and the node
 // completes normally. escalateHookTrip + markCheckpointedFromExit are mocked so
 // this stays a pure wiring test (no DB).
+//
+// ADR-129 (REQ-20 / REQ-17): the second describe block covers the enforcementProfile
+// DELIVERY seam — runAgentStep threads ctx.enforcementProfile onto the createSession
+// body on BOTH the new-session and the resume paths (a resume re-delivers the
+// re-derived profile), and omits it (inert) for a non-enforced node.
 
 import type { FlowContext } from "@/lib/flows/types";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
@@ -263,5 +268,65 @@ describe("runner-agent — session.hook_trip", () => {
 
     expect(escalateHookTripMock.escalateHookTrip).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("runner-agent — enforcementProfile delivery (ADR-129)", () => {
+  const profile = {
+    tools: { allow: ["Edit"] },
+    enforcedClasses: ["tools"] as Array<"tools" | "mcps">,
+    escalationThreshold: 3,
+  };
+
+  it("REQ-20: delivers ctx.enforcementProfile on the new-session createSession body", async () => {
+    const api = makeApi([exited(1)]);
+
+    await runAgentStep(
+      { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx({ enforcementProfile: profile }),
+      api as never,
+    );
+
+    expect(api.createSession).toHaveBeenCalledTimes(1);
+    expect(api.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ enforcementProfile: profile }),
+    );
+  });
+
+  it("REQ-17: a resume re-delivers the (re-derived) enforcementProfile alongside resumeSessionId", async () => {
+    // The resume path reuses the SAME createInput (with the freshly re-derived
+    // profile) + resumeSessionId — the persisted plan.enforcementProfile is an
+    // audit snapshot, never read back; a resumed attempt re-derives (deterministic,
+    // proven in enforcement-profile.test.ts) and re-delivers here.
+    const api = makeApi([exited(1)]);
+
+    await runAgentStep(
+      { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx({ enforcementProfile: profile, resumeSessionId: "acp-prev" }),
+      api as never,
+    );
+
+    expect(api.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enforcementProfile: profile,
+        resumeSessionId: "acp-prev",
+      }),
+    );
+  });
+
+  it("omits enforcementProfile for a non-enforced node (inert — byte-identical to pre-ADR-129)", async () => {
+    const api = makeApi([exited(1)]);
+
+    await runAgentStep(
+      { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(),
+      api as never,
+    );
+
+    // Not called with any defined enforcementProfile (expect.anything() excludes
+    // undefined) → the field is inert exactly as before ADR-129.
+    expect(api.createSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ enforcementProfile: expect.anything() }),
+    );
   });
 });
