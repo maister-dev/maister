@@ -1,5 +1,6 @@
 "use client";
 
+import type { LocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 import type { ReactElement } from "react";
 
 import { useMemo, useState } from "react";
@@ -20,7 +21,6 @@ import {
 } from "@/components/studio/import-dialog";
 import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
 import { readApiError } from "@/lib/api-error";
-import type { LocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 
 // Client-safe local-package list item. `working_dir` and the lock session are
 // server-only and intentionally absent (D1/D10); `isDefault`/`status` are flags.

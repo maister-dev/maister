@@ -49,6 +49,7 @@ export async function register(): Promise<void> {
         );
 
       const msg = `[migrations] ${parts.join("; ")}.`;
+
       // eslint-disable-next-line no-console
       console.error(`\n${"=".repeat(72)}\n${msg}\n${"=".repeat(72)}\n`);
 

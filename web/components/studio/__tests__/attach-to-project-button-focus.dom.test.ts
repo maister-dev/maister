@@ -42,6 +42,7 @@ describe("AttachToProjectButton focus contract", () => {
 
       document.body.append(container);
       const root = createRoot(container);
+
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue(

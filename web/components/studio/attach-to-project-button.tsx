@@ -191,9 +191,9 @@ export function AttachToProjectButton({
 
             {error ? (
               <p
+                ref={errorRef}
                 className="rounded-md border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
                 data-testid="attach-error"
-                ref={errorRef}
                 role="alert"
                 tabIndex={-1}
               >

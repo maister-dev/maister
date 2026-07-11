@@ -1,8 +1,5 @@
 import type { BoardColumn } from "@/lib/board";
-import type {
-  BoardData,
-  BoardFlowIncompatibility,
-} from "@/lib/queries/board";
+import type { BoardData, BoardFlowIncompatibility } from "@/lib/queries/board";
 import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
 import type { TaskQueueControlsLabels } from "@/components/board/task-queue-controls";
 import type { RunStatusKey } from "@/lib/runs/run-status-tone";
