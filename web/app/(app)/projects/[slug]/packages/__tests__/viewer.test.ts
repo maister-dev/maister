@@ -35,6 +35,9 @@ const headerLabels: PackageViewerHeaderLabels = {
   trustTrustedByPolicy: "Trusted by policy",
   execUntrusted: "Scripts blocked",
   execTrusted: "Scripts allowed",
+  incompatible: "Incompatible with engine 3.0.0",
+  incompatibleRemediation:
+    "Legacy steps[] flows are unsupported; republish this package with nodes[].",
 };
 
 const fileLabels: PackageFileViewLabels = {

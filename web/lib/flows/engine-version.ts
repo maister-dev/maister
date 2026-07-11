@@ -43,7 +43,9 @@ const log = pino({
 // reference both require `compat.engine_min >= 2.2.0` (ARTIFACT_INLINE_ENGINE_MIN,
 // see config.ts) — the latter detected by a load-time template scan sharing the
 // runtime `collectContentArtifactIds` regex.
-export const MAISTER_ENGINE_VERSION = "2.2.0";
+// Bumped 2.2.0 -> 3.0.0 for the graph-only cut-over (ADR-129): `steps[]`
+// manifests are refused and `nodes[]` is the only executable Flow shape.
+export const MAISTER_ENGINE_VERSION = "3.0.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

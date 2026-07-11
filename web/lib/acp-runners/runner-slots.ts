@@ -70,7 +70,7 @@ export function enumerateRunnerSlots(
   }
 
   for (const node of graph.nodes.values()) {
-    if (node.nodeType !== "consensus" || node.source.kind !== "node") continue;
+    if (node.nodeType !== "consensus") continue;
 
     const def = node.source.node;
 

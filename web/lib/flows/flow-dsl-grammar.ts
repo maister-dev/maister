@@ -15,9 +15,9 @@ const GRAMMAR = `# Flow DSL grammar (authoritative, typed-node graph)
 This reference is generated from the runtime Zod schema (\`config.schema.ts\`) plus
 the prompt render/storage contracts, and is drift-guarded — when it lists a field,
 type, enum value, skill mention form, or template expression form, that is the
-accepted shape. A flow manifest declares \`nodes[]\` (the canonical runtime graph)
-wired by named \`transitions\`, OR a legacy linear \`steps[]\` list. Author new
-flows as graphs.
+accepted shape. A flow manifest declares a non-empty \`nodes[]\` runtime graph
+wired by named \`transitions\`. Engine 3.0.0 refuses legacy \`steps[]\`
+manifests; republish them as node graphs.
 
 ## Manifest header
 
@@ -26,8 +26,8 @@ schemaVersion: 1
 name: my-flow
 runner_profiles:
   claude-code: { capability_agent: claude, adapter: claude, model: claude-sonnet-4-6, provider: { kind: anthropic } }
-compat: { engine_min: 1.3.0 }   # graph floor; gates/artifacts/agent bind push it higher
-nodes: [ ... ]                   # exactly one of nodes[] or steps[]
+compat: { engine_min: 3.0.0 }   # graph-only authoring baseline
+nodes: [ ... ]                   # required and non-empty
 \`\`\`
 
 ## Node types (discriminated by \`type\`)
@@ -216,7 +216,7 @@ schemaVersion: 1
 name: bugfix
 runner_profiles:
   claude-code: { capability_agent: claude, adapter: claude, model: claude-sonnet-4-6, provider: { kind: anthropic } }
-compat: { engine_min: 1.3.0 }
+compat: { engine_min: 3.0.0 }
 nodes:
   - id: fix
     type: ai_coding

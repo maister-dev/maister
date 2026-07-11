@@ -13,7 +13,7 @@ import type {
   RetryPolicy,
   SessionPolicy,
 } from "@/lib/config.schema";
-import type { AcpSessionState, FlowContext, StepResult } from "../types";
+import type { FlowContext, StepResult } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun, RunFlowOptions } from "./runner-core";
@@ -32,7 +32,6 @@ import { runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
 
 import {
-  cleanupSlashSession,
   asError,
   executorFromRunnerSnapshot,
   resolveFlowRuntimeRoot,
@@ -1049,8 +1048,7 @@ export async function runFormCollect(
 // id: resolveArtifactContent (raw) → artifactContentToTemplateText (json pretty)
 // → capForInline (256 KiB). Throws MaisterError("CONFIG") on a gone/notfound
 // payload so the caller fails the node BEFORE spawn (consistent with the existing
-// input.requires PRECONDITION). Returns {} for compiled-linear nodes (graph-only,
-// D4) and when nothing is referenced.
+// input.requires PRECONDITION). Returns {} when nothing is referenced.
 async function resolveNodeArtifactContents(
   node: CompiledNode,
   currentArtifacts: ArtifactInstance[],
@@ -1063,8 +1061,6 @@ async function resolveNodeArtifactContents(
     db: Db;
   },
 ): Promise<Record<string, { text: string; truncated: boolean }>> {
-  if (node.source.kind !== "node") return {};
-
   // ADR-120 (Codex finding #1): EXCLUDE execution-policy-skipped gates from the
   // resolution set — a `checks=skip` non-review gate never renders its refs, so
   // resolving them (and hard-failing on a gone payload) would turn a skipped gate
@@ -1132,7 +1128,6 @@ async function executeNodeAction(
   ctx: {
     runtimeRoot: string;
     worktreePath: string;
-    sessionState: AcpSessionState;
     supervisorApi?: SupervisorApi;
     capabilityProfilePath?: string;
     adapterLaunch?: ScratchAdapterLaunch;
@@ -1158,13 +1153,6 @@ async function executeNodeAction(
 ): Promise<NodeResult> {
   const sessionExecutor = ctx.sessionExecutor ?? loaded.executor;
   const sessionRunner = ctx.sessionRunner ?? loaded.runner;
-
-  if (node.source.kind !== "node") {
-    throw new MaisterError(
-      "CONFIG",
-      `runGraph received a compiled-linear node (${node.id}); linear flows run on the linear runner`,
-    );
-  }
 
   const def = node.source.node;
   const common = {
@@ -1293,7 +1281,6 @@ async function executeNodeAction(
               router: sessionExecutor.router ?? undefined,
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
-            sessionState: ctx.sessionState,
             capabilityProfilePath: ctx.capabilityProfilePath,
             adapterLaunch: mergeRunnerAdapterLaunch(
               sessionRunner,
@@ -1336,7 +1323,6 @@ async function executeNodeAction(
         context,
         runtimeRoot: ctx.runtimeRoot,
         worktreePath: ctx.worktreePath,
-        sessionState: ctx.sessionState,
         supervisorApi: ctx.supervisorApi,
         nodeAttemptId: ctx.nodeAttemptId,
         nodeAttemptNumber: ctx.nodeAttemptNumber,
@@ -2117,7 +2103,7 @@ export async function runGraph(
   }
 
   if (isResume) {
-    // Fail closed AFTER the claim (matches the linear runner ordering): only
+    // Fail closed AFTER the claim: only
     // the claim winner writes Crashed if the resume pointer is stale (node id
     // not in the pinned graph — bundle drift / hand-edited SHA dir).
     if (resumeNodeId !== null && !graph.nodes.has(resumeNodeId)) {
@@ -2173,11 +2159,6 @@ export async function runGraph(
   }
 
   const worktreePath = loaded.workspace.worktreePath;
-  const sessionState: AcpSessionState = {
-    currentSessionId: null,
-    lastSeenMonotonicId: 0,
-  };
-
   // M14 T4.1 / M27 T-B5 (ADR-069): load the live selectable catalog ONCE, then
   // PIN it to the launch-frozen `runs.resolved_capability_set` snapshot so a
   // mid-run edit/publish (a new same-id record at any scope, or a wholly new
@@ -2239,8 +2220,6 @@ export async function runGraph(
     state: { nodeAttemptNumber: number; attemptCheckpointRef: string | null },
   ): Promise<AutoRetryDecision> => {
     if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return "fail";
-    if (node.source.kind !== "node") return "fail";
-
     // Author's explicit per-node retry_policy wins; otherwise the run's
     // execution-policy crashRetry=auto_retry synthesizes one for a retry_safe
     // node (transient codes, workspace=keep, MAISTER_AUTO_RETRY_MAX_ATTEMPTS).
@@ -2870,7 +2849,6 @@ export async function runGraph(
         result = await executeNodeAction(node, loaded, context, {
           runtimeRoot,
           worktreePath,
-          sessionState,
           supervisorApi: opts.supervisorApi,
           capabilityProfilePath: materialized?.capabilityProfilePath,
           adapterLaunch: materialized?.adapterLaunch,
@@ -3224,14 +3202,9 @@ export async function runGraph(
             db,
           );
 
-          const targetDef =
-            graph.nodes.get(reworkTarget)?.source.kind === "node"
-              ? (
-                  graph.nodes.get(reworkTarget)?.source as {
-                    node: { session_policy?: SessionPolicy };
-                  }
-                ).node
-              : undefined;
+          const targetDef = graph.nodes.get(reworkTarget)?.source.node as
+            | { session_policy?: SessionPolicy }
+            | undefined;
           const resolved = resolveSessionPolicy({
             reworkPolicy: node.rework.session_policy,
             nodePolicy: targetDef?.session_policy,
@@ -3303,7 +3276,6 @@ export async function runGraph(
           {
             runtimeRoot,
             worktreePath,
-            sessionState,
             supervisorApi: opts.supervisorApi,
             // M29 (ADR-074): the node's resolved restriction path sets for
             // must_not_touch — undefined for capability-less nodes.
@@ -3631,7 +3603,7 @@ export async function runGraph(
       // outcome is computed from the node's own structured output
       // (from: output.<path>) or its gate verdict (from: verdict) — M38, ADR-103.
       const legacyOutcome =
-        node.source.kind === "node" && node.source.node.type === "human"
+        node.source.node.type === "human"
           ? (result.decision ?? "success")
           : "success";
       const outcome = computeDecideOutcome({
@@ -4078,14 +4050,9 @@ export async function runGraph(
           // next attempt — rework-transition > target node > flow defaults >
           // engine default `resume`.
           if (target) {
-            const targetDef =
-              graph.nodes.get(target)?.source.kind === "node"
-                ? (
-                    graph.nodes.get(target)?.source as {
-                      node: { session_policy?: SessionPolicy };
-                    }
-                  ).node
-                : undefined;
+            const targetDef = graph.nodes.get(target)?.source.node as
+              | { session_policy?: SessionPolicy }
+              | undefined;
             const resolved = resolveSessionPolicy({
               reworkPolicy: node.rework?.session_policy,
               nodePolicy: targetDef?.session_policy,
@@ -4264,11 +4231,6 @@ export async function runGraph(
 
   if (needsInput) {
     log2.info({}, "runGraph paused on NeedsInput");
-    await cleanupSlashSession(
-      sessionState,
-      opts.supervisorApi?.deleteSession,
-      log2,
-    );
     await safeProject();
 
     return;
@@ -4276,11 +4238,6 @@ export async function runGraph(
 
   if (checkpointed) {
     log2.info({}, "runGraph paused on STEP_CHECKPOINTED — slot freed");
-    await cleanupSlashSession(
-      sessionState,
-      opts.supervisorApi?.deleteSession,
-      log2,
-    );
     await safeProject();
     await promoteAfterExit(db, opts, log2);
 
@@ -4431,11 +4388,6 @@ export async function runGraph(
   }
 
   await safeProject();
-  await cleanupSlashSession(
-    sessionState,
-    opts.supervisorApi?.deleteSession,
-    log2,
-  );
   await promoteAfterExit(db, opts, log2);
 }
 

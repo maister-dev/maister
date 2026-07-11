@@ -42,14 +42,21 @@ async function seedPackage(): Promise<void> {
     [
       "schemaVersion: 1",
       "name: dev",
-      "steps:",
+      "compat:",
+      "  engine_min: 3.0.0",
+      "nodes:",
       "  - id: plan",
-      "    type: agent",
-      "    mode: new-session",
-      "    prompt: build it",
+      "    type: ai_coding",
+      "    action:",
+      "      prompt: build it",
+      "    transitions:",
+      "      success: build",
       "  - id: build",
       "    type: cli",
-      "    command: echo hi",
+      "    action:",
+      "      command: echo hi",
+      "    transitions:",
+      "      success: done",
       "",
     ].join("\n"),
   );
@@ -107,14 +114,14 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
     expect(bom).not.toBeNull();
     if (!bom) throw new Error("unexpected null bom");
 
-    // Flows — compiled node/gate counts (2 steps → 2 nodes, no gates).
+    // Flows — compiled node/gate counts.
     expect(bom.flows).toHaveLength(1);
     expect(bom.flows[0]).toMatchObject({
       id: "dev",
       path: "flows/dev",
       nodeCount: 2,
       gateCount: 0,
-      engine: null,
+      engine: "3.0.0",
       frontmatter: {
         title: null,
         summary: null,

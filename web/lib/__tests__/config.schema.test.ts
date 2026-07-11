@@ -13,7 +13,6 @@ import {
   maisterCapabilitiesSchema,
   nodeOutputSchema,
   nodeSchema,
-  stepSchema,
 } from "@/lib/config.schema";
 
 const goldenMaisterYaml = {
@@ -346,6 +345,7 @@ describe("flowEntrySchema", () => {
 const goldenFlowYaml = {
   schemaVersion: 1,
   name: "Bugfix",
+  compat: { engine_min: "1.1.0" },
   runner_profiles: {
     "claude-code": {
       capability_agent: "claude",
@@ -354,34 +354,18 @@ const goldenFlowYaml = {
       provider: { kind: "anthropic" },
     },
   },
-  steps: [
+  nodes: [
     {
       id: "plan",
-      type: "agent",
-      mode: "new-session",
-      prompt: "/aif-plan {{ task.prompt }}",
-    },
-    {
-      id: "lint",
-      type: "cli",
-      command: "pnpm lint",
-    },
-    {
-      id: "budget",
-      type: "guard",
-      cost: 5,
-    },
-    {
-      id: "review",
-      type: "human",
-      form_schema: "./schemas/review.json",
-      on_reject: { goto_step: "plan", comments_var: "review_comments" },
+      type: "ai_coding",
+      action: { prompt: "/aif-plan {{ task.prompt }}" },
+      transitions: { success: "done" },
     },
   ],
 };
 
 describe("flowYamlV1Schema", () => {
-  it("accepts a golden v1 flow manifest with all 4 step types", () => {
+  it("accepts a golden v1 graph manifest", () => {
     expect(() => flowYamlV1Schema.parse(goldenFlowYaml)).not.toThrow();
   });
 
@@ -400,16 +384,10 @@ describe("flowYamlV1Schema", () => {
     ).toThrow();
   });
 
-  it("rejects empty steps[]", () => {
-    expect(() =>
-      flowYamlV1Schema.parse({ ...goldenFlowYaml, steps: [] }),
-    ).toThrow();
-  });
-
-  it("rejects step with unknown type via discriminated union", () => {
+  it("rejects node with unknown type via discriminated union", () => {
     const bad = {
       ...goldenFlowYaml,
-      steps: [...goldenFlowYaml.steps, { id: "x", type: "unknown" }],
+      nodes: [...goldenFlowYaml.nodes, { id: "x", type: "unknown" }],
     };
 
     expect(() => flowYamlV1Schema.parse(bad)).toThrow();
@@ -467,7 +445,7 @@ describe("flowYamlV1Schema — graph (nodes[])", () => {
     expect(() =>
       flowYamlV1Schema.parse({
         ...goldenGraphYaml,
-        steps: goldenFlowYaml.steps,
+        steps: [{ id: "old", type: "cli", command: "true" }],
       }),
     ).toThrow();
   });
@@ -932,61 +910,6 @@ describe("nodeSchema", () => {
         settings: { roles: ["reviewer"] },
         finish: { human: { decisions: ["approve"] } },
         transitions: { approve: "done" },
-      }),
-    ).not.toThrow();
-  });
-});
-
-describe("stepSchema", () => {
-  it("agent step requires prompt + mode", () => {
-    expect(() =>
-      stepSchema.parse({ id: "x", type: "agent", mode: "new-session" }),
-    ).toThrow();
-
-    expect(() =>
-      stepSchema.parse({ id: "x", type: "agent", prompt: "go" }),
-    ).toThrow();
-  });
-
-  it("human step requires form_schema", () => {
-    expect(() => stepSchema.parse({ id: "x", type: "human" })).toThrow();
-  });
-
-  // M17 ADR-054: criticality field on human steps
-  it("human step accepts optional criticality: low|medium|high|critical", () => {
-    const base = { id: "x", type: "human", form_schema: "schemas/review.json" };
-
-    expect(() =>
-      stepSchema.parse({ ...base, criticality: "low" }),
-    ).not.toThrow();
-    expect(() =>
-      stepSchema.parse({ ...base, criticality: "medium" }),
-    ).not.toThrow();
-    expect(() =>
-      stepSchema.parse({ ...base, criticality: "high" }),
-    ).not.toThrow();
-    expect(() =>
-      stepSchema.parse({ ...base, criticality: "critical" }),
-    ).not.toThrow();
-  });
-
-  it("human step rejects invalid criticality values", () => {
-    const base = { id: "x", type: "human", form_schema: "schemas/review.json" };
-
-    expect(() =>
-      stepSchema.parse({ ...base, criticality: "urgent" }),
-    ).toThrow();
-    expect(() =>
-      stepSchema.parse({ ...base, criticality: "CRITICAL" }),
-    ).toThrow();
-  });
-
-  it("human step with absent criticality is valid", () => {
-    expect(() =>
-      stepSchema.parse({
-        id: "x",
-        type: "human",
-        form_schema: "schemas/review.json",
       }),
     ).not.toThrow();
   });

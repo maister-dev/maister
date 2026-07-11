@@ -118,6 +118,8 @@ function buildStaticGraph(revision: FlowRevisionDetail): {
   layout: FlowLayout;
   nodeTooltips: Record<string, string>;
 } | null {
+  if (!revision.manifest) return null;
+
   try {
     return {
       topology: buildGraphTopology(compileManifest(revision.manifest)),
@@ -208,6 +210,8 @@ export default async function FlowPackageViewerPage({
     trustTrustedByPolicy: t("trustedByPolicy"),
     execUntrusted: tViewer("execUntrusted"),
     execTrusted: tViewer("execTrusted"),
+    incompatible: tViewer("incompatible"),
+    incompatibleRemediation: tViewer("incompatibleRemediation"),
   };
 
   const fileLabels: PackageFileViewLabels = {
@@ -261,7 +265,7 @@ export default async function FlowPackageViewerPage({
   // Admin/owner-only (binding is an `editSettings` action).
   const enabledRevisionId = detail.flow.enabledRevisionId ?? null;
   const bindingScope =
-    canManageCatalog && enabledRevisionId
+    canManageCatalog && enabledRevisionId && revision.incompatibility === null
       ? await getFlowRunnerBindingScope(detail.project.id, enabledRevisionId)
       : null;
 
@@ -301,6 +305,7 @@ export default async function FlowPackageViewerPage({
         enablementState={dto.enablementState}
         execTrust={revision.execTrust}
         flowRef={dto.ref}
+        incompatibilityMessage={revision.incompatibility?.message ?? null}
         labels={headerLabels}
         resolvedRevision={revision.resolvedRevision}
         trustStatus={dto.trustStatus}
@@ -327,7 +332,9 @@ export default async function FlowPackageViewerPage({
               >
                 {staticGraph
                   ? tViewer("graphEmpty")
-                  : tViewer("graphUnavailable")}
+                  : revision.incompatibility
+                    ? tViewer("incompatibleRemediation")
+                    : tViewer("graphUnavailable")}
               </p>
             )}
           </section>
@@ -480,6 +487,11 @@ export default async function FlowPackageViewerPage({
                         {isEnabled ? (
                           <span className="shrink-0 rounded-full border border-amber-line bg-paper px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-amber">
                             {tViewer("revisionEnabled")}
+                          </span>
+                        ) : null}
+                        {!r.compatible ? (
+                          <span className="shrink-0 rounded-full border border-danger-line bg-danger-soft px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-danger">
+                            {tViewer("revisionIncompatible")}
                           </span>
                         ) : null}
                       </div>

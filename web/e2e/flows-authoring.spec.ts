@@ -10,7 +10,7 @@
 //   2. lint       — typing a schema-invalid manifest surfaces a @codemirror/lint
 //      error marker (.cm-lintRange-error) after the debounce.
 //   3. autocomplete — Ctrl+Space inside the buffer opens .cm-tooltip-autocomplete
-//      with the static `agent` step-type option.
+//      with the static `ai_coding` node-type option.
 //   4. persist    — restoring valid content and clicking Save Draft persists the
 //      buffer (the hidden flowYaml input → updateAuthoredFlowAction); after a
 //      reload the editor shows the saved manifest and the validation panel
@@ -90,7 +90,23 @@ test("an invalid manifest surfaces a CodeMirror lint marker", async ({
   });
 });
 
-test("Ctrl+Space opens autocomplete with the agent step-type option", async ({
+test("legacy steps[] stays editable but blocks publish with graph-only remediation", async ({
+  page,
+}) => {
+  const fx = loadFixture();
+
+  await page.goto(`/flows/${fx.projectSlug}/${fx.capId}`);
+
+  await expect(page.getByRole("alert").first()).toContainText(
+    "legacy steps[] flows are not supported since engine 3.0.0",
+  );
+  await expect(page.getByTestId("topbar-publish")).toBeDisabled();
+  await expect(
+    page.locator('[data-testid="code-editor"] .cm-content').first(),
+  ).toBeEditable();
+});
+
+test("Ctrl+Space opens autocomplete with the ai_coding node-type option", async ({
   page,
 }) => {
   const fx = loadFixture();
@@ -107,7 +123,7 @@ test("Ctrl+Space opens autocomplete with the agent step-type option", async ({
   const tooltip = page.locator(".cm-tooltip-autocomplete");
 
   await expect(tooltip).toBeVisible({ timeout: 15_000 });
-  await expect(tooltip.getByText("agent", { exact: true })).toBeVisible();
+  await expect(tooltip.getByText("ai_coding", { exact: true })).toBeVisible();
 });
 
 test("saving a restored valid manifest persists across reload", async ({
@@ -117,11 +133,15 @@ test("saving a restored valid manifest persists across reload", async ({
   const savedName = "E2E Authoring Saved";
   const validManifest = `schemaVersion: 1
 name: ${savedName}
-steps:
+compat:
+  engine_min: 3.0.0
+nodes:
   - id: plan
-    type: agent
-    mode: new-session
-    prompt: "do the thing"
+    type: ai_coding
+    action:
+      prompt: "do the thing"
+    transitions:
+      success: done
 `;
 
   await page.goto(`/flows/${fx.projectSlug}/${fx.capId}`);

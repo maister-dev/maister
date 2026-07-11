@@ -28,10 +28,10 @@ import pino from "pino";
 import { parse as parseYaml } from "yaml";
 
 import { validateGraphManifest } from "@/lib/config";
-import { flowYamlV1Schema } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
+import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 
 const log = pino({
   name: "flow-package-authoring",
@@ -518,37 +518,33 @@ function parseAndValidateManifest(
     return null;
   }
 
-  const parsed = flowYamlV1Schema.safeParse(parsedYaml);
+  const compatibility = classifyStoredFlowManifest(parsedYaml);
 
-  if (!parsed.success) {
-    issues.push(
-      ...parsed.error.issues.map((issue) => ({
-        code: "schema" as const,
-        path: `flow.yaml:${issue.path.join(".") || "(root)"}`,
-        message: issue.message,
-      })),
-    );
+  if (!compatibility.compatible) {
+    issues.push({
+      code: "schema",
+      path: "flow.yaml:(root)",
+      message: compatibility.reason.message,
+    });
 
     return null;
   }
 
-  if (parsed.data.nodes) {
-    try {
-      validateGraphManifest(
-        parsed.data,
-        parsed.data.nodes,
-        "authored-flow-package/flow.yaml",
-      );
-    } catch (err) {
-      issues.push({
-        code: "graph",
-        path: "flow.yaml",
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
+  try {
+    validateGraphManifest(
+      compatibility.manifest,
+      compatibility.manifest.nodes,
+      "authored-flow-package/flow.yaml",
+    );
+  } catch (err) {
+    issues.push({
+      code: "graph",
+      path: "flow.yaml",
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
 
-  return parsed.data;
+  return compatibility.manifest;
 }
 
 function normalizePackageFiles(

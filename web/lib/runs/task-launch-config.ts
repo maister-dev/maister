@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
 import type {
   RunnerCatalogEntry,
   RunnerResolutionTier,
@@ -22,6 +21,7 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { resolveDeliveryPolicy } from "@/lib/runs/delivery-policy";
 import { resolveExecutionPolicy } from "@/lib/runs/execution-policy";
 import {
@@ -57,6 +57,7 @@ export type TaskLaunchConfig = {
     | "unsupported_schema"
     | "incompatible"
     | null;
+  flowIssueReason: string | null;
   runner: { id: string; model: string; adapter: string } | null;
   runnerTier: RunnerResolutionTier | "task" | null;
   baseBranch: string;
@@ -160,6 +161,8 @@ export async function resolveTaskLaunchConfig(
         ).compatible
       ) {
         flowIssue = "incompatible";
+      } else if (!classifyStoredFlowManifest(revision.manifest).compatible) {
+        flowIssue = "incompatible";
       }
     }
   }
@@ -195,10 +198,22 @@ export async function resolveTaskLaunchConfig(
   // M42 (ADR-114): the card shows the run's `default` session runner (the
   // single-runner case). A flow whose default session cannot resolve degrades
   // to `null` — the card just shows no runner, never throws.
-  if (platformRuntime?.defaultRunnerId && revision && flowRow) {
+  const manifestCompatibility = revision
+    ? classifyStoredFlowManifest(revision.manifest)
+    : null;
+  const compatibleManifest = manifestCompatibility?.compatible
+    ? manifestCompatibility.manifest
+    : null;
+
+  if (
+    platformRuntime?.defaultRunnerId &&
+    revision &&
+    flowRow &&
+    compatibleManifest
+  ) {
     try {
       const sessions = [
-        ...compileManifest(revision.manifest as FlowYamlV1).sessions.values(),
+        ...compileManifest(compatibleManifest).sessions.values(),
       ];
       const defaultSession =
         sessions.find((session) => session.name === "default") ?? sessions[0];
@@ -206,7 +221,7 @@ export async function resolveTaskLaunchConfig(
       if (defaultSession) {
         const [resolution] = resolveRunSessions({
           sessions: [defaultSession],
-          runnerProfiles: (revision.manifest as FlowYamlV1).runner_profiles,
+          runnerProfiles: compatibleManifest.runner_profiles,
           bindings,
           projectFlow: {
             defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
@@ -277,18 +292,23 @@ export async function resolveTaskLaunchConfig(
     latestFlowRun,
     { openBlockers },
   );
+  const flowIssueReason =
+    manifestCompatibility && !manifestCompatibility.compatible
+      ? manifestCompatibility.reason.message
+      : null;
   const launchReason =
-    manual === "launchable" && !task.flowId ? "unconfigured" : manual;
+    manual === "launchable" ? (flowIssue ?? "launchable") : manual;
 
   return {
     flow: flowRow ? { id: flowRow.id, refId: flowRow.flowRefId } : null,
     flowIssue,
+    flowIssueReason,
     runner,
     runnerTier: task.runnerId ? "task" : resolvedTier,
     baseBranch,
     targetBranch,
     deliveryPolicy,
-    launchable: manual === "launchable",
+    launchable: manual === "launchable" && flowIssue === null,
     launchReason,
     executionPolicy,
   };

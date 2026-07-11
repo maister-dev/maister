@@ -119,7 +119,18 @@ describe("project Flow runner remap API", () => {
         projectId: "project-1",
         flowRefId: "bugfix",
         enabledRevisionId: "revision-1",
-        manifest: { steps: [{ id: "implement", type: "agent" }] },
+        manifest: {
+          schemaVersion: 1,
+          name: "Bugfix",
+          nodes: [
+            {
+              id: "implement",
+              type: "ai_coding",
+              action: { prompt: "Implement" },
+              transitions: { success: "done" },
+            },
+          ],
+        },
         enablementState: "Disabled",
         trustStatus: "trusted_by_policy",
       },

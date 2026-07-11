@@ -64,6 +64,14 @@ export async function GET(
 
     await requireProjectAction(loaded.projectId, "readBoard");
 
+    if (!loaded.compatible) {
+      return NextResponse.json({
+        compatible: false,
+        incompatibility: loaded.incompatibility,
+        nodes: {},
+      });
+    }
+
     const snapshot = await getRunNodeStatuses(runId);
 
     log.info(
@@ -71,7 +79,7 @@ export async function GET(
       "graph-status served",
     );
 
-    return NextResponse.json(snapshot);
+    return NextResponse.json({ compatible: true, ...snapshot });
   } catch (err) {
     return errorResponse(err, runId);
   }

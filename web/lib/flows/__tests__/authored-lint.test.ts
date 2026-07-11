@@ -5,8 +5,8 @@ import {
   jsonDiagnostics,
 } from "@/lib/flows/authored-lint";
 
-// A manifest that PARSES as YAML and PASSES flowYamlV1Schema — schemaVersion +
-// name + exactly one of nodes[]/steps[]. Verified against the real
+// A manifest that PARSES as YAML and PASSES flowYamlV1Schema — schemaVersion,
+// name, and non-empty nodes[]. Verified against the real
 // flowYamlV1Schema (lib/config.schema.ts:669) in a throwaway probe.
 function validFlowYaml(): string {
   return [

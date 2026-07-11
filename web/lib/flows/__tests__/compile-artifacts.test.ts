@@ -154,27 +154,4 @@ describe("compile — typed artifacts (T3.1)", () => {
       visibility: "shared",
     });
   });
-
-  it("Linear (steps-based) manifest nodes do NOT populate input/output (backward compat)", () => {
-    const manifest: FlowYamlV1 = {
-      schemaVersion: 1,
-      name: "Linear Test Flow",
-      steps: [
-        {
-          id: "plan",
-          type: "agent",
-          mode: "new-session",
-          prompt: "plan the work",
-        },
-      ],
-    };
-
-    const graph = compileManifest(manifest);
-    const planNode = graph.nodes.get("plan");
-
-    expect(planNode).toBeDefined();
-    // Linear nodes should not have input/output because they come from Step, not NodeDef
-    expect(planNode?.input).toBeUndefined();
-    expect(planNode?.output).toBeUndefined();
-  });
 });

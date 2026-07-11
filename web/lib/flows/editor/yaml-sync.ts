@@ -83,7 +83,7 @@ export function syncYamlToCanvas(
 
   // A structurally distinct, valid manifest. compileManifest can still throw a
   // CONFIG MaisterError on a manifest the zod schema accepts but the compiler
-  // rejects (e.g. neither nodes[] nor steps[]) — treat that as a kept-last-good
+  // rejects (for example, missing nodes[]) — treat that as a kept-last-good
   // error, never a canvas wipe.
   let topology: GraphTopology;
 

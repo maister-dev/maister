@@ -102,7 +102,21 @@ beforeEach(() => {
   vi.mocked(loadRunManifest).mockResolvedValue({
     flowId: "flow-1",
     projectId: "project-1",
-    manifest: { schemaVersion: 1, name: "aif", steps: [] } as never,
+    compatible: true,
+    incompatibility: null,
+    manifest: {
+      schemaVersion: 1,
+      name: "aif",
+      nodes: [
+        {
+          id: "implement",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "review" },
+        },
+        { id: "review", type: "human", transitions: { approve: "done" } },
+      ],
+    } as never,
   } as never);
 
   vi.mocked(getRunNodeStatuses).mockReset();
@@ -115,7 +129,7 @@ describe("GET /api/runs/[runId]/graph-status", () => {
     const body = (await res.json()) as typeof SNAPSHOT;
 
     expect(res.status).toBe(200);
-    expect(body).toEqual(SNAPSHOT);
+    expect(body).toEqual({ compatible: true, ...SNAPSHOT });
     expect(getRunNodeStatuses).toHaveBeenCalledWith("run-1");
   });
 

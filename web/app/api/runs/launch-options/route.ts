@@ -1,7 +1,5 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
-
 import { and, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
@@ -25,6 +23,7 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import {
   classifyForceRelaunchLaunchability,
   classifyManualTaskLaunchability,
@@ -188,6 +187,10 @@ function revisionLaunchIssue(
     return "incompatible";
   }
 
+  if (!classifyStoredFlowManifest(revision.manifest).compatible) {
+    return "incompatible";
+  }
+
   return null;
 }
 
@@ -327,6 +330,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       db.select().from(flows).where(eq(flows.projectId, project.id)),
     ]);
     const platformRuntime = runtimeRows[0];
+    const manifestCompatibility = revision
+      ? classifyStoredFlowManifest(revision.manifest)
+      : null;
+    const compatibleManifest = manifestCompatibility?.compatible
+      ? manifestCompatibility.manifest
+      : null;
+    const flowIssueReason =
+      manifestCompatibility && !manifestCompatibility.compatible
+        ? manifestCompatibility.reason.message
+        : null;
 
     const projectEnabledRevisionIds = Array.from(
       new Set(
@@ -384,17 +397,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // that cannot resolve (unbound / ambiguous / no host) degrades to
     // `runnerId: null` so the options dialog still renders (the binding screen
     // resolves it) instead of 5xx-ing the whole preview.
-    const runnerProfiles =
-      revision && flowIssue === null
-        ? (revision.manifest as FlowYamlV1).runner_profiles
-        : undefined;
+    const runnerProfiles = compatibleManifest?.runner_profiles;
     const sessionSlots: RunSessionSlot[] =
-      revision && flow && flowIssue === null
-        ? [
-            ...compileManifest(
-              revision.manifest as FlowYamlV1,
-            ).sessions.values(),
-          ]
+      revision && flow && flowIssue === null && compatibleManifest
+        ? [...compileManifest(compatibleManifest).sessions.values()]
         : [];
     const sessionResolutions: SessionPreviewResolution[] = sessionSlots.map(
       (session) => {
@@ -456,11 +462,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               runnerResolutionTier: null,
               warning: null,
             }
-        : {
-            runnerId: fallbackResolution.runnerId,
-            runnerResolutionTier: fallbackResolution.runnerResolutionTier,
-            warning: null,
-          };
+          : {
+              runnerId: fallbackResolution.runnerId,
+              runnerResolutionTier: fallbackResolution.runnerResolutionTier,
+              warning: null,
+            };
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
@@ -564,7 +570,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     return NextResponse.json({
-      runners: safeRunners,
+      runners: flowIssue === "incompatible" ? [] : safeRunners,
       // M42 (ADR-114): one entry per logical session of the selected flow, each
       // with its resolved runner; empty for a single-session flow (the single
       // `selectedRunnerId` selector covers it). `overridable` advertises the
@@ -590,6 +596,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       launchability: {
         launchable: launchability === "launchable" && flowIssue === null,
         reason: launchability,
+        incompatibilityReason: flowIssueReason,
         blockers: openBlockers.map(
           (blocker: { key: string; number: number }) => ({
             kind: "relation",
@@ -605,6 +612,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       relaunch: {
         launchable: relaunchReason === "launchable" && flowIssue === null,
         reason: relaunchReason,
+        incompatibilityReason: flowIssueReason,
       },
       flows: flowRowsForProject.map((projectFlow: Record<string, any>) => {
         const disabledReason = projectFlowLaunchIssue({
@@ -619,12 +627,29 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           version: projectFlow.version ?? null,
           enabled: disabledReason === null,
           disabledReason,
+          disabledReasonMessage:
+            disabledReason === "incompatible"
+              ? (() => {
+                  const projectRevision = projectFlow.enabledRevisionId
+                    ? projectRevisionById.get(projectFlow.enabledRevisionId)
+                    : null;
+                  const compatibility = projectRevision
+                    ? classifyStoredFlowManifest(projectRevision.manifest)
+                    : null;
+
+                  return compatibility && !compatibility.compatible
+                    ? compatibility.reason.message
+                    : null;
+                })()
+              : null,
           isTaskDefault: projectFlow.id === task.flowId,
         };
       }),
       selectedFlowId: flow?.id ?? "",
       selectedRunnerId:
-        (task.runnerId as string | null) ?? defaultResolution.runnerId,
+        flowIssue === "incompatible"
+          ? ""
+          : ((task.runnerId as string | null) ?? defaultResolution.runnerId),
       selectedRunnerWarning: task.runnerId ? null : defaultResolution.warning,
       branches,
       defaultBaseBranch,

@@ -48,14 +48,21 @@ async function seedPackage(at: string): Promise<void> {
     [
       "schemaVersion: 1",
       "name: dev",
-      "steps:",
+      "compat:",
+      "  engine_min: 3.0.0",
+      "nodes:",
       "  - id: plan",
-      "    type: agent",
-      "    mode: new-session",
-      "    prompt: build it",
+      "    type: ai_coding",
+      "    action:",
+      "      prompt: build it",
+      "    transitions:",
+      "      success: build",
       "  - id: build",
       "    type: cli",
-      "    command: echo hi",
+      "    action:",
+      "      command: echo hi",
+      "    transitions:",
+      "      success: done",
       "",
     ].join("\n"),
   );
@@ -115,7 +122,7 @@ describe("buildPackageBom (ADR-116 shared builder)", () => {
       path: "flows/dev",
       nodeCount: 2,
       gateCount: 0,
-      engine: null,
+      engine: "3.0.0",
     });
     expect(bom.flows[0].graph).not.toBeNull();
     expect(bom.skills).toEqual([

@@ -509,7 +509,7 @@ export default async function RunDetailLayout({
   if (detail.runKind === "flow") {
     const loadedM = await loadRunManifest(runId);
 
-    if (loadedM) {
+    if (loadedM?.compatible) {
       const compiled = compileManifest(loadedM.manifest);
       const topology = buildGraphTopology(compiled);
       const graphLayout = presentationLayout(loadedM.manifest);

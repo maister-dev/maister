@@ -314,7 +314,18 @@ function seedSelects(
         engineMin: null,
         engineMax: null,
         defaultRunnerId: null,
-        manifest: { schemaVersion: 1, name: "Bugfix", nodes: [] },
+        manifest: {
+          schemaVersion: 1,
+          name: "Bugfix",
+          nodes: [
+            {
+              id: "run",
+              type: "cli",
+              action: { command: "true" },
+              transitions: { success: "done" },
+            },
+          ],
+        },
       },
     ],
     // 5 platformRuntimeSettings — platform default points at the seeded runner.

@@ -199,6 +199,8 @@ flow_roles:
 const goldenFlowYaml = `
 schemaVersion: 1
 name: Bugfix
+compat:
+  engine_min: 3.0.0
 runner_profiles:
   claude-code:
     capability_agent: claude
@@ -206,29 +208,41 @@ runner_profiles:
     model: claude-sonnet-4-6
     provider:
       kind: anthropic
-steps:
+nodes:
   - id: plan
-    type: agent
-    mode: new-session
-    prompt: "/aif-plan {{ task.prompt }}"
+    type: ai_coding
+    action:
+      prompt: "/aif-plan {{ task.prompt }}"
+    transitions:
+      success: lint
   - id: lint
     type: cli
-    command: pnpm lint
+    action:
+      command: pnpm lint
+    transitions:
+      success: review
   - id: review
     type: human
-    form_schema: ./schemas/review.json
-    on_reject:
-      goto_step: plan
-      comments_var: comments
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      approve: done
+      rework: plan
+    rework:
+      allowedTargets: [plan]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: comments
 `;
 
 describe("loadFlowManifest", () => {
-  it("loads a golden flow.yaml with all step types", async () => {
+  it("loads a golden flow.yaml with representative graph node types", async () => {
     const path = await writeFixture("flow.yaml", goldenFlowYaml);
     const manifest = await loadFlowManifest(path);
 
     expect(manifest.name).toBe("Bugfix");
-    expect(manifest.steps).toHaveLength(3);
+    expect(manifest.nodes).toHaveLength(3);
   });
 
   it("rejects legacy recommended_executor", async () => {
@@ -242,8 +256,8 @@ describe("loadFlowManifest", () => {
     });
   });
 
-  it("rejects on_reject.goto_step referencing missing step", async () => {
-    const bad = goldenFlowYaml.replace("goto_step: plan", "goto_step: missing");
+  it("rejects a transition referencing a missing node", async () => {
+    const bad = goldenFlowYaml.replace("rework: plan", "rework: missing");
     const path = await writeFixture("bad-goto.yaml", bad);
 
     await expect(loadFlowManifest(path)).rejects.toMatchObject({
@@ -251,7 +265,7 @@ describe("loadFlowManifest", () => {
     });
   });
 
-  it("rejects duplicate step IDs", async () => {
+  it("rejects duplicate node IDs", async () => {
     const dup = goldenFlowYaml.replace(
       "  - id: lint\n    type: cli",
       "  - id: plan\n    type: cli",
@@ -265,8 +279,8 @@ describe("loadFlowManifest", () => {
 
   it("rejects flow with unbalanced Mustache prompt template", async () => {
     const bad = goldenFlowYaml.replace(
-      'prompt: "/aif-plan {{ task.prompt }}"',
-      'prompt: "/aif-plan {{ task.prompt"',
+      '      prompt: "/aif-plan {{ task.prompt }}"',
+      '      prompt: "/aif-plan {{ task.prompt"',
     );
     const path = await writeFixture("bad-template.yaml", bad);
 

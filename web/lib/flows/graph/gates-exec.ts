@@ -2,7 +2,7 @@ import "server-only";
 
 import type { GateDef } from "@/lib/config.schema";
 import type { ArtifactKind, GateVerdict } from "@/lib/db/schema";
-import type { AcpSessionState, FlowContext } from "../types";
+import type { FlowContext } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun } from "./runner-core";
@@ -59,7 +59,6 @@ const VERDICT_EVIDENCE_CAP = 2000;
 export type GateRunContext = {
   runtimeRoot: string;
   worktreePath: string;
-  sessionState: AcpSessionState;
   supervisorApi?: SupervisorApi;
   // M29 (ADR-074, D-C2): the node's resolved restriction path sets for
   // must_not_touch; undefined when the node declares no restrictions.
@@ -519,7 +518,6 @@ async function runOneGate(
                 | undefined,
               router: loaded.executor.router ?? undefined,
             },
-            sessionState: ctx.sessionState,
           },
           ctx.supervisorApi,
         ),

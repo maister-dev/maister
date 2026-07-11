@@ -48,7 +48,6 @@ function makeCtx(overrides: Partial<RunAgentStepCtx> = {}): RunAgentStepCtx {
     worktreePath: "/tmp/wt",
     executor: { id: "e1", agent: "claude", model: "claude-sonnet-4-6" },
     context: baseFlowCtx,
-    sessionState: { currentSessionId: null, lastSeenMonotonicId: 0 },
     db: makeFakeDb(),
     ...overrides,
   };

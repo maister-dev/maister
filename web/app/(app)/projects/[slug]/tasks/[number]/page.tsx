@@ -251,7 +251,7 @@ export default async function TaskDetailPage({
   if (detail.latestFlowRun) {
     const loaded = await loadRunManifest(detail.latestFlowRun.id);
 
-    if (loaded) {
+    if (loaded?.compatible) {
       const tWorkbench = await getTranslations("workbench");
 
       graph = {

@@ -11,6 +11,10 @@ import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
+import {
+  classifyStoredFlowManifest,
+  type FlowManifestIncompatibility,
+} from "@/lib/flows/manifest-parser";
 
 const { flowRevisions, flows, projects, runs } = schema;
 
@@ -35,6 +39,7 @@ export interface FlowRevisionView {
   packageStatus: string;
   setupStatus: string;
   installedAt: Date;
+  incompatibility: FlowManifestIncompatibility | null;
 }
 
 export interface FlowContractView {
@@ -66,7 +71,10 @@ function toRevisionView(r: {
   packageStatus: string;
   setupStatus: string;
   installedAt: Date;
+  manifest: unknown;
 }): FlowRevisionView {
+  const compatibility = classifyStoredFlowManifest(r.manifest);
+
   return {
     id: r.id,
     versionLabel: r.versionLabel,
@@ -74,6 +82,7 @@ function toRevisionView(r: {
     packageStatus: r.packageStatus,
     setupStatus: r.setupStatus,
     installedAt: r.installedAt,
+    incompatibility: compatibility.compatible ? null : compatibility.reason,
   };
 }
 
@@ -208,7 +217,13 @@ export async function getFlowPackages(
     let compatWarning: string | null = null;
 
     if (enabled) {
-      if (!isSchemaVersionSupported(enabled.schemaVersion)) {
+      const manifestCompatibility = classifyStoredFlowManifest(
+        enabled.manifest,
+      );
+
+      if (!manifestCompatibility.compatible) {
+        compatWarning = manifestCompatibility.reason.message;
+      } else if (!isSchemaVersionSupported(enabled.schemaVersion)) {
         compatWarning = `unsupported manifest schemaVersion ${enabled.schemaVersion}`;
       } else {
         const compat = isEngineCompatible(
@@ -257,7 +272,8 @@ export interface FlowRevisionDetail {
   versionLabel: string;
   resolvedRevision: string;
   manifestDigest: string;
-  manifest: FlowYamlV1;
+  manifest: FlowYamlV1 | null;
+  incompatibility: FlowManifestIncompatibility | null;
   execTrust: string;
   setupStatus: string;
   packageStatus: string;
@@ -271,6 +287,8 @@ export interface FlowRevisionDetailDTO {
   manifestDigest: string;
   execTrust: string;
   packageStatus: string;
+  compatible: boolean;
+  incompatibility: FlowManifestIncompatibility | null;
 }
 
 // Client-safe header + revision-list projection. NO `installedPath`, NO
@@ -305,6 +323,8 @@ function toRevisionDetailDTO(r: FlowRevisionDetail): FlowRevisionDetailDTO {
     manifestDigest: r.manifestDigest,
     execTrust: r.execTrust,
     packageStatus: r.packageStatus,
+    compatible: r.incompatibility === null,
+    incompatibility: r.incompatibility,
   };
 }
 
@@ -375,17 +395,22 @@ export async function getFlowPackageDetail(
     )
     .orderBy(asc(flowRevisions.installedAt));
 
-  const revisions: FlowRevisionDetail[] = revisionRows.map((r) => ({
-    id: r.id,
-    versionLabel: r.versionLabel,
-    resolvedRevision: r.resolvedRevision,
-    manifestDigest: r.manifestDigest,
-    manifest: r.manifest as FlowYamlV1,
-    execTrust: r.execTrust,
-    setupStatus: r.setupStatus,
-    packageStatus: r.packageStatus,
-    installedPath: r.installedPath,
-  }));
+  const revisions: FlowRevisionDetail[] = revisionRows.map((r) => {
+    const compatibility = classifyStoredFlowManifest(r.manifest);
+
+    return {
+      id: r.id,
+      versionLabel: r.versionLabel,
+      resolvedRevision: r.resolvedRevision,
+      manifestDigest: r.manifestDigest,
+      manifest: compatibility.compatible ? compatibility.manifest : null,
+      incompatibility: compatibility.compatible ? null : compatibility.reason,
+      execTrust: r.execTrust,
+      setupStatus: r.setupStatus,
+      packageStatus: r.packageStatus,
+      installedPath: r.installedPath,
+    };
+  });
 
   return {
     project,

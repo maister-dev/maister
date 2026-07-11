@@ -13,10 +13,6 @@ function nodeManifest(nodes: FlowYamlV1["nodes"]): FlowYamlV1 {
   return { schemaVersion: 1, name: "Prompt assists", nodes } as FlowYamlV1;
 }
 
-function stepManifest(steps: FlowYamlV1["steps"]): FlowYamlV1 {
-  return { schemaVersion: 1, name: "Legacy", steps } as FlowYamlV1;
-}
-
 function file(
   path: string,
   content: string,
@@ -203,49 +199,6 @@ describe("buildTemplateVariableCatalog", () => {
       presence: "optional",
       insertText: "review_comments ?? ''",
     });
-  });
-
-  it("degrades legacy steps to a predecessor chain", () => {
-    const catalog = buildTemplateVariableCatalog({
-      manifest: stepManifest([
-        { id: "build", type: "cli", command: "pnpm test" },
-        {
-          id: "approval",
-          type: "human",
-          form_schema: "./schemas/approval.json",
-        },
-        {
-          id: "agent",
-          type: "agent",
-          mode: "new-session",
-          prompt: "ship it",
-        },
-      ]),
-      selectedNodeId: "agent",
-      files: [
-        file(
-          "schemas/approval.json",
-          schema([{ name: "approved", type: "boolean", required: true }]),
-        ),
-      ],
-    });
-    const entries = byPath(catalog.entries);
-
-    expect(entries.get("steps.build.exitCode")).toMatchObject({
-      availability: "definite",
-      presence: "required",
-      insertText: "steps.build.exitCode",
-    });
-    expect(entries.get("steps.approval.exitCode")).toMatchObject({
-      availability: "definite",
-      presence: "optional",
-      insertText: "steps.approval.exitCode ?? ''",
-    });
-    expect(entries.get("steps.approval.vars.approved")).toMatchObject({
-      availability: "definite",
-      presence: "required",
-    });
-    expect(entries.has("steps.agent.output")).toBe(false);
   });
 
   it("turns missing, invalid, and non-root schema refs into warnings", () => {

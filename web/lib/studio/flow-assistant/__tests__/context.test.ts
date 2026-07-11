@@ -19,12 +19,11 @@ vi.mock("@/lib/queries/authored-flow-graph", () => {
     transitions?: Record<string, string>;
   };
   type MockManifest = {
-    nodes?: MockNode[];
-    steps?: MockNode[];
+    nodes: MockNode[];
   };
 
   function manifestNodes(manifest: MockManifest): MockNode[] {
-    return manifest.nodes ?? manifest.steps ?? [];
+    return manifest.nodes;
   }
 
   return {

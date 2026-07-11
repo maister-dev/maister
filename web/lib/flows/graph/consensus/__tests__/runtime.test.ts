@@ -249,7 +249,6 @@ function input(overrides: Record<string, unknown> = {}) {
     },
     runtimeRoot: "/tmp/runtime",
     worktreePath: "/tmp/repo",
-    sessionState: { currentSessionId: null, lastSeenMonotonicId: 0 },
     nodeAttemptId: "attempt-1",
     nodeAttemptNumber: 1,
     db: db(),

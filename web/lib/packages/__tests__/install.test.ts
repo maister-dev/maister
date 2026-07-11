@@ -45,7 +45,7 @@ const DIGEST64 = "d".repeat(64);
 const DIGEST40 = "d".repeat(40);
 
 const FLOW_YAML = (name: string): string =>
-  `schemaVersion: 1\nname: ${name}\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n`;
+  `schemaVersion: 1\nname: ${name}\ncompat:\n  engine_min: 3.0.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`;
 
 let workDir: string;
 

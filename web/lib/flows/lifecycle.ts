@@ -19,6 +19,11 @@ import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
+import {
+  classifyStoredFlowManifest,
+  parseGraphOnlyFlowManifest,
+  type FlowManifestIncompatibility,
+} from "@/lib/flows/manifest-parser";
 import { ensureSymlink, installRevision, runRevisionSetup } from "@/lib/flows";
 import { projectFlowSymlinkPath } from "@/lib/flow-paths";
 
@@ -56,7 +61,7 @@ type RevisionRow = {
   versionLabel: string;
   resolvedRevision: string;
   installedPath: string;
-  manifest: FlowYamlV1;
+  manifest: unknown;
   schemaVersion: number;
   engineMin: string | null;
   engineMax: string | null;
@@ -119,7 +124,10 @@ async function loadRevisionForFlow(
   return rev;
 }
 
-function assertEnableable(flow: FlowEnablementRow, rev: RevisionRow): void {
+function assertEnableable(
+  flow: FlowEnablementRow,
+  rev: RevisionRow,
+): FlowYamlV1 {
   if (rev.packageStatus !== "Installed") {
     throw new MaisterError(
       "PRECONDITION",
@@ -153,6 +161,14 @@ function assertEnableable(flow: FlowEnablementRow, rev: RevisionRow): void {
       `revision ${rev.id} is incompatible with this MAIster engine: ${compat.reason}`,
     );
   }
+
+  return parseGraphOnlyFlowManifest(rev.manifest, {
+    code: "CONFIG",
+    surface: "flow-lifecycle-enable",
+    manifestLabel: `flow revision ${rev.id}`,
+    flowRefId: rev.flowRefId,
+    revision: rev.resolvedRevision,
+  });
 }
 
 async function repointSymlink(
@@ -230,7 +246,7 @@ export async function enableRevision(args: {
     flow.source,
   );
 
-  assertEnableable(flow, rev);
+  const manifest = assertEnableable(flow, rev);
 
   // Trust is now confirmed (flow.trustStatus != untrusted via assertEnableable).
   // Run the deferred setup.sh for an untrusted-then-trusted revision before
@@ -250,8 +266,6 @@ export async function enableRevision(args: {
       );
     }
   }
-
-  const manifest = rev.manifest;
 
   // Atomic switch (Codex finding #2): lock the revision row and re-verify it is
   // still Installed under the lock, so a concurrent removeRevision (which also
@@ -544,11 +558,13 @@ export type AgentUpgradeImpact = {
 };
 
 export type UpgradePreview = {
+  compatible: boolean;
+  incompatibility: FlowManifestIncompatibility | null;
   fromRevisionId: string | null;
   toRevisionId: string;
   schemaVersionChanged: boolean;
   setupChanged: boolean;
-  steps: ContractDiff;
+  nodes: ContractDiff;
   gates: ContractDiff;
   artifacts: ContractDiff;
   capabilities: ContractDiff;
@@ -569,8 +585,8 @@ function diff(
   };
 }
 
-function stepIds(m: FlowYamlV1 | undefined): string[] {
-  return (m?.steps ?? []).map((s) => s.id);
+function nodeIds(m: FlowYamlV1 | undefined): string[] {
+  return (m?.nodes ?? []).map((node) => node.id);
 }
 
 type RevisionAgentScan = Map<
@@ -756,6 +772,29 @@ export async function upgradePreview(args: {
     args.candidateRevisionId,
     args.expectedSource,
   );
+  const candidateCompatibility = classifyStoredFlowManifest(cand.manifest);
+
+  if (!candidateCompatibility.compatible) {
+    return {
+      compatible: false,
+      incompatibility: candidateCompatibility.reason,
+      fromRevisionId: args.enabledRevisionId,
+      toRevisionId: cand.id,
+      schemaVersionChanged: false,
+      setupChanged: false,
+      nodes: { added: [], removed: [] },
+      gates: { added: [], removed: [] },
+      artifacts: { added: [], removed: [] },
+      capabilities: { added: [], removed: [] },
+      externalOps: { added: [], removed: [] },
+      agents: await agentUpgradeImpact(db, {
+        flowRefId: args.flowRefId,
+        fromInstalledPath: undefined,
+        toInstalledPath: cand.installedPath,
+        projectId: args.projectId,
+      }),
+    };
+  }
 
   let fromManifest: FlowYamlV1 | undefined;
   let fromSchema: number | undefined;
@@ -769,21 +808,29 @@ export async function upgradePreview(args: {
       .where(eq(flowRevisions.id, args.enabledRevisionId));
     const from = fromRows[0] as RevisionRow | undefined;
 
-    fromManifest = from?.manifest;
+    const fromCompatibility = from
+      ? classifyStoredFlowManifest(from.manifest)
+      : null;
+
+    fromManifest = fromCompatibility?.compatible
+      ? fromCompatibility.manifest
+      : undefined;
     fromSchema = from?.schemaVersion;
-    fromSetup = from?.manifest?.setup !== undefined;
+    fromSetup = fromManifest?.setup !== undefined;
     fromInstalledPath = from?.installedPath;
   }
 
-  const toManifest = cand.manifest;
+  const toManifest = candidateCompatibility.manifest;
 
   return {
+    compatible: true,
+    incompatibility: null,
     fromRevisionId: args.enabledRevisionId,
     toRevisionId: cand.id,
     schemaVersionChanged:
       fromSchema !== undefined && fromSchema !== cand.schemaVersion,
     setupChanged: fromSetup !== (toManifest.setup !== undefined),
-    steps: diff(stepIds(fromManifest), stepIds(toManifest)),
+    nodes: diff(nodeIds(fromManifest), nodeIds(toManifest)),
     gates: diff(fromManifest?.gates, toManifest.gates),
     artifacts: diff(fromManifest?.artifacts, toManifest.artifacts),
     capabilities: diff(fromManifest?.capabilities, toManifest.capabilities),

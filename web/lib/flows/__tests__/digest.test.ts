@@ -7,14 +7,21 @@ import { manifestDigest } from "@/lib/flows/digest";
 const base: FlowYamlV1 = {
   schemaVersion: 1,
   name: "Bugfix",
-  steps: [{ id: "plan", type: "agent", mode: "new-session", prompt: "/plan" }],
+  nodes: [
+    {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "/plan" },
+      transitions: { success: "done" },
+    },
+  ],
 };
 
 describe("manifestDigest", () => {
   it("is stable across top-level key reordering", () => {
     const a = manifestDigest({ ...base });
     const reordered = {
-      steps: base.steps,
+      nodes: base.nodes,
       name: base.name,
       schemaVersion: base.schemaVersion,
     } as FlowYamlV1;

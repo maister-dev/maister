@@ -135,8 +135,7 @@ export async function loadRunSessions(
 }
 
 // Persist a dispatch's resume handle onto a logical session's row (the sole
-// source of truth). The linear runner pins the run's single `default` session;
-// the graph runner persists per-node inline.
+// source of truth). The graph runner persists each node's logical session.
 export async function persistRunSessionAcpSessionId(
   db: WriteDb,
   runId: string,

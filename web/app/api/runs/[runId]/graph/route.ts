@@ -66,12 +66,21 @@ export async function GET(
 
     await requireProjectAction(loaded.projectId, "readBoard");
 
+    if (!loaded.compatible) {
+      return NextResponse.json({
+        compatible: false,
+        incompatibility: loaded.incompatibility,
+        topology: null,
+        layout: null,
+      });
+    }
+
     const topology = buildGraphTopology(compileManifest(loaded.manifest));
     const layout = presentationLayout(loaded.manifest);
 
     log.info({ runId, nodes: topology.nodes.length }, "graph served");
 
-    return NextResponse.json({ topology, layout });
+    return NextResponse.json({ compatible: true, topology, layout });
   } catch (err) {
     return errorResponse(err, runId);
   }

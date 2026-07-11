@@ -32,7 +32,7 @@ import pino from "pino";
 import { loadFlowManifest, type CapabilityRefIdsInput } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
 import { readAuthoredFlowPackageDirectory } from "@/lib/flows/package-authoring";
 import { resolveTrust } from "@/lib/flows/trust";
@@ -522,8 +522,12 @@ async function loadManifestOrThrow(
     return await loadFlowManifest(flowYamlPath, {
       roleRefs: opts.roleRefs,
       capabilityRefIds: opts.capabilityRefIds,
+      errorCode: "FLOW_INSTALL",
+      surface: "direct-flow-install",
     });
   } catch (err) {
+    if (isMaisterError(err) && err.code === "FLOW_INSTALL") throw err;
+
     throw wrapInstallStage({
       source,
       version,

@@ -183,6 +183,7 @@ export function LocalPackageEditor({
   layout,
   diff,
   canvasAvailable,
+  blockingValidationMessage,
   files,
   bom,
   labels,
@@ -207,6 +208,7 @@ export function LocalPackageEditor({
   layout: FlowLayout | null;
   diff: string;
   canvasAvailable: boolean;
+  blockingValidationMessage: string | null;
   files: AuthoredFlowPackageFile[];
   // Server-computed bill-of-materials from the last-saved working dir (ADR-116),
   // driving the tabbed composition landing.
@@ -737,7 +739,11 @@ export function LocalPackageEditor({
             <button
               className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
               data-testid="local-editor-commit-state"
-              disabled={readOnly || (changedCount ?? 0) === 0}
+              disabled={
+                readOnly ||
+                blockingValidationMessage !== null ||
+                (changedCount ?? 0) === 0
+              }
               title={labels.commitState}
               type="button"
               onClick={() => setReviewOpen(true)}
@@ -758,7 +764,7 @@ export function LocalPackageEditor({
             <button
               className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
               data-testid="local-editor-publish"
-              disabled={readOnly}
+              disabled={readOnly || blockingValidationMessage !== null}
               title={tPublish("openButton")}
               type="button"
               onClick={() => setPublishOpen(true)}
@@ -800,6 +806,16 @@ export function LocalPackageEditor({
           </button>
         </div>
       </nav>
+
+      {blockingValidationMessage ? (
+        <p
+          className="shrink-0 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
+          data-testid="local-editor-blocking-validation"
+          role="alert"
+        >
+          {blockingValidationMessage}
+        </p>
+      ) : null}
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
           <LockBanner
@@ -944,7 +960,7 @@ export function LocalPackageEditor({
               diff={diff}
               diffDrawer={
                 <LocalPackageDiffDrawer
-                  canManage={!readOnly}
+                  canManage={!readOnly && blockingValidationMessage === null}
                   diffViewLabels={labels.diffView}
                   labels={labels.diff}
                   packageId={packageId}

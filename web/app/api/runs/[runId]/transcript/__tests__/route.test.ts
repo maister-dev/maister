@@ -55,6 +55,8 @@ beforeEach(() => {
     projectId: PROJECT_ID,
   } as unknown as Awaited<ReturnType<typeof getRunDetail>>);
   vi.mocked(loadRunManifest).mockResolvedValue({
+    compatible: true,
+    incompatibility: null,
     manifest: {},
   } as unknown as Awaited<ReturnType<typeof loadRunManifest>>);
   vi.mocked(compileManifest).mockReturnValue({

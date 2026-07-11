@@ -416,21 +416,4 @@ body`,
       path: "setup.sh",
     });
   });
-
-  it("collects form_schema references from legacy steps[] too", () => {
-    const issues = validateArtifactContent({
-      files: [file("schemas/review.json", BAD_GRAMMAR_SCHEMA)],
-      manifest: {
-        steps: [
-          { id: "review", type: "human", form_schema: "schemas/review.json" },
-        ],
-      },
-    });
-
-    expect(codes(issues)).toContainEqual({
-      code: "form_schema_invalid",
-      severity: "block",
-      path: "schemas/review.json",
-    });
-  });
 });

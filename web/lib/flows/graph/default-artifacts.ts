@@ -81,12 +81,10 @@ export type RecordDefaultArtifactsArgs = {
   runtimeRoot: string;
 };
 
-// Record up to four default ("index") artifact rows for a just-finished
-// node/step. The rows point at EXISTING payloads; no payload is created here.
-// Called from BOTH runner-graph.ts (node finish) and runner.ts (step finish).
+// Record default ("index") artifact rows for a just-finished graph node. The
+// rows point at EXISTING payloads; no payload is created here.
 //
 // - log: if <runDir>/<nodeId>.log exists → kind "log"
-// - guards: if <runDir>/guards.jsonl exists → kind "generic_file"
 // - hitl-response: if a hitl_requests row with non-null response exists for
 //   (runId, nodeId) → kind "human_note", locator hitl-response
 // - diff: always → kind "diff", locator git-range
@@ -152,30 +150,7 @@ export async function recordDefaultArtifacts(
     }
   }
 
-  // 2. Guards metrics (best-effort: only if payload exists)
-  const guardsPath = path.join(runDir, "guards.jsonl");
-
-  if (await fileExists(guardsPath)) {
-    try {
-      await recordArtifact(
-        {
-          ...baseArgs,
-          id: makeId("guards"),
-          artifactDefId: `default:${nodeId}:guards`,
-          kind: "generic_file",
-          locator: { kind: "file", path: "guards.jsonl" },
-        },
-        db,
-      );
-    } catch (err) {
-      log.warn(
-        { runId, nodeId, err: (err as Error).message },
-        "default guards artifact record failed (non-fatal)",
-      );
-    }
-  }
-
-  // 3. HITL response (best-effort: only if responded row exists)
+  // 2. HITL response (best-effort: only if responded row exists)
   try {
     // On an on_reject rework loop a step has multiple responded HITL rows
     // (reject, then the final approve). Bind the human_note to the LATEST one
@@ -215,7 +190,7 @@ export async function recordDefaultArtifacts(
     );
   }
 
-  // 4. Diff artifact (always — uses safe fallback when git unavailable)
+  // 3. Diff artifact (always — uses safe fallback when git unavailable)
   try {
     const baseCommit = await safeBaseCommit(workspace);
     const headRef = await safeHeadRef(workspace);

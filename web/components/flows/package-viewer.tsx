@@ -17,6 +17,8 @@ export interface PackageViewerHeaderLabels {
   trustTrustedByPolicy: string;
   execUntrusted: string;
   execTrusted: string;
+  incompatible: string;
+  incompatibleRemediation: string;
 }
 
 export interface PackageViewerHeaderProps {
@@ -27,6 +29,7 @@ export interface PackageViewerHeaderProps {
   trustStatus: string;
   execTrust: string;
   labels: PackageViewerHeaderLabels;
+  incompatibilityMessage?: string | null;
 }
 
 function trustLabel(trust: string, labels: PackageViewerHeaderLabels): string {
@@ -59,6 +62,7 @@ export function PackageViewerHeader({
   trustStatus,
   execTrust,
   labels,
+  incompatibilityMessage = null,
 }: PackageViewerHeaderProps): ReactElement {
   return (
     <header
@@ -85,7 +89,24 @@ export function PackageViewerHeader({
             execTrust === "trusted" ? labels.execTrusted : labels.execUntrusted
           }
         />
+        {incompatibilityMessage ? (
+          <span
+            className="inline-flex rounded-full border border-danger-line bg-danger-soft px-2.5 py-1 font-mono text-[10.5px] font-semibold text-danger"
+            data-testid="package-incompatible-badge"
+          >
+            {labels.incompatible}
+          </span>
+        ) : null}
       </div>
+      {incompatibilityMessage ? (
+        <p
+          className="mt-3 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
+          data-testid="package-incompatible-alert"
+          role="alert"
+        >
+          {labels.incompatibleRemediation}
+        </p>
+      ) : null}
     </header>
   );
 }

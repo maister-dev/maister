@@ -110,81 +110,6 @@ describe("runCliStep", () => {
     expect(result.stdout).toContain("tmpl-out");
   });
 
-  it("writes a pre-guard metric to guards.jsonl on success", async () => {
-    await runCliStep(
-      {
-        id: "echo",
-        type: "cli",
-        command: "echo ok",
-        pre_guards: [{ cost: 1000 }],
-      },
-      {
-        runtimeRoot: workDir,
-        projectSlug: "demo",
-        runId: "r1",
-        stepId: "echo",
-        worktreePath,
-        context: ctxBase(),
-        timeoutMs: 5_000,
-      },
-    );
-
-    const file = join(
-      workDir,
-      ".maister",
-      "demo",
-      "runs",
-      "r1",
-      "guards.jsonl",
-    );
-    const raw = await readFile(file, "utf8");
-    const lines = raw.trim().split("\n").filter(Boolean);
-
-    expect(lines.length).toBeGreaterThanOrEqual(1);
-    const pre = lines
-      .map((l) => JSON.parse(l))
-      .find((o) => o.kind === "pre" && o.stepId === "echo");
-
-    expect(pre).toBeDefined();
-  });
-
-  it("post-guard regex match is recorded in guards.jsonl", async () => {
-    await runCliStep(
-      {
-        id: "errecho",
-        type: "cli",
-        command: "echo ERROR-marker",
-        post_guards: [{ regex: "ERROR" }],
-      },
-      {
-        runtimeRoot: workDir,
-        projectSlug: "demo",
-        runId: "r1",
-        stepId: "errecho",
-        worktreePath,
-        context: ctxBase(),
-        timeoutMs: 5_000,
-      },
-    );
-
-    const file = join(
-      workDir,
-      ".maister",
-      "demo",
-      "runs",
-      "r1",
-      "guards.jsonl",
-    );
-    const raw = await readFile(file, "utf8");
-    const lines = raw.trim().split("\n").filter(Boolean);
-    const post = lines
-      .map((l) => JSON.parse(l))
-      .find((o) => o.kind === "post" && o.stepId === "errecho");
-
-    expect(post).toBeDefined();
-    expect(post.regexMatched).toBe(true);
-  });
-
   it("injects MAISTER_OUTPUT_FILE with the per-attempt filename when attempt is provided (M26)", async () => {
     const result = await runCliStep(
       {
@@ -311,42 +236,5 @@ describe("runCliStep", () => {
     );
 
     expect(JSON.parse(written)).toEqual({ k: "v" });
-  });
-
-  it("post-guard time cap exceeded is recorded with capExceeded=true", async () => {
-    await runCliStep(
-      {
-        id: "tinyguard",
-        type: "cli",
-        command: "echo done",
-        post_guards: [{ time: 0 }],
-      },
-      {
-        runtimeRoot: workDir,
-        projectSlug: "demo",
-        runId: "r1",
-        stepId: "tinyguard",
-        worktreePath,
-        context: ctxBase(),
-        timeoutMs: 5_000,
-      },
-    );
-
-    const file = join(
-      workDir,
-      ".maister",
-      "demo",
-      "runs",
-      "r1",
-      "guards.jsonl",
-    );
-    const raw = await readFile(file, "utf8");
-    const lines = raw.trim().split("\n").filter(Boolean);
-    const post = lines
-      .map((l) => JSON.parse(l))
-      .find((o) => o.kind === "post" && o.stepId === "tinyguard");
-
-    expect(post).toBeDefined();
-    expect(post.capExceeded).toBe(true);
   });
 });

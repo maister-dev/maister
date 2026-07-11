@@ -301,8 +301,8 @@ function pushUnknownFrontmatterKeys(
 }
 
 // Collects every schema path the manifest REFERENCES on a runtime path: each
-// node's `settings.form_schema` and `output.result.schema`, plus legacy
-// `steps[].form_schema`. Paths are normalized (leading `./` stripped) so they
+// node's `settings.form_schema` and `output.result.schema`. Paths are normalized
+// (leading `./` stripped) so they
 // match the persisted `files[].path` (e.g. `schemas/review.json`).
 function collectReferencedSchemaPaths(
   manifest: Record<string, unknown>,
@@ -310,7 +310,6 @@ function collectReferencedSchemaPaths(
   const refs = new Set<string>();
 
   addSchemaRefsFromList(manifest.nodes, refs);
-  addSchemaRefsFromList(manifest.steps, refs);
 
   return refs;
 }
@@ -326,9 +325,6 @@ function addSchemaRefsFromList(value: unknown, refs: Set<string>): void {
     if (isRecord(settings)) {
       addRef(settings.form_schema, refs);
     }
-    // Legacy linear `steps[]` declare `form_schema` at the top level.
-    addRef(entry.form_schema, refs);
-
     const output = entry.output;
 
     if (isRecord(output)) {

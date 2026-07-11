@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 
 import * as schemaModule from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { flowRevisions, flows } = schemaModule as unknown as Record<string, any>;
@@ -28,7 +29,16 @@ export async function resolveManifest(
       .from(flowRevisions)
       .where(eq(flowRevisions.id, run.flowRevisionId));
 
-    manifest = (revisionRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+    const rawManifest = revisionRows[0]?.manifest;
+
+    manifest = rawManifest
+      ? parseGraphOnlyFlowManifest(rawManifest, {
+          code: "CONFIG",
+          surface: "current-node-revision",
+          manifestLabel: `flow revision ${run.flowRevisionId}`,
+          revision: run.flowRevisionId,
+        })
+      : null;
   }
 
   if (!manifest && run.flowId) {
@@ -37,16 +47,24 @@ export async function resolveManifest(
       .from(flows)
       .where(eq(flows.id, run.flowId));
 
-    manifest = (flowRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+    const rawManifest = flowRows[0]?.manifest;
+
+    manifest = rawManifest
+      ? parseGraphOnlyFlowManifest(rawManifest, {
+          code: "CONFIG",
+          surface: "current-node-flow",
+          manifestLabel: `flow ${run.flowId}`,
+          flowRefId: run.flowId,
+        })
+      : null;
   }
 
   return manifest;
 }
 
-// Resolve the node type of `currentStepId` from the run's pinned manifest,
-// compiled via the graph compiler. Legacy `steps[]` compile to single-action
-// nodes. Null when there is no current step, no resolvable manifest, or the
-// step is absent. Canonical extraction (reviewer N1) shared by reconcile.ts,
+// Resolve the node type of `currentStepId` from the run's pinned graph manifest.
+// Null when there is no current step, no resolvable manifest, or the node is
+// absent. Canonical extraction (reviewer N1) shared by reconcile.ts,
 // queries/run.ts, and runs/recover.ts.
 export async function resolveCurrentNodeKind(
   db: Db,
@@ -67,11 +85,6 @@ export async function resolveCurrentNodeKind(
   );
 }
 
-// M17 (ADR-056): resolve BOTH the current node kind AND whether the run's flow
-// is a flat `steps[]` (linear) flow, in ONE manifest load. Reconcile needs the
-// linear flag to route a session-less gate/human orphan to `crash` (linear has
-// no graph mid-flow resume) instead of `redispatch`. `isLinear` is true when the
-// manifest declares `steps[]`; graph (`nodes[]`) flows return false.
 export async function resolveCurrentNodeContext(
   db: Db,
   run: {
@@ -79,17 +92,16 @@ export async function resolveCurrentNodeContext(
     flowId: string | null;
     currentStepId: string | null;
   },
-): Promise<{ nodeKind: NodeAttemptType | null; isLinear: boolean }> {
+): Promise<{ nodeKind: NodeAttemptType | null }> {
   const manifest = await resolveManifest(db, run);
 
-  if (!manifest) return { nodeKind: null, isLinear: false };
+  if (!manifest) return { nodeKind: null };
 
-  const isLinear = Array.isArray(manifest.steps) && manifest.steps.length > 0;
   const nodeKind = run.currentStepId
     ? (compileManifest(manifest).nodes.get(run.currentStepId)?.nodeType ?? null)
     : null;
 
-  return { nodeKind, isLinear };
+  return { nodeKind };
 }
 
 // M19 crash-recover (ADR-034): resolve BOTH the node kind and its `retry_safe`

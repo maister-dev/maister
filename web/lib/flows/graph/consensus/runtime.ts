@@ -1,10 +1,6 @@
 import "server-only";
 
-import type {
-  AcpSessionState,
-  FlowContext,
-  StepResult,
-} from "@/lib/flows/types";
+import type { FlowContext, StepResult } from "@/lib/flows/types";
 import type { CompiledNode } from "../compile";
 import type { Db, LoadedRun } from "../runner-core";
 import type { SupervisorApi } from "@/lib/flows/runner-agent";
@@ -62,7 +58,6 @@ type RunConsensusNodeInput = {
   context: FlowContext;
   runtimeRoot: string;
   worktreePath: string;
-  sessionState: AcpSessionState;
   supervisorApi?: SupervisorApi;
   nodeAttemptId: string;
   nodeAttemptNumber: number;
@@ -426,7 +421,6 @@ async function runVerifier(
             : {}),
           db: args.db,
           context: args.context,
-          sessionState: args.sessionState,
         },
         args.supervisorApi,
       );
@@ -683,7 +677,6 @@ async function synthesizeConsensus(
           : {}),
         db: args.db,
         context: args.context,
-        sessionState: args.sessionState,
       },
       args.supervisorApi,
     );

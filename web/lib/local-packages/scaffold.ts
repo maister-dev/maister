@@ -47,11 +47,15 @@ function flowSkeleton(name: string): string {
   return [
     "schemaVersion: 1",
     `name: ${name}`,
-    "steps:",
+    "compat:",
+    '  engine_min: "3.0.0"',
+    "nodes:",
     "  - id: start",
-    "    type: agent",
-    "    mode: new-session",
-    "    prompt: Describe the task.",
+    "    type: ai_coding",
+    "    action:",
+    "      prompt: Describe the task.",
+    "    transitions:",
+    "      success: done",
     "",
   ].join("\n");
 }

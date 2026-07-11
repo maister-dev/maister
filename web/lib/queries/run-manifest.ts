@@ -8,6 +8,10 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import {
+  classifyStoredFlowManifest,
+  type FlowManifestIncompatibility,
+} from "@/lib/flows/manifest-parser";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 
 const { flowRevisions, flows, runs } = schema;
@@ -19,11 +23,20 @@ const log = pino({
 
 type Db = NodePgDatabase<typeof schema>;
 
-export interface RunManifest {
+type RunManifestIdentity = {
   flowId: string;
   projectId: string;
-  manifest: FlowYamlV1;
-}
+};
+
+export type RunManifest = RunManifestIdentity &
+  (
+    | { compatible: true; manifest: FlowYamlV1; incompatibility: null }
+    | {
+        compatible: false;
+        manifest: null;
+        incompatibility: FlowManifestIncompatibility;
+      }
+  );
 
 /**
  * Resolve a run's flow id, owning project id, and pinned manifest. Prefer the
@@ -54,7 +67,7 @@ export async function loadRunManifest(
     return null;
   }
 
-  let manifest: FlowYamlV1 | null = null;
+  let manifest: unknown = null;
 
   if (row.flowRevisionId) {
     const revisionRows = await client
@@ -62,7 +75,7 @@ export async function loadRunManifest(
       .from(flowRevisions)
       .where(eq(flowRevisions.id, row.flowRevisionId));
 
-    manifest = (revisionRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+    manifest = revisionRows[0]?.manifest ?? null;
   }
 
   if (!manifest) {
@@ -71,7 +84,7 @@ export async function loadRunManifest(
       .from(flows)
       .where(eq(flows.id, row.flowId));
 
-    manifest = (flowRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+    manifest = flowRows[0]?.manifest ?? null;
   }
 
   if (!manifest) {
@@ -80,11 +93,35 @@ export async function loadRunManifest(
     return null;
   }
 
-  // A row with a non-null flowId is a flow run, which always has a project
-  // (the project-less variant is scratch/flow-less, returned null above).
-  return {
+  const identity = {
     flowId: row.flowId,
     projectId: requireRunProjectId(row.projectId, runId),
-    manifest,
+  };
+  const compatibility = classifyStoredFlowManifest(manifest);
+
+  if (!compatibility.compatible) {
+    log.warn(
+      {
+        runId,
+        flowId: row.flowId,
+        kind: compatibility.reason.kind,
+        manifestShape: compatibility.manifestShape,
+      },
+      "stored run manifest is incompatible",
+    );
+
+    return {
+      ...identity,
+      compatible: false,
+      manifest: null,
+      incompatibility: compatibility.reason,
+    };
+  }
+
+  return {
+    ...identity,
+    compatible: true,
+    manifest: compatibility.manifest,
+    incompatibility: null,
   };
 }

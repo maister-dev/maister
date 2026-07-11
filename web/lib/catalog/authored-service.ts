@@ -18,7 +18,6 @@ import pino from "pino";
 
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { validateGraphManifest } from "@/lib/config";
-import { flowYamlV1Schema } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -26,6 +25,7 @@ import {
   type ArtifactContentIssue,
 } from "@/lib/flows/artifact-validate";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 
 export type { AuthoredCapabilityKind };
 
@@ -321,22 +321,13 @@ export async function createAuthoredCapabilityDraftInTransaction(args: {
  * launch (project registry), so no ref sets are passed here.
  */
 function assertAuthoredFlowManifestValid(manifest: unknown): void {
-  const result = flowYamlV1Schema.safeParse(manifest);
+  const parsed = parseGraphOnlyFlowManifest(manifest, {
+    code: "CONFIG",
+    surface: "authored-flow-draft",
+    manifestLabel: "<authored flow draft>",
+  });
 
-  if (!result.success) {
-    throw new MaisterError(
-      "CONFIG",
-      `invalid flow manifest: ${result.error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("; ")}`,
-    );
-  }
-
-  const parsed = result.data;
-
-  if (parsed.nodes) {
-    validateGraphManifest(parsed, parsed.nodes, "<authored flow draft>");
-  }
+  validateGraphManifest(parsed, parsed.nodes, "<authored flow draft>");
 
   compileManifest(parsed);
 }

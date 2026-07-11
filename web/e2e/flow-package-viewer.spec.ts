@@ -133,11 +133,15 @@ test("nav-path: board → package viewer → open file → fork → editor → s
   const savedName = "Forked Viewer Saved";
   const validManifest = `schemaVersion: 1
 name: ${savedName}
-steps:
+compat:
+  engine_min: 3.0.0
+nodes:
   - id: plan
-    type: agent
-    mode: new-session
-    prompt: "do the thing"
+    type: ai_coding
+    action:
+      prompt: "do the thing"
+    transitions:
+      success: done
 `;
 
   await replaceEditorContent(page, validManifest);

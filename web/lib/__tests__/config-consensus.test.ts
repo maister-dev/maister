@@ -237,7 +237,7 @@ describe("loadFlowManifest — consensus node validation (M41)", () => {
   });
 });
 
-describe("flowYamlV1Schema — consensus keeps graph/steps exclusivity", () => {
+describe("flowYamlV1Schema — consensus keeps graph-only exclusivity", () => {
   it("rejects a consensus graph that also declares legacy steps[]", () => {
     const manifest = baseManifest();
 
@@ -250,7 +250,7 @@ describe("flowYamlV1Schema — consensus keeps graph/steps exclusivity", () => {
     ];
 
     expect(() => flowYamlV1Schema.parse(manifest)).toThrow(
-      /exactly one of steps\[\] or nodes\[\]/,
+      /legacy steps\[\] flows are not supported since engine 3\.0\.0/,
     );
   });
 });

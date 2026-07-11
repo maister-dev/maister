@@ -14,6 +14,10 @@ import { LocalPackageEditor } from "@/components/studio/local-package-editor";
 import { requireSession } from "@/lib/authz";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
+  classifyFlowManifestShape,
+  LEGACY_STEPS_REFUSAL_MESSAGE,
+} from "@/lib/flows/manifest-shape";
+import {
   buildChangeReviewLabels,
   buildFlowEditorTabsLabels,
   diffViewLabels,
@@ -111,13 +115,20 @@ export default async function StudioEditPage({
   let topology: GraphTopology | null = null;
   let layout: FlowLayout | null = null;
   let initialYaml = "";
+  let blockingValidationMessage: string | null = null;
 
   if (flowPath) {
     const selected = files.find((f) => f.path === flowPath);
 
     initialYaml = selected?.content ?? "";
     try {
-      const parsed = flowYamlV1Schema.safeParse(parseYaml(initialYaml));
+      const rawManifest = parseYaml(initialYaml);
+      const shape = classifyFlowManifestShape(rawManifest);
+      const parsed = flowYamlV1Schema.safeParse(rawManifest);
+
+      if (shape === "legacy_steps" || shape === "mixed") {
+        blockingValidationMessage = LEGACY_STEPS_REFUSAL_MESSAGE;
+      }
 
       if (parsed.success) {
         const graph = buildAuthoredFlowGraph(parsed.data, 0);
@@ -189,6 +200,7 @@ export default async function StudioEditPage({
     <div className="flex h-[calc(100vh-130px)] min-h-[560px] w-full flex-col">
       <LocalPackageEditor
         canManage
+        blockingValidationMessage={blockingValidationMessage}
         bom={bom}
         canvasAvailable={canvasAvailable}
         diff=""

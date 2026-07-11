@@ -13,10 +13,15 @@ import {
 
 const VALID_FLOW = `schemaVersion: 1
 name: demo
-steps:
+compat:
+  engine_min: 3.0.0
+nodes:
   - id: s1
     type: cli
-    command: echo hi
+    action:
+      command: echo hi
+    transitions:
+      success: done
 `;
 
 const VALID_MANIFEST = `schemaVersion: 1

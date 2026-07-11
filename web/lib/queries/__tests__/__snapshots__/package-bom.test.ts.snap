@@ -4,7 +4,7 @@ exports[`getStudioPackageBom characterization (ADR-116 refactor guard) > install
 {
   "flows": [
     {
-      "engine": null,
+      "engine": "3.0.0",
       "frontmatter": {
         "labels": [],
         "links": [],

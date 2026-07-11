@@ -129,7 +129,6 @@ export async function POST(
 
     if (
       !node ||
-      node.source.kind !== "node" ||
       node.source.node.type !== "human" ||
       !(node.finishHuman?.decisions ?? []).includes("takeover")
     ) {

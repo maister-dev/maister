@@ -15,7 +15,7 @@ export type NodePresentation = {
  * Returns a NEW manifest with presentation.nodes set from `presentations`.
  * Validated against flowPresentationSchema before returning.
  * Node-id integrity: drops any presentation whose id is not a real node in
- * the manifest (manifest.nodes[].id or steps[].id). Preserves every other
+ * the manifest (manifest.nodes[].id). Preserves every other
  * manifest field untouched (logic-only DSL stays intact). Does not mutate
  * the input manifest.
  */
@@ -23,10 +23,7 @@ export function applyPresentation(
   manifest: FlowYamlV1,
   presentations: NodePresentation[],
 ): FlowYamlV1 {
-  const knownIds = new Set<string>([
-    ...(manifest.nodes ?? []).map((n) => n.id),
-    ...(manifest.steps ?? []).map((s) => s.id),
-  ]);
+  const knownIds = new Set<string>(manifest.nodes.map((node) => node.id));
 
   const filtered = presentations.filter((p) => knownIds.has(p.id));
 

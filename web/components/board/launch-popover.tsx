@@ -114,7 +114,11 @@ type LaunchSessionOption = {
   warning: RunnerResolutionWarning | null;
 };
 
-type LaunchVerdict = { launchable: boolean; reason: string };
+type LaunchVerdict = {
+  launchable: boolean;
+  reason: string;
+  incompatibilityReason?: string | null;
+};
 
 type LaunchOptions = {
   launchability: {
@@ -250,6 +254,16 @@ export function launchUnavailableReasonMessage(
   const key = LAUNCH_UNAVAILABLE_REASON_KEY[reason];
 
   return key ? translate(key) : reason;
+}
+
+export function launchVerdictReasonMessage(
+  verdict: LaunchVerdict,
+  translate: (key: string) => string,
+): string {
+  return (
+    verdict.incompatibilityReason ??
+    launchUnavailableReasonMessage(verdict.reason, translate)
+  );
 }
 
 export function launchRunnerResolutionWarnings(
@@ -855,7 +869,7 @@ export function LaunchPopover({
   };
   const launchUnavailableReason =
     launchVerdict && !launchVerdict.launchable
-      ? launchUnavailableReasonMessage(launchVerdict.reason, (key) => t(key))
+      ? launchVerdictReasonMessage(launchVerdict, (key) => t(key))
       : "";
 
   function onBudgetChange(
@@ -969,20 +983,22 @@ export function LaunchPopover({
                     ) : null}
 
                     <div className="grid gap-3 md:grid-cols-2">
-                      <label className="flex flex-col gap-1">
-                        <span className={fieldLabelClass}>
-                          {t("flow")}
-                          {flowId !== options.selectedFlowId ? (
-                            <b className="ml-2 text-amber">{t("override")}</b>
-                          ) : null}
-                        </span>
-                        <LaunchSelect
-                          label={t("flow")}
-                          options={flowOptions}
-                          value={flowId}
-                          onChange={setFlowId}
-                        />
-                      </label>
+                      {options.runners.length > 0 ? (
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {t("flow")}
+                            {flowId !== options.selectedFlowId ? (
+                              <b className="ml-2 text-amber">{t("override")}</b>
+                            ) : null}
+                          </span>
+                          <LaunchSelect
+                            label={t("flow")}
+                            options={flowOptions}
+                            value={flowId}
+                            onChange={setFlowId}
+                          />
+                        </label>
+                      ) : null}
 
                       <label className="flex flex-col gap-1">
                         <span className={fieldLabelClass}>

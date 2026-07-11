@@ -88,11 +88,10 @@ type ProducerAvailability = {
   id: string;
   type: string;
   availability: TemplateVariableAvailability;
-  node: NodeLike | StepLike;
+  node: NodeLike;
 };
 
 type NodeLike = NonNullable<FlowYamlV1["nodes"]>[number];
-type StepLike = NonNullable<FlowYamlV1["steps"]>[number];
 type EdgeMap = Map<string, Set<string>>;
 type SchemaField = FormSchema["fields"][number];
 type ProducerOutput = {
@@ -127,9 +126,7 @@ export function buildTemplateVariableCatalog({
     `steps.${selectedNodeId}.exitCode`,
   ];
   const schemaFiles = new Map(files.map((file) => [file.path, file.content]));
-  const producers = manifest.nodes
-    ? graphProducers(manifest.nodes, selectedNodeId)
-    : legacyProducers(manifest.steps ?? [], selectedNodeId);
+  const producers = graphProducers(manifest.nodes, selectedNodeId);
 
   for (const producer of producers) {
     addProducerEntries(entries, warnings, schemaFiles, producer);
@@ -275,22 +272,6 @@ function graphProducers(
       },
     ];
   });
-}
-
-function legacyProducers(
-  steps: readonly StepLike[],
-  selectedNodeId: string,
-): ProducerAvailability[] {
-  const selectedIndex = steps.findIndex((step) => step.id === selectedNodeId);
-
-  if (selectedIndex <= 0) return [];
-
-  return steps.slice(0, selectedIndex).map((step) => ({
-    id: step.id,
-    type: step.type,
-    availability: "definite",
-    node: step,
-  }));
 }
 
 function buildEdges(nodes: readonly NodeLike[], ids: Set<string>): EdgeMap {
@@ -593,16 +574,14 @@ function resolveSchema(
   }
 }
 
-function schemaRefsForProducer(node: NodeLike | StepLike): string[] {
+function schemaRefsForProducer(node: NodeLike): string[] {
   const refs: string[] = [];
   const output = nodeOutput(node);
   const settings = nodeSettings(node);
-  const legacyFormSchema = nodeLegacyFormSchema(node);
 
   if (output?.result?.schema) refs.push(output.result.schema);
   if (typeof settings?.form_schema === "string")
     refs.push(settings.form_schema);
-  if (legacyFormSchema) refs.push(legacyFormSchema);
 
   return refs;
 }
@@ -611,7 +590,7 @@ function isCliLike(type: string): boolean {
   return type === "cli" || type === "check";
 }
 
-function nodeOutput(node: NodeLike | StepLike): ProducerOutput | undefined {
+function nodeOutput(node: NodeLike): ProducerOutput | undefined {
   if (!("output" in node) || !isRecord(node.output)) return undefined;
 
   const result = isRecord(node.output.result)
@@ -637,7 +616,7 @@ function nodeOutput(node: NodeLike | StepLike): ProducerOutput | undefined {
   return { result, produces };
 }
 
-function nodeSettings(node: NodeLike | StepLike): { form_schema?: string } {
+function nodeSettings(node: NodeLike): { form_schema?: string } {
   if (!("settings" in node) || !isRecord(node.settings)) return {};
 
   return typeof node.settings.form_schema === "string"
@@ -645,15 +624,7 @@ function nodeSettings(node: NodeLike | StepLike): { form_schema?: string } {
     : {};
 }
 
-function nodeLegacyFormSchema(node: NodeLike | StepLike): string | undefined {
-  return "form_schema" in node && typeof node.form_schema === "string"
-    ? node.form_schema
-    : undefined;
-}
-
-function nodeRework(
-  node: NodeLike | StepLike,
-): { commentsVar?: string } | undefined {
+function nodeRework(node: NodeLike): { commentsVar?: string } | undefined {
   if (!("rework" in node) || !isRecord(node.rework)) return undefined;
 
   return typeof node.rework.commentsVar === "string"

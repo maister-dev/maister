@@ -157,28 +157,4 @@ describe("applyPresentation", () => {
       ]),
     ).not.toThrow();
   });
-
-  // steps[]-form manifests: node-id integrity should also work with steps[].
-  it("drops presentations for ids absent from manifest.steps[]", () => {
-    const stepsManifest = flowYamlV1Schema.parse({
-      schemaVersion: 1,
-      name: "steps flow",
-      steps: [
-        {
-          id: "step1",
-          type: "agent",
-          mode: "new-session",
-          prompt: "do something",
-        },
-      ],
-    });
-
-    const result = applyPresentation(stepsManifest, [
-      { id: "step1", x: 0, y: 0 },
-      { id: "unknown", x: 1, y: 1 },
-    ]);
-    const ids = (result.presentation?.nodes ?? []).map((n) => n.id);
-
-    expect(ids).toEqual(["step1"]);
-  });
 });

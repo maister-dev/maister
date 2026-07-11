@@ -71,7 +71,6 @@ export type ReconcileReason =
   | "live-session-by-step"
   | "live-scratch-session"
   | "gate-redispatch"
-  | "linear-gate-orphan"
   | "cli-not-retry-safe"
   | "grace-window"
   | "agent-session-gone"
@@ -113,13 +112,6 @@ export interface ReconcileInput {
   latestAttemptStartedAt: Date | null;
   nowMs: number;
   graceSeconds: number;
-  // M17 (ADR-056): true when the run executes a flat `steps[]` flow (vs a
-  // graph `nodes[]` flow). A linear run has NO graph resume — bare `runFlow`
-  // restarts from step 0 and re-runs prior side-effects — so a session-less
-  // gate/human orphan (incl. the repark window-(c) state) must reconcile to
-  // `crash` and recover via `resume_target_step_id`, NOT auto-redispatch.
-  // Graph runs (false/omitted) keep the existing gate-redispatch path.
-  isLinearFlow?: boolean;
   // M36 (ADR-095) T7.1: the run's delegator (null for a top-level run). When
   // set, the sweep also loads `parentStatus` so an orphaned child (parent
   // Crashed/Abandoned/missing) is caught regardless of session liveness.
@@ -270,16 +262,7 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     return { action: "crash", reason: "agent-session-gone" };
   }
 
-  // check / judge / guard / human / form / null → retry-safe gate re-dispatch.
-  // A linear (flat `steps[]`) run cannot resume mid-flow through `runFlow`
-  // (no graph node-resume; bare re-entry restarts at step 0 and re-runs prior
-  // side-effects). Crash it instead so `crashRunningRun` retains the node in
-  // `resume_target_step_id` and operator Recover resumes from it via
-  // `crashResume` (ADR-056 window-(c)). Graph runs keep gate-redispatch.
-  if (input.isLinearFlow) {
-    return { action: "crash", reason: "linear-gate-orphan" };
-  }
-
+  // check / judge / guard / human / form / null → retry-safe graph re-dispatch.
   return { action: "redispatch", reason: "gate-redispatch" };
 }
 
@@ -346,8 +329,6 @@ function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
       return "agent-session-gone";
     case "cli-not-retry-safe":
       return "cli-not-retry-safe";
-    case "linear-gate-orphan":
-      return "linear-gate-orphan";
     case "orphaned-child":
       return "orphaned-child";
     case "orchestrator-stuck":
@@ -902,12 +883,12 @@ export async function runReconcileSweep(
         : undefined;
 
     // A parked orchestrator (WaitingOnChildren) is classified by the §0
-    // branch which reads neither node-kind nor isLinear — skip the resolve.
-    const { nodeKind: currentNodeKind, isLinear } =
+    // branch which reads no node-kind — skip the resolve.
+    const { nodeKind: currentNodeKind } =
       cand.runKind === "scratch" ||
       cand.runKind === "agent" ||
       cand.status === "WaitingOnChildren"
-        ? { nodeKind: null, isLinear: false }
+        ? { nodeKind: null }
         : await resolveCurrentNodeContext(db, {
             flowRevisionId: cand.flowRevisionId,
             flowId: cand.flowId,
@@ -947,7 +928,6 @@ export async function runReconcileSweep(
         latestAttemptStartedAt: attemptStartedAt,
         nowMs,
         graceSeconds,
-        isLinearFlow: isLinear,
         parentRunId: cand.parentRunId,
         parentStatus,
         hasPendingChildren: pendingChildren,

@@ -231,7 +231,18 @@ function seedSelects(opts: { task?: Record<string, unknown> } = {}): void {
         engineMin: null,
         engineMax: null,
         defaultRunnerId: null,
-        manifest: { schemaVersion: 1, name: "Bugfix", nodes: [] },
+        manifest: {
+          schemaVersion: 1,
+          name: "Bugfix",
+          nodes: [
+            {
+              id: "run",
+              type: "cli",
+              action: { command: "true" },
+              transitions: { success: "done" },
+            },
+          ],
+        },
       },
     ],
     [{ id: "singleton", defaultRunnerId: RUNNER_ID }],

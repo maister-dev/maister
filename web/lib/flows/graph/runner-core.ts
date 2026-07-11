@@ -10,18 +10,16 @@ import type {
   Workspace as WorkspaceRow,
 } from "@/lib/db/schema";
 import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
-import type { AcpSessionState } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 
 import { eq } from "drizzle-orm";
-import pino from "pino";
 
-import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
 import { MaisterError } from "@/lib/errors";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
 import { systemCachePath } from "@/lib/flow-paths";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -34,11 +32,6 @@ const {
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
-
-const log = pino({
-  name: "flow-runner-core",
-  level: process.env.LOG_LEVEL ?? "info",
-});
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 export type Db = any;
@@ -53,10 +46,6 @@ export type RunFlowOptions = {
   // CAS-clears `resume_started_at`, instead of no-op'ing (graph) or restarting
   // from step 0 (linear).
   crashResume?: { targetStepId: string };
-  // M17 Phase 3: set by the in-process repark tail-call after the repark CAS
-  // commits. The repark CAS is the single-winner claim; this is a soft re-entry
-  // with NO additional CAS.
-  reparkResume?: { targetStepId: string };
   // M37 (ADR-098) T5.2: set by the orchestrator-resume domain-event consumer
   // after it wins the WaitingOnChildren → Running CAS (markResumedFromWait —
   // that IS the single-winner claim). The runner re-enters the parked
@@ -82,7 +71,7 @@ export type LoadedRunSession = {
 };
 
 export type LoadedRun = {
-  // ADR-100: the graph/linear runner only loads flow runs (loadRun requires a
+  // ADR-100: the graph runner only loads flow runs (loadRun requires a
   // task + flow + project), so project_id is non-null here even though the base
   // Run type made it nullable for the project-less local-package variant.
   run: RunRow & { projectId: string };
@@ -180,7 +169,7 @@ async function loadRunnerSnapshot(
 
 // Loads a run plus its task/flow/runner/workspace and resolves the manifest +
 // bundle path from the IMMUTABLE pinned revision (M10, ADR-021). Shared by the
-// linear runner (runner.ts) and the graph runner (runner-graph.ts).
+// graph runner (runner-graph.ts).
 export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   const runRows: RunRow[] = await db
     .select()
@@ -292,7 +281,13 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     );
   }
 
-  let manifest = flow.manifest as FlowYamlV1;
+  let manifest = parseGraphOnlyFlowManifest(flow.manifest, {
+    code: "CONFIG",
+    surface: "graph-runner-flow",
+    manifestLabel: `flow ${flow.flowRefId}`,
+    flowRefId: flow.flowRefId,
+    revision: run.flowRevision,
+  });
   let flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
   // M27/T-C8b: a run with no pinned revision (legacy / pre-bridge) is treated as
   // exec-trusted (no stdio-MCP gate); a pinned revision carries its own axis.
@@ -320,7 +315,13 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       );
     }
 
-    manifest = revision.manifest as FlowYamlV1;
+    manifest = parseGraphOnlyFlowManifest(revision.manifest, {
+      code: "CONFIG",
+      surface: "graph-runner-revision",
+      manifestLabel: `flow revision ${run.flowRevisionId}`,
+      flowRefId: flow.flowRefId,
+      revision: run.flowRevision,
+    });
     flowInstallPath = revision.installedPath;
     execTrust = revision.execTrust;
   }
@@ -339,26 +340,4 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     flowInstallPath,
     execTrust,
   };
-}
-
-// Deletes a lingering `slash-in-existing` ACP session on a terminal/pause exit.
-export async function cleanupSlashSession(
-  sessionState: AcpSessionState,
-  deleteSession: (sessionId: string) => Promise<void> = defaultDeleteSession,
-  logger: typeof log = log,
-): Promise<void> {
-  if (sessionState.currentSessionId === null) return;
-
-  const sessionId = sessionState.currentSessionId;
-
-  sessionState.currentSessionId = null;
-  try {
-    await deleteSession(sessionId);
-    logger.info({ sessionId }, "slash-in-existing session deleted on terminal");
-  } catch (err) {
-    logger.warn(
-      { err: (err as Error).message, sessionId },
-      "deleteSession failed during cleanup (non-fatal)",
-    );
-  }
 }

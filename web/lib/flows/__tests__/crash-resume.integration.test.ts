@@ -1,15 +1,12 @@
-// M19 crash-recover (ADR-034, Codex round-3): drives the REAL graph + linear
-// runners (NOT a mocked runFlow) for a crashed `retry_safe` session-less node.
+// M19 crash-recover (ADR-034, Codex round-3): drives the real graph runner for
+// a crashed `retry_safe` session-less node.
 // Proves the crash-resume mode added to runGraph/runFlow:
 //   - graph: a `Running` run with prior attempts + `crashResume.targetStepId`
 //     RE-RUNS the crashed node (fresh attempt) instead of no-op'ing, and does
 //     NOT re-run upstream nodes;
 //   - single-winner: two concurrent crash-resume dispatches → exactly ONE
 //     traversal executes (CAS-clear resume_started_at claim);
-//   - linear: resumes FROM the crashed step, not from step 0 (no upstream
-//     re-run / duplicated side effects).
-
-import type { NodeAttempt, Run, StepRun } from "@/lib/db/schema";
+import type { NodeAttempt, Run } from "@/lib/db/schema";
 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -39,11 +36,6 @@ import {
   markNodeSucceeded,
 } from "@/lib/flows/graph/ledger";
 import { runFlow } from "@/lib/flows/runner";
-import {
-  createStepRun,
-  getStepRunsForRun,
-  markStepSucceeded,
-} from "@/lib/flows/step-runs";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -184,15 +176,6 @@ const cliChain = {
   ],
 };
 
-const linearChain = {
-  schemaVersion: 1,
-  name: "lin",
-  steps: [
-    { id: "s1", type: "cli", command: "true", retry_safe: true },
-    { id: "s2", type: "cli", command: "true", retry_safe: true },
-  ],
-};
-
 describe("graph runner — crash-resume re-runs the crashed node", () => {
   it("re-dispatches the crashed retry_safe node (fresh attempt), NOT a no-op, and does not re-run upstream", async () => {
     const seeded = await seedCrashResumeRun(cliChain, "b");
@@ -288,40 +271,5 @@ describe("graph runner — crash-resume re-runs the crashed node", () => {
     // Only the claim winner appended a fresh attempt: the pre-seeded crash
     // attempt + exactly ONE re-run = 2 (the loser bailed, no 3rd attempt).
     expect(bAttempts).toHaveLength(2);
-  }, 60_000);
-});
-
-describe("linear runner — crash-resume resumes from the crashed step", () => {
-  it("re-runs the crashed step forward, NOT from step 0 (no upstream duplication)", async () => {
-    const seeded = await seedCrashResumeRun(linearChain, "s2");
-
-    // s1 already Succeeded before the crash at s2.
-    const s1 = await createStepRun({
-      runId: seeded.runId,
-      stepId: "s1",
-      stepType: "cli",
-      db,
-    });
-
-    await markStepSucceeded(s1.id, {}, db);
-
-    await runFlow(seeded.runId, {
-      db,
-      runtimeRoot: seeded.runtimeRoot,
-      crashResume: { targetStepId: "s2" },
-    });
-
-    const stepRuns = (await getStepRunsForRun(seeded.runId, db)) as StepRun[];
-    const s1Runs = stepRuns.filter((x) => x.stepId === "s1");
-    const s2Runs = stepRuns.filter((x) => x.stepId === "s2");
-
-    // s1 NOT re-run (the round-3 bug restarted linear flows from step 0).
-    expect(s1Runs).toHaveLength(1);
-    // s2 (the crashed step) ran.
-    expect(s2Runs.length).toBeGreaterThanOrEqual(1);
-
-    const run = await getRun(seeded.runId);
-
-    expect(run.resumeStartedAt).toBeNull();
   }, 60_000);
 });

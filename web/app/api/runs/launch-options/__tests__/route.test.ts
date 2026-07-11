@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server";
 import { getTableName } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
+
 const mocks = vi.hoisted(() => ({
   requireActiveSession: vi.fn(),
   requireProjectAction: vi.fn(),
@@ -404,6 +406,7 @@ describe("GET /api/runs/launch-options per-session resolution (M42)", () => {
     expect(body.launchability).toEqual({
       launchable: true,
       reason: "launchable",
+      incompatibilityReason: null,
       blockers: [],
     });
     expect(body.selectedFlowId).toBe("flow-1");
@@ -503,6 +506,51 @@ describe("GET /api/runs/launch-options — launchability (ADR-089)", () => {
       launchable: false,
       reason: "not_enabled",
     });
+  });
+
+  it("returns a typed legacy incompatibility and no runner bypass", async () => {
+    state.flow_revisions[0].manifest = {
+      schemaVersion: 1,
+      name: "Bugfix",
+      steps: [{ id: "old", type: "cli", command: "true" }],
+    };
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      launchability?: {
+        launchable: boolean;
+        reason: string;
+        incompatibilityReason: string | null;
+      };
+      sessions?: unknown[];
+      runners?: unknown[];
+      selectedRunnerId?: string;
+      flows?: Array<{
+        id: string;
+        enabled: boolean;
+        disabledReason: string | null;
+        disabledReasonMessage: string | null;
+      }>;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.launchability).toEqual({
+      launchable: false,
+      reason: "incompatible",
+      incompatibilityReason: LEGACY_STEPS_REFUSAL_MESSAGE,
+      blockers: [],
+    });
+    expect(body.sessions).toEqual([]);
+    expect(body.runners).toEqual([]);
+    expect(body.selectedRunnerId).toBe("");
+    expect(body.flows).toContainEqual(
+      expect.objectContaining({
+        id: "flow-1",
+        enabled: false,
+        disabledReason: "incompatible",
+        disabledReasonMessage: LEGACY_STEPS_REFUSAL_MESSAGE,
+      }),
+    );
   });
 
   it("the triage verdict pre-fills runner, target branch, and promotion mode", async () => {

@@ -86,26 +86,3 @@ export type RunContext = {
   runId: string;
   worktreePath: string;
 };
-
-export type AcpSessionState = {
-  currentSessionId: string | null;
-  lastSeenMonotonicId: number;
-  profileDigest?: string;
-};
-
-export type GuardKind = "pre" | "post" | "standalone";
-
-export type GuardMetric = {
-  guard: {
-    cost?: number;
-    time?: number;
-    regex?: string;
-  };
-  observed: {
-    durationMs: number;
-    costTokens?: number;
-    regexMatched?: boolean;
-  };
-  capExceeded: boolean;
-  regexMatched?: boolean;
-};

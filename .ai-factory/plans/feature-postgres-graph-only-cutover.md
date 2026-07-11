@@ -543,7 +543,7 @@ Phase 1 exit gate: DB/boot RED tests are GREEN; real-PG lock tests are GREEN;
 
 ### Phase 2 — Graph-only schema, intake, stored revisions, and engine
 
-- [ ] **Task 7 — Make `nodes[]` required and bump the engine to 3.0.0.**
+- [x] **Task 7 — Make `nodes[]` required and bump the engine to 3.0.0.**
   Delete four legacy step variants, `stepSchema`, `guardConfigSchema`, and
   legacy `pre_guards/post_guards` fields from `config.schema.ts`; require
   non-empty `nodes[]`; add a raw-object precheck that explicitly refuses a
@@ -559,7 +559,7 @@ Phase 1 exit gate: DB/boot RED tests are GREEN; real-PG lock tests are GREEN;
   suite owns the manifest-shape/error-message matrix; route tests do not repeat
   that combinatorial table.
 
-- [ ] **Task 8 — Enforce typed refusal at every real intake and stored-revision surface.**
+- [x] **Task 8 — Enforce typed refusal at every real intake and stored-revision surface.**
   Wire the shared graph-only parser into direct install, package install,
   project registration/bootstrap, Studio save/import/publish, authored hard
   gate, CLI import, lifecycle enable/rollback/upgrade preview, launch service,
@@ -577,7 +577,7 @@ Phase 1 exit gate: DB/boot RED tests are GREEN; real-PG lock tests are GREEN;
   code/status/body/zero-side-effect, while service integration owns shared
   persisted-state invariants.
 
-- [ ] **Task 9 — Deliver mature refusal and historical-compatibility UI states.**
+- [x] **Task 9 — Deliver mature refusal and historical-compatibility UI states.**
   Implement the Phase-0 screen contracts across project registration, package
   install/viewer, Studio local editor, task/board launch affordances, and stored
   revision views. Reuse a typed incompatibility reason DTO; do not string-match
@@ -593,7 +593,7 @@ Phase 1 exit gate: DB/boot RED tests are GREEN; real-PG lock tests are GREEN;
   generic graph packages remain usable; component tests own state rendering and
   E2E owns only the end-to-end refusal journey.
 
-- [ ] **Task 10 — Delete the linear engine, guard subsystem, and legacy editor helpers.**
+- [x] **Task 10 — Delete the linear engine, guard subsystem, and legacy editor helpers.**
   Delete the `runFlow` linear dispatch/walker, `runner-human.ts`, `guards.ts`,
   linear compiler path, legacy current-node classifier, `slash-in-existing`
   execution branch and dead cleanup/session state, plus legacy editor/artifact

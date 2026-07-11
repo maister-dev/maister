@@ -318,21 +318,4 @@ describe("compileManifest — flow-level verdict_calibration.confidence_min reso
     // With no flow-level default and no per-gate calibration, gate should be unchanged
     expect((g1 as { calibration?: unknown }).calibration).toBeUndefined();
   });
-
-  it("preserves gates as-is when compiled from linear steps[] (no gates)", () => {
-    const flow: FlowYamlV1 = {
-      schemaVersion: 1,
-      name: "test",
-      verdict_calibration: {
-        confidence_min: 0.8,
-      },
-      steps: [{ id: "hello", type: "cli", command: "echo hi" }],
-    } as FlowYamlV1;
-
-    const compiled = compileManifest(flow);
-    const helloNode = compiled.nodes.get("hello")!;
-
-    // Linear-compiled nodes have empty gates[]
-    expect(helloNode.gates).toEqual([]);
-  });
 });

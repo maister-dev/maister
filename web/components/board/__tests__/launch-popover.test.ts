@@ -34,6 +34,7 @@ import {
   launchRunnerResolutionWarnings,
   isBudgetFieldInvalid,
   launchUnavailableReasonMessage,
+  launchVerdictReasonMessage,
   pruneBudgetText,
 } from "@/components/board/launch-popover";
 
@@ -95,6 +96,22 @@ describe("LaunchPopover — launchability reason copy", () => {
   it("keeps unknown backend reasons visible for diagnostics", () => {
     expect(launchUnavailableReasonMessage("new_reason", translate)).toBe(
       "new_reason",
+    );
+  });
+
+  it("shows the typed graph-only remediation instead of generic incompatibility copy", () => {
+    expect(
+      launchVerdictReasonMessage(
+        {
+          launchable: false,
+          reason: "incompatible",
+          incompatibilityReason:
+            "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
+        },
+        translate,
+      ),
+    ).toBe(
+      "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
     );
   });
 });

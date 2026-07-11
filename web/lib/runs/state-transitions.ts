@@ -772,10 +772,6 @@ export type CrashReason =
   | "worktree-gone"
   | "agent-session-gone"
   | "cli-not-retry-safe"
-  // M17 (ADR-056): a session-less linear (flat `steps[]`) run parked on a
-  // gate/human node — no graph mid-flow resume, so reconcile crashes it and
-  // Recover resumes from resume_target_step_id (window-(c)).
-  | "linear-gate-orphan"
   // M37 (ADR-098) T7.1: a Running child whose coordinator parent is gone.
   | "orphaned-child"
   // M37 (ADR-098) T7.1: a parked orchestrator with no resumable wake left.

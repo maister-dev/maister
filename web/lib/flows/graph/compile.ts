@@ -4,7 +4,6 @@ import type {
   GateDef,
   NodeDef,
   RunnerSlot,
-  Step,
 } from "@/lib/config.schema";
 
 import pino from "pino";
@@ -19,14 +18,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// A node in the compiled graph. It carries either the original linear `Step`
-// (compiled-linear back-compat — executed via the existing per-step runners) or
-// the manifest `NodeDef` (graph v1). Both forms expose the same traversal
-// surface: transitions + optional gates/rework/finishHuman.
 export type CompiledNode = {
   id: string;
   nodeType: NodeAttemptType;
-  source: { kind: "step"; step: Step } | { kind: "node"; node: NodeDef };
+  source: { kind: "node"; node: NodeDef };
   // decision/outcome -> target node id, or TERMINAL_TRANSITION_TARGET ("done").
   transitions: Record<string, string>;
   gates: GateDef[];
@@ -34,20 +29,16 @@ export type CompiledNode = {
   finishHuman?: NonNullable<NodeDef["finish"]>["human"];
   // M11c (ADR-032): the node's typed settings threaded onto the compiled node
   // so the per-node enforcement gate reads it without re-parsing the manifest.
-  // Compiled-linear nodes carry no settings (undefined).
   settings?: NodeDef["settings"];
   // M19 crash-recover (ADR-034): whether an operator Recover may re-dispatch
   // this node after a crash. Defaults false; only meaningful for session-less
   // node kinds (ai_coding recovers via `--resume`).
   retrySafe: boolean;
   // M12 (T3.1): typed artifact requires/produces from the NodeDef. Present only
-  // for graph-based nodes (source.kind === "node"); compiled-linear nodes leave
-  // these undefined for backward compat.
   input?: NodeDef["input"];
   output?: NodeDef["output"];
   // M38 (ADR-103): node-level dynamic-routing table. Present only for graph nodes
-  // declaring `decide`; the runtime outcome site reads it. Compiled-linear nodes
-  // leave it undefined (always "success"-routed).
+  // declaring `decide`; the runtime outcome site reads it.
   decide?: NodeDef["decide"];
   // M42 (ADR-114): the logical session this node runs in (one ACP process + one
   // continuous acp_session_id). Set ONLY for runner-bearing nodes
@@ -74,13 +65,6 @@ export type FlowGraph = {
   sessions: Map<string, CompiledSession>;
 };
 
-const STEP_TYPE_TO_NODE_TYPE: Record<Step["type"], NodeAttemptType> = {
-  cli: "cli",
-  agent: "ai_coding",
-  guard: "guard",
-  human: "human",
-};
-
 // M42 (ADR-114): node types that run as a parent ACP session (and therefore
 // belong to a session). consensus is a child-run fan-out (excluded); cli/check
 // are shell; human/form are HITL.
@@ -89,40 +73,6 @@ const RUNNER_BEARING_NODE_TYPES: ReadonlySet<NodeAttemptType> = new Set([
   "orchestrator",
   "judge",
 ]);
-
-// Compile a linear `steps[]` manifest into a chain of single-action nodes:
-// each step -> node with `transitions.success -> next` (last -> "done"), no
-// rework. Preserves behavioral parity with the pre-M11a linear runner.
-function compileLinear(steps: Step[]): FlowGraph {
-  const order = steps.map((s) => s.id);
-  const nodes = new Map<string, CompiledNode>();
-  // Legacy linear flows are single-runner-per-run: every agent step shares the
-  // implicit `default` session (M42).
-  const sessions = new Map<string, CompiledSession>();
-
-  steps.forEach((step, i) => {
-    const next =
-      i + 1 < steps.length ? steps[i + 1].id : TERMINAL_TRANSITION_TARGET;
-    const nodeType = STEP_TYPE_TO_NODE_TYPE[step.type];
-    const session = RUNNER_BEARING_NODE_TYPES.has(nodeType)
-      ? "default"
-      : undefined;
-
-    if (session) sessions.set("default", { name: "default" });
-
-    nodes.set(step.id, {
-      id: step.id,
-      nodeType,
-      source: { kind: "step", step },
-      transitions: { success: next },
-      gates: [],
-      retrySafe: step.retry_safe ?? false,
-      session,
-    });
-  });
-
-  return { entry: steps[0].id, order, nodes, sessions };
-}
 
 // M38 (ADR-103): compile/load-time verification of a node's `decide` table and
 // `output.result.on_mismatch`. Throws MaisterError("CONFIG") on any violation.
@@ -435,24 +385,12 @@ function compileGraph(
   return { entry: graphNodes[0].id, order, nodes, sessions };
 }
 
-// Normalize either manifest form into a FlowGraph. The manifest has already
-// passed `loadFlowManifest` validation (exactly one of steps/nodes, graph
-// cross-references resolve), so this is a pure structural transform.
+// Compile a validated graph-only manifest into its runtime traversal model.
 export function compileManifest(manifest: FlowYamlV1): FlowGraph {
-  if (manifest.nodes && manifest.nodes.length > 0) {
-    return compileGraph(
-      manifest.nodes,
-      manifest.verdict_calibration,
-      manifest.sessions,
-    );
-  }
-  if (manifest.steps && manifest.steps.length > 0) {
-    return compileLinear(manifest.steps);
-  }
-
-  throw new MaisterError(
-    "CONFIG",
-    "flow manifest has neither steps[] nor nodes[] to compile",
+  return compileGraph(
+    manifest.nodes,
+    manifest.verdict_calibration,
+    manifest.sessions,
   );
 }
 

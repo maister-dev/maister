@@ -90,6 +90,15 @@ export async function GET(
       throw new MaisterError("PRECONDITION", "run has no compiled flow graph");
     }
 
+    if (!loaded.compatible) {
+      return NextResponse.json({
+        compatible: false,
+        incompatibility: loaded.incompatibility,
+        messages: [],
+        usage: null,
+      });
+    }
+
     const compiled = compileManifest(loaded.manifest);
 
     if (!compiled.nodes.has(nodeId)) {
@@ -100,6 +109,7 @@ export async function GET(
     const transcript = await getRunNodeTranscript(runId, nodeId);
 
     return NextResponse.json({
+      compatible: true,
       messages: transcript?.messages ?? [],
       usage: transcript?.usage ?? null,
     });

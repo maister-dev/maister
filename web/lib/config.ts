@@ -11,7 +11,6 @@ import {
   ARTIFACT_KINDS,
   TERMINAL_TRANSITION_TARGET,
   allNodeMcpRefs,
-  flowYamlV1Schema,
   formSchemaSchema,
   maisterYamlV2Schema,
   type CapabilityKind,
@@ -22,6 +21,7 @@ import {
   type NodeMcpsConfig,
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 import {
   collectContentArtifactIds,
   isInjectableArtifactId,
@@ -375,6 +375,8 @@ export async function loadFlowManifest(
   opts?: {
     roleRefs?: readonly string[] | ReadonlySet<string>;
     capabilityRefIds?: CapabilityRefIdsInput;
+    errorCode?: "CONFIG" | "FLOW_INSTALL";
+    surface?: string;
   },
 ): Promise<FlowYamlV1> {
   let raw: string;
@@ -401,101 +403,21 @@ export async function loadFlowManifest(
     );
   }
 
-  const parsed = flowYamlV1Schema.safeParse(data);
+  const manifest = parseGraphOnlyFlowManifest(data, {
+    code: opts?.errorCode ?? "CONFIG",
+    surface: opts?.surface ?? "filesystem",
+    manifestLabel: flowYamlPath,
+  });
 
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
-      .join("; ");
+  const capabilityRefIdSets =
+    opts?.capabilityRefIds !== undefined
+      ? toCapabilityRefIdSets(opts.capabilityRefIds)
+      : undefined;
 
-    log.warn({ path: flowYamlPath, issues }, "flow.yaml validation failed");
-    throw new MaisterError(
-      "CONFIG",
-      `flow.yaml schema errors in ${flowYamlPath}: ${issues}`,
-    );
-  }
-
-  const manifest = parsed.data;
-
-  // M11a graph manifest (`nodes[]`): validate the graph, then return.
-  if (manifest.nodes) {
-    const capabilityRefIdSets =
-      opts?.capabilityRefIds !== undefined
-        ? toCapabilityRefIdSets(opts.capabilityRefIds)
-        : undefined;
-
-    validateGraphManifest(manifest, manifest.nodes, flowYamlPath, {
-      roleRefs: opts?.roleRefs,
-      capabilityRefIds: capabilityRefIdSets,
-    });
-
-    return manifest;
-  }
-
-  // Linear `steps[]` manifest (legacy path). `steps` is guaranteed present here
-  // by the exactly-one `.refine` in flowYamlV1Schema.
-  const steps = manifest.steps ?? [];
-
-  log.debug(
-    {
-      path: flowYamlPath,
-      steps: steps.length,
-      contract: {
-        compat: manifest.compat,
-        capabilities: manifest.capabilities?.length ?? 0,
-        gates: manifest.gates?.length ?? 0,
-        artifacts: manifest.artifacts?.length ?? 0,
-        externalOps: manifest.external_ops?.length ?? 0,
-      },
-    },
-    "flow.yaml loaded",
-  );
-
-  const stepIds = new Set<string>();
-
-  for (const s of steps) {
-    if (stepIds.has(s.id)) {
-      throw new MaisterError(
-        "CONFIG",
-        `Duplicate step id "${s.id}" in ${flowYamlPath}`,
-      );
-    }
-    stepIds.add(s.id);
-  }
-
-  for (const s of steps) {
-    if (s.type === "human" && s.on_reject?.goto_step) {
-      if (!stepIds.has(s.on_reject.goto_step)) {
-        throw new MaisterError(
-          "CONFIG",
-          `Step "${s.id}" on_reject.goto_step "${s.on_reject.goto_step}" not found in steps[] of ${flowYamlPath}`,
-        );
-      }
-    }
-  }
-
-  for (const s of steps) {
-    let template: string | undefined;
-
-    if (s.type === "agent") template = s.prompt;
-    else if (s.type === "cli") template = s.command;
-
-    if (template === undefined) continue;
-
-    try {
-      Mustache.parse(template);
-      log.debug(
-        { path: flowYamlPath, stepId: s.id, type: s.type },
-        "template parse-ok",
-      );
-    } catch (err) {
-      throw new MaisterError(
-        "CONFIG",
-        `flow.yaml step ${s.id}: invalid mustache template — ${asError(err).message}`,
-        { cause: asError(err) },
-      );
-    }
-  }
+  validateGraphManifest(manifest, manifest.nodes, flowYamlPath, {
+    roleRefs: opts?.roleRefs,
+    capabilityRefIds: capabilityRefIdSets,
+  });
 
   return manifest;
 }
@@ -1689,7 +1611,7 @@ export function validateFormSchemaVersion(
 // `./path` against the flow install dir, escape-guards, follows the symlink to
 // its real path (Flow bundles are symlinked into the project, so the real path
 // must be inside the install dir too), reads, JSON-parses, and validates the
-// formSchemaSchema grammar. Both the HITL `form_schema` loader (runner-human)
+// formSchemaSchema grammar. Both the HITL `form_schema` loader
 // and the node `output.result.schema` resolver call this — one read+parse+
 // validate procedure, four `CONFIG` failure modes (escape, ENOENT, bad JSON,
 // bad shape).

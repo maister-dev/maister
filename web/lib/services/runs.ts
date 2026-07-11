@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
+import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
 
 import { randomUUID } from "node:crypto";
@@ -53,6 +53,7 @@ import {
 import { normalizeNodeMcps } from "@/lib/config.schema";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
@@ -216,10 +217,7 @@ function assertCompiledFlowRolesLaunchable(args: {
       );
     }
 
-    if (
-      node.source.kind !== "node" ||
-      (node.source.node.type !== "human" && node.source.node.type !== "form")
-    ) {
+    if (node.source.node.type !== "human" && node.source.node.type !== "form") {
       continue;
     }
 
@@ -847,18 +845,22 @@ export async function* launchRunStaged(
         );
       }
     }
+    const manifest = parseGraphOnlyFlowManifest(revision.manifest, {
+      code: "CONFIG",
+      surface: "launch-service",
+      manifestLabel: `flow revision ${revision.id}`,
+      flowRefId: flow.flowRefId,
+      revision: revision.resolvedRevision,
+    });
 
     // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the
     // flow shells out to). Probed in the project repo BEFORE any worktree/session
     // exists — a missing binary fails clean as PRECONDITION here, not late
     // mid-run after token spend. Check-only: MAIster never auto-installs (trust);
     // each requirement's `hint` carries the remediation. No-op when none declared.
-    await checkFlowRequirements(
-      (revision.manifest as FlowYamlV1).requirements,
-      project.repoPath,
-    );
+    await checkFlowRequirements(manifest.requirements, project.repoPath);
 
-    const compiled = compileManifest(revision.manifest as FlowYamlV1);
+    const compiled = compileManifest(manifest);
     const runtimeRows = await _db
       .select()
       .from(platformRuntimeSettings)
@@ -905,7 +907,7 @@ export async function* launchRunStaged(
       sessionSlots[0].name;
     const sessionResolutions = resolveRunSessions({
       sessions: sessionSlots,
-      runnerProfiles: (revision.manifest as FlowYamlV1).runner_profiles,
+      runnerProfiles: manifest.runner_profiles,
       bindings,
       // The single launch-dialog override applies to the run's primary session.
       ephemeralOverrides: input.runnerId
@@ -1086,7 +1088,7 @@ export async function* launchRunStaged(
       // per-node M14 cap-ref check, before any side-effect. The
       // known-but-unmaterializable required-MCP refusal is T-C8.
       const unknownPackageMcp = firstUnknownPackageMcpRef(
-        (revision.manifest as FlowYamlV1).mcps,
+        manifest.mcps,
         capabilityRefIds.mcp,
       );
 
@@ -1097,7 +1099,7 @@ export async function* launchRunStaged(
         );
       }
 
-      for (const ref of (revision.manifest as FlowYamlV1).mcps ?? []) {
+      for (const ref of manifest.mcps ?? []) {
         requiredMcpRefs.add(ref);
       }
 

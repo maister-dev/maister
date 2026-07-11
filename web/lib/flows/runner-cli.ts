@@ -1,7 +1,6 @@
 import "server-only";
 
 import type { FlowContext, StepResult } from "./types";
-import type { GuardConfig } from "./guards";
 
 import { execFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
@@ -10,7 +9,6 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
-import { appendGuardMetric, evaluateGuards } from "./guards";
 import { cliOutputFilePath } from "./graph/node-output";
 import { renderStrict } from "./templating";
 
@@ -29,8 +27,6 @@ export type CliStepLike = {
   id: string;
   type: "cli";
   command: string;
-  pre_guards?: GuardConfig[];
-  post_guards?: GuardConfig[];
 };
 
 export type RunCliStepCtx = {
@@ -75,19 +71,6 @@ export async function runCliStep(
     },
     "cli step start",
   );
-
-  await appendGuardMetric({
-    runtimeRoot: ctx.runtimeRoot,
-    projectSlug: ctx.projectSlug,
-    runId: ctx.runId,
-    stepId: ctx.stepId,
-    kind: "pre",
-    metrics: evaluateGuards(step.pre_guards, {
-      durationMs: 0,
-      stdout: "",
-      costTokens: 0,
-    }),
-  });
 
   let outputFile: string | undefined;
 
@@ -159,19 +142,6 @@ export async function runCliStep(
 
   const durationMs = Date.now() - startedAt;
   const ok = !aborted && exitCode === 0;
-
-  await appendGuardMetric({
-    runtimeRoot: ctx.runtimeRoot,
-    projectSlug: ctx.projectSlug,
-    runId: ctx.runId,
-    stepId: ctx.stepId,
-    kind: "post",
-    metrics: evaluateGuards(step.post_guards, {
-      durationMs,
-      stdout,
-      costTokens: 0,
-    }),
-  });
 
   log.info(
     {

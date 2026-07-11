@@ -3,10 +3,9 @@ import "server-only";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
-import type { GuardConfig } from "./guards";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
-import type { AcpSessionState, FlowContext, StepResult } from "./types";
+import type { FlowContext, StepResult } from "./types";
 
 import { randomUUID } from "node:crypto";
 
@@ -23,7 +22,6 @@ import {
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import { hitlRequests, nodeAttempts, runs } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   cancelPermission,
@@ -54,10 +52,8 @@ const STDOUT_CAP_BYTES = 1024 * 1024;
 export type AgentStepLike = {
   id: string;
   type: "agent";
-  mode: "new-session" | "slash-in-existing";
+  mode: "new-session";
   prompt: string;
-  pre_guards?: GuardConfig[];
-  post_guards?: GuardConfig[];
 };
 
 // FIXME(any): dual drizzle-orm peer-dep variants (mirrors lib/scheduler.ts).
@@ -90,7 +86,6 @@ export type RunAgentStepCtx = {
   // supervisor for per-session cost/event attribution.
   sessionName?: string;
   context: FlowContext;
-  sessionState: AcpSessionState;
   capabilityProfilePath?: string;
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
@@ -134,28 +129,6 @@ const defaultSupervisor: SupervisorApi = {
   deliverPermission,
   checkpointSession,
 };
-
-// M14 T4.5: a long-living (slash-in-existing) session may not silently serve a
-// second AI node whose resolved capability profile differs from the one the
-// session was materialized with. Allow-list: reuse permitted iff the digests
-// are equal, or either side is undefined (a non-capability node, or the first
-// materialized node seeding a fresh session). Mismatch ⇒ CONFIG: the Flow author
-// must declare a session boundary.
-export function assertSessionProfileConsistent(
-  existingDigest: string | undefined,
-  incomingDigest: string | undefined,
-): void {
-  if (
-    existingDigest !== undefined &&
-    incomingDigest !== undefined &&
-    existingDigest !== incomingDigest
-  ) {
-    throw new MaisterError(
-      "CONFIG",
-      `capability profile changed mid-session (session digest ${existingDigest} != node digest ${incomingDigest}); a long-living session requires a declared session boundary`,
-    );
-  }
-}
 
 function synthesizePermissionPrompt(toolCall: unknown): string {
   const tc = (toolCall ?? {}) as { title?: string };
@@ -753,7 +726,6 @@ export async function runAgentStep(
       stepId: ctx.stepId,
       mode: step.mode,
       promptLen: resolvedPrompt.length,
-      currentSessionId: ctx.sessionState.currentSessionId,
     },
     "agent step start",
   );
@@ -798,11 +770,7 @@ export async function runAgentStep(
     }
   }
 
-  if (step.mode === "new-session") {
-    return runNewSession(step, ctx, supervisorApi, resolvedPrompt);
-  }
-
-  return runSlashInExisting(step, ctx, supervisorApi, resolvedPrompt);
+  return runNewSession(step, ctx, supervisorApi, resolvedPrompt);
 }
 
 async function runNewSession(
@@ -1008,178 +976,4 @@ async function runNewSession(
         );
     }
   }
-}
-
-async function runSlashInExisting(
-  _step: AgentStepLike,
-  ctx: RunAgentStepCtx,
-  api: SupervisorApi,
-  resolvedPrompt: string,
-): Promise<StepResult & { acpSessionId?: string }> {
-  const startedAt = Date.now();
-
-  if (ctx.sessionState.currentSessionId === null) {
-    const session = await api.createSession({
-      runId: ctx.runId,
-      projectSlug: ctx.projectSlug,
-      worktreePath: ctx.worktreePath,
-      stepId: ctx.stepId,
-      sessionName: ctx.sessionName,
-      executor: executorToSupervisorInput(ctx.executor),
-      runner: ctx.runner,
-      capabilityProfilePath: ctx.capabilityProfilePath,
-      adapterLaunch: ctx.adapterLaunch,
-      mcpServers: ctx.mcpServers,
-      autoApprovePermissions: ctx.autoApprovePermissions,
-      hooksConfig: ctx.hooksConfig,
-      enforcementProfile: ctx.enforcementProfile,
-    });
-
-    ctx.sessionState.currentSessionId = session.sessionId;
-    // First-MATERIALIZED pin: the session is bound to the first capability
-    // profile digest it actually carries. A profile-LESS first node seeds this
-    // `undefined`; the reuse branch below then ADOPTS the first reuse that
-    // carries a digest (the `??=`), so the consistency guard tracks
-    // first-materialized rather than first-seed. (Dormant today — the graph
-    // runner forces new-session, so reuse is unreachable; M14 T4.5.)
-    ctx.sessionState.profileDigest = ctx.profileDigest;
-    log.info(
-      {
-        runId: ctx.runId,
-        stepId: ctx.stepId,
-        sessionId: session.sessionId,
-        acpSessionId: session.acpSessionId,
-      },
-      "slash-in-existing primary session seeded",
-    );
-  } else {
-    assertSessionProfileConsistent(
-      ctx.sessionState.profileDigest,
-      ctx.profileDigest,
-    );
-    // Adopt the first-materialized digest: once a permitted reuse arrives with a
-    // defined digest on a session that was seeded profile-less, pin to it so a
-    // LATER node with a different profile is rejected instead of comparing
-    // against `undefined` and silently slipping through (M14 T4.5).
-    ctx.sessionState.profileDigest ??= ctx.profileDigest;
-  }
-
-  const sessionId = ctx.sessionState.currentSessionId;
-  const consumer = startEventConsumer(sessionId, api, {
-    db: ctx.db ?? getDb(),
-    runId: ctx.runId,
-    stepId: ctx.stepId,
-    supervisorSessionId: sessionId,
-    cancelPermission: api.cancelPermission,
-    deliverPermission: api.deliverPermission,
-  });
-
-  let promptResult: PromptResult;
-
-  try {
-    promptResult = await api.sendPrompt(sessionId, {
-      stepId: ctx.stepId,
-      nodeAttemptId: ctx.nodeAttemptId,
-      prompt: resolvedPrompt,
-    });
-  } finally {
-    consumer.abort.abort();
-    await consumer.done;
-  }
-
-  // M8 Codex review fix #1: see runNewSession for rationale.
-  const persistFailure = consumer.permissionPersistFailure();
-  const checkpointed = consumer.checkpointReasonObserved();
-  const hookEscalated = consumer.hookTripEscalated();
-  const hookEscalateFailed = consumer.hookTripEscalateFailed();
-
-  // ADR-108 (M40): see runNewSession — escalateHookTrip rejected after the
-  // pre-tx checkpoint; the run is stranded Running with no HITL. Surface CRASH.
-  if (hookEscalateFailed) {
-    log.error(
-      { runId: ctx.runId, stepId: ctx.stepId, sessionId },
-      "hook_trip escalation failed — STEP CRASH (stranded run)",
-    );
-
-    return {
-      ok: false,
-      stdout: consumer.snapshot(),
-      vars: {},
-      durationMs: Date.now() - startedAt,
-      errorCode: "CRASH" as const,
-      acpSessionId: sessionId,
-    };
-  }
-
-  // ADR-108 (M40): see runNewSession — a guardrail trip leaves the run
-  // NeedsInput; surface STEP_CHECKPOINTED without markCheckpointedFromExit.
-  if (hookEscalated) {
-    log.info(
-      {
-        runId: ctx.runId,
-        stepId: ctx.stepId,
-        stopReason: promptResult.stopReason,
-        sessionId,
-      },
-      "slash-in-existing step halted by guardrail trip — STEP_CHECKPOINTED (NeedsInput)",
-    );
-
-    return {
-      ok: false,
-      stdout: consumer.snapshot(),
-      vars: {},
-      durationMs: Date.now() - startedAt,
-      errorCode: "STEP_CHECKPOINTED" as const,
-      acpSessionId: sessionId,
-    };
-  }
-
-  if (checkpointed) {
-    await markCheckpointedFromExit(ctx.runId, { db: ctx.db ?? getDb() });
-    log.info(
-      {
-        runId: ctx.runId,
-        stepId: ctx.stepId,
-        stopReason: promptResult.stopReason,
-        sessionId,
-      },
-      "slash-in-existing step paused by supervisor checkpoint — STEP_CHECKPOINTED",
-    );
-
-    return {
-      ok: false,
-      stdout: consumer.snapshot(),
-      vars: {},
-      durationMs: Date.now() - startedAt,
-      errorCode: "STEP_CHECKPOINTED" as const,
-      acpSessionId: sessionId,
-    };
-  }
-
-  const ok = !persistFailure && promptResult.stopReason === "end_turn";
-  const errorCode = persistFailure
-    ? ("CRASH" as const)
-    : ok
-      ? undefined
-      : ("ACP_PROTOCOL" as const);
-
-  if (persistFailure) {
-    log.error(
-      {
-        runId: ctx.runId,
-        stepId: ctx.stepId,
-        reason: persistFailure.reason,
-      },
-      "permission-persistence failure propagated to step result",
-    );
-  }
-
-  return {
-    ok,
-    stdout: consumer.snapshot(),
-    vars: {},
-    durationMs: Date.now() - startedAt,
-    errorCode,
-    acpSessionId: sessionId,
-  };
 }

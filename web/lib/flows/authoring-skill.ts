@@ -48,9 +48,9 @@ rules/                    # rule capability descriptors
 schemas/                  # JSON schemas referenced by form/human nodes
 \`\`\`
 
-The **canonical runtime DSL is the typed-node graph** (\`nodes:\` with named
-\`transitions\`), engine \`1.3.0+\`. A legacy linear \`steps:\` list still parses but
-is degenerate — author new flows as graphs.
+The runtime DSL is the typed-node graph (\`nodes:\` with named
+\`transitions\`). Engine \`3.0.0+\` refuses legacy \`steps:\` manifests;
+republish them with a non-empty \`nodes:\` graph.
 
 ## The flow.yaml graph (the part you edit most)
 

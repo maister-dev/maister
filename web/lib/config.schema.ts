@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import {
+  classifyFlowManifestShape,
+  LEGACY_STEPS_REFUSAL_MESSAGE,
+} from "@/lib/flows/manifest-shape";
 import { ADAPTER_IDS, PROVIDER_KINDS } from "@/lib/acp-runners/adapter-support";
 
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
@@ -253,81 +257,6 @@ export const maisterYamlV2Schema = z.object({
   flows: z.array(flowEntrySchema),
 });
 
-const guardConfigSchema = z
-  .object({
-    cost: z.number().optional(),
-    time: z.number().optional(),
-    regex: z.string().optional(),
-  })
-  .passthrough()
-  .refine(
-    (v) =>
-      v.cost !== undefined || v.time !== undefined || v.regex !== undefined,
-    {
-      message: "guard step must declare at least one of cost/time/regex",
-    },
-  );
-
-const cliStepSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.literal("cli"),
-    command: z.string().min(1),
-    pre_guards: z.array(guardConfigSchema).optional(),
-    post_guards: z.array(guardConfigSchema).optional(),
-    // M19 crash-recover opt-in — see `nodeCommon.retry_safe`.
-    retry_safe: z.boolean().optional(),
-  })
-  .passthrough();
-
-const agentStepSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.literal("agent"),
-    mode: z.enum(["new-session", "slash-in-existing"]),
-    prompt: z.string().min(1),
-    pre_guards: z.array(guardConfigSchema).optional(),
-    post_guards: z.array(guardConfigSchema).optional(),
-    retry_safe: z.boolean().optional(),
-  })
-  .passthrough();
-
-const guardStepSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.literal("guard"),
-    cost: z.number().optional(),
-    time: z.number().optional(),
-    regex: z.string().optional(),
-    retry_safe: z.boolean().optional(),
-  })
-  .passthrough();
-
-const humanStepSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.literal("human"),
-    form_schema: z.string().min(1),
-    on_reject: z
-      .object({
-        goto_step: z.string().min(1),
-        comments_var: z.string().min(1).optional(),
-      })
-      .passthrough()
-      .optional(),
-    retry_safe: z.boolean().optional(),
-    // M17 ADR-054: flow-author-declared criticality for this HITL step.
-    criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
-  })
-  .passthrough();
-
-export const stepSchema = z.discriminatedUnion("type", [
-  cliStepSchema,
-  agentStepSchema,
-  guardStepSchema,
-  humanStepSchema,
-]);
-
 // Engine/API compatibility range a Flow package declares. Enforced (engine +
 // schemaVersion) at enablement in M10; see ADR-021.
 export const flowCompatSchema = z
@@ -355,9 +284,8 @@ export const ARTIFACT_KINDS = [
   "plan",
 ] as const;
 
-// --- M11a: Flow graph v1 (`nodes[]`) — ADR-026 ---------------------------
-// A graph manifest declares `nodes[]` instead of `steps[]` (mutually
-// exclusive). Cross-reference + cycle validation lives in `loadFlowManifest`
+// --- Flow graph v1 (`nodes[]`) — ADR-026 ---------------------------------
+// Cross-reference + cycle validation lives in `loadFlowManifest`
 // (`config.ts`); zod here covers shape only.
 
 // Reserved transition target meaning "the run is done" (reaches `Review`). A
@@ -1247,66 +1175,73 @@ export const flowRequirementSchema = z
 
 export type FlowRequirement = z.infer<typeof flowRequirementSchema>;
 
-export const flowYamlV1Schema = z
-  .object({
-    schemaVersion: z.literal(1),
-    name: z.string().min(1),
-    metadata: flowMetadataSchema.optional(),
-    recommended_executor: z.never().optional(),
-    runner_profiles: z
-      .record(capabilityRefIdSchema, flowRunnerProfileSchema)
-      .optional(),
-    // M42 (ADR-114): named, runner-bearing sessions. A node joins one via
-    // `session: <name>`; the session `runner` is a profile-ref or inline unified
-    // runner config. Undefined-ref / consensus-excluded / engine-floor checks
-    // run in loadFlowManifest (config.ts). Requires compat.engine_min >= 2.0.0.
-    sessions: z
-      .record(
-        sessionNameSchema,
-        z.object({ runner: runnerSlotSchema }).strict(),
-      )
-      .optional(),
-    setup: z.string().min(1).optional(),
-    // Package contract (M10): recorded + displayed as opaque metadata; only
-    // `compat` and `schemaVersion` are enforced today. Semantic validation of
-    // capabilities/gates/artifacts/external_ops lands with M11+ (see ADR-021).
-    compat: flowCompatSchema.optional(),
-    capabilities: z.array(z.string().min(1)).optional(),
-    gates: z.array(z.string().min(1)).optional(),
-    artifacts: z.array(z.string().min(1)).optional(),
-    external_ops: z.array(z.string().min(1)).optional(),
-    // M27/T-C6 (ADR-070): package-level REQUIRED MCP declaration — capability
-    // ref ids the flow package needs. The hard-gate rejects unknown refs
-    // (CONFIG); launch refuses a required MCP that cannot materialize (T-C8).
-    mcps: z.array(z.string().min(1)).optional(),
-    // M15: flow-level calibration default, folded into each ai_judgment/skill_check
-    // gate's effective calibration at compile time.
-    verdict_calibration: z
-      .object({ confidence_min: z.number().min(0).max(1).optional() })
-      .strict()
-      .optional(),
-    // M30 (ADR-081): flow-level defaults — today only the rework session
-    // policy. Lowest declared precedence (above the engine default only).
-    defaults: z
-      .object({ session_policy: sessionPolicySchema.optional() })
-      .strict()
-      .optional(),
-    // Exactly one of `steps` (linear) or `nodes` (graph v1) is present —
-    // enforced by the .refine below (ADR-026). `steps` was required before
-    // M11a; it is now optional so the refine can reject both-absent.
-    steps: z.array(stepSchema).min(1).optional(),
-    nodes: z.array(nodeSchema).min(1).optional(),
-    // Additive presentation metadata (ADR-064); runner/engine never reads it.
-    presentation: flowPresentationSchema.optional(),
-    // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the
-    // flow shells out to). Probed before worktree/session creation; additive +
-    // launch-checked (never read at compile) → no engine floor.
-    requirements: z.array(flowRequirementSchema).optional(),
-  })
-  .passthrough()
-  .refine((d) => (d.steps ? 1 : 0) + (d.nodes ? 1 : 0) === 1, {
-    message: "flow manifest must declare exactly one of steps[] or nodes[]",
+const graphOnlyManifestInputSchema = z.unknown().superRefine((value, ctx) => {
+  const shape = classifyFlowManifestShape(value);
+
+  if (shape !== "legacy_steps" && shape !== "mixed") return;
+
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: LEGACY_STEPS_REFUSAL_MESSAGE,
+    fatal: true,
   });
+});
+
+export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      name: z.string().min(1),
+      metadata: flowMetadataSchema.optional(),
+      recommended_executor: z.never().optional(),
+      runner_profiles: z
+        .record(capabilityRefIdSchema, flowRunnerProfileSchema)
+        .optional(),
+      // M42 (ADR-114): named, runner-bearing sessions. A node joins one via
+      // `session: <name>`; the session `runner` is a profile-ref or inline unified
+      // runner config. Undefined-ref / consensus-excluded / engine-floor checks
+      // run in loadFlowManifest (config.ts). Requires compat.engine_min >= 2.0.0.
+      sessions: z
+        .record(
+          sessionNameSchema,
+          z.object({ runner: runnerSlotSchema }).strict(),
+        )
+        .optional(),
+      setup: z.string().min(1).optional(),
+      // Package contract (M10): recorded + displayed as opaque metadata; only
+      // `compat` and `schemaVersion` are enforced today. Semantic validation of
+      // capabilities/gates/artifacts/external_ops lands with M11+ (see ADR-021).
+      compat: flowCompatSchema.optional(),
+      capabilities: z.array(z.string().min(1)).optional(),
+      gates: z.array(z.string().min(1)).optional(),
+      artifacts: z.array(z.string().min(1)).optional(),
+      external_ops: z.array(z.string().min(1)).optional(),
+      // M27/T-C6 (ADR-070): package-level REQUIRED MCP declaration — capability
+      // ref ids the flow package needs. The hard-gate rejects unknown refs
+      // (CONFIG); launch refuses a required MCP that cannot materialize (T-C8).
+      mcps: z.array(z.string().min(1)).optional(),
+      // M15: flow-level calibration default, folded into each ai_judgment/skill_check
+      // gate's effective calibration at compile time.
+      verdict_calibration: z
+        .object({ confidence_min: z.number().min(0).max(1).optional() })
+        .strict()
+        .optional(),
+      // M30 (ADR-081): flow-level defaults — today only the rework session
+      // policy. Lowest declared precedence (above the engine default only).
+      defaults: z
+        .object({ session_policy: sessionPolicySchema.optional() })
+        .strict()
+        .optional(),
+      nodes: z.array(nodeSchema).min(1),
+      // Additive presentation metadata (ADR-064); runner/engine never reads it.
+      presentation: flowPresentationSchema.optional(),
+      // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the
+      // flow shells out to). Probed before worktree/session creation; additive +
+      // launch-checked (never read at compile) → no engine floor.
+      requirements: z.array(flowRequirementSchema).optional(),
+    })
+    .passthrough(),
+);
 
 // M26 (ADR-063): the grammar gains a nested `object` type with recursive
 // `fields`, so a structured node output can declare a tree. Recursion needs an
@@ -1375,7 +1310,6 @@ export type FlowMetadata = z.infer<typeof flowMetadataSchema>;
 export type FlowPresentation = z.infer<typeof flowPresentationSchema>;
 export type FlowNodePresentation = z.infer<typeof flowNodePresentationSchema>;
 export type FlowCompat = z.infer<typeof flowCompatSchema>;
-export type Step = z.infer<typeof stepSchema>;
 export type FormSchema = z.infer<typeof formSchemaSchema>;
 export type NodeDef = z.infer<typeof nodeSchema>;
 export type GateDef = z.infer<typeof gateSchema>;

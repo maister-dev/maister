@@ -74,7 +74,14 @@ const LAYOUT = { plan: { x: 10, y: 20 } };
 const MANIFEST = {
   schemaVersion: 1,
   name: "aif",
-  steps: [],
+  nodes: [
+    {
+      id: "plan",
+      type: "cli",
+      action: { command: "true" },
+      transitions: { success: "done" },
+    },
+  ],
   presentation: { nodes: [{ id: "plan", x: 10, y: 20 }] },
 };
 
@@ -111,6 +118,8 @@ beforeEach(() => {
   vi.mocked(loadRunManifest).mockResolvedValue({
     flowId: "flow-1",
     projectId: "project-1",
+    compatible: true,
+    incompatibility: null,
     manifest: MANIFEST as never,
   } as never);
 

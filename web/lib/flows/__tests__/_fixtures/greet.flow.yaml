@@ -1,8 +1,13 @@
 schemaVersion: 1
 name: Greet (fixture)
-# M11c (AC-6 back-compat): a settings-less linear flow. Absence of `settings`
+compat:
+  engine_min: 3.0.0
+# M11c (AC-6): a settings-less graph flow. Absence of `settings`
 # MUST NEVER trigger an enforcement refusal.
-steps:
+nodes:
   - id: greet
     type: cli
-    command: "echo hello"
+    action:
+      command: "echo hello"
+    transitions:
+      success: done
