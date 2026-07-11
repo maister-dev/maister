@@ -36,12 +36,23 @@ let agentsRoot: string;
 // agent-session spawn microtask never fires — the run row stays a stable
 // Pending with every delegation column set at INSERT.
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    listSessions: vi.fn(async () => []),
+    deleteSession: vi.fn(async () => undefined),
+  };
+});
 vi.mock("@/lib/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/scheduler")>();
 
   return {
     ...actual,
     tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+    promoteNextPending: vi.fn(async () => null),
   };
 });
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {

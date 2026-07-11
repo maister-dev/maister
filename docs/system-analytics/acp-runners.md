@@ -170,7 +170,7 @@ pending, skipped, stale, or failed read-only-session evidence refuses the launch
 with `MaisterError("EXECUTOR_UNAVAILABLE")` before worktree/cwd creation, run
 insertion, or token issuance.
 
-ADR-129 hardens this evidence contract (Designed). Evidence is keyed by adapter
+ADR-129 hardens this evidence contract (Implemented). Evidence is keyed by adapter
 id, never `capability_agent`; the web and supervisor descriptor mirrors must
 agree. Cache v1 remains valid for generic readiness but its nested read-only
 evidence is `stale`. Cache v2 adds a probe-contract version. Required evidence
@@ -179,15 +179,13 @@ is not future-dated, and age is strictly less than seven days. The supported
 producer invalidates old nested evidence before probing and writes `ok` only
 after read allow, write deny, and unknown deny were all observed through ACP.
 
-## Per-adapter materialization target (Designed — capability composer, FR-C1/T0.4)
+## Per-adapter materialization target (Implemented — capability composer, FR-C1/T0.4)
 
 Each adapter family declares **how** MAIster places a run's materialized
 capabilities (skills, subagents, MCP, config) so the spawned agent discovers
-them. The descriptor lives on the supervisor adapter registry
-(`supervisor/src/adapter-registry.ts`) and is read **table-driven** by the
-web-side materializer (`web/lib/capabilities/agent-map.ts`) and the cross-runner
-token normalizer (FR-E2 — surface forms derive from `supports`, not a
-claude/codex constant). Shape:
+them. Web and supervisor own separate descriptor mirrors; contract tests keep
+their adapter-id capability/evidence matrix aligned without a cross-process
+runtime import. The web materializer dispatches from the web descriptor.
 
 ```ts
 materialization: {
@@ -213,6 +211,13 @@ per-adapter smoke in T3.5 and tagged accordingly.
 | `mimo`     | `home-redirect` | `XDG_CONFIG_HOME`/`XDG_DATA_HOME` → `mimocode` | opencode-shaped; skills via `OPENCODE_SKILLS` / claude-compat _(T3.5)_                                                             | ✓ / ✗ / ✓ / ✓                     |
 
 Notes:
+
+- Read-only L2 is descriptor-selected: Claude uses its bounded
+  `settings.local.json` tract; Codex, Gemini, OpenCode, and MiMo select `none`.
+  L1 permission arbitration and L3 dirt detection remain load-bearing.
+- The OpenCode native-persona investigation did not establish a bounded,
+  file-only runtime contract. ADR-129 therefore ships no OpenCode persona tract;
+  only its proven skill-home materialization is active.
 
 - **codex** does NOT auto-read cwd `.codex/skills` yet (openai/codex#21907) → it
   MUST use `home-redirect` with a **composed** `CODEX_HOME`: symlink the global

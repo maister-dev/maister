@@ -245,7 +245,9 @@ read-only evidence, a mismatched probe version, a future `checkedAt`, or evidenc
 aged seven days or more is reported as diagnostic `stale`; generic v1 smoke
 remains readable for ordinary readiness. Starting a new read-only probe
 invalidates the targeted old evidence before adapter work begins, so a crashed
-or partial probe cannot leave a reusable `ok` behind.
+or partial probe cannot leave a reusable `ok` behind. Initialize, session
+creation, and each permission probe are independently bounded to ten seconds;
+a timeout is an error and never produces fresh eligibility evidence.
 
 `envRefs` contains a fixed safe catalog of known runner env-ref names plus the
 comma-separated names in `MAISTER_DIAGNOSTIC_ENV_REFS`. It reports presence

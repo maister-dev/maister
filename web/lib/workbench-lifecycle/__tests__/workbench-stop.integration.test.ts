@@ -30,6 +30,16 @@ let stopThenArchive: typeof import("@/lib/workbench-lifecycle/service").stopThen
 let stopScratchWorkbench: typeof import("@/lib/scratch-runs/service").stopScratchWorkbench;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    listSessions: vi.fn(async () => []),
+    deleteSession: vi.fn(async () => undefined),
+  };
+});
 // authz is dynamically imported by the default workbench deps; no-op it so the
 // integration test exercises the DB-real stop path without a live session.
 vi.mock("@/lib/authz", () => ({

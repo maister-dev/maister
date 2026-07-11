@@ -113,13 +113,14 @@ The implementation spec created in Task 0.1 is the normative source. It uses the
 | `Q1` | Every behavior change follows RED -> GREEN -> refactor with runnable, non-trivial, minimally overlapping tests. | 0.3, 1.1-1.3, 5.1-5.2 | Spec traceability + verification evidence. |
 | `Q2` | Implementation follows strict typing, SOLID, KISS, DRY, project boundaries, structured logging, and `MaisterError` domain failures. | 2.1-5.2 | Architecture/rules + final review. |
 
-## Commit Plan
+## Phase Commits
 
-- **Commit 1** (Tasks 0.1-0.3): `docs: freeze agent parity hardening specification`
-- **Commit 2** (Tasks 1.1-2.4): `fix(runners): harden read-only adapter evidence`
-- **Commit 3** (Tasks 1.2, 3.1-3.3): `fix(agents): make package materialization lifecycle-safe`
-- **Commit 4** (Tasks 1.3, 4.1-4.3): `fix(agents): complete strict capability profile handling`
-- **Commit 5** (Tasks 5.1-6.2): `chore(agents): refactor and verify hardening contracts`
+- **Phase 0** (`9801ef71`, Tasks 0.1-0.3): `docs: freeze agent parity hardening spec`
+- **Phases 1-2** (`95e8366e`, Tasks 1.1 and 2.1-2.4): `feat: harden runner read-only parity`
+- **Phase 3** (`f4380b94`, Tasks 1.2 and 3.1-3.3): `feat: scope package materialization to runs`
+- **Phase 4** (`a329243b`, Tasks 1.3 and 4.1-4.3): `feat: enforce strict agent capability profiles`
+- **Phase 5** (`ce4772c9`, Tasks 5.1-5.2): `refactor: harden agent delivery boundaries`
+- **Phase 6** (Task 6.1 and Task 6.2 evidence): `test: record agent parity verification`
 
 ## Tasks
 
@@ -713,7 +714,7 @@ Dependencies: Tasks 3.1-4.3. May run in parallel with Task 5.1.
 
 #### Task 6.1 - Synchronize docs and audit unchanged contracts
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -788,11 +789,11 @@ pnpm --filter @maister/mcp exec eslint .
 Live smoke where binaries and credentials exist:
 
 ```bash
-pnpm --filter @maister/supervisor smoke:acp -- --read-only-session claude
-pnpm --filter @maister/supervisor smoke:acp -- --read-only-session codex
-pnpm --filter @maister/supervisor smoke:acp -- --read-only-session gemini
-pnpm --filter @maister/supervisor smoke:acp -- --read-only-session opencode
-pnpm --filter @maister/supervisor smoke:acp -- --read-only-session mimo
+pnpm --filter @maister/supervisor smoke:acp --read-only-session claude
+pnpm --filter @maister/supervisor smoke:acp --read-only-session codex
+pnpm --filter @maister/supervisor smoke:acp --read-only-session gemini
+pnpm --filter @maister/supervisor smoke:acp --read-only-session opencode
+pnpm --filter @maister/supervisor smoke:acp --read-only-session mimo
 ```
 
 Deliverables:
@@ -813,6 +814,38 @@ Acceptance:
 - Live-smoke unavailable is recorded per adapter and cannot be used to produce fresh `ok` evidence.
 - Check-only ESLint is used; no repo-wide `--fix` command runs.
 - No trivial test, redundant Cartesian test family, unchecked acceptance criterion, or undocumented contract change remains.
+
+Verification evidence (2026-07-11):
+
+- Green: focused web unit 158/158; focused supervisor unit 62/62; parameterized
+  supervisor ACP wire integration 19/19; feature real-Postgres integration
+  37/37; delegation real-Postgres integration 15/15.
+- Green: full web unit 6114/6114; an escalated full supervisor run completed
+  unit 327/327 and integration 95/95; MCP 201/201; web, supervisor, and MCP
+  typecheck; check-only ESLint; docs, contracts, Mermaid, and ADR-anchor
+  validation. After adding the smoke timeout, its focused cache/script gate
+  passed 10/10. A non-escalated supervisor unit rerun reached 321 passes, while
+  six unrelated Fastify route cases were denied permission to bind
+  `127.0.0.1`; the earlier escalated run had passed those six.
+- Current local `main` (`5916d4ea8305`) is the branch merge base and remains an
+  ancestor of this work. ADR-128 is still its latest decision, so ADR-129 has no
+  numbering collision; no migration number or database artifact was added.
+- Full web integration reached 2214/2223 green. Its nine failures were isolated
+  to seven `agent-flow-launch` and two `workbench-stop` cases making unintended
+  live supervisor calls. Those suites and the delegation suite now use explicit
+  supervisor test doubles; all 29 corrected scenarios are discoverable, and the
+  delegation suite passed 15/15 after correction.
+- Blocker: the required real-Postgres rerun of the corrected
+  `agent-flow-launch` and `workbench-stop` suites could not be executed because
+  the managed environment rejected the required container-runtime escalation
+  after its execution-usage limit was reached. Environment-blocked is not pass,
+  so this task and the final go/no-go remain pending.
+- Live smoke produced no cache or fresh eligibility evidence. Claude, MiMo, and
+  OpenCode initialized but did not emit the required permission observations;
+  Gemini reported an unsupported installed client; Codex stalled. ACP smoke
+  operations are now independently bounded to ten seconds, and the focused
+  smoke/cache unit gate passes 10/10. Required-evidence adapters therefore stay
+  fail-closed.
 
 Dependencies: Task 6.1.
 

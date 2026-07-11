@@ -50,7 +50,16 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
 
   return {
     ...actual,
-    checkSupervisorHealth: vi.fn(async () => ({ kind: "available" as const })),
+    checkSupervisorHealth: vi.fn(async () => ({
+      kind: "ready" as const,
+      health: {
+        status: "ready" as const,
+        version: "test",
+        uptimeMs: 1,
+        checkedAt: "2026-07-11T00:00:00.000Z",
+        sessions: { live: 0, exited: 0, crashed: 0 },
+      },
+    })),
   };
 });
 

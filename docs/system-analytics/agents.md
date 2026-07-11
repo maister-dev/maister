@@ -199,7 +199,7 @@ the same capability member roots also materialize `agents/` into
 `.claude/agents/`; non-Claude adapters omit subagents because their descriptor
 surface does not support them.
 
-ADR-129 ownership hardening (Designed) replaces the singleton package-skills
+ADR-129 ownership hardening (Implemented) replaces the singleton package-skills
 manifest with a cwd ownership index plus per-run records under
 `.maister/agent-materialization/`. Records transition
 `preparing -> active -> releasing` under a bounded cross-process lock. Paths are

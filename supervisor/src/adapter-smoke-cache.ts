@@ -466,6 +466,7 @@ async function persistAdapterSmokeCache(
   await mkdir(dirname(cachePath), { recursive: true });
 
   const temporaryPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
+
   await writeFile(
     temporaryPath,
     `${JSON.stringify({ version: 2, adapters }, null, 2)}\n`,

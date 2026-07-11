@@ -119,6 +119,7 @@ const WRITE_LIKE_KINDS = new Set([
   "move",
   "execute",
 ]);
+const SMOKE_OPERATION_TIMEOUT_MS = 10_000;
 
 // ADR-130 capability_guard smoke (DES-8): prove `requestPermission` fires per
 // write-class call under permissionPolicy=default AND that `params.toolCall`
@@ -147,6 +148,27 @@ const noopClient: acp.Client = {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+async function withSmokeTimeout<T>(
+  operation: Promise<T>,
+  label: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out`)),
+          SMOKE_OPERATION_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function toolCallKind(toolCall: unknown): string | null {
@@ -364,10 +386,13 @@ async function smokeReadOnlySession(args: {
 }): Promise<ReadOnlySessionSmokeResult> {
   try {
     for (const probe of READ_ONLY_SESSION_PROBES) {
-      await args.connection.prompt({
-        sessionId: args.sessionId,
-        prompt: [{ type: "text", text: probe.prompt }],
-      });
+      await withSmokeTimeout(
+        args.connection.prompt({
+          sessionId: args.sessionId,
+          prompt: [{ type: "text", text: probe.prompt }],
+        }),
+        `${args.adapter} ${probe.kind} permission probe`,
+      );
     }
   } catch (err) {
     return {
@@ -582,11 +607,17 @@ export async function smokeAdapter(
       ) as unknown as NodeReadableStream<Uint8Array>,
     );
     const connection = new acp.ClientSideConnection(() => client, stream);
-    const init = await connection.initialize({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: clientCapabilitiesForAdapter(adapter),
-    });
-    const session = await connection.newSession({ cwd, mcpServers: [] });
+    const init = await withSmokeTimeout(
+      connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: clientCapabilitiesForAdapter(adapter),
+      }),
+      `${adapter} initialize`,
+    );
+    const session = await withSmokeTimeout(
+      connection.newSession({ cwd, mcpServers: [] }),
+      `${adapter} newSession`,
+    );
     const readOnlySession =
       options.readOnlySession && !options.capabilityEnforcement
         ? await smokeReadOnlySession({

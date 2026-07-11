@@ -11580,7 +11580,7 @@ re-check (D7) · clone-with-history forks (D5, rejected below).
 ### ADR-129: Versioned read-only evidence and run-owned package materialization
 
 **Date:** 2026-07-11
-**Status:** Proposed
+**Status:** Accepted
 
 **Context:** Platform agents already launch through every ACP adapter family and
 materialize providing-package skills, but read-only evidence can be replayed

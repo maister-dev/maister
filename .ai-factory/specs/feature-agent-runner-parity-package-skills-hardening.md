@@ -2,7 +2,11 @@
 
 ## Status
 
-Designed. Implementation evidence is recorded only after every acceptance gate passes.
+Implementation complete on
+`feature/agent-runner-parity-package-skills-hardening`; final verification is
+pending. The traceability table below records the available acceptance evidence
+and names the blocked reruns explicitly. This status is not promoted to
+Verified until every Task 6.2 required suite is green.
 
 ## Value
 
@@ -134,4 +138,17 @@ Corrupt ownership state preserves files and fails loudly. It never guesses owner
 
 ## Traceability
 
-The implementation plan is the task-level traceability index. Completion evidence is appended here only after Task 6.2; a checked plan box without current command output is not evidence.
+| Requirement | As-built surface | Verification |
+| --- | --- | --- |
+| A1-A2 | Adapter-id launch gate, cache v2, `probeVersion`, derived freshness | Supervisor cache/unit tests; web resolver/client tests |
+| A3-A5 | Parameterized ACP wire arbitration; descriptor-selected Claude L2; no OpenCode native-persona tract | 19 supervisor adapter-compatibility integration cases; adapter descriptor/unit tests |
+| B1-B2 | Pinned manifest member-root inventory; descriptor-supported skills/subagents | Adapter-home and effective-definition tests |
+| B3 | `.maister/agent-materialization/` index, per-run states, lock heartbeat, leases, confinement and recovery | Dirty-watchdog ownership, concurrency, symlink and crash-window unit tests |
+| B4-B5 | Central `launchAgentRun` materialization/finalization; existing trigger normalization and stdio exec-trust gate | Launch/trigger/effective tests; four feature real-PG suites passed 37/37 |
+| C1 | Canonical strict capability-profile schema through launch | Definition, artifact-validation and Studio component tests |
+| C2 | Invalid-existing resync protected from missing-row cleanup | Registry real-PG integration test passed in the 37/37 feature gate |
+| C3 | Strict Studio field validation plus existing artifact lifecycle blocking | Studio editor and artifact-validation unit tests |
+| Q1-Q2 | SDD artifact, RED evidence, GREEN implementation, refactor, phase commits | Full web unit 6114/6114; escalated supervisor unit 327/327 and integration 95/95; post-timeout focused gate 10/10; MCP 201/201; blocked reruns are recorded in Task 6.2 |
+
+No Drizzle schema/migration, web OpenAPI, AsyncAPI, deployment, environment,
+port, sidecar, or mount changed in this slice.
