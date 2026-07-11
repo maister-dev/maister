@@ -18,7 +18,11 @@ import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { detectProvider, type Provider } from "@/lib/repo-source";
 import { selectPrAdapter } from "@/lib/runs/pr-adapter";
-import { branchNameSchema, pushBranch } from "@/lib/worktree";
+import {
+  branchNameSchema,
+  GitPushRejectedError,
+  pushBranch,
+} from "@/lib/worktree";
 
 const log = pino({
   name: "local-packages/publish",
@@ -89,6 +93,15 @@ function normalizeForCompare(url: string): string {
       .replace(/\/+$/, "")
       .replace(/\.git$/, "")
   ).toLowerCase();
+}
+
+// ADR-129 (T21): PR base resolution order — the source's configured
+// `base_branch` wins; else the remote's detected default; else "main".
+export function resolvePrBase(
+  configuredBase: string | null,
+  remoteDefault: string | null,
+): string {
+  return configuredBase ?? remoteDefault ?? DEFAULT_PR_BASE;
 }
 
 // Best-effort compare / new-PR URL for the push-only fallback (no provider CLI /
@@ -217,23 +230,41 @@ export async function publishLocalPackage(
   const lockToken = await acquirePublishLock(id, d);
 
   try {
-    // Point the remote at the target + force the stable branch to HEAD, then push.
-    // pushBranch throws CONFLICT on a non-fast-forward, EXECUTOR_UNAVAILABLE else.
+    // Point the remote at the target, then push. A non-fast-forward (the
+    // upstream `maister/<slug>` branch moved) is a TYPED refusal carrying the
+    // sync path (ADR-129) — the push is NEVER retried with force.
     await gitSetRemote(pkg.workingDir, PUBLISH_REMOTE, sourceUrl);
     await gitSetPublishBranchToHead(pkg.workingDir, opts.branchName);
-    await pushBranch({
-      projectRepoPath: pkg.workingDir,
-      remote: PUBLISH_REMOTE,
-      branch: opts.branchName,
-      setUpstream: true,
-    });
+    try {
+      await pushBranch({
+        projectRepoPath: pkg.workingDir,
+        remote: PUBLISH_REMOTE,
+        branch: opts.branchName,
+        setUpstream: true,
+      });
+    } catch (err) {
+      if (err instanceof GitPushRejectedError) {
+        throw new MaisterError("CONFLICT", err.message, {
+          cause: err,
+          details: {
+            reason: "upstream_moved",
+            canSync: Boolean(pkg.sourceInstallId),
+            localPackageId: id,
+          },
+        });
+      }
+      throw err;
+    }
 
-    // The PR base = the target's real default branch (master/develop/…); a
-    // hardcoded "main" would open the PR / compare-url against a wrong/absent base.
-    // Best-effort network lookup; falls back to DEFAULT_PR_BASE.
-    const prBase =
-      (await gitRemoteDefaultBranch(pkg.workingDir, PUBLISH_REMOTE)) ??
-      DEFAULT_PR_BASE;
+    // The PR base: the source's configured base branch wins (ADR-129); else
+    // the target's real default branch (best-effort network lookup); else
+    // "main" — a hardcoded base would open the PR against a wrong/absent one.
+    const prBase = resolvePrBase(
+      source.baseBranch ?? null,
+      source.baseBranch
+        ? null
+        : await gitRemoteDefaultBranch(pkg.workingDir, PUBLISH_REMOTE),
+    );
 
     // Try a PR; fall back to push-only. A failure here is classified (never the raw
     // message, which the adapters already scrub) so no token can leak.

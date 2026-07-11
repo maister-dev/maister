@@ -22,7 +22,10 @@ import {
   packageFilesEditorLabels,
 } from "@/lib/flows/editor/editor-labels";
 import { getLocalPackageBom } from "@/lib/local-packages/bom";
-import { listPackageCuts } from "@/lib/local-packages/versions";
+import {
+  listPackageCuts,
+  listSyncTargets,
+} from "@/lib/local-packages/versions";
 import { resolveSkillSubtreePrefix } from "@/lib/local-packages/composition";
 import { classifyLocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 import { readLockState } from "@/lib/local-packages/lock";
@@ -196,6 +199,20 @@ export default async function StudioEditPage({
   const divergence = pkg.sourceInstallId
     ? { cuts: await listPackageCuts(pkg.id) }
     : null;
+  // ADR-129 §d (T20): sync targets + the pending crash-window banner state.
+  const syncOptions = await listSyncTargets(pkg);
+  const sync = syncOptions
+    ? {
+        pending: pkg.syncState
+          ? {
+              targetInstallId: pkg.syncState.targetInstallId,
+              targetRef: pkg.syncState.targetRef,
+              conflictedFiles: pkg.syncState.conflictedFiles,
+            }
+          : null,
+        options: syncOptions,
+      }
+    : null;
 
   return (
     <div className="flex h-[calc(100vh-130px)] min-h-[560px] w-full flex-col">
@@ -206,6 +223,7 @@ export default async function StudioEditPage({
         canvasAvailable={canvasAvailable}
         diff=""
         divergence={divergence}
+        sync={sync}
         fileKindLabels={packageFileKindLabels(t)}
         files={files}
         filesLabels={packageFilesEditorLabels(t, te, true)}

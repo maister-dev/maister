@@ -48,6 +48,11 @@ export function PublishDialog({
   const [branch, setBranch] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ADR-129 (T21): the typed non-fast-forward refusal — upstream maister/<slug>
+  // moved. `canSync` selects the sync CTA vs manual-reconcile guidance.
+  const [upstreamMoved, setUpstreamMoved] = useState<{
+    canSync: boolean;
+  } | null>(null);
   const [result, setResult] = useState<PublishResult | null>(null);
 
   useEffect(() => {
@@ -95,6 +100,7 @@ export function PublishDialog({
   async function publish(): Promise<void> {
     setPublishing(true);
     setError(null);
+    setUpstreamMoved(null);
 
     try {
       const res = await fetch(
@@ -110,6 +116,16 @@ export function PublishDialog({
       );
 
       if (!res.ok) {
+        const probe = (await res
+          .clone()
+          .json()
+          .catch(() => null)) as {
+          details?: { reason?: string; canSync?: boolean };
+        } | null;
+
+        if (probe?.details?.reason === "upstream_moved") {
+          setUpstreamMoved({ canSync: Boolean(probe.details.canSync) });
+        }
         setError(await readApiError(res, tApiErrors));
 
         return;
@@ -236,7 +252,32 @@ export function PublishDialog({
               </>
             )}
 
-            {error ? (
+            {upstreamMoved ? (
+              <div
+                className="flex flex-col gap-2 rounded-md border border-amber/50 bg-amber/10 px-3 py-2.5"
+                data-testid="publish-upstream-moved"
+                role="alert"
+              >
+                <p className="m-0 text-[12.5px] font-semibold text-ink">
+                  {t("upstreamMovedTitle")}
+                </p>
+                <p className="m-0 text-[12px] leading-[1.5] text-ink-2">
+                  {upstreamMoved.canSync
+                    ? t("upstreamMovedSyncHint")
+                    : t("upstreamMovedManualHint", { branch })}
+                </p>
+                {upstreamMoved.canSync ? (
+                  <button
+                    className="self-start rounded-[8px] border border-amber bg-amber px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-amber-2"
+                    data-testid="publish-close-and-sync"
+                    type="button"
+                    onClick={onClose}
+                  >
+                    {t("closeAndSync")}
+                  </button>
+                ) : null}
+              </div>
+            ) : error ? (
               <p
                 className="rounded-md border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
                 data-testid="publish-error"

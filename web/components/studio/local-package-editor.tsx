@@ -48,6 +48,12 @@ import {
   type DivergenceCutOption,
 } from "@/components/studio/upstream-divergence-drawer";
 import {
+  UpstreamSyncBanner,
+  UpstreamSyncButton,
+  type SyncOptions,
+  type SyncPendingState,
+} from "@/components/studio/upstream-sync-controls";
+import {
   StudioAiTab,
   type StudioAiTabLabels,
 } from "@/components/studio/studio-ai-tab";
@@ -195,6 +201,7 @@ export function LocalPackageEditor({
   fileKindLabels,
   mcpCatalog,
   divergence,
+  sync,
 }: {
   packageId: string;
   canManage: boolean;
@@ -229,6 +236,9 @@ export function LocalPackageEditor({
   // ADR-129 (T18): non-null iff the package has upstream lineage — carries the
   // cut-picker options; null hides every compare affordance.
   divergence: { cuts: DivergenceCutOption[] } | null;
+  // ADR-129 §d (T20): non-null iff lineage exists — the sync target picker +
+  // (when a sync is pending) the crash-window recovery banner state.
+  sync: { pending: SyncPendingState | null; options: SyncOptions } | null;
 }): ReactElement {
   const locale = useLocale();
   const router = useRouter();
@@ -800,6 +810,14 @@ export function LocalPackageEditor({
               <span>{tStudio("divergence.compareButton")}</span>
             </button>
           ) : null}
+          {sync && canManage ? (
+            <UpstreamSyncButton
+              disabled={readOnly}
+              options={sync.options}
+              packageId={packageId}
+              sessionId={sessionIdRef.current}
+            />
+          ) : null}
           {flowPath !== null ? (
             <button
               aria-pressed={aiOpen}
@@ -842,6 +860,14 @@ export function LocalPackageEditor({
         >
           {blockingValidationMessage}
         </p>
+      ) : null}
+      {sync?.pending ? (
+        <UpstreamSyncBanner
+          disabled={readOnly || !canManage}
+          packageId={packageId}
+          pending={sync.pending}
+          sessionId={sessionIdRef.current}
+        />
       ) : null}
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">

@@ -18,7 +18,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // The real selectPrAdapter throws PRECONDITION for the "generic" provider (a bare
 // file remote) — the push-only path. Flip `mockState.mode = "succeed"` to make the
 // adapter return a PR url, exercising the PR-success path without a real provider.
-const mockState = vi.hoisted(() => ({ mode: "throw" as "throw" | "succeed" }));
+const mockState = vi.hoisted(() => ({
+  mode: "throw" as "throw" | "succeed",
+  lastPrArgs: null as Record<string, unknown> | null,
+}));
 
 vi.mock("@/lib/runs/pr-adapter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/runs/pr-adapter")>();
@@ -29,10 +32,11 @@ vi.mock("@/lib/runs/pr-adapter", async (importOriginal) => {
       mockState.mode === "succeed"
         ? {
             preflight: async () => undefined,
-            createOrUpdatePr: async () => ({
-              url: "https://example.test/pr/7",
-              number: 7,
-            }),
+            createOrUpdatePr: async (args: Record<string, unknown>) => {
+              mockState.lastPrArgs = args;
+
+              return { url: "https://example.test/pr/7", number: 7 };
+            },
           }
         : actual.selectPrAdapter(provider, ctx),
   };
@@ -303,7 +307,7 @@ describe("PR-to-source publish (integration)", () => {
 
   it("a non-fast-forward push → CONFLICT (two-phase: markers not updated on failure)", async () => {
     mockState.mode = "succeed"; // the successful publishes set last_pr_url
-    const { sourceId } = await makeBareRemote();
+    const { sourceId, barePath } = await makeBareRemote();
     const pkg = await makePackage("pub-nonff");
     const branch = `maister/${pkg.slug}`;
 
@@ -333,6 +337,93 @@ describe("PR-to-source publish (integration)", () => {
       firstSha,
     ]);
     mockState.mode = "throw";
+    const remoteShaBefore = await remoteBranchSha(barePath, branch);
+
+    // ADR-129 (T21): the refusal is TYPED — {reason: upstream_moved, canSync,
+    // localPackageId} — and the push is NEVER retried with force.
+    await expect(
+      publishLocalPackage(pkg.id, {
+        targetSourceId: sourceId,
+        branchName: branch,
+        db,
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        isMaisterError(e) &&
+        e.code === "CONFLICT" &&
+        JSON.stringify(e.details) ===
+          JSON.stringify({
+            reason: "upstream_moved",
+            canSync: false,
+            localPackageId: pkg.id,
+          }),
+    );
+
+    // The failed publish threw before the marker update — last_pr_url unchanged.
+    expect((await lpRow(pkg.id)).lastPrUrl).toBe(prAfterSuccess);
+    // The remote branch was NOT force-updated.
+    expect(await remoteBranchSha(barePath, branch)).toBe(remoteShaBefore);
+  });
+
+  // ADR-129 (T21): a fork WITH lineage advertises the sync path in the
+  // refusal (`canSync: true`) — the dialog renders the sync CTA from it.
+  it("upstream_moved on a fork with lineage → canSync: true", async () => {
+    mockState.mode = "throw";
+    const { sourceId, barePath } = await makeBareRemote();
+    const pkg = await makePackage("pub-cansync");
+    const branch = `maister/${pkg.slug}`;
+
+    // Minimal lineage: a real install row referenced by source_install_id.
+    const lineageInstallId = randomUUID();
+
+    await db.insert(schema.packageInstalls).values({
+      id: lineageInstallId,
+      sourceUrl: "https://example.test/upstream.git",
+      name: "pub-cansync",
+      versionLabel: "v1.0.0",
+      resolvedRevision: "a".repeat(40),
+      manifest: { spec: { flows: [] } },
+      manifestDigest: "d".repeat(12),
+      installedPath: "/nonexistent/for-cansync",
+      packageStatus: "Installed",
+      trustStatus: "trusted_by_policy",
+    });
+    await db
+      .update(schema.localPackages)
+      .set({ sourceInstallId: lineageInstallId })
+      .where(eq(schema.localPackages.id, pkg.id));
+
+    await publishLocalPackage(pkg.id, {
+      targetSourceId: sourceId,
+      branchName: branch,
+      db,
+    });
+    // Move the REMOTE branch forward independently (commit-tree in the bare).
+    const parent = (await remoteBranchSha(barePath, branch))!;
+    const { stdout: tree } = await execFileAsync("git", [
+      "-C",
+      barePath,
+      "rev-parse",
+      `${branch}^{tree}`,
+    ]);
+    const { stdout: moved } = await execFileAsync("git", [
+      "-C",
+      barePath,
+      "commit-tree",
+      tree.trim(),
+      "-p",
+      parent,
+      "-m",
+      "moved upstream",
+    ]);
+
+    await execFileAsync("git", [
+      "-C",
+      barePath,
+      "update-ref",
+      `refs/heads/${branch}`,
+      moved.trim(),
+    ]);
 
     await expect(
       publishLocalPackage(pkg.id, {
@@ -341,10 +432,37 @@ describe("PR-to-source publish (integration)", () => {
         db,
       }),
     ).rejects.toSatisfy(
-      (e: unknown) => isMaisterError(e) && e.code === "CONFLICT",
+      (e: unknown) =>
+        isMaisterError(e) &&
+        e.code === "CONFLICT" &&
+        (e.details as { reason?: string; canSync?: boolean })?.reason ===
+          "upstream_moved" &&
+        (e.details as { canSync?: boolean }).canSync === true,
     );
+    // Never force-updated: the remote still points at the moved commit.
+    expect(await remoteBranchSha(barePath, branch)).toBe(moved.trim());
+  });
 
-    // The failed publish threw before the marker update — last_pr_url unchanged.
-    expect((await lpRow(pkg.id)).lastPrUrl).toBe(prAfterSuccess);
+  // ADR-129 (T21): a configured `base_branch` feeds the PR base ahead of the
+  // remote-default lookup (which a bare local remote cannot answer anyway).
+  it("configured base_branch becomes the PR target branch", async () => {
+    mockState.mode = "succeed";
+    mockState.lastPrArgs = null;
+    const { sourceId } = await makeBareRemote();
+
+    await db
+      .update(schema.packageSources)
+      .set({ baseBranch: "develop" })
+      .where(eq(schema.packageSources.id, sourceId));
+    const pkg = await makePackage("pub-base");
+
+    const result = await publishLocalPackage(pkg.id, {
+      targetSourceId: sourceId,
+      branchName: `maister/${pkg.slug}`,
+      db,
+    });
+
+    expect(result.prUrl).toBe("https://example.test/pr/7");
+    expect(mockState.lastPrArgs).toMatchObject({ targetBranch: "develop" });
   });
 });

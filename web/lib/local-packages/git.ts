@@ -203,6 +203,47 @@ export async function gitDiscardPaths(
   await git(dir, ["clean", "-fdq", "--", ...targets]);
 }
 
+// (ADR-129 T19) Per-file textual 3-way merge via `git merge-file`: merges
+// `theirs` into `ours` IN PLACE against `base`. Exit 0 = clean; exit > 0 =
+// the number of conflicts (markers already written into `ours`); other
+// failures throw. `markerLabel` names the theirs side in the markers
+// (e.g. "upstream v1.2.0").
+export async function gitMergeFile(
+  oursPath: string,
+  basePath: string,
+  theirsPath: string,
+  opts: { markerLabel: string },
+): Promise<number> {
+  try {
+    await execFileAsync(
+      "git",
+      [
+        "merge-file",
+        "-L",
+        "ours",
+        "-L",
+        "base",
+        "-L",
+        opts.markerLabel,
+        "--",
+        oursPath,
+        basePath,
+        theirsPath,
+      ],
+      { timeout: GIT_TIMEOUT_MS, maxBuffer: EXEC_MAX_BUFFER },
+    );
+
+    return 0;
+  } catch (err) {
+    const e = err as { code?: string | number };
+
+    if (typeof e.code === "number" && e.code > 0 && e.code < 128) {
+      return e.code;
+    }
+    throw err;
+  }
+}
+
 // (ADR-129 T17) Two-directory unified diff outside any repo: `git diff
 // --no-index` exits 0 on identical trees and 1 on differences — BOTH are
 // success here; other exits (bad path etc.) throw. A diff cut at maxBuffer

@@ -123,6 +123,74 @@ export type AdoptTargetProject = {
   attachmentId: string;
 };
 
+// ADR-129 §d (T20): the sync dialog's target set for a fork with lineage —
+// already-installed OTHER versions of the lineage package (same name +
+// sourceUrl), plus the lineage source's discovered-but-uninstalled tags for
+// the "install & sync" path. Null when the lineage row is gone (the
+// divergence panel already renders that degradation). Client-safe.
+export type SyncTargetOptions = {
+  targets: { installId: string; versionLabel: string }[];
+  source: { sourceId: string; packageName: string; tags: string[] } | null;
+};
+
+export async function listSyncTargets(
+  pkg: LocalPackage,
+  db?: Db,
+): Promise<SyncTargetOptions | null> {
+  if (!pkg.sourceInstallId) return null;
+  const d = resolveDb(db);
+  const [lineage] = await d
+    .select({ name: pi.name, sourceUrl: pi.sourceUrl })
+    .from(pi)
+    .where(eq(pi.id, pkg.sourceInstallId));
+
+  if (!lineage) return null;
+
+  const siblings = await d
+    .select({ id: pi.id, versionLabel: pi.versionLabel })
+    .from(pi)
+    .where(
+      and(
+        eq(pi.name, lineage.name),
+        eq(pi.sourceUrl, lineage.sourceUrl),
+        eq(pi.packageStatus, "Installed"),
+      ),
+    );
+  const targets = siblings
+    .filter((s) => s.id !== pkg.sourceInstallId)
+    .map((s) => ({ installId: s.id, versionLabel: s.versionLabel }));
+
+  const [sourceRow] = await d
+    .select({
+      id: schema.packageSources.id,
+      discovered: schema.packageSources.discovered,
+    })
+    .from(schema.packageSources)
+    .where(eq(schema.packageSources.url, lineage.sourceUrl));
+  let source: SyncTargetOptions["source"] = null;
+
+  if (sourceRow) {
+    const entry = (sourceRow.discovered ?? []).find(
+      (e) => e.name === lineage.name,
+    );
+    const known = new Set([
+      ...siblings.map((s) => s.versionLabel),
+      pkg.sourceRef ?? "",
+    ]);
+    const tags = (
+      entry?.tags.length
+        ? entry.tags
+        : entry?.digestVersionLabel
+          ? [entry.digestVersionLabel]
+          : []
+    ).filter((tag) => !known.has(tag));
+
+    source = { sourceId: sourceRow.id, packageName: lineage.name, tags };
+  }
+
+  return { targets, source };
+}
+
 // The package's OWN cuts (newest first) — the divergence drawer's picker
 // (ADR-129 T18). Client-safe pair only; installed paths stay server-side.
 export async function listPackageCuts(

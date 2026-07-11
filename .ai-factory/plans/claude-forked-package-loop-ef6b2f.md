@@ -1081,7 +1081,18 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 7 — W-G: upstream sync for forks + publish base (G3)
 
-- [ ] **T19: Synthetic 3-way merge lib (pure, heavily unit-tested)**
+- [x] **T19: Synthetic 3-way merge lib (pure, heavily unit-tested)**
+  - GREEN first run 17/17: every case-table row has a named test (incl. the
+    two extra converged rows the table implies: deleted-in-both and
+    deleted-in-ours+theirs-unchanged), add/add via a shared empty synthetic
+    base, binary NUL-sniff keeps ours byte-identical, runtime dirs
+    (.git/.maister/.claude) never merged, marker content matches
+    `git merge-file` defaults with `-L ours -L base -L <markerLabel>`, and
+    re-running on the merged clean tree returns `{[], []}` (the Resume
+    idempotency guarantee). `gitMergeFile` exit >0 = conflict count.
+    Bytes ride `Uint8Array` end-to-end (dual @types/node Buffer clash).
+  - `cleanFiles` = paths actually written/deleted; no-op rows unlisted —
+    this is what makes "at most one commit" decidable in T20.
   - Files: `web/lib/local-packages/git.ts` (NEW `gitMergeFile(ours, base,
     theirs, {markerLabel})` wrapping `git merge-file -L ours -L base -L
     theirs` — exit 0 clean, >0 = conflict count, markers written into ours),
@@ -1105,7 +1116,36 @@ Commit messages: NO Co-Authored-By trailer (project convention).
   - Acceptance: pure lib, no DB; every table row has a named test.
   - Logging: none (pure); typed errors for I/O failures.
 
-- [ ] **T20: Sync operation — routes, state, conflict UX (multi-store, crash-windowed)**
+- [x] **T20: Sync operation — routes, state, conflict UX (multi-store, crash-windowed)**
+  - SPEC CORRECTION (docs-first): the T2 OpenAPI omitted `sessionId` from
+    all three sync bodies, making the edit-lock precondition unenforceable —
+    amended to required `sessionId` (commit-route idiom) before
+    implementation.
+  - `sync.ts`: full precondition allow-list (lock via assertHoldsLock ·
+    active · lineage CONFIG · pending-different-target CONFLICT ·
+    pending+dirty = window 2 → CONFLICT "resolve or abort" (Resume is
+    window-1-only) · dirty-tree PRECONDITION · target must be an Installed
+    install of the lineage's name+sourceUrl). Two-phase exactly as spec'd:
+    tx-persist `sync_state` BEFORE disk → mergeTrees → clean: at most ONE
+    commit (no-change merge skips) + ONE tx advancing lineage + clearing
+    state; conflict: stamp conflictedFiles, markers stay uncommitted.
+    Resolve: union marker scan (listed files + dirty files; `<<<<<<<`/
+    `>>>>>>>` only — a bare `=======` is a legal markdown underline),
+    nothing-to-resolve → PRECONDITION "resume", commit-with-message when
+    dirty, SAME single completion tx, idempotent no-op retry. Abort:
+    pending-gated, discard-to-HEAD + clear, never rewrites commits.
+  - Integration 5/5 GREEN first run on real PG + git (local-dir upstream,
+    digest-as-version v1/v2 installs): clean (one commit · lineage advanced ·
+    T17 divergence now empty vs NEW base · same-target re-sync = no-op with
+    HEAD unchanged) · conflict→marker-refusal→hand-resolve→completed→
+    idempotent retry · abort byte-identical restore (+ second abort 409) ·
+    precondition matrix · both crash windows by direct state injection.
+    Route shell 7/7 (422 without sessionId pins the amended contract).
+  - UI: `UpstreamSyncButton` (target picker; installed target → one POST;
+    discovered tag → install-then-sync chain through the NORMAL install
+    path) + `UpstreamSyncBanner` (pending recovery surface: conflicted list,
+    Resolve with optional message, confirm-gated Abort) fed by
+    `listSyncTargets`; dom tests 4/4 pin the POST bodies. i18n EN+RU.
   - Files: NEW `web/lib/local-packages/sync.ts` + routes
     `web/app/api/studio/local-packages/[id]/sync/route.ts` (POST
     `{targetInstallId}`), `sync/resolve/route.ts` (POST), `sync/abort/route.ts`
@@ -1165,7 +1205,27 @@ Commit messages: NO Co-Authored-By trailer (project convention).
   - Logging: typed errors; `sync_state` is the durable audit of the
     operation.
 
-- [ ] **T21: Publish base branch + "upstream moved — sync first" refusal**
+- [x] **T21: Publish base branch + "upstream moved — sync first" refusal**
+  - `resolvePrBase` (configured `base_branch` → remote default → "main";
+    a configured base also SKIPS the network lookup) + the pushBranch
+    `GitPushRejectedError` catch rethrown as CONFLICT
+    `{reason: "upstream_moved", canSync: <lineage present>, localPackageId}`
+    — never retried with force.
+  - Integration 9/9: existing non-FF case upgraded to assert the TYPED
+    details + remote SHA unchanged; NEW canSync=true arm (lineage seeded,
+    remote branch moved independently via `commit-tree`+`update-ref` inside
+    the bare — still not force-updated after the refusal); NEW configured
+    base_branch → adapter receives `targetBranch: "develop"` (mock captures
+    args). Unit 13/13 incl. `resolvePrBase` order + the no-force regression
+    pin (source-level: no `force:`/`--force` in publish.ts, the force
+    capability stays quarantined).
+  - Dialog: typed refusal renders the "Upstream moved — sync first" panel
+    (probe via `res.clone()` so the generic path keeps `readApiError`);
+    canSync → "Close & sync from upstream" CTA (the header sync entry is
+    the T20 surface), else manual-reconcile guidance naming the branch.
+    i18n EN+RU.
+  - **Phase 7 exit gate**: typecheck ✓ · unit 605 files / 6194 ✓ ·
+    integration 297 files / 2244 ✓.
   - Files: `web/lib/local-packages/publish.ts` (`:213-215` becomes
     `source.baseBranch ?? gitRemoteDefaultBranch(...) ?? DEFAULT_PR_BASE`;
     catch `GitPushRejectedError` from `pushBranch:203-208` and rethrow

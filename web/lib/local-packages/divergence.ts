@@ -43,8 +43,9 @@ export type UpstreamDivergence = DiffPrepResult & {
 
 // Install row + on-disk bundle guard (mirrors fork.ts loadInstallSource):
 // a missing row, a `set null`-orphaned path, or GC'd bytes all degrade to a
-// typed CONFIG the UI can render — never a raw fs error.
-async function loadInstallDir(
+// typed CONFIG the UI can render — never a raw fs error. Shared with the
+// sync operation (ADR-129 §d).
+export async function loadInstallDir(
   d: Db,
   installId: string,
   context: string,

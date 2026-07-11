@@ -489,6 +489,23 @@
       "clean": "No divergence — the fork matches its upstream install.",
       "degraded": "Upstream source unavailable — the lineage install is missing or its bytes were removed. Divergence cannot be computed.",
       "close": "Close"
+    },
+    "sync": {
+      "button": "Sync from upstream",
+      "dialogTitle": "Sync from upstream",
+      "targetPick": "Pick an upstream version",
+      "installAndSync": "Install & sync — {tag}",
+      "noTargets": "No other upstream version is installed or discovered. Re-check the package source, then reopen this dialog.",
+      "start": "Sync",
+      "close": "Close",
+      "cleanDone": "Synced cleanly from {label} — committed and lineage advanced.",
+      "conflictsFound": "{count} file(s) conflicted — resolve them in the editor, then complete the sync from the banner.",
+      "bannerTitle": "Sync from {label} in progress",
+      "bannerNoList": "The merge has not written conflicts — resume the sync (re-run it towards the same version) or abort.",
+      "resolveMessagePlaceholder": "Resolve commit message (optional)",
+      "resolve": "Resolve & complete",
+      "abort": "Abort sync",
+      "abortConfirm": "Abort the sync? The working tree resets to the last commit — upstream merge content is discarded."
     }
   },
   "flows": {
@@ -1871,7 +1888,11 @@
     "noSources": "No package sources are registered.",
     "resultPr": "Pull request opened:",
     "resultPushed": "Pushed branch {branch}.",
-    "resultCompare": "Open a pull request:"
+    "resultCompare": "Open a pull request:",
+    "upstreamMovedTitle": "Upstream moved — sync first",
+    "upstreamMovedSyncHint": "The remote maister branch advanced past your fork. Sync from upstream, resolve any conflicts, cut if needed, then publish again. Publishing never force-pushes.",
+    "upstreamMovedManualHint": "The remote branch “{branch}” advanced independently and this package has no upstream lineage to sync from. Inspect or delete the remote branch, then publish again. Publishing never force-pushes.",
+    "closeAndSync": "Close & sync from upstream"
   },
   "run": {
     "eyebrow": "run",

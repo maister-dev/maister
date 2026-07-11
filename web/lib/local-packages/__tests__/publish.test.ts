@@ -7,6 +7,7 @@ import {
   buildCompareUrl,
   preselectPublishSourceId,
   publishLocalPackage,
+  resolvePrBase,
   webUrlFromGitUrl,
 } from "@/lib/local-packages/publish";
 
@@ -196,5 +197,31 @@ describe("getPublishOptions — kind allow-list (ADR-129)", () => {
     ]);
     expect(options.preselectedSourceId).toBe("s-git");
     expect(options.defaultBranch).toBe("maister/fork");
+  });
+});
+
+// ADR-129 (T21): the PR base resolution order is configured base_branch →
+// remote default branch → "main".
+describe("resolvePrBase", () => {
+  it("a configured base branch wins over the remote default", () => {
+    expect(resolvePrBase("develop", "master")).toBe("develop");
+  });
+
+  it("falls back to the remote default, then to main", () => {
+    expect(resolvePrBase(null, "master")).toBe("master");
+    expect(resolvePrBase(null, null)).toBe("main");
+  });
+});
+
+// ADR-129 (T21) regression pin: publish must never force-push — the force
+// capability stays quarantined outside this module. A `force:` ever appearing
+// in publish.ts is a contract break, whatever the call site.
+describe("no-force regression", () => {
+  it("publish.ts contains no force flag", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile("lib/local-packages/publish.ts", "utf8");
+
+    expect(source).not.toMatch(/force\s*:/);
+    expect(source).not.toMatch(/--force/);
   });
 });

@@ -8561,13 +8561,17 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [targetInstallId]
+              required: [sessionId, targetInstallId]
               properties:
+                sessionId:
+                  type: string
+                  minLength: 1
+                  description: "The editor session holding the edit-lock (the lock precondition is asserted against it — commit-route idiom)."
                 targetInstallId:
                   type: string
                   minLength: 1
                   description: "The newer upstream `package_installs` id to sync onto (installed via the normal install path first)."
-              example: { targetInstallId: "install-2" }
+              example: { sessionId: "sess-1", targetInstallId: "install-2" }
       responses:
         "200":
           description: Sync outcome (clean or conflicted).
@@ -8604,13 +8608,18 @@ paths:
         retry: lineage already advanced and state cleared → 200 no-op.
       operationId: resolveStudioLocalPackageSync
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
               additionalProperties: false
+              required: [sessionId]
               properties:
+                sessionId:
+                  type: string
+                  minLength: 1
+                  description: "The editor session holding the edit-lock."
                 commitMessage:
                   type: string
                   minLength: 1
@@ -8644,6 +8653,19 @@ paths:
         user-authored is lost) and clears `sync_state` in a transaction.
         Never force-overwrites commits.
       operationId: abortStudioLocalPackageSync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sessionId]
+              properties:
+                sessionId:
+                  type: string
+                  minLength: 1
+                  description: "The editor session holding the edit-lock."
       responses:
         "200": { $ref: "#/components/responses/OkResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
