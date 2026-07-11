@@ -341,6 +341,12 @@ export const platformMcpServers = pgTable(
       .$type<string[]>()
       .notNull()
       .default([]),
+    lastProbeStatus: text("last_probe_status", { enum: ["Ok", "Failed"] }),
+    lastProbeAt: timestamp("last_probe_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastProbeReason: text("last_probe_reason"),
     enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
@@ -1236,6 +1242,61 @@ export const projectFlowRunnerDefaults = pgTable(
   }),
 );
 
+// ADR-129: per-binding config overlay. Rewrites env/header/arg/url NAMES only —
+// NEVER a secret value. Validated against the target's declared slots at write
+// and materialization (unknown slot -> CONFIG).
+export type McpConfigOverlay = {
+  envRemap?: Record<string, string>; // slot NAME -> "env:OTHER_NAME"
+  headerRemap?: Record<string, string>; // slot NAME -> "env:OTHER_NAME"
+  argsOverride?: string[];
+  urlOverride?: string;
+};
+
+// ADR-129: the explicit binding of a capability ref to a concrete MCP target in
+// one project. An enabled binding wins over SOURCE_PRECEDENCE for its ref; a
+// disabled binding makes the ref unresolvable (opt-out); an absent binding is
+// grandfather (unchanged). target_id is polymorphic (validated app-side against
+// target_kind), so it carries no DB FK — only project_id does.
+export const projectMcpBindings = pgTable(
+  "project_mcp_bindings",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    refId: text("ref_id").notNull(),
+    targetKind: text("target_kind", {
+      enum: ["platform", "project", "package"],
+    }).notNull(),
+    targetId: text("target_id").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    configOverlay: jsonb("config_overlay")
+      .$type<McpConfigOverlay>()
+      .notNull()
+      .default({}),
+    recommendedHint: text("recommended_hint"),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectRef: unique("project_mcp_bindings_project_ref_uq").on(
+      t.projectId,
+      t.refId,
+    ),
+    idxProject: index("project_mcp_bindings_project_idx").on(t.projectId),
+    targetKindCheck: check(
+      "project_mcp_bindings_target_kind_check",
+      sql`${t.targetKind} in ('platform', 'project', 'package')`,
+    ),
+  }),
+);
+export type ProjectMcpBinding = typeof projectMcpBindings.$inferSelect;
+
 export const flowRunnerRemaps = pgTable(
   "flow_runner_remaps",
   {
@@ -1280,6 +1341,15 @@ export type RunKind = "flow" | "scratch" | "agent";
 // M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
 // the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
 // whether the resolved flow revision came from the authored bridge or git.
+// ADR-129: an MCP excluded from the executable set. `reason` distinguishes the
+// two withhold causes; NEVER carries a secret value.
+export type WithheldMcp = {
+  refId: string;
+  transport: "stdio" | "sse" | "http";
+  reason: "platform-untrusted" | "exec-untrusted-stdio";
+  scope: string;
+};
+
 export type ResolvedCapabilitySet = {
   flowRevisionId: string;
   flowOrigin: "authored" | "git";
@@ -1293,7 +1363,18 @@ export type ResolvedCapabilitySet = {
     sha: string | null;
     scope: string;
   }>;
-  mcps: Array<{ refId: string; sha: string | null; scope: string }>;
+  mcps: Array<{
+    refId: string;
+    sha: string | null;
+    scope: string;
+    // ADR-129: how this MCP won its slot. Optional so pre-migration snapshots
+    // deserialize without the field.
+    provenance?: "binding" | "precedence";
+    boundTarget?: { kind: "platform" | "project" | "package"; id: string };
+  }>;
+  // ADR-129: MCPs excluded from the executable set at launch (trust / exec-trust),
+  // snapshotted for run-detail visibility. Optional for pre-migration runs.
+  withheldMcps?: WithheldMcp[];
 };
 
 // M37 (ADR-098): launch-time effective definition of a delegated child. Catalog
@@ -1457,6 +1538,9 @@ export const runs = pgTable(
     resolvedCapabilitySet: jsonb(
       "resolved_capability_set",
     ).$type<ResolvedCapabilitySet>(),
+    // ADR-129: run-level withheld-MCP sink for flow AND agent launches (agent
+    // runs persist no node_attempts materialization_plan). Nullable; never a secret.
+    withheldMcps: jsonb("withheld_mcps").$type<WithheldMcp[]>(),
     deliveryPolicySnapshot: jsonb(
       "delivery_policy_snapshot",
     ).$type<DeliveryPolicy | null>(),
@@ -3038,6 +3122,9 @@ export type MaterializationPlan = {
   enforcedClasses: string[];
   instructedClasses: string[];
   refusedClasses: string[];
+  // ADR-129: per-node MCPs withheld from materialization (trust / exec-trust).
+  // Optional so pre-migration plans deserialize without the field.
+  withheldMcps?: WithheldMcp[];
   cleanup: {
     status: "pending" | "done" | "failed";
     error?: string;

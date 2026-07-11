@@ -624,6 +624,13 @@
       "when": 1783366788605,
       "tag": "0092_graded_runner_resolution",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1783767609443,
+      "tag": "0093_mcp_management_v2",
+      "breakpoints": true
     }
   ]
 }
