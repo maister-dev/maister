@@ -46,6 +46,7 @@ const installs = [
     flows: ["aif-dev", "aif-bugfix"],
     compatible: true,
     incompatibilityReason: null,
+    sourceLocalPackageId: null,
   },
   {
     id: "inst-2",
@@ -56,6 +57,7 @@ const installs = [
     flows: ["aif-dev"],
     compatible: true,
     incompatibilityReason: null,
+    sourceLocalPackageId: null,
   },
   {
     id: "inst-3",
@@ -66,6 +68,19 @@ const installs = [
     flows: ["triager"],
     compatible: true,
     incompatibilityReason: null,
+    sourceLocalPackageId: null,
+  },
+  // ADR-132 (T15): a Studio fork's cut — shares the upstream's name "aif".
+  {
+    id: "inst-cut",
+    name: "aif",
+    versionLabel: "local-abcdef123456",
+    resolvedRevision: "d".repeat(40),
+    trustStatus: "trusted_by_policy",
+    flows: ["aif-dev"],
+    compatible: true,
+    incompatibilityReason: null,
+    sourceLocalPackageId: "lp-9",
   },
 ];
 
@@ -92,6 +107,26 @@ describe("ProjectPackagesSection", () => {
     // Attach picker offers only packages not yet attached (core, not aif).
     expect(markup).toContain("core@core/v0.1.0");
     expect(markup).not.toContain("aif@aif/v2.0.0</option>");
+  });
+
+  // ADR-129 §c (T15): a local cut stays selectable even when its name
+  // collides with an attached package (the explainer handles the collision);
+  // an upstream sibling version of an attached name stays hidden (upgrade
+  // path, not attach path).
+  it("offers a name-colliding LOCAL CUT with a local-cut marker, but never an upstream sibling", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProjectPackagesSection, {
+        slug: "demo",
+        isAdmin: true,
+        canTrust: true,
+        attachments: [attachment],
+        availableInstalls: installs,
+      }),
+    );
+
+    expect(markup).toContain('value="inst-cut"');
+    expect(markup).toContain("attachLocalCutBadge");
+    expect(markup).not.toContain('value="inst-2"');
   });
 
   it("offers a downgrade path but never lists an older version as an upgrade", () => {

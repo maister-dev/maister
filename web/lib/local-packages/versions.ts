@@ -5,7 +5,7 @@ import type { LocalPackage } from "@/lib/db/schema";
 
 import { rm } from "node:fs/promises";
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { gitHeadSha } from "./git";
@@ -105,6 +105,53 @@ export async function cutLocalPackageVersion(
       () => undefined,
     );
   }
+}
+
+// ADR-129 §c (T16): the projects eligible for "adopt in attached projects
+// now" at cut time — those whose CURRENT attachment for this package points
+// at a cut of THIS local package (`package_installs.source_local_package_id`
+// = the package id). Projects attached to the UPSTREAM install of the same
+// name are deliberately absent: they are never offered and never silently
+// migrated. Archived projects are excluded. Batch-shaped so the Studio list
+// page can feed every row's dialog in one query.
+export type AdoptTargetProject = {
+  localPackageId: string;
+  projectId: string;
+  slug: string;
+  name: string;
+  repoPath: string;
+  attachmentId: string;
+};
+
+export async function listAdoptTargetProjects(
+  localPackageIds: string[],
+  db?: Db,
+): Promise<AdoptTargetProject[]> {
+  if (localPackageIds.length === 0) return [];
+  const d = resolveDb(db);
+  const p = schema.projects;
+
+  return d
+    .select({
+      localPackageId: pi.sourceLocalPackageId,
+      projectId: p.id,
+      slug: p.slug,
+      name: p.name,
+      repoPath: p.repoPath,
+      attachmentId: pa.id,
+    })
+    .from(pa)
+    .innerJoin(
+      pi,
+      and(
+        eq(pi.id, pa.packageInstallId),
+        inArray(pi.sourceLocalPackageId, localPackageIds),
+      ),
+    )
+    .innerJoin(p, and(eq(p.id, pa.projectId), isNull(p.archivedAt)))
+    .then((rows) =>
+      rows.map((r) => ({ ...r, localPackageId: r.localPackageId as string })),
+    );
 }
 
 // Detect, for a project's attached CENTRALIZED packages (those whose pinned

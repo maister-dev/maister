@@ -16,6 +16,10 @@ import {
 } from "@heroicons/react/24/outline";
 
 import {
+  CutVersionDialog,
+  type CutAdoptTarget,
+} from "@/components/studio/cut-version-dialog";
+import {
   buildImportDialogLabels,
   ImportDialog,
 } from "@/components/studio/import-dialog";
@@ -24,6 +28,8 @@ import { readApiError } from "@/lib/api-error";
 
 // Client-safe local-package list item. `working_dir` and the lock session are
 // server-only and intentionally absent (D1/D10); `isDefault`/`status` are flags.
+// `adoptTargets` (ADR-129) = projects whose attachment points at a cut of this
+// package — the cut dialog's multi-select; repo paths stay server-side.
 export type LocalPackageListItem = {
   id: string;
   name: string;
@@ -32,6 +38,7 @@ export type LocalPackageListItem = {
   status: "active" | "archived";
   cutCompatibility: LocalPackageCutCompatibility;
   origin: LocalPackageOrigin;
+  adoptTargets: CutAdoptTarget[];
 };
 
 export type LocalPackageOrigin =
@@ -68,6 +75,7 @@ export function LocalPackagesList({
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const [cutDialogId, setCutDialogId] = useState<string | null>(null);
 
   const archivedCount = useMemo(
     () => packages.filter((pkg) => pkg.status === "archived").length,
@@ -151,31 +159,12 @@ export function LocalPackagesList({
     }
   }
 
-  async function cutVersion(id: string): Promise<void> {
-    setRowBusyId(id);
-    setError(null);
-    setNotice(null);
-
-    try {
-      const res = await fetch(`/api/studio/local-packages/${id}/cut-version`, {
-        method: "POST",
-      });
-
-      if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
-
-        return;
-      }
-
-      const cut = (await res.json()) as { versionLabel: string };
-
-      setNotice(t("local.cutVersionDone").replace("$label", cut.versionLabel));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRowBusyId(null);
-    }
-  }
+  // ADR-129 (T16): cutting goes through the dialog — it owns the POST and the
+  // optional "adopt in attached projects now" multi-select.
+  const cuttingPkg =
+    cutDialogId === null
+      ? null
+      : (packages.find((pkg) => pkg.id === cutDialogId) ?? null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -404,7 +393,7 @@ export function LocalPackagesList({
                         t("local.cutVersion")
                       }
                       type="button"
-                      onClick={() => void cutVersion(pkg.id)}
+                      onClick={() => setCutDialogId(pkg.id)}
                     >
                       <ScissorsIcon className="h-4 w-4" />
                     </button>
@@ -460,6 +449,20 @@ export function LocalPackagesList({
           packageId={importingId}
           onClose={() => setImportingId(null)}
           onImported={() => router.refresh()}
+        />
+      ) : null}
+      {cuttingPkg ? (
+        <CutVersionDialog
+          adoptTargets={cuttingPkg.adoptTargets}
+          packageId={cuttingPkg.id}
+          packageName={cuttingPkg.name}
+          onClose={() => {
+            setCutDialogId(null);
+            router.refresh();
+          }}
+          onCut={(label) =>
+            setNotice(t("local.cutVersionDone").replace("$label", label))
+          }
         />
       ) : null}
     </div>

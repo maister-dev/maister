@@ -688,6 +688,36 @@ export async function attachPackage(opts: {
   const flowIds = manifest.spec.flows.map((f) => f.id);
 
   const attached: AttachResult = await db.transaction(async (tx: any) => {
+    // Name pre-guard (ADR-129 §c): a fork's cut shares its upstream's
+    // package name, so (projectId, packageName) would collide — and a whole-
+    // package fork also collides on flow ids, so the flow guard below would
+    // otherwise mask the real problem. Refuse with the rename path first.
+    // The unique constraint stays authoritative for races.
+    const [nameHolder] = await tx
+      .select({
+        packageInstallId: projectPackageAttachments.packageInstallId,
+      })
+      .from(projectPackageAttachments)
+      .where(
+        and(
+          eq(projectPackageAttachments.projectId, opts.projectId),
+          eq(projectPackageAttachments.packageName, install.name),
+        ),
+      );
+
+    if (nameHolder && nameHolder.packageInstallId !== install.id) {
+      throw new MaisterError(
+        "CONFLICT",
+        `package name "${install.name}" is already attached to this project from another install — rename the fork (manifest name) and cut again to attach it beside the upstream`,
+        {
+          details: {
+            reason: "package_name_taken",
+            packageName: install.name,
+          },
+        },
+      );
+    }
+
     // Pre-guard: a manifest flow id colliding with an EXISTING standalone
     // flow of this project would hit flows_project_ref_uq mid-group —
     // refuse deterministically instead (CONFLICT, no partial group).

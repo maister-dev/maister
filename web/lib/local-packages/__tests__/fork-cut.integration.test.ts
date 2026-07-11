@@ -7,7 +7,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -621,5 +621,112 @@ describe("cut version (integration)", () => {
       "flow-b",
     ]);
     for (const f of flowRows) expect(f.packageInstallId).toBe(install.id);
+  });
+
+  // ADR-129 §c (T16): "adopt in attached projects now" — eligibility is the
+  // back-edge (attachment's install has source_local_package_id = this
+  // package), NEVER the package name: a project attached to the UPSTREAM
+  // install of the same name is not offered and stays untouched.
+  it("cut + adopt advances every cut-pinned project; an upstream-pinned project is not offered and untouched", async () => {
+    const { cutLocalPackageVersion, listAdoptTargetProjects } = await import(
+      "@/lib/local-packages/versions"
+    );
+    const { attachPackage, upgradeAttachment } = await import(
+      "@/lib/packages/attach"
+    );
+
+    const { localPackageId } = await forkPackageToLocal({
+      sourceInstallId,
+      sourceRef: "srcpkg",
+      createdBy: userId,
+      forceNew: true,
+      db,
+    });
+    const pkg = await getLocalPackage(localPackageId, db);
+    const cut1 = await cutLocalPackageVersion(pkg!, { db });
+
+    async function makeProject(
+      label: string,
+      installId: string,
+    ): Promise<{ projectId: string; slug: string; repoPath: string }> {
+      const projectId = randomUUID();
+      const slug = `${label}-${projectId.slice(0, 8)}`;
+      const repoPath = join(homeDir, `repo-${slug}`);
+
+      await db.insert(schema.projects).values({
+        taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
+        id: projectId,
+        slug,
+        name: `Adopt ${label}`,
+        repoPath,
+      });
+      const attached = await attachPackage({
+        projectId,
+        projectSlug: slug,
+        packageInstallId: installId,
+        workspaceRoot: repoPath,
+        db,
+      });
+
+      expect(attached).not.toBeNull();
+
+      return { projectId, slug, repoPath };
+    }
+
+    const projA = await makeProject("adopt-a", cut1.installId);
+    const projB = await makeProject("adopt-b", cut1.installId);
+    // Same package NAME ("srcpkg") but pinned to the upstream install.
+    const projC = await makeProject("upstream-c", sourceInstallId);
+
+    const eligible = await listAdoptTargetProjects([localPackageId], db);
+    const eligibleProjectIds = eligible.map((t) => t.projectId).sort();
+
+    expect(eligibleProjectIds).toEqual(
+      [projA.projectId, projB.projectId].sort(),
+    );
+
+    // A fresh cut of edited content, then the route's adopt loop.
+    await writeWorkingDirFile(
+      pkg!,
+      "flows/flow-a/flow.yaml",
+      FLOW_YAML("adopt-round"),
+    );
+    const cut2 = await cutLocalPackageVersion(pkg!, { db });
+
+    expect(cut2.installId).not.toBe(cut1.installId);
+
+    for (const target of eligible) {
+      const result = await upgradeAttachment({
+        projectId: target.projectId,
+        projectSlug: target.slug,
+        attachmentId: target.attachmentId,
+        packageInstallId: cut2.installId,
+        workspaceRoot: target.repoPath,
+        db,
+      });
+
+      expect(result).toEqual({ upgraded: true });
+    }
+
+    const pins = await db
+      .select({
+        projectId: schema.projectPackageAttachments.projectId,
+        packageInstallId: schema.projectPackageAttachments.packageInstallId,
+      })
+      .from(schema.projectPackageAttachments)
+      .where(
+        inArray(schema.projectPackageAttachments.projectId, [
+          projA.projectId,
+          projB.projectId,
+          projC.projectId,
+        ]),
+      );
+    const pinByProject = new Map(
+      pins.map((p: any) => [p.projectId, p.packageInstallId]),
+    );
+
+    expect(pinByProject.get(projA.projectId)).toBe(cut2.installId);
+    expect(pinByProject.get(projB.projectId)).toBe(cut2.installId);
+    expect(pinByProject.get(projC.projectId)).toBe(sourceInstallId);
   });
 });

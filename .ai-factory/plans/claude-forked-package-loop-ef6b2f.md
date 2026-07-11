@@ -883,7 +883,24 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 5 — W-E: project-side attach + adopt polish (G5+G6)
 
-- [ ] **T15: Local-cut installs in the project attach picker + name-uniqueness UX**
+- [x] **T15: Local-cut installs in the project attach picker + name-uniqueness UX**
+  - RED→GREEN (3 observed wrong-code failures): query view returned
+    `[undefined, undefined]` before `sourceLocalPackageId` was mapped;
+    static markup dropped the name-colliding cut from the picker before the
+    by-kind filter (cuts excluded by attached-install-id, upstream siblings
+    still excluded by name — upgrade path pinned); dom test showed no
+    explainer before the pre-flight block landed. Route RED: 409 arrived
+    with `details: undefined` (and from the WRONG guard — the flow-id
+    message) before the name pre-guard was hoisted ABOVE the flow guard in
+    `attachPackage` (a whole-package fork collides on both, so guard order
+    decides which story the user gets). `packageErrorResponse` now projects
+    `details` (additive).
+  - GREEN: `projects-packages-routes.integration.test.ts` 8/8 — fork cut
+    beside upstream → `{reason: "package_name_taken", packageName}`; after
+    manifest rename (name + flow id) + re-cut → 201, GET lists
+    routepkg + routepkg-fork. Picker/dom/query units 10/10; i18n parity
+    green; explainer links `/studio/edit/<sourceLocalPackageId>` and Attach
+    stays disabled while colliding.
   - Files: `web/lib/queries/packages.ts` — the picker is fed by the
     `AvailablePackageInstallView` prop (type at `:66`, producing query at
     `:162`); extend THAT query to include installs with
@@ -913,7 +930,26 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     fork-beside-upstream surfaces the rename path, not an opaque 409.
   - Logging: typed errors; UI copy through i18n.
 
-- [ ] **T16: Cut-version dialog — multi-select "adopt in attached projects now"**
+- [x] **T16: Cut-version dialog — multi-select "adopt in attached projects now"**
+  - RED→GREEN: route unit RED observed 422 (strict schema rejecting
+    `adoptInProjectIds`) across all three contract cases before the body +
+    validation landed; GREEN pins: ineligible id → 409 pre-cut (cut fn never
+    called), authz → 403 pre-cut, partial adopt failure → 201 with
+    `adoptions: [{adopted},{failed,error}]` and exactly ONE cut; adopt-less
+    body keeps the legacy shape (no `adoptions` key, eligibility query never
+    consulted). Crash window (d) documented in the route comment.
+  - Eligibility = the back-edge, never the name: `listAdoptTargetProjects`
+    (batch-shaped, archived excluded) joins attachments ⋈ installs on
+    `source_local_package_id`; fork-cut integration proves 2 cut-pinned
+    projects advance to cut2 while the upstream-pinned project of the SAME
+    name is not offered and its pin is byte-identical after the round.
+  - UI: new `cut-version-dialog.tsx` (accessible modal per import-dialog
+    idiom; default NO projects checked; ✓/✗ glyph outcomes; "retry failed"
+    re-POSTs only the failed ids — safe because the cut is content-addressed
+    and re-adopt is an idempotent same-install upgrade); list Cut button
+    opens it; `/studio/local` page feeds `adoptTargets` client-safe
+    (projectId+name only) from one batch query. Dom test pins the POST body
+    (empty default / checked ids / retry subset). i18n EN+RU.
   - Eligibility (owner-narrowed): a project is offered iff its CURRENT
     attachment for this package points at a cut of THIS local package —
     attachment's install has `sourceLocalPackageId = <localPackage.id>`.

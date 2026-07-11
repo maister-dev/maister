@@ -91,6 +91,10 @@ export type AvailablePackageInstallView = {
   flows: string[];
   compatible: boolean;
   incompatibilityReason: string | null;
+  // ADR-132 §c: non-null for a Studio fork's cut — the back-edge to the local
+  // package. The picker badges these and, on a name collision with an
+  // existing attachment, links the rename explainer to the fork's editor.
+  sourceLocalPackageId: string | null;
 };
 
 export type PackageCompatibility = Pick<
@@ -363,6 +367,7 @@ export async function getAvailablePackageInstalls(): Promise<
         resolvedRevision: install.resolvedRevision,
         trustStatus: install.trustStatus,
         flows: manifest?.spec.flows.map((f) => f.id) ?? [],
+        sourceLocalPackageId: install.sourceLocalPackageId ?? null,
         ...compatibility,
       };
     }),

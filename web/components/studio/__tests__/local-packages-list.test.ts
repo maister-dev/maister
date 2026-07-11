@@ -30,6 +30,7 @@ const ACTIVE: LocalPackageListItem = {
     packageName: "openspec",
     versionLabel: "v1.2.3",
   },
+  adoptTargets: [],
 };
 const ARCHIVED: LocalPackageListItem = {
   id: "p2",
@@ -42,6 +43,7 @@ const ARCHIVED: LocalPackageListItem = {
     incompatibilityReason: null,
   },
   origin: { kind: "local" },
+  adoptTargets: [],
 };
 
 function render(packages: LocalPackageListItem[]): string {
@@ -83,6 +85,7 @@ describe("LocalPackagesList", () => {
           incompatibilityReason: null,
         },
         origin: { kind: "local" },
+        adoptTargets: [],
       },
     ]);
 

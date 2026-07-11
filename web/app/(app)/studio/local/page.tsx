@@ -19,6 +19,10 @@ import {
   listSourceInstallsForLocalPackages,
 } from "@/lib/local-packages/service";
 import { getLocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
+import {
+  listAdoptTargetProjects,
+  type AdoptTargetProject,
+} from "@/lib/local-packages/versions";
 
 type SourceInstallMap = Map<string, LocalPackageSourceInstall>;
 
@@ -33,6 +37,9 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
   const t = await getTranslations("studio");
   const rows = await listAllLocalPackages();
   const sourceInstalls = await listSourceInstallsForLocalPackages(rows);
+  // ADR-132 (T16): projects whose attachment points at a cut of each package
+  // — the cut dialog's adopt multi-select (one batch query for the page).
+  const adoptTargets = await listAdoptTargetProjects(rows.map((r) => r.id));
 
   // Client-safe projection: `working_dir` + lock session stay server-side.
   const packages: LocalPackageListItem[] = await Promise.all(
@@ -41,6 +48,7 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
         row,
         sourceInstalls,
         await getLocalPackageCutCompatibility(row),
+        adoptTargets,
       ),
     ),
   );
@@ -71,6 +79,7 @@ function toLocalPackageListItem(
   row: LocalPackage,
   sourceInstalls: SourceInstallMap,
   cutCompatibility: LocalPackageCutCompatibility,
+  adoptTargets: AdoptTargetProject[],
 ): LocalPackageListItem {
   return {
     id: row.id,
@@ -80,6 +89,10 @@ function toLocalPackageListItem(
     status: row.status,
     cutCompatibility,
     origin: localPackageOrigin(row, sourceInstalls),
+    // Client-safe subset: repo paths + attachment ids stay server-side.
+    adoptTargets: adoptTargets
+      .filter((target) => target.localPackageId === row.id)
+      .map((target) => ({ projectId: target.projectId, name: target.name })),
   };
 }
 

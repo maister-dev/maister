@@ -68,10 +68,20 @@ export function ProjectPackagesSection({
 
   const refresh = (): void => startTransition(() => router.refresh());
   const attachedNames = new Set(attachments.map((a) => a.packageName));
-  const attachable = availableInstalls.filter(
-    (i) => !attachedNames.has(i.name),
+  const attachedInstallIds = new Set(
+    attachments.map((a) => a.packageInstallId),
   );
-  const selected = attachable.find((install) => install.id === selectedInstall);
+  // ADR-132 §c: a local cut stays offered on a name collision (the explainer
+  // below handles it); an upstream sibling of an attached name stays hidden —
+  // that's the upgrade path, not the attach path.
+  const attachable = availableInstalls.filter((i) =>
+    i.sourceLocalPackageId
+      ? !attachedInstallIds.has(i.id)
+      : !attachedNames.has(i.name),
+  );
+  const selected = attachable.find((i) => i.id === selectedInstall);
+  const nameCollision =
+    selected !== undefined && attachedNames.has(selected.name);
 
   useEffect(() => {
     if (notice) noticeRef.current?.focus();
@@ -90,7 +100,7 @@ export function ProjectPackagesSection({
   }
 
   async function attach(): Promise<void> {
-    if (!selectedInstall) return;
+    if (!selectedInstall || nameCollision) return;
     setBusy("attach");
     surface(
       await call(`/api/projects/${slug}/packages`, "POST", {
@@ -160,13 +170,19 @@ export function ProjectPackagesSection({
                   value={install.id}
                 >
                   {install.name}@{install.versionLabel}
+                  {install.sourceLocalPackageId
+                    ? ` · ${t("attachLocalCutBadge")}`
+                    : ""}
                 </option>
               ))}
             </select>
             <button
               className="h-9 rounded-[8px] border border-amber bg-amber px-3 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-50"
               disabled={
-                busy === "attach" || !selectedInstall || !selected?.compatible
+                busy === "attach" ||
+                !selectedInstall ||
+                !selected?.compatible ||
+                nameCollision
               }
               type="button"
               onClick={attach}
@@ -185,6 +201,23 @@ export function ProjectPackagesSection({
           </div>
         ) : null}
       </div>
+
+      {nameCollision && selected ? (
+        <p
+          className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
+          role="alert"
+        >
+          {t("attachNameTakenExplainer", { name: selected.name })}{" "}
+          {selected.sourceLocalPackageId ? (
+            <Link
+              className="font-semibold underline underline-offset-2"
+              href={`/studio/edit/${selected.sourceLocalPackageId}`}
+            >
+              {t("attachNameTakenEditorLink")}
+            </Link>
+          ) : null}
+        </p>
+      ) : null}
 
       {notice ? (
         <p

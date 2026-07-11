@@ -23,7 +23,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let workspaceRoot: string;
 let pkgDir: string;
@@ -60,7 +60,7 @@ beforeAll(async () => {
     .withPassword("test")
     .start();
   pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
+  db = drizzle(pool, { schema: schemaModule });
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
   homeDir = await mkdtemp(join(tmpdir(), "pkg-routes-home-"));
@@ -116,10 +116,12 @@ afterAll(async () => {
   }
 });
 
-describe("project packages routes (integration)", () => {
-  let installId: string;
-  let attachmentId: string;
+// Shared across describes: the fork-beside-upstream block below forks the
+// upstream install the first block attached.
+let installId: string;
+let attachmentId: string;
 
+describe("project packages routes (integration)", () => {
   it("attach 404s for an unknown package install", async () => {
     const res = await attachPOST(
       jsonRequest("/api/projects/pkg-routes/packages", {
@@ -263,5 +265,96 @@ describe("project packages routes (integration)", () => {
       .where(eq(schema.packageInstalls.id, installId));
 
     expect(install.trustStatus).toBe("trusted");
+  });
+});
+
+// ADR-129 §c (T15): a fork's cut shares its upstream's package name — the
+// (projectId, packageName) unique surfaces as a TYPED 409 naming the
+// collision and the rename path, never an opaque DB error or the downstream
+// flow-id message. After the Studio rename journey (manifest name + flow id
+// → cut) the fork attaches beside the upstream.
+describe("fork-beside-upstream name uniqueness (integration)", () => {
+  let localPackageId: string;
+
+  it("attaching a fork cut with the upstream's name → 409 package_name_taken (pre-flow-guard)", async () => {
+    const { forkPackageToLocal } = await import("@/lib/local-packages/fork");
+    const { getLocalPackage } = await import("@/lib/local-packages/service");
+    const { cutLocalPackageVersion } = await import(
+      "@/lib/local-packages/versions"
+    );
+
+    const userId = randomUUID();
+
+    await db.insert(schema.users).values({
+      id: userId,
+      email: `u-${userId}@x.test`,
+      name: "Fork Author",
+    });
+
+    // installId (routepkg upstream) is attached to the project by the trust
+    // test above — the fork below collides with it by name AND flow id.
+    ({ localPackageId } = await forkPackageToLocal({
+      sourceInstallId: installId,
+      sourceRef: "routepkg",
+      createdBy: userId,
+      forceNew: true,
+      db,
+    }));
+    const pkg = await getLocalPackage(localPackageId, db);
+    const cut = await cutLocalPackageVersion(pkg!, { db });
+
+    const res = await attachPOST(
+      jsonRequest("/api/projects/pkg-routes/packages", {
+        packageInstallId: cut.installId,
+      }),
+      { params: Promise.resolve({ slug: "pkg-routes" }) },
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+
+    expect(body.code).toBe("CONFLICT");
+    expect(body.details).toEqual({
+      reason: "package_name_taken",
+      packageName: "routepkg",
+    });
+  });
+
+  it("after manifest rename (name + flow id) + re-cut, the fork attaches beside the upstream", async () => {
+    const { getLocalPackage, writeWorkingDirFile } = await import(
+      "@/lib/local-packages/service"
+    );
+    const { cutLocalPackageVersion } = await import(
+      "@/lib/local-packages/versions"
+    );
+
+    const pkg = await getLocalPackage(localPackageId, db);
+
+    await writeWorkingDirFile(
+      pkg!,
+      "maister-package.yaml",
+      "schemaVersion: 1\nname: routepkg-fork\nflows:\n  - { id: route-flow-fork, path: flows/route-flow }\n",
+    );
+    const renamedCut = await cutLocalPackageVersion(pkg!, { db });
+
+    const res = await attachPOST(
+      jsonRequest("/api/projects/pkg-routes/packages", {
+        packageInstallId: renamedCut.installId,
+      }),
+      { params: Promise.resolve({ slug: "pkg-routes" }) },
+    );
+
+    expect(res.status).toBe(201);
+
+    const listRes = await attachGET(
+      jsonRequest("/api/projects/pkg-routes/packages"),
+      { params: Promise.resolve({ slug: "pkg-routes" }) },
+    );
+    const list = await listRes.json();
+    const names = list.attachments
+      .map((a: { packageName: string }) => a.packageName)
+      .sort();
+
+    expect(names).toEqual(["routepkg", "routepkg-fork"]);
   });
 });
