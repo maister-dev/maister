@@ -154,6 +154,7 @@
 | [ADR-127](#adr-127-project-brain-consultant-indexed-tier) | Project Brain Consultant indexed tier | Accepted | 2026-07-03 |
 | [ADR-128](#adr-128-project-brain-self-improvement-proposal-bridge) | Project Brain self-improvement proposal bridge | Accepted | 2026-07-03 |
 | [ADR-129](#adr-129-mcp-management-v2--requirements--bindings-per-project-overlay-trust--health-activation) | MCP management v2: requirements & bindings across package/platform/project, per-project env-slot overlay (names-only), load-bearing trust, supervisor health probe | Accepted | 2026-07-11 |
+| [ADR-129](#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam) | Adapter-agnostic capability enforcement at the ACP seam: derived-only `capability_guard` interceptor, evidence-gated per-adapter flip of `tools`/`mcps` to `enforced`, `hooks` label corrected, no migration / no engine bump | Accepted | 2026-07-11 |
 
 ---
 
@@ -10988,6 +10989,204 @@ project-local servers. This ADR adds the explicit requirements & bindings layer.
   and risk than a maintained MCP SDK dependency.
 - _A separate project MCP page_: rejected by owner — the board `?tab=mcps` tab is
   the one place for all three sources.
+||||||| parent of 939a34f7a (docs(enforcement): ADR-129 + SDD for adapter-agnostic capability_guard (M14 flip))
+### ADR-129: Adapter-agnostic capability enforcement at the ACP seam
+
+**Date:** 2026-07-11
+**Status:** Accepted
+
+**Context:**
+
+M14 (ADR-041/043/044) built per-session capability *materialization* — `tools` /
+`mcps` / `permissionMode` are delivered to the adapter via
+`<worktree>/.claude/settings.local.json` + ACP `newSession params.mcpServers` — but
+froze the `instructed → enforced` flip. Every cell of `ENFORCEABILITY_BY_AGENT`
+(`web/lib/flows/enforcement.ts`) is `instructed`, and `claude`/`codex` carry **12
+`TODO(M14)` comments** promising a flip "once materialized per session". ADR-042
+authorized a *claude-first, per-cell, live-spike-gated* flip that never landed;
+the delivery is real but nothing on the adapter side is *proven* to constrain the
+agent, so keeping the cells `instructed` is the honest state (ADR-032 criterion
+#6 — strict must never silently degrade to instruction).
+
+Two things changed since M14:
+
+1. **M40 (ADR-108) shipped an adapter-agnostic guardrail interceptor** at the
+   supervisor↔ACP `requestPermission` seam (`supervisor/src/acp-client.ts` +
+   `guardrail-hooks.ts`): a deny-and-continue / halt substrate (`path_guard` /
+   `repetition` / `no_progress`) that works across all five adapter families,
+   with a `hook_trip` HITL escalation reusing the existing `hitl_requests.kind =
+   "hook_trip"` + `assignments.action_kind = "hook_trip"` (migration `0066`, a
+   doc-marker no-op) resume path. This is a *vendor-neutral* enforcement point —
+   exactly what a per-cell, per-adapter flip needed and lacked.
+2. `hooks` is itself `instructed` in the table yet **deterministically enforced**
+   at that seam since M40 — a label the docs already flag as a deliberate honest
+   under-claim (`flow-settings.md`), pending this ADR.
+
+The seam, however, reads only the coarse ACP `ToolCallUpdate.kind` (a 10-value
+enum) + `locations[0].path`. It does **not** carry a first-class tool NAME or MCP
+server namespace; those ride non-standard fields (`_meta.claudeCode.toolName` for
+claude, `title`, `rawInput`). Whether every write reaches the seam with a stable
+identity is a per-adapter empirical question (the "tool-identity spike").
+
+**Decision:**
+
+- **A new derived-only guardrail rule kind `capability_guard`** lives beside
+  `path_guard` in the supervisor interceptor. It is **NOT** authorable in the
+  flow `hooks` settings schema — the web tier *derives* it from the node/agent
+  capability `settings` (`tools` / `mcps`) filtered to classes declared
+  `enforcement.<class>: strict` and enforceable. No new authored manifest surface
+  → **no engine-version bump**.
+- **A new derived type `SessionEnforcementProfile`** is carried on a **new**
+  `StartSessionRequest.enforcementProfile` field (distinct from the M14
+  `capabilityProfilePath` and the platform-agent `capability_profile` frontmatter
+  — the name collision is deliberately avoided), seeded onto the in-memory
+  `SessionRecord` exactly as `hooksConfig` is (the M14 `capabilityProfilePath`
+  reaches only the child env, never the seam, so it could not be reused). Shape,
+  per strictly-enforced class only:
+  ```ts
+  type SessionEnforcementProfile = {
+    tools?: { allow: string[] };        // allow-list of tool NAMES for the resolved adapter
+    mcps?: { allowServers: string[] };  // allow-list of MCP server namespaces
+    enforcedClasses: Array<"tools" | "mcps">;  // audit
+  };
+  ```
+- **Interceptor semantics** (`requestPermission`, only when
+  `record.enforcementProfile` is present; placed **inside the M40 guardrail block,
+  after `path_guard`, before B1 auto-approve** so an out-of-profile call is denied
+  even on unattended/auto-approve sessions): a call **governed** by a strict class
+  (its tool identity resolves) — in-profile → resolve inline as an allow
+  (auto-allow, zero added HITL, reset the deny counter); out-of-profile → inline
+  `{cancelled}` (deny-and-continue), `emitHookTrip("capability_guard", …)`
+  disposition `deny`, increment `capabilityDenyCount`. The **Nth consecutive**
+  out-of-profile deny (N = `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`, default
+  3, resolved web-side and delivered on the profile) latches `hookHalted`, emits a
+  `capability_guard` **halt**, and cancels every pending deferred (mirroring
+  `no_progress`). A call governed by no strict class falls through unchanged to
+  B1/HITL. Any throw in evaluation falls through to a logged deny + release — never
+  an unresolved RPC (the M40 deferred-release invariant). This makes
+  `capability_guard` **dual-disposition** (per-call `deny`, Nth-deny `halt`), so
+  the halt emit passes its disposition explicitly rather than reading the single
+  frozen `HOOK_RULE_META` value.
+- **Tool identity at the seam** is extracted from `_meta.claudeCode.toolName ??
+  title` (the same fields `web/lib/run-transcript/transcript.ts` already parses),
+  and an MCP call's server namespace from the `mcp__<server>__<tool>` convention.
+  Missing/malformed identity for a call governed by a strict class →
+  **conservative deny** (fail-closed). This is why the flip is **evidence-gated,
+  not a hard prerequisite** (next bullet).
+- **Evidence-gated per-adapter flip.** A new optional smoke dimension
+  `capabilityEnforcement` (mirroring `readOnlySession`) is added to the adapter
+  smoke cache + `GET /diagnostics`; the smoke script gains a
+  `--capability-enforcement` probe proving, per adapter, that (a) every
+  WRITE_KINDS tool call fires `requestPermission` under `permissionPolicy=default`
+  and (b) `params.toolCall` carries a stable tool-name (+ resolvable MCP server).
+  `capabilityEnforcementSmoke: "required"` for **all five** adapters. A new async
+  launch gate `assertEnforcementEvidence` (mirroring `assertReadOnlySessionEvidence`)
+  refuses a strict-enforced launch when the resolved adapter's
+  `capabilityEnforcement` smoke ≠ `ok`, with a diagnostic naming the missing
+  evidence. Net effect: an adapter enforces **only after its smoke is cached ok**
+  (an operator ritual); until then it refuses-with-diagnostic — never a
+  false-enforce.
+- **Permission-mode ownership (D5).** An enforced session is spawned with
+  `permissionPolicy = "default"` so the adapter issues `session/request_permission`
+  and the supervisor becomes the permission authority. A runner whose
+  `permissionPolicy = "dangerously_skip_permissions"` + a strict-armed profile
+  **refuses launch** (`EXECUTOR_UNAVAILABLE`) — under skip-permissions the seam is
+  structurally inert, so enforcing would be a silent lie. A fail-closed **always-ask
+  sentinel** latches `hookHalted` if a WRITE_KINDS `session/update` tool_call is
+  observed whose `toolCallId` was never arbitrated (the adapter stopped honoring
+  always-ask mid-session).
+- **`ENFORCEABILITY_BY_AGENT` flip (honest scope).** Only classes with a real,
+  adapter-agnostic seam mechanism flip to `enforced`, for **all** adapters (the
+  interceptor is adapter-agnostic; the launch evidence gate — not the table —
+  admits an adapter):
+  - `tools` → `enforced` (capability_guard tool-name allow-list; evidence-gated).
+  - `mcps` → `enforced` (capability_guard MCP-server allow-list; evidence-gated).
+  - `hooks` → `enforced` (already M40-enforced at the seam; the honest-visibility
+    under-claim from ADR-108 is retired now that a peer class carries the same
+    seam mechanism openly).
+  The other four classes stay `instructed` with a **permanent documented** comment
+  (not `TODO`), because none has a tool-identity seam mechanism:
+  - `skills` → materialized instruction/skill files, not tool calls — not
+    seam-interceptable.
+  - `restrictions` → path-based `mustNotTouch` deny-sets (`material.paths`)
+    enforced *post-hoc* by the `mutation-check` flow gate; `capability_guard` is an
+    **allow-list over tool identity**, and expressing a path deny-set as a
+    path_guard allow-list is a forbidden deny-list-complement. (No tool-shaped
+    restriction exists in the catalog — the planned `deniedTools` profile field
+    has no producer and is dropped.)
+  - `permissionMode` → delivered claude-only via `settings.local.json`
+    `permissions.defaultMode`, its end-to-end constraint unverified (spike 0.10);
+    a 3-valued `ask|allow|deny` intent does not reduce to a tool-identity
+    allow-list.
+  - `workspaceAccess` → not materialized to the seam on the flow path (flow
+    sessions carry no `readOnlySession`); the M34 L1–L3 read-only stack it would
+    reuse is wired for platform-agent runs, not flow nodes. Wiring flow-node
+    `workspaceAccess → readOnlySession` is a clean follow-up, out of scope here.
+  All **12 `TODO(M14)`** comments are removed (3 classes × 2 adapters become
+  `enforced` comments; the `skills`/`restrictions`/`permissionMode`/`workspaceAccess`
+  cells become permanent documented-instructed comments).
+- **No new `MaisterError` code** (ADR-008 closed union). `CONFIG` (strict class
+  with no declared allow-set for the resolved agent, or strict on a
+  never-enforceable class), `EXECUTOR_UNAVAILABLE` (strict enforceable-elsewhere
+  but not on the resolved adapter / missing smoke evidence / skip-permissions
+  conflict), and `PRECONDITION` (launch preconditions) already carry the needed
+  semantics.
+- **No migration.** Guardrail rule kinds are jsonb keys + TS unions;
+  `enforcement_snapshot` / `materialization_plan` are existing jsonb columns;
+  `hitl_requests.kind` / `assignments.action_kind` already include `hook_trip`.
+  This ADR takes **no** DDL and **not** migration `0093` (contested with the
+  postgres/graph cut-over plan). Precedent for a DB-layer no-op is `0066`.
+
+**Consequences:**
+
+- `enforcement: strict` on `tools` / `mcps` is launchable and actually enforced —
+  identically across every adapter whose `capabilityEnforcement` smoke is cached
+  `ok` — via one adapter-agnostic code path. The `TODO(M14)` lie is gone.
+- The ADR-032 invariant (strict never silently degrades to instruction) holds
+  **everywhere**: an unproven adapter or a non-seam class **refuses** launch; it
+  never enforces-nothing. This is *stronger* than ADR-042's claude-first plan,
+  which left every codex cell `instructed` — codex enforces the same code the day
+  its smoke passes.
+- In-profile tool calls add **zero** user-visible permission prompts (auto-resolved
+  at the seam); out-of-profile calls deny-and-continue, and a run stuck in a deny
+  loop escalates to a human via the existing `hook_trip` HITL after N=3.
+- This ADR **amends/executes ADR-042** (generalizes claude-first-per-cell → an
+  adapter-agnostic evidence-gated seam), **unblocks the ADR-041 gating notes**, and
+  **corrects the `hooks` cell label**. ADR-041/042/044 history is not renumbered.
+- A future generic ALLOW/DENY/ASK policy language (a separate plan) is not
+  precluded — `SessionEnforcementProfile` is a data input, not a policy grammar.
+
+**Alternatives Considered:**
+
+- _Flip all five "seam-coverable" classes as the plan first scoped
+  (`tools`/`mcps`/`restrictions`/`permissionMode`/`workspaceAccess`)_: rejected on
+  code-verified evidence. `restrictions` is a path deny-set (not tool identity),
+  `permissionMode` is a claude-only unverified 3-valued enum, and `workspaceAccess`
+  is not delivered to the seam on the flow path — flipping them would re-introduce
+  the exact silent-degradation ADR-032 forbids. The four stay `instructed` with
+  documented reasons; only the classes with a real seam mechanism flip.
+- _Add `capability_guard` to the authorable `hooks` settings schema_: rejected. It
+  is a **derived** projection of existing capability settings; authoring it
+  separately would duplicate the source of truth and force an engine-version bump.
+- _Reuse the M14 `capabilityProfilePath` to carry the enforcement set_: rejected.
+  That field reaches only the spawned child's env (`MAISTER_CAPABILITY_PROFILE_PATH`),
+  never the in-memory `SessionRecord` the seam reads; the `hooksConfig` delivery
+  pattern is the correct precedent.
+- _A codex-specific carve-out_: rejected. One evidence-gated code path for all five
+  adapters; codex-acp is schema-backed for the fields the identity extractor needs,
+  so acceptance is expected to hold — and any adapter that fails its smoke gets the
+  same refuse-with-diagnostic, not a carve-out.
+- _Take a migration to add a `capability_guard` enum value_: rejected. No `pgEnum`
+  is involved; the rule kind is a TS union + jsonb key. A DDL-free change with an
+  ADR record (ADR-108 precedent) is correct.
+
+> **Numbering note (four-way contest).** At HEAD the next free number is 129
+> (max = ADR-128; 123 is a real gap — do not backfill it). Four unlanded branches
+> target 129: this (`enforcement-flip`), `postgres-graph-cutover`,
+> `agent-format-superset`, and `fork-loop`. Whoever lands 2nd/3rd/4th renumbers to
+> 130/131/132 and re-points every citation; re-grep `docs/decisions.md` at merge.
+> This change takes neither a migration nor an engine bump, so only the ADR number
+> collides.
 
 ---
 

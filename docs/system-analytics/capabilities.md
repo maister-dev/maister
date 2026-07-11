@@ -5,11 +5,14 @@
 > mapping (`agent-map`), per-session native materialization (`materialize`), ACP
 > `newSession params.mcpServers` delivery, the `node_attempts.materialization_plan`
 > ledger, scoped cleanup, and the run-detail capability view have all shipped to
-> the current branch. **Only the spike-gated `instructed → enforced` flip stays
-> Designed/deferred** — `ENFORCEABILITY_BY_AGENT` stays all `instructed` this
-> milestone, gated on a live-adapter spike that cannot run in CI (ADR-042). Read
-> every "MUST" tied to the flip as the deferred contract; everything else is
-> as-built. Locked decisions:
+> the current branch. **The `instructed → enforced` flip is now Designed —
+> [ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
+> (`capability_guard`, this branch): `tools` / `mcps` flip to `enforced` via an
+> adapter-agnostic supervisor↔ACP-seam interceptor, evidence-gated per adapter, and
+> `hooks` is corrected to `enforced`. ADR-042's per-cell live-spike gating is
+> superseded by that evidence gate. The four remaining classes stay `instructed`
+> with documented reasons. Read every "MUST" tagged `(ADR-129)` as the flip
+> contract ahead of code; everything else is as-built. Locked decisions:
 > [ADR-041](../decisions.md#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
 > (registry refs + agent-aware mapping + runner-owned native materialization),
 > [ADR-042](../decisions.md#adr-042-conservative-spike-gated-enforcement-flip-claude-first)
@@ -250,34 +253,37 @@ The boundary stays the M11c machinery
 ([ADR-032](../decisions.md#adr-032-settings-enforcement-refusal-boundary)):
 `evaluateNodeEnforcement` + `assertNodeLaunchable`, fired at BOTH the launch
 precondition (`POST /api/runs`) and the per-node runtime build
-(`runner-graph.ts`). M14 only changes the **data** — it flips proven cells in
-`ENFORCEABILITY_BY_AGENT` from `instructed` to `enforced`, which activates the
-previously-dead `EXECUTOR_UNAVAILABLE` branch. The guard is an **allow-list of
-`enforced` cells**, never a deny-list. Launch proceeds iff every `strict`
-capability-bearing setting on every `ai_coding`/`judge` node resolves to an
-`enforced` cell for the resolved agent.
+(`runner-graph.ts`). ADR-129 flips cells in `ENFORCEABILITY_BY_AGENT` from
+`instructed` to `enforced` and adds a second, **async evidence gate** for per-adapter
+admission. The guard is an **allow-list of `enforced` cells** (never a deny-list);
+launch proceeds iff every `strict` capability-bearing setting on every
+`ai_coding`/`judge`/`orchestrator` node resolves to an `enforced` cell for the
+resolved agent **and** clears the evidence gate.
 
-The set of `(agent, class) → enforced` cells is the **allow-list**, filled in
-Phase 5 from the [ADR-042 verdict table](../decisions.md#adr-042-conservative-spike-gated-enforcement-flip-claude-first).
-**claude-first:** only `claude` cells are candidates this milestone; **every
-`codex` cell stays `instructed`** (codex enforced mapping → Phase 2).
+**Mechanism per class (ADR-129, adapter-agnostic).** The enforcement point for
+`tools`/`mcps` is the supervisor↔ACP-seam `capability_guard` interceptor
+([`guardrail-hooks.md`](guardrail-hooks.md)) — **not** the `settings.local.json`
+materialized-delivery channel (that channel still *materializes* the profile for the
+agent's own use; the *enforcement* is the seam). The table is uniform across all five
+adapters; per-adapter readiness is the `capabilityEnforcement` evidence gate, not a
+cell.
 
-| `(agent, class)` | materialized mechanism | enforced this milestone? |
-| ---------------- | ---------------------- | ------------------------ |
-| `claude, mcps` | ACP `newSession params.mcpServers` (env NAMES) | *(Phase 5 spike — claude-first candidate)* |
-| `claude, tools` | `settings.local.json` `permissions.allow` | *(Phase 5 spike — claude-first candidate)* |
-| `claude, skills` | `settings.local.json` `skillOverrides` (not emitted yet) | *(Phase 5 spike — claude-first candidate)* |
-| `claude, restrictions` | `settings.local.json` `permissions.deny` (not emitted yet) | *(Phase 5 spike — claude-first candidate)* |
-| `claude, permissionMode` | `settings.local.json` `permissions.defaultMode` (MUST re-run live) | *(Phase 5 spike — claude-first candidate)* |
-| `claude, workspaceAccess` | `settings.local.json` `permissions.additionalDirectories` (not emitted yet) | *(Phase 5 spike — claude-first candidate)* |
-| `codex, *` | profile/instructions handoff only | **No — stays `instructed` (Phase 2)** |
+| `(class)` | enforcement mechanism (ADR-129) | enforced? |
+| --------- | ------------------------------- | --------- |
+| `tools` | `capability_guard` **tool-name allow-list** at the ACP seam (identity from `_meta.claudeCode.toolName ?? title`) | **enforced** (all adapters; evidence-gated at launch) |
+| `mcps` | `capability_guard` **MCP-server allow-list** at the ACP seam (server from `mcp__<server>__<tool>`) | **enforced** (all adapters; evidence-gated at launch) |
+| `hooks` | supervisor guardrail interceptor (M40, ADR-108) | **enforced** (all adapters; label corrected) |
+| `skills` | materialized skill/instruction files — not tool calls | instructed (permanent — not seam-interceptable) |
+| `restrictions` | path-based `mustNotTouch` deny-sets → post-hoc `mutation-check` gate | instructed (permanent — a path deny-set is not a tool-identity allow-list) |
+| `permissionMode` | `settings.local.json` `permissions.defaultMode` (claude-only, unverified) | instructed (permanent — 3-valued enum, not a tool-identity allow-list) |
+| `workspaceAccess` | M34 L1–L3 read-only stack (agent runs only; not wired to the flow seam) | instructed (follow-up — flow-node `workspaceAccess → readOnlySession` not yet delivered) |
 
-A cell flips iff its Phase-5 spike verdict is `enforced`; an unproven `claude`
-cell stays `instructed` with a rationale comment. The contract only ever tightens
-(`instructed → enforced`), never loosens. A `strict` declaration on a still-
-`instructed` class refuses with `MaisterError("CONFIG")` (no agent can enforce);
-once some agent enforces a class but the resolved executor's agent cannot, the
-refusal is `MaisterError("EXECUTOR_UNAVAILABLE")`. No new error code
+The contract only ever tightens (`instructed → enforced`), never loosens. A `strict`
+declaration on a still-`instructed` class refuses with `MaisterError("CONFIG")` (no
+agent can enforce it); a `strict` `tools`/`mcps` whose resolved adapter lacks cached
+`capabilityEnforcement` evidence (or uses skip-permissions, or has no declared
+allow-set) refuses with `MaisterError("EXECUTOR_UNAVAILABLE")` / `CONFIG` from the
+evidence gate. No new error code
 ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror) closed
 union).
 
@@ -373,9 +379,11 @@ they hold once the milestone lands, not before).
 - The trust route's idempotency marker MUST be `setupStatus`: `409` ONLY when
   `setupStatus ∈ {done, not_required}`, NEVER merely because `trustStatus` is set;
   a `trusted`+`failed` row MUST re-run setup on re-POST.
-- `ENFORCEABILITY_BY_AGENT` MUST only ever flip `instructed → enforced`; ALL six
-  `codex` cells MUST stay `instructed` this milestone; the launch/runtime guard
-  MUST stay an allow-list of `enforced` cells.
+- `ENFORCEABILITY_BY_AGENT` MUST only ever flip `instructed → enforced`; the
+  launch/runtime guard MUST stay an allow-list of `enforced` cells. Since ADR-129,
+  `tools`/`mcps`/`hooks` are `enforced` for **all five** adapters (adapter-agnostic
+  `capability_guard` seam); per-adapter admission for a `strict` `tools`/`mcps`
+  launch MUST be the async `capabilityEnforcement` evidence gate, never a table cell.
 - Subsequent node attempts in the same run MUST re-materialize from the persisted
   `materialization_plan.resolvedRevisions` snapshot, NEVER a fresh catalog read,
   so a mid-run `capability_records` change cannot mutate a running run.

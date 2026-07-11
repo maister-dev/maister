@@ -859,6 +859,7 @@ components:
                     checkedAt,
                     protocolVersion,
                     readOnlySession,
+                    capabilityEnforcement,
                   ]
                 additionalProperties: false
                 properties:
@@ -894,6 +895,36 @@ components:
                       adapters whose descriptor marks read-only-session smoke as
                       required; descriptors marked `not_required` skip this
                       evidence gate.
+                    properties:
+                      status:
+                        type: string
+                        enum: [not_required, pending, ok, skipped, error]
+                      reason:
+                        type: string
+                        nullable: true
+                      checkedAt:
+                        type: string
+                        format: date-time
+                        nullable: true
+                      protocolVersion:
+                        type: integer
+                        nullable: true
+                  capabilityEnforcement:
+                    type: object
+                    required: [status, reason, checkedAt, protocolVersion]
+                    additionalProperties: false
+                    description: |
+                      (Designed — ADR-129) Cached adapter-specific evidence that
+                      `capability_guard` enforcement behaves safely at the ACP
+                      seam: the probe proved `requestPermission` fires for every
+                      write-class tool call under `permissionPolicy=default` and
+                      that `params.toolCall` carries a stable tool name (+ a
+                      resolvable MCP server namespace). `ok` must come from that
+                      probe; generic initialize/newSession smoke is not enough
+                      and remains `skipped`. `ok` is required (the launch
+                      evidence gate refuses a strict `tools`/`mcps` enforcement
+                      launch otherwise); the demote-to-generic rule mirrors
+                      `readOnlySession`.
                     properties:
                       status:
                         type: string
@@ -1273,6 +1304,61 @@ components:
                     Glob writable set (non-empty; the resolver fills at least
                     `["**"]`); a write-class tool call outside it is denied
                     (deny-and-continue).
+        enforcementProfile:
+          type: object
+          additionalProperties: false
+          required: [enforcedClasses]
+          description: |
+            (Designed — ADR-129) Resolved, derived capability-enforcement set for the
+            `capability_guard` seam interceptor. Present iff the resolved node/agent
+            declares `enforcement.tools: strict` and/or `enforcement.mcps: strict` on
+            an enforceable adapter. Seeded onto the in-memory SessionRecord like
+            `hooksConfig`; distinct from `capabilityProfilePath` (child-env only).
+            Each class key is present iff that class is strict-enforced; an
+            out-of-profile tool call is denied at the seam (deny-and-continue) and the
+            Nth consecutive deny halts. See `system-analytics/guardrail-hooks.md`.
+          properties:
+            tools:
+              type: object
+              additionalProperties: false
+              required: [allow]
+              description: |
+                Present iff `tools` is strict-enforced. Allow-list of tool NAMES for
+                the resolved adapter; a tool call whose extracted identity is not in
+                `allow` is denied. Never empty (a strict class with no declared
+                allow-set is a launch-time `CONFIG` refusal).
+              properties:
+                allow:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    minLength: 1
+                  description: Allowed tool names (allow-list, never a deny-list).
+            mcps:
+              type: object
+              additionalProperties: false
+              required: [allowServers]
+              description: |
+                Present iff `mcps` is strict-enforced. Allow-list of MCP server
+                namespaces; a `mcp__<server>__<tool>` call whose server is not in
+                `allowServers` is denied.
+              properties:
+                allowServers:
+                  type: array
+                  items:
+                    type: string
+                    minLength: 1
+                  description: Allowed MCP server namespaces.
+            enforcedClasses:
+              type: array
+              minItems: 1
+              items:
+                type: string
+                enum: [tools, mcps]
+              description: |
+                Audit list of the classes this profile enforces (folded into the
+                enforcement snapshot + logs).
     AdapterLaunch:
       type: object
       additionalProperties: false

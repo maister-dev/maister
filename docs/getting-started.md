@@ -165,7 +165,25 @@ typecheck          # tsc --noEmit
 test               # vitest unit + integration
 test:unit          # 30 tests (registry, types, cost, spawn)
 test:integration   # 9 lifecycle scenarios via the fake-acp.mjs fixture
+smoke:acp          # cache adapter smoke evidence (readOnlySession + capabilityEnforcement dimensions)
 ```
+
+**Adapter evidence ritual (ADR-090 / ADR-129).** Some launches are gated on cached
+live-adapter smoke evidence written by `smoke:acp` into
+`MAISTER_ADAPTER_SMOKE_CACHE_PATH`:
+
+```bash
+# Read-only-session evidence (none/repo_read platform-agent runs — ADR-090):
+pnpm -C supervisor smoke:acp --cache <path> --read-only-session gemini opencode mimo
+# Capability-enforcement evidence (strict tools/mcps flow/agent runs — ADR-129):
+pnpm -C supervisor smoke:acp --cache <path> --capability-enforcement claude codex gemini opencode mimo
+```
+
+Until an adapter's `capabilityEnforcement` dimension is cached `ok`, a strict
+`tools`/`mcps` launch on it **refuses** with a diagnostic naming the missing
+evidence (never a false-enforce). CI runs the probe against the mock-ACP adapter;
+the live confirmation for real adapters is this operator ritual. Full checklist:
+[`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md).
 
 ## Database
 
