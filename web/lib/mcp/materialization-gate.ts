@@ -1,11 +1,12 @@
 import "server-only";
 
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
-import type { WithheldMcp } from "@/lib/db/schema";
+import type { McpConfigOverlay, WithheldMcp } from "@/lib/db/schema";
 
 import { inArray, sql, type SQL } from "drizzle-orm";
 
 import { platformMcpServers } from "@/lib/db/schema";
+import { assertOverlayAgainstSlots } from "@/lib/mcp/binding-service";
 
 // ADR-129 (W-E): the materialization gate makes platform `trust_status`
 // load-bearing and unifies it with the exec-trust stdio gate into ONE structured
@@ -100,6 +101,54 @@ export function partitionWithheldMcps(args: {
   }
 
   return { kept, withheld };
+}
+
+function bareName(k: string): string {
+  return k.startsWith("env:") ? k.slice(4) : k;
+}
+
+// ADR-129 (W-C): apply per-binding overlays to the materialized servers by
+// rewriting env/header/arg/url NAMES only — the ACP wire shape is unchanged and
+// the supervisor still resolves values from `process.env`. NO secret VALUE is
+// ever introduced. The overlay is re-validated against the server's declared
+// slots (defensive; unknown slot → CONFIG), so a stale binding cannot smuggle an
+// unknown slot past the write-time check.
+export function applyMcpOverlays(
+  mcpServers: readonly AgentMcpServer[],
+  overlaysByRef: Map<string, McpConfigOverlay>,
+): AgentMcpServer[] {
+  return mcpServers.map((server) => {
+    const overlay = overlaysByRef.get(server.name);
+
+    if (!overlay) return server;
+
+    assertOverlayAgainstSlots(overlay, {
+      env: server.envKeys ?? [],
+      header: server.headerKeys ?? [],
+    });
+
+    const next: AgentMcpServer = { ...server };
+
+    if (overlay.envRemap && server.envKeys) {
+      next.envKeys = server.envKeys.map((k) => {
+        const remap = overlay.envRemap?.[bareName(k)];
+
+        return remap !== undefined ? bareName(remap) : k;
+      });
+    }
+    if (overlay.headerRemap && server.headerKeys) {
+      next.headerKeys = server.headerKeys.map((k) => {
+        const remap = overlay.headerRemap?.[bareName(k)];
+
+        return remap !== undefined ? bareName(remap) : k;
+      });
+    }
+    if (overlay.argsOverride !== undefined)
+      next.args = [...overlay.argsOverride];
+    if (overlay.urlOverride !== undefined) next.url = overlay.urlOverride;
+
+    return next;
+  });
 }
 
 // Merge a node's withheld MCPs into the run-level `runs.withheld_mcps` sink,

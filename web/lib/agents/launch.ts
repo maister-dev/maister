@@ -2530,8 +2530,13 @@ export async function resolveAgentProfileMcpServers(args: {
   const [
     { loadSelectableCapabilities, resolveCapabilityProfile },
     { mapProfileToAgentArtifacts },
-    { loadProjectMcpBindings },
-    { loadPlatformTrustByRef, mergeRunWithheldMcps, partitionWithheldMcps },
+    { loadProjectMcpBindings, loadProjectMcpOverlays },
+    {
+      applyMcpOverlays,
+      loadPlatformTrustByRef,
+      mergeRunWithheldMcps,
+      partitionWithheldMcps,
+    },
   ] = await Promise.all([
     import("@/lib/capabilities/resolver"),
     import("@/lib/capabilities/agent-map"),
@@ -2588,7 +2593,13 @@ export async function resolveAgentProfileMcpServers(args: {
     );
   }
 
-  return kept;
+  // ADR-129 (W-C): apply the per-binding env-slot overlay (NAMES only).
+  const mcpOverlays = await loadProjectMcpOverlays(
+    args.projectId,
+    args.db as never,
+  );
+
+  return mcpOverlays.size > 0 ? applyMcpOverlays(kept, mcpOverlays) : kept;
 }
 
 // MCP facade injection (ADR-089 D9): the agent's sanctioned write channel —

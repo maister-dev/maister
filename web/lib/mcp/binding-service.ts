@@ -240,6 +240,32 @@ export async function loadProjectMcpBindings(
   }));
 }
 
+// ADR-129 (W-C): per-ref config overlays for a project, applied at
+// materialization to rewrite NAMES only. Only ENABLED bindings with a non-empty
+// overlay are returned (a disabled binding never materializes).
+export async function loadProjectMcpOverlays(
+  projectId: string,
+  injected?: BindingDb,
+): Promise<Map<string, McpConfigOverlay>> {
+  const result = await db(injected).execute(sql`
+    SELECT ref_id, config_overlay
+    FROM project_mcp_bindings
+    WHERE project_id = ${projectId} AND enabled = true
+  `);
+  const map = new Map<string, McpConfigOverlay>();
+
+  for (const row of rowsOf<{
+    ref_id: string;
+    config_overlay: McpConfigOverlay;
+  }>(result)) {
+    const overlay = row.config_overlay ?? {};
+
+    if (Object.keys(overlay).length > 0) map.set(row.ref_id, overlay);
+  }
+
+  return map;
+}
+
 export async function listBindings(
   projectId: string,
   injected?: BindingDb,

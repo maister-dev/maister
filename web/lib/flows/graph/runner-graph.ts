@@ -101,6 +101,7 @@ import {
 
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
 import {
+  applyMcpOverlays,
   loadPlatformTrustByRef,
   mergeRunWithheldMcps,
   partitionWithheldMcps,
@@ -127,7 +128,10 @@ import {
 } from "@/lib/capabilities/resolver";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
-import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
+import {
+  loadProjectMcpBindings,
+  loadProjectMcpOverlays,
+} from "@/lib/mcp/binding-service";
 import { agentFacadeMcpServer } from "@/lib/agents/launch";
 import {
   issueOrchestratorRunToken,
@@ -1754,12 +1758,25 @@ async function materializeNodeCapabilities(
   const mcpEntries = profile.supported
     .filter((e) => e.kind === "mcp")
     .map((e) => ({ refId: e.capabilityRefId, source: e.source }));
-  const { kept: mcpServers, withheld: withheldMcps } = partitionWithheldMcps({
+  const { kept, withheld: withheldMcps } = partitionWithheldMcps({
     mcpServers: m.mcpServers,
     sourceByRef: new Map(mcpEntries.map((e) => [e.refId, e.source])),
     platformTrustedByRef: await loadPlatformTrustByRef(mcpEntries, db),
     execTrust: loaded.execTrust,
   });
+
+  // ADR-129 (W-C): apply the per-binding env-slot overlay (NAMES only) to the
+  // executable set. Wire shape unchanged — supervisor still resolves from process.env.
+  const mcpOverlays = await loadProjectMcpOverlays(loaded.run.projectId);
+  const mcpServers =
+    mcpOverlays.size > 0 ? applyMcpOverlays(kept, mcpOverlays) : kept;
+
+  if (mcpOverlays.size > 0) {
+    logger.debug(
+      { nodeId: node.id, overlaidRefs: [...mcpOverlays.keys()] },
+      "[runner.graph] MCP config overlays applied (names only)",
+    );
+  }
 
   const plan: MaterializationPlan = {
     profileDigest: profile.profileDigest,
