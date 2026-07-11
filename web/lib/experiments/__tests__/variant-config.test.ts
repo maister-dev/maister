@@ -18,6 +18,34 @@ describe("experiment variant config", () => {
     ).toThrow();
   });
 
+  it("accepts a packagePin with a uuid packageInstallId (ADR-129 axis)", () => {
+    expect(
+      experimentVariantConfigSchema.parse({
+        packagePin: {
+          packageInstallId: "2c2f0f9e-6c1e-4d7a-9b1a-0e6cf4b1a111",
+        },
+      }),
+    ).toMatchObject({
+      packagePin: { packageInstallId: "2c2f0f9e-6c1e-4d7a-9b1a-0e6cf4b1a111" },
+    });
+  });
+
+  it("rejects a non-uuid packagePin id and unknown packagePin keys (strict)", () => {
+    expect(() =>
+      experimentVariantConfigSchema.parse({
+        packagePin: { packageInstallId: "not-a-uuid" },
+      }),
+    ).toThrow();
+    expect(() =>
+      experimentVariantConfigSchema.parse({
+        packagePin: {
+          packageInstallId: "2c2f0f9e-6c1e-4d7a-9b1a-0e6cf4b1a111",
+          attachmentId: "smuggled",
+        },
+      }),
+    ).toThrow();
+  });
+
   it("rejects the same overlay ref in add and remove", () => {
     expect(() =>
       experimentVariantConfigSchema.parse({

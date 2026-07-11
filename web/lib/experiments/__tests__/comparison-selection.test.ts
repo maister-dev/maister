@@ -32,6 +32,7 @@ function run(
     },
     files: [],
     materializationDelta: null,
+    provenance: null,
   };
 }
 
@@ -72,6 +73,7 @@ const comparison: ExperimentComparisonDTO = {
   ],
   verdict: null,
   generatedAt: "2026-07-04T00:00:00.000Z",
+  flowRevisionDelta: false,
 };
 
 describe("comparison diff run selection", () => {

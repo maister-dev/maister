@@ -102,6 +102,8 @@ export default async function ProjectExperimentsPage({
     variantLabel: t("create.variantLabel"),
     runner: t("create.runner"),
     executionPolicy: t("create.executionPolicy"),
+    packagePin: t("create.packagePin"),
+    packagePinNone: t("create.packagePinNone"),
     rulesAdd: t("create.rulesAdd"),
     rulesRemove: t("create.rulesRemove"),
     skillsAdd: t("create.skillsAdd"),

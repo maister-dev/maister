@@ -68,6 +68,8 @@ const createLabels: CreateExperimentLabels = {
   variantLabel: "Label",
   runner: "Runner override",
   executionPolicy: "Execution policy JSON",
+  packagePin: "Package version pin",
+  packagePinNone: "Project pin (no override)",
   rulesAdd: "Rules add",
   rulesRemove: "Rules remove",
   skillsAdd: "Skills add",

@@ -32,6 +32,9 @@ const labels: ExperimentLabLabels = {
   openRun: "Open run",
   noRuns: "No runs yet",
   crashedConcludable: "Crashed variants remain comparable",
+  provenanceLocalCut: "local cut",
+  provenanceUpstream: "upstream",
+  flowRevisionDelta: "package versions differ",
   tabs: {
     diff: "Diff",
     diffOfDiffs: "Diff of diffs",
@@ -122,6 +125,7 @@ function comparison(
         },
         files: [],
         materializationDelta: null,
+        provenance: null,
       },
       {
         runId: "run-b-1",
@@ -143,10 +147,12 @@ function comparison(
         },
         files: [],
         materializationDelta: null,
+        provenance: null,
       },
     ],
     verdict: null,
     generatedAt: "2026-07-03T09:01:00.000Z",
+    flowRevisionDelta: false,
   };
 }
 

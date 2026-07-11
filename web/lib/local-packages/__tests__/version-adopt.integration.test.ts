@@ -208,6 +208,54 @@ describe("version-adopt launch (integration)", () => {
     expect(install.sourceCommitSha).toBe(await gitHeadSha(pkg.workingDir));
   });
 
+  it("resolvePackageProvenanceByRevision covers BOTH arms + null degradation (ADR-129)", async () => {
+    const project = await createProject();
+    const { pinInstallId } = await forkCutAttach("srcpkg", project);
+
+    const [cutInstall] = await db
+      .select()
+      .from(schema.packageInstalls)
+      .where(eq(schema.packageInstalls.id, pinInstallId));
+    const [upstreamInstall] = await db
+      .select()
+      .from(schema.packageInstalls)
+      .where(eq(schema.packageInstalls.id, sourceInstall.srcpkg));
+
+    // Local-cut arm — AND the tie-break: a fresh fork's cut is byte-identical
+    // to its source install (same content digest), so BOTH installs match
+    // this revision and the local-cut row wins deterministically.
+    expect(upstreamInstall.resolvedRevision).toBe(cutInstall.resolvedRevision);
+    expect(
+      await resolvePackageProvenanceByRevision(cutInstall.resolvedRevision, db),
+    ).toMatchObject({
+      kind: "local_cut",
+      versionLabel: cutInstall.versionLabel,
+      installDigest12: String(cutInstall.resolvedRevision).slice(0, 12),
+    });
+
+    // Upstream arm: a never-forked install's revision resolves with kind
+    // upstream — the ADR-129 extension beyond local cuts.
+    const [neverForked] = await db
+      .select()
+      .from(schema.packageInstalls)
+      .where(eq(schema.packageInstalls.id, sourceInstall.otherpkg));
+
+    expect(
+      await resolvePackageProvenanceByRevision(
+        neverForked.resolvedRevision,
+        db,
+      ),
+    ).toMatchObject({
+      kind: "upstream",
+      packageName: "otherpkg",
+    });
+
+    // Null degradation: an unknown revision matches no install.
+    expect(
+      await resolvePackageProvenanceByRevision("f".repeat(40), db),
+    ).toBeNull();
+  });
+
   it("detects a newer cut and `adopt` advances the project pin to it", async () => {
     const project = await createProject();
     const { pkg, pinInstallId, attachmentId } = await forkCutAttach(

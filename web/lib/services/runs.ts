@@ -26,6 +26,7 @@ import {
   applyPackageVersionChoices,
   revertPackageVersionChoices,
 } from "@/lib/local-packages/versions";
+import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 import { getDb } from "@/lib/db/client";
 import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
@@ -108,7 +109,6 @@ const {
   experimentRuns,
   flowRevisions,
   flows,
-  packageInstalls,
   platformAcpRunners,
   platformRouterSidecars,
   platformRuntimeSettings,
@@ -524,63 +524,18 @@ export type LaunchRunContext = {
 // `precondition → worktree_created → materializing(<adapter>)` and then returns
 // the terminal `{runId, status, queuePosition?}`. `opts.signal` aborts at the
 // materialize boundary → the existing worktree compensation (pre-commit GC).
-// ADR-129 §a: the ephemeral-pin allow-list matrix — resolve the flow revision
-// an explicitly named `package_installs` row ships for `flow.flowRefId`.
-// Refusals: unknown install → CONFIG; not Installed / untrusted →
-// PRECONDITION; no member revision with the flow's ref id → CONFIG naming
-// both ids. Used by the direct `packagePin` input (experiments) and the
-// `try_once` launch-choice translation; the caller routes the returned row
-// through the same downstream revision guards as an enabled revision.
+// ADR-129 §a: the ephemeral-pin matrix lives in the neutral
+// `@/lib/packages/pin` module (shared with the experiments create/fan-out
+// batch validation). This wrapper adapts it to the launch path's flow row.
 async function resolvePinnedFlowRevision(
   _db: any,
   flow: Record<string, any>,
   packageInstallId: string,
 ): Promise<Record<string, any>> {
-  const pinInstallRows = await _db
-    .select()
-    .from(packageInstalls)
-    .where(eq(packageInstalls.id, packageInstallId));
-  const pinInstall = pinInstallRows[0];
-
-  if (!pinInstall) {
-    throw new MaisterError(
-      "CONFIG",
-      `packagePin install not found: ${packageInstallId}`,
-    );
-  }
-  if (pinInstall.packageStatus !== "Installed") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `packagePin install ${pinInstall.id} is ${pinInstall.packageStatus}, not Installed`,
-    );
-  }
-  if (pinInstall.trustStatus === "untrusted") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `packagePin install ${pinInstall.id} is untrusted — confirm trust before pinning a run to it`,
-    );
-  }
-
-  const pinRevisionRows = await _db
-    .select()
-    .from(flowRevisions)
-    .where(
-      and(
-        eq(flowRevisions.flowRefId, flow.flowRefId),
-        eq(flowRevisions.resolvedRevision, pinInstall.resolvedRevision),
-      ),
-    )
-    .limit(1);
-  const pinnedRevision = pinRevisionRows[0];
-
-  if (!pinnedRevision) {
-    throw new MaisterError(
-      "CONFIG",
-      `packagePin install ${pinInstall.id} does not ship a revision of flow "${flow.flowRefId}"`,
-    );
-  }
-
-  return pinnedRevision;
+  return resolvePinnedFlowRevisionForRefId(_db, {
+    flowRefId: flow.flowRefId,
+    packageInstallId,
+  });
 }
 
 export async function* launchRunStaged(

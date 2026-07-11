@@ -2700,6 +2700,60 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/experiments/pin-options:
+    get:
+      tags: [experiments]
+      summary: (ADR-129) Eligible package-pin installs for a task's flow
+      description: |
+        (ADR-129 §b.) The variant-editor package-pin picker feed — the
+        server-filtered eligible install set for the task's flow: `Installed`
+        + trusted (`trusted` / `trusted_by_policy` allow-list) installs
+        shipping a member revision with the flow's ref id (upstream installs
+        and local cuts alike). Requires `readExperiments`; `taskId` is
+        validated against the slug-derived project (a task outside the
+        project is 422 `CONFIG` — no cross-project install leak through a
+        forged id). The picker is never free-text.
+      operationId: getProjectExperimentPinOptions
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - name: taskId
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Eligible installs (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [options]
+                properties:
+                  options:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        [packageInstallId, packageName, versionLabel, kind]
+                      properties:
+                        packageInstallId: { type: string }
+                        packageName: { type: string }
+                        versionLabel: { type: string }
+                        kind:
+                          type: string
+                          enum: [local_cut, upstream]
+              example:
+                options:
+                  - packageInstallId: install-2
+                    packageName: aif
+                    versionLabel: local-1a2b3c4d5e6f
+                    kind: local_cut
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
   /api/projects/{slug}/experiments/{experimentId}:
     get:
       tags: [experiments]

@@ -16,6 +16,9 @@ export interface VariantMatrixLabels {
   openRun: string;
   noRuns: string;
   crashedConcludable: string;
+  provenanceLocalCut: string;
+  provenanceUpstream: string;
+  flowRevisionDelta: string;
   runStatus: RunStatusLabels;
 }
 
@@ -45,7 +48,12 @@ export function VariantMatrix({
     <section className="mt-5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="m-0 text-base font-bold text-ink">{labels.variants}</h2>
-        <span className="font-mono text-[11px] text-mute">
+        <span className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-mute">
+          {comparison.flowRevisionDelta ? (
+            <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-px text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
+              {labels.flowRevisionDelta}
+            </span>
+          ) : null}
           {labels.latestReplicate}
         </span>
       </div>
@@ -74,11 +82,35 @@ export function VariantMatrix({
                     {variant.key}
                   </p>
                 </div>
-                {variant.config.runnerId ? (
-                  <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-                    {variant.config.runnerId}
-                  </span>
-                ) : null}
+                <span className="flex flex-wrap items-center gap-1.5">
+                  {variant.config.runnerId ? (
+                    <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                      {variant.config.runnerId}
+                    </span>
+                  ) : null}
+                  {(() => {
+                    // ADR-129: provenance badges — package name · version ·
+                    // local-cut vs upstream chip (runnerId badge idiom).
+                    const provenance = runs.find(
+                      (run) => run.provenance !== null,
+                    )?.provenance;
+
+                    if (!provenance) return null;
+
+                    return (
+                      <>
+                        <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] tracking-[0.02em] text-mute">
+                          {provenance.packageName} · {provenance.versionLabel}
+                        </span>
+                        <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
+                          {provenance.kind === "local_cut"
+                            ? labels.provenanceLocalCut
+                            : labels.provenanceUpstream}
+                        </span>
+                      </>
+                    );
+                  })()}
+                </span>
               </header>
               {runs.length === 0 ? (
                 <p className="m-0 text-sm text-mute">{labels.noRuns}</p>

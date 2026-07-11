@@ -101,6 +101,8 @@ afterEach(() => {
 beforeEach(async () => {
   await pool.query(`DELETE FROM "task_comments"`);
   await pool.query(`DELETE FROM "workspaces"`);
+  await pool.query(`DELETE FROM "experiment_runs"`);
+  await pool.query(`DELETE FROM "experiments"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "tasks"`);
   await pool.query(`DELETE FROM "flows"`);
@@ -344,6 +346,76 @@ describe("runSchedulerTick × auto_promote — through-dispatch (codex F2)", () 
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe("runAutoPromoteJob — ADR-129: experiment members are never candidates", () => {
+  async function makeMember(runId: string, taskId: string): Promise<void> {
+    const experimentId = randomUUID();
+
+    await db.insert(schema.experiments).values({
+      id: experimentId,
+      projectId,
+      taskId,
+      title: "fork vs upstream",
+      baseBranch: "main",
+      baseCommit: "abc123",
+      status: "running",
+      variants: [
+        { key: "a", label: "A", config: {} },
+        { key: "b", label: "B", config: {} },
+      ],
+      rubric: { criteria: [] },
+    });
+    await db.insert(schema.experimentRuns).values({
+      id: randomUUID(),
+      experimentId,
+      runId,
+      variantKey: "a",
+      replicateOrdinal: 1,
+      launchReason: "initial",
+      baseCommit: "abc123",
+    });
+  }
+
+  it("the candidate query excludes the member; the sibling non-member still promotes (regression arm)", async () => {
+    const member = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+    const plain = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+
+    await makeMember(member.runId, member.taskId);
+
+    const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });
+
+    // The SQL prefilter never selects the member (candidates = 1), and the
+    // evaluate term is the apply-site backstop — asserting the COUNT pins the
+    // prefilter arm specifically.
+    expect(summary.candidates).toBe(1);
+    expect(mocks.promoteRun).toHaveBeenCalledTimes(1);
+    expect(mocks.promoteRun).toHaveBeenCalledWith(
+      plain.runId,
+      expect.anything(),
+      expect.anything(),
+      db,
+    );
+  });
+
+  it("the runSchedulerTick through-dispatch path never promotes a member end-to-end (wiring seam)", async () => {
+    const member = (await seedReviewRun()) as unknown as {
+      runId: string;
+      taskId: string;
+    };
+
+    await makeMember(member.runId, member.taskId);
+
+    await runSchedulerTick({ jobKind: "auto_promote" });
+
+    expect(mocks.promoteRun).not.toHaveBeenCalled();
   });
 });
 

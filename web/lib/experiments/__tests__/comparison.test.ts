@@ -23,6 +23,9 @@ type State = {
   runSessions: Row[];
   gateResults: Row[];
   runCostRollups: Row[];
+  // ADR-129 provenance lookup rows, pre-shaped as the helper's projection
+  // (the predicate-blind fake returns them for the package_installs select).
+  packageInstalls: Row[];
   updates: Row[];
   updateReturningRows: Row[] | null;
 };
@@ -41,6 +44,8 @@ function rowsFor(table: unknown, state: State): Row[] {
       return state.gateResults;
     case "run_cost_rollups":
       return state.runCostRollups;
+    case "package_installs":
+      return state.packageInstalls;
     default:
       return [];
   }
@@ -48,11 +53,13 @@ function rowsFor(table: unknown, state: State): Row[] {
 
 function selectChain(rows: Row[]): PromiseLike<Row[]> & {
   where: () => ReturnType<typeof selectChain>;
+  leftJoin: (table: unknown, on: unknown) => ReturnType<typeof selectChain>;
   limit: (n: number) => Promise<Row[]>;
 } {
   return {
     then: (onFulfilled) => Promise.resolve(rows).then(onFulfilled),
     where: () => selectChain(rows),
+    leftJoin: () => selectChain(rows),
     limit: async (n: number) => rows.slice(0, n),
   };
 }
@@ -211,6 +218,7 @@ function state(overrides: Partial<State> = {}): State {
         sourceEventCount: 2,
       },
     ],
+    packageInstalls: [],
     updates: [],
     updateReturningRows: null,
     ...overrides,
@@ -235,6 +243,7 @@ describe("experiment comparison DTO", () => {
     expect(s.updates[0]).toMatchObject({ status: "comparable" });
     expect(Object.keys(dto).sort()).toEqual([
       "experiment",
+      "flowRevisionDelta",
       "generatedAt",
       "runs",
       "variants",
@@ -248,6 +257,7 @@ describe("experiment comparison DTO", () => {
       "gates",
       "launchReason",
       "materializationDelta",
+      "provenance",
       "queuePosition",
       "replicateOrdinal",
       "runId",
@@ -258,6 +268,62 @@ describe("experiment comparison DTO", () => {
     ]);
     expect(JSON.stringify(dto)).not.toContain("/secret/path");
     expect(JSON.stringify(dto)).not.toContain("secret-session");
+  });
+
+  it("carries per-run provenance and flags the cross-variant flow-revision delta (ADR-129)", async () => {
+    const s = state();
+
+    s.runs = s.runs.map((row, index) => ({
+      ...row,
+      flowRevision: index === 0 ? "r1".padEnd(40, "1") : "r2".padEnd(40, "2"),
+    }));
+    s.packageInstalls = [
+      {
+        packageName: "aif",
+        versionLabel: "local-abcdef123456",
+        localPackageName: "aif-local",
+        sourceLocalPackageId: "lp-1",
+        resolvedRevision: "r1".padEnd(40, "1"),
+      },
+    ];
+
+    const dto = await getExperimentComparison(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        viewerType: "session",
+      },
+      fakeDb(s),
+    );
+
+    expect(dto.flowRevisionDelta).toBe(true);
+    expect(dto.runs[0].provenance).toEqual({
+      packageName: "aif",
+      versionLabel: "local-abcdef123456",
+      kind: "local_cut",
+      installDigest12: "r1".padEnd(40, "1").slice(0, 12),
+    });
+  });
+
+  it("degrades provenance to null when no install matches and reports no delta for same revisions (ADR-129)", async () => {
+    const s = state();
+
+    s.runs = s.runs.map((row) => ({
+      ...row,
+      flowRevision: "r1".padEnd(40, "1"),
+    }));
+
+    const dto = await getExperimentComparison(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        viewerType: "session",
+      },
+      fakeDb(s),
+    );
+
+    expect(dto.flowRevisionDelta).toBe(false);
+    expect(dto.runs.every((run) => run.provenance === null)).toBe(true);
   });
 
   it("does not heal over a concurrent terminal status write", async () => {

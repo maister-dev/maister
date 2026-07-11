@@ -5,7 +5,7 @@ import type { LocalPackage } from "@/lib/db/schema";
 
 import { rm } from "node:fs/promises";
 
-import { and, eq, isNotNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { gitHeadSha } from "./git";
@@ -425,35 +425,52 @@ export type RunPackageProvenance = {
   packageName: string;
   versionLabel: string;
   localPackageName: string | null;
+  // ADR-129: provenance kind + short digest for the comparison-lab badges.
+  kind: "local_cut" | "upstream";
+  installDigest12: string;
 };
 
-// Provenance for a run whose flow came from a centralized local-package cut:
-// match the run's flow-revision digest to the cut install (the one carrying a
-// `source_local_package_id`) and read the package name + version + originating
-// local package. Derivable with NO `runs` column (ADR-107). Null when the run's
-// flow did not come from a centralized cut.
+// Provenance for a run's snapshotted flow revision: match `runs.flow_revision`
+// to the install that shipped it. Two arms (ADR-129): a centralized local-cut
+// install (carries `source_local_package_id`) or a plain upstream install.
+// Derivable with NO `runs` column (ADR-107). Null when no install matches
+// (degradation — the lab renders the run without package badges). When both
+// arms could match one revision string, the local-cut row wins
+// (deterministic).
 export async function resolvePackageProvenanceByRevision(
   resolvedRevision: string,
   db?: Db,
 ): Promise<RunPackageProvenance | null> {
   const d = resolveDb(db);
-  const [row] = await d
+  const rows = await d
     .select({
       packageName: pi.name,
       versionLabel: pi.versionLabel,
       localPackageName: lp.name,
+      sourceLocalPackageId: pi.sourceLocalPackageId,
+      resolvedRevision: pi.resolvedRevision,
     })
     .from(pi)
     .leftJoin(lp, eq(lp.id, pi.sourceLocalPackageId))
-    .where(
-      and(
-        eq(pi.resolvedRevision, resolvedRevision),
-        isNotNull(pi.sourceLocalPackageId),
-      ),
-    )
-    .limit(1);
+    .where(eq(pi.resolvedRevision, resolvedRevision))
+    .limit(2);
+  const row =
+    rows.find(
+      (candidate: Record<string, unknown>) => candidate.sourceLocalPackageId,
+    ) ?? rows[0];
 
-  return row ?? null;
+  if (!row) return null;
+
+  return {
+    packageName: row.packageName,
+    versionLabel: row.versionLabel,
+    localPackageName: row.localPackageName ?? null,
+    kind: row.sourceLocalPackageId ? "local_cut" : "upstream",
+    installDigest12: String(row.resolvedRevision ?? resolvedRevision).slice(
+      0,
+      12,
+    ),
+  };
 }
 
 export async function getRunPackageProvenance(

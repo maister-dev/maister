@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
-import { gateResults, hitlRequests } from "@/lib/db/schema";
+import { experimentRuns, gateResults, hitlRequests } from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { getNodeAttemptsForRun } from "@/lib/flows/graph/ledger";
@@ -107,6 +107,17 @@ export function buildAutoPromotionReaders(args: {
         .where(
           and(eq(hitlRequests.runId, runId), isNull(hitlRequests.response)),
         )
+        .limit(1);
+
+      return rows.length > 0;
+    },
+    // ADR-129 (enforcing ADR-124): experiment membership makes the run
+    // structurally non-promotable at the apply site.
+    async isExperimentMember(): Promise<boolean> {
+      const rows = await db
+        .select({ id: experimentRuns.id })
+        .from(experimentRuns)
+        .where(eq(experimentRuns.runId, runId))
         .limit(1);
 
       return rows.length > 0;

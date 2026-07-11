@@ -207,6 +207,9 @@ function labLabels(
     openRun: t("lab.openRun"),
     noRuns: t("lab.noRuns"),
     crashedConcludable: t("lab.crashedConcludable"),
+    provenanceLocalCut: t("lab.provenanceLocalCut"),
+    provenanceUpstream: t("lab.provenanceUpstream"),
+    flowRevisionDelta: t("lab.flowRevisionDelta"),
     tabs: {
       diff: t("tabs.diff"),
       diffOfDiffs: t("tabs.diffOfDiffs"),

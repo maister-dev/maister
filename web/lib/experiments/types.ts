@@ -41,6 +41,8 @@ export type ExperimentVariantConfig = {
   runnerId?: string;
   executionPolicy?: ExecutionPolicy;
   capabilityOverlay?: ExperimentCapabilityOverlay;
+  // ADR-129: ephemeral per-run package pin (attachment never mutated).
+  packagePin?: { packageInstallId: string };
 };
 
 export type ExperimentVariant = {

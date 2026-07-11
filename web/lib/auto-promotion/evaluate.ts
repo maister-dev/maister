@@ -50,6 +50,9 @@ export const NOT_APPLICABLE_REASONS = [
   "no_task",
   "orchestrator_child",
   "shared_workspace",
+  // ADR-129 (enforcing ADR-124): experiment member runs never auto-promote —
+  // winner promotion stays the explicit human path.
+  "experiment_member",
   "auto_on_ready",
 ] as const;
 
@@ -103,6 +106,10 @@ export interface AutoPromotionReaders {
   readinessGreen(): Promise<boolean>;
   externalCheck(gateId: string): Promise<ExternalCheckState>;
   readDepsFiles(files: DiffChangeStatEntry[]): Promise<DepsFile[]>;
+  // ADR-129: experiment membership is structural non-candidacy — the guard at
+  // the irreversible apply site, since promoteRun evaluation can be reached
+  // outside the sweep (the SQL prefilter alone is not enough).
+  isExperimentMember(): Promise<boolean>;
 }
 
 export interface EvaluateAutoPromotionInput {
@@ -160,6 +167,11 @@ export async function evaluateAutoPromotion(
   }
   if (run.workspaceMode === "shared") {
     return { verdict: "not_applicable", reason: "shared_workspace" };
+  }
+  // ADR-129 (enforcing the ADR-124 invariant): an experiment member run is
+  // structurally non-promotable — winner promotion is the explicit human path.
+  if (await readers.isExperimentMember()) {
+    return { verdict: "not_applicable", reason: "experiment_member" };
   }
 
   // Term 8: already auto-delivering (either OR-combined knob) — the existing

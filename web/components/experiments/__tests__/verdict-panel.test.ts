@@ -100,6 +100,7 @@ function comparison(
     runs: [],
     verdict: null,
     generatedAt: "2026-07-03T09:00:00.000Z",
+    flowRevisionDelta: false,
     ...over,
   };
 }

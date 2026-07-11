@@ -1,3 +1,4 @@
+import type { ExperimentPinOption } from "@/lib/experiments/package-pin";
 import type { ExperimentVariant } from "@/lib/experiments/types";
 import type { ReactElement } from "react";
 
@@ -7,6 +8,8 @@ export interface VariantEditorLabels {
   variantLabel: string;
   runner: string;
   executionPolicy: string;
+  packagePin: string;
+  packagePinNone: string;
   rulesAdd: string;
   rulesRemove: string;
   skillsAdd: string;
@@ -22,6 +25,7 @@ export interface VariantEditorLabels {
 export function VariantEditor({
   labels,
   variants,
+  pinOptions = [],
   minVariants = 2,
   maxVariants = 12,
   onAddVariant,
@@ -29,6 +33,9 @@ export function VariantEditor({
 }: {
   labels: VariantEditorLabels;
   variants: ExperimentVariant[];
+  // ADR-129: server-filtered eligible installs for the task's flow — the
+  // package-pin picker is never free-text.
+  pinOptions?: ExperimentPinOption[];
   minVariants?: number;
   maxVariants?: number;
   onAddVariant?: () => void;
@@ -102,6 +109,28 @@ export function VariantEditor({
                   defaultValue={variant.config.runnerId ?? ""}
                   name={`variant.${index}.runnerId`}
                 />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-mute">
+                  {labels.packagePin}
+                </span>
+                <select
+                  className="rounded-md border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink disabled:opacity-50"
+                  defaultValue={variant.config.packagePin?.packageInstallId ?? ""}
+                  disabled={pinOptions.length === 0}
+                  name={`variant.${index}.packagePin`}
+                >
+                  <option value="">{labels.packagePinNone}</option>
+                  {pinOptions.map((option) => (
+                    <option
+                      key={option.packageInstallId}
+                      value={option.packageInstallId}
+                    >
+                      {option.packageName} · {option.versionLabel} (
+                      {option.kind === "local_cut" ? "local cut" : "upstream"})
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="flex flex-col gap-1">
                 <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-mute">

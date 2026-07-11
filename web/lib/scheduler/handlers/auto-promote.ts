@@ -130,6 +130,10 @@ export async function runAutoPromoteJob(
         sql`${projects.autoPromotion} @> '{"enabled": true}'::jsonb`,
         // A shared-tree run has workspace_mode='shared'; exclude fail-closed.
         sql`${runs.workspaceMode} IS DISTINCT FROM 'shared'`,
+        // ADR-129 (enforcing ADR-124): experiment member runs never occupy a
+        // candidate slot — winner promotion is the explicit human path.
+        // evaluateAutoPromotion re-checks membership at the apply site.
+        sql`NOT EXISTS (SELECT 1 FROM experiment_runs er WHERE er.run_id = ${runs.id})`,
         // Keyset resume: rows strictly after the previous tick's last key, in the
         // ORDER BY's (coalesced review anchor, id) space.
         cursor

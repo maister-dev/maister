@@ -32,6 +32,7 @@ import {
   type ConcludeExperimentInput,
   type CreateExperimentInput,
 } from "@/lib/experiments/http-schemas";
+import { assertVariantPackagePinsLaunchable } from "@/lib/experiments/package-pin";
 import {
   DEFAULT_EXPERIMENT_RUBRIC,
   validateExperimentHumanVerdict,
@@ -295,6 +296,15 @@ export async function createExperiment(
       `task not found for project: ${input.taskId}`,
     );
   }
+
+  // ADR-129 §b: batch-validate every variant packagePin NOW — "creatable now,
+  // unlaunchable later" is a design defect, so create refuses early. Launch
+  // fan-out re-validates (launch stays authoritative).
+  await assertVariantPackagePinsLaunchable({
+    db: _db,
+    taskId: input.taskId,
+    variants: input.variants,
+  });
 
   const baseCommit = await resolveCreateBaseCommit({
     projectRepoPath: project.repoPath,

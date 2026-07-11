@@ -3729,6 +3729,8 @@
       "variantLabel": "Label",
       "runner": "Runner override",
       "executionPolicy": "Execution policy JSON",
+      "packagePin": "Package version pin",
+      "packagePinNone": "Project pin (no override)",
       "rulesAdd": "Rules add",
       "rulesRemove": "Rules remove",
       "skillsAdd": "Skills add",
@@ -3763,7 +3765,10 @@
       "duration": "Duration",
       "openRun": "Open run",
       "noRuns": "No runs yet",
-      "crashedConcludable": "Crashed variants remain visible and the experiment can still be concluded."
+      "crashedConcludable": "Crashed variants remain visible and the experiment can still be concluded.",
+      "provenanceLocalCut": "local cut",
+      "provenanceUpstream": "upstream",
+      "flowRevisionDelta": "package versions differ"
     },
     "tabs": {
       "diff": "Diff",
@@ -3926,6 +3931,7 @@
       "no_task": "Run has no task",
       "orchestrator_child": "Child runs promote via their orchestrator",
       "shared_workspace": "Shared-workspace runs are excluded",
+      "experiment_member": "Experiment member runs never auto-promote",
       "auto_on_ready": "Run already auto-delivers"
     },
     "panel": {

@@ -15,6 +15,7 @@ import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { ExperimentNotFoundError } from "@/lib/experiments/errors";
+import { assertVariantPackagePinsLaunchable } from "@/lib/experiments/package-pin";
 import {
   launchExperimentInputSchema,
   type LaunchExperimentInput,
@@ -377,6 +378,14 @@ export async function launchExperimentVariants(
     variants,
     db: _db,
   });
+  // ADR-129 §b: re-validate every variant packagePin against the pin matrix
+  // BEFORE the first side effect — a bad pin on variant B must not launch
+  // variant A (launch stays authoritative over the create-time check).
+  await assertVariantPackagePinsLaunchable({
+    db: _db,
+    taskId: experiment.taskId as string,
+    variants,
+  });
   const nextOrdinal = nextOrdinalByVariant(variants, existingRows);
 
   try {
@@ -424,6 +433,10 @@ export async function launchExperimentVariants(
         taskId: experiment.taskId,
         runnerId: item.variant.config.runnerId,
         executionPolicy: item.variant.config.executionPolicy,
+        // ADR-129: explicit threading — the pin does NOT auto-flow from the
+        // variant config (the capabilityOverlay precedent); launchRun
+        // re-validates it via the shared matrix.
+        packagePin: item.variant.config.packagePin,
         baseBranch: experiment.baseBranch,
         baseCommit: experiment.baseCommit,
         experimentMembership: {

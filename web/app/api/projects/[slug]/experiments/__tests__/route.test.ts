@@ -197,4 +197,55 @@ describe("POST /api/projects/[slug]/experiments", () => {
     expect(body.code).toBe("CONFIG");
     expect(mocks.createExperiment).not.toHaveBeenCalled();
   });
+
+  it("accepts variant config.packagePin through the REAL body schema and forwards it (ADR-129)", async () => {
+    const body = {
+      taskId: "task-1",
+      title: "Fork vs upstream",
+      baseBranch: "main",
+      variants: [
+        variantA,
+        {
+          key: "fork",
+          label: "Fork cut",
+          config: {
+            packagePin: {
+              packageInstallId: "2c2f0f9e-6c1e-4d7a-9b1a-0e6cf4b1a111",
+            },
+          },
+        },
+      ],
+    };
+
+    const res = await route.POST(request("POST", body), params());
+
+    expect(res.status).toBe(201);
+    expect(mocks.createExperiment).toHaveBeenCalledWith(
+      expect.objectContaining({ input: body }),
+    );
+  });
+
+  it("rejects a packagePin with a non-uuid install id at the body boundary (ADR-129)", async () => {
+    const res = await route.POST(
+      request("POST", {
+        taskId: "task-1",
+        title: "Bad pin",
+        baseBranch: "main",
+        variants: [
+          variantA,
+          {
+            key: "fork",
+            label: "Fork",
+            config: { packagePin: { packageInstallId: "not-a-uuid" } },
+          },
+        ],
+      }),
+      params(),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+    expect(mocks.createExperiment).not.toHaveBeenCalled();
+  });
 });

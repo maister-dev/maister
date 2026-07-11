@@ -22,6 +22,12 @@ type State = {
   experimentRuns: Row[];
   capabilityRecords?: Row[];
   platformAcpRunners?: Row[];
+  // ADR-129 packagePin batch validation reads: task → flow → pinned installs
+  // → member flow revisions.
+  tasks?: Row[];
+  flows?: Row[];
+  packageInstalls?: Row[];
+  flowRevisions?: Row[];
   lockedTables?: string[];
   transactionCount?: number;
 };
@@ -38,6 +44,14 @@ function rowsFor(table: unknown, state: State): Row[] {
       return state.capabilityRecords ?? [];
     case "platform_acp_runners":
       return state.platformAcpRunners ?? [];
+    case "tasks":
+      return state.tasks ?? [];
+    case "flows":
+      return state.flows ?? [];
+    case "package_installs":
+      return state.packageInstalls ?? [];
+    case "flow_revisions":
+      return state.flowRevisions ?? [];
     default:
       return [];
   }
@@ -142,6 +156,123 @@ beforeEach(async () => {
 afterEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+});
+
+
+describe("launchExperimentVariants — packagePin axis (ADR-129)", () => {
+  const PIN_ID = "2c2f0f9e-6c1e-4d7a-9b1a-0e6cf4b1a111";
+
+  function pinState(overrides: Partial<State> = {}): State {
+    return {
+      projects: [project()],
+      experiments: [
+        experiment({
+          variants: [
+            {
+              key: "upstream",
+              label: "Upstream",
+              config: { runnerId: "runner-claude" },
+            },
+            {
+              key: "fork",
+              label: "Fork cut",
+              config: {
+                runnerId: "runner-codex",
+                executionPolicy: { preset: "assisted" },
+                packagePin: { packageInstallId: PIN_ID },
+              },
+            },
+          ],
+        }),
+      ],
+      experimentRuns: [],
+      tasks: [{ id: "task-1", projectId: "project-1", flowId: "flow-row-1" }],
+      flows: [{ id: "flow-row-1", flowRefId: "bugfix" }],
+      packageInstalls: [
+        {
+          id: PIN_ID,
+          packageStatus: "Installed",
+          trustStatus: "trusted_by_policy",
+          resolvedRevision: "r2".padEnd(40, "2"),
+        },
+      ],
+      flowRevisions: [
+        {
+          id: "rev-2",
+          flowRefId: "bugfix",
+          resolvedRevision: "r2".padEnd(40, "2"),
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("threads packagePin into launchRun and composes with runnerId + executionPolicy on the SAME variant", async () => {
+    const state = pinState();
+
+    await launch.launchExperimentVariants(
+      {
+        projectId: "project-1",
+        experimentId: "exp-1",
+        actorUserId: "user-1",
+        input: { variants: "all", replicates: 1 },
+      },
+      fakeDb(state),
+    );
+
+    expect(mocks.launchRun).toHaveBeenCalledTimes(2);
+    // Upstream variant: no pin.
+    expect(mocks.launchRun.mock.calls[0][0].packagePin).toBeUndefined();
+    // Fork variant: pin + runner + policy all apply together (policy-axis
+    // interaction — pin changes the recipe, runner changes the executor,
+    // policy changes autonomy; none masks another).
+    expect(mocks.launchRun.mock.calls[1][0]).toMatchObject({
+      runnerId: "runner-codex",
+      executionPolicy: { preset: "assisted" },
+      packagePin: { packageInstallId: PIN_ID },
+      experimentMembership: { variantKey: "fork" },
+    });
+  });
+
+  it("refuses the whole batch pre-fan-out when a pinned install is unknown (CONFIG)", async () => {
+    const state = pinState({ packageInstalls: [] });
+
+    await expect(
+      launch.launchExperimentVariants(
+        {
+          projectId: "project-1",
+          experimentId: "exp-1",
+          actorUserId: "user-1",
+          input: { variants: "all", replicates: 1 },
+        },
+        fakeDb(state),
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
+
+  it("refuses pre-fan-out when a pinned install is no longer Installed (PRECONDITION)", async () => {
+    const state = pinState();
+
+    state.packageInstalls = [
+      { ...state.packageInstalls![0], packageStatus: "Removed" },
+    ];
+
+    await expect(
+      launch.launchExperimentVariants(
+        {
+          projectId: "project-1",
+          experimentId: "exp-1",
+          actorUserId: "user-1",
+          input: { variants: "all", replicates: 1 },
+        },
+        fakeDb(state),
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
 });
 
 describe("launchExperimentVariants", () => {

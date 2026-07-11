@@ -135,6 +135,7 @@ const comparison: ExperimentComparisonDTO = {
         },
       ],
       materializationDelta: null,
+      provenance: null,
     },
     {
       runId: "run-b",
@@ -171,6 +172,7 @@ const comparison: ExperimentComparisonDTO = {
         },
       ],
       materializationDelta: null,
+      provenance: null,
     },
     {
       runId: "run-c",
@@ -192,10 +194,12 @@ const comparison: ExperimentComparisonDTO = {
       },
       files: [],
       materializationDelta: null,
+      provenance: null,
     },
   ],
   verdict: null,
   generatedAt: "2026-07-03T09:03:00.000Z",
+  flowRevisionDelta: false,
 };
 
 describe("comparison tabs", () => {

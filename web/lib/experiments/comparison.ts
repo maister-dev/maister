@@ -26,6 +26,7 @@ import {
   deriveExperimentProgressStatus,
 } from "@/lib/experiments/fsm";
 import { experimentStatusTimestampPatch } from "@/lib/experiments/repository";
+import { resolvePackageProvenanceByRevision } from "@/lib/local-packages/versions";
 import { runStatusTone, type RunStatusTone } from "@/lib/runs/run-status-tone";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -90,6 +91,17 @@ export type ExperimentComparisonRunDTO = {
   };
   files: ExperimentDiffFileSummary[];
   materializationDelta: ExperimentMaterializationDelta | null;
+  // ADR-129: package provenance of the run's snapshotted flow revision
+  // (runs.flow_revision ⋈ package_installs.resolved_revision); null when no
+  // install matches (degradation — rendered without badges).
+  provenance: ExperimentRunProvenanceDTO | null;
+};
+
+export type ExperimentRunProvenanceDTO = {
+  packageName: string;
+  versionLabel: string;
+  kind: "local_cut" | "upstream";
+  installDigest12: string;
 };
 
 export type ExperimentComparisonDTO = {
@@ -98,6 +110,10 @@ export type ExperimentComparisonDTO = {
   runs: ExperimentComparisonRunDTO[];
   verdict: ExperimentVerdictEnvelope | null;
   generatedAt: string;
+  // ADR-129: true when member runs span >1 distinct snapshotted flow
+  // revision — the package-version delta marker beside the
+  // materialization delta.
+  flowRevisionDelta: boolean;
 };
 
 export type GetExperimentComparisonArgs = {
@@ -353,6 +369,45 @@ export async function getExperimentComparison(
     ),
   });
   const runById = new Map(runRows.map((row) => [String(row.id), row]));
+  // ADR-129: provenance per DISTINCT snapshotted revision (replicates share
+  // one lookup); degradation to null when no install matches.
+  const distinctRevisions = [
+    ...new Set(
+      runRows
+        .map((row) => (row.flowRevision ? String(row.flowRevision) : null))
+        .filter((revision): revision is string => revision !== null),
+    ),
+  ];
+  const provenanceByRevision = new Map<
+    string,
+    ExperimentRunProvenanceDTO | null
+  >(
+    await Promise.all(
+      distinctRevisions.map(
+        async (
+          revision,
+        ): Promise<[string, ExperimentRunProvenanceDTO | null]> => {
+          const provenance = await resolvePackageProvenanceByRevision(
+            revision,
+            d as never,
+          );
+
+          return [
+            revision,
+            provenance
+              ? {
+                  packageName: provenance.packageName,
+                  versionLabel: provenance.versionLabel,
+                  kind: provenance.kind,
+                  installDigest12: provenance.installDigest12,
+                }
+              : null,
+          ];
+        },
+      ),
+    ),
+  );
+  const flowRevisionDelta = distinctRevisions.length > 1;
   const sessionsByRunId = Map.groupBy(sessionRows, (row) => String(row.runId));
   const gatesByRunId = Map.groupBy(gateRows, (row) => String(row.runId));
   const costByRunId = new Map(costRows.map((row) => [String(row.runId), row]));
@@ -409,6 +464,9 @@ export async function getExperimentComparison(
         materializationDelta:
           (member.materializationDelta as ExperimentMaterializationDelta | null) ??
           null,
+        provenance: runRow?.flowRevision
+          ? (provenanceByRevision.get(String(runRow.flowRevision)) ?? null)
+          : null,
       };
     })
     .sort((left, right) => {
@@ -440,5 +498,6 @@ export async function getExperimentComparison(
     verdict:
       (healedExperiment.verdict as ExperimentVerdictEnvelope | null) ?? null,
     generatedAt: new Date().toISOString(),
+    flowRevisionDelta,
   };
 }

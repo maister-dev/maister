@@ -641,7 +641,19 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 3 — W-B/W-C: experiment axis + provenance (+ the missing exclusion)
 
-- [ ] **T8: `packagePin` variant axis end-to-end (create-time + fan-out)**
+- [x] **T8: `packagePin` variant axis end-to-end (create-time + fan-out)**
+  - RED evidence: 4 wrong-code failures (schema rejected packagePin; fan-out
+    neither threaded nor validated) before implementation; GREEN 18/18 after
+    + create-route contract cases (accepted+forwarded through the REAL body
+    schema, paired non-uuid refusal). Policy-axis interaction pinned:
+    packagePin × runnerId × executionPolicy all apply on ONE variant.
+  - Shared matrix extracted to `web/lib/packages/pin.ts` (one matrix, every
+    entry point); batch validation in `web/lib/experiments/package-pin.ts`
+    runs at create AND at fan-out (before the first side effect).
+  - Picker feed: NEW `GET /api/projects/{slug}/experiments/pin-options`
+    (readExperiments-gated, task validated against the slug project) —
+    documented in OpenAPI in the same task; variant editor renders a
+    server-filtered select (never free-text); EN+RU labels landed.
   - Files: `web/lib/experiments/variant-config.ts:91-97`
     (`packagePin: z.object({ packageInstallId: z.string().uuid() }).strict()
     .optional()` into the `.strict()` registry), `web/lib/experiments/
@@ -671,7 +683,17 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     (`launch.ts:383-387` untouched); judge/rubric/verdict machinery untouched.
   - Logging: typed errors.
 
-- [ ] **T9: Enforce the ADR-124 auto-promotion exclusion (two arms + wiring test)**
+- [x] **T9: Enforce the ADR-124 auto-promotion exclusion (two arms + wiring test)**
+  - RED evidence: unit — member case failed (eligible where not_applicable
+    expected); integration — prefilter temporarily disabled to observe the
+    prefilter-specific red (candidates=2; promote still blocked by the
+    evaluate arm — defense-in-depth demonstrated), then restored.
+  - GREEN: evaluate term `experiment_member` (reader-backed, apply-site
+    guard) + sweep `NOT EXISTS (experiment_runs)` prefilter + the
+    runSchedulerTick through-dispatch member case; 122 unit + 14 integration
+    green. Panel surfaces the reason via the enforced
+    `autoPromotion.notApplicable.experiment_member` EN+RU keys (the i18n
+    coverage loop made them mandatory).
   - Files: `web/lib/scheduler/handlers/auto-promote.ts` (candidate SQL
     `:95-143` gains `NOT EXISTS (SELECT 1 FROM experiment_runs er WHERE
     er.run_id = runs.id)` prefilter), `web/lib/auto-promotion/evaluate.ts`
@@ -693,7 +715,19 @@ Commit messages: NO Co-Authored-By trailer (project convention).
   - Logging: term name in the evaluate output (existing structured verdict),
     no console.
 
-- [ ] **T10: Comparison-lab provenance (DTO + UI)**
+- [x] **T10: Comparison-lab provenance (DTO + UI)**
+  - RED evidence: 3 failures against the target DTO (exact-key pins +
+    provenance/delta cases) before implementation; GREEN 8/8 + 124
+    experiments/components tests after; fixture migrations enumerated
+    (comparison-tabs, experiment-lab, verdict-panel, comparison-selection).
+  - Helper extended ADDITIVELY (run-detail keeps localPackageName ??
+    packageName and now shows upstream provenance too — consistent, noted);
+    two-arm lookup with deterministic local-cut tie-break — proven on real
+    PG: a fresh fork's cut is byte-identical to its source install (same
+    digest), so both installs match one revision and local_cut wins; the
+    true upstream arm asserted via a never-forked install.
+  - Header badges (package · version · local-cut/upstream chip, runnerId
+    idiom) + top-level flowRevisionDelta marker; tabs untouched; EN+RU keys.
   - Files: `web/lib/local-packages/versions.ts:401-438` (extend
     `resolvePackageProvenanceByRevision`: drop the local-only filter into a
     two-arm lookup — local-cut (join `local_packages`) vs upstream install —
@@ -716,7 +750,15 @@ Commit messages: NO Co-Authored-By trailer (project convention).
     without touching tab semantics.
   - Logging: none (pure read path), typed errors on malformed state.
 
-- [ ] **T11: Integration proof — fork-vs-upstream experiment (real Postgres)**
+- [x] **T11: Integration proof — fork-vs-upstream experiment (real Postgres)**
+  - GREEN first run: upstream install → attach → fork → edit → commit → cut →
+    experiment A=upstream/B=cut → both launch from the experiment's pinned
+    base commit (workspaces.baseCommit equal), two DISTINCT snapshotted
+    flowRevisionIds, comparison DTO carries kind=upstream + kind=local_cut
+    provenances + flowRevisionDelta=true, attachment row byte-identical,
+    and (T9 join) both Review members yield candidates=0 in an
+    auto-promotion-enabled project. nodes[] fixtures with real git repo for
+    base-commit pinning.
   - Files: NEW `web/lib/experiments/__tests__/package-pin.integration.test.ts`.
   - Scenario: install upstream package (git fixture repo, `nodes[]` flow) →
     attach → fork → edit flow → commit → cut → create experiment variant

@@ -93,6 +93,13 @@ export const experimentVariantConfigSchema = z
     runnerId: z.string().min(1).optional(),
     executionPolicy: executionPolicySchema.optional(),
     capabilityOverlay: experimentCapabilityOverlaySchema.optional(),
+    // ADR-129: ephemeral per-run package pin — the variant's runs resolve the
+    // task-flow's revision from this install; the attachment never moves.
+    // Batch-validated at create AND re-validated at launch fan-out.
+    packagePin: z
+      .object({ packageInstallId: z.string().uuid() })
+      .strict()
+      .optional(),
   })
   .strict();
 

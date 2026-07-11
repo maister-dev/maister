@@ -6,11 +6,12 @@ import type {
   ExperimentVariantConfig,
 } from "@/lib/experiments/types";
 import type { ExperimentFlowOption } from "@/lib/experiments/service";
+import type { ExperimentPinOption } from "@/lib/experiments/package-pin";
 import type { TaskDTO } from "@/lib/services/tasks";
 import type { ReactElement } from "react";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import clsx from "clsx";
 
 import { RubricEditor } from "@/components/experiments/rubric-editor";
@@ -51,10 +52,13 @@ export interface CreateExperimentFormProps {
   defaultBaseBranch: string;
   defaultVariants: ExperimentVariant[];
   defaultRubric: ExperimentRubric;
+  // ADR-129: server-filtered pin options for the currently selected task.
+  pinOptions?: ExperimentPinOption[];
   busy: boolean;
   error: string | null;
   onSubmit?: (form: HTMLFormElement) => void;
   onCancel?: () => void;
+  onTaskChange?: (taskId: string) => void;
 }
 
 type CreatedTaskResponse = {
@@ -122,12 +126,15 @@ function variantConfig(form: FormData, index: number): ExperimentVariantConfig {
     ([, value]) => value !== undefined,
   );
 
+  const packagePin = nonEmpty(form.get(`variant.${index}.packagePin`));
+
   return {
     ...(runnerId ? { runnerId } : {}),
     ...(executionPolicy ? { executionPolicy } : {}),
     ...(overlayEntries.length > 0
       ? { capabilityOverlay: Object.fromEntries(overlayEntries) }
       : {}),
+    ...(packagePin ? { packagePin: { packageInstallId: packagePin } } : {}),
   };
 }
 
@@ -210,10 +217,12 @@ export function CreateExperimentForm({
   defaultBaseBranch,
   defaultVariants,
   defaultRubric,
+  pinOptions = [],
   busy,
   error,
   onSubmit,
   onCancel,
+  onTaskChange,
 }: CreateExperimentFormProps): ReactElement {
   const [variants, setVariants] = useState(defaultVariants);
   const flowIds = new Set(flows.map((flow) => flow.id));
@@ -285,6 +294,7 @@ export function CreateExperimentForm({
               className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink"
               defaultValue={defaultTaskId(configuredTasks)}
               name="taskId"
+              onChange={(event) => onTaskChange?.(event.currentTarget.value)}
             >
               {configuredTasks.map((task) => (
                 <option key={task.id} value={task.id}>
@@ -344,6 +354,7 @@ export function CreateExperimentForm({
         </label>
         <VariantEditor
           labels={labels}
+          pinOptions={pinOptions}
           variants={variants}
           onAddVariant={() =>
             setVariants((current) =>
@@ -416,7 +427,45 @@ export function CreateExperimentModal({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ADR-129: the pin picker feed for the currently selected task; server
+  // filters to the T4-valid set (never free-text). Fetch failure degrades to
+  // an empty (disabled) picker — pins are optional.
+  const [pinOptions, setPinOptions] = useState<ExperimentPinOption[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string>(
+    tasks[0]?.id ?? "",
+  );
   const [, startTransition] = useTransition();
+
+  const loadPinOptions = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (!taskId) {
+        setPinOptions([]);
+
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/projects/${slug}/experiments/pin-options?taskId=${encodeURIComponent(taskId)}`,
+        );
+
+        if (!res.ok) {
+          setPinOptions([]);
+
+          return;
+        }
+        const body = (await res.json()) as { options?: ExperimentPinOption[] };
+
+        setPinOptions(body.options ?? []);
+      } catch {
+        setPinOptions([]);
+      }
+    },
+    [slug],
+  );
+
+  useEffect(() => {
+    if (open) void loadPinOptions(selectedTaskId);
+  }, [open, selectedTaskId, loadPinOptions]);
   const defaultVariants = useMemo<ExperimentVariant[]>(
     () => [
       { key: "a", label: "Control", config: {} },
@@ -534,8 +583,10 @@ export function CreateExperimentModal({
               error={error}
               flows={flows}
               labels={labels}
+              pinOptions={pinOptions}
               tasks={tasks}
               onCancel={() => setOpen(false)}
+              onTaskChange={(taskId) => setSelectedTaskId(taskId)}
               onSubmit={(form) => void submit(form)}
             />
           </div>

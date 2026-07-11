@@ -3729,6 +3729,8 @@
       "variantLabel": "Название",
       "runner": "Переопределение раннера",
       "executionPolicy": "Execution policy JSON",
+      "packagePin": "Закрепить версию пакета",
+      "packagePinNone": "Версия проекта (без переопределения)",
       "rulesAdd": "Добавить rules",
       "rulesRemove": "Убрать rules",
       "skillsAdd": "Добавить skills",
@@ -3763,7 +3765,10 @@
       "duration": "Длительность",
       "openRun": "Открыть ран",
       "noRuns": "Ранов пока нет",
-      "crashedConcludable": "Упавшие варианты остаются видимыми, эксперимент всё ещё можно завершить."
+      "crashedConcludable": "Упавшие варианты остаются видимыми, эксперимент всё ещё можно завершить.",
+      "provenanceLocalCut": "локальный срез",
+      "provenanceUpstream": "апстрим",
+      "flowRevisionDelta": "версии пакета различаются"
     },
     "tabs": {
       "diff": "Diff",
@@ -3926,6 +3931,7 @@
       "no_task": "У прогона нет задачи",
       "orchestrator_child": "Дочерние прогоны промоутятся через оркестратор",
       "shared_workspace": "Прогоны с общим воркспейсом исключены",
+      "experiment_member": "Раны-участники эксперимента не продвигаются автоматически",
       "auto_on_ready": "Прогон уже авто-доставляется"
     },
     "panel": {
