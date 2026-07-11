@@ -432,6 +432,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               reason: null,
               checkedAt: null,
               protocolVersion: null,
+              probeVersion: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -459,6 +460,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               reason: null,
               checkedAt: null,
               protocolVersion: null,
+              probeVersion: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -486,6 +488,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               reason: "gemini read-only-session smoke has not been cached",
               checkedAt: null,
               protocolVersion: null,
+              probeVersion: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -513,6 +516,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               reason: "opencode read-only-session smoke has not been cached",
               checkedAt: null,
               protocolVersion: null,
+              probeVersion: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -541,6 +545,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               reason: "mimo read-only-session smoke has not been cached",
               checkedAt: null,
               protocolVersion: null,
+              probeVersion: null,
             },
             capabilityEnforcement: {
               status: "pending",

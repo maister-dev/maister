@@ -32,7 +32,10 @@ import {
   resolveAdapterBinary,
 } from "../src/adapter-registry";
 import { extractToolIdentity } from "../src/guardrail-hooks";
-import { writeAdapterSmokeCache } from "../src/adapter-smoke-cache";
+import {
+  invalidateAdapterReadOnlySmokeCache,
+  writeAdapterSmokeCache,
+} from "../src/adapter-smoke-cache";
 import { provisionRunnerLaunch } from "../src/runner-provisioner";
 import { buildChildEnv } from "../src/spawn";
 
@@ -631,6 +634,10 @@ async function main(): Promise<void> {
   const results: SmokeResult[] = [];
 
   for (const adapter of args.adapters) {
+    if (args.cachePath && args.readOnlySession) {
+      await invalidateAdapterReadOnlySmokeCache(args.cachePath, adapter);
+    }
+
     const result = await smokeAdapter(adapter, {
       readOnlySession: args.readOnlySession,
       capabilityEnforcement: args.capabilityEnforcement,

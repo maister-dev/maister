@@ -87,6 +87,7 @@ export type AdapterSupport = {
   readonly fsPolicy: AdapterFsPolicy;
   readonly capabilitySurface: CapabilitySurface;
   readonly materialization: AdapterMaterialization;
+  readonly readOnlyMaterializer: "claude-settings" | "none";
 };
 
 export const ADAPTER_SUPPORT = [
@@ -106,6 +107,7 @@ export const ADAPTER_SUPPORT = [
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: true, skillSigil: "/" },
     materialization: { mode: "cwd-dir", dir: ".claude" },
+    readOnlyMaterializer: "claude-settings",
   },
   {
     id: "codex",
@@ -127,6 +129,7 @@ export const ADAPTER_SUPPORT = [
       dir: "codex-home",
       redirectEnv: "CODEX_HOME",
     },
+    readOnlyMaterializer: "none",
   },
   {
     id: "gemini",
@@ -144,6 +147,7 @@ export const ADAPTER_SUPPORT = [
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
     materialization: { mode: "cwd-dir", dir: ".gemini" },
+    readOnlyMaterializer: "none",
   },
   {
     id: "opencode",
@@ -165,6 +169,7 @@ export const ADAPTER_SUPPORT = [
       dir: "opencode-home",
       redirectEnv: "OPENCODE_CONFIG_DIR",
     },
+    readOnlyMaterializer: "none",
   },
   {
     id: "mimo",
@@ -186,6 +191,7 @@ export const ADAPTER_SUPPORT = [
       dir: "mimo-home",
       redirectEnv: "XDG_CONFIG_HOME",
     },
+    readOnlyMaterializer: "none",
   },
 ] as const satisfies readonly AdapterSupport[];
 

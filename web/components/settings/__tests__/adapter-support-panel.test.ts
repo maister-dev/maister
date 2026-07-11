@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
+import {
+  AdapterSupportPanel,
+  smokeStatusTranslationKey,
+} from "@/components/settings/adapter-support-panel";
 import { getAdapterSupport } from "@/lib/acp-runners/schema";
 
 vi.mock("next-intl/server", () => ({
@@ -9,6 +12,20 @@ vi.mock("next-intl/server", () => ({
 }));
 
 describe("AdapterSupportPanel", () => {
+  it.each([
+    ["not_required", null, "notRequired"],
+    ["pending", null, "evidencePending"],
+    ["ok", null, "evidenceOk"],
+    ["skipped", null, "evidenceSkipped"],
+    ["error", null, "evidenceError"],
+    ["stale", "read-only-session evidence is seven days old", "evidenceStaleAge"],
+    ["stale", "read-only-session probe version 2 does not match 1", "evidenceStaleVersion"],
+  ])("maps %s evidence to localized key %s", (status, reason, expected) => {
+    expect(
+      smokeStatusTranslationKey({ status, reason, checkedAt: null }),
+    ).toBe(expected);
+  });
+
   it("renders a status dot per adapter, a details expansion, and a setup hint only for unavailable adapters", async () => {
     const element = await AdapterSupportPanel({
       adapters: getAdapterSupport().filter((adapter) =>
@@ -39,6 +56,7 @@ describe("AdapterSupportPanel", () => {
                   reason: null,
                   checkedAt: null,
                   protocolVersion: null,
+                  probeVersion: null,
                 },
                 capabilityEnforcement: {
                   status: "pending",
@@ -66,6 +84,7 @@ describe("AdapterSupportPanel", () => {
                   reason: null,
                   checkedAt: null,
                   protocolVersion: null,
+                  probeVersion: null,
                 },
                 capabilityEnforcement: {
                   status: "pending",
@@ -117,5 +136,58 @@ describe("AdapterSupportPanel", () => {
 
     expect(html).toContain("diagnosticsUnavailable: network");
     expect(html).not.toContain("secret-like diagnostic detail");
+  });
+
+  it("renders localized stale evidence, checked time, and remediation", async () => {
+    const [adapter] = getAdapterSupport().filter(
+      (item) => item.id === "opencode",
+    );
+    const checkedAt = "2026-07-01T12:00:00.000Z";
+    const element = await AdapterSupportPanel({
+      adapters: [adapter],
+      diagnostics: {
+        kind: "ready",
+        diagnostics: {
+          status: "ready",
+          version: "0.0.1",
+          checkedAt,
+          adapters: [
+            {
+              id: "opencode",
+              binary: "opencode",
+              source: "path",
+              path: "/usr/local/bin/opencode",
+              available: true,
+              version: "1.0.0",
+              error: null,
+              smoke: {
+                status: "ok",
+                reason: null,
+                checkedAt,
+                protocolVersion: 1,
+                readOnlySession: {
+                  status: "stale",
+                  reason:
+                    "read-only-session probe version 2 does not match 1",
+                  checkedAt,
+                  protocolVersion: 1,
+                  probeVersion: 2,
+                },
+              },
+            },
+          ],
+          sidecars: [],
+          envRefs: [],
+        },
+      },
+    });
+
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("evidenceOk");
+    expect(html).toContain("evidenceStaleVersion");
+    expect(html).toContain("evidenceCheckedAt");
+    expect(html).toContain("readOnlySmokeRemediation");
+    expect(html).not.toContain(">stale<");
   });
 });

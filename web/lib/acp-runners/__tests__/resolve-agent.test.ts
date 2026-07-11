@@ -218,6 +218,25 @@ describe("resolveAgentRunner — compatibility refusals (ADR-089/088)", () => {
     }
   });
 
+  it("preserves the stable adapter id when capabilityAgent is an alias", () => {
+    const resolution = resolveAgentRunner(
+      baseInput({
+        launchOverrideRunnerId: "opencode-r",
+        agent: { runnerId: null, mode: "session", workspace: "repo_read" },
+        runners: [
+          entry("opencode-r", {
+            adapter: "opencode",
+            capabilityAgent: "claude",
+            readOnlyCapable: true,
+          }),
+        ],
+      }),
+    );
+
+    expect(resolution.runnerSnapshot.adapter).toBe("opencode");
+    expect(resolution.capabilityAgent).toBe("claude");
+  });
+
   it("refuses read-only agent workspaces when the runner is not readOnlyCapable", () => {
     expectUnavailable(
       () =>

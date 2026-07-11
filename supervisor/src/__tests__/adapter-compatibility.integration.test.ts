@@ -11,6 +11,7 @@ import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createAcpConnection, sendPromptOnConnection } from "../acp-client";
+import { listAdapterRuntimes } from "../adapter-registry";
 import { modelCatalogCache } from "../model-catalog/cache";
 import { createPendingPermissions } from "../pending-permissions";
 import { SESSION_EVENT_CHANNEL } from "../registry";
@@ -35,7 +36,7 @@ function spawnFixture(args: readonly string[] = []): FixtureChild {
   return child;
 }
 
-function recordFor(adapter: "gemini" | "opencode" | "mimo"): SessionRecord {
+function recordFor(adapter: SessionRecord["adapter"]): SessionRecord {
   return {
     sessionId: `compat-${adapter}`,
     adapter,
@@ -52,7 +53,7 @@ function recordFor(adapter: "gemini" | "opencode" | "mimo"): SessionRecord {
   };
 }
 
-function runnerFor(adapter: "gemini" | "opencode" | "mimo"): RunnerLaunch {
+function runnerFor(adapter: SessionRecord["adapter"]): RunnerLaunch {
   return {
     version: 1,
     runnerId: `${adapter}-compat`,
@@ -60,9 +61,13 @@ function runnerFor(adapter: "gemini" | "opencode" | "mimo"): RunnerLaunch {
     capabilityAgent: adapter,
     model: "configured-model",
     provider:
-      adapter === "gemini"
-        ? { kind: "google_gemini" }
-        : { kind: "agent_native" },
+      adapter === "claude"
+        ? { kind: "anthropic" }
+        : adapter === "codex"
+          ? { kind: "openai" }
+          : adapter === "gemini"
+            ? { kind: "google_gemini" }
+            : { kind: "agent_native" },
     permissionPolicy: "default",
   };
 }
@@ -262,7 +267,10 @@ describe("adapter compatibility fixtures", () => {
     expect(resumed.acpSessionId).toBe("existing-mimo-session");
   });
 
-  async function driveReadOnlyPrompt(permissionKind: string): Promise<{
+  async function driveReadOnlyPrompt(
+    adapter: SessionRecord["adapter"],
+    permissionKind: string,
+  ): Promise<{
     events: SessionEvent[];
     result: Awaited<ReturnType<typeof sendPromptOnConnection>>;
     pendingPermissions: ReturnType<typeof createPendingPermissions>;
@@ -273,7 +281,7 @@ describe("adapter compatibility fixtures", () => {
     const emitter = new EventEmitter();
     const events = eventCollector(emitter);
     const record: SessionRecord = {
-      ...recordFor("opencode"),
+      ...recordFor(adapter),
       readOnlySession: true,
     };
     const connection = await createAcpConnection({
@@ -284,15 +292,15 @@ describe("adapter compatibility fixtures", () => {
       record,
       emitter,
       logger,
-      adapter: "opencode",
+      adapter,
       pendingPermissions,
-      runner: runnerFor("opencode"),
+      runner: runnerFor(adapter),
     });
 
     const result = await sendPromptOnConnection(
       connection.connection,
       {
-        adapter: "opencode",
+        adapter,
         acpSessionId: connection.acpSessionId,
         stepId: "step-1",
         prompt: "request permission",
@@ -304,9 +312,23 @@ describe("adapter compatibility fixtures", () => {
   }
 
   describe("readOnlySession L1 wire arbitration (ADR-090)", () => {
-    it("auto-DENIES a write-class (edit) permission inline — no HITL event, no pending deferred", async () => {
+    const capableAdapters = listAdapterRuntimes()
+      .filter((runtime) => runtime.readOnlyCapable)
+      .map((runtime) => runtime.id);
+
+    it.each(
+      capableAdapters.flatMap((adapter) =>
+        ([
+          ["read", "allow"],
+          ["edit", "deny"],
+          ["other", "deny"],
+        ] as const).map(([kind, decision]) => [adapter, kind, decision] as const),
+      ),
+    )(
+      "%s answers %s with %s inline without HITL leakage",
+      async (adapter, permissionKind, decision) => {
       const { events, result, pendingPermissions, sessionId } =
-        await driveReadOnlyPrompt("edit");
+        await driveReadOnlyPrompt(adapter, permissionKind);
 
       // The prompt completes without a human in the loop.
       expect(result).toMatchObject({ stopReason: "end_turn" });
@@ -323,34 +345,13 @@ describe("adapter compatibility fixtures", () => {
           update: expect.objectContaining({
             sessionUpdate: "agent_message_chunk",
             content: expect.objectContaining({
-              text: "permission selected:deny",
+              text: `permission selected:${decision}`,
             }),
           }),
         }),
       );
-    });
-
-    it("auto-APPROVES a read-class permission inline — a headless agent never stalls on its first Read", async () => {
-      const { events, result, pendingPermissions, sessionId } =
-        await driveReadOnlyPrompt("read");
-
-      expect(result).toMatchObject({ stopReason: "end_turn" });
-      expect(events).not.toContainEqual(
-        expect.objectContaining({ type: "session.permission_request" }),
-      );
-      expect(pendingPermissions.size(sessionId)).toBe(0);
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: "session.update",
-          update: expect.objectContaining({
-            sessionUpdate: "agent_message_chunk",
-            content: expect.objectContaining({
-              text: "permission selected:allow",
-            }),
-          }),
-        }),
-      );
-    });
+      },
+    );
   });
 
   it("does not call ACP authenticate for a Gemini CLI-native runner", async () => {

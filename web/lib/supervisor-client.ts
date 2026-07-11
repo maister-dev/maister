@@ -261,11 +261,13 @@ const SupervisorDiagnosticsSchema = z
                     "pending",
                     "ok",
                     "skipped",
+                    "stale",
                     "error",
                   ]),
                   reason: z.string().nullable(),
                   checkedAt: z.string().datetime().nullable(),
                   protocolVersion: z.number().int().positive().nullable(),
+                  probeVersion: z.number().int().positive().nullable(),
                 })
                 .strict(),
               capabilityEnforcement: z

@@ -14,6 +14,7 @@ export type AdapterRuntime = {
   // Required for every adapter; the launch evidence gate refuses a strict
   // tools/mcps enforcement launch until this dimension is cached ok.
   readonly capabilityEnforcementSmoke: "required" | "not_required";
+  readonly readOnlyMaterializer: "claude-settings" | "none";
   readonly modelChannel: "settings_local" | "set_session_model" | "advisory";
   readonly resumeStrategy:
     | "session_resume"
@@ -54,6 +55,7 @@ const ADAPTER_RUNTIMES = [
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
     capabilityEnforcementSmoke: "required",
+    readOnlyMaterializer: "claude-settings",
     modelChannel: "settings_local",
     resumeStrategy: "session_resume",
   },
@@ -65,6 +67,7 @@ const ADAPTER_RUNTIMES = [
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
     capabilityEnforcementSmoke: "required",
+    readOnlyMaterializer: "none",
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume",
   },
@@ -76,6 +79,7 @@ const ADAPTER_RUNTIMES = [
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
     capabilityEnforcementSmoke: "required",
+    readOnlyMaterializer: "none",
     modelChannel: "advisory",
     resumeStrategy: "load_session_pending_smoke",
   },
@@ -87,6 +91,7 @@ const ADAPTER_RUNTIMES = [
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
     capabilityEnforcementSmoke: "required",
+    readOnlyMaterializer: "none",
     modelChannel: "advisory",
     resumeStrategy: "session_resume_pending_smoke",
   },
@@ -98,6 +103,7 @@ const ADAPTER_RUNTIMES = [
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
     capabilityEnforcementSmoke: "required",
+    readOnlyMaterializer: "none",
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume_pending_smoke",
   },

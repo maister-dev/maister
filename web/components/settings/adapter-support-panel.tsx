@@ -15,7 +15,30 @@ type Props = {
 type SmokeEvidence = {
   readonly status: string;
   readonly reason: string | null;
+  readonly checkedAt: string | null;
 };
+
+export function smokeStatusTranslationKey(evidence: SmokeEvidence): string {
+  switch (evidence.status) {
+    case "not_required":
+      return "notRequired";
+    case "pending":
+      return "evidencePending";
+    case "ok":
+      return "evidenceOk";
+    case "skipped":
+      return "evidenceSkipped";
+    case "error":
+      return "evidenceError";
+    case "stale":
+      return evidence.reason?.includes("probe version") ||
+        evidence.reason?.includes("legacy cache")
+        ? "evidenceStaleVersion"
+        : "evidenceStaleAge";
+    default:
+      return "unknown";
+  }
+}
 
 export async function AdapterSupportPanel({
   adapters,
@@ -31,10 +54,12 @@ export async function AdapterSupportPanel({
   const formatSmokeEvidence = (evidence: SmokeEvidence | undefined): string => {
     if (!evidence) return t("unknown");
 
-    const status =
-      evidence.status === "not_required" ? t("notRequired") : evidence.status;
+    const status = t(smokeStatusTranslationKey(evidence));
+    const checkedAt = evidence.checkedAt
+      ? ` · ${t("evidenceCheckedAt")}: ${evidence.checkedAt}`
+      : "";
 
-    return evidence.reason ? `${status}: ${evidence.reason}` : status;
+    return `${status}${checkedAt}`;
   };
 
   return (
@@ -122,6 +147,12 @@ export async function AdapterSupportPanel({
                     </dd>
                   </div>
                 </dl>
+                {adapter.readOnlySessionSmoke === "required" &&
+                diagnostic?.smoke.readOnlySession.status !== "ok" ? (
+                  <p className="m-0 mt-2 text-[11px] leading-[1.45] text-mute">
+                    {t("readOnlySmokeRemediation")}
+                  </p>
+                ) : null}
               </details>
             </article>
           );

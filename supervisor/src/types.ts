@@ -420,18 +420,34 @@ const AdapterSmokeDiagnosticSchema = z
     protocolVersion: z.number().int().positive().nullable(),
     readOnlySession: z
       .object({
-        status: z.enum(["not_required", "pending", "ok", "skipped", "error"]),
+        status: z.enum([
+          "not_required",
+          "pending",
+          "ok",
+          "skipped",
+          "stale",
+          "error",
+        ]),
         reason: z.string().min(1).nullable(),
         checkedAt: z.string().datetime().nullable(),
         protocolVersion: z.number().int().positive().nullable(),
+        probeVersion: z.number().int().positive().nullable(),
       })
       .strict(),
     capabilityEnforcement: z
       .object({
-        status: z.enum(["not_required", "pending", "ok", "skipped", "error"]),
+        status: z.enum([
+          "not_required",
+          "pending",
+          "ok",
+          "skipped",
+          "stale",
+          "error",
+        ]),
         reason: z.string().min(1).nullable(),
         checkedAt: z.string().datetime().nullable(),
         protocolVersion: z.number().int().positive().nullable(),
+        probeVersion: z.number().int().positive().nullable(),
       })
       .strict(),
   })

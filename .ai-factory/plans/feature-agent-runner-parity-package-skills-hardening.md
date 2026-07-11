@@ -230,7 +230,7 @@ Dependencies: Task 0.2.
 
 #### Task 1.1 - Add runner evidence, identity, and wire-parity RED tests
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -267,7 +267,7 @@ Dependencies: Task 0.3.
 
 #### Task 1.2 - Add materialization lifecycle RED tests
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -299,7 +299,7 @@ Dependencies: Task 0.3.
 
 #### Task 1.3 - Add strict-profile, resync, and UI RED tests
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -331,7 +331,7 @@ Dependencies: Task 0.3.
 
 #### Task 2.1 - Key capability and evidence by stable adapter id
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -368,7 +368,7 @@ Dependencies: Task 1.1.
 
 #### Task 2.2 - Parameterize ACP wire parity over the descriptor matrix
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -398,7 +398,7 @@ Dependencies: Tasks 1.1 and 2.1.
 
 #### Task 2.3 - Make L2 materialization adapter-descriptor-owned
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -429,7 +429,7 @@ Dependencies: Tasks 1.1 and 2.1. May run in parallel with Task 2.2 after Task 2.
 
 #### Task 2.4 - Mature Settings evidence and launch-refusal UX
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 

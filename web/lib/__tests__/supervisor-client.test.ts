@@ -331,6 +331,7 @@ describe("checkSupervisorDiagnostics", () => {
             reason: null,
             checkedAt: null,
             protocolVersion: null,
+            probeVersion: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -358,6 +359,7 @@ describe("checkSupervisorDiagnostics", () => {
             reason: null,
             checkedAt: null,
             protocolVersion: null,
+            probeVersion: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -385,6 +387,7 @@ describe("checkSupervisorDiagnostics", () => {
             reason: "gemini read-only-session smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
+            probeVersion: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -412,6 +415,7 @@ describe("checkSupervisorDiagnostics", () => {
             reason: "opencode read-only-session smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
+            probeVersion: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -439,6 +443,7 @@ describe("checkSupervisorDiagnostics", () => {
             reason: "mimo read-only-session smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
+            probeVersion: null,
           },
           capabilityEnforcement: {
             status: "pending",

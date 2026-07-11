@@ -25,12 +25,16 @@ import {
   getAdapterSupportById,
 } from "@/lib/acp-runners/adapter-support";
 import { resolveAgentConfig } from "@/lib/agents/config";
-import { type ParsedAgentDefinition } from "@/lib/agents/definition";
+import {
+  type AgentCapabilityProfile,
+  type ParsedAgentDefinition,
+} from "@/lib/agents/definition";
 import {
   checkRepoReadDirt,
   loadAgentWorkspaceContext,
   materializeAgentReadOnlySettings,
   quarantineAgentInTx,
+  restoreAgentMaterialization,
 } from "@/lib/agents/dirty-watchdog";
 import {
   resolveEffectiveAgentDefinition,
@@ -275,7 +279,7 @@ function runnerCatalogEntry(
     providerKind: row.provider?.kind ?? "anthropic",
     permissionPolicy: row.permissionPolicy,
     readOnlyCapable:
-      getAdapterSupportById(row.capabilityAgent)?.readOnlyCapable === true,
+      getAdapterSupportById(row.adapter)?.readOnlyCapable === true,
     sidecar: sidecar
       ? ({
           id: sidecar.id,
@@ -455,7 +459,7 @@ async function resolveRunnerForAgent(
   });
 
   await assertReadOnlySessionEvidence({
-    capabilityAgent: resolution.capabilityAgent,
+    adapterId: resolution.runnerSnapshot.adapter,
     runnerId: resolution.runnerId,
     workspace,
   });
@@ -464,36 +468,79 @@ async function resolveRunnerForAgent(
 }
 
 async function assertReadOnlySessionEvidence(args: {
-  readonly capabilityAgent: string;
+  readonly adapterId: string;
   readonly runnerId: string;
   readonly workspace: "none" | "repo_read" | "worktree";
 }): Promise<void> {
   if (args.workspace === "worktree") return;
 
-  const support = getAdapterSupportById(args.capabilityAgent);
+  const support = getAdapterSupportById(args.adapterId);
 
   if (support?.readOnlySessionSmoke !== "required") return;
+
+  log.debug(
+    {
+      runnerId: args.runnerId,
+      adapterId: args.adapterId,
+      workspace: args.workspace,
+    },
+    "evaluating agent runner read-only-session evidence",
+  );
 
   const diagnostics = await checkSupervisorDiagnostics();
 
   if (diagnostics.kind !== "ready") {
+    log.warn(
+      {
+        runnerId: args.runnerId,
+        adapterId: args.adapterId,
+        workspace: args.workspace,
+        evidenceStatus: "unavailable",
+        evidenceReason: diagnostics.reason,
+      },
+      "agent runner read-only-session evidence refused",
+    );
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `agent runner ${args.runnerId} (capability ${args.capabilityAgent}) cannot host a ${args.workspace} agent — read-only-session diagnostics are unavailable: ${diagnostics.message}`,
+      `agent runner ${args.runnerId} (adapter ${args.adapterId}) cannot host a ${args.workspace} agent — read-only-session diagnostics are unavailable: ${diagnostics.message}`,
     );
   }
 
   const adapter = diagnostics.diagnostics.adapters.find(
-    (item) => item.id === args.capabilityAgent,
+    (item) => item.id === args.adapterId,
   );
   const readOnlySession = adapter?.smoke.readOnlySession;
 
   if (!readOnlySession || readOnlySession.status !== "ok") {
+    log.warn(
+      {
+        runnerId: args.runnerId,
+        adapterId: args.adapterId,
+        workspace: args.workspace,
+        evidenceStatus: readOnlySession?.status ?? "missing",
+        evidenceReason: readOnlySession?.reason ?? "missing_adapter_diagnostics",
+        evidenceCheckedAt: readOnlySession?.checkedAt ?? null,
+        evidenceProbeVersion: readOnlySession?.probeVersion ?? null,
+      },
+      "agent runner read-only-session evidence refused",
+    );
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `agent runner ${args.runnerId} (capability ${args.capabilityAgent}) cannot host a ${args.workspace} agent — read-only-session smoke is ${readOnlySession?.status ?? "missing"}: ${readOnlySession?.reason ?? "missing adapter diagnostics"}`,
+      `agent runner ${args.runnerId} (adapter ${args.adapterId}) cannot host a ${args.workspace} agent — read-only-session smoke is ${readOnlySession?.status ?? "missing"}: ${readOnlySession?.reason ?? "missing adapter diagnostics"}`,
     );
   }
+
+  log.info(
+    {
+      runnerId: args.runnerId,
+      adapterId: args.adapterId,
+      workspace: args.workspace,
+      evidenceStatus: readOnlySession.status,
+      evidenceCheckedAt: readOnlySession.checkedAt,
+      evidenceProbeVersion: readOnlySession.probeVersion,
+    },
+    "agent runner read-only-session evidence accepted",
+  );
 }
 
 async function packageSkillMaterializationRoots(
@@ -1744,7 +1791,11 @@ async function startConsensusRunnerDraftSession(args: {
   const cwd = args.project.repoPath as string;
 
   try {
-    await materializeAgentReadOnlySettings(cwd).catch((err: unknown) => {
+    await materializeAgentReadOnlySettings(
+      cwd,
+      args.snapshot.adapter,
+      runId,
+    ).catch((err: unknown) => {
       log.warn(
         { runId, err: err instanceof Error ? err.message : String(err) },
         "L2 materialization failed — L1 carries consensus runner draft read-only contract",
@@ -1898,6 +1949,7 @@ export async function finalizeAgentRun(
       .select({
         workspaceMode: runs.workspaceMode,
         agentWorkspace: runs.agentWorkspace,
+        rootRunId: runs.rootRunId,
       })
       .from(runs)
       .where(eq(runs.id, runId));
@@ -1909,13 +1961,10 @@ export async function finalizeAgentRun(
       preRows[0]?.workspaceMode === "shared" &&
       preRows[0]?.agentWorkspace === "worktree";
 
-    const workspaceRows =
-      outcome === "Done"
-        ? await tx
-            .select({ id: workspaces.id })
-            .from(workspaces)
-            .where(eq(workspaces.runId, runId))
-        : [];
+    const workspaceRows = await tx
+      .select({ id: workspaces.id, worktreePath: workspaces.worktreePath })
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId));
     const status =
       outcome === "Done"
         ? isSharedWritableExit
@@ -2006,7 +2055,7 @@ export async function finalizeAgentRun(
         const ephemeralPath = agentReadOnlyWorkdirPath(wsCtx.slug, runId);
         const usedEphemeral = await pathIsDirectory(ephemeralPath);
         const l3Target = usedEphemeral ? ephemeralPath : wsCtx.repoPath;
-        const verdict = await checkRepoReadDirt(l3Target);
+        const verdict = await checkRepoReadDirt(l3Target, runId);
 
         if (verdict.dirty) {
           await quarantineAgentInTx({
@@ -2025,6 +2074,19 @@ export async function finalizeAgentRun(
             worktreePath: ephemeralPath,
           };
         }
+      } else if (wsCtx && ranAs === "none") {
+        await restoreAgentMaterialization(
+          agentWorkdirPath(wsCtx.slug, runId),
+          runId,
+        );
+      } else if (wsCtx && ranAs === "worktree") {
+        const worktreePath =
+          workspaceRows[0]?.worktreePath ??
+          (preRows[0]?.workspaceMode === "shared" && preRows[0]?.rootRunId
+            ? sharedAgentWorktreePath(wsCtx.slug, preRows[0].rootRunId)
+            : agentWorkdirPath(wsCtx.slug, runId));
+
+        await restoreAgentMaterialization(worktreePath, runId);
       }
     }
 
@@ -2515,16 +2577,12 @@ export type AgentSupervisorApi = {
 export async function resolveAgentProfileMcpServers(args: {
   db: Db;
   projectId: string;
-  capabilityProfile: Record<string, unknown> | null;
+  capabilityProfile?: AgentCapabilityProfile;
   capabilityAgent: string;
   execTrust: "untrusted" | "trusted";
   runId: string;
 }): Promise<AgentMcpServer[]> {
-  const declared = Array.isArray(args.capabilityProfile?.mcps)
-    ? (args.capabilityProfile.mcps as unknown[]).filter(
-        (v): v is string => typeof v === "string" && v.length > 0,
-      )
-    : [];
+  const declared = args.capabilityProfile?.mcps ?? [];
 
   if (declared.length === 0) return [];
 
@@ -2831,7 +2889,11 @@ export async function startAgentSession(
     // ADR-090 L2 (materialize-only): instructed deny rules in the session
     // cwd; manifest-tracked and restored at the terminal choke point.
     if (workspace !== "worktree") {
-      await materializeAgentReadOnlySettings(cwd).catch((err: unknown) => {
+      await materializeAgentReadOnlySettings(
+        cwd,
+        snapshot.adapter,
+        runId,
+      ).catch((err: unknown) => {
         log.warn(
           { runId, err: err instanceof Error ? err.message : String(err) },
           "L2 materialization failed — L1/L3 carry the contract",
@@ -2859,7 +2921,7 @@ export async function startAgentSession(
     const profileMcpServers = await resolveAgentProfileMcpServers({
       db: _db,
       projectId: project.id as string,
-      capabilityProfile: effective.parsed.capabilityProfile,
+      capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
       capabilityAgent: snapshot.capabilityAgent as string,
       execTrust: effective.execTrust,
       runId,
@@ -2888,7 +2950,7 @@ export async function startAgentSession(
     const packageSkillHome =
       packageSkillRoots.length > 0
         ? await materializeAdapterCapabilityHome({
-            agent: snapshot.capabilityAgent as AdapterId,
+            agent: snapshot.adapter as AdapterId,
             worktreePath: cwd,
             runId,
             installedPaths: packageSkillRoots,

@@ -1,11 +1,19 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  READ_ONLY_SMOKE_PROBE_VERSION,
+  invalidateAdapterReadOnlySmokeCache,
   smokeDiagnosticForAdapter,
+  writeAdapterSmokeCache,
   type AdapterSmokeCacheRead,
 } from "../adapter-smoke-cache";
 
 const checkedAt = "2026-07-07T09:00:00.000Z";
+const evaluatedAt = new Date("2026-07-11T09:00:00.000Z");
 
 describe("adapter smoke diagnostics", () => {
   it("surfaces nested read-only-session and capability-enforcement evidence from the cache", () => {
@@ -19,6 +27,7 @@ describe("adapter smoke diagnostics", () => {
             status: "ok",
             checkedAt,
             protocolVersion: 1,
+            probeVersion: READ_ONLY_SMOKE_PROBE_VERSION,
           },
           capabilityEnforcement: {
             status: "ok",
@@ -28,9 +37,10 @@ describe("adapter smoke diagnostics", () => {
         } as never,
       },
       error: null,
+      cacheVersion: 2,
     };
 
-    expect(smokeDiagnosticForAdapter("opencode", cache)).toEqual({
+    expect(smokeDiagnosticForAdapter("opencode", cache, evaluatedAt)).toEqual({
       status: "ok",
       reason: null,
       checkedAt,
@@ -40,6 +50,7 @@ describe("adapter smoke diagnostics", () => {
         reason: null,
         checkedAt,
         protocolVersion: 1,
+        probeVersion: READ_ONLY_SMOKE_PROBE_VERSION,
       },
       capabilityEnforcement: {
         status: "ok",
@@ -141,15 +152,17 @@ describe("adapter smoke diagnostics", () => {
         },
       },
       error: null,
+      cacheVersion: 2,
     };
 
     expect(
-      smokeDiagnosticForAdapter("opencode", cache).readOnlySession,
+      smokeDiagnosticForAdapter("opencode", cache, evaluatedAt).readOnlySession,
     ).toEqual({
       status: "pending",
       reason: "opencode read-only-session smoke has not been cached",
       checkedAt: null,
       protocolVersion: null,
+      probeVersion: null,
     });
   });
 
@@ -168,16 +181,100 @@ describe("adapter smoke diagnostics", () => {
         } as never,
       },
       error: null,
+      cacheVersion: 2,
     };
 
     expect(
-      smokeDiagnosticForAdapter("opencode", cache).readOnlySession,
+      smokeDiagnosticForAdapter("opencode", cache, evaluatedAt).readOnlySession,
     ).toEqual({
       status: "skipped",
       reason:
         "opencode read-only-session smoke ignored because adapter ACP compatibility smoke is skipped: binary missing",
       checkedAt,
       protocolVersion: null,
+      probeVersion: null,
     });
+  });
+
+  it.each([
+    ["cache v1", undefined, checkedAt],
+    ["probe mismatch", READ_ONLY_SMOKE_PROBE_VERSION + 1, checkedAt],
+    ["future timestamp", READ_ONLY_SMOKE_PROBE_VERSION, "2026-07-12T09:00:00.000Z"],
+    ["seven-day boundary", READ_ONLY_SMOKE_PROBE_VERSION, "2026-07-04T09:00:00.000Z"],
+  ])("derives stale read-only evidence for %s", (caseName, probeVersion, evidenceAt) => {
+    const cache: AdapterSmokeCacheRead = {
+      entries: {
+        opencode: {
+          status: "ok",
+          checkedAt,
+          protocolVersion: 1,
+          readOnlySession: {
+            status: "ok",
+            checkedAt: evidenceAt,
+            protocolVersion: 1,
+            ...(probeVersion === undefined ? {} : { probeVersion }),
+          },
+        } as never,
+      },
+      error: null,
+      cacheVersion: caseName === "cache v1" ? 1 : 2,
+    };
+
+    expect(
+      smokeDiagnosticForAdapter("opencode", cache, evaluatedAt).readOnlySession,
+    ).toMatchObject({ status: "stale", probeVersion: probeVersion ?? null });
+  });
+
+  it("writes cache v2 with the current read-only probe version", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "maister-smoke-cache-"));
+    const cachePath = join(directory, "adapter-smoke-cache.json");
+
+    await writeAdapterSmokeCache(cachePath, [
+      {
+        adapter: "opencode",
+        status: "ok",
+        protocolVersion: 1,
+        readOnlySession: { status: "ok", protocolVersion: 1 },
+      },
+    ]);
+
+    const written = JSON.parse(await readFile(cachePath, "utf8")) as {
+      readonly version: number;
+      readonly adapters: {
+        readonly opencode: {
+          readonly readOnlySession: { readonly probeVersion: number };
+        };
+      };
+    };
+
+    expect(written.version).toBe(2);
+    expect(written.adapters.opencode.readOnlySession.probeVersion).toBe(
+      READ_ONLY_SMOKE_PROBE_VERSION,
+    );
+  });
+
+  it("invalidates old read-only ok evidence before a new probe", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "maister-smoke-cache-"));
+    const cachePath = join(directory, "adapter-smoke-cache.json");
+
+    await writeAdapterSmokeCache(cachePath, [
+      {
+        adapter: "opencode",
+        status: "ok",
+        protocolVersion: 1,
+        readOnlySession: { status: "ok", protocolVersion: 1 },
+      },
+    ]);
+    await invalidateAdapterReadOnlySmokeCache(cachePath, "opencode");
+
+    const cache = JSON.parse(await readFile(cachePath, "utf8")) as {
+      readonly adapters: {
+        readonly opencode: {
+          readonly readOnlySession: { readonly status: string };
+        };
+      };
+    };
+
+    expect(cache.adapters.opencode.readOnlySession.status).toBe("error");
   });
 });
