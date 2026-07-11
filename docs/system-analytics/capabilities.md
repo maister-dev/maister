@@ -339,6 +339,11 @@ materialization target"; this section states only what this domain requires.
   also materialize capability-local `agents/` from those member roots into
   `.claude/agents/`; non-Claude adapters omit subagents because their capability
   surface does not support them.
+- **Standalone ownership is run-scoped (ADR-129, Designed).** Cwd-local copies
+  are tracked under `.maister/agent-materialization/` with per-run lifecycle
+  state and a shared ownership index. Only normalized descriptor-root paths may
+  be claimed. Terminal cleanup releases the run's ownership and removes a path
+  only when no other live owner remains.
 - **Materialization is verbatim of files only** — the cross-runner wire-form
   rewriting happens web-side in the normalizer (FR-E,
   [flow-settings.md](flow-settings.md)); the supervisor still forwards the

@@ -205,10 +205,11 @@ Adapter diagnostic entries are:
     checkedAt: string | null;
     protocolVersion: number | null;
     readOnlySession: {
-      status: "not_required" | "pending" | "ok" | "skipped" | "error";
+      status: "not_required" | "pending" | "ok" | "skipped" | "stale" | "error";
       reason: string | null;
       checkedAt: string | null;
       protocolVersion: number | null;
+      probeVersion: number | null;
     }
   }
 }
@@ -239,6 +240,12 @@ prompt probes that must observe read-like permission allow, write-like
 permission deny, and unknown-kind deny decisions before writing nested `ok`
 evidence. If the adapter does not produce those wire observations, the nested
 dimension is written as `error` and read-only standalone launch stays refused.
+The v2 cache also records the read-only probe contract version. Cache-v1
+read-only evidence, a mismatched probe version, a future `checkedAt`, or evidence
+aged seven days or more is reported as diagnostic `stale`; generic v1 smoke
+remains readable for ordinary readiness. Starting a new read-only probe
+invalidates the targeted old evidence before adapter work begins, so a crashed
+or partial probe cannot leave a reusable `ok` behind.
 
 `envRefs` contains a fixed safe catalog of known runner env-ref names plus the
 comma-separated names in `MAISTER_DIAGNOSTIC_ENV_REFS`. It reports presence

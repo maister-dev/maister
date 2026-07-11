@@ -58,6 +58,12 @@ Each row/details area separates three signals:
   `smoke.readOnlySession` evidence when the adapter descriptor marks
   read-only-session smoke as required.
 
+ADR-129 adds explicit read-only evidence states (Designed): not required,
+missing/pending, stale by age, stale by probe version, error, and ok. Details
+show `checkedAt` when present and one remediation for evidence-required
+adapters: run the supported `smoke:acp -- --read-only-session` probe. Normal
+Ready remains separate from read-only eligibility.
+
 The modal contains:
 
 - identity and adapter/model controls;

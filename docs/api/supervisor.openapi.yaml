@@ -883,7 +883,8 @@ components:
                     nullable: true
                   readOnlySession:
                     type: object
-                    required: [status, reason, checkedAt, protocolVersion]
+                    required:
+                      [status, reason, checkedAt, protocolVersion, probeVersion]
                     additionalProperties: false
                     description: |
                       Cached adapter-specific evidence that `readOnlySession`
@@ -898,7 +899,8 @@ components:
                     properties:
                       status:
                         type: string
-                        enum: [not_required, pending, ok, skipped, error]
+                        enum:
+                          [not_required, pending, ok, skipped, stale, error]
                       reason:
                         type: string
                         nullable: true
@@ -909,6 +911,14 @@ components:
                       protocolVersion:
                         type: integer
                         nullable: true
+                      probeVersion:
+                        type: integer
+                        nullable: true
+                        description: |
+                          Read-only probe contract version. Null for cache-v1,
+                          not-required, missing, and unprobed evidence. A value
+                          different from the current supervisor probe version
+                          yields diagnostic status `stale`.
                   capabilityEnforcement:
                     type: object
                     required: [status, reason, checkedAt, protocolVersion]

@@ -170,6 +170,15 @@ pending, skipped, stale, or failed read-only-session evidence refuses the launch
 with `MaisterError("EXECUTOR_UNAVAILABLE")` before worktree/cwd creation, run
 insertion, or token issuance.
 
+ADR-129 hardens this evidence contract (Designed). Evidence is keyed by adapter
+id, never `capability_agent`; the web and supervisor descriptor mirrors must
+agree. Cache v1 remains valid for generic readiness but its nested read-only
+evidence is `stale`. Cache v2 adds a probe-contract version. Required evidence
+is `ok` only when generic smoke is `ok`, the probe version matches, `checkedAt`
+is not future-dated, and age is strictly less than seven days. The supported
+producer invalidates old nested evidence before probing and writes `ok` only
+after read allow, write deny, and unknown deny were all observed through ACP.
+
 ## Per-adapter materialization target (Designed — capability composer, FR-C1/T0.4)
 
 Each adapter family declares **how** MAIster places a run's materialized

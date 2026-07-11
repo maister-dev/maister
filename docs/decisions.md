@@ -157,6 +157,7 @@
 | [ADR-130](#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) | Adapter-agnostic capability enforcement at the ACP seam: derived-only `capability_guard` interceptor, evidence-gated per-adapter flip of `tools`/`mcps` to `enforced`, `hooks` label corrected, no migration / no engine bump | Accepted | 2026-07-11 |
 | [ADR-131](#adr-131-postgres-only-and-graph-only-engine-300-cut-over) | Postgres-only and graph-only engine 3.0.0 cut-over | Accepted | 2026-07-11 |
 | [ADR-132](#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync) | Forked-package loop — ephemeral pins, package experiment axis, local sources, upstream sync | Accepted | 2026-07-11 |
+| [ADR-129](#adr-129-versioned-read-only-evidence-and-run-owned-package-materialization) | Versioned read-only evidence and run-owned package materialization | Accepted | 2026-07-11 |
 
 ---
 
@@ -11575,6 +11576,61 @@ re-check (D7) · clone-with-history forks (D5, rejected below).
   cut dialog's multi-adopt lists ONLY projects whose current attachment is
   already a cut of this local package; switching an upstream consumer to a
   fork stays an explicit per-project action.
+||||||| parent of 9801ef71a (docs: freeze agent parity hardening spec)
+### ADR-129: Versioned read-only evidence and run-owned package materialization
+
+**Date:** 2026-07-11
+**Status:** Proposed
+
+**Context:** Platform agents already launch through every ACP adapter family and
+materialize providing-package skills, but read-only evidence can be replayed
+indefinitely, adapter identity can drift through aliases, Claude-specific L2
+settings are written for non-Claude sessions, and a singleton cwd manifest
+cannot safely represent concurrent materialization ownership.
+
+**Decision:**
+
+- Key compatibility and evidence by stable adapter id and lock the web and
+  supervisor descriptor mirrors with a contract test.
+- Advance the adapter smoke cache to v2. Cache v1 remains readable for generic
+  readiness, but its read-only evidence is stale. Cache v2 read-only evidence
+  carries a probe-contract version and expires after seven days; future dates
+  and version mismatch are stale. The diagnostics HTTP schema exposes the
+  derived stale state.
+- Invalidate targeted read-only evidence before probing. Only a complete
+  read/write/unknown permission observation set may write `ok`.
+- Keep L1 supervisor arbitration and L3 dirt detection load-bearing. L2 is a
+  descriptor-selected best-effort materializer; non-Claude sessions never
+  receive Claude settings by default.
+- Resolve package skills wholesale from the pinned attached package. Claude
+  also receives package subagents. Passive files use attached-package trust;
+  executable stdio MCPs keep their exec-trust gate.
+- Replace the singleton package-skills manifest with cwd-level and per-run
+  ownership records under `.maister/agent-materialization/`, using atomic
+  writes, bounded cross-process locking, path confinement, explicit lifecycle
+  states, and idempotent crash recovery.
+- Keep the slice migration-free: `runs.agent_workspace` is already the durable
+  enforcement snapshot and materialization ownership is a filesystem artifact.
+
+**Consequences:**
+
+- Read-only launches fail closed on stale or incomplete evidence and Settings
+  can explain the exact remediation.
+- Concurrent standalone sessions can share package materialization without
+  deleting each other's or the user's files.
+- The diagnostics response changes additively; web OpenAPI, AsyncAPI, DB, and
+  deployment contracts stay unchanged.
+
+**Alternatives Considered:**
+
+- _Trust any cached `ok` forever_: rejected because adapter upgrades and probe
+  changes invalidate old evidence.
+- _Use adapter-name conditionals_: rejected because capability belongs to a
+  descriptor contract and aliases can drift.
+- _Persist ownership in Postgres_: rejected because the state is local to the
+  cwd filesystem and existing run identity/workspace snapshots are sufficient.
+- _Materialize package skills without cleanup ownership_: rejected because it
+  pollutes review diffs and makes repo-read dirt attribution unsafe.
 
 ---
 

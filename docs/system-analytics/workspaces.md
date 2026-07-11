@@ -431,6 +431,10 @@ flowchart LR
 
 - Exactly one worktree per run, rooted at
   `.maister/<slug>/runs/<runId>/`; no cross-project bleed.
+- Standalone agent package materialization is session-owned even when the cwd is
+  shared: per-run ownership and a cwd index prevent one terminal run from
+  deleting another run's adapter files. The `runs.agent_workspace` snapshot,
+  not a mutable agent definition, selects terminal cleanup behavior.
 - `workspaces.worktree_path` is globally UNIQUE across all projects;
   enforced at the DB layer.
 - Branch names are validated before reaching `git worktree add ... -b`; task

@@ -139,6 +139,11 @@ surfaces the server's `EXECUTOR_UNAVAILABLE` message with the selected runner,
 adapter, workspace, and missing read-only-session evidence; no partial run row is
 shown.
 
+Stale evidence is the same typed refusal family: the surface keeps the runner,
+adapter, workspace, and reason context and directs the operator to the ACP
+runner Settings evidence row. It never synthesizes a fallback runner or creates
+a partial run.
+
 ## i18n
 
 `web/messages/{en,ru}.json` namespace `projectSettings.agents` (table headers,

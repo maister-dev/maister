@@ -199,6 +199,15 @@ the same capability member roots also materialize `agents/` into
 `.claude/agents/`; non-Claude adapters omit subagents because their descriptor
 surface does not support them.
 
+ADR-129 ownership hardening (Designed) replaces the singleton package-skills
+manifest with a cwd ownership index plus per-run records under
+`.maister/agent-materialization/`. Records transition
+`preparing -> active -> releasing` under a bounded cross-process lock. Paths are
+normalized and confined to descriptor-approved roots; corrupt, traversal, or
+symlink-escaping records preserve files and fail loudly. Cleanup is idempotent
+across terminal retry/GC and never removes a user-owned entry or an entry still
+leased by another run.
+
 ### (c) Optional-flow enrichment — "agent drives a flow" (Implemented — ADR-106)
 
 When the effective agent declares a same-package `flow_ref`, launch branches on
@@ -466,6 +475,9 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
   keys such as `skills`, `mcp_servers`, or `restrictions` MUST be reported as
   `MaisterError("CONFIG")` during registration/resync and no invalid row may be
   written.
+- A now-invalid existing definition MUST be reported with source path while its
+  last valid row remains byte-for-byte unchanged; a genuinely missing
+  definition retains the existing disable behavior.
 - **(ADR-130)** The adapter-agnostic `capability_guard` seam enforces strict
   `tools`/`mcps` for **flow `ai_coding`/`judge`/`orchestrator` nodes** (Implemented:
   derived `enforcementProfile` delivered on `StartSessionRequest`, evidence-gated,

@@ -162,6 +162,8 @@ correctness and first-class kinds (behavior SSOT:
   Platform-agent validation surfaces strict `capability_profile` issues inline:
   only `{ mcps?: string[] }` is accepted, legacy `skills`, `mcp_servers`, or
   `restrictions` keys hard-block commit/cut-version flows.
+  Issue copy identifies the exact field path and keeps the compact structural
+  editor; this hardening adds no package-skill selector or new authoring IA.
   **Create is a generic Add-File today** — the per-kind create wizards (New Flow /
   Platform Agent / Subagent / Skill, with seeded templates) are **deferred** (#134,
   A4); `newSubagentTemplate` exists but is not yet wired into a create flow.
