@@ -146,8 +146,8 @@ surface exists.
     never publishes or writes repo files. Duplicate `clusterHash` values are
     idempotent and return the existing proposal status.
   All memory tools are gated by `brain_enabled` + the `can_read_brain`/`can_write_brain` link
-  axis. In SQLite mode the tools stay **listed** (static `TOOL_SPECS`) but fail
-  closed with `PRECONDITION`; a transient embedding outage returns
+  axis. When the Brain migration lineage is not provisioned, tools stay
+  **listed** (static `TOOL_SPECS`) but fail closed with `PRECONDITION`; a transient embedding outage returns
   `EMBEDDING_UNAVAILABLE` (503, retryable) while a deterministic provider 4xx maps
   to 422 `CONFIG`. Ext rate limiting remains deferred until the multi-tenant
   middleware exists.

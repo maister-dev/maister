@@ -308,7 +308,7 @@ Local publish, export, installer bridge, and launch require:
 
 - YAML parses to an object.
 - `flow.yaml` satisfies the v1 manifest schema.
-- graph validation passes (`nodes[]`/`steps[]`, transitions, gates, artifacts,
+- graph validation passes (`nodes[]`, transitions, gates, artifacts,
   engine compatibility).
 - package file paths are safe and unique.
 - package file kinds are supported.

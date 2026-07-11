@@ -823,7 +823,8 @@ paths:
         the token's project — mismatch → 404 (the body carries no project id). For
         an **agent** token, the agent's `agent_project_links.can_read_brain` must be
         true (else 403). The project's `projects.brain_enabled` must be true (else
-        422 `CONFIG`). In SQLite mode the Brain is disabled → 409 `PRECONDITION`.
+        422 `CONFIG`). An unprovisioned Brain migration lineage returns 409
+        `PRECONDITION`.
 
         Writes a `brain_snapshots` row (`trigger='explicit'`, `run_id` set only when
         the token is run-bound, actor always set) recording the query and the
@@ -917,8 +918,9 @@ paths:
 
         For an **agent** token, `agent_project_links.can_write_brain` must be true
         (else 403) — `can_read_brain`/`memory:read` alone NEVER grant write. The
-        project's `brain_enabled` must be true (else 422 `CONFIG`); SQLite → 409
-        `PRECONDITION`; embedding-provider outage → 503 `EMBEDDING_UNAVAILABLE`.
+        project's `brain_enabled` must be true (else 422 `CONFIG`); an
+        unprovisioned Brain migration lineage returns 409 `PRECONDITION`;
+        embedding-provider outage → 503 `EMBEDDING_UNAVAILABLE`.
       operationId: extRetainProjectMemory
       security:
         - projectToken: [memory:write]
@@ -1095,6 +1097,7 @@ paths:
         status: 422
         code: CONFIG
         sideEffects: none
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       security:
         - projectToken: []
       requestBody:

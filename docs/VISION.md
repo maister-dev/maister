@@ -42,7 +42,7 @@ Project -> Flow package -> Task / Scratch run -> Run -> Workspace -> Headless Ag
    Review, intervention, dialogue and validation require a rich surface. Telegram is useful later for notifications and quick decisions.
 
 5. **Human participates where Flow says**
-   HITL is not global. Each Flow step defines whether human input is must/can/autonomous.
+   HITL is not global. Each Flow node defines whether human input is must/can/autonomous.
 
 6. **Evidence over chat sludge**
    Specs, plans, diffs, tests, gate results, reviews and HITL responses must be

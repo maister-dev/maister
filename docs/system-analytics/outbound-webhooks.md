@@ -1,6 +1,6 @@
 # Outbound webhooks domain
 
-## M43 webhook behavior (Designed)
+## M43 webhook behavior (Implemented)
 
 D2 uses the existing run.failed webhook event. Public data stays exactly
 errorCode=CONFIG; internal reason/source fields are not added to the AsyncAPI

@@ -23,9 +23,8 @@ From the repo root, with `pnpm` and Node 24 installed.
    At minimum set in `web/.env.local`:
 
    - `AUTH_SECRET` — generate with `openssl rand -base64 33` (or `npx auth secret`).
-   - `DB_URL` — defaults to the compose Postgres at
-     `postgres://maister:maister@localhost:5432/maister`. For SQLite use
-     `file:./dev.db`.
+   - `DB_URL` — Postgres connection URL, normally the compose database at
+     `postgres://maister:maister@localhost:5432/maister`.
 
    The file is gitignored. Never commit it.
 

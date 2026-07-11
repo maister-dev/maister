@@ -343,8 +343,8 @@ sequenceDiagram
 - Content MUST be injected only via the context var — a body containing literal
   `{{ … }}` renders verbatim (mustache re-render invariant), NEVER re-processed.
 - The resolver MUST NOT read `process.env`; it adds no secret surface.
-- The accessor is graph-only — a linear `steps[]` flow referencing
-  `{{ artifacts.X.content }}` gets a strict `CONFIG` (never populated).
+- The accessor is graph-only; artifact content is resolved only for a validated
+  graph node attempt.
 
 **Edge cases (P2):**
 
@@ -418,9 +418,6 @@ sequenceDiagram
 - **Payload file deleted (GC / manual) while row `current`** → payload route
   returns 410 `gone` (typed reason); index row stays for audit, `validity`
   unchanged.
-- **Linear `steps[]` flow (engine 1.1.0)** → default artifacts recorded (log,
-  guard metrics, human/form answer, diff); **no** declared-artifact validation
-  runs (requires `compat.engine_min ≥ 1.2.0`).
 
 ## Log lines emitted
 

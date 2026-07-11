@@ -29,8 +29,7 @@ DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:migrate
 ```
 
 The runner exits 1 if `DB_URL` is missing or does not point at Postgres.
-Migrations always run against the production engine (Postgres), even when
-the runtime app is using SQLite for ultra-light dev.
+Migrations and the runtime always use Postgres.
 
 ### 4. Seed (optional)
 
@@ -49,7 +48,7 @@ local reset instead of preserving stale project-scoped executor rows.
 
 A reset command or runbook may delete only MAIster-owned state:
 
-- the MAIster database or SQLite dev DB;
+- the MAIster Postgres database;
 - `.maister/` runtime artifacts created by the app;
 - MAIster Flow and capability caches;
 - MAIster-created worktrees;
@@ -71,21 +70,6 @@ pnpm --filter maister-web db:seed
 The confirmed script deletes only MAIster-owned runtime/cache/worktree/config
 roots. `--reset-postgres` additionally resets the `public` schema through
 `DATABASE_URL`; it never removes project repositories.
-
-## SQLite caveat (dev only)
-
-`DB_URL=file:./dev.db` switches the **runtime** Drizzle client (`buildClient`
-in `client.ts`) to `better-sqlite3`. It does **not** apply the generated
-Postgres migrations — those are dialect-specific.
-
-For SQLite-only dev, push the schema directly:
-
-```bash
-DB_URL=file:./dev.db pnpm exec drizzle-kit push --dialect=sqlite
-```
-
-POC stance: SQLite is best-effort. If it adds friction during Phase 1+, drop
-it. Postgres is the only production target.
 
 ## Connection pool
 

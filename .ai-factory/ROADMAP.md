@@ -595,7 +595,7 @@
   run-to-runner/session source of truth, including per-node/named sessions,
   resume, cost attribution, launch and UI read models.
 
-- [ ] **M43. Postgres-only + graph-only cut-over** — engine `3.0.0` removes
+- [x] **M43. Postgres-only + graph-only cut-over** — engine `3.0.0` removes
   SQLite and the legacy linear `steps[]` runtime in one breaking release.
   Migration `0093` terminalizes unfinished legacy linear runs to explained
   `Failed` state before dropping `step_runs`; run-level history remains. See

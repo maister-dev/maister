@@ -140,7 +140,7 @@ per-doc template, and the classification rule.
 | [`configuration.md`](configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + env vars. |
 | [`error-taxonomy.md`](error-taxonomy.md) | `MaisterError` codes + UI actions. |
 | [`supervisor.md`](supervisor.md) | Supervisor daemon prose reference. |
-| [`flow-dsl.md`](flow-dsl.md) | Flow step DSL and runner behavior. |
+| [`flow-dsl.md`](flow-dsl.md) | Flow graph DSL and runner behavior. |
 | [`flow-installer.md`](flow-installer.md) | Flow plugin install pipeline. |
 | [`flow-aif-plugin.md`](flow-aif-plugin.md) | Bundled `aif` Flow plugin. |
 | [`deployment.md`](deployment.md) | Production VPS install: systemd, Postgres, reverse proxy, git auth. |

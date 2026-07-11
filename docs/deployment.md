@@ -79,8 +79,7 @@ the host (`restart: unless-stopped` handles the container itself).
 > (the compose `POSTGRES_USER` is the bootstrap superuser; on RDS use
 > `rds_superuser`). If `db:migrate:brain` is never run, the web tier still
 > boots: the boot guard warns, the Brain sweeps quietly no-op, and the Brain
-> config/enable surfaces refuse with `PRECONDITION` naming the command; in
-> SQLite mode the Brain is disabled (D3).
+> config/enable surfaces refuse with `PRECONDITION` naming the command.
 
 ## 4. Configure the environment
 
@@ -122,13 +121,13 @@ Apply migrations and seed the first admin:
 cd /opt/maister
 set -a; . /etc/maister/maister.env; set +a
 pnpm --filter maister-web db:migrate         # main lineage (all shared tables)
-pnpm --filter maister-web db:migrate:brain   # brain lineage (brain_* + pgvector); no-op under SQLite (ADR-122)
+pnpm --filter maister-web db:migrate:brain   # brain lineage (brain_* + pgvector)
 pnpm --filter maister-web db:seed        # initial admin user — see getting-started.md for credentials
 ```
 
 > **(ADR-122)** `db:migrate:brain` runs the separate Project-Brain migration
 > lineage (own `_journal.json` + own ledger `__drizzle_brain_migrations`) AFTER
-> the main lineage (`brain_*` FKs → `projects`/`runs`). It no-ops under SQLite. A
+> the main lineage (`brain_*` FKs → `projects`/`runs`). A
 > runtime embedding model/dimension switch is a non-destructive reindex generation,
 > never a schema migration.
 

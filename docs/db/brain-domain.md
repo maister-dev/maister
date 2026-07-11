@@ -20,7 +20,7 @@ column-level narrative.
 > `0003_brain_indexed_tier.sql`; Sub-project C uses
 > `0004_brain_proposals.sql` plus
 > `0005_brain_proposal_decision_stats.sql`. The brain lineage is provisioned only on Postgres
-> (SQLite → Brain disabled, D3).
+> Brain entrypoints fail closed until this lineage is provisioned.
 >
 > **Refinement over the design-spec §4 conceptual shape:** `brain_snapshots` carries
 > a first-class `project_id` (FK CASCADE, NOT NULL) — required by E-1 ("every

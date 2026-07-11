@@ -1,6 +1,6 @@
 # Launch dialog
 
-## M43 incompatible revision state (Designed)
+## M43 incompatible revision state (Implemented)
 
 An incompatible stored revision remains visible with its exact graph-only
 reason, but launchable is false. Runner overrides and the submit control are

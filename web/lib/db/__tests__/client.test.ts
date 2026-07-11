@@ -29,7 +29,6 @@ describe("db client factory", () => {
       "postgres://user:***@host:5432/dbname",
     );
     expect(maskUrl("postgresql://u:p@h/d")).toBe("postgresql://u:***@h/d");
-    expect(maskUrl("file:./dev.db")).toBe("file:./dev.db");
   });
 
   it("returns a Pg-backed Drizzle client when DB_URL=postgres://...", async () => {

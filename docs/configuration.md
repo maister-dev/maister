@@ -163,8 +163,7 @@ response, logged, or streamed — the same `env:NAME` policy as
 dimension** switch is a reindex generation, not a migration. Behavior policy
 constants live in `web/lib/brain/policy.ts` (not env, not DB) — including
 `ambientMinConfidence` 0.4 (ambient-inject floor) and `snapshotTtlDays` 30 (the
-`brain_snapshots` GC horizon). In SQLite
-mode the Brain is disabled (D3). See
+`brain_snapshots` GC horizon). See
 [`system-analytics/project-brain.md`](system-analytics/project-brain.md).
 
 ## `maister.yaml` v2
@@ -678,7 +677,7 @@ adapter-registry-derived `capability_agent` and an immutable `runner_snapshot`.
 If a referenced runner id is missing, disabled, not ready, or unsupported for
 the selected provider/policy/sidecar combination, launch refuses before
 worktree creation, run/workspace DB writes, or supervisor spawn. Missing
-Flow-step runner ids create a required reconfiguration requirement; they never
+Flow-node runner ids create a required reconfiguration requirement; they never
 silently fall through to lower tiers.
 
 ## `flow.yaml` v1
@@ -704,43 +703,40 @@ setup: ./setup.sh                       # optional one-time install hook
 # metadata. Only `compat` + `schemaVersion` are ENFORCED at enablement;
 # capabilities/gates/artifacts/external_ops gain runtime meaning in M11+.
 compat:                                 # optional engine compatibility range
-  engine_min: 1.0.0
-  engine_max: 2.0.0
+  engine_min: 3.0.0
 capabilities: [shell, edit]             # optional opaque string list
 gates: []                               # optional opaque string list
 artifacts: [diff, human_note]           # optional opaque string list
 external_ops: []                        # optional opaque string list
-steps:
+nodes:
   - id: plan
-    type: agent
-    mode: new-session                   # or slash-in-existing
-    prompt: "/aif-plan {{ task.prompt }}"
-  - id: lint
-    type: cli
-    command: pnpm lint
-  - id: budget
-    type: guard
-    cost: 5                             # parsed and persisted, not enforced today
+    type: ai_coding
+    action:
+      prompt: "/aif-plan {{ task.prompt }}"
+    transitions:
+      success: review
   - id: review
     type: human
-    form_schema: ./schemas/review.json
-    on_reject:
-      goto_step: plan
-      comments_var: review_comments
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      rework: plan
+    rework:
+      allowedTargets: [plan]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
 ```
 
-### Step types
+### Node types
 
-Discriminated on `type`:
+`nodes[]` is a closed discriminated union covering runner-bearing actions,
+CLI/check/judge work, forms, human review, gates, merge, orchestration, and
+consensus. Type-specific fields and lifecycle rules are defined in
+[`flow-dsl.md`](flow-dsl.md). A top-level `steps` key is rejected by engine 3.
 
-| Type | Required fields | Optional fields |
-| ---- | --------------- | --------------- |
-| `cli` | `id`, `type=cli`, `command` | `pre_guards`, `post_guards`, `retry_safe` |
-| `agent` | `id`, `type=agent`, `mode=new-session\|slash-in-existing`, `prompt` | `pre_guards`, `post_guards`, `retry_safe` |
-| `guard` | `id`, `type=guard` + at least one of `cost`, `time`, `regex` | `retry_safe` |
-| `human` | `id`, `type=human`, `form_schema` (path to JSON schema with `schemaVersion`) | `on_reject.goto_step`, `on_reject.comments_var`, `retry_safe` |
-
-`retry_safe` (boolean, default `false`) is also accepted on graph `nodes[]`. It
+`retry_safe` (boolean, default `false`) is accepted on graph nodes. It
 gates operator crash-recovery re-dispatch of a session-less node — a `Crashed`
 run whose recover target is session-less (`cli`/`check`/`judge`/`guard`/`human`)
 is redispatch-recoverable only when its config declares `retry_safe: true`;

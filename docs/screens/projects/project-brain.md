@@ -78,7 +78,7 @@ viewer and therefore reuse its member gate and `readRepoFiles` checks.
 ```mermaid
 stateDiagram-v2
     [*] --> Loading
-    Loading --> Disabled: Brain off or SQLite PRECONDITION
+    Loading --> Disabled: Brain off or schema PRECONDITION
     Loading --> Empty: enabled but no memories/sources/proposals
     Loading --> Ready
     Ready --> SourceError: source has last_error

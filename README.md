@@ -47,7 +47,7 @@ cp .env.example .env                              # then fill in DB_URL etc.
 
 docker compose up -d                              # Postgres only (pgvector/pgvector:pg16)
 pnpm --filter maister-web db:migrate              # main migration lineage
-pnpm --filter maister-web db:migrate:brain        # Project-Brain lineage (ADR-122); no-op on SQLite
+pnpm --filter maister-web db:migrate:brain        # Project-Brain lineage (ADR-122)
 pnpm --filter maister-web db:seed                 # admin user + dev seed
 
 # web + supervisor run on the HOST (ADR-023 — they spawn agent CLIs), two terminals:
@@ -65,7 +65,7 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
 
 - Next.js 16 (App Router) · React 19 · TypeScript 5 (strict)
 - HeroUI v3 · Tailwind CSS 4 · `tailwind-variants` · `next-themes`
-- Drizzle ORM · Postgres 16 (SQLite via dialect switch for ultra-light dev)
+- Drizzle ORM · Postgres 16
 - Fastify supervisor · ACP adapter binaries · optional CCR router
 - vitest · Playwright · pnpm · Node 24
 

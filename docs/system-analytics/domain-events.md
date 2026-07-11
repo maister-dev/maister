@@ -1,6 +1,6 @@
 # Domain-event outbox domain
 
-## M43 cut-over event (Designed)
+## M43 cut-over event (Implemented)
 
 Each migration-0093 CAS winner emits exactly one existing run.failed event with
 reason legacy_steps_engine_3_cutover and source upgrade_cutover. A shared

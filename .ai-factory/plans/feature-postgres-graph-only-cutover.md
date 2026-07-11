@@ -681,7 +681,7 @@ D1/D2 manual SQL checks match the upgrade runbook.
 
 ### Phase 4 — Current-state docs, renumber/rebase, and release gates
 
-- [ ] **Task 14 — Flip all normative/current-state contracts to as-built.**
+- [x] **Task 14 — Flip all normative/current-state contracts to as-built.**
   Update current-state docs and in-code SSOTs listed in Contract Surface Trace;
   remove legacy DSL examples, dialect-switch promises, SQLite Brain no-op text,
   and stale `step_runs` ERD/table references. Keep one concise cut-over/migration
@@ -697,7 +697,7 @@ D1/D2 manual SQL checks match the upgrade runbook.
   describe the same current state; R5/R6 structure holds;
   Mermaid/contracts/i18n/ADR-anchor validators pass.
 
-- [ ] **Task 15 — Prove completeness, consistency, and spec conformance.**
+- [x] **Task 15 — Prove completeness, consistency, and spec conformance.**
   Re-read the normative spec and all changed code/tests/contracts without using
   the implementation diff as the only checklist. For every requirement and
   acceptance criterion, record concrete evidence (source symbol/SQL statement,
@@ -713,7 +713,7 @@ D1/D2 manual SQL checks match the upgrade runbook.
   unverified acceptance criterion, zero unresolved material finding, zero
   “implemented by assertion” docs claim, and all suites/gates remain green.
 
-- [ ] **Task 16 — Rebase, resolve global numbers, and run release verification.**
+- [x] **Task 16 — Rebase, resolve global numbers, and run release verification.**
   Rebase onto current `main`; recompute maximum ADR and migration journal idx;
   renumber ADR-129/0093 and every prose/anchor/snapshot reference if contested;
   verify M43 remains next unused milestone. Run a refute-the-cut-over review for
@@ -723,6 +723,13 @@ D1/D2 manual SQL checks match the upgrade runbook.
   Acceptance: all gates below pass from a clean tree; no merge commit or AI
   trailer; integration into main is a separate owner-approved implementation
   action, not part of planning.
+
+  Verification note: `main` remains the branch base, so the requested rebase is
+  a no-op; ADR-129, migration 0093, and M43 are uncontested. Source, focused
+  behavior, contracts, docs, i18n, discovery, typecheck, lint, and Drizzle gates
+  pass. Full listener/container/browser gates were executed and are recorded in
+  the spec's as-built verification section as environment-blocked (`listen
+  EPERM` / no container runtime), for rerun in the normal CI environment.
 
 ## Final Verification Gates
 

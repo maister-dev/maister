@@ -115,8 +115,7 @@ For the full vision, product model, architecture, and roadmap see
 | Styling          | Tailwind CSS 4 via `@tailwindcss/postcss`, `tailwind-variants`    |
 | Theming          | `next-themes` (default `dark`)                                    |
 | i18n             | EN + RU from day one (REQUIRED)                                   |
-| Database         | Postgres 16 primary (docker, named volume); SQLite via Drizzle    |
-|                  | dialect switch (`DB_URL=file:./dev.db`) for ultra-light dev only  |
+| Database         | Postgres 16 only (docker, named volume)                           |
 | ORM              | Drizzle (SQL-flavored, JOOQ-like). Not Prisma.                    |
 | Agent runtime    | ACP hosted by `supervisor/`, via                                  |
 |                  | `@agentclientprotocol/claude-agent-acp`,                          |

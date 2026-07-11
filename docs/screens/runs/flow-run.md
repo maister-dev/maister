@@ -1,6 +1,6 @@
 # Flow run detail
 
-## M43 terminalized legacy run (Designed)
+## M43 terminalized legacy run (Implemented)
 
 A migration-terminalized run shows a persistent Failed cut-over banner with
 timestamp, reason legacy_steps_engine_3_cutover, and links to retained

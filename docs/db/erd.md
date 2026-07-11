@@ -1,6 +1,6 @@
 # Full database ERD
 
-## M43 ERD transition (Designed)
+## M43 ERD transition (Implemented)
 
 Migration 0093 removes STEP_RUNS after terminalizing unfinished legacy runs.
 The implemented ERD will contain NODE_ATTEMPTS as the sole execution-attempt
@@ -96,7 +96,6 @@ erDiagram
     RUNS ||--|| WORKSPACES : "one worktree per run"
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
-    RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (M42 Implemented)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (M42 Implemented, SET NULL)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
@@ -796,23 +795,6 @@ erDiagram
         text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch"
     }
 
-    STEP_RUNS {
-        text id PK
-        text run_id FK
-        text step_id "matches flow.yaml steps[].id"
-        text step_type "cli|agent|guard|human"
-        text mode "new-session|slash-in-existing (agent)"
-        integer attempt "DEFAULT 1"
-        text status "Pending..NeedsInput"
-        text acp_session_id
-        text stdout "truncated to 1 MiB"
-        jsonb vars "DEFAULT {}"
-        integer exit_code
-        text error_code "MaisterErrorCode literal"
-        timestamp started_at
-        timestamp ended_at
-    }
-
     NODE_ATTEMPT_COST_ROLLUPS {
         text id PK
         text run_id FK
@@ -1389,7 +1371,6 @@ external-operation events) is not drawn until its migrations exist. See
 | `scratch_runs` | `scratch_runs_project_status_idx` | `(project_id, dialog_status)` | Project scratch workspace lists. |
 | `scratch_attachments` | `scratch_attachments_run_idx` | `(run_id)` | Run-level attachment lookup. |
 | `scratch_attachments` | `scratch_attachments_message_idx` | `(message_id)` | Message attachment lookup. |
-| `step_runs` | `step_runs_run_idx` | `(run_id)` | Per-run step lookups. |
 | `node_attempts` | `node_attempts_run_step_attempt_uq` | `(run_id, node_id, attempt)` UNIQUE | **(M11a)** Append-only ledger uniqueness. |
 | `node_attempts` | `node_attempts_run_idx` | `(run_id)` | **(M11a)** Templating highest-attempt union. |
 | `gate_results` | `gate_results_run_idx` | `(run_id)` | **(M11a)** Per-run gate lookups. |

@@ -450,7 +450,7 @@ components:
         nodeId:
           type: string
           nullable: true
-          description: Graph node id that parked the input, or `null` for legacy linear steps.
+          description: Graph node id that parked the input; nullable for non-node run kinds.
 
     DataRunEscalated:
       type: object

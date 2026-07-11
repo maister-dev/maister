@@ -42,7 +42,7 @@ Backend split:
 pnpm install --frozen-lockfile
 docker compose up -d                        # Postgres (pgvector/pgvector:pg16)
 pnpm --filter maister-web db:migrate        # main migration lineage
-pnpm --filter maister-web db:migrate:brain  # brain lineage (ADR-122); no-op on SQLite
+pnpm --filter maister-web db:migrate:brain  # brain lineage (ADR-122)
 pnpm --filter @maister/supervisor dev  # http://localhost:7777
 pnpm --filter maister-web dev          # http://localhost:3000
 pnpm --filter maister-web lint
@@ -55,8 +55,7 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
 - **Framework**: Next.js 16+ App Router, server actions + RSC where it fits.
 - **Lang**: TypeScript end-to-end. Python only when a specific Flow plugin
   ships Python CLIs (no longer mandatory in the container).
-- **DB**: Postgres 16 primary (docker compose, named volume). SQLite via
-  Drizzle dialect switch (`DB_URL=file:./dev.db`) for ultra-light dev only.
+- **DB**: Postgres 16 only (docker compose, named volume).
 - **ORM**: Drizzle. SQL-flavored, JOOQ-like mental model. Do not swap for Prisma.
 - **UI**: HeroUI v3 (Tailwind4-based). No other component lib.
 - **i18n**: EN + RU from day one (REQUIRED per `web/CLAUDE.md`).
@@ -100,12 +99,11 @@ These were earned in two review passes. Reopen them only with new evidence.
 
 ### 1. ACP-driven execution with hybrid HITL
 
-A Flow = a typed-node **graph** (`nodes[]`, canonical at runtime) — node
+A Flow = a typed-node **graph** (`nodes[]`, engine 3.0.0) — node
 types `ai_coding | judge | cli | check | human | form | orchestrator`
-and the M41-designed `consensus`, wired by named
-`transitions` with bounded `rework` loops — OR a legacy linear `steps[]`
-list (`cli | agent | guard | human`); both parse from the `flow.yaml`
-manifest and compile to one `FlowGraph`
+and `consensus`, wired by named `transitions` with bounded `rework` loops.
+Manifests with a top-level `steps` key are incompatible and must be
+republished as `nodes[]`
 (see `docs/flow-dsl.md` + `docs/system-analytics/flow-graph.md`).
 `ai_coding`/`agent` nodes run as ACP sessions hosted by `supervisor/`,
 which spawns one adapter process per active session. State transitions are driven by
@@ -194,7 +192,7 @@ Model routing:
 
 Runner resolution (highest priority wins):
 1. Launch override (set at Launch click, optional).
-2. Flow step `settings.runner` target, remapped when imported if the platform
+2. Flow node `settings.runner` target, remapped when imported if the platform
    does not have that runner id.
 3. Project Flow default (`project_flow_runner_defaults`).
 4. Platform Flow default (`flow_revisions.default_runner_id`).
@@ -242,31 +240,36 @@ runner_profiles:
     provider:
       kind: anthropic
 setup: ./setup.sh                      # optional one-time install script
-steps:
+nodes:
   - id: plan
-    type: agent
-    mode: new-session                  # or slash-in-existing
-    prompt: "/aif-plan {{ task.prompt }}"
-    pre_guards: []                     # cost/time/regex are metric-only today
-    post_guards: []
+    type: ai_coding
+    action:
+      prompt: "/aif-plan {{ task.prompt }}"
+    transitions:
+      success: review
   - id: review
     type: human
-    form_schema: ./schemas/review.json
-    on_reject:
-      goto_step: plan
-      comments_var: review_comments
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      approve: done
+      rework: plan
+    rework:
+      allowedTargets: [plan]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
 ```
 
-**Canonical runtime DSL = the typed-node graph (engine `1.3.0`), not linear
-steps.** The `steps:` block above is the **legacy** linear DSL (still runs,
-compiled to a degenerate success-chain). New flows use `nodes:` with named
+**The only runtime DSL is the typed-node graph (engine `3.0.0`).** Flows use
+`nodes:` with named
 `transitions`, bounded `rework`, typed `input.requires`/`output.produces`
 artifacts (kind-matched, presence-enforced → `PRECONDITION`), six gate kinds
 (`command_check | skill_check | ai_judgment | artifact_required |
 external_check | human_review`, each `blocking | advisory`), a promotion-time
 **readiness** gate, per-node capability `settings` + declared `enforcement`,
-and per-capability engine-version floors. Legacy `guard` steps / `pre_guards`
-/ `post_guards` stay metric-only; graph **gates** actually block. Flows are
+and per-capability engine-version floors. Graph **gates** block. Flows are
 also authorable **in-app** (`authored_capabilities`, draft→publish,
 content-addressed, bridged into the same `flow_revisions` lineage) on the
 **Flow Studio** visual graph editor (M25/M27). See

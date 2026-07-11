@@ -21,8 +21,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
 - **Language:** TypeScript 5.6 (strict)
 - **UI library:** HeroUI v3 (`@heroui/react` 3.0.4)
 - **Styling:** Tailwind CSS 4 + `tailwind-variants`
-- **Database:** Postgres 16 via Drizzle ORM (SQLite for ultra-light dev via
-  Drizzle dialect switch)
+- **Database:** Postgres 16 via Drizzle ORM
 - **Supervisor daemon (`supervisor/`):** Fastify 5 + pino + zod; ACP via
   `@agentclientprotocol/sdk@0.22.1` spawning `claude-agent-acp@0.37.0`,
   `codex-acp@0.0.44`, and readiness-gated `gemini --acp`, `opencode acp`,
@@ -127,7 +126,7 @@ on a different host than the web tier.
 | `web/app/error.tsx` | Root error boundary |
 | `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
-| `web/lib/db/schema.ts` | Drizzle schema: 8 tables (projects, executors, flows, tasks, runs, workspaces, step_runs, hitl_requests) |
+| `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
 | `supervisor/src/main.ts` | Supervisor daemon entrypoint (Fastify on `:7777`) |
 | `supervisor/src/http-api.ts` | Six HTTP routes + SSE bridge |

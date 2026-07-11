@@ -1,6 +1,6 @@
 # Projects domain
 
-## M43 registration cut-over (Designed)
+## M43 registration cut-over (Implemented)
 
 Project registration classifies every installed Flow member before finalizing
 the project. A legacy steps[] member maps to FLOW_INSTALL/502 with the engine-3

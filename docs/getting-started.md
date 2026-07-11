@@ -120,7 +120,7 @@ test:e2e           # Playwright (authed M11a/M11b UI specs — see note below)
 db:generate        # generate a Drizzle migration from lib/db/schema.ts
 db:migrate         # apply MAIN-lineage migrations against $DB_URL
 db:migrate:brain   # apply the Project-Brain lineage (brain_* + pgvector); AFTER
-                   # db:migrate; no-op under SQLite (ADR-122). Requires a
+                   # db:migrate. Requires a
                    # pgvector-enabled Postgres image (pgvector/pgvector:pg16).
 db:seed            # idempotent dev seed (admin + platform runners + sample project)
 db:studio          # drizzle-kit studio
@@ -191,15 +191,14 @@ the live confirmation for real adapters is this operator ritual. Full checklist:
 docker compose up postgres -d
 cd web
 DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:migrate
-DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:migrate:brain  # ADR-122; no-op under SQLite
+DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:migrate:brain
 DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:seed
 ```
 
 > **Project Brain (ADR-122).** `compose.yml` uses the pgvector-enabled image
 > `pgvector/pgvector:pg16` (data-compatible with `postgres:16-alpine`). Run
 > `db:migrate:brain` AFTER `db:migrate` — it applies the separate `brain_*` +
-> `CREATE EXTENSION vector` lineage into its own ledger. In SQLite mode the Brain
-> is disabled and the step is a no-op.
+> `CREATE EXTENSION vector` lineage into its own ledger.
 
 Full reference: [Database Schema](database-schema.md). For the full env-var
 list (incl. `MAISTER_DB_POOL_MAX`, `MAISTER_MAX_CONCURRENT_RUNS`,
@@ -214,7 +213,7 @@ MAIster-owned local artifact and re-bootstrap from scratch.
 The reset boundary is deliberately narrow:
 
 - Stop web and supervisor processes.
-- Drop/recreate the MAIster Postgres database, or remove the SQLite dev DB.
+- Drop/recreate the MAIster Postgres database.
 - Remove MAIster runtime artifacts under `.maister/` roots created by the app.
 - Remove MAIster cache directories for Flow packages and capability imports.
 - Remove stale MAIster-created worktrees.
@@ -487,13 +486,13 @@ Behavior:
   worktree add`, claims a global concurrency slot
   (`MAISTER_MAX_CONCURRENT_RUNS`, default 3), then kicks off the runner
   in the background.
-- The runner walks `flow.manifest.steps[]`, persists per-step state to
-  the `step_runs` table, drives `runs.status` through
+- The runner traverses the validated `flow.manifest.nodes[]` graph, persists
+  append-only attempts to `node_attempts`, and drives `runs.status` through
   `Running ↔ NeedsInput → Review | Failed`.
-- `agent` steps proxy to the supervisor at
+- AI coding nodes proxy to the supervisor at
   `POST /sessions` + `POST /sessions/:id/prompt` (see
   [Supervisor](supervisor.md)).
-- `human` steps suspend the run with `NeedsInput`, writing
+- Form and human-review nodes suspend the run with `NeedsInput`, writing
   a `hitl_requests` row. The response route writes
   `input-<stepId>.json` and the runner resumes from that durable input.
 

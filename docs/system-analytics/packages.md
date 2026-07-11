@@ -1,6 +1,6 @@
 # Packages domain
 
-## M43 package compatibility (Designed)
+## M43 package compatibility (Implemented)
 
 Direct Flow-package installation maps legacy members to FLOW_INSTALL/502.
 Admin package ingestion maps member-manifest validation to CONFIG/422 while

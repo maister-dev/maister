@@ -1,6 +1,6 @@
 # Flow graph domain
 
-## M43 graph-only execution contract (Designed)
+## M43 graph-only execution contract (Implemented)
 
 Engine 3.0.0 removes linear compilation, linear guards and the linear runner.
 node_attempts becomes the sole execution ledger. Graph node gates,
@@ -27,8 +27,7 @@ resolved only from node attempts.
 
 ## Purpose
 
-The **flow graph** domain is M11a's execution-model foundation: it replaces the
-strictly linear `for (const step of steps)` walker with a validated **node
+The **flow graph** domain is the execution-model foundation: a validated **node
 graph**, an append-only **`node_attempts`** ledger, **gate execution**, and a
 **review-driven rework loop**. Its boundary is the *runtime* of a single run's
 traversal — how a node enters, acts, gates, finishes, and transitions, and how a
@@ -36,8 +35,8 @@ reviewer's `rework` decision jumps the pointer back and re-stales downstream
 work. Package install/trust/enablement is [`flows.md`](flows.md) /
 [`flow-packages.md`](flow-packages.md); the run status machine and
 keep-alive/checkpoint are [`runs.md`](runs.md); the human-ask protocol is
-[`hitl.md`](hitl.md); promotion readiness is M15/M18. Linear `steps[]` flows stay
-valid by compiling to single-action nodes, so this domain governs **all** runs.
+[`hitl.md`](hitl.md); promotion readiness is M15/M18. Engine 3 accepts only
+`nodes[]` manifests, so this domain governs every Flow run.
 
 ## Domain entities
 
@@ -47,8 +46,7 @@ valid by compiling to single-action nodes, so this domain governs **all** runs.
   `output.produces?` (typed artifact decls, **M12**), a type-specific `action`,
   `pre_finish.gates?`, `finish` (auto or `human`), `transitions`, and `rework?`.
 - **FlowGraph** — the normalized in-memory graph produced by `compileManifest`:
-  nodes + adjacency + entry node. **Both** `steps[]` (compiled to a linear chain)
-  and `nodes[]` produce one.
+  nodes + adjacency + entry node.
 - **Node attempt** — `node_attempts` row; one immutable record per execution of a
   node. `attempt` auto-increments per `(run_id, node_id)`. See ERD
   [`../db/runs-domain.md`](../db/runs-domain.md).
@@ -76,8 +74,8 @@ valid by compiling to single-action nodes, so this domain governs **all** runs.
 
 ## State machine — node attempt (execution axis)
 
-A node attempt is one immutable ledger row. PascalCase, extending the
-`step_runs` vocabulary (see [Status vocabularies](#status-vocabularies-dual-casing--intentional)).
+A node attempt is one immutable ledger row using the PascalCase lifecycle
+vocabulary below.
 
 ```mermaid
 stateDiagram-v2
@@ -129,20 +127,9 @@ un-confusable in code and queries:
 | `node_attempts.status` | **PascalCase** | `Pending \| Running \| Succeeded \| Failed \| NeedsInput \| Reworked \| Stale` |
 | `gate_results.status` | **lowercase** | `pending \| running \| passed \| failed \| stale \| skipped \| overridden` |
 
-`node_attempts.status` **extends** the existing `step_runs.status` vocabulary
-(`Pending | Running | Succeeded | Failed | Skipped | NeedsInput`): it **adds**
-`Reworked` and `Stale`, and **omits** `Skipped` (a *node* is never skipped — only
-a *gate* is, via `gate_results.status = 'skipped'`).
-
-**Legacy `step_runs` → `node_attempts` mapping** (templating
-highest-attempt-wins union, [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger)):
-the five overlapping values map **identically** (`Pending→Pending`,
-`Running→Running`, `Succeeded→Succeeded`, `Failed→Failed`,
-`NeedsInput→NeedsInput`). `step_runs.Skipped` has no `node_attempts` counterpart;
-`node_attempts.Reworked`/`Stale` have no `step_runs` counterpart. Because the
-overlap is value-identical, the templating union needs no value remapping — it
-reads the highest-`attempt` `node_attempts` row for `steps.<id>` and falls back
-to the `step_runs` row only when no `node_attempts` exist (legacy runs).
+A node is never skipped; only a gate can have
+`gate_results.status = 'skipped'`. Template resolution reads the highest
+`node_attempts.attempt` for the requested node id.
 
 ## Process flows
 
@@ -523,39 +510,21 @@ failure. Git unavailable → blocking fails with reason, advisory records
 [ADR-074](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates);
 readiness interaction: [`readiness.md`](readiness.md).
 
-### `steps[]` → nodes compile (back-compat)
-
-```mermaid
-flowchart LR
-    S1[step 1] --> N1[node 1<br/>single action]
-    S2[step 2] --> N2[node 2]
-    S3[step N] --> N3[node N]
-    N1 -->|transitions.success| N2
-    N2 -->|transitions.success| N3
-    N3 -->|terminal| End([Review])
-```
-
-A `steps[]` step compiles to a single-action node with
-`transitions.success → next` and **no rework**; the legacy
-`on_reject.goto_step` stays recorded-but-unexecuted for linear flows. Linear
-flows write `node_attempts` and behave identically to the pre-M11a runner.
-
 ## Expectations
 
-- A graph manifest declares **exactly one** of `steps` or `nodes`; both-present
-  and neither-present are refused with `MaisterError("CONFIG")`.
-- A graph flow (`nodes[]`) MUST declare `compat.engine_min >= 1.1.0`; otherwise
-  enablement/launch refuses it with `CONFIG`.
+- A manifest declares a non-empty `nodes[]`; any `steps[]` key and any missing
+  or empty `nodes[]` is refused with `MaisterError("CONFIG")`.
+- A graph flow's declared `compat` range MUST include host engine `3.0.0`;
+  open-ended graph packages with an older `engine_min` remain compatible.
 - `node_attempts` is **append-only**: rework and retries never mutate a prior
   row; `attempt` auto-increments per `(run_id, node_id)` under
   `UNIQUE (run_id, node_id, attempt)`.
 - Templating `steps.<id>.output`/`.vars`/`.exitCode` resolves the
-  **highest-`attempt`** `node_attempts` row, falling back to `step_runs` only for
-  legacy runs with no `node_attempts`.
+  **highest-`attempt`** `node_attempts` row.
 - Rework is a **node-pointer move within `runs.status = 'Running'`** — never a
   new run status; there is no `HumanWorking` in M11a (that is M11b).
-- `runs.current_step_id` carries the **node id** (≡ step id for compiled-linear
-  nodes); the existing fail-closed resume check (unknown id in the pinned
+- `runs.current_step_id` carries the **node id**; the fail-closed resume check
+  (unknown id in the pinned
   manifest → `Crashed` + `CONFIG`) applies to the compiled graph.
 - A `blocking` gate failure aborts the node finish (run → `Failed` unless a
   rework target exists); an `advisory` gate records its verdict and the node
@@ -726,9 +695,6 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **Untrusted revision** → launch is refused by the M10 trust precondition
   ([ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility))
   **before** any gate command/agent runs — no gate side-effect occurs.
-- **Legacy pre-M11a `NeedsInput` run** (has `step_runs`, no `node_attempts`) →
-  graph runner seeds the resume entry from the latest `step_runs` row for
-  `current_step_id`; resumes without fail-closed/restart.
 - **Node `settings` block present** → preserved as opaque passthrough (never
   silently stripped), `SETTINGS_NOT_ENFORCED_WARN` fires once; enforcement is
   M11c.

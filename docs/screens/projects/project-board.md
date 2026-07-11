@@ -1,6 +1,6 @@
 # Project board
 
-## M43 incompatible task state (Designed)
+## M43 incompatible task state (Implemented)
 
 A task bound to a legacy revision stays visible and shows “Incompatible with
 engine 3.0.0” plus republish guidance. Launch is unavailable. For D2 runs the

@@ -118,7 +118,7 @@ C4Container
 | --------- | ------ | ---- | ------- |
 | Web tier | Implemented | Next.js 16 + React 19 + HeroUI v3 + Tailwind 4 | Route Handlers for run launch, HITL response, and durable run SSE; Drizzle access; Flow runner. |
 | Supervisor daemon | Implemented | Node 24 + Fastify + pino + Zod | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting, permission deferreds, run event log. |
-| Database | Implemented | Postgres 16 (SQLite dev) | Persistent state for projects, ACP runners, router sidecars, flows, tasks, runs, workspaces, step runs, HITL. |
+| Database | Implemented | Postgres 16 | Persistent state for projects, ACP runners, router sidecars, flows, tasks, runs, workspaces, node attempts, and HITL. |
 | `claude-agent-acp` | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
 | `codex-acp` | Implemented | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
 | CCR daemon | Implemented | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, one daemon per supervisor process. |
@@ -225,11 +225,11 @@ C4Component
         Component(supervisor_client, "lib/supervisor-client.ts", "HTTP+SSE client", "createSession, sendPrompt, deliverPermission, cancelPermission, streamSession.")
         Component(db_schema, "lib/db/schema.ts", "Drizzle schema", "8 tables, FKs with cascade, indexes.")
         Component(db_client, "lib/db/client.ts", "Drizzle factory", "buildClient, getDb (lazy singleton), maskUrl.")
-        Component(flow_runner, "lib/flows/runner.ts", "Flow runner", "Executes cli/agent/guard/human steps, pauses on NeedsInput, resumes from input artifacts.")
+        Component(flow_runner, "lib/flows/runner.ts", "Flow runner", "Traverses graph nodes, persists attempts and gates, pauses on NeedsInput, and resumes from durable inputs.")
         Component(run_api, "app/api/runs/*", "Route Handlers", "Launch runs, durable run SSE, HITL responses.")
     }
 
-    ContainerDb_Ext(pg, "Database", "Postgres 16 / SQLite")
+    ContainerDb_Ext(pg, "Database", "Postgres 16")
     Container_Ext(supervisor, "Supervisor", "Fastify")
     ContainerDb_Ext(fs, "Filesystem", ".maister/ subtree")
 
@@ -256,7 +256,7 @@ C4Component
 | `lib/supervisor-client` | `web/lib/supervisor-client.ts` | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`, `resolveModelSuggestions` (ADR-076). | `lib/errors`, `pino`. |
 | `lib/db/schema` | `web/lib/db/schema.ts` | Drizzle table definitions for the 8 tables. | `drizzle-orm/pg-core`. |
 | `lib/db/client` | `web/lib/db/client.ts` | Drizzle client factory + lazy singleton. | `drizzle-orm`, `lib/errors`. |
-| `lib/flows/runner` | `web/lib/flows/runner.ts` | Flow step execution and resume gate. | `flows/*`, `db/schema`, `scheduler`, `supervisor-client`. |
+| `lib/flows/runner` | `web/lib/flows/runner.ts` | Flow graph execution and resume gate. | `flows/*`, `db/schema`, `scheduler`, `supervisor-client`. |
 | `app/api/runs` | `web/app/api/runs/route.ts` | Launch a run from a Backlog task. | `db`, `worktree`, `scheduler`, `flows/runner`. |
 | `app/api/runs/[runId]/stream` | `web/app/api/runs/[runId]/stream/route.ts` | Browser-facing durable run SSE. | `db`, `run.events.jsonl`. |
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up. | `db`, `atomic`, `supervisor-client`, `flows/runner`. |
@@ -302,8 +302,8 @@ Enforced by review today; a CI gate is Phase 2. The current rules:
 4. **No `chokidar` / `fs.watch` / polling for state transitions.**
    Live path: supervisor ACP notifications → SSE. Recovery path:
    supervisor heartbeat + reconcile on startup.
-5. **`drizzle-orm/pg-core` is the only DB driver shape.** SQLite uses
-   the same schema via dialect switch — no parallel SQLite types.
+5. **Postgres is the only database backend.** `drizzle-orm/pg-core` defines the
+   schema and `DB_URL` must use `postgres://` or `postgresql://`.
 6. **No re-exports of `pino` / `zod` / `yaml`.** Components import from
    the dep directly.
 

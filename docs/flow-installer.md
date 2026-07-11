@@ -35,7 +35,7 @@ prefix of the git commit SHA captured at install time via
 `git rev-parse HEAD` after the tag-pinned clone. Installing the same
 tag at the same upstream commit for two projects produces one cache
 directory and two symlinks. The per-project symlink is what agents and
-Flow steps reference (steps like `form_schema: ./schemas/review.json`
+Flow nodes reference (fields like `settings.form_schema: ./schemas/review.json`
 resolve relative to it).
 
 ### Version upgrade and immutability

@@ -176,7 +176,7 @@ mAIster/
     │   ├── scheduler.ts            # Global concurrency cap + Pending queue
     │   ├── reconcile.ts            # Startup: runs vs git worktree list vs supervisor sessions
     │   └── db/                     # ── PERSISTENCE LAYER ──
-    │       ├── client.ts           # Drizzle client (PG or SQLite via dialect)
+    │       ├── client.ts           # Typed Postgres Drizzle client
     │       ├── schema.ts           # projects, tasks, runs, workspaces, hitl_requests, flows, executors
     │       └── migrations/         # drizzle-kit output
     │

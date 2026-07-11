@@ -1,6 +1,6 @@
 # Flows domain
 
-## M43 graph-only compatibility contract (Designed)
+## M43 graph-only compatibility contract (Implemented)
 
 Engine 3.0.0 accepts only manifests with a non-empty nodes array and no
 top-level steps key. A present steps key, including an empty array or a
@@ -15,8 +15,8 @@ engine-bound incompatibility remain distinct CONFIG classifications.
 A **Flow** is a versioned plugin bundle that describes how to execute
 one kind of task — bugfix, feature, spec-kit, review, etc. It ships as
 a git repository with a manifest (`flow.yaml` v1), shipped CLIs, an
-optional `setup.sh`, and a step-typed YAML DSL. MAIster orchestrates
-the steps; it does NOT design Flows itself. Multi-flow **packages** that group
+optional `setup.sh`, and a graph-node YAML DSL. MAIster orchestrates
+the graph; it does NOT design Flows itself. Multi-flow **packages** that group
 several Flows + capability content under one import are **(Designed)** in
 [`packages.md`](packages.md) (ADR-088).
 
@@ -29,8 +29,8 @@ several Flows + capability content under one import are **(Designed)** in
   upgrade, rollback, and deprecation state.
 - **Project Flow enablement** — project-level pointer to the Flow package
   revision new runs should use. Existing runs keep their snapshotted revision.
-- **Step** — one of four typed entries in the Flow's `steps[]`:
-  `cli`, `agent`, `guard`, `human`.
+- **Node** — a typed entry in the Flow's `nodes[]` graph, with an action,
+  lifecycle gates, explicit transitions, and optional rework policy.
 - **Manifest** — parsed `flow.yaml`. Persisted to `flows.manifest`
   (jsonb).
 - **Recommended executor** — optional pointer in the manifest. Lowest
@@ -39,43 +39,29 @@ several Flows + capability content under one import are **(Designed)** in
   command check, internal skill/command check, AI judgment, external
   CI/system check, required artifact, or human review.
 
-## Step taxonomy
+## Node taxonomy
 
 ```mermaid
 classDiagram
-    class Step {
+    class Node {
         +string id
-        +'cli'|'agent'|'guard'|'human' type
+        +NodeType type
+        +Action action
+        +Gate[] pre_finish
+        +Transitions transitions
+        +Rework rework
     }
-    class CliStep {
-        +string command
-        +Guard[] pre_guards?
-        +Guard[] post_guards?
+    class NodeAttempt {
+        +string nodeId
+        +number attempt
+        +NodeAttemptStatus status
     }
-    class AgentStep {
-        +'new-session'|'slash-in-existing' mode
-        +string prompt
-        +Guard[] pre_guards?
-        +Guard[] post_guards?
+    class GateResult {
+        +string gateId
+        +GateStatus status
     }
-    class GuardStep {
-        +number cost?
-        +number time?
-        +string regex?
-    }
-    class HumanStep {
-        +string form_schema
-        +OnReject on_reject?
-    }
-    class OnReject {
-        +string goto_step
-        +string comments_var?
-    }
-    Step <|-- CliStep
-    Step <|-- AgentStep
-    Step <|-- GuardStep
-    Step <|-- HumanStep
-    HumanStep *-- OnReject
+    Node "1" --> "many" NodeAttempt
+    NodeAttempt "1" --> "many" GateResult
 ```
 
 ## Process flows
@@ -128,43 +114,25 @@ stateDiagram-v2
     Failed --> Removed
 ```
 
-### Step DSL execution model (Partly implemented)
+### Graph execution model (Implemented)
 
-Steps run sequentially. The linear `on_reject.goto_step` loop is **Implemented
-(M17, ADR-056)**: a rejected `human` response reparks the run to the target step
-(injecting `comments_var`) via an atomic CAS, bounded by `maxLoops` (default 5)
-so a review cycle cannot loop forever.
+Nodes run according to validated transitions. A human review decision may
+re-enter an allowed target, mark downstream evidence stale, and open a new node
+attempt. `maxLoops` bounds rework.
 
 ```mermaid
 flowchart TD
-    Start([Run launched]) --> S1[Step 1]
-    S1 --> T{type?}
-    T -- cli --> Exec1[exec command in worktree]
-    T -- agent --> Acp1[supervisor POST /sessions<br/>spawn adapter]
-    T -- guard --> Eval[parse cost/time/regex<br/>metric-only today]
-    T -- human --> Form[render form_schema in UI<br/>wait for response]
-    Exec1 --> Next
-    Acp1 --> Next
-    Eval --> Next
-    Form --> Verdict{accepted?}
-    Verdict -- yes --> Next[Step N+1]
-    Verdict -- no, on_reject.goto_step M17 --> Loop[jump to target step<br/>+ inject comments_var]
-    Loop --> S1
-    Next --> Done{more steps?}
-    Done -- yes --> S1
-    Done -- no --> End([Run complete])
+    Start([Run launched]) --> Node[Append node attempt]
+    Node --> Action[Execute typed action]
+    Action --> Gates[Run pre-finish gates]
+    Gates --> Finish{Finish contract}
+    Finish -- success/approve --> Next[Follow declared transition]
+    Finish -- rework --> Stale[Mark downstream evidence stale]
+    Stale --> Node
+    Next --> Done{Terminal node?}
+    Done -- no --> Node
+    Done -- yes --> End([Run ready for review])
 ```
-
-> **(M11a) graph rework supersedes `on_reject.goto_step` for `nodes[]` flows.** The
-> linear `on_reject.goto_step` loop above is **Implemented (M17, ADR-056)** for
-> `steps[]` flows (atomic repark, bounded by `maxLoops`; a session-less linear
-> gate/human orphan reconciles to `Crashed`/`linear-gate-orphan`). A graph
-> (`nodes[]`) flow instead uses node `transitions` +
-> `finish.human.decisions`: a reviewer's declared `rework` decision marks
-> downstream gates **stale**, moves the node pointer to the rework target, opens
-> a new `node_attempts` row, and re-runs the validation path before reaching a
-> fresh review. The full rework loop is drawn in
-> [`flow-graph.md`](flow-graph.md).
 
 ### Runner resolution
 
@@ -225,26 +193,20 @@ flowchart LR
   revision. GC can remove only unreferenced disabled/failed revisions.
 - `flow.yaml schemaVersion: 1` mismatch refused with `CONFIG` BEFORE
   any filesystem side effect.
-- `steps[]` ids are unique within a Flow; duplicates refused with
-  `CONFIG`.
-- Step types are exactly `cli | agent | guard | human`; unknown type
-  refused with `CONFIG`.
-- Steps execute sequentially in declaration order; no parallelism today.
-- `agent` step MUST declare `mode`; `human` step MUST declare
-  `form_schema`; `guard` step MUST declare at least one of
-  `cost | time | regex` — else `CONFIG`.
-- `on_reject.goto_step` MUST resolve to an earlier step `id`; jumps to
-  a later or missing step refused with `CONFIG`.
+- `nodes[]` ids are unique within a Flow; duplicates are refused with `CONFIG`.
+- Node types and their type-specific action/settings contracts are a closed
+  discriminated union; unknown or malformed nodes are refused with `CONFIG`.
+- Every transition and rework target resolves to a declared node id; the graph
+  must have one valid entry and at least one terminal path.
+- Any top-level `steps` key is refused with the locked engine-3 migration
+  message before persistence or runtime side effects.
 - `setup.sh` runs exactly once per `{id}@{tag}` install.
-- Executor resolution for every `agent` step is total — produces a
+- Executor resolution for every runner-bearing node is total — produces a
   registered executor or fails with `EXECUTOR_UNAVAILABLE`.
-- Guard caps (`cost | time | regex`) are parsed and persisted as
-  metrics only; no kill-on-cap today (Phase 2).
-- **(Planned)** Flow graph gates replace observational guard-only readiness.
-  Gates ship with the Flow plugin, while project config supplies reusable
+- Graph gates ship with the Flow plugin, while project config supplies reusable
   command profiles, skill mappings, capability profiles, env profiles, and
   default limits.
-- **(M11a — Designed)** Gate kinds are `command_check | skill_check |
+- Gate kinds are `command_check | skill_check |
   ai_judgment | external_check | artifact_required | human_review`; each gate has
   `mode: blocking | advisory` and status `pending | running | passed |
   failed | stale | skipped | overridden`. M11a **executes**
@@ -264,17 +226,18 @@ flowchart LR
   `gate_results` but does not gate promotion on them. **(M11a — Designed)**
   Overrides require a declared `human_review` decision and never delete the
   failed evidence (override-without-erasure).
-- Templating in `prompt` is Mustache-style and resolves session
-  context, task fields, per-step output vars, and executor metadata.
+- Templating in `prompt` is Mustache-style and resolves session context, task
+  fields, highest-attempt node output vars through the stable `steps.<nodeId>`
+  namespace, and executor metadata.
 
 ## Edge cases
 
 - **`schemaVersion: 1` mismatch in `flow.yaml`** → `MaisterError("CONFIG")` on load.
-- **Duplicate step id within `steps[]`** → `CONFIG`.
-- **`on_reject.goto_step` references a missing step id** → `CONFIG`.
-- **`human` step without `form_schema`** → `CONFIG`.
-- **`guard` step without any of `cost`/`time`/`regex`** → `CONFIG`.
-- **`agent` step missing `mode`** → `CONFIG`.
+- **Any top-level `steps` key** → `CONFIG` with the locked engine-3 migration
+  message.
+- **Missing/empty `nodes[]` or duplicate node id** → `CONFIG`.
+- **Transition/rework target references a missing node id** → `CONFIG`.
+- **Malformed node-specific action/settings contract** → `CONFIG`.
 - **`git clone --branch <tag>` fails** → `FLOW_INSTALL` (502).
 - **Tag mutated upstream after install** — MAIster does NOT re-validate
   on each launch (cache hit short-circuits). Operator forces refresh by

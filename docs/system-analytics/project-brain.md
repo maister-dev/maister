@@ -1,6 +1,6 @@
 # Project Brain domain (A+B+C: Foundation, Consultant, Improvement Bridge)
 
-## M43 Postgres-only provisioning and event filter (Designed)
+## M43 Postgres-only provisioning and event filter (Implemented)
 
 Brain stays separately provisioned through its own Postgres migration lineage.
 Engine 3 removes the SQLite/dialect availability check but retains the
@@ -457,10 +457,10 @@ implemented in this branch unless a bullet explicitly names a later deferral.)*
   only. (Implemented)
 - **E-10** — Embedding-provider secrets MUST be stored as `env:NAME` refs and MUST
   NEVER be logged, streamed, or embedded in any payload. (Implemented)
-- **E-11** — In SQLite mode the Brain MUST be disabled: the ext memory routes,
-  `GET/PATCH /api/admin/brain-settings`, and the project `brainEnabled` enable-gate
-  MUST call `assertBrainProvisioned()` FIRST (409 `PRECONDITION`), and MCP memory
-  tools MUST fail closed (the facade still lists `TOOL_SPECS` statically). (Implemented)
+- **E-11** — Brain entrypoints MUST call `assertBrainProvisioned()` before use.
+  A Postgres installation missing the Brain lineage returns 409
+  `PRECONDITION`; MCP memory tools fail closed while the facade still lists
+  `TOOL_SPECS` statically. (Implemented)
 - **E-12** — Every recall-path Brain consumption MUST record a `brain_snapshots`
   row — explicit ext/MCP recall records the token's `boundRunId` as `run_id` when
   run-bound; ambient writes exactly ONE row per `(run, query_hash,
@@ -559,8 +559,8 @@ implemented in this branch unless a bullet explicitly names a later deferral.)*
 - **Non-English content on the lexical leg** → the `tsv` column uses the
   `'english'` tsvector config; RU text gets exact-lexeme matching only (no
   stemming) — a known bias, the config knob is deferred.
-- **SQLite dialect** → `MaisterError("PRECONDITION")` from Brain service entrypoints;
-  MCP memory tools fail closed; the brain migration lineage is not provisioned.
+- **Brain migration lineage missing** → `MaisterError("PRECONDITION")` from
+  Brain service entrypoints; MCP memory tools fail closed.
 - **Cross-project token / slug mismatch on the ext route** → HTTP 404 (the body
   carries no project id; `projectId` is server-derived from the token + slug).
 - **Missing scope or agent link axis** → HTTP 403 (`memory:read`/`memory:write` scope

@@ -224,8 +224,8 @@ runs after the verdict transaction through the standard dispatcher.
   fails with `MaisterError("CONFIG")` naming the missing ref.
 - **Unsupported overlay class for adapter** — class x adapter refusal returns
   `MaisterError("CONFIG")` before any launch side effect.
-- **SQLite dialect** — schema boots with the same two tables and JSON columns;
-  parity bugs are `MaisterError("CONFIG")` or migration-test failures.
+- **Unsupported/non-Postgres `DB_URL`** — boot fails with
+  `MaisterError("CONFIG")` before a connection is attempted.
 - **Experiment abandon with live runs** — abandon flips the experiment terminal
   under row lock, then stops live member runs through the standard dispatcher;
   stop failures are logged per run and do not resurrect the experiment.

@@ -1,6 +1,6 @@
 # Add project
 
-## M43 legacy Flow refusal (Designed)
+## M43 legacy Flow refusal (Implemented)
 
 If any package member contains steps[], registration preserves every entered
 field and focuses a role=alert summary with FLOW_INSTALL and the engine-3

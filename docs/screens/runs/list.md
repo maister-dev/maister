@@ -1,6 +1,6 @@
 # Runs ledger
 
-## M43 terminalized legacy row (Designed)
+## M43 terminalized legacy row (Implemented)
 
 The row is a terminal Failed result with an engine-3 cut-over reason and
 timestamp, not a recoverable crash. It links to retained history and exposes no

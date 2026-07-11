@@ -13,19 +13,15 @@ store invalid draft YAML while an author is working, but publish/export/install
 requires the manifest and graph validation described in this document. Authoring
 does not run `setup.sh`, scripts, agents, or hooks.
 
-## Step types
+## Node types
 
-A Flow is an ordered list of steps. Each step has an `id` (unique within
-the flow) and a `type` chosen from:
+A Flow is a directed graph declared through `nodes[]`. Every node has a unique
+`id`, a typed lifecycle, and explicit transitions. The executable node types are
+`ai_coding`, `cli`, `check`, `judge`, `guard`, `human`, `form`,
+`human_edit`, `merge`, and `consensus`; unsupported `steps[]` manifests are
+rejected at every persisted ingest boundary.
 
-| type    | what it does                                                               |
-| ------- | -------------------------------------------------------------------------- |
-| `cli`   | shells out to `bash -c <command>` with `cwd = worktreePath`                |
-| `agent` | drives an ACP session through `claude-agent-acp` / `codex-acp`             |
-| `guard` | observational gate — writes metrics, never blocks today                    |
-| `human` | suspends the run, writes `needs-input.json`, inserts a `hitl_requests` row |
-
-## Flow graph node lifecycle (M11a — Designed)
+## Flow graph node lifecycle (Implemented)
 
 > **Status (M11a).** Flow graph v1 — the `nodes[]` manifest, node-lifecycle
 > compile, the append-only `node_attempts` ledger, the review-driven rework
@@ -45,13 +41,12 @@ the flow) and a `type` chosen from:
 > lifecycle state machine, traversal, staleness, and rework loop are drawn in
 > [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
-The current runner executes ordered `steps[]`. M11a keeps that path backwards
-compatible and introduces Flow graph v1 as the product-grade execution model: a
-manifest declares an optional top-level `nodes[]` (mutually exclusive with
-`steps[]`), and the runner compiles **both** forms to a normalized node graph.
-Every legacy `steps[]` step compiles to a single-action node with default
-`transitions.success → next` and no rework, so linear Flows run exactly as
-before. Graph flows MUST declare `compat.engine_min: 1.1.0`.
+Engine 3.0.0 accepts only graph manifests with a non-empty top-level `nodes[]`.
+The parser and compiler reject any manifest containing `steps[]` with the
+locked migration message: `legacy steps[] flows are not supported since engine
+3.0.0; republish the package with nodes[]`. Existing graph packages remain
+compatible when their declared `compat` range includes host engine `3.0.0`;
+they do not need to raise an open-ended historical `engine_min`.
 
 ```yaml
 nodes:
@@ -201,8 +196,7 @@ Lifecycle sections:
 | `transitions` | Maps declared outcomes to declared node ids.                                                   |
 | `rework`      | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
 
-**Top-level `retry_safe?` (boolean, default `false`).** A per-node opt-in
-(also accepted on linear `steps[]`) that gates operator crash-recovery
+**Node `retry_safe?` (boolean, default `false`).** A per-node opt-in that gates operator crash-recovery
 re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`guard`/`human`/`form`).
 A `Crashed` run whose recover target is session-less is redispatch-recoverable
 only when its config declares `retry_safe: true` — re-running a session-less
@@ -355,9 +349,8 @@ manifest-derived allow-list stored on the `hitl_requests` row at creation time
 (server-state, never body-trusted). Any rework return marks downstream gates,
 checks, and AI judgments **stale**; the run cannot reach a fresh review until
 the Flow-declared validation path reruns and produces current results. In a
-graph flow the legacy `human` step `on_reject.goto_step` is **superseded** by
-node `transitions` + `finish.human.decisions`; linear `steps[]` flows retain the
-documented (still-unexecuted) `on_reject.goto_step` behavior.
+graph flow, review routing is expressed only by node `transitions` and
+`finish.human.decisions`; arbitrary `goto_step` is not part of engine 3.
 
 **`rework.commentsVar` composed payload — (Implemented — ADR-072).** The value
 injected as the top-level `{{ <commentsVar> }}` template var on the rework
@@ -1429,118 +1422,18 @@ two HITL tools — `hitl_list` and `hitl_respond` — are backed by the
 ext routes (Implemented — M17). MCP tools never bypass Flow validation,
 token authorization, readiness, or artifact recording.
 
-### `cli` step
+## Node actions, review, and gates
 
-```yaml
-- id: lint
-  type: cli
-  command: "pnpm lint"
-  pre_guards: [] # optional, observational only
-  post_guards: []
-```
+`cli`, `ai_coding`, `check`, and `judge` actions, `form` collection,
+`human_review` decisions, and `pre_finish` gates are all graph-node lifecycle
+concerns. Rework is expressed only through validated node `transitions`,
+`finish.human.decisions`, and `rework`; there is no linear step/guard subsystem.
+Blocking policy is implemented through graph gates and promotion readiness.
 
-The `command` is rendered via the templating engine before execution. The
-captured stdout becomes `steps.<id>.output` for subsequent templates.
-Non-zero exit maps the step to `errorCode: PRECONDITION` and aborts the
-flow with `runs.status = "Failed"`. Timeout default is 5 min
-(`timeoutMs` configurable at the call site).
-
-### `agent` step
-
-```yaml
-- id: plan
-  type: agent
-  mode: new-session # OR slash-in-existing
-  prompt: "/aif-plan {{ task.prompt }}"
-  pre_guards: []
-  post_guards: []
-```
-
-`mode` selects how supervisor sessions are reused:
-
-- **`new-session`** — every step spawns a fresh adapter process and
-  initialises a new ACP session. Deleted on `end_turn`. Cleanest
-  isolation; loses cached context between steps.
-- **`slash-in-existing`** — the first agent step seeds one supervisor
-  session; subsequent steps reuse it via `POST /sessions/:id/prompt`.
-  Slash commands like `/aif-plan` accumulate context across turns. The
-  session is deleted at the end of the run (or on `human` step
-  suspension).
-
-The step completes when `PromptResponse.stopReason` resolves. `end_turn`
-is success; `max_tokens` / `max_turn_requests` / `refusal` map to
-`errorCode: ACP_PROTOCOL` (run → `Failed`); `cancelled` raises a
-`SupervisorError("ACP_PROTOCOL", ...)`.
-
-### `guard` step
-
-```yaml
-- id: budget
-  type: guard
-  cost: 10000 # tokens
-  time: 300 # seconds
-  regex: "ERROR"
-```
-
-A standalone observational step. The runner evaluates the guard against
-the previous step's metrics (observational today), writes a metric line
-to `.maister/<slug>/runs/<run-id>/guards.jsonl`, and always returns
-success.
-
-### `human` step
-
-```yaml
-- id: review
-  type: human
-  form_schema: ./schemas/review.json
-  criticality: high # optional — low | medium | high | critical
-  on_reject:
-    goto_step: implement
-    comments_var: review_comments
-```
-
-Inserts a `hitl_requests` row of `kind: "human"`, transitions the run to
-`NeedsInput`, and returns. The response route writes
-`input-<stepId>.json` after the HITL row is claimed, then schedules
-`runFlow`; the runner owns the `NeedsInput -> Running` transition.
-
-**`criticality`** (optional, `low | medium | high | critical`) — flow-author-declared
-severity. Stored on `hitl_requests.criticality` at row creation; write-once.
-Controls inbox sort order and badge display. Additive — no engine bump; absent
-means no severity declared.
-
-**Responder `confidence`** — a response-time self-report (`number 0..1`)
-supplied by the human when answering. Captured from the response body; stored
-as `hitl_requests.human_confidence` and echoed in the `response` jsonb.
-`confidence` is NOT a flow-declared field — flow authors cannot pre-declare it;
-it is submitted with the answer, not specified in `flow.yaml`.
-
-**`on_reject.goto_step` + `comments_var`** (Implemented — M17): for linear
-`steps[]` flows, submitting a reject response reparks the runner to the named
-step via a single atomic `currentStepId` CAS, bounded by a re-entry guard
-(`maxLoops`, default 5). Comments travel via a dedicated
-`rework-comments-<gotoStepId>.json` artifact — they are **never** written to
-`input-<gotoStepId>.json`, which would falsely auto-satisfy a re-reached
-human/form step. Completion sentinels (`input-<stepId>.json`) for every step in
-the window `[gotoTarget..humanStep]` are deleted before the repark commit so
-re-reached human/form steps re-prompt instead of auto-satisfying from a prior
-pass. Exceeding `maxLoops` terminates the run with `MaisterError("CONFIG")`
-(parity with the graph runner's `rework.maxLoops` breach).
-In a graph flow (`nodes[]`) `on_reject` is **superseded** by node
-`transitions` + `finish.human.decisions`, which drive the validated
-review-driven rework loop (M11a — see
-[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md)).
-
-## Pre- and post-guards (observational)
-
-Guards attached to `cli` and `agent` steps are evaluated **before** the
-step (`pre_guards`, against zero observed metrics) and **after** the step
-(`post_guards`, against `{durationMs, stdout, costTokens}`). Cost guard
-evaluation reads token totals from `cost.jsonl` when present. Cap
-exceedance emits a `WARN` log line but never aborts. Guard metrics are
-written to `.maister/<slug>/runs/<run-id>/guards.jsonl`.
-
-Phase 2 will add enforcement (cancel on cost/time cap).
+`criticality` (`low | medium | high | critical`) is an optional, write-once
+severity on graph HITL requests. Responder `confidence` is a response-time
+self-report (`0..1`) stored on `hitl_requests.human_confidence`; it is not a
+manifest field.
 
 ## Templating
 
@@ -1573,9 +1466,9 @@ Context paths available inside templates:
 | `executor.agent`         | Adapter-registry identity, e.g. `claude` or `codex`                                             |
 | `executor.model`         | Snapshotted runner model label                                                                  |
 | `executor.router`        | Optional runner router, e.g. `ccr`                                                              |
-| `steps.<id>.output`      | `node_attempts.stdout` (highest attempt), `step_runs.stdout` fallback, truncated to 8 KiB       |
-| `steps.<id>.vars.<name>` | `node_attempts.vars` jsonb (highest attempt), `step_runs.vars` fallback                         |
-| `steps.<id>.exitCode`    | `node_attempts.exit_code` (highest attempt), `step_runs.exit_code` fallback                     |
+| `steps.<id>.output`      | `node_attempts.stdout` (highest attempt), truncated to 8 KiB                                     |
+| `steps.<id>.vars.<name>` | `node_attempts.vars` jsonb (highest attempt)                                                    |
+| `steps.<id>.exitCode`    | `node_attempts.exit_code` (highest attempt)                                                     |
 | `env.<KEY>`              | filtered process.env (see below)                                                                |
 | `artifacts.<id>.kind`    | current artifact instance kind                                                                  |
 | `artifacts.<id>.uri`     | current artifact locator URI; optional, use `??` if it may be absent                            |
@@ -1583,9 +1476,10 @@ Context paths available inside templates:
 | `artifacts.<id>.nodeId`  | producing node id; optional, use `??` if it may be absent                                       |
 | `artifacts.<id>.content` | **(P2, ADR-120)** resolved body of the `current` artifact (diff/log/plan/test-report text, or pretty-printed JSON for a `gate-verdict`/`hitl-response` locator). Capped at the injection seam to `MAISTER_ARTIFACT_INLINE_MAX_BYTES` (256 KiB); for a `file` or `git-log` locator the read itself is bounded to the cap (a huge payload never loads fully into the web process; an oversized log truncates instead of throwing). Optional — use `??` if it may be absent. **Requires `compat.engine_min >= 2.2.0`.** Graph `nodes[]` only. |
 
-Highest-attempt-wins: when a node has been retried (or reworked, M11a),
-`steps.<id>` resolves to the highest-`attempt` `node_attempts` row, falling back
-to `step_runs` for legacy runs that predate the ledger
+Highest-attempt-wins: when a node has been retried or reworked, `steps.<id>`
+resolves to the highest-`attempt` `node_attempts` row. The `steps` namespace is
+retained as a stable template API name; it does not imply a `steps[]` manifest
+or a `step_runs` table
 ([ADR-027](decisions.md#adr-027-append-only-node_attempts-run-ledger)).
 Current templates use `executor.*`; `runner.*` is not a template-context alias.
 
@@ -1604,19 +1498,17 @@ Allow patterns: `LANG`, `LC_*`, `TZ`, `PATH`, `HOME`, `USER`, `SHELL`,
 `TERM`. Tests may inject extra allow patterns via the
 `envWhitelist: RegExp[]` arg of `buildContext()`.
 
-## Step output vars
+## Node output vars
 
-`step_runs.vars` is `{}` for `cli` and `agent` steps today — the runner
-does not yet extract structured output. The column + UNIQUE constraint
-ship now so future work (tool-call extraction, retry, etc.) can populate
-it without another migration.
+Structured node output is persisted in `node_attempts.vars`. Downstream
+templates resolve the highest attempt through the stable
+`steps.<node-id>.vars` namespace.
 
 ## ACP wire
 
 The supervisor speaks ACP via `@agentclientprotocol/sdk@0.22.1`'s
-`ClientSideConnection`. One ACP session per `POST /sessions` (per
-`agent` step in `new-session` mode, or per run in `slash-in-existing`
-mode).
+`ClientSideConnection`. Logical ACP sessions are recorded in `run_sessions`;
+node attempts reference the session that owns their turn.
 
 - `initialize` is called once at connection time.
 - `newSession` produces the `acpSessionId` (persisted on `run_sessions.acp_session_id`).
@@ -1646,7 +1538,7 @@ The checkpoint path adds `NeedsInput -> NeedsInputIdle -> Running` via
 `acp_session_id` resume; the supervisor checkpoint endpoint and web resume
 driver are implemented.
 
-In a graph flow (M11a — Designed) the review-driven rework loop is a **node-
+In a graph flow the review-driven rework loop is a **node-
 pointer move inside `Running`**, not a new run status: a `rework` decision on a
 review node sets the node pointer back to the rework target, marks downstream
 gates stale, and continues — there is no `HumanWorking` status in M11a (that is
@@ -1658,10 +1550,14 @@ M11b). The full node lifecycle state machine lives in
 ```yaml
 schemaVersion: 1
 name: greet
-steps:
+compat:
+  engine_min: 3.0.0
+nodes:
   - id: hello
     type: cli
-    command: "echo Hello, {{ task.prompt }}"
+    action:
+      command: "echo Hello, {{ task.prompt }}"
+    transitions: {}
 ```
 
 Install: `pnpm install-flow --source /abs/path/to/this/dir --version

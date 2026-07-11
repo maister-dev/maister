@@ -1,6 +1,6 @@
 # Flow editor (Studio)
 
-## M43 local legacy manifest state (Designed)
+## M43 local legacy manifest state (Implemented)
 
 Raw YAML containing steps[] remains open for manual rewriting. A focused,
 blocking validation panel carries the exact engine-3 remediation. Canvas,

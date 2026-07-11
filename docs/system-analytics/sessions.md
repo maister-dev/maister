@@ -146,8 +146,8 @@ flowchart LR
   `UNIQUE(run_id, session_name)` MUST hold.
 - `run_sessions` MUST be the sole source of truth for run runner state; the dropped
   `runs.{runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
-  acp_session_id}` columns MUST NOT be reintroduced, and `step_runs.acp_session_id`
-  MUST stay (it records which session a step used).
+  acp_session_id}` columns MUST NOT be reintroduced. Node/session attribution is
+  recorded through `node_attempts.acp_session_id` and `run_sessions`.
 - A node with neither `session:` nor `runner:` MUST join the implicit `default`
   session; a node with `runner:` and no `session:` MUST get its own solo session; a
   node with `session:` MUST join that named group.

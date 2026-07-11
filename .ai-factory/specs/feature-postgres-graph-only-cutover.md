@@ -1,6 +1,6 @@
 # M43 Postgres-only + graph-only cut-over
 
-Status: Designed (implementation gate)
+Status: Implemented
 Owner: platform
 Decision: [ADR-129](../../docs/decisions.md#adr-129-postgres-only-and-graph-only-engine-300-cut-over)
 Plan: [feature-postgres-graph-only-cutover](../plans/feature-postgres-graph-only-cutover.md)
@@ -255,18 +255,18 @@ dialect, converter, duplicated parser, new status or new error code are allowed.
 
 | Requirement(s) | Task | Primary test / project | Focused RED/GREEN command | Acceptance evidence |
 | --- | --- | --- | --- | --- |
-| PG-01, PG-02 | 4 | `web/lib/db/__tests__/postgres-url.test.ts`, instrumentation unit | `pnpm --filter maister-web exec vitest run --project unit web/lib/db/__tests__/postgres-url.test.ts web/__tests__/instrumentation.test.ts` | URL table and rejected boot |
-| PG-03, PG-04 | 5 | scheduler/relation/Brain real-PG integration | `pnpm --filter maister-web exec vitest run --project integration web/lib/__tests__/scheduler.integration.test.ts web/lib/social/__tests__/social-domain.integration.test.ts` | lock execution/failure + Brain schema refusal |
+| PG-01, PG-02 | 4 | `web/lib/db/__tests__/postgres-url.test.ts`, instrumentation unit | `pnpm --filter maister-web exec vitest run --project unit lib/db/__tests__/postgres-url.test.ts lib/__tests__/instrumentation.test.ts` | URL table and rejected boot |
+| PG-03, PG-04 | 5 | scheduler/relation/Brain real-PG integration | `pnpm --filter maister-web exec vitest run --project integration lib/__tests__/scheduler.integration.test.ts lib/social/__tests__/social-domain.integration.test.ts` | lock execution/failure + Brain schema refusal |
 | PG-05 | 6 | typecheck + static/dependency sentinel | `pnpm --filter maister-web typecheck` | no dependency/union FIXME |
-| GRAPH-01, GRAPH-02 | 7 | `config.schema.test.ts` pure table | `pnpm --filter maister-web exec vitest run --project unit web/lib/__tests__/config.schema.test.ts` | exact truth table |
-| GRAPH-03, GRAPH-04 | 7,10 | engine/grammar/graph runner unit | `pnpm --filter maister-web exec vitest run --project unit web/lib/flows/__tests__/engine-version.test.ts web/lib/flows/graph/__tests__/runner-core.test.ts` | engine 3 + no linear dispatch |
-| GRAPH-05 | 10,12 | `templating.test.ts` | `pnpm --filter maister-web exec vitest run --project unit web/lib/flows/__tests__/templating.test.ts` | preserved `steps.*` namespace |
-| API-01, API-02 | 8 | operation route tests + runs service integration | `pnpm --filter maister-web exec vitest run --project integration web/app/api/v1/ext/runs/__tests__/route.integration.test.ts` | exact status/code/body and no side effects |
-| API-03 | 8,12 | flow-package/run-manifest query integration | `pnpm --filter maister-web exec vitest run --project integration web/lib/queries/__tests__/flow-package-detail.integration.test.ts` | typed 200 DTO |
-| UX-01..UX-04 | 9 | focused component/route DOM tests | `pnpm --filter maister-web exec vitest run --project unit web/components` | badge/control/alert/focus/EN-RU |
-| UX-05 | 12 | D2 history component + Playwright | `pnpm --filter maister-web test:e2e -- --grep "engine 3 cut-over"` | persistent banner and absent actions |
-| MIG-01..MIG-04 | 11 | `migration-0093.integration.test.ts` real PG | `pnpm --filter maister-web exec vitest run --project integration web/lib/db/__tests__/migration-0093.integration.test.ts` | status/store/atomic/idempotent matrix |
-| MIG-05 | 11 | domain-event consumer integration | `pnpm --filter maister-web exec vitest run --project integration web/lib/domain-events/__tests__/cutover-filter.integration.test.ts` | suppression/fan-out |
+| GRAPH-01, GRAPH-02 | 7 | `manifest-shape.test.ts` pure table | `pnpm --filter maister-web exec vitest run --project unit lib/flows/__tests__/manifest-shape.test.ts` | exact truth table and caller-selected typed code |
+| GRAPH-03, GRAPH-04 | 7,10 | engine/grammar/graph runner unit | `pnpm --filter maister-web exec vitest run --project unit lib/flows/__tests__/engine-version.test.ts lib/flows/graph/__tests__/runner-core.test.ts` | engine 3 + no linear dispatch |
+| GRAPH-05 | 10,12 | `templating.test.ts` | `pnpm --filter maister-web exec vitest run --project unit lib/flows/__tests__/templating.test.ts` | preserved `steps.*` namespace |
+| API-01, API-02 | 8 | operation route tests + runs service integration | `pnpm --filter maister-web exec vitest run --project integration app/api/v1/ext/runs/__tests__/route.integration.test.ts` | exact status/code/body and no side effects |
+| API-03 | 8,12 | flow-package/run-manifest query integration | `pnpm --filter maister-web exec vitest run --project integration lib/queries/__tests__/flow-package-detail.integration.test.ts` | typed 200 DTO |
+| UX-01..UX-04 | 9 | focused component/route DOM tests | `pnpm --filter maister-web exec vitest run --project unit components/flows/__tests__/package-viewer.test.ts components/board/__tests__/launch-popover.test.ts app/api/runs/launch-options/__tests__/route.test.ts` | badge/control/alert/focus/EN-RU |
+| UX-05 | 12 | D2 history component + Playwright | `pnpm --dir web exec playwright test m43-cutover-history.spec.ts` | persistent banner and absent actions |
+| MIG-01..MIG-04 | 11 | `migration-0093.integration.test.ts` real PG | `pnpm --filter maister-web exec vitest run --project integration lib/db/__tests__/migration-0093.integration.test.ts` | status/store/atomic/idempotent matrix |
+| MIG-05 | 11 | domain-event consumer unit + emit-site integration | `pnpm --filter maister-web exec vitest run --project unit lib/domain-events/__tests__/cutover.test.ts` | exact suppression predicate; consumer tests exercise fan-out |
 | DOC-01, DOC-02 | 1,14 | contract/docs/ADR/Mermaid/i18n validators | `CI=true pnpm validate:docs:all` | all current-state surfaces agree |
 | TEST-01, TEST-02 | 3,13,15,16 | Vitest list + forbidden-symbol audit | `pnpm --filter maister-web exec vitest list --project unit` | no dead/orphan/positive legacy test |
 
@@ -275,6 +275,38 @@ columns. A test may support secondary requirements, but only the listed row owns
 the primary decision boundary; route tests do not repeat pure manifest
 permutations, E2E does not repeat SQL matrices, and static gates do not claim
 behavior.
+
+## As-built verification record
+
+The implementation was re-read against this specification after the code
+changes. Evidence is anchored to the source of truth rather than inferred from
+the diff:
+
+| Contract | As-built evidence | Verification |
+| --- | --- | --- |
+| PG-01..PG-05 | `web/lib/db/postgres-url.ts`, `client.ts`, `instrumentation.ts`, Postgres-only schema/imports and dependency manifests | URL/boot/client units, typecheck, lint, Drizzle journal check |
+| GRAPH-01..GRAPH-05 | `manifest-shape.ts`, `manifest-parser.ts`, `config.schema.ts`, engine `3.0.0`, graph-only `runner.ts`, `context.ts` | 128 focused units; positive first-party graph fixtures; forbidden-symbol audit |
+| API-01..API-03 | shared parser at all intake/read boundaries; per-operation `x-maister-m43-legacy-steps` status/code/message/side-effect contracts | contract validator; route/read-model focused units; operation matrix audit |
+| MIG-01..MIG-04 | migration `0093`: precondition, one materialized candidate relation, lifecycle-store closure, eight-status CAS, winner-scoped event, then `DROP TABLE step_runs` | migration integration is discovered and SQL/snapshot/journal pass static integrity; execution requires a container-capable real-Postgres environment |
+| MIG-05 | `isGraphOnlyCutoverFailure` shared by Ralph, agents, Brain harvest/index and webhook filtering | five-case predicate unit plus consumer call-site audit |
+| UX-01..UX-05 | typed package/launch incompatibility, blocked Studio controls, `CutoverFailureBanner`, list/board/detail/inspector read models, EN/RU catalogs | focused UI/route tests green; Playwright test discovered as one Chromium scenario |
+| DOC-01..DOC-02 | ADR-129, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | 340 Mermaid blocks, 644 ADR links, all API contracts and EN/RU parity green |
+
+Six final audits were executed: scope/fullness, bidirectional traceability,
+internal consistency, migration crash-window/logical holes, forbidden
+survivors, and UX/API/DB parity. The audits found and corrected two documentation
+holes: stale linear examples and an incorrect claim that existing open-ended
+graph packages must raise `engine_min` to 3.0.0. No material source finding
+remains.
+
+Environment-qualified release evidence is recorded without converting a
+sandbox limitation into a product exception: the complete web unit run has
+594 files / 6042 tests green, with only two pre-existing listener tests blocked
+by `listen EPERM`; supervisor listener suites and Playwright are blocked by the
+same socket policy; Testcontainers cannot find a container runtime. Focused M43
+tests, typecheck, lint (zero errors), contracts, docs, i18n, test discovery and
+Drizzle integrity are green. These environment-only gates must be rerun in the
+normal container/socket-enabled CI runner before merge.
 
 ## Resolved questions and excluded work
 

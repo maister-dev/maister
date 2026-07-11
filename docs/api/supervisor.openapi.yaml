@@ -1201,8 +1201,9 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9._-]+$'
           description: |
-            Flow step id. Step log lands at `<runId>/<stepId>.log`. Constrained
-            to safe filesystem characters.
+            Graph node id carried under the stable `stepId` wire name. The node
+            log lands at `<runId>/<stepId>.log`. Constrained to safe filesystem
+            characters.
         sessionName:
           type: string
           minLength: 1
@@ -1432,9 +1433,9 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9._-]+$'
           description: |
-            Flow step id this prompt belongs to. Echoed in supervisor
-            logs and used to attribute `session.update` events back to a
-            step in the web tier.
+            Graph node id this prompt belongs to, carried under the stable
+            `stepId` wire name. Echoed in supervisor logs and used to attribute
+            `session.update` events back to a node in the web tier.
         nodeAttemptId:
           type: string
           minLength: 1

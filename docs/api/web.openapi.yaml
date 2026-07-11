@@ -961,6 +961,7 @@ paths:
         flowIssue: incompatible
         launchable: false
         sideEffects: none
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       parameters:
         - name: taskId
           in: query
@@ -1204,6 +1205,7 @@ paths:
         status: 502
         code: FLOW_INSTALL
         sideEffects: compensated-registration
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       requestBody:
         required: true
         content:
@@ -3572,6 +3574,7 @@ paths:
         status: 400
         code: CONFIG
         sideEffects: none-before-json-or-stream-open
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       requestBody:
         required: true
         content:
@@ -7260,6 +7263,7 @@ paths:
         status: 422
         code: CONFIG
         sideEffects: no-published-revision-or-bridge
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       parameters:
         - name: slug
           in: path
@@ -7674,6 +7678,7 @@ paths:
         status: 502
         code: FLOW_INSTALL
         sideEffects: no-installed-or-enabled-revision
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       parameters:
         - {
             name: slug,
@@ -7714,6 +7719,7 @@ paths:
         status: 422
         code: CONFIG
         sideEffects: enabled-pointer-unchanged
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       parameters:
         - {
             name: slug,
@@ -7782,6 +7788,7 @@ paths:
         status: 422
         code: CONFIG
         sideEffects: enabled-pointer-unchanged
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       parameters:
         - {
             name: slug,
@@ -7830,6 +7837,7 @@ paths:
         status: 422
         code: CONFIG
         sideEffects: enabled-pointer-unchanged
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       parameters:
         - {
             name: slug,
@@ -8272,6 +8280,7 @@ paths:
         code: PRECONDITION
         details: invalidArtifacts
         sideEffects: no-export-install-stamp-or-attach
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       requestBody:
         required: false
         content:
@@ -8853,6 +8862,7 @@ paths:
         status: 422
         code: CONFIG
         sideEffects: no-usable-member-projection
+        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       requestBody:
         required: true
         content:
@@ -15415,22 +15425,8 @@ components:
             option-specific payload described by
             `BudgetBreachResponsePayload`.
 
-            **`kind="human"` with `on_reject` (Implemented — M17):** the
-            response is captured under the same atomic-claim + artifact-write
-            contract as `kind="form"`. On an APPROVE response (`rejected`
-            absent/false) the runner advances to the NEXT step with the response
-            surfaced as `steps.<stepId>.vars`. On a REJECT response
-            (`{ rejected: true, comments?: string }`) the runner executes the
-            Flow step's `on_reject` clause: it atomically reparks
-            `runs.current_step_id` to `on_reject.goto_step`, injects `comments`
-            under the step's `comments_var` into the goto target's context, and
-            re-enters there. UIs SHOULD present rejection as a loop-back /
-            send-back-with-comments action. The reject→goto loop is bounded by
-            `maxLoops` (default 5); exceeding it terminates the run with
-            `MaisterError("CONFIG")`. (In a graph `nodes[]` flow this routing is
-            superseded by the node's declared-decision rework loop, M11a.)
-
-            **(M11a — Designed) graph `human_review`:** for a review HITL the
+            **Graph `human_review`:** the response uses the same atomic-claim +
+            artifact-write contract as `kind="form"`. For a review HITL the
             `response` object additionally carries the review-decision
             sub-schema (`ReviewDecisionResponse`) — `decision`, optional
             `comments`, optional `workspacePolicy` — alongside any declared form

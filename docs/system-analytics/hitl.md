@@ -18,17 +18,10 @@ artifact protocol used when the worker is checkpointed.
   (on `hitl_requests.kind`):
   - `permission` — binary approve/deny via ACP
     `session/request_permission`.
-  - `form` — structured form, schema declared in the Flow's
-    `human` step `form_schema` (linear) or a graph `form` node's
-    `settings.form_schema` (intake — `runFormCollect`).
-  - `human` — Flow step `type: human` with an `on_reject` clause
-    declared in `flow.yaml`. Current behaviour: the row is persisted
-    as `kind="human"` and the response is captured under the same
-    atomic-claim + artifact-write contract as `kind="form"`. The
-    loop-on-reject routing (`on_reject.goto_step` rerouting +
-    `comments_var` propagation) is implemented — `kind="human"` now
-    reparks atomically to the goto target on rejection. The distinction
-    is preserved on the row so the loop can be traced per-kind.
+  - `form` — structured input whose schema is declared by a graph `form`
+    node's `settings.form_schema` (intake — `runFormCollect`).
+  - `human` — a graph `human_review` finish. The row stores the validated
+    decision, transition, rework targets, workspace policies, and loop bound.
   - `infra_recovery` — opened by the flow engine when execution-policy
     `crashRetry=auto_retry` exhausts its in-run retries on a transient
     code (see [`execution-policy.md`](execution-policy.md)). The failed
@@ -114,20 +107,20 @@ enum | array`.
 | ------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | `permission` | Agent emits `session/request_permission` mid-step                                                                 | No (binary)         | No                                                                                                                                                       | Live ACP request/response        |
 | `form`       | Agent writes `needs-input.json` mid-step, OR a graph `form` (intake) node is reached (`runFormCollect` writes it) | Yes (`form_schema`) | No                                                                                                                                                       | Artifact + ACP message OR resume |
-| `human`      | Flow step `type: human` (linear) or `human_review` node finish (graph)                                            | Yes (`form_schema`) | Linear: **Implemented — M17** (`on_reject.goto_step` atomic repark, bounded by `maxLoops=5`). Graph (M11a): **declared decisions** drive the rework loop | Artifact only                    |
+| `human`      | Graph `human_review` node finish                                                                                  | Yes (`form_schema`) | Declared decisions drive the bounded rework loop                                                                                                   | Artifact only                    |
 
 The decision tree:
 
 ```mermaid
 flowchart TD
-    Step{Flow step type?} -- agent --> AgentRun[agent runs]
-    Step -- form node --> FormNode[form intake node<br/>runFormCollect]
-    Step -- human --> HumanStep[human step]
+    Node{Graph node lifecycle?} -- runner-bearing --> AgentRun[agent runs]
+    Node -- form --> FormNode[form intake node<br/>runFormCollect]
+    Node -- human_review finish --> HumanStep[human review]
     AgentRun --> Ask{Agent needs input?}
     Ask -- binary tool/file permission --> Perm[kind=permission<br/>via session/request_permission]
     Ask -- structured data --> Form[kind=form<br/>write needs-input.json]
     FormNode --> Form
-    HumanStep --> Review[kind=human<br/>write needs-input.json with on_reject]
+    HumanStep --> Review[kind=human<br/>store declared decisions and transitions]
 ```
 
 ## State machine — HITL request
@@ -208,14 +201,12 @@ as the node's output vars (`node_attempts.vars`), read downstream as
 `{{ steps.<id>.vars.<field> }}`. Unlike a `human` review, a `form` node carries
 no decision — it finishes on `transitions.success`.
 
-### Human-review response with executed on_reject loop (Implemented — M17)
+### Human-review response with declared graph rework
 
-The sequence below describes the M17 linear `on_reject.goto_step`
-repark (Implemented — landed in Phase 3). On a reject response the runner writes a dedicated rework-comments
-artifact (never the completion sentinel), invalidates prior-pass sentinels for
-the re-execution window, and atomically reparks `currentStepId` to the goto
-target. The loop is bounded by `maxLoops` (default 5). An approve response
-follows the normal structured-form path (advance to next step).
+On a rework response the route validates the decision and target against the
+server-stored allow-list, persists the response, marks downstream evidence
+stale, and atomically moves `currentStepId` to the declared target. The loop is
+bounded by the graph node's `rework.maxLoops`.
 
 ```mermaid
 sequenceDiagram
@@ -225,21 +216,19 @@ sequenceDiagram
     participant FS as Filesystem
     participant DB as Postgres
 
-    Note over W: Flow reached a step type=human with on_reject.goto_step=plan
-    U->>W: Reject with comments
-    W->>DB: Phase 1: claim row, store response {rejected:true, comments}
-    W->>FS: Phase 2: atomicWriteJson input-{humanStepId}.json
+    Note over W: Flow reached a human_review finish
+    U->>W: Rework with decision, target, policy, and comments
+    W->>DB: Validate allow-list, claim row, store response
+    W->>FS: Phase 2: atomicWriteJson input-{nodeId}.json
     W->>DB: Phase 3: set responded_at
     W-->>R: schedule runFlow
     R->>DB: claim NeedsInput -> Running
-    R->>R: read stored response, detect rejection
-    R->>FS: atomicWriteJson rework-comments-{gotoStepId}.json {comments_var: comments}
-    R->>FS: delete input-{stepId}.json for every step in [gotoTarget..humanStep]
-    R->>DB: single CAS tx: UPDATE runs SET currentStepId=gotoStepId WHERE status=Running AND currentStepId=humanStepId
-    R->>R: break and re-enter at gotoStepId via resume-claim path
-    Note over R: Re-entered step reads rework-comments-{gotoStepId}.json<br/>and injects comments_var into its context.
-    Note over R: When re-execution reaches the human step again,<br/>its input-{stepId}.json is gone so HITL is re-created.
-    Note over R: Reject count incremented per run/step.<br/>Exceeding maxLoops=5 raises MaisterError(CONFIG).
+    R->>R: read stored decision and rework contract
+    R->>DB: mark downstream attempts/gates stale
+    R->>DB: CAS currentStepId to declared target
+    R->>R: open a fresh target node attempt
+    Note over R: commentsVar is injected into the target context.
+    Note over R: Exceeding rework.maxLoops fails closed.
 ```
 
 ### `ai_rebase_merge` HITL surfacing (Implemented, ADR-085)
@@ -269,11 +258,10 @@ and assignment id; WARN on unresolved conflict, denied permission, abort, or res
 failure with bounded command/path context; no prompts, env values, or raw cost payloads in
 logs.
 
-### Declared decisions vs raw `goto_step` (M11a — Designed)
+### Declared review decisions
 
-The legacy `human` step reroutes via a single `on_reject.goto_step` that the
-runner does not execute. A graph `human_review` node replaces that with
-**declared decisions**: the manifest declares `finish.human.decisions` (e.g.
+A graph `human_review` node declares **decisions**: the manifest declares
+`finish.human.decisions` (e.g.
 `approve`, `rework`) and a `transitions` map, and the runner stores the allowed
 sets (`allowedDecisions`, `transitions`, `reworkTargets`, `workspacePolicies`)
 in `hitl_requests.schema` at creation. The reviewer's `decision` /
@@ -546,8 +534,7 @@ expensive context loads lazily only when a card is expanded.
   `hitl_requests.step_id`; `type` is the node kind resolved from the run's
   compiled flow graph. To avoid an N+1 the resolver loads each distinct flow
   revision's manifest ONCE (`resolveManifest` + `compileManifest`) and maps every
-  item's `step_id → nodeType`; legacy linear-step runs fall back to
-  `{ step_id, "cli" }`. An unresolved `step_id` logs a WARN and degrades to the
+  item's `step_id → nodeType`. An unresolved `step_id` logs a WARN and degrades to the
   raw label — the inbox always renders.
 - **Lazy (`GET /api/runs/{runId}/inbox-context`).** On expand the browser fetches
   a read-only, project-scoped (`readBoard`) DTO
@@ -760,14 +747,10 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   with conflicting payloads return 409 before any artifact is
   touched, and same-payload retries are idempotent. The supervisor
   never writes input artifacts.
-- **(Implemented — M17)** `human` step responses are captured under the
-  same two-phase commit + artifact-write contract as `form` (stored as
-  `hitl_requests.kind = "human"`); the reject decision is carried in the
-  response payload as `{ rejected: bool, comments?: string }`. On
-  **approve** the runner advances to the next step; on **reject** the
-  runner EXECUTES the step's `on_reject.goto_step` rerouting (see the
-  `runHumanStep` rerouting bullet below), bounded by `maxLoops` — rejection
-  is a routing action, NOT merely informational.
+- `human_review` responses use the same two-phase commit + artifact-write
+  contract as `form` (stored as `hitl_requests.kind = "human"`). The response
+  carries a declared decision, comments, and optional workspace policy; the
+  runner follows only the server-stored transition allow-list.
 - **(Implemented — M17)** A conflicting re-submit on an already-claimed
   `hitl_requests` row (different payload, `respondedAt IS NULL`) MUST
   return 409 before any artifact or supervisor side-effect runs.
@@ -829,10 +812,6 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   `permission` and `form` unless a later ADR opens those kinds explicitly.
   For `human`, MCP/REST MUST require exact `hitl:respond:human`; `*` alone
   MUST return 403.
-- **(Implemented — M17)** The flat `steps[]` `on_reject` loop MUST be
-  bounded by `maxLoops` (default 5). Exceeding `maxLoops` MUST raise
-  `MaisterError("CONFIG")` (parity with the graph runner's `rework.maxLoops`
-  breach) and terminate the run.
 - **(Implemented — ADR-072)** A graph review gate's stored schema MUST carry
   server-state `{ maxLoops, gateAttempt }`; the respond route MUST reject a
   `rework` decision with 422 (`NEEDS_INPUT`) when `gateAttempt > maxLoops`
@@ -842,12 +821,6 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   rejection applies only when the stored schema carries both fields: a
   no-rework node stamps `maxLoops` null and legacy pre-ADR-072 rows lack
   the fields entirely, so the rule is vacuous there.
-- **(Implemented — M17)** Full `on_reject.goto_step` rerouting in
-  `runHumanStep`: on rejection the runner MUST write
-  `rework-comments-{gotoStepId}.json` (NEVER `input-{gotoStepId}.json`),
-  delete `input-{stepId}.json` for every step in
-  `[gotoTarget..humanStep]`, and atomically repark
-  `runs.currentStepId` to the goto target in a single CAS transaction.
 - **(Implemented)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
   - **Phase 1 (atomic claim).** `response` is stored under a row-level
@@ -960,13 +933,9 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.
-- **HITL on `human` step is rejected** — rejection is stored as
-  response payload. (Implemented — M17) The runner reparks
-  `currentStepId` to `on_reject.goto_step` atomically, invalidates
-  prior-pass completion sentinels for the re-execution window, and
-  re-enters at the goto target with `comments_var` injected from
-  `rework-comments-{gotoStepId}.json`. Exceeding `maxLoops` →
-  `MaisterError("CONFIG")` (terminal).
+- **Graph human review requests rework** — the decision is validated and stored,
+  downstream evidence is marked stale, and the runner atomically reparks to the
+  declared target with `commentsVar` injected. Exceeding `maxLoops` fails closed.
 - **`session/request_permission` arrives while the supervisor is
   shutting down** — request lost; agent will retry on next launch
   through the standard `acp_session_id` resume.
@@ -989,8 +958,6 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   existence-hide: 404, not 403. (Implemented — M17)
 - **`human_confidence` body value outside `[0,1]`** → server-side Zod
   validation fails → 422 (`NEEDS_INPUT`). (Implemented — M17)
-- **`on_reject.goto_step` re-entry guard exceeded** → `MaisterError("CONFIG")` →
-  run `Failed`, task → `Backlog`. (Implemented — M17)
 - **Graph review `rework` decision at an exhausted loop**
   (`schema.gateAttempt > schema.maxLoops`) → 422 (`NEEDS_INPUT`) at validate
   time — no artifact write, no state mutation; the reviewer can still

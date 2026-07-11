@@ -508,8 +508,9 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
 2. Rework edges MUST include `rework.allowedTargets`; `decide`,
    `output.result.on_mismatch`, and `finish.human.decisions` route through
    matching `transitions` outcomes.
-3. Legacy linear `steps[]` manifests MUST degrade to a predecessor chain rather
-   than throwing in the editor.
+3. A legacy `steps[]` manifest may remain visible as raw YAML for manual
+   migration, but graph controls MUST stay disabled and publish/install MUST
+   return the locked engine-3 incompatibility.
 4. Schema refs MUST resolve only from package draft files under root
    `schemas/*.json`; invalid or missing schema files produce warnings.
 5. The hidden `flowYaml` value MUST still parse after skill and variable edits.

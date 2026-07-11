@@ -1,6 +1,6 @@
 # Reconciliation and GC domain
 
-## M43 one-time cut-over versus recurring repair (Designed)
+## M43 one-time cut-over versus recurring repair (Implemented)
 
 Migration 0093 is the only owner of unfinished-linear-run terminalization. It
 runs while web and supervisor are stopped and is not a recurring reconcile
@@ -49,7 +49,7 @@ GC is the deferred removal that never destroys un-committed work.
   node kind + `retry_safe` from this column (falling back to `current_step_id`
   for live/hand-seeded rows). See [`runs.md`](runs.md).
 - **`retry_safe` opt-in** — a per-node boolean on graph nodes (`flow.yaml`
-  `nodes[]`) and linear steps (`steps[]`), default `false`. A crashed
+  `nodes[]`), default `false`. A crashed
   session-less node is redispatch-recoverable only when its config declares
   `retry_safe: true` (`ai_coding` ignores it — recovered via `session/resume`). See
   [`../flow-dsl.md`](../flow-dsl.md).
@@ -89,7 +89,6 @@ stateDiagram-v2
         Running --> Crashed: worktree gone
         Running --> Crashed: agent session gone past grace
         Running --> Crashed: cli node, no live session<br/>(cli-not-retry-safe)
-        Running --> Crashed: linear flow, gate/human orphan<br/>(linear-gate-orphan)
         Reattached --> [*]
         Redispatched --> [*]
         Skipped --> [*]: re-evaluated next tick
@@ -187,9 +186,9 @@ reconciler, never double-spawns.
 The runner recognizes Recover as a **crash-resume mode** (a third resume mode
 alongside NeedsInput-resume and takeover-resume): `driveResume` flips
 `Crashed → Running` and calls `runFlow(runId, { crashResume: { targetStepId } })`;
-`runGraph`/`runFlow` resume FROM the target node (re-running it once as a fresh
-attempt) instead of no-op'ing on the already-owned guard (graph) or restarting
-from step 0 (linear). The claim is single-winner via a CAS-clear of the
+`runGraph`/`runFlow` resume FROM the target node, re-running it once as a fresh
+attempt instead of no-op'ing on the already-owned graph guard. The claim is
+single-winner via a CAS-clear of the
 in-flight marker (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND
 resume_started_at IS NOT NULL`): the winner drives, the loser bails.
 
@@ -360,9 +359,8 @@ flowchart TD
 
 For each run at reconcile time, gather: `run.status`, `run.runKind`,
 `run.acpSessionId`, `run.currentStepId`, the workspace `worktreePath`, the
-**node type of `currentStepId`** (from the run's pinned
-`flow_revisions.manifest`, compiled to the graph; legacy `steps[]` compile
-to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`),
+**node type of `currentStepId`** (from the run's pinned graph
+`flow_revisions.manifest`), `worktreeExists` (path ∈ `listWorktrees`),
 `liveSession` (`acpSessionId` ∈ live `listSessions` map). Then:
 
 | Run state | Condition | Action | Reason |
@@ -371,8 +369,7 @@ to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`),
 | `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
 | `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
 | `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
-| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) in a **graph (`nodes[]`) flow** | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
-| `Running` | worktree present, no live session, current node is a gate/`human` orphan in a **linear (`steps[]`) flow** | **CRASH** (`crashRunningRun`, reason `linear-gate-orphan`) | a flat `steps[]` run cannot resume mid-flow via `runFlow` (bare re-entry restarts at step 0 and re-runs prior side-effects); crashing retains the node in `resume_target_step_id` so operator Recover resumes from it (ADR-056 window-(c)) |
+| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
 | `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
 | `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
 | `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |
