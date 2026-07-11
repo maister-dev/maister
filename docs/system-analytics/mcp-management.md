@@ -1,236 +1,263 @@
 # MCP capability management domain
 
-> **Status: Implemented (M27 Stage 1).** The entities, routes, and state
-> machines below have shipped — contracted in the
-> [M27 Stage-1 SDD](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md)
-> and now coded. Locked decision: [ADR-070](../decisions.md#adr-070).
-> Extends the M14 materialization surface documented in
-> [capabilities.md](capabilities.md) and the M25 authored catalog documented in
+> **Status: mixed.** The platform CRUD + M14 materialization surface is
+> **Implemented** (M27, [ADR-070](../decisions.md#adr-070)). The **requirements
+> & bindings** layer, **per-project config overlay**, **load-bearing trust**,
+> and **health probe** are **Designed** (MCP Management v2,
+> [ADR-129](../decisions.md#adr-129); acceptance SSOT
+> [`.ai-factory/specs/feature-mcp-management-v2.md`](../../.ai-factory/specs/feature-mcp-management-v2.md)).
+> Each piece below carries its own status tag. Extends the M14 materialization
+> surface in [capabilities.md](capabilities.md) and the M25 authored catalog in
 > [capability-catalog.md](capability-catalog.md).
 
 ## Purpose
 
-This domain covers how Model Context Protocol (MCP) servers are declared,
-configured, and materialized across the three scopes of a MAIster deployment:
-the **platform instance** (admin-owned, host-wide), a **project** (project-admin-
-owned), and a **flow-package** (embedded in a `flow.yaml` manifest). It owns
-the CRUD lifecycle for `platform_mcp_servers`, the resolution of scoped
-`capability_records` rows of `kind=mcp`, and the per-session materialization
-path that injects configured MCP servers into an ACP session. Secret values
-are never stored — only `env:NAME` references. Out of scope: MCP marketplace /
-reputation / malware scanning / sandboxing / org policy (Phase 2).
+This domain covers how Model Context Protocol (MCP) servers are **declared,
+matched, bound, configured, and materialized** across the three scopes of a
+MAIster deployment: the **platform instance** (admin-owned, host-wide catalog),
+a **project** (project-admin-owned bindings + local servers), and a
+**flow-package** (a requirement or a shipped template inside a `flow.yaml` /
+package manifest).
+
+v2 replaces the implicit "`refId` string-equality" resolution model with an
+**explicit requirements & bindings layer**: a package declares a *requirement*
+or ships a *template*; the platform catalogs servers once; a project **binds** a
+ref to a concrete target and may **override** its per-project config (env-slot
+names only). Two dormant signals become load-bearing — `trust_status`
+(untrusted ⇒ visible-but-not-executable) and a real `initialize` **health
+probe**. Secret values are never stored — only `env:NAME` references. Out of
+scope: MCP marketplace / reputation / malware scanning / sandboxing / org policy
+/ version pinning / OAuth (see the SDD §2).
 
 ## Domain entities
 
-- **`platform_mcp_servers`** (Implemented) — admin-managed, host-wide MCP catalog.
-  One row per server: `{ id, transport ∈ {stdio,sse,http}, command (stdio),
-  args, env_keys (names only), url (sse|http), header_keys (names only),
-  supported_agents, trust_status ∈ {untrusted,trusted,trusted_by_policy},
-  readiness_status ∈ {Unknown,Ready,NotReady}, readiness_reasons,
-  enabled, created_at, updated_at }`. Mirrors `platform_acp_runners`.
-  See [db/projects-domain.md](../db/projects-domain.md).
-- **Serena default seed** (Implemented, ADR-128) — admin MCP list ensure inserts a
-  platform MCP catalog row `id='serena'` for the optional Serena/LSP MCP server.
-  The row is visible in the catalog but **not executable by default**:
-  `enabled=false` and `trust_status='untrusted'`. Current projection
-  (`web/lib/mcp/projection.ts`) materializes only `enabled=true` rows and does
-  not inspect `trust_status`; therefore seeding Serena enabled would grant an
-  executable capability. Any future "visible while enabled" product behavior must
-  first add a trust gate to projection/materialization and move tests/docs with
-  that change.
-- **`capability_records` kind=mcp** (Implemented, M14; extended M27) — one row
-  per declared MCP in the project registry, with `source ∈ {platform, project,
-  flow-package}`. The `material` jsonb carries the transport shape and
-  `env:NAME` references — never resolved secret values. See
-  [capabilities.md](capabilities.md) and
+- **`platform_mcp_servers`** (Implemented; trust column now load-bearing —
+  Designed) — admin-managed, host-wide MCP catalog. One row per server:
+  `{ id, transport ∈ {stdio,sse,http}, command, args, env_keys (names),
+  url, header_keys (names), supported_agents,
+  trust_status ∈ {untrusted,trusted,trusted_by_policy},
+  readiness_status, readiness_reasons, last_probe_status, last_probe_at,
+  last_probe_reason, enabled, created_at, updated_at }`. The
+  `last_probe_*` columns (Designed) cache the admin global probe. See
+  [db/projects-domain.md](../db/projects-domain.md).
+- **`project_mcp_bindings`** (Designed, W-A) — the explicit binding of a **ref**
+  to a concrete MCP **target** within one project:
+  `{ id, project_id (CASCADE), ref_id, target_kind ∈ {platform,project,package},
+  target_id, enabled (default true), config_overlay jsonb, recommended_hint,
+  created_by, created_at, updated_at }`, unique `(project_id, ref_id)`. An
+  enabled binding **wins over precedence**; a disabled binding makes the ref
+  **unresolvable** (opt-out); an absent binding is **grandfather** (today's
+  behavior). See [db/projects-domain.md](../db/projects-domain.md).
+- **`capability_records` kind=mcp** (Implemented, M14; extended v2) — one row per
+  declared MCP in the project registry, `source ∈ {platform, project,
+  flow-package}`. `material` jsonb carries transport shape + `env:NAME`
+  references — never secret values; a package **requirement** marker and the
+  `material.lastProbe`/`material.readiness` cache (Designed) also live here.
+  Enabled = `disabled_at IS NULL`. See
   [db/capabilities-domain.md](../db/capabilities-domain.md).
-- **MCP transport** — discriminated union in `mcpCapabilitySchema`:
-  `stdio { command, args?, env? }` | `sse { url, headers? }` |
-  `http { url, headers? }`. All credential fields accept `env:NAME` only
-  (regex `^env:[A-Za-z_][A-Za-z0-9_]*$`). See
+- **Requirements ledger** (Designed, W-A) — a **derived** read model (never
+  stored redundantly) aggregating refs from attached packages' manifest
+  `mcps[]` requirement-only entries, `settings.mcps.required/additional` across
+  enabled flow revisions, and attached agents' `capability_profile.mcps`; each
+  classified `bound | auto | unbound | misconfigured | not_ready`.
+- **Config overlay** (Designed, W-C) — per-binding
+  `{ envRemap?, argsOverride?, urlOverride?, headerRemap? }` validated against
+  the target's declared slots; rewrites env/header/arg/url **NAMES** only, wire
+  shape unchanged.
+- **MCP transport** — discriminated union: `stdio { command, args?, env? }` |
+  `sse { url, headers? }` | `http { url, headers? }`. Credential fields accept
+  `env:NAME` only (regex `^env:[A-Za-z_][A-Za-z0-9_]*$`). See
   [configuration.md](../configuration.md).
-- **Required vs additional** — `flow.yaml` node settings declare
-  `mcps: { required?: string[], additional?: string[] }` (a bare `string[]`
-  is treated as `additional` for backward compatibility). An unresolvable
-  `required` MCP blocks launch; an absent `additional` MCP degrades gracefully.
-- **`env:NAME` secret refs** — env-var names stored in `env_keys`/`header_keys`
-  on `platform_mcp_servers` and carried as `mcpServers[].envKeys` over ACP
-  `newSession`. The supervisor resolves name → value from its `process.env` at
-  spawn; the value never reaches the web tier, the DB, the wire, or any log.
+- **Required vs additional** — node `settings.mcps: { required?, additional? }`
+  (bare `string[]` ⇒ `additional`). An unresolvable `required` ref blocks
+  launch; an absent `additional` ref degrades gracefully.
+- **Provenance + withheld** (Designed, W-B/W-E) — `resolved_capability_set.mcps[]`
+  gains `provenance ∈ {binding,precedence}` (+ `boundTarget`); `withheldMcps[]`
+  is persisted into `node_attempts.materialization_plan` (flow) and
+  `runs.withheld_mcps` (both flow and agent).
 
 ## State machines
 
-### MCP record lifecycle (Implemented)
-
-The state of a `capability_records` row of `kind=mcp`, from declaration to
-active use within a session.
+### Binding lifecycle (Designed)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Configured: declared in platform admin / project / flow-package
-    Configured --> Trusted: trust_status set to trusted or trusted_by_policy
-    Trusted --> Materialized: per-session ACP newSession params.mcpServers injected
-    Materialized --> Configured: session ends — scope cleaned
-    Configured --> Removed: entry removed from scope (disabled / deleted / manifest change)
-    Trusted --> Removed: deleted while not in active session
-    Removed --> [*]
-
-    note right of Trusted
-      stdio command spawn requires
-      exec_trust=trusted on the owning revision
+    [*] --> Unbound: requirement declared, no binding
+    Unbound --> Bound: POST bind / connect (enabled)
+    Bound --> Disconnected: DELETE / disconnect (disabled binding)
+    Disconnected --> Bound: POST connect / re-bind
+    Bound --> Unbound: binding row removed
+    Unbound --> [*]: requirement dropped (SET/CLEAR)
+    note right of Bound
+      enabled binding target
+      WINS over SOURCE_PRECEDENCE
+    end note
+    note right of Disconnected
+      ref unresolvable in this project
+      even if a platform row matches
     end note
 ```
 
-### Setup-time resolve flow (Implemented)
-
-When a run is launched, the setup-time resolver checks whether a required MCP
-ref is already configured; if absent, it proposes configuration before
-allowing launch to proceed.
+### Trust activation (Designed — makes the inert column load-bearing)
 
 ```mermaid
-flowchart TD
-    A([launch: resolve required MCPs]) --> B[for each required MCP ref-id]
-    B --> C{capability_records row<br/>present for this scope?}
-    C -- yes --> D[reuse existing record<br/>no duplicate emitted]
-    C -- no --> E{MCP is required?}
-    E -- yes --> F[refuse launch CONFIG<br/>MaisterError EXECUTOR_UNAVAILABLE<br/>if agent-unsupported]
-    E -- no, additional --> G[skip — non-fatal]
-    D --> H[include in resolved-set snapshot]
-    G --> H
-    H --> I([launch proceeds])
+stateDiagram-v2
+    [*] --> Untrusted: platform_mcp_servers default
+    Untrusted --> Trusted: POST /admin/mcp-servers/{id}/trust
+    Trusted --> Untrusted: trust revoked
+    Trusted --> TrustedByPolicy: policy grant
+    TrustedByPolicy --> Untrusted: policy revoked
+    note right of Untrusted
+      VISIBLE in hub/ledger,
+      withheld (platform-untrusted),
+      never materialized
+    end note
+```
+
+### Probe (Designed — per target, per project)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unprobed
+    Unprobed --> Ok: initialize handshake ok (latencyMs, serverInfo)
+    Unprobed --> Failed: handshake / timeout / spawn error (reason)
+    Unprobed --> Refused: untrusted-source stdio (web-side gate, no override)
+    Ok --> Unprobed: config/overlay changed
+    Failed --> Unprobed: retry
 ```
 
 ## Process flows
 
-### Setup-time resolve-by-id (Implemented)
+### Binding-vs-precedence resolution (Designed — the core v2 rule)
 
-Resolution precedence — **project wins over platform wins over flow-package** —
-is documented canonically in [capabilities.md](capabilities.md); this flow
-applies that rule to `kind=mcp` only. At most one winner is emitted per
-`(kind, refId)` — no duplicate materialization.
+For each ref, an enabled binding wins; a disabled binding suppresses; an absent
+binding falls through to `project > platform > flow-package` precedence
+(canonical in [capabilities.md](capabilities.md)). The platform winner then
+passes the live trust gate.
 
 ```mermaid
 flowchart TD
-    A([launchRun: resolve MCP capability set]) --> B[collect capability_records<br/>kind=mcp for this project + flow-package]
-    B --> C[apply precedence: project > platform > flow-package<br/>one winner per kind+refId — see capabilities.md]
-    C --> D[for each required ref-id declared in manifest]
-    D --> E{winner found?}
-    E -- no --> F[MaisterError CONFIG<br/>required MCP unresolved — refuse launch]
-    E -- yes --> G{agent supports transport?}
-    G -- no --> H[MaisterError EXECUTOR_UNAVAILABLE — refuse launch]
-    G -- yes --> I[include in resolved-set snapshot<br/>runs.resolved_capability_set]
-    I --> J[for each additional ref-id]
-    J --> K{winner found?}
-    K -- no --> L[skip — non-fatal]
-    K -- yes --> I
-    I --> M([proceed to worktree creation])
+    A([resolve ref-id for project]) --> B{binding row present?}
+    B -- enabled --> C[winner = binding target<br/>provenance=binding, boundTarget]
+    B -- disabled --> D[winner = none — ref unresolvable<br/>required ref → CONFIG names disconnect]
+    B -- absent --> E[apply SOURCE_PRECEDENCE<br/>project > platform > flow-package<br/>provenance=precedence]
+    C --> F{winner source = platform?}
+    E --> F
+    F -- yes --> G{live trust_status trusted?}
+    F -- no --> I[include in executable set]
+    G -- no --> H[WITHHELD platform-untrusted<br/>visible in ledger, excluded from set]
+    G -- yes --> I
+    I --> J[snapshot provenance into resolved_capability_set]
+    H --> K[snapshot withheld into materialization_plan + runs.withheld_mcps]
 ```
 
-### Per-session materialization (Implemented)
-
-This flow reuses the M14 materialize → agent-map → supervisor wire path
-([capabilities.md](capabilities.md) §Process flows). The M27 extension adds
-`sse`/`http` transport and the resolved-set snapshot read.
+### Trust gate + withheld visibility (Designed — kills the silent log-only downgrade)
 
 ```mermaid
 sequenceDiagram
-    participant R as graph runner
-    participant Res as resolver (capabilities.md M14)
+    participant R as runner-graph / launch
+    participant Res as resolver (binding-aware)
     participant Map as agent-map.ts
-    participant L as node_attempts ledger
+    participant L as node_attempts + runs.withheld_mcps
     participant S as supervisor acp-client.ts
 
-    R->>Res: selectedRecords(kind=mcp, resolvedCapabilitySet snapshot)
-    Res-->>R: deduplicated winner set (project > platform > flow-package)
-    R->>Map: mapProfileToAgentArtifacts({ mcps, agent })
-    Map-->>R: mcpServers[] with envKeys names only — no secret values
-    note over R,L: db.transaction: materialization_plan (write-once) + markNodeRunning
-    R->>L: plan includes mcps[]{refId, sha, scope}
-    R->>S: POST /sessions newSession params.mcpServers (env NAMES)
-    note over S: supervisor resolves env-var names → values from process.env at spawn
+    R->>Res: resolve(kind=mcp, bindings, live trust)
+    Res-->>R: executable set + withheld[] {refId,transport,reason}
+    R->>Map: mapProfileToAgentArtifacts(executable set)
+    Map-->>R: mcpServers[] (env NAMES only) — untrusted excluded
+    note over R,L: db.transaction: materialization_plan.withheldMcps (flow)<br/>+ runs.withheld_mcps (flow AND agent)
+    R->>L: persist withheld (durable, not warn-only)
+    R->>S: newSession params.mcpServers (NAMES)
+    note over S: supervisor resolves env NAMES → values from process.env
     S-->>R: session/update stream
-    note over R: on session end: cleanup scoped node dir
 ```
 
-### Platform MCP readiness (computed on write — WI-2, Implemented)
+### Per-project overlay application (Designed — names-only, wire unchanged)
 
-`platform_mcp_servers.readiness_status` / `readiness_reasons` describe whether a
-declared server is actually launch-ready. The columns existed but were **never
-computed before WI-2** (every row read `Unknown`). WI-2 computes readiness on
-every write, mirroring the platform ACP-runner readiness path
-([acp-runners.md](acp-runners.md), `web/lib/acp-runners/readiness.ts`).
+The overlay rewrites `envKeys`/`args`/`url`/`headerKeys` **NAMES** web-side after
+`mapProfileToAgentArtifacts`; the ACP `mcpServers` wire shape is unchanged and
+the supervisor still resolves values from `process.env`. Project A and project B
+can point the same platform MCP at different `env:NAME` slots — no secret value
+ever crosses a boundary.
 
-`evaluateMcpReadiness(row, diagnostics)` (`web/lib/mcp/readiness.ts`) derives the
-status from the row's transport config × the supervisor `/diagnostics` env
-references (`checkSupervisorDiagnostics`):
+### Health probe handshake (Designed — real MCP `initialize`)
 
-- `stdio` — `command` present, else `NotReady` "missing command".
-- `sse` / `http` — `url` present, else `NotReady` "missing url".
-- every referenced `env_keys` / `header_keys` name present in diagnostics
-  `envRefs`, else `NotReady` "env ref missing: NAME".
-- all satisfied → `Ready`; diagnostics unavailable → `Unknown` with a reason.
+```mermaid
+sequenceDiagram
+    participant U as user (hub "Test connection")
+    participant W as web probe proxy route
+    participant D as platform_mcp_servers / capability_records
+    participant V as supervisor POST /mcp-probe
+    participant M as MCP server (child / remote)
 
-It is invoked from the two write routes only — `POST /api/admin/mcp-servers` and
-`PATCH /api/admin/mcp-servers/{id}` — so stored readiness is recomputed on every
-create/edit. `DELETE` does not recompute (the row is gone). The evaluator runs
-no side-effect and reads only `env:NAME` names — never a secret value.
+    U->>W: POST /projects/{slug}/mcp/probe {refId}
+    W->>D: resolve target NAMES + trust
+    alt untrusted-source stdio
+        W-->>U: CONFIG refused (no override in v1)
+    else trusted / non-stdio
+        W->>V: POST /mcp-probe {transport, names only}
+        V->>M: spawn/connect + initialize (withTimeout)
+        M-->>V: serverInfo | error
+        note over V: terminateProbeChild in finally<br/>(SIGTERM→grace→SIGKILL) — deferred-release
+        V-->>W: {ok, latencyMs, serverInfo?, reason?}
+        W->>D: cache last_probe_* / material.lastProbe (never secrets)
+        W-->>U: probe result
+    end
+```
+
+### Platform MCP readiness (computed on write — WI-2, Implemented; extended to project/package — Designed)
+
+`evaluateMcpReadiness(row, diagnostics)` (`web/lib/mcp/readiness.ts`) derives
+`readiness_status`/`readiness_reasons` from transport config × supervisor
+`/diagnostics` env references, invoked on every `POST`/`PATCH
+/api/admin/mcp-servers`. v2 extends the same evaluator over project/package
+`capability_records` material + diagnostics envRefs, caching into
+`material.readiness`. It reads only `env:NAME` names — never a secret value.
 
 ## Expectations
 
-The following normative bullets are copied verbatim from SDD §7.2 (Implemented):
-
-1. MCP secret values MUST be stored/accepted ONLY as `env:NAME`; values MUST be resolved supervisor-side and MUST NEVER appear in any HTTP response, DB column, or `session/update` payload.
-2. Capability id-collision MUST resolve project > platform > flow-package, picking exactly ONE winner per `(kind, refId)`, no duplicate materialization.
-3. A platform MCP DELETE MUST be refused (409) while any usage reference exists (mirror `assertCanDisable`); zero refs → 204.
-4. A platform MCP POST with a duplicate id MUST return 409 (via `onConflictDoNothing().returning()`), never a raw 500.
-5. Setup-time resolve MUST reuse an already-present MCP by id (dedupe, no silent duplicate); an absent REQUIRED MCP MUST block launch until configured.
-6. A REQUIRED MCP that cannot resolve+materialize MUST refuse launch; an ADDITIONAL MCP absence MUST NOT.
-7. Resolved MCP revisions MUST be included in the launch resolved-set snapshot.
-8. Materialization MUST reuse M14 (`materialize.ts`/`agent-map.ts`/supervisor wire) — no parallel materialization path.
-9. Flow-package MCP declarations MUST honor config SET/CLEAR/re-SET symmetry (declared→required; removed→not required; re-added→required).
-10. Codex MCP support MUST be either materialized (if `codex-acp` supports it) OR explicitly documented as a gap (no silent degrade).
-
-This branch adds the readiness-on-write contract (the readiness columns were
-recorded but never computed before WI-2):
-
-- **(WI-2 — Implemented)** Platform MCP `readiness_status` / `readiness_reasons`
-  MUST be recomputed by `evaluateMcpReadiness(row, diagnostics)` on every
-  `POST /api/admin/mcp-servers` and `PATCH /api/admin/mcp-servers/{id}` write,
-  and MUST NOT be recomputed on `DELETE`. A `stdio` row missing `command`, an
-  `sse`/`http` row missing `url`, or any `env_keys`/`header_keys` name absent
-  from supervisor `/diagnostics` `envRefs` MUST yield `NotReady` with a
-  per-cause reason; diagnostics unavailable MUST yield `Unknown` with a reason;
-  the evaluator MUST NOT read or store any secret value (only `env:NAME` names).
-- **(ADR-128 — Implemented)** The Serena seed MUST be insert-only idempotent and
-  MUST remain non-executable by default (`enabled=false`,
-  `trust_status='untrusted'`). Projection tests MUST prove the seeded row is not
-  returned as an executable capability until an explicit trust/enabling path is
-  completed.
+1. A `project_mcp_bindings` row MUST be unique on `(project_id, ref_id)`; an enabled binding's target MUST win over `SOURCE_PRECEDENCE`, and a disabled binding MUST make the ref unresolvable in that project. (Designed)
+2. An **absent** binding MUST leave resolution exactly as today (grandfather) — zero behavior change for any project without bindings. (Designed)
+3. Every binding route MUST derive `project_id` from the URL slug (server-state) and validate `target_kind`/`target_id` against existing rows of the matching kind; a platform target MUST be `enabled`+trusted to bind as executable, else `CONFLICT`/`CONFIG`. (Designed)
+4. `config_overlay` MUST validate against the target's declared slots at write AND materialization (unknown slot → `MaisterError("CONFIG")` 422); overlay application MUST rewrite only NAMES, keeping the ACP `mcpServers` wire shape unchanged. (Designed)
+5. No secret **value** MUST EVER appear in a binding row, HTTP response, `session/update`, `materialization_plan`, `runs.withheld_mcps`, or a log — only `env:NAME` names. (Implemented invariant, extended)
+6. A winning `source='platform'` record with live `trust_status='untrusted'` MUST be excluded from the executable set and recorded withheld `platform-untrusted`, while remaining VISIBLE in the requirements ledger/hub. (Designed)
+7. The grandfather migration MUST set `trust_status='trusted'` for every `enabled=true AND trust_status='untrusted'` platform row and MUST leave `enabled=false` rows (Serena) untouched. (Designed)
+8. Every withhold (trust or exec-trust; flow or agent) MUST be persisted — flow into `node_attempts.materialization_plan.withheldMcps`, both into `runs.withheld_mcps` — with NO silent warn-only path as the sole record. (Designed)
+9. `resolved_capability_set.mcps[]` MUST record `provenance ∈ {binding,precedence}` (+ `boundTarget` when bound) at launch; pre-migration runs MUST read it absent without error. (Designed)
+10. The requirements ledger MUST honor SET/CLEAR/re-SET symmetry: dropping the last declaring flow-revision/package/agent drops the requirement; re-adding restores it. (Designed)
+11. Supervisor `POST /mcp-probe` MUST release the child + timer on every path; the web probe proxy MUST refuse an untrusted-source stdio probe with a typed reason and have NO override path in v1. (Designed)
+12. A package manifest `mcps[]` entry with neither `command` nor `url` MUST be a valid requirement (no `schemaVersion` bump); an entry with an implementation stays a template; `recommendedPlatformServerId` is an optional `capabilityRefId`. (Designed)
 
 ## Edge cases
 
 | Case | MaisterError code | HTTP |
 |---|---|---|
-| Unknown MCP/skill ref-id in manifest | `CONFIG` | 422 (not persisted) |
-| Required MCP unresolved at launch | `CONFIG` | 409 |
-| Required MCP agent-unsupported (strict transport/agent check) | `EXECUTOR_UNAVAILABLE` | 503 |
-| Platform MCP delete while any usage reference exists | `CONFLICT` | 409 |
-| Platform MCP POST with a duplicate id | `CONFLICT` | 409 |
-| MCP stdio `command` spawn before `exec_trust=trusted` on owning revision | refused (guard — no exec) | n/a |
+| Bind unknown ref (not in ledger + not a registered ref) | `CONFIG` | 422 |
+| Bind to non-existent target, or `target_kind` mismatch | `CONFIG` | 422 |
+| Bind a disabled/untrusted platform target as executable | `CONFLICT` | 409 |
+| `config_overlay` names an unknown slot (write or materialization) | `CONFIG` | 422 |
+| Second binding for the same `(project, ref)` | `CONFLICT` | 409 |
+| Required ref with a **disabled** binding at launch | `CONFIG` | 409 (names disconnect) |
+| Required ref unresolved (no candidate, no binding) at launch | `CONFIG` | 409 |
+| Required ref agent-unsupported transport at launch | `EXECUTOR_UNAVAILABLE` | 503 |
+| Probe an untrusted-source stdio MCP | `CONFIG` (typed refusal, no override) | 409 |
+| Probe target missing / not connected | `PRECONDITION` | 409 |
+| Trust route unknown platform id | `PRECONDITION` | 409 |
 | Raw (non-`env:`) secret in any MCP field | `CONFIG` | 422 |
-| Repeated Serena seed ensure | n/a | idempotent: created/skipped counts only |
-| Serena default projection | n/a | not materialized while `enabled=false` |
+| Repeated Serena seed ensure | n/a | idempotent |
+| Serena default projection (enabled=false, untrusted) | n/a | not materialized (now via real trust gate) |
 
 ## Linked artifacts
 
-- **Decision:** [ADR-070](../decisions.md#adr-070) — platform MCP admin CRUD surface and delete guard.
-  [ADR-128](../decisions.md#adr-128-project-brain-self-improvement-proposal-bridge) locks the Serena seed default.
-- **SDD:** [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md) §3.1 (`platform_mcp_servers` DDL), §3.2 (`mcpCapabilitySchema`, required/additional), §6.2 (required-vs-additional gate), §7.2 (normative MCP bullets), §8 (edge cases).
-- **Capability resolution precedence:** [capabilities.md](capabilities.md) — the project > platform > flow-package winner rule applies to all `kind` values including `mcp`; this file does not restate the full rule.
-- **M14 materialization path:** [capabilities.md](capabilities.md) §Process flows — reused unchanged by M27; M27 extends the transport shape only.
-- **Authored catalog:** [capability-catalog.md](capability-catalog.md) — authored flow publish does not mutate `platform_mcp_servers`.
-- **Admin surface precedent:** [acp-runners.md](acp-runners.md) — `platform_mcp_servers` CRUD mirrors `platform_acp_runners` CRUD and delete-guard pattern (ADR-065).
-- **Instance config / settings page:** [instance-config.md](instance-config.md) §Platform MCP server admin — the `/settings` page hosts the platform-scoped MCP admin panel.
-- **OpenAPI:** [`../api/web.openapi.yaml`](../api/web.openapi.yaml) — `GET/POST /api/admin/mcp-servers`, `PATCH/DELETE /api/admin/mcp-servers/{id}`, `GET/POST /api/projects/{slug}/mcp`, `PATCH/DELETE /api/projects/{slug}/mcp/{mcpId}`, `POST /api/projects/{slug}/mcp/resolve`.
-- **ERD:** [`../db/capabilities-domain.md`](../db/capabilities-domain.md) — `capability_records` + `capability_imports` + new `platform_mcp_servers`.
-- **Source (Implemented):** `web/lib/capabilities/resolver.ts`, `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/agent-map.ts`, `supervisor/src/acp-client.ts`, `web/lib/mcp/serena-seed.ts`, `web/app/api/admin/mcp-servers/route.ts`, `web/app/api/admin/mcp-servers/[id]/route.ts`, `web/app/api/projects/[slug]/mcp/route.ts`, `web/app/api/projects/[slug]/mcp/[mcpId]/route.ts`, `web/app/api/projects/[slug]/mcp/resolve/route.ts`, `web/components/settings/mcp-servers-panel.tsx`, `web/components/settings/mcp-server-modal.tsx`.
+- **Acceptance SSOT (SDD):** [`.ai-factory/specs/feature-mcp-management-v2.md`](../../.ai-factory/specs/feature-mcp-management-v2.md) — entities, per-route identifier labels, Expectations, edge-cases, test matrix.
+- **Decision:** [ADR-129](../decisions.md#adr-129) — requirements & bindings, per-project overlay, trust & health activation (amends [ADR-070](../decisions.md#adr-070) platform CRUD + [ADR-043](../decisions.md#adr-043) materialization visibility; extends [ADR-088](../decisions.md#adr-088) package manifest; fulfills [ADR-128](../decisions.md#adr-128) Serena trust-gate precondition).
+- **Capability resolution precedence:** [capabilities.md](capabilities.md) — the project > platform > flow-package winner rule that an **absent** binding falls through to.
+- **M14 materialization path:** [capabilities.md](capabilities.md) §Process flows — reused; v2 adds the trust gate, the overlay (names-only), and the withheld sinks.
+- **Authored catalog:** [capability-catalog.md](capability-catalog.md) — authored publish does not mutate `platform_mcp_servers`.
+- **Admin surface precedent:** [acp-runners.md](acp-runners.md) — `platform_mcp_servers` CRUD + delete-guard mirror `platform_acp_runners` (ADR-065).
+- **OpenAPI (web):** [`../api/web.openapi.yaml`](../api/web.openapi.yaml) — bindings, connect/disconnect, project probe, admin trust + PATCH `trustStatus`.
+- **OpenAPI (supervisor):** [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml) — `POST /mcp-probe`.
+- **ERD:** [`../db/capabilities-domain.md`](../db/capabilities-domain.md) + [`../db/projects-domain.md`](../db/projects-domain.md) — `project_mcp_bindings`, `platform_mcp_servers.last_probe_*`, `capability_records.material.lastProbe/readiness`, `runs.withheld_mcps`.
+- **Screens:** [`../screens/mcps.md`](../screens/mcps.md) (admin trust + used-by) + [`../screens/projects/project-mcps-hub.md`](../screens/projects/project-mcps-hub.md) (project hub).
+- **Source (Implemented base):** `web/lib/capabilities/resolver.ts`, `web/lib/capabilities/agent-map.ts`, `web/lib/mcp/projection.ts`, `web/lib/mcp/readiness.ts`, `supervisor/src/acp-client.ts`, `web/app/api/admin/mcp-servers/*`.

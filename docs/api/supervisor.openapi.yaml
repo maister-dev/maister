@@ -52,6 +52,8 @@ tags:
     description: Permission-only human-in-the-loop input delivery.
   - name: model-catalog
     description: Model discovery resolver for a runner draft (ADR-076).
+  - name: mcp-probe
+    description: MCP server health probe — real `initialize` handshake (ADR-129).
   - name: sidecars
     description: CCR router-sidecar admin lifecycle — start/stop (ADR-094).
 paths:
@@ -546,6 +548,88 @@ paths:
                   value:
                     code: "PRECONDITION"
                     message: "provider.authTokenEnv: must be an environment variable name"
+        default:
+          description: Unhandled supervisor error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /mcp-probe:
+    post:
+      tags: [mcp-probe]
+      summary: Probe an MCP server with a real `initialize` handshake
+      description: |
+        (ADR-129 — Designed.) Opens the MCP server per its transport
+        (`stdio` spawns a child; `sse`/`http` connect), performs the MCP
+        `initialize` handshake, and returns `{ ok, latencyMs, serverInfo?,
+        reason? }`. Bounded by `MAISTER_MCP_PROBE_TIMEOUT_MS` (default 8000);
+        the spawned child + timer are released on **every** path (success,
+        handshake error, timeout, spawn error) via SIGTERM →
+        `MAISTER_MCP_PROBE_TEARDOWN_GRACE_MS` (default 2000) → SIGKILL in a
+        `finally`.
+
+        **Identifiers & secrets.** Every body field is probe config
+        (`body-controlled`), NAMES only — `envKeys`/`headerKeys` are
+        environment-variable NAME references resolved server-side from
+        `process.env`. The supervisor NEVER returns or logs a secret value. The
+        exec-trust gate is enforced **web-side** before this call (this route
+        executes what it is told, inside the trust boundary).
+      operationId: probeMcpServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [transport]
+              properties:
+                transport: { type: string, enum: [stdio, sse, http] }
+                command:
+                  type: string
+                  description: Required when `transport=stdio`.
+                args:
+                  type: array
+                  items: { type: string }
+                envKeys:
+                  type: array
+                  items: { type: string }
+                  description: Env-var NAME references (stdio). Resolved from `process.env`.
+                url:
+                  type: string
+                  description: Required when `transport=sse`/`http`.
+                headerKeys:
+                  type: array
+                  items: { type: string }
+                  description: Header NAME references (sse/http). Resolved from `process.env`.
+            examples:
+              stdio:
+                summary: Probe a stdio MCP
+                value:
+                  transport: stdio
+                  command: npx
+                  args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+                  envKeys: []
+      responses:
+        "200":
+          description: Probe completed (ok true/false; never a secret).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  latencyMs: { type: integer }
+                  serverInfo:
+                    type: object
+                    additionalProperties: true
+                    nullable: true
+                  reason: { type: string, nullable: true }
+        "409":
+          description: Malformed body (Zod rejection → `PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         default:
           description: Unhandled supervisor error.
           content:

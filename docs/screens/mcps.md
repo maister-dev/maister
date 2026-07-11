@@ -2,7 +2,7 @@
 
 - **Type:** screen (admin).
 - **Route:** `/mcps` (global admin only).
-- **Status:** Implemented (WI-2).
+- **Status:** Implemented (WI-2); trust action + used-by column + test-connection Designed (ADR-129).
 - **Source:** `web/app/(app)/mcps/page.tsx`, reusing
   `components/settings/{mcp-servers-panel,mcp-server-modal}.tsx`.
 
@@ -33,9 +33,18 @@ board's `?tab=mcps`; this screen is platform scope.
 ## Layout & regions
 
 A page header, then the reused `McpServersPanel`: a full-width view-only table
-(id, transport, target, agents, **readiness**, enabled, actions) plus the
-create/edit/delete modal. Follows the data-management page bar from
-`web/CLAUDE.md` (full-width, view-only table, modal edits).
+(id, transport, target, agents, **readiness**, **trust**, **used by N**,
+enabled, actions) plus the create/edit/delete modal. Follows the data-management
+page bar from `web/CLAUDE.md` (full-width, view-only table, modal edits).
+
+**Trust action (Designed, ADR-129).** Each row shows its
+`trust_status ∈ {untrusted, trusted, trusted_by_policy}` as a badge and offers a
+**trust / revoke** control (mirrors the `studio` namespace `trust`/`needsTrust`
+labels). Flipping trust calls `POST /api/admin/mcp-servers/{id}/trust`. An
+untrusted platform MCP is **visible but not executable** — projects see it in
+the hub but it is withheld from materialization (`platform-untrusted`) until
+trusted. The **used by N** column counts projects referencing the server
+(`web/lib/mcp/usage.ts loadMcpUsageReferences`, mirrors `studio.usedBy`).
 
 ## States
 
@@ -55,22 +64,30 @@ stateDiagram-v2
 
 - Read: `db.select(...).from(platform_mcp_servers)` (admin-scoped page load).
 - Mutations: `POST /api/admin/mcp-servers`,
-  `PATCH /api/admin/mcp-servers/{id}`, `DELETE /api/admin/mcp-servers/{id}`.
+  `PATCH /api/admin/mcp-servers/{id}` (accepts `trustStatus`),
+  `DELETE /api/admin/mcp-servers/{id}`, and (Designed, ADR-129)
+  `POST /api/admin/mcp-servers/{id}/trust`.
   `readiness_status` / `readiness_reasons` are recomputed by
   `evaluateMcpReadiness(row, diagnostics)` on POST + PATCH (never DELETE) — see
   [`../system-analytics/mcp-management.md`](../system-analytics/mcp-management.md).
-- No new routes are added by this screen (the catalog CRUD pre-dates it).
+- Used-by count: `web/lib/mcp/usage.ts loadMcpUsageReferences`.
+- The "Test connection" probe (Designed, ADR-129) proxies to supervisor
+  `POST /mcp-probe`; a stdio server from an untrusted source is refused with a
+  typed `CONFIG` reason (no override in v1).
 
 ## i18n
 
 `mcps` (page eyebrow/title/subtitle) and `settings` (reused panel + modal
-labels: `mcpServersTitle`, `colReadiness`, `addMcp`, …).
+labels: `mcpServersTitle`, `colReadiness`, `addMcp`, …). The trust + used-by UI
+mirrors the `studio` namespace keys (`trust`, `needsTrust`, `usedBy`).
 
 ## Linked artifacts
 
 - ADR: [ADR-070](../decisions.md#adr-070) — platform MCP admin CRUD + delete
-  guard.
+  guard; [ADR-129](../decisions.md#adr-129) — load-bearing trust + used-by +
+  health probe.
 - Behavior: [`../system-analytics/mcp-management.md`](../system-analytics/mcp-management.md).
+- Project-side hub: [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md).
 - Source: `web/app/(app)/mcps/page.tsx`, `web/lib/mcp/readiness.ts`,
   `web/app/api/admin/mcp-servers/route.ts`,
   `web/app/api/admin/mcp-servers/[id]/route.ts`.

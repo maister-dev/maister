@@ -105,6 +105,17 @@ per-class/per-agent live spike proves enforcement. Every cell carries a `TODO(M1
 in code. **Codex stays `instructed` for all six classes in M14** (Q2 decision, see
 ADR-042).
 
+> **MCP note (ADR-129, 2026-07-11).** Per-session MCP config **is** materialized
+> today (M14 delivers it via `settings.local.json` + ACP `mcpServers`), so the
+> `mcps` cells being `instructed` reflect only the un-flipped *enforcement of
+> declared limits*, not a missing materialization path. Orthogonally, MCP
+> Management v2 makes `platform_mcp_servers.trust_status` **load-bearing at
+> materialization**: an untrusted platform MCP is withheld from the materialized
+> executable set (reason `platform-untrusted`) regardless of this enforcement
+> flip — see [mcp-management.md](mcp-management.md). Whether the `instructed →
+> enforced` flip lands is owned by the enforcement-flip work (ADR-042); this note
+> changes no `ENFORCEABILITY_BY_AGENT` cell.
+
 | agent → class | `mcps` | `tools` | `skills` | `restrictions` | `permissionMode` | `workspaceAccess` |
 | ------------- | ------ | ------- | -------- | -------------- | ---------------- | ----------------- |
 | `claude`      | instructed | instructed | instructed | instructed | instructed | instructed |

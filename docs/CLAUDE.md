@@ -124,7 +124,8 @@ per-doc template, and the classification rule.
 | [`screens/chrome/top-nav.md`](screens/chrome/top-nav.md) | Top nav: breadcrumb, locale/theme/user menu. |
 | [`screens/chrome/launch-dialog.md`](screens/chrome/launch-dialog.md) | Launch dialog: scratch/launch popover, Cmd/Ctrl+K. |
 | [`screens/inbox.md`](screens/inbox.md) | Unified `/inbox` screen (needs-you HITL + mentions). |
-| [`screens/mcps.md`](screens/mcps.md) | Platform MCP catalog `/mcps` (admin). |
+| [`screens/mcps.md`](screens/mcps.md) | Platform MCP catalog `/mcps` (admin): CRUD + readiness, plus trust action + used-by (ADR-129). |
+| [`screens/projects/project-mcps-hub.md`](screens/projects/project-mcps-hub.md) | Project MCP hub `/projects/{slug}?tab=mcps`: 3-source list, requirements ledger, match/connect/overlay, test-connection (ADR-129). |
 | [`screens/projects/add-project.md`](screens/projects/add-project.md) | Add-project form `/projects/new`: onboarding mode selector, live name/task-key prefill, classified clone-error remediation (ADR-093). |
 | [`screens/projects/project-settings-git.md`](screens/projects/project-settings-git.md) | Project Settings → Git (block): remotes table + add/edit/remove + push/fetch, persist-config action + banner (ADR-093). |
 | [`screens/projects/project-settings-agents.md`](screens/projects/project-settings-agents.md) | Project Settings → Agents (block): attach/enable agents from attached packages, cron/event triggers, runner override, autoApply/onBudgetBreach, branch base (M39, ADR-106). |

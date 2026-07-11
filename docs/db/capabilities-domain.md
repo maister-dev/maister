@@ -44,7 +44,7 @@ erDiagram
         text enforceability "enforced|instructed|unsupported"
         boolean selected_by_default
         boolean selectable "false after CLEAR or unsupported"
-        jsonb material "capability definition; env values redacted to key-names"
+        jsonb material "capability def (env→key-names); +lastProbe/readiness cache + requirement marker (ADR-129)"
         timestamp disabled_at "nullable; SET on CLEAR, cleared on re-add"
         timestamp created_at
         timestamp updated_at
@@ -82,6 +82,16 @@ registration (`upsertCapabilitiesFromConfig`).
 - `capability_ref_id` — the stable id used in `maister.yaml` capability arrays
   and in node `settings.mcps[]`, `settings.skills[]`, etc. Unique within
   `(project_id, source, kind)`.
+- **(Designed, ADR-129)** `material` (for `kind=mcp`) additionally carries: a
+  package **requirement marker** (`origin` distinguishing a requirement from an
+  executable template — a requirement declares a needed ref without a
+  `command`/`url`), and the per-project probe/readiness cache
+  `material.lastProbe` / `material.readiness` (project & package MCP rows have no
+  readiness columns, so the cache lives in jsonb — never a secret value). The
+  cache is per-project by design: a W-C overlay makes the effective config
+  per-project, so the same platform MCP can be Ready in project A and NotReady in
+  project B. Binding rows themselves live in `project_mcp_bindings` (see
+  [`projects-domain.md`](projects-domain.md)), never overloaded onto this table.
 - `kind` — discriminates the record shape. `agent_definition` and `env_profile`
   are **Designed (M14)** kinds ingested from the new `capability_imports[]` and
   the `capabilities.agent_definitions[]` / `capabilities.env_profiles[]` blocks

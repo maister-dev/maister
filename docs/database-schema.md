@@ -38,6 +38,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `project_flow_runner_defaults` | Per-project Flow attachment runner default. `runner_id = null` means inherit project default.                                                                                                                                                                                                                              | `projects.id`, `flows.id`, optional `platform_acp_runners.id`              |
 | `flow_runner_remaps`          | Per-slot binding records keyed `(project_id, flow_revision_id, slot_key)` mapping each unbound session / consensus runner slot to a platform runner. **(M42 — Implemented, ADR-114, migration `0081`)** re-keys this from the per-step `(…, step_id, source_runner_id)` shape.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
 | `capability_records`          | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings.                                                                                                                                                                                                     | `projects.id`                                                              |
+| `project_mcp_bindings`        | **(ADR-129 — Designed, migration `0093`)** Explicit binding of a capability `ref_id` → concrete MCP target per project (`platform`/`project`/`package`); enabled binding wins over precedence, disabled = opt-out, absent = grandfather. UNIQUE `(project_id, ref_id)`; per-project env-slot overlay (names only).             | `projects.id` (CASCADE)                                                    |
 | `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
@@ -353,6 +354,9 @@ never stored and are resolved supervisor-side.
                                  //   platform_acp_runners.trustStatus semantics
   readinessStatus: 'Unknown' | 'Ready' | 'NotReady', // DEFAULT 'Unknown'
   readinessReasons (jsonb, DEFAULT '[]'),
+  lastProbeStatus?,              // (ADR-129 Designed) 'Ok' | 'Failed', nullable
+  lastProbeAt?,                  // (ADR-129 Designed) timestamptz, nullable
+  lastProbeReason?,              // (ADR-129 Designed) nullable; never a secret
   enabled (DEFAULT true),
   createdAt, updatedAt
 }
@@ -362,6 +366,49 @@ A platform MCP DELETE is refused (409) while any `capability_records` row
 references it (mirrors `assertCanDisable`). A duplicate id on POST returns 409
 via `onConflictDoNothing().returning()`, never a raw 500. Stdio `command` spawn
 is gated on `exec_trust = 'trusted'` for the owning `flow_revisions` row (§4.2).
+
+**(ADR-129 — Designed.)** `trustStatus` becomes **load-bearing** at
+materialization: an `untrusted` server is visible in every project hub but
+withheld from the executable set (`platform-untrusted`). Migration `0093`
+grandfather-backfills `trust_status='trusted' WHERE enabled=true AND
+trust_status='untrusted'` so existing setups are unchanged (Serena,
+`enabled=false`, stays `untrusted`). The `lastProbe*` columns cache the admin
+global health probe (`POST /mcp-probe`); per-project probe/readiness for the
+same server lives on the project's `capability_records.material` instead (the
+overlay makes the effective config per-project).
+
+## `project_mcp_bindings` (Designed, ADR-129)
+
+**(ADR-129 — Designed, migration `0093`.)** The explicit binding of a capability
+`ref_id` to a concrete MCP target within one project — the entity that replaces
+implicit `refId`-equality resolution.
+
+```ts
+{
+  id,                            // PK (server-generated)
+  projectId,                     // FK projects(id) ON DELETE CASCADE (server-state)
+  refId,                         // capability ref bound, e.g. 'github'
+  targetKind: 'platform' | 'project' | 'package',  // inline-text enum + CHECK
+  targetId,                      // platform_mcp_servers.id | capability_records.id
+  enabled (DEFAULT true),        // false = explicit opt-out / disconnect
+  configOverlay (jsonb, DEFAULT '{}'), // {envRemap?,headerRemap?,argsOverride?,urlOverride?}
+                                 //   NAMES only — no secret VALUE ever stored
+  recommendedHint?,              // studio hint mirror, nullable
+  createdBy?,                    // audit user id, nullable
+  createdAt, updatedAt
+}
+```
+
+UNIQUE `(project_id, ref_id)` — one binding per ref per project. An **enabled**
+binding's target wins over `project > platform > flow-package` precedence for its
+ref; a **disabled** binding makes the ref unresolvable in that project (explicit
+opt-out); an **absent** binding leaves resolution unchanged (grandfather). Every
+route derives `project_id` from the URL slug (server-state) and validates
+`(target_kind, target_id)` against existing rows; a platform target must be
+`enabled` + trusted to bind as executable. `config_overlay` is validated against
+the target's declared slots (unknown slot → `CONFIG` 422) and rewrites only
+NAMES web-side — the ACP `mcpServers` wire shape is unchanged (§ supervisor).
+See [`system-analytics/mcp-management.md`](system-analytics/mcp-management.md).
 ADR-084/ADR-086 allow `supportedAgents` to include all five adapter families.
 New rows default to `["claude","codex","gemini","opencode","mimo"]` after
 migrations `0044` and `0045`; existing custom rows are not silently widened.
@@ -609,7 +656,13 @@ registration.
   enforceability: 'enforced' | 'instructed' | 'unsupported',
   selectedByDefault,             // default launcher checkbox state
   selectable,                    // false after CLEAR or unsupported
-  material,                      // jsonb; secret values are not stored
+  material,                      // jsonb; secret values are not stored.
+                                 //   (ADR-129 Designed) for kind=mcp, additionally
+                                 //   carries a package requirement marker (a
+                                 //   requirement declares a ref with no command/url)
+                                 //   and the per-project probe/readiness cache
+                                 //   material.lastProbe / material.readiness —
+                                 //   never a secret value.
   disabledAt?,
   createdAt, updatedAt
 }
@@ -1109,7 +1162,14 @@ unread badge and inbox panel.
                                  //   Shape: { flowRevisionId: string,
                                  //     flowOrigin: "authored"|"git",
                                  //     capabilities: {refId,kind,sha}[],
-                                 //     mcps: {refId,sha,scope}[] }.
+                                 //     mcps: {refId,sha,scope,
+                                 //       provenance?:'binding'|'precedence',   // ADR-129
+                                 //       boundTarget?:{kind,id}}[] }.
+  withheldMcps?,                 // (ADR-129 — Designed, migration 0093) jsonb NULL.
+                                 //   Run-level withheld-MCP sink for flow AND agent:
+                                 //   {refId,transport,reason,scope}[]; reason ∈
+                                 //   {platform-untrusted, exec-untrusted-stdio}.
+                                 //   Never a secret value. Read by run-detail.
   deliveryPolicySnapshot?,       // ADR-085 (jsonb, migration 0047)
                                  //   immutable resolved DeliveryPolicy at launch;
                                  //   cancel may change trigger auto_on_ready -> manual

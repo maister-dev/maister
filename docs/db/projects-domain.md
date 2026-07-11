@@ -9,6 +9,7 @@ each entity's behavior.
 ```mermaid
 erDiagram
     PROJECTS ||--o{ FLOWS : "flows[] in maister.yaml"
+    PROJECTS ||--o{ PROJECT_MCP_BINDINGS : "ref → MCP target (ADR-129)"
     PLATFORM_ACP_RUNNERS ||--o{ PROJECTS : "default_runner_id override"
     PLATFORM_ACP_RUNNERS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "attachment default"
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner binding"
@@ -71,6 +72,9 @@ erDiagram
         text trust_status "untrusted|trusted|trusted_by_policy (DEFAULT untrusted)"
         text readiness_status "Unknown|Ready|NotReady (DEFAULT Unknown)"
         jsonb readiness_reasons "DEFAULT []"
+        text last_probe_status "ADR-129 Designed: nullable Ok|Failed"
+        timestamp last_probe_at "ADR-129 Designed: nullable"
+        text last_probe_reason "ADR-129 Designed: nullable"
         boolean enabled "DEFAULT true"
         timestamp created_at
         timestamp updated_at
@@ -81,6 +85,20 @@ erDiagram
         text project_id FK
         text flow_id FK
         text runner_id FK "nullable = inherit"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PROJECT_MCP_BINDINGS {
+        text id PK
+        text project_id FK "cascade"
+        text ref_id "capability ref bound, e.g. github"
+        text target_kind "platform|project|package (CHECK)"
+        text target_id "platform_mcp_servers.id | capability_records.id"
+        boolean enabled "DEFAULT true; false = explicit opt-out"
+        jsonb config_overlay "DEFAULT {}; env/header/arg/url NAME remaps only"
+        text recommended_hint "nullable; studio hint mirror"
+        text created_by "nullable; audit user id"
         timestamp created_at
         timestamp updated_at
     }
@@ -188,6 +206,9 @@ mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
 - **(Implemented, ADR-088)** `project_package_attachments` UNIQUE on
   `(project_id, package_name)` — at most one attached version of a package per
   project.
+- **(Designed, ADR-129)** `project_mcp_bindings` UNIQUE on `(project_id, ref_id)`
+  — exactly one binding per ref per project; `target_kind` carries a CHECK
+  (`platform|project|package`); `project_id` FK CASCADE.
 - **(Designed, ADR-096)** `local_packages.slug` UNIQUE — platform-scoped
   working-package identity; the working-dir name derives from it. `working_dir`
   is never exposed to the client; `source_install_id` / `last_cut_install_id`
@@ -228,7 +249,8 @@ mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
   enablement. Until that lands, `flows` is still the mutable current pointer;
   run safety comes from `runs.flow_revision`.
 - `flow_revisions.exec_trust` **(Designed, M27)**: second independent trust axis. `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) and MCP stdio command spawn. Default `untrusted`; requires an explicit operator flip. Drawn in the narrative; `FLOW_REVISIONS` is not included in this partial ERD.
-- `platform_mcp_servers` **(Designed, M27)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram — secret values are stored only as `env:NAME` references. Mirrors `platform_acp_runners` in admin CRUD surface.
+- `platform_mcp_servers` **(Designed, M27)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram — secret values are stored only as `env:NAME` references. Mirrors `platform_acp_runners` in admin CRUD surface. **(ADR-129 Designed)** `trust_status` becomes load-bearing at materialization (untrusted ⇒ visible-but-withheld); `last_probe_status`/`last_probe_at`/`last_probe_reason` cache the admin global health probe (never a secret value).
+- `project_mcp_bindings` **(Designed, ADR-129)**: the explicit binding of a capability `ref_id` to a concrete MCP target within one project. FK `project_id` → `projects` (CASCADE). UNIQUE `(project_id, ref_id)` — one binding per ref per project. An enabled binding's target WINS over `project > platform > flow-package` precedence; a disabled binding makes the ref unresolvable (explicit opt-out); an absent binding leaves resolution unchanged (grandfather). `config_overlay` remaps env/header/arg/url NAMES only (no secret value). See [`../system-analytics/mcp-management.md`](../system-analytics/mcp-management.md).
 - ADR-084 DB audit: runner adapter/capability-agent columns are SQL `text`
   without CHECK/enum constraints, so adding `gemini`, `opencode`, and `mimo` is a
   TypeScript/schema contract change, not a SQL DDL migration for runner rows.

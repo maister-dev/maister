@@ -281,11 +281,11 @@ refusal is `MaisterError("EXECUTOR_UNAVAILABLE")`. No new error code
 ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror) closed
 union).
 
-## Capability resolution precedence (Designed, M27)
+## Capability resolution precedence (Implemented)
 
-**(Designed, M27)** The uniform local-first resolution order applies to **all** capability kinds (`mcp`, `skill`, `rule`, `agent_definition`, `restriction`, and any future kind): **project > platform > flow-package**.
+**(Implemented)** The uniform local-first resolution order applies to **all** capability kinds (`mcp`, `skill`, `rule`, `agent_definition`, `restriction`, and any future kind): **project > platform > flow-package**. For `kind=mcp`, an explicit `project_mcp_bindings` row overrides this precedence for its ref (ADR-129, Designed — see [mcp-management.md](mcp-management.md)).
 
-Winner per `(kind, capability_ref_id)`: the highest-precedence record in the chain is used; lower-precedence records with the same `(kind, refId)` are **shadowed — no merge, no duplicate emitted**. This is consistent with the runner-resolution chain (root CLAUDE.md §5) and supersedes the current `resolver.ts` behavior that returns all records for a ref-id without picking a winner, which produces latent duplicate-materialization bugs.
+Winner per `(kind, capability_ref_id)`: the highest-precedence record in the chain is used; lower-precedence records with the same `(kind, refId)` are **shadowed — no merge, no duplicate emitted**. This is consistent with the runner-resolution chain (root CLAUDE.md §5) and is enforced in `resolver.ts` via winner-per-`(kind, refId)` selection (`selectedRecords`), so no duplicate capability record for the same `(kind, refId)` reaches materialization.
 
 Concretely:
 - A project-scoped MCP with `id=github` shadows a platform-scoped MCP with the same id.

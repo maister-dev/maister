@@ -153,6 +153,7 @@
 | [ADR-126](#adr-126-auto-promotion-lanes) | Auto-promotion lanes: project-scoped path/content-bounded diff classes (docs/tests/deps/config) promoted through the same `promoteRun` choke point, non-configurable hard deny-list security boundary, `runs.review_entered_at` grace anchor, CAS hold give-up, deps supply-chain hardening | Proposed | 2026-07-03 |
 | [ADR-127](#adr-127-project-brain-consultant-indexed-tier) | Project Brain Consultant indexed tier | Accepted | 2026-07-03 |
 | [ADR-128](#adr-128-project-brain-self-improvement-proposal-bridge) | Project Brain self-improvement proposal bridge | Accepted | 2026-07-03 |
+| [ADR-129](#adr-129-mcp-management-v2--requirements--bindings-per-project-overlay-trust--health-activation) | MCP management v2: requirements & bindings across package/platform/project, per-project env-slot overlay (names-only), load-bearing trust, supervisor health probe | Accepted | 2026-07-11 |
 
 ---
 
@@ -10892,6 +10893,101 @@ optional non-executable MCP catalog row.
   humans or explicit autonomy conclude.
 - _Seed Serena enabled and rely on `trust_status` alone_: rejected. Current
   projection ignores `trust_status`, so enabled would be executable today.
+
+---
+
+### ADR-129: MCP management v2 — requirements & bindings, per-project overlay, trust & health activation
+
+**Date:** 2026-07-11
+**Status:** Accepted
+
+> Number is nominal (contested at authoring time). Renumber to the true
+> next-free at merge; prose citations use `ADR-129` as a placeholder.
+
+**Context:** M27/ADR-070 shipped a platform MCP catalog and M14/ADR-043 shipped
+per-session materialization, but MCP configuration is resolved by implicit
+`refId` string-equality across `project > platform > flow-package`. Seven gaps
+followed: no way for a project to *bind* a required ref to a chosen server, no
+per-project config (a single global supervisor `process.env` supplies every
+slot), a `platform_mcp_servers.trust_status` column consulted **nowhere** (so
+ADR-128's Serena seed leans on `enabled=false` alone), exec-trust withholding
+that is warn-log-only and ephemeral (silent downgrade), no health probe (no MCP
+client in the supervisor), package manifests that cannot declare a *requirement*
+without shipping an implementation, and a project MCP board tab that lists only
+project-local servers. This ADR adds the explicit requirements & bindings layer.
+
+**Decision:**
+
+- **D1 — bindings table.** A new `project_mcp_bindings`
+  `(project_id CASCADE, ref_id, target_kind ∈ {platform,project,package},
+  target_id, enabled default true, config_overlay jsonb, recommended_hint,
+  created_by, timestamps)` unique `(project_id, ref_id)` — NOT an overload of
+  `capability_records`. An enabled binding wins over `SOURCE_PRECEDENCE`; a
+  disabled binding makes the ref unresolvable (explicit opt-out); an absent
+  binding is grandfather (today's behavior, zero migration of live setups).
+- **D2 — grandfather pickup.** Platform→project pickup stays implicit projection;
+  disconnect is an explicit per-project opt-out (disabled binding). Opt-in mode
+  is a later platform setting.
+- **D3 — requirement-only package manifest.** A `mcps[]` entry with neither
+  `command` nor `url` is a valid requirement; an entry with an implementation
+  stays a template. Additive-optional → **no `schemaVersion` bump** (ADR-088
+  bumps only for a new content *kind*). Adds optional `recommendedPlatformServerId`.
+- **D4 — probe trust gate, no override.** Probing an untrusted-source stdio MCP
+  is refused with a typed `CONFIG` reason — **no admin override in v1**. Enforced
+  web-side (exec-trust never reaches the supervisor as a named signal); the
+  supervisor `POST /mcp-probe` executes what it is told, inside the trust boundary.
+- **D5 — one resolution path.** A binding also satisfies agent
+  `capability_profile.mcps` refs — flows, agents, and scratch resolve through the
+  same binding-aware `resolveCapabilityProfile`.
+- **Trust made load-bearing (W-E).** `trust_status='untrusted'` on the winning
+  `source='platform'` record excludes it from the executable set (withheld
+  `platform-untrusted`) while keeping it VISIBLE in the hub/ledger. Live-join, so
+  an admin flip takes effect next launch; the decision is snapshotted into
+  `resolved_capability_set`. A migration backfills
+  `trust_status='trusted' WHERE enabled=true AND trust_status='untrusted'` so no
+  live setup breaks; Serena (`enabled=false`) stays untrusted and now flows
+  through the real gate — fulfilling ADR-128's precondition.
+- **Withheld sinks.** `withheldMcps[]` is persisted into
+  `node_attempts.materialization_plan` (flow, per-node) AND a new
+  `runs.withheld_mcps` jsonb column (both flow and agent — agent runs persist no
+  materialization_plan). No silent warn-only path remains the sole record.
+- **Per-project overlay (W-C).** `config_overlay` rewrites env/header/arg/url
+  **NAMES** web-side after `mapProfileToAgentArtifacts`; the ACP `mcpServers`
+  wire shape is unchanged and the supervisor still resolves values from
+  `process.env`. No secret **value** persists anywhere.
+- **Probe (W-F).** Add `@modelcontextprotocol/sdk` to the supervisor; a new
+  `POST /mcp-probe` performs a real `initialize` handshake per transport with
+  deferred-release teardown (SIGTERM→grace→SIGKILL in `finally`). Cache into
+  platform `last_probe_*` columns / project-package `material.lastProbe` — no new
+  table.
+- **Hub placement.** All project-side MCP management lives in the existing board
+  `?tab=mcps` tab (rebuilt), NOT a separate page.
+
+**Consequences:**
+
+- Requirements become first-class and matchable; a project can bind `github`
+  (required by a package) to its platform `github` server in one click, and a
+  previously CONFIG-refused launch succeeds with `provenance='binding'`.
+- Trust and health stop being decorative: untrusted platform MCPs are visible
+  but never silently executed, and withholds are durable and reviewable.
+- Accepted residual crash windows: a trust flip between resolve and spawn uses
+  the launch-time snapshot (next launch re-reads); a probe result cached
+  per-project can go stale after an overlay edit (re-probe clears it). No new
+  `MaisterError` code, no engine bump, no SSE/AsyncAPI event.
+
+**Alternatives Considered:**
+
+- _Overload `capability_records` for bindings_: rejected — muddies the
+  materialization row with binding audit/overlay; clean FK targets + a dedicated
+  audit trail win.
+- _Opt-in platform pickup now_: rejected for v1 — grandfather preserves every
+  live setup with zero migration; opt-in is a later platform setting.
+- _Admin override for untrusted-source probe_: rejected — trust→execute, never
+  execute-then-trust; an override is a v2 concern behind an explicit policy.
+- _Hand-roll three-transport JSON-RPC in the supervisor_: rejected — more code
+  and risk than a maintained MCP SDK dependency.
+- _A separate project MCP page_: rejected by owner — the board `?tab=mcps` tab is
+  the one place for all three sources.
 
 ---
 
