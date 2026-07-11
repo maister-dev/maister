@@ -47,6 +47,7 @@ type FakeDb = {
     };
   };
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
+  execute: (query?: unknown) => Promise<{ rows: unknown[] }>;
 };
 
 const state: {
@@ -81,6 +82,7 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
 }
 
 const fakeDb: FakeDb = {
+  execute: async () => ({ rows: [] }),
   select: () => ({
     from: (table: unknown) => {
       const nextRows = async () => {

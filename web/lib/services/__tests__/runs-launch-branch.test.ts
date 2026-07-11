@@ -71,6 +71,7 @@ type FakeDb = {
     set: (values: unknown) => { where: (predicate: unknown) => Promise<void> };
   };
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
+  execute: (query?: unknown) => Promise<{ rows: unknown[] }>;
 };
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -109,6 +110,7 @@ const relationJoinChain: RelationJoinChain = {
 };
 
 const fakeDb: FakeDb = {
+  execute: async () => ({ rows: [] }),
   select: () => ({
     from: (table: unknown): FromResult | LatestRunChain | RelationJoinChain => {
       if (getTableName(table as never) === "runs") {
