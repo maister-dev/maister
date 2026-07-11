@@ -123,6 +123,7 @@ import {
 } from "@/lib/capabilities/resolver";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
+import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { agentFacadeMcpServer } from "@/lib/agents/launch";
 import {
   issueOrchestratorRunToken,
@@ -1696,9 +1697,14 @@ async function materializeNodeCapabilities(
   const selectedAgentDefinitionIds =
     materializationSelection?.selection.selectedAgentDefinitionIds ?? [];
 
+  // ADR-129 (W-B): bindings redirect the winning MCP record per ref so the
+  // materialized server matches the launch snapshot's bound target.
+  const mcpBindings = await loadProjectMcpBindings(loaded.run.projectId);
+
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
     executorAgent: agent,
+    mcpBindings,
     // declares: undefined mcps → resolver default set; explicit list → that set
     // (required ∪ additional, T-C6). model-only pin → explicit [] so NO default
     // MCPs are pulled in (idsForKind treats undefined as "the default set").

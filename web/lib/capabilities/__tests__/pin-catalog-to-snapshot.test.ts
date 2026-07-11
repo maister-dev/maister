@@ -58,7 +58,12 @@ describe("buildResolvedCapabilitySet — capability scope (B5)", () => {
       { refId: "lint", kind: "skill", sha: "a", scope: "project" },
     ]);
     expect(set.mcps).toEqual([
-      { refId: "github", sha: "b", scope: "flow-package" },
+      {
+        refId: "github",
+        sha: "b",
+        scope: "flow-package",
+        provenance: "precedence",
+      },
     ]);
   });
 
@@ -83,7 +88,7 @@ describe("buildResolvedCapabilitySet — capability scope (B5)", () => {
     });
 
     expect(set.mcps).toEqual([
-      { refId: "github", sha: "new", scope: "project" },
+      { refId: "github", sha: "new", scope: "project", provenance: "precedence" },
     ]);
   });
 });

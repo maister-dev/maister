@@ -2530,14 +2530,23 @@ export async function resolveAgentProfileMcpServers(args: {
   const [
     { loadSelectableCapabilities, resolveCapabilityProfile },
     { gateStdioMcpsByExecTrust, mapProfileToAgentArtifacts },
+    { loadProjectMcpBindings },
   ] = await Promise.all([
     import("@/lib/capabilities/resolver"),
     import("@/lib/capabilities/agent-map"),
+    import("@/lib/mcp/binding-service"),
   ]);
   const catalog = await loadSelectableCapabilities(args.projectId, args.db);
+  // ADR-129 (D5): an agent's declared capability_profile.mcps resolve through the
+  // SAME binding-aware resolver as flows/scratch — one resolution path.
+  const mcpBindings = await loadProjectMcpBindings(
+    args.projectId,
+    args.db as never,
+  );
   const profile = resolveCapabilityProfile({
     projectId: args.projectId,
     executorAgent: args.capabilityAgent as never,
+    mcpBindings,
     selectedMcpIds: declared,
     selectedSkillIds: [],
     selectedRuleIds: [],

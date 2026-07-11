@@ -50,6 +50,7 @@ import {
   firstAgentUnsupportedRequiredMcp,
 } from "@/lib/capabilities/resolver";
 import { normalizeNodeMcps } from "@/lib/config.schema";
+import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
@@ -1089,11 +1090,31 @@ export async function* launchRunStaged(
         requiredMcpRefs.add(ref);
       }
 
+      // ADR-129 (W-B): project MCP bindings redirect which record is the winner
+      // for a ref (enabled binding beats precedence; disabled = unresolvable).
+      // Loaded once here; reused by the agent-support gate and the launch
+      // snapshot. Absent = grandfather (unchanged).
+      const mcpBindings = await loadProjectMcpBindings(project.id);
+
       // M27/T-C8b (mcp-management §6.2, bullet 6): a REQUIRED mcp whose resolved
       // winner record does not support the executor agent cannot materialize →
       // refuse launch (EXECUTOR_UNAVAILABLE → 503), before any side-effect.
       // ADDITIONAL mcps degrade gracefully at materialization (non-fatal).
       if (requiredMcpRefs.size > 0) {
+        // ADR-129 (W-B): a REQUIRED ref that has been explicitly disconnected
+        // (disabled binding) is unresolvable — refuse launch naming the reconnect,
+        // before any side-effect. CONFIG (422/409), not a silent drop.
+        const disconnectedRequired = [...requiredMcpRefs].find((ref) =>
+          mcpBindings.some((b) => b.refId === ref && !b.enabled),
+        );
+
+        if (disconnectedRequired) {
+          throw new MaisterError(
+            "CONFIG",
+            `required mcp "${disconnectedRequired}" is disconnected for project ${project.slug} — reconnect it in Project → MCPs`,
+          );
+        }
+
         const mcpAgentRows = await _db
           .select({
             capabilityRefId: capabilityRecords.capabilityRefId,
@@ -1113,12 +1134,13 @@ export async function* launchRunStaged(
           [...requiredMcpRefs],
           mcpAgentRows,
           capabilityAgent,
+          mcpBindings,
         );
 
         if (unsupportedMcp !== null) {
           throw new MaisterError(
             "EXECUTOR_UNAVAILABLE",
-            `required mcp "${unsupportedMcp}" cannot materialize for executor agent ${capabilityAgent} in project ${project.slug}`,
+            `required mcp "${unsupportedMcp}" cannot materialize for executor agent ${capabilityAgent} in project ${project.slug} — bind or configure it in Project → MCPs`,
           );
         }
       }
@@ -1312,10 +1334,14 @@ export async function* launchRunStaged(
         source: string;
         revision: string | null;
       }>;
+      // ADR-129 (W-B): thread bindings into the frozen snapshot so mcps[] records
+      // provenance and the bound target wins over precedence.
+      const snapshotMcpBindings = await loadProjectMcpBindings(project.id);
       const resolvedCapabilitySet = buildResolvedCapabilitySet({
         records: snapshotRecords,
         flowRevisionId: revision.id,
         flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
+        mcpBindings: snapshotMcpBindings,
       });
 
       log.debug(

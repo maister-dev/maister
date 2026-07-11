@@ -40,7 +40,12 @@ describe("buildResolvedCapabilitySet (T-C8)", () => {
     });
 
     expect(snap.mcps).toEqual([
-      { refId: "github", sha: "sha-mcp", scope: "platform" },
+      {
+        refId: "github",
+        sha: "sha-mcp",
+        scope: "platform",
+        provenance: "precedence",
+      },
     ]);
     expect(snap.capabilities).toEqual([
       {
@@ -79,7 +84,7 @@ describe("buildResolvedCapabilitySet (T-C8)", () => {
     });
 
     expect(snap.mcps).toEqual([
-      { refId: "github", sha: "pj", scope: "project" },
+      { refId: "github", sha: "pj", scope: "project", provenance: "precedence" },
     ]);
   });
 

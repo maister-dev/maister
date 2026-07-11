@@ -37,6 +37,7 @@ type McpTemplate = {
   url?: string;
   env?: string[];
   description?: string;
+  recommendedPlatformServerId?: string;
 };
 
 // `mcps/<id>.yaml` → the id segment (stem) as the template id default.
@@ -49,8 +50,9 @@ function stemOf(fileName: string): string {
 // Materialize a catalog row into a package-manifest MCP template. SECRETS NEVER
 // CROSS: only the env/header var NAMES become `env:NAME` references (T2.1). The
 // platform catalog's `sse` transport is mapped to the package schema's `http`
-// (the package DSL admits only `stdio | http`). Provenance is display-only —
-// the source server id is NOT written into the template.
+// (the package DSL admits only `stdio | http`). ADR-129 (D3): the source server
+// id IS now persisted as `recommendedPlatformServerId` — the match hint the
+// project MCP hub pre-selects when binding this ref.
 function materialize(
   entry: PlatformMcpCatalogEntry,
   fileName: string,
@@ -67,6 +69,7 @@ function materialize(
       ...(entry.args.length > 0 ? { args: entry.args } : {}),
       ...(envNames.length > 0 ? { env: envNames } : {}),
       description: entry.id,
+      recommendedPlatformServerId: entry.id,
     };
   }
 
@@ -76,6 +79,7 @@ function materialize(
     url: entry.url ?? "",
     ...(envNames.length > 0 ? { env: envNames } : {}),
     description: entry.id,
+    recommendedPlatformServerId: entry.id,
   };
 }
 
@@ -83,8 +87,8 @@ function materialize(
  * Editor for an `mcps/*` template file. A picker over the admin-managed
  * `platform_mcp_servers` catalog materializes a transport-aware MCP template
  * (command/args/url + `env:NAME` references ONLY) into the file, plus a raw YAML
- * surface for further edits. No secret VALUE is ever read or written, and the
- * source server id is not persisted (display-only provenance, T2.1).
+ * surface for further edits. No secret VALUE is ever read or written; the source
+ * server id is persisted as `recommendedPlatformServerId` (the match hint, ADR-129).
  *
  * Uniform `content`/`onChange` contract so the package files editor dispatches
  * here by the `mcps/` path prefix.

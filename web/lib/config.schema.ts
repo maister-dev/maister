@@ -1410,7 +1410,9 @@ const PACKAGE_ENV_REF = /^env:[A-Z0-9_]+$/;
 export const packageManifestMcpSchema = z
   .object({
     id: capabilityRefIdSchema,
-    transport: z.enum(["stdio", "http"]),
+    // ADR-129 (D3): all three impl fields are optional — an entry with NEITHER
+    // command NOR url NOR transport is a REQUIREMENT (a needed ref, no impl).
+    transport: z.enum(["stdio", "http"]).optional(),
     command: z.string().min(1).optional(),
     args: z.array(z.string()).optional(),
     url: z.string().min(1).optional(),
@@ -1422,9 +1424,43 @@ export const packageManifestMcpSchema = z
       )
       .optional(),
     description: z.string().min(1).optional(),
+    // ADR-129 (D3): optional hint pre-selecting a platform server to match this
+    // requirement in the project MCP hub match dialog.
+    recommendedPlatformServerId: capabilityRefIdSchema.optional(),
   })
   .strict()
   .superRefine((mcp, ctx) => {
+    const hasImplementation =
+      mcp.command !== undefined ||
+      mcp.url !== undefined ||
+      mcp.transport !== undefined;
+
+    // Requirement-only: id (+ env/description/recommendedPlatformServerId). No
+    // transport-specific fields — `args` without a command/transport is invalid.
+    if (!hasImplementation) {
+      if (mcp.args !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["args"],
+          message:
+            "`args` requires a transport/command (template), not a requirement-only entry",
+        });
+      }
+
+      return;
+    }
+
+    // Template: transport is required and drives command/url validation.
+    if (mcp.transport === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["transport"],
+        message: "an mcp template with `command`/`url` requires `transport`",
+      });
+
+      return;
+    }
+
     if (mcp.transport === "stdio") {
       if (!mcp.command) {
         ctx.addIssue({

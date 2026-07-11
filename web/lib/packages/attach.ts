@@ -366,19 +366,38 @@ function ingestionRecords(
     const env: Record<string, string> = {};
 
     for (const ref of mcp.env ?? []) env[ref.slice("env:".length)] = ref;
+
+    // ADR-129 (D3): an entry with NO implementation is a REQUIREMENT, not a
+    // template. It is marked `requirement: true` so materialization skips it (it
+    // declares a needed ref; the project satisfies it via a binding). The
+    // requirements ledger reads these markers. A template keeps its impl.
+    const isRequirement =
+      mcp.command === undefined &&
+      mcp.url === undefined &&
+      mcp.transport === undefined;
+
     records.push({
       capabilityRefId: mcp.id,
       kind: "mcp",
       label: mcp.description ?? mcp.id,
-      material: {
-        origin: ATTACHMENT_ORIGIN,
-        packageInstallId: install.id,
-        transport: mcp.transport,
-        command: mcp.command,
-        args: mcp.args ?? [],
-        env,
-        url: mcp.url,
-      },
+      material: isRequirement
+        ? {
+            origin: ATTACHMENT_ORIGIN,
+            packageInstallId: install.id,
+            requirement: true,
+            envKeys: (mcp.env ?? []).map((ref) => ref.slice("env:".length)),
+            recommendedPlatformServerId: mcp.recommendedPlatformServerId,
+          }
+        : {
+            origin: ATTACHMENT_ORIGIN,
+            packageInstallId: install.id,
+            transport: mcp.transport,
+            command: mcp.command,
+            args: mcp.args ?? [],
+            env,
+            url: mcp.url,
+            recommendedPlatformServerId: mcp.recommendedPlatformServerId,
+          },
     });
   }
 

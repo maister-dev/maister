@@ -49,6 +49,7 @@ function id(): string {
 
 async function seedProject(): Promise<string> {
   const projectId = id();
+
   await db.execute(sql`
     INSERT INTO projects (id, slug, name, repo_path, task_key)
     VALUES (
@@ -88,7 +89,9 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
 
     // project_mcp_bindings columns + nullability + defaults
     expect(byKey.get("project_mcp_bindings.id")?.is_nullable).toBe("NO");
-    expect(byKey.get("project_mcp_bindings.project_id")?.is_nullable).toBe("NO");
+    expect(byKey.get("project_mcp_bindings.project_id")?.is_nullable).toBe(
+      "NO",
+    );
     expect(byKey.get("project_mcp_bindings.ref_id")?.is_nullable).toBe("NO");
     expect(byKey.get("project_mcp_bindings.target_kind")?.is_nullable).toBe(
       "NO",
@@ -100,23 +103,23 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
     expect(byKey.get("project_mcp_bindings.config_overlay")?.data_type).toBe(
       "jsonb",
     );
-    expect(byKey.get("project_mcp_bindings.recommended_hint")?.is_nullable).toBe(
-      "YES",
-    );
+    expect(
+      byKey.get("project_mcp_bindings.recommended_hint")?.is_nullable,
+    ).toBe("YES");
     expect(byKey.get("project_mcp_bindings.created_by")?.is_nullable).toBe(
       "YES",
     );
 
     // platform probe columns are all nullable
-    expect(byKey.get("platform_mcp_servers.last_probe_status")?.is_nullable).toBe(
-      "YES",
-    );
+    expect(
+      byKey.get("platform_mcp_servers.last_probe_status")?.is_nullable,
+    ).toBe("YES");
     expect(byKey.get("platform_mcp_servers.last_probe_at")?.data_type).toBe(
       "timestamp with time zone",
     );
-    expect(byKey.get("platform_mcp_servers.last_probe_reason")?.is_nullable).toBe(
-      "YES",
-    );
+    expect(
+      byKey.get("platform_mcp_servers.last_probe_reason")?.is_nullable,
+    ).toBe("YES");
 
     // run-level withheld sink (nullable jsonb)
     expect(byKey.get("runs.withheld_mcps")?.data_type).toBe("jsonb");
@@ -127,6 +130,7 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
       SELECT indexname FROM pg_indexes WHERE tablename = 'project_mcp_bindings'
     `);
     const indexNames = new Set(indexes.rows.map((r) => r.indexname));
+
     expect(indexNames.has("project_mcp_bindings_project_ref_uq")).toBe(true);
     expect(indexNames.has("project_mcp_bindings_project_idx")).toBe(true);
 
@@ -135,16 +139,18 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
       WHERE conrelid = 'project_mcp_bindings'::regclass
     `);
     const conByName = new Map(cons.rows.map((r) => [r.conname, r.contype]));
+
     expect(conByName.get("project_mcp_bindings_target_kind_check")).toBe("c");
-    expect(conByName.get("project_mcp_bindings_project_id_projects_id_fk")).toBe(
-      "f",
-    );
+    expect(
+      conByName.get("project_mcp_bindings_project_id_projects_id_fk"),
+    ).toBe("f");
   });
 
   it("grandfather backfill flips enabled+untrusted platform MCPs to trusted, leaving disabled and already-trusted untouched", async () => {
     const enabledUntrusted = id();
     const serenaLike = id(); // disabled + untrusted
     const alreadyTrusted = id();
+
     await seedPlatformMcp({
       serverId: enabledUntrusted,
       enabled: true,
@@ -171,6 +177,7 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
       .split("--> statement-breakpoint")
       .map((s) => s.trim())
       .find((s) => s.startsWith("UPDATE"));
+
     expect(backfill).toBeDefined();
     await db.execute(sql.raw(backfill!));
 
@@ -179,6 +186,7 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
       WHERE id IN (${enabledUntrusted}, ${serenaLike}, ${alreadyTrusted})
     `);
     const trust = new Map(rows.rows.map((r) => [r.id, r.trust_status]));
+
     expect(trust.get(enabledUntrusted)).toBe("trusted"); // grandfathered
     expect(trust.get(serenaLike)).toBe("untrusted"); // Serena stays gated
     expect(trust.get(alreadyTrusted)).toBe("trusted"); // no-op
@@ -187,6 +195,7 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
   it("round-trips a binding and enforces uniqueness, target_kind CHECK, and cascade delete", async () => {
     const projectId = await seedProject();
     const serverId = id();
+
     await seedPlatformMcp({
       serverId,
       enabled: true,
@@ -194,6 +203,7 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
     });
 
     const bindingId = id();
+
     await db.execute(sql`
       INSERT INTO project_mcp_bindings (id, project_id, ref_id, target_kind, target_id, config_overlay)
       VALUES (${bindingId}, ${projectId}, 'github', 'platform', ${serverId}, ${JSON.stringify({ envRemap: { GITHUB_TOKEN: "env:PROJ_A_GH" } })}::jsonb)
@@ -208,6 +218,7 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
       SELECT ref_id, target_kind, enabled, config_overlay
       FROM project_mcp_bindings WHERE id = ${bindingId}
     `);
+
     expect(read.rows[0].ref_id).toBe("github");
     expect(read.rows[0].target_kind).toBe("platform");
     expect(read.rows[0].enabled).toBe(true);
@@ -236,6 +247,7 @@ describe("migration 0093 — MCP management v2 (ADR-129)", () => {
     const after = await db.execute<{ count: string }>(sql`
       SELECT count(*)::text AS count FROM project_mcp_bindings WHERE project_id = ${projectId}
     `);
+
     expect(Number(after.rows[0].count)).toBe(0);
   });
 });

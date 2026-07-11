@@ -56,6 +56,7 @@ import {
   loadSelectableCapabilities,
   resolveCapabilityProfile,
 } from "@/lib/capabilities/resolver";
+import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -795,9 +796,12 @@ export async function* launchScratchRunStaged(
   const broadSkillIds = catalog
     .filter((record) => record.kind === "skill")
     .map((record) => record.capabilityRefId);
+  // ADR-129 (D5): scratch resolves through the same binding-aware path as flows.
+  const mcpBindings = await loadProjectMcpBindings(project.id, db as never);
   const profile = resolveCapabilityProfile({
     projectId: project.id,
     executorAgent: executor.agent,
+    mcpBindings,
     selectedMcpIds: args.body.capabilities?.mcpIds,
     selectedSkillIds: broadSkillIds,
     selectedRuleIds: args.body.capabilities?.ruleIds,
