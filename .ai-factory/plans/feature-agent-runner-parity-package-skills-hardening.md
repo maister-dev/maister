@@ -465,7 +465,7 @@ Dependencies: Tasks 1.1 and 2.1.
 
 #### Task 3.1 - Make pinned-manifest wholesale inventory the only skill source
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -495,7 +495,7 @@ Dependencies: Task 1.2.
 
 #### Task 3.2 - Introduce run-scoped ownership and concurrency-safe leases
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -530,7 +530,7 @@ Dependencies: Tasks 1.2 and 3.1.
 
 #### Task 3.3 - Close terminal cleanup and trigger/workspace parity
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 

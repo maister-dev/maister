@@ -2947,6 +2947,21 @@ export async function startAgentSession(
     }
 
     const packageSkillRoots = await packageSkillMaterializationRoots(effective);
+
+    log.debug(
+      {
+        runId,
+        agentId: agent.id,
+        projectId: project.id,
+        packageInstallId: effective.packageInstallId,
+        installedPath: effective.installedPath,
+        skillRoots: packageSkillRoots,
+        skillRootCount: packageSkillRoots.length,
+        adapterId: snapshot.adapter,
+        workspace,
+      },
+      "standalone agent package capability inventory resolved",
+    );
     const packageSkillHome =
       packageSkillRoots.length > 0
         ? await materializeAdapterCapabilityHome({

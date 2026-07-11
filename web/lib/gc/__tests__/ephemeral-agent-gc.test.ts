@@ -55,6 +55,7 @@ describe("runEphemeralAgentGcSweep", () => {
         [{ id: "live1" }],
       ),
       removeOwnedWorktree: remove,
+      restoreMaterialization: vi.fn().mockResolvedValue(undefined),
     });
 
     expect(summary).toEqual({ scanned: 3, removed: 2, live: 1, failed: 0 });
@@ -85,6 +86,7 @@ describe("runEphemeralAgentGcSweep", () => {
     const summary = await runEphemeralAgentGcSweep({
       db: fakeDb([{ slug: "proj", repoPath: "/repos/proj" }], []),
       removeOwnedWorktree: remove,
+      restoreMaterialization: vi.fn().mockResolvedValue(undefined),
     });
 
     expect(summary).toEqual({ scanned: 2, removed: 1, live: 0, failed: 1 });

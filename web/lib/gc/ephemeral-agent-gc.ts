@@ -9,6 +9,7 @@ import { and, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
 import * as schemaModule from "@/lib/db/schema";
 import { worktreesRoot } from "@/lib/instance-config";
 import { removeOwnedWorktree } from "@/lib/worktree";
@@ -49,6 +50,7 @@ export interface RunEphemeralAgentGcSweepOptions {
   db?: Db;
   // Injected for tests; defaults to the real path-guarded git removal.
   removeOwnedWorktree?: (args: RemoveOwnedWorktreeArgs) => Promise<void>;
+  restoreMaterialization?: (cwd: string, runId: string) => Promise<void>;
 }
 
 // ADR-090 / RD6 backstop. `workspace_ref` runs create an EPHEMERAL detached
@@ -62,6 +64,8 @@ export async function runEphemeralAgentGcSweep(
 ): Promise<EphemeralAgentGcSummary> {
   const db = opts.db ?? getDb();
   const remove = opts.removeOwnedWorktree ?? removeOwnedWorktree;
+  const restore =
+    opts.restoreMaterialization ?? restoreAgentMaterialization;
   const root = worktreesRoot();
 
   const projectRows: Array<{ slug: string; repoPath: string }> = await db
@@ -112,6 +116,7 @@ export async function runEphemeralAgentGcSweep(
       const worktreePath = path.join(slugDir, dir);
 
       try {
+        await restore(worktreePath, runId);
         await remove({
           projectRepoPath: project.repoPath,
           worktreePath,

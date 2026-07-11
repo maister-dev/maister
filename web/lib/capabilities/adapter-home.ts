@@ -23,11 +23,10 @@ import {
   FLOW_AUTHORING_SKILL_FILES,
   FLOW_AUTHORING_SKILL_ID,
 } from "@/lib/flows/authoring-skill";
-import { atomicWriteText } from "@/lib/atomic";
 import {
-  PACKAGE_SKILLS_MANIFEST_RELATIVE,
-  type PackageSkillsManifest,
+  materializeWithAgentLease,
 } from "@/lib/agents/materialization-manifest";
+import { atomicWriteText } from "@/lib/atomic";
 
 const log = pino({
   name: "capabilities",
@@ -123,29 +122,45 @@ export async function materializeAdapterCapabilityHome(args: {
   }
 
   if (materialization.mode === "cwd-dir") {
-    const copiedSkills = await copyBundleSkills(
-      path.join(worktreePath, materialization.dir, "skills"),
-      args.installedPaths,
-    );
-    const copiedAgents =
-      args.agent === "claude"
-        ? await copyBundleAgents(
-            path.join(worktreePath, materialization.dir, "agents"),
-            args.installedPaths,
-          )
-        : [];
-    const copied = [...copiedSkills, ...copiedAgents];
+    let skillCount = 0;
+    let subagentCount = 0;
+    const copied = await materializeWithAgentLease({
+      cwd: worktreePath,
+      runId: args.runId,
+      materialize: async (ownedRelativePaths) => {
+        const ownedPaths = new Set(
+          [...ownedRelativePaths].map((relativePath) =>
+            path.join(worktreePath, relativePath),
+          ),
+        );
+        const copiedSkills = await copyBundleSkills(
+          path.join(worktreePath, materialization.dir, "skills"),
+          args.installedPaths,
+          { ownedPaths },
+        );
+        const copiedAgents =
+          args.agent === "claude"
+            ? await copyBundleAgents(
+                path.join(worktreePath, materialization.dir, "agents"),
+                args.installedPaths,
+                ownedPaths,
+              )
+            : [];
 
-    if (copied.length > 0) {
-      await writePackageSkillsManifest(worktreePath, copied);
-    }
+        skillCount = copiedSkills.length;
+        subagentCount = copiedAgents.length;
+
+        return [...copiedSkills, ...copiedAgents];
+      },
+    });
 
     log.debug(
       {
         agent: args.agent,
         worktreePath,
-        skillCount: copiedSkills.length,
-        subagentCount: copiedAgents.length,
+        runId: args.runId,
+        skillCount,
+        subagentCount,
       },
       "[capabilities.adapter-home] materialized cwd adapter package entries",
     );
@@ -162,19 +177,29 @@ export async function materializeAdapterCapabilityHome(args: {
     materialization.dir,
   );
 
-  await mkdir(homeRoot, { recursive: true });
+  await materializeWithAgentLease({
+    cwd: worktreePath,
+    runId: args.runId,
+    materialize: async () => {
+      await mkdir(homeRoot, { recursive: true });
 
-  if (args.agent === "codex") {
-    await composeCodexHome({
-      homeRoot,
-      installedPaths: args.installedPaths,
-      codexGlobalHome: args.codexGlobalHome ?? path.join(homedir(), ".codex"),
-    });
-  } else {
-    // opencode/mimo: skills under `<home>/skills/` (exact per-agent subpath is
-    // T3.5-verified via smoke; this lands the dir + env contract).
-    await copyBundleSkills(path.join(homeRoot, "skills"), args.installedPaths);
-  }
+      if (args.agent === "codex") {
+        await composeCodexHome({
+          homeRoot,
+          installedPaths: args.installedPaths,
+          codexGlobalHome:
+            args.codexGlobalHome ?? path.join(homedir(), ".codex"),
+        });
+      } else {
+        await copyBundleSkills(
+          path.join(homeRoot, "skills"),
+          args.installedPaths,
+        );
+      }
+
+      return [homeRoot];
+    },
+  });
 
   const env = materialization.redirectEnv
     ? { [materialization.redirectEnv]: homeRoot }
@@ -232,7 +257,10 @@ async function composeCodexHome(args: {
 async function copyBundleSkills(
   destSkillsDir: string,
   installedPaths: readonly string[],
-  opts: { projectWins?: boolean } = {},
+  opts: {
+    projectWins?: boolean;
+    ownedPaths?: ReadonlySet<string>;
+  } = {},
 ): Promise<string[]> {
   await mkdir(destSkillsDir, { recursive: true });
   const copied: string[] = [];
@@ -245,6 +273,10 @@ async function copyBundleSkills(
       const dest = path.join(destSkillsDir, entry);
 
       if (await pathExists(dest)) {
+        if (opts.ownedPaths?.has(dest)) {
+          copied.push(dest);
+          continue;
+        }
         if (!opts.projectWins) continue;
         await rm(dest, { recursive: true, force: true });
       }
@@ -264,6 +296,7 @@ async function copyBundleSkills(
 async function copyBundleAgents(
   destAgentsDir: string,
   installedPaths: readonly string[],
+  ownedPaths: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
   await mkdir(destAgentsDir, { recursive: true });
   const copied: string[] = [];
@@ -275,7 +308,10 @@ async function copyBundleAgents(
       if (entry.startsWith(".")) continue;
       const dest = path.join(destAgentsDir, entry);
 
-      if (await pathExists(dest)) continue;
+      if (await pathExists(dest)) {
+        if (ownedPaths.has(dest)) copied.push(dest);
+        continue;
+      }
 
       await cp(path.join(src, entry), dest, {
         recursive: true,
@@ -287,24 +323,6 @@ async function copyBundleAgents(
   }
 
   return copied;
-}
-
-async function writePackageSkillsManifest(
-  worktreePath: string,
-  copiedPaths: readonly string[],
-): Promise<void> {
-  const manifestPath = path.join(
-    worktreePath,
-    PACKAGE_SKILLS_MANIFEST_RELATIVE,
-  );
-  const manifest: PackageSkillsManifest = {
-    paths: copiedPaths.map((copiedPath) =>
-      path.relative(worktreePath, copiedPath),
-    ),
-  };
-
-  await mkdir(path.dirname(manifestPath), { recursive: true });
-  await atomicWriteText(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 /**

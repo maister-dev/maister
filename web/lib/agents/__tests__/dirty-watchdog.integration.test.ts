@@ -201,7 +201,7 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
   it("clean repo_read run → no quarantine, L2 materialization restored", async () => {
     const { taskId, runId } = await seedWorld();
 
-    await materializeAgentReadOnlySettings(repoPath);
+    await materializeAgentReadOnlySettings(repoPath, "claude", runId);
     expect(
       await statSafe(path.join(repoPath, ".claude/settings.local.json")),
     ).toBe(true);
@@ -307,7 +307,7 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
   it("abandoned repo_read run still revokes tokens and restores L2 materialization", async () => {
     const { runId } = await seedWorld();
 
-    await materializeAgentReadOnlySettings(repoPath);
+    await materializeAgentReadOnlySettings(repoPath, "claude", runId);
     await expect(issueTokenForRun(runId)).resolves.toMatchObject({
       tokenId: expect.any(String),
     });

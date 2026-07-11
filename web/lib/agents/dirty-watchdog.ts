@@ -1,15 +1,19 @@
 import "server-only";
 
-import { readFile, rm, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 import { atomicWriteText } from "@/lib/atomic";
 import {
+  AGENT_MATERIALIZATION_ROOT_RELATIVE,
+  agentMaterializationPathsForRun,
   PACKAGE_SKILLS_MANIFEST_RELATIVE,
-  type PackageSkillsManifest,
+  materializeWithAgentLease,
+  releaseAgentMaterialization,
 } from "@/lib/agents/materialization-manifest";
 import * as schemaModule from "@/lib/db/schema";
 import { recordTaskActivity } from "@/lib/social/activity";
@@ -75,54 +79,69 @@ async function fileExists(p: string): Promise<boolean> {
 // with a WARN and L1/L3 carry the contract alone.
 export async function materializeAgentReadOnlySettings(
   cwd: string,
+  adapterId: string,
+  runId: string,
 ): Promise<{ materialized: boolean }> {
-  const settingsPath = path.join(cwd, SETTINGS_RELATIVE);
-  const markerPath = path.join(cwd, MARKER_RELATIVE);
+  const materializer = getAdapterSupportById(adapterId)?.readOnlyMaterializer;
 
-  if ((await fileExists(settingsPath)) && !(await fileExists(markerPath))) {
-    log.warn(
-      { cwd },
-      "L2 skipped — user-owned .claude/settings.local.json present",
+  if (materializer !== "claude-settings") {
+    log.debug(
+      { adapterId, runId, cwd, materializer: materializer ?? "none" },
+      "L2 descriptor selects no read-only materializer",
     );
 
     return { materialized: false };
   }
 
-  await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
-  await atomicWriteText(markerPath, "maister-owned\n");
-  log.info({ cwd }, "L2 read-only settings materialized");
+  const settingsPath = path.join(cwd, SETTINGS_RELATIVE);
+  const markerPath = path.join(cwd, MARKER_RELATIVE);
+  const leased = await materializeWithAgentLease({
+    cwd,
+    runId,
+    materialize: async (ownedPaths) => {
+      if (
+        ownedPaths.has(SETTINGS_RELATIVE) &&
+        ownedPaths.has(MARKER_RELATIVE)
+      ) {
+        return [settingsPath, markerPath];
+      }
 
-  return { materialized: true };
+      if ((await fileExists(settingsPath)) && !(await fileExists(markerPath))) {
+        log.warn(
+          { adapterId, runId, cwd, materializer },
+          "L2 skipped because a user-owned adapter settings file is present",
+        );
+
+        return [];
+      }
+
+      await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
+      await atomicWriteText(markerPath, "maister-owned\n");
+
+      return [settingsPath, markerPath];
+    },
+  });
+
+  const materialized = leased.length === 2;
+
+  if (materialized) {
+    log.info(
+      { adapterId, runId, cwd, materializer },
+      "L2 read-only settings materialized",
+    );
+  }
+
+  return { materialized };
 }
 
 // Removes exactly MAIster-owned materialization. The package-skill manifest is
 // session-owned; read-only settings are removed only when our marker is present.
-export async function restoreAgentMaterialization(cwd: string): Promise<void> {
-  const manifestPath = path.join(cwd, PACKAGE_SKILLS_MANIFEST_RELATIVE);
-  const markerPath = path.join(cwd, MARKER_RELATIVE);
-  const packageMaterializationPaths =
-    await readPackageMaterializationManifest(cwd);
-  const hasMarker = await fileExists(markerPath);
-  const hasPackageSkillManifest = await fileExists(manifestPath);
-
-  if (
-    !hasMarker &&
-    !hasPackageSkillManifest &&
-    packageMaterializationPaths.length === 0
-  )
-    return;
-
-  for (const relPath of packageMaterializationPaths) {
-    await rm(path.resolve(cwd, relPath), { recursive: true, force: true });
-  }
-
-  await rm(manifestPath, { force: true });
-
-  if (hasMarker) {
-    await rm(path.join(cwd, SETTINGS_RELATIVE), { force: true });
-    await rm(markerPath, { force: true });
-  }
-  log.info({ cwd }, "L2 materialization restored");
+export async function restoreAgentMaterialization(
+  cwd: string,
+  runId: string,
+): Promise<void> {
+  await releaseAgentMaterialization(cwd, runId);
+  log.info({ cwd, runId }, "L2 materialization restored");
 }
 
 // Drops porcelain lines that name manifest-tracked paths — the watchdog
@@ -136,6 +155,7 @@ export function filterManifestPorcelain(
     SETTINGS_RELATIVE,
     MARKER_RELATIVE,
     PACKAGE_SKILLS_MANIFEST_RELATIVE,
+    AGENT_MATERIALIZATION_ROOT_RELATIVE,
     ...extraRelativePaths.flatMap((relPath) => {
       const normalized = normalizePackageSkillRelativePath(relPath);
 
@@ -153,39 +173,6 @@ export function filterManifestPorcelain(
         ),
     )
     .join("\n");
-}
-
-async function readPackageMaterializationManifest(
-  cwd: string,
-): Promise<string[]> {
-  const manifestPath = path.join(cwd, PACKAGE_SKILLS_MANIFEST_RELATIVE);
-
-  try {
-    const parsed = JSON.parse(
-      await readFile(manifestPath, "utf8"),
-    ) as Partial<PackageSkillsManifest>;
-
-    if (!Array.isArray(parsed.paths)) return [];
-
-    const paths = parsed.paths.flatMap((value) => {
-      if (typeof value !== "string") return [];
-      const normalized = normalizePackageSkillRelativePath(value);
-
-      return normalized ? [normalized] : [];
-    });
-    const invalidCount = parsed.paths.length - paths.length;
-
-    if (invalidCount > 0) {
-      log.warn(
-        { cwd, invalidCount },
-        "ignored invalid package materialization manifest path(s)",
-      );
-    }
-
-    return paths;
-  } catch {
-    return [];
-  }
 }
 
 function normalizePackageSkillRelativePath(value: string): string | null {
@@ -240,11 +227,14 @@ export type DirtyWatchdogVerdict =
 // remaining dirt attributable.
 export async function checkRepoReadDirt(
   repoPath: string,
+  runId: string,
 ): Promise<DirtyWatchdogVerdict> {
-  const packageMaterializationPaths =
-    await readPackageMaterializationManifest(repoPath);
+  const packageMaterializationPaths = await agentMaterializationPathsForRun(
+    repoPath,
+    runId,
+  );
 
-  await restoreAgentMaterialization(repoPath).catch((err: unknown) => {
+  await restoreAgentMaterialization(repoPath, runId).catch((err: unknown) => {
     log.warn(
       { repoPath, err: err instanceof Error ? err.message : String(err) },
       "L2 restore failed — porcelain filter still excludes manifest paths",
