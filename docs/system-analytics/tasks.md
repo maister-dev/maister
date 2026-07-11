@@ -71,7 +71,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
 stateDiagram-v2
     [*] --> Backlog: create task<br/>(title + prompt; flow optional — M34)
     Backlog --> InFlight: Launch click<br/>(preconditions pass,<br/>run created)
-    InFlight --> Backlog: latest run terminates<br/>Failed | Crashed | Abandoned
+    InFlight --> InFlight: latest run terminates<br/>Failed | Crashed | Abandoned<br/>(retry eligibility is derived)
     InFlight --> Done: latest run merged<br/>(terminal)
     Backlog --> Abandoned: explicit Discard click
     InFlight --> Abandoned: explicit Discard click
@@ -97,8 +97,9 @@ NeedsInput | NeedsInputIdle | HumanWorking | Review | Crashed`.
 - "Latest run" on the card today is `runs ORDER BY started_at DESC
 LIMIT 1 WHERE task_id = ?`. Once `runs.attempt_number`
   lands this becomes `MAX(attempt_number) WHERE task_id = ?`.
-- Auto-return to `Backlog` on `Failed | Crashed | Abandoned` enables
-  ralph-loop retry without recreating the task.
+- A failed, crashed, or abandoned latest run does not mutate the persisted task
+  status back to `Backlog`. Retry placement and the launch affordance are derived
+  from the latest-run classifier while the task remains `InFlight`.
 
 ## Process flows
 
@@ -187,13 +188,13 @@ sequenceDiagram
     UI-->>U: card moves to In Flight column
 ```
 
-### Failure auto-return to Backlog
+### Failure retry eligibility
 
 ```mermaid
 flowchart LR
-    Latest{Latest run terminal?} -->|status in <br/>Failed/Crashed/Abandoned| Return[UPDATE tasks SET status=Backlog]
+    Latest{Latest run terminal?} -->|status in <br/>Failed/Crashed/Abandoned| Retry[task status stays InFlight<br/>latest-run classifier permits retry]
     Latest -->|status=Done| Done[UPDATE tasks SET status=Done<br/>terminal]
-    Return --> UI[Card re-appears in Backlog<br/>Launch button re-enabled]
+    Retry --> UI[Board presents retry placement<br/>and Launch button]
     UI --> NextLaunch[Next Launch click<br/>attempt_number = max + 1]
 ```
 
@@ -215,7 +216,7 @@ with scratch — see [`scratch-runs.md`](scratch-runs.md) and `web.openapi.yaml`
 `classifyTaskLaunchability` gains optional relation context and a
 `"blocked"` classification with precedence
 `target_terminal > crashed > busy > blocked > launchable` — relations gate
-*launching* only, they never mask an active run's state. (M34 — Implemented,
+_launching_ only, they never mask an active run's state. (M34 — Implemented,
 ADR-089) a flowless task adds the `"unconfigured"` classification between
 `blocked` and `launchable` (`… > blocked > unconfigured > launchable`):
 launch is refused with `PRECONDITION` at every entry point, the schedules
@@ -260,7 +261,7 @@ relation is removed; the UI always renders blockers as removable chips.
 
 ### Auto-launch of triaged tasks (Implemented, ADR-112)
 
-The triager never launches a run itself; it sets the enqueue *intent*
+The triager never launches a run itself; it sets the enqueue _intent_
 (`tasks.launch_mode = 'auto'`), and a system-authority sweep job
 (`auto_launch_triaged`) on the M24 polymorphic scheduler clock performs the
 launch through the standard `launchRun` choke point. Each tick finds and
@@ -273,7 +274,7 @@ launch. Because the tick reuses `classifyTaskLaunchability` +
 clears** — "wait in queue for predecessors, then fly" with no extra wiring.
 The predicate is **disjoint** from the orchestrator's `auto_launch_run_plan`
 (which requires `parent_of`-under-orchestrator + `delegation_spec.agentId`
-and launches *agent* runs, see [`orchestrator.md`](orchestrator.md)), so the
+and launches _agent_ runs, see [`orchestrator.md`](orchestrator.md)), so the
 two never collide. See [`triage.md`](triage.md) for the full intent → tick →
 dependency-release → give-up state machine.
 
@@ -295,16 +296,16 @@ flowchart TD
 Manual launchability is an operator-facing intent, separate from scheduled
 dispatch. The manual classifier returns:
 
-| Task/latest-run condition | Manual result | Required UI surface |
-| --- | --- | --- |
-| Latest run or task is `Done` | `launchable` | Task card and task page show `Run again`. |
-| Latest run is `Review` | `launchable` | Task card and task page show `Run again`; existing promote controls remain on the run detail. |
-| Latest run is `Failed` or `Abandoned` | `launchable` | Existing retry behavior plus launch dialog. |
-| Latest run is `Crashed` | `launchable` | `Run again` is allowed; recover/discard controls for the crashed run stay visible on the run surface. |
-| Latest run is `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, or `HumanWorking` | `busy` | The action is disabled with a visible tooltip/reason, never hidden. |
-| Task is `flagged` and no busy state wins **(ADR-112 — Implemented)** | `flagged` | Disabled action plus a "needs review" chip; held even when `flow_id` is set; cleared by a human (remove `duplicate_of` / re-send to triage). |
-| Open relation blocker exists and no busy/flagged state wins | `blocked` | Disabled action plus blocker `KEY-N` chips. |
-| Supervisor or runner readiness is unavailable | `executor_unavailable` | Disabled or failed launch state with `EXECUTOR_UNAVAILABLE`; no worktree/run/workspace/task side effect. |
+| Task/latest-run condition                                                             | Manual result          | Required UI surface                                                                                                                          |
+| ------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Latest run or task is `Done`                                                          | `launchable`           | Task card and task page show `Run again`.                                                                                                    |
+| Latest run is `Review`                                                                | `launchable`           | Task card and task page show `Run again`; existing promote controls remain on the run detail.                                                |
+| Latest run is `Failed` or `Abandoned`                                                 | `launchable`           | Existing retry behavior plus launch dialog.                                                                                                  |
+| Latest run is `Crashed`                                                               | `launchable`           | `Run again` is allowed; recover/discard controls for the crashed run stay visible on the run surface.                                        |
+| Latest run is `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, or `HumanWorking` | `busy`                 | The action is disabled with a visible tooltip/reason, never hidden.                                                                          |
+| Task is `flagged` and no busy state wins **(ADR-112 — Implemented)**                  | `flagged`              | Disabled action plus a "needs review" chip; held even when `flow_id` is set; cleared by a human (remove `duplicate_of` / re-send to triage). |
+| Open relation blocker exists and no busy/flagged state wins                           | `blocked`              | Disabled action plus blocker `KEY-N` chips.                                                                                                  |
+| Supervisor or runner readiness is unavailable                                         | `executor_unavailable` | Disabled or failed launch state with `EXECUTOR_UNAVAILABLE`; no worktree/run/workspace/task side effect.                                     |
 
 Launching a terminal or review task reopens the board task to `InFlight` only
 after `launchRun` has passed auth, flow, runner, branch, readiness, relation,
@@ -347,7 +348,7 @@ the task page.
 The manual classifier above blocks a new launch while any prior run is active
 (`busy`). The runs-history header on `/projects/[slug]/tasks/[number]` adds a
 **second** launch button — to the right of the runs-count chip — that uses a
-**force-relaunch** classifier so an operator can start another run *alongside* a
+**force-relaunch** classifier so an operator can start another run _alongside_ a
 still-running one (additive concurrency, ralph-loop). The existing page-header
 launch button keeps the manual gate.
 
@@ -369,6 +370,7 @@ the task has ≥1 run, so it is already configured). The allow-list (only
 must not silently change force behaviour.
 
 Wire-up:
+
 - `POST /api/runs` accepts `allowConcurrent` (boolean, default `false`). When
   `true`, `launchRunStaged` selects `classifyForceRelaunchLaunchability`;
   otherwise `classifyManualTaskLaunchability`. The throw-on-not-launchable
@@ -402,12 +404,12 @@ display cap never makes the chip lie.
 
 ### Phase B UI and test ownership (Designed, ADR-085)
 
-| User story | UI surface(s) | Acceptance and states | Test owner |
-| --- | --- | --- | --- |
-| Rerun a terminal or review task | Task card, task page `/projects/[slug]/tasks/[number]` | Run again is visible for `Done`, `Review`, `Failed`, `Abandoned`, and `Crashed`; click opens the launch dialog; success reopens task to `InFlight`; EN/RU labels exist. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/runs/__tests__/launchability.test.ts` |
-| Understand why a task cannot launch | Task card, task page | Busy, relation-blocked, supervisor-unavailable, and runner-unavailable states show a disabled action with tooltip/reason; control is never hidden silently; error retry keeps the dialog state. | `web/e2e/multi-run-cost-policy.spec.ts`; launch-options route tests |
-| Choose launch overrides deliberately | Launch dialog | Flow, runner/model, base/target branch, delivery policy, execution controls, and budget defaults are prefilled; every deviation from default is marked; empty branch/flow lists and non-launchable Flow states render disabled explanations; invalid server response renders typed error copy; EN/RU coverage. | `web/e2e/multi-run-cost-policy.spec.ts`; `/api/runs` integration tests |
-| Recognize multiple attempts quickly | Board task card and task page history | Board preserves latest-run status placement and adds a run-count badge; task page table has empty state for no runs and columns for flow, runner/model, outcome, delivery status, duration, and token total. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/task-detail*.test.ts` |
+| User story                           | UI surface(s)                                          | Acceptance and states                                                                                                                                                                                                                                                                                          | Test owner                                                                                |
+| ------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Rerun a terminal or review task      | Task card, task page `/projects/[slug]/tasks/[number]` | Run again is visible for `Done`, `Review`, `Failed`, `Abandoned`, and `Crashed`; click opens the launch dialog; success reopens task to `InFlight`; EN/RU labels exist.                                                                                                                                        | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/runs/__tests__/launchability.test.ts`   |
+| Understand why a task cannot launch  | Task card, task page                                   | Busy, relation-blocked, supervisor-unavailable, and runner-unavailable states show a disabled action with tooltip/reason; control is never hidden silently; error retry keeps the dialog state.                                                                                                                | `web/e2e/multi-run-cost-policy.spec.ts`; launch-options route tests                       |
+| Choose launch overrides deliberately | Launch dialog                                          | Flow, runner/model, base/target branch, delivery policy, execution controls, and budget defaults are prefilled; every deviation from default is marked; empty branch/flow lists and non-launchable Flow states render disabled explanations; invalid server response renders typed error copy; EN/RU coverage. | `web/e2e/multi-run-cost-policy.spec.ts`; `/api/runs` integration tests                    |
+| Recognize multiple attempts quickly  | Board task card and task page history                  | Board preserves latest-run status placement and adds a run-count badge; task page table has empty state for no runs and columns for flow, runner/model, outcome, delivery status, duration, and token total.                                                                                                   | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/task-detail*.test.ts` |
 
 ### Assignment-aware board card (Planned)
 
@@ -441,7 +443,7 @@ flowchart TD
 - Board state is exactly `Backlog | InFlight | Done | Abandoned`.
 - `InFlight` is a derived bucket; it contains tasks whose latest run is
   in `Pending | Running | NeedsInput | NeedsInputIdle | HumanWorking |
-  Review | Crashed`.
+Review | Crashed`.
 - **(Planned)** Human-owned waits create assignments. The latest active
   assignment is rendered directly on the task card and in the portfolio inbox;
   the card must make clear that the task is waiting on a role/person, not just
@@ -454,8 +456,9 @@ flowchart TD
   Only `Open | Claimed | Working` appear as actionable inbox items.
 - **(Planned)** Manual takeover assignments include branch/ref, checkout
   affordance, return action, elapsed time, and stale-evidence summary.
-- Latest run terminates in `Failed | Crashed | Abandoned` → task auto-
-  returns to `Backlog` and Launch button re-appears.
+- Latest run terminates in `Failed | Crashed | Abandoned` → the persisted task
+  remains `InFlight`; the latest-run classifier exposes retry placement and the
+  Launch affordance without recreating the task.
 - `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
 - Title and prompt are non-empty at creation.
 - **(M34 — Implemented)** A task without `flow_id` MUST classify as
@@ -468,7 +471,7 @@ flowchart TD
   (non-launchable) in BOTH `classifyTaskLaunchability` and
   `classifyManualTaskLaunchability` — as an allow-list arm at precedence
   `target_terminal > crashed > busy > flagged > blocked > unconfigured >
-  launchable`, held **even when `flow_id` is set** — and MUST be cleared only
+launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   by a human (remove `duplicate_of` / re-send to triage); the
   `auto_launch_triaged` tick MUST NEVER launch a `flagged` task.
 - **(M34 — Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
@@ -536,7 +539,7 @@ flowchart TD
 - **Discard a task that has a live run** — supervisor `DELETE
 /sessions/<id>`, then mark worktree stale, then `tasks.status =
 Abandoned`. Failure to terminate the session does NOT block the task
-transition (the run reconciles to `Crashed` on next heartbeat tick).
+  transition (the run reconciles to `Crashed` on next heartbeat tick).
 - **(Implemented, ADR-078) Mutual block (`A blocks B` + `B blocks A`)** —
   both tasks classify `blocked` until one relation is removed; the UI
   renders blockers as removable chips, so the state is always recoverable.

@@ -7,8 +7,14 @@ NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, or Crashed to Failed
 in one transaction. The terminal event has reason
 legacy_steps_engine_3_cutover and source upgrade_cutover. Done, Failed and
 Abandoned history, graph runs, workspaces, evidence and run rows are retained.
-The transition releases scheduler capacity and removes recovery, resume,
-response, promotion and retry actions.
+The transition releases scheduler capacity and removes user-visible recovery,
+resume, response, promotion and retry actions. Follow-on migration 0094 clears
+only a task C2 claim that predates its durable D2 event, so an interrupted
+pre-upgrade claim cannot block other scheduler admission after restart; it
+leaves later claims intact and does not create a run or event. The shared C2
+poll/gate then treats that latest D2 run as a one-time terminal hold: it flags
+the task and clears auto-launch without a claim or new run. Only human
+re-triage after the event creates a later arm eligible for C2.
 
 > **M42 — Unified runner & session model (Implemented).** Run runner state
 > (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`,
@@ -28,8 +34,9 @@ domain projects state onto it.
 
 ## Domain entities
 
-- **Run** — `runs` row. FK to `tasks`, `projects`, `flows`,
-  `executors`. `run_kind ∈ {flow, scratch, agent}`.
+- **Run** — `runs` row. FK to `tasks`, `projects`, and `flows`.
+  `run_kind ∈ {flow, scratch, agent}`; per-session runner identity is held in
+  `run_sessions`.
   - **`run_kind = scratch` — project-less local-package variant** (M36 Phase 5,
     ADR-097): a scratch run rooted at a local-package `working_dir` with **no
     project and no `workspaces` row**. `runs.project_id` is **NULL** and
@@ -48,7 +55,8 @@ domain projects state onto it.
 - **Workspace** — git worktree under
   `.maister/<slug>/runs/<runId>/`. See [`workspaces.md`](workspaces.md).
 - **Per-run artifacts on disk**:
-  - `<stepId>.log` — append-only stdout of each step.
+  - `<stepId>.log` — append-only stdout of each node attempt; `stepId` remains
+    the stable supervisor wire field for the node id.
   - `cost.jsonl` — token usage records.
   - `needs-input.json` — present while the run waits for structured
     form input.
@@ -138,10 +146,10 @@ pointer back to the rework target, opens attempt N+1, and continues — all with
 1. **No new status.** Rework is a pointer move within `Running`; there is **no
    `HumanWorking`** status in M11a (that is M11b). The only HITL-driven status is
    the existing `NeedsInput`/`NeedsInputIdle` pair.
-2. **`current_step_id` carries the node id.** `runs.current_step_id` now holds
-   the compiled-graph **node id** (≡ the step id for compiled-linear nodes). The
-   existing fail-closed resume check (unknown id in the pinned manifest →
-   `Crashed` + `MaisterError("CONFIG")`) applies unchanged to the compiled graph.
+2. **`current_step_id` carries the node id.** `runs.current_step_id` holds the
+   compiled-graph **node id**. The existing fail-closed resume check (unknown id
+   in the pinned manifest → `Crashed` + `MaisterError("CONFIG")`) applies to the
+   graph.
 3. **Gates feed, do not gate promotion.** M11a writes `gate_results` but they do
    **not** block promotion. The promote sequence's "verify required gates" step
    is the **M15/M18** readiness policy, not M11a — see the note on the happy-path

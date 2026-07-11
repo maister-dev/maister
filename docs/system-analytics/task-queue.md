@@ -44,6 +44,8 @@ The admission state of one eligible unit of work (Implemented):
 ```mermaid
 stateDiagram-v2
     [*] --> BacklogEligible: triaged + auto + flow + unblocked + not paused
+    BacklogEligible --> Held: latest Flow run has D2 graph-only cut-over failure\nAND arm is absent or not newer than event
+    Held --> BacklogEligible: human re-triage writes a fresh arm
     BacklogEligible --> Claimed: C2 admit (CAS queue_claimed_at)
     Claimed --> Running: launchRun inserts run (queue_admitted_at)
     Claimed --> BacklogEligible: launchRun fails → clear claim
@@ -106,6 +108,12 @@ flowchart TD
 - Exactly-once admission per eligible unit across {edge, poll, direct launch,
   resume} (INV-3): C2 via the `tasks.queue_claimed_at` CAS under the scheduler lock,
   C1/C3 via the status-guarded `Pending|NeedsInputIdle → Running` CAS.
+- Both C2 consumers MUST inspect the durable `run.failed` graph-only cut-over
+  event for the latest Flow run before claiming or launching. When the task has no
+  `launch_armed_at`, or its arm is at or before the event's `occurred_at`, the
+  shared CAS give-up transaction clears `launch_mode`, marks the task `flagged`,
+  and writes the system comment/activity without creating another run. A later
+  human re-triage writes a fresh arm and is eligible again.
 
 ## Edge cases
 
@@ -115,7 +123,9 @@ flowchart TD
   (HTTP 422); the DB CHECK is the final backstop.
 - `launchRun` failure after a C2 claim → clear `queue_claimed_at`, task re-eligible
   next tick; a TERMINAL refusal (PRECONDITION/CONFIG) or the ADR-112 failure cap
-  gives the task up (`flagged`) on both the gate and the poll path.
+  gives the task up (`flagged`) on both the gate and the poll path. A latest-run
+  D2 graph-only cut-over failure is held before any new C2 claim, using its
+  durable `occurred_at` boundary rather than a retryable launch failure.
 - A C2 claimer crash between the CAS and the run-INSERT → the reconcile sweep clears
   the stale `queue_claimed_at` past a grace window (`staleClaimsCleared`); the
   per-task live-flow-run guard prevents a double-mint if a run was created.

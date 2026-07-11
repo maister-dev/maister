@@ -2,9 +2,11 @@
 
 ## M43 incompatible revision state (Implemented)
 
-An incompatible stored revision remains visible with its exact graph-only
-reason, but launchable is false. Runner overrides and the submit control are
-absent, so no selection can bypass compatibility.
+An incompatible stored revision remains visible with its exact compatibility
+reason: the locked graph-only remediation for legacy `steps[]`, or the declared
+engine-range reason for a graph revision. `launchable` is false. Runner
+overrides and the submit control are absent, so no selection can bypass
+compatibility.
 
 - **Type:** chrome (launch surface reachable from the rail and a global
   shortcut).

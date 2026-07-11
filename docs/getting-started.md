@@ -124,9 +124,6 @@ db:migrate:brain   # apply the Project-Brain lineage (brain_* + pgvector); AFTER
                    # pgvector-enabled Postgres image (pgvector/pgvector:pg16).
 db:seed            # idempotent dev seed (admin + platform runners + sample project)
 db:studio          # drizzle-kit studio
-backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
-                         # existing flows rows after applying migration 0007
-                         # (idempotent; run once after upgrading to M10)
 validate-authored-flow   # validate a portable authored Flow package directory
 import-flow-package-draft # import a portable package as an inert authored draft
 export-authored-flow     # export an authored Flow draft/published revision
@@ -135,12 +132,12 @@ install-authored-flow-package # install an exported authored package as
                               # untrusted; trust/enable remains separate
 ```
 
-> **Upgrading to M10:** after `pnpm db:migrate` applies `0006`, run
-> `pnpm --filter maister-web backfill-flow-revisions` once. It seeds a
-> `flow_revisions` row per existing flow, points each project's enablement at
-> it (grandfathered `Enabled` + `trusted_by_policy`), and links historical runs.
-> Set `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` (see
-> [configuration](configuration.md)) to auto-trust your internal Flow sources.
+> **Engine 3 upgrade:** do **not** run `backfill-flow-revisions`. It is retired
+> after the graph-only cut-over and exits with `PRECONDITION`; the ordered
+> 0093 D2/D1 and 0094 stale-C2-claim main-lineage sequence is the only supported
+> upgrade path. Follow the ordered
+> [deployment preflight](deployment.md#13-engine-300-postgresgraph-only-upgrade)
+> instead.
 
 > **`test:e2e` prerequisites (no manual setup):** `pnpm --filter maister-web
 test:e2e` (or `cd web && pnpm test:e2e`) is self-provisioning. Its
@@ -238,7 +235,9 @@ pnpm --filter maister-web db:migrate
 pnpm --filter maister-web db:seed
 ```
 
-`--reset-postgres` uses `DATABASE_URL` and resets only the `public` schema.
+`--reset-postgres` uses `DB_URL` and resets only the `public` schema. It
+refuses a missing, malformed, or non-Postgres URL before deleting any local
+state or invoking `psql`.
 The script prints every root it will remove and refuses to delete the MAIster
 repository cwd or `MAISTER_REPOS_ROOT`.
 

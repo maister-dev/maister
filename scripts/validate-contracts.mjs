@@ -88,6 +88,202 @@ function assertObject(doc, key, file) {
   }
 }
 
+function schemaFor(doc, name, file) {
+  const schema = doc.components?.schemas?.[name];
+
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    throw new Error(`${file}: missing schema '${name}'`);
+  }
+
+  return schema;
+}
+
+function assertEnumIncludes(schema, values, context) {
+  if (!Array.isArray(schema?.enum)) {
+    throw new Error(`${context}: expected enum`);
+  }
+
+  const missing = values.filter((value) => !schema.enum.includes(value));
+
+  if (missing.length > 0) {
+    throw new Error(`${context}: missing enum values ${missing.join(", ")}`);
+  }
+}
+
+function assertNullableString(schema, context) {
+  if (schema?.type !== "string" || schema?.nullable !== true) {
+    throw new Error(`${context}: expected nullable string`);
+  }
+}
+
+function assertRequired(schema, key, context) {
+  if (!Array.isArray(schema?.required) || !schema.required.includes(key)) {
+    throw new Error(`${context}: expected required '${key}'`);
+  }
+}
+
+function assertIncompatibilityUnion(schema, context) {
+  if (!Array.isArray(schema?.oneOf)) {
+    throw new Error(`${context}: expected incompatibility union`);
+  }
+
+  const hasTypedReason = schema.oneOf.some(
+    (branch) =>
+      branch?.$ref === "#/components/schemas/FlowManifestIncompatibility",
+  );
+  const hasNull = schema.oneOf.some(
+    (branch) =>
+      branch?.type === "object" &&
+      branch?.nullable === true &&
+      branch?.enum?.includes(null),
+  );
+
+  if (!hasTypedReason || !hasNull) {
+    throw new Error(
+      `${context}: expected FlowManifestIncompatibility or null`,
+    );
+  }
+}
+
+function assertIncompatibleResponseBranch(schema, name, file) {
+  if (!Array.isArray(schema.oneOf)) {
+    throw new Error(`${file}: ${name} must use a compatible/incompatible union`);
+  }
+
+  const compatible = schema.oneOf.find(
+    (branch) => branch?.properties?.compatible?.enum?.includes(true),
+  );
+  const incompatible = schema.oneOf.find(
+    (branch) => branch?.properties?.compatible?.enum?.includes(false),
+  );
+
+  const compatibleIncompatibility = compatible?.properties?.incompatibility;
+
+  if (
+    !compatible?.required?.includes("incompatibility") ||
+    compatibleIncompatibility?.type !== "object" ||
+    compatibleIncompatibility?.nullable !== true ||
+    !compatibleIncompatibility?.enum?.includes(null)
+  ) {
+    throw new Error(
+      `${file}: ${name} compatible branch must expose incompatibility: null`,
+    );
+  }
+
+  if (
+    !incompatible ||
+    !incompatible.required?.includes("incompatibility") ||
+    incompatible.properties?.incompatibility?.$ref !==
+      "#/components/schemas/FlowManifestIncompatibility"
+  ) {
+    throw new Error(
+      `${file}: ${name} incompatible branch must expose FlowManifestIncompatibility`,
+    );
+  }
+}
+
+function validateM43WebContract(doc, file) {
+  if (file !== "docs/api/web.openapi.yaml") return;
+
+  const incompatibility = schemaFor(doc, "FlowManifestIncompatibility", file);
+  assertEnumIncludes(
+    incompatibility.properties?.kind,
+    ["legacy_steps", "invalid_manifest", "engine_incompatible"],
+    `${file}: FlowManifestIncompatibility.kind`,
+  );
+
+  const launchOptions = schemaFor(doc, "TaskRunLaunchOptionsResponse", file);
+  const launchability = launchOptions.properties?.launchability;
+  const relaunch = launchOptions.properties?.relaunch;
+  const flows = launchOptions.properties?.flows;
+  const flowIssueReasons = [
+    "unconfigured",
+    "flow_missing",
+    "no_revision",
+    "not_enabled",
+    "not_installed",
+    "setup_failed",
+    "setup_pending",
+    "unsupported_schema",
+    "incompatible",
+  ];
+
+  assertNullableString(
+    launchOptions.properties?.task?.properties?.flowId,
+    `${file}: TaskRunLaunchOptionsResponse.task.flowId`,
+  );
+  assertRequired(
+    launchOptions.properties?.task,
+    "flowId",
+    `${file}: TaskRunLaunchOptionsResponse.task`,
+  );
+  assertNullableString(
+    launchability?.properties?.incompatibilityReason,
+    `${file}: TaskRunLaunchOptionsResponse.launchability.incompatibilityReason`,
+  );
+  assertNullableString(
+    relaunch?.properties?.incompatibilityReason,
+    `${file}: TaskRunLaunchOptionsResponse.relaunch.incompatibilityReason`,
+  );
+  assertNullableString(
+    flows?.items?.properties?.disabledReasonMessage,
+    `${file}: TaskRunLaunchOptionsResponse.flows[].disabledReasonMessage`,
+  );
+  assertRequired(
+    launchability,
+    "incompatibilityReason",
+    `${file}: TaskRunLaunchOptionsResponse.launchability`,
+  );
+  assertRequired(
+    relaunch,
+    "incompatibilityReason",
+    `${file}: TaskRunLaunchOptionsResponse.relaunch`,
+  );
+  assertRequired(
+    flows?.items,
+    "disabledReasonMessage",
+    `${file}: TaskRunLaunchOptionsResponse.flows[]`,
+  );
+  assertEnumIncludes(
+    launchability?.properties?.reason,
+    [
+      "launchable",
+      "busy",
+      "crashed",
+      "target_terminal",
+      "flagged",
+      "blocked",
+      ...flowIssueReasons,
+    ],
+    `${file}: TaskRunLaunchOptionsResponse.launchability.reason`,
+  );
+  assertEnumIncludes(
+    relaunch?.properties?.reason,
+    ["launchable", "flagged", "blocked", ...flowIssueReasons],
+    `${file}: TaskRunLaunchOptionsResponse.relaunch.reason`,
+  );
+
+  for (const name of [
+    "RunGraphResponse",
+    "RunGraphStatusResponse",
+    "RunTranscriptResponse",
+  ]) {
+    assertIncompatibleResponseBranch(schemaFor(doc, name, file), name, file);
+  }
+
+  const upgradePreview = schemaFor(doc, "UpgradePreview", file);
+
+  for (const key of ["compatible", "incompatibility", "nodes"]) {
+    if (!upgradePreview.required?.includes(key)) {
+      throw new Error(`${file}: UpgradePreview must require '${key}'`);
+    }
+  }
+  assertIncompatibilityUnion(
+    upgradePreview.properties?.incompatibility,
+    `${file}: UpgradePreview.incompatibility`,
+  );
+}
+
 function validateOpenApi(file) {
   const doc = readYaml(file);
 
@@ -99,6 +295,7 @@ function validateOpenApi(file) {
   assertObject(doc, "paths", file);
   assertObject(doc, "components", file);
   visitRefs(doc, doc);
+  validateM43WebContract(doc, file);
   console.log(`validate-contracts: ${basename(file)} ok`);
 }
 

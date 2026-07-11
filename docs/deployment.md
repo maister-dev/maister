@@ -294,24 +294,85 @@ project repos / `.maister/` run artifacts as needed.
 ## 13. Engine 3.0.0 Postgres/graph-only upgrade
 
 This upgrade is intentionally non-rolling and irreversible after migration
-0093 drops step_runs. Complete these steps in order:
+0093 drops step_runs. The main-lineage sequence is 0093 followed by the
+data-only 0094 stale-C2-claim closure. Complete these steps in order:
 
 1. Inventory every cached, stored and first-party Flow manifest. Republish any
    attached/enabled steps[] Flow as nodes[]; do not convert it in place.
-2. List unfinished legacy runs and finish them or explicitly accept that the
+2. Run the actionable-run identity preflight below. It **must return zero
+   rows** before the maintenance window; migration 0093 aborts on the same
+   predicate rather than guessing an authoritative manifest.
+3. List unfinished legacy runs and finish them or explicitly accept that the
    upgrade will mark them Failed.
-3. Back up Postgres and verify the dump can be read.
-4. Stop both web and supervisor. Do not migrate while either process can write.
-5. Run the main migration through 0093, then run/check the separate Brain
-   migration lineage.
-6. Start supervisor and web. Verify there is no actionable legacy run, every
-   active package is graph-compatible, and the scheduler admits graph work.
-7. Retain the pre-upgrade backup. Restore it with both processes stopped if the
+4. Back up Postgres and verify the dump can be read.
+5. Stop both web and supervisor. Do not migrate while either process can write.
+6. Run the main migration through 0094 (0093 D2/D1, then 0094 stale-C2-claim
+   closure), then run/check the separate Brain migration lineage.
+7. Start supervisor and web. Verify there is no actionable legacy run, every
+   active package is graph-compatible, the 0094 stale-claim query below returns
+   zero rows, D2 tasks are held rather than C2-auto-launched, and the scheduler
+   admits other eligible graph work.
+8. Retain the pre-upgrade backup. Restore it with both processes stopped if the
    release must be rolled back; there is no down-migration or reconstructed
    step history.
 
-The following read-only SQL identifies the D2 actionable set. Pinned revision
-manifests are authoritative; only unpinned rows use the flows cache.
+The following read-only SQL is the migration-0093 identity preflight. It mirrors
+the migration's abort guard for every actionable Flow run. Resolve every row by
+restoring its authoritative pinned revision/Flow relationship or by making the
+run terminal before migration; do not proceed while this query returns rows.
+
+~~~sql
+WITH actionable AS (
+  SELECT
+    r.id,
+    r.status,
+    r.project_id,
+    r.flow_id,
+    r.flow_revision_id,
+    fr.id AS resolved_revision_id,
+    f.id AS resolved_flow_id,
+    CASE
+      WHEN r.project_id IS NULL THEN 'missing_project_id'
+      WHEN r.flow_revision_id IS NOT NULL AND fr.id IS NULL
+        THEN 'missing_pinned_revision'
+      WHEN r.flow_revision_id IS NOT NULL AND f.id IS NULL
+        THEN 'missing_flow_for_pinned_revision'
+      WHEN r.flow_revision_id IS NOT NULL
+        AND fr.flow_ref_id <> f.flow_ref_id
+        THEN 'pinned_revision_flow_ref_mismatch'
+      WHEN r.flow_revision_id IS NULL AND f.id IS NULL
+        THEN 'missing_fallback_flow'
+      WHEN r.flow_revision_id IS NOT NULL AND fr.manifest IS NULL
+        THEN 'missing_pinned_manifest'
+      WHEN r.flow_revision_id IS NULL AND f.manifest IS NULL
+        THEN 'missing_fallback_manifest'
+      ELSE NULL
+    END AS identity_problem
+  FROM runs r
+  LEFT JOIN flow_revisions fr ON fr.id = r.flow_revision_id
+  LEFT JOIN flows f ON f.id = r.flow_id
+  WHERE r.run_kind = 'flow'
+    AND r.status IN (
+      'Pending', 'Running', 'NeedsInput', 'NeedsInputIdle',
+      'HumanWorking', 'WaitingOnChildren', 'Review', 'Crashed'
+    )
+)
+SELECT
+  id,
+  status,
+  project_id,
+  flow_id,
+  flow_revision_id,
+  resolved_revision_id,
+  resolved_flow_id,
+  identity_problem
+FROM actionable
+WHERE identity_problem IS NOT NULL
+ORDER BY status, id;
+~~~
+
+The following read-only SQL identifies the D2 actionable legacy set. Pinned
+revision manifests are authoritative; only unpinned rows use the flows cache.
 
 ~~~sql
 WITH authoritative AS (
@@ -337,8 +398,44 @@ WHERE manifest ? 'steps'
 ORDER BY status, id;
 ~~~
 
-The D1 impact query reports terminal legacy run count and step-detail rows that
-will be lost:
+After the main migration completes, the following read-only SQL verifies 0094.
+It is the exact stale-C2-claim predicate: a claim that predates or equals its
+task's durable D2 event must have been cleared; a later claim is intentionally
+outside this query and remains untouched.
+
+~~~sql
+WITH cutover_tasks AS (
+  SELECT
+    de.task_id,
+    MAX(de.occurred_at) AS cutover_occurred_at
+  FROM domain_events de
+  WHERE de.kind = 'run.failed'
+    AND de.task_id IS NOT NULL
+    AND de.payload->>'reason' = 'legacy_steps_engine_3_cutover'
+    AND de.payload->>'source' = 'upgrade_cutover'
+  GROUP BY de.task_id
+)
+SELECT
+  t.id AS task_id,
+  t.queue_claimed_at,
+  c.cutover_occurred_at
+FROM tasks t
+JOIN cutover_tasks c ON c.task_id = t.id
+WHERE t.queue_claimed_at IS NOT NULL
+  AND t.queue_claimed_at <= c.cutover_occurred_at
+ORDER BY c.cutover_occurred_at, t.id;
+~~~
+
+After restart, C2 reads a task's latest Flow run and exact D2 event. If the
+task has no `launch_armed_at` after that event, it is atomically flagged with a
+system explanation; C2 neither acquires another claim nor calls `launchRun`.
+This one-time hold is expected and is not an automatic retry. Republish or
+repair the Flow, then explicitly re-triage the task to create a later arm before
+allowing a new automatic attempt.
+
+Run this read-only D1 impact query **before** migration 0093. It intentionally
+references `step_runs` to report the terminal legacy detail that will be lost;
+it must not be run after 0093 drops that table:
 
 ~~~sql
 WITH authoritative AS (

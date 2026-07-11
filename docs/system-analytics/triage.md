@@ -14,7 +14,7 @@ The triage domain owns the **triager agent** and the generic **agent-config
 framework** it is the first consumer of. The triager reads a freshly created or
 re-queued task, detects duplicates, picks a flow + runner + base branch, forms
 inter-task dependencies, evaluates clarity over **two distinct thresholds**
-(routing vs execution), and optionally records an enqueue *intent* — it never
+(routing vs execution), and optionally records an enqueue _intent_ — it never
 launches a run itself. A system-authority tick (`auto_launch_triaged`) performs
 the actual launch through the standard precondition choke point. Boundary: this
 domain owns the triage decision surface (`tasks.triage_status` values
@@ -156,7 +156,7 @@ Reusing `classifyTaskLaunchability` + `getOpenRelationBlockers` means a task
 blocked by a dependency stays `triaged + blocked` and **launches itself once the
 blocker clears** — no extra wiring. The predicate is **disjoint** from
 `auto_launch_run_plan` (which requires `parent_of`-under-orchestrator +
-`delegation_spec.agentId` and launches *agent* runs).
+`delegation_spec.agentId` and launches _agent_ runs).
 
 ```mermaid
 flowchart TD
@@ -168,12 +168,14 @@ flowchart TD
     LIVE -- no --> CL{classifyTaskLaunchability = 'launchable'?<br/>getOpenRelationBlockers}
     CL -- blocked --> WAIT[stays triaged+blocked — re-evaluated next tick once blocker → Done/Abandoned]
     CL -- flagged --> SKIP
-    CL -- launchable --> LR[launchRun flow run — system authority, standard preconditions]
+    CL -- launchable --> D2{latest Flow run has durable graph-only<br/>cut-over failure AND arm absent or at/before event?}
+    D2 -- yes --> GIVEUP[give up: clear launch_mode + post system comment / set flagged + INFO log]
+    D2 -- no --> LR[launchRun flow run — system authority, standard preconditions]
     LR --> CAP{global cap free?}
     CAP -- no --> PEND[run inserted Pending — stays launch_mode='auto', retried]
     CAP -- yes --> RUN[flow run starts]
     LR --> GU{terminal PRECONDITION or CONFIG?<br/>flow disabled/untrusted post-triage, branch taken,<br/>unlaunchable revision: unsupported schema/engine}
-    GU -- yes --> GIVEUP[give up: clear launch_mode + post system comment / set flagged + INFO log]
+    GU -- yes --> GIVEUP
     GU -- no/transient --> PEND
 ```
 
@@ -193,7 +195,7 @@ flowchart TD
     WV -- no --> CFG[MaisterError CONFIG — 422 at triage time, no silent stall]
     WV -- yes --> OK[verdict stamped triaged]
     OK --> TICK[tick launches]
-    TICK --> GB[give-up backstop: a flow that becomes unlaunchable AFTER a valid triage<br/>→ terminal PRECONDITION/CONFIG → tick clears launch_mode, does not loop]
+    TICK --> GB[give-up backstop: a flow that becomes unlaunchable AFTER a valid triage<br/>or the latest run carries the durable graph-only cut-over event<br/>→ shared CAS clears launch_mode, does not loop]
 ```
 
 ## Expectations
@@ -235,17 +237,20 @@ flowchart TD
   against the token's project and existence-hide cross-project access as 404.
 - The `auto_launch_triaged` tick MUST be a `systemManaged` singleton (budget 1)
   whose candidate predicate is `triage_status='triaged' AND launch_mode='auto'
-  AND flow_id IS NOT NULL AND launchable AND no live flow run AND not an
-  orchestrator as-plan task`, and MUST be disjoint from `auto_launch_run_plan`.
+AND flow_id IS NOT NULL AND launchable AND no live flow run AND not an
+orchestrator as-plan task`, and MUST be disjoint from `auto_launch_run_plan`.
 - The tick MUST launch through the standard `launchRun` choke point (cap hit →
-  `Pending`, NOT an error) and MUST give up (clear `launch_mode` + system comment
-  / `flagged`) only on a terminal `PRECONDITION` or `CONFIG` (a non-retryable
-  misconfiguration — unsupported schema/engine, unknown role/capability/mcp ref)
-  or the failure-attempt cap, never on a transient cap-hit or
-  `EXECUTOR_UNAVAILABLE`. The failure cap MUST count ONLY flow runs started
-  at/after `launch_armed_at` (so a re-triage / re-arm earns a fresh budget), and
-  the give-up write MUST be a CAS over the selected `(triaged, auto, flow,
-  launch_armed_at)` tuple so a concurrent re-triage is never clobbered.
+  `Pending`, NOT an error). Both C2 consumers MUST give up (clear `launch_mode`
+  - system comment / `flagged`) on a terminal `PRECONDITION` or `CONFIG` (a
+    non-retryable misconfiguration — unsupported schema/engine, unknown
+    role/capability/mcp ref), the failure-attempt cap, or a durable graph-only
+    cut-over failure on the latest Flow run when `launch_armed_at` is absent or no
+    newer than the event's `occurred_at`. They MUST NOT give up on a transient
+    cap-hit or `EXECUTOR_UNAVAILABLE`. The failure cap MUST count ONLY flow runs
+    started at/after `launch_armed_at` (so a re-triage / re-arm earns a fresh
+    budget), and the give-up write MUST be a CAS over the selected `(triaged,
+auto, flow, launch_armed_at)` tuple so a concurrent re-triage is never
+    clobbered.
 - A `clarify` loop MUST be bounded at 3 question rounds before falling back to
   `flagged`; the triager MUST reconstruct context statelessly per run from the
   task + its comment thread (`comment_list`).
@@ -283,6 +288,10 @@ flowchart TD
   the target branch becomes taken) → the tick's `launchRun` returns a terminal
   `MaisterError("PRECONDITION")`; the tick gives up (clears `launch_mode`,
   records a system comment / `flagged`) instead of looping.
+- **Latest Flow run was terminalized by the graph-only cut-over** → before either
+  C2 path creates another run, the shared eligibility check holds the task when
+  its arm is absent or at/before the durable failure `occurred_at`; a human
+  re-triage after updating the Flow creates a fresh arm and can launch it.
 - **`flow_list`/`runner_list` for a slug outside the token's project** →
   `MaisterError("NOT_FOUND")` (404, existence-hide), failure audit written.
 - **`triage_set` referencing a disabled-flow target via any path** →
@@ -297,15 +306,15 @@ agent bearer verbatim to `/api/v1/ext`. Beyond the existing `task_get`,
 and `triage_set` tools, this domain adds two read-only discovery tools and
 extends the triage op.
 
-| MCP tool | `inputSchema` | Backing ext route | Response (mirrors the ext GET) |
-| --- | --- | --- | --- |
-| `flow_list` (Implemented) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/flows` | per project flow `{ id, ref, metadata: { title, summary, route_when, labels } }`, **launchable-only** (read-side guard) |
-| `runner_list` (Implemented) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/runners` | per enabled runner `{ id, adapter, model, capabilityAgent, readinessStatus }` |
+| MCP tool                    | `inputSchema` | Backing ext route                         | Response (mirrors the ext GET)                                                                                          |
+| --------------------------- | ------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `flow_list` (Implemented)   | `{ slug }`    | `GET /api/v1/ext/projects/{slug}/flows`   | per project flow `{ id, ref, metadata: { title, summary, route_when, labels } }`, **launchable-only** (read-side guard) |
+| `runner_list` (Implemented) | `{ slug }`    | `GET /api/v1/ext/projects/{slug}/runners` | per enabled runner `{ id, adapter, model, capabilityAgent, readinessStatus }`                                           |
 
 - `flow_list` returns the "when/what to apply" the triager matches against
   (`metadata.route_when` / `metadata.summary`); all attached-package flows are
   available (no curation knob), filtered to `enablementState ∈ {Enabled,
-  UpdateAvailable}` ∧ `trustStatus ≠ untrusted`.
+UpdateAvailable}` ∧ `trustStatus ≠ untrusted`.
 - `runner_list` returns the global enabled-runner catalog (runners are
   platform-scoped → no project filter).
 - The triage op (`POST /api/v1/ext/projects/{slug}/tasks/{taskId}/triage`, MCP
@@ -318,12 +327,12 @@ extends the triage op.
 Locators are URL-params validated by `handleExt` against the token's project;
 flag/enqueue are body booleans, not locators (safe).
 
-| Surface | Identifier | Trust | On mismatch |
-| --- | --- | --- | --- |
-| `GET …/flows`, `GET …/runners` | `slug` | url-param, validated vs token project | 404 (existence-hide, cross-project) |
-| `GET …/flows`, `GET …/runners` | `projectId` | server-state (`ctx.projectId`), never a body field | — |
-| `POST …/tasks/{taskId}/triage` | `taskId` | url-param, re-validated vs token project | 404 (existence-hide, cross-project) |
-| `POST …/tasks/{taskId}/triage` | `flag`, `enqueue` | body-controlled booleans (not locators) | — |
+| Surface                        | Identifier        | Trust                                              | On mismatch                         |
+| ------------------------------ | ----------------- | -------------------------------------------------- | ----------------------------------- |
+| `GET …/flows`, `GET …/runners` | `slug`            | url-param, validated vs token project              | 404 (existence-hide, cross-project) |
+| `GET …/flows`, `GET …/runners` | `projectId`       | server-state (`ctx.projectId`), never a body field | —                                   |
+| `POST …/tasks/{taskId}/triage` | `taskId`          | url-param, re-validated vs token project           | 404 (existence-hide, cross-project) |
+| `POST …/tasks/{taskId}/triage` | `flag`, `enqueue` | body-controlled booleans (not locators)            | —                                   |
 
 ## Linked artifacts
 

@@ -598,8 +598,10 @@
 - [x] **M43. Postgres-only + graph-only cut-over** — engine `3.0.0` removes
   SQLite and the legacy linear `steps[]` runtime in one breaking release.
   Migration `0093` terminalizes unfinished legacy linear runs to explained
-  `Failed` state before dropping `step_runs`; run-level history remains. See
-  ADR-129 and
+  `Failed` state before dropping `step_runs`; follow-on data migration `0094`
+  clears only C2 task claims predating the durable D2 event, preserving later
+  claims, and C2 terminally holds the D2 task until a later human re-triage.
+  Run-level history remains. See ADR-129 and
   `.ai-factory/specs/feature-postgres-graph-only-cutover.md`.
 
 ## Completed

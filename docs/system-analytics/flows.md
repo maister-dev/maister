@@ -8,7 +8,8 @@ manifest that also contains nodes, is the typed incompatibility “legacy
 steps[] flows are not supported since engine 3.0.0; republish the package with
 nodes[]”. Stored legacy revisions remain inspectable but cannot be enabled,
 selected by lifecycle mutation, or launched. Malformed graph data and
-engine-bound incompatibility remain distinct CONFIG classifications.
+engine-bound incompatibility remain distinct typed classifications; mutation
+boundaries reject them with `CONFIG`, while read models remain renderable.
 
 ## Purpose
 
@@ -17,16 +18,16 @@ one kind of task — bugfix, feature, spec-kit, review, etc. It ships as
 a git repository with a manifest (`flow.yaml` v1), shipped CLIs, an
 optional `setup.sh`, and a graph-node YAML DSL. MAIster orchestrates
 the graph; it does NOT design Flows itself. Multi-flow **packages** that group
-several Flows + capability content under one import are **(Designed)** in
+several Flows + capability content under one import are **(Implemented)** in
 [`packages.md`](packages.md) (ADR-088).
 
 ## Domain entities
 
 - **Flow plugin** — git repo with `flow.yaml` at root. Pinned by tag.
 - **Flow package revision** — immutable installed revision of a Flow package,
-  keyed by resolved commit SHA and manifest digest. Planned M10 makes this a
-  first-class lifecycle object with trust, compatibility, setup, enablement,
-  upgrade, rollback, and deprecation state.
+  keyed by resolved commit SHA and manifest digest. It is a first-class
+  lifecycle object with trust, compatibility, setup, enablement, upgrade,
+  rollback, and deprecation state.
 - **Project Flow enablement** — project-level pointer to the Flow package
   revision new runs should use. Existing runs keep their snapshotted revision.
 - **Node** — a typed entry in the Flow's `nodes[]` graph, with an action,
@@ -95,7 +96,7 @@ sequenceDiagram
     end
 ```
 
-### Package lifecycle (Planned M10)
+### Package lifecycle (Implemented)
 
 ```mermaid
 stateDiagram-v2
@@ -136,7 +137,7 @@ flowchart TD
 
 ### Runner resolution
 
-The platform ACP runner for an AI-coding step is the highest-priority match:
+The platform ACP runner for an AI-coding node is the highest-priority match:
 
 ```mermaid
 flowchart LR
@@ -173,23 +174,23 @@ flowchart LR
   revision; production flows are git-only.
 - `flow.yaml` is parsed exactly once at install and persisted verbatim
   to `flows.manifest` (jsonb); runtime NEVER re-reads `flow.yaml`.
-- **(Planned M10)** Package revisions are persisted separately from project
+- **(Implemented)** Package revisions are persisted separately from project
   enablement. A project may have several installed revisions of one Flow id,
   but only one enabled revision is used for new launches.
-- **(Planned M10)** Install and upgrade are explicit product actions. Reading
+- **(Implemented)** Install and upgrade are explicit product actions. Reading
   `maister.yaml` can discover a desired Flow source/version, but it must not
   silently trust, enable, run setup, or replace the project-enabled revision.
-- **(Planned M10)** Package metadata includes source, version label, resolved
+- **(Implemented)** Package metadata includes source, version label, resolved
   revision, manifest digest, compatibility result, trust status, setup status,
   declared nodes, artifacts, gates, capabilities, external operation needs, and
   active run references.
-- **(Planned M10)** Upgrade installs a new immutable revision beside the old
+- **(Implemented)** Upgrade installs a new immutable revision beside the old
   one, validates compatibility, shows a diff of package contract changes, and
   then switches the project enablement only after user confirmation.
-- **(Planned M10)** Rollback switches project enablement to an older installed
+- **(Implemented)** Rollback switches project enablement to an older installed
   revision. Active and completed runs continue to resolve the revision they
   snapshotted at launch.
-- **(Planned M10)** Package removal is refused while any run references the
+- **(Implemented)** Package removal is refused while any run references the
   revision. GC can remove only unreferenced disabled/failed revisions.
 - `flow.yaml schemaVersion: 1` mismatch refused with `CONFIG` BEFORE
   any filesystem side effect.
@@ -250,7 +251,7 @@ flowchart LR
   enabled; launch fails before workspace creation.
 - **`setup.sh` exits non-zero** → `FLOW_INSTALL` (502); manifest stays
   uninstalled.
-- **Step output token cost exceeds guard cap** — metric only,
+- **Node output token cost exceeds guard cap** — metric only,
   no kill. Phase 2 adds enforcement.
 
 ## Linked artifacts
@@ -262,5 +263,5 @@ flowchart LR
 - Package lifecycle: [`flow-packages.md`](flow-packages.md).
 - Config reference: [`../configuration.md`](../configuration.md) §`flow.yaml v1`.
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md) (flows table).
-- Schemas: `web/lib/config.schema.ts` (zod step union).
+- Schemas: `web/lib/config.schema.ts` (graph-only node union).
 - Source: `web/lib/config.ts` (`loadFlowManifest`).

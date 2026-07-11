@@ -2,9 +2,12 @@
 
 ## M43 compatibility state (Implemented)
 
-The workspace lists a legacy package with an incompatible badge while keeping
-Open YAML available. Commit, cut and publish are blocked by full-tree
-validation; no export, install, version stamp or attachment occurs.
+The workspace keeps local packages with a legacy, malformed, or
+engine-range-incompatible Flow inspectable and keeps **Open YAML** available.
+Its row shows the exact compatibility reason and disables **Cut version**. A
+legacy `steps[]` Flow also opens the editor's full-tree validation panel, which
+blocks Commit state and Publish until it is rewritten as nodes[]. No automatic
+conversion action exists.
 
 - **Type:** screen template.
 - **Route:** `/studio/local`.
@@ -30,6 +33,8 @@ throwaway packages that are not attached anywhere.
   - badge: **Project default** for project-owned defaults, otherwise
     **Unattached**;
   - **Import** action for archive/package import into the local package;
+  - **Cut version** action, disabled with an accessible exact reason when any
+    Flow is legacy, malformed, or outside the host engine range;
   - row click opens the local package editor.
 - **Delete** is shown only for packages that are both unattached and not a
   project default. It opens an inline danger confirmation. Confirming deletes the
@@ -64,9 +69,12 @@ stateDiagram-v2
 
 ## Data & APIs
 
-- List: `listLocalPackages()` returns active local package rows; the page projects
-  only client-safe fields (`id`, `name`, `slug`, `isDefault`, `canDelete`).
+- List: `listAllLocalPackages()` returns local package rows; the page projects
+  only client-safe fields (`id`, `name`, `slug`, `isDefault`, `status`,
+  `origin`, `cutCompatibility`). Working directories and edit-lock sessions
+  remain server-only.
 - Create: `POST /api/studio/local-packages`.
+- Cut version: `POST /api/studio/local-packages/{id}/cut-version`.
 - Delete: `DELETE /api/studio/local-packages/{id}`.
 - Import: `POST /api/studio/local-packages/{id}/import`.
 - Edit: `/studio/edit/{localPackageId}/[[...path]]`.

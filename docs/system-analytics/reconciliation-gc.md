@@ -4,9 +4,10 @@
 
 Migration 0093 is the only owner of unfinished-linear-run terminalization. It
 runs while web and supervisor are stopped and is not a recurring reconcile
-rule. Reconcile never recovers or redispatches these explained Failed rows.
-Workspaces are retained and enter normal terminal preserve/prune GC after
-restart.
+rule. Ordered follow-on migration 0094 clears only C2 task claims that predate
+the durable D2 event; it does not change a run or emit an event. Reconcile never
+recovers or redispatches these explained Failed rows. Workspaces are retained
+and enter normal terminal preserve/prune GC after restart.
 
 > **M42 — Unified runner & session model (Implemented).** Reconcile / resume /
 > recover read the per-session `run_sessions` snapshot (incl. `acp_session_id`)

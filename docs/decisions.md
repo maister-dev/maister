@@ -147,7 +147,7 @@
 | [ADR-119](#adr-119-manual-force-relaunch-additive-concurrent-runs-per-task--atomic-attempt-number-allocation) | Manual force-relaunch (additive concurrent runs per task) + atomic attempt-number allocation | Accepted | 2026-06-30 |
 | [ADR-120](#adr-120-artifact-body-injection-into-prompts) | Artifact body injection into prompts (`{{ artifacts.X.content }}` + `input.requires.inline`) + engine 2.2.0 | Accepted | 2026-06-30 |
 | [ADR-121](#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate) | Priority-ordered dependency-draining task queue: unified admission gate, cycle-safe relations, cap-safe resume, advisory confidence, operator pause | Accepted | 2026-06-30 |
-| [ADR-122](#adr-122-project-brain-per-project-memory-substrate) | Project Brain (per-project memory substrate): build-thin pgvector, two migration lineages, immutable per-generation embeddings, harvest/decay owned tier, RecallRanker seam, 4-layer enablement (Sub-project A) | Accepted | 2026-07-02 |
+| [ADR-122](#adr-122-project-brain-per-project-memory-substrate) | Project Brain (per-project memory substrate): build-thin pgvector, two migration lineages, immutable per-generation embeddings, harvest/decay owned tier, RecallRanker seam, 4-layer enablement (Sub-project A) | Accepted; D3 superseded by ADR-129 | 2026-07-02 |
 | [ADR-124](#adr-124-experiment-comparison-studio-for-pinned-base-comparison-runs) | Experiment Comparison Studio for pinned-base comparison runs | Accepted | 2026-07-03 |
 | [ADR-125](#adr-125-budget-breach-four-way-fork-with-staged-claims) | Budget-breach four-way fork with staged claims | Accepted | 2026-07-02 |
 | [ADR-126](#adr-126-auto-promotion-lanes) | Auto-promotion lanes: project-scoped path/content-bounded diff classes (docs/tests/deps/config) promoted through the same `promoteRun` choke point, non-configurable hard deny-list security boundary, `runs.review_entered_at` grace anchor, CAS hold give-up, deps supply-chain hardening | Proposed | 2026-07-03 |
@@ -1090,6 +1090,10 @@ flows MUST declare `compat.engine_min: 1.1.0`. Bump the engine constant
 **Date:** 2026-05-30
 **Status:** Accepted
 
+> **Partially superseded by [ADR-129](#adr-129-postgres-only-and-graph-only-engine-300-cut-over):**
+> `node_attempts` remains the append-only ledger, but migration 0093 drops
+> `step_runs` and retires the linear fallback. The two-table/deprecation and
+> legacy-resume details below are historical only.
 > **Amended by [ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture) / [ADR-080](#adr-080-node-level-retry-policy) / [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) (2026-06-11):** adds ledger columns `checkpoint_ref`, `session_policy`, `session_fallback`, and `auto_retry` (migration 0041).
 > **Context:** The current `step_runs` table reuses the same row on resume and
 > hard-codes `attempt = 1`, so there is no append-only execution history. A rework
@@ -10191,7 +10195,7 @@ the test matrix live in the SDD plan `.ai-factory/plans/dependency-ordered-task-
 ### ADR-122: Project Brain (per-project memory substrate)
 
 **Date:** 2026-07-02
-**Status:** Accepted
+**Status:** Accepted; D3 superseded by ADR-129
 **Context:** MAIster needs a per-project, self-improving knowledge substrate that
 platform agents use natively — run/gate/rework lessons, current project state,
 direction, a consultant surface over decisions/conventions, and the evidence base
@@ -10213,9 +10217,11 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   separate DB, not a separate PG schema). Keeps joins to `projects`/`runs`/`tasks` and
   one transaction with `domain_events`; table prefixes avoid multiplying the Drizzle
   journal hazards. Boundary enforced in code under `web/lib/brain/*`.
-- **D3 — SQLite mode → Brain disabled.** pgvector is Postgres-only; SQLite is
-  ultra-light dev only. Brain routes/services refuse `PRECONDITION`; MCP memory tools
-  fail closed. The MCP facade registers `TOOL_SPECS` statically — tools stay *listed*.
+- **D3 — Postgres-only engine.** This replaces the original SQLite-mode gate:
+  [ADR-129](#adr-129-postgres-only-and-graph-only-engine-300-cut-over) removes
+  SQLite, so missing, malformed, or non-Postgres DB configuration fails before
+  Brain. On Postgres, Brain routes/services and statically listed MCP tools use
+  the current schema/provider availability guards.
 - **D4 — Embedding-provider registry, `openai_compatible` default; immutable embedding
   rows; reindex-on-model/dimension-switch.** Default `text-embedding-3-small` @ 1536.
   `brain_embeddings.vector` is **dimension-untyped**; HNSW rides **per-generation
@@ -11237,14 +11243,23 @@ legacy linear runs to an explained terminal failure.
   handles, and emits one existing `run.failed` event/outbox record per CAS
   winner with durable reason `legacy_steps_engine_3_cutover` and source
   `upgrade_cutover`. It then drops `step_runs` without export or backfill.
+- Follow-on migration `0094_close-m43-cutover-task-claims` runs after 0093 in
+  the same stopped-service main-lineage upgrade. It clears only a non-null C2
+  `tasks.queue_claimed_at` that is at or before that task's latest durable D2
+  event, preserving a later claim (including one from a later re-triage). It
+  creates no new run or event.
+- The shared C2 poll and slot-free admission gate treat a latest D2 run with no
+  later `launch_armed_at` as a terminal hold rather than a retry: one atomic
+  task flag/comment is written without a claim or `launchRun`. A human
+  re-triage after D2 writes a later arm and is a distinct eligible intent.
 - D2 is filtered from Ralph relaunch, configured-agent triggers, Brain harvest
   and source reindex. Cost reconciliation may consume it and graph parents may
   observe a failed child. The external webhook shape stays
   `{errorCode:"CONFIG"}`.
 - Upgrade order is audit/republish, finish-or-accept-failure, backup, stop both
-  processes, migrate main and Brain schemas, restart, verify. After the table
-  drop, rollback means restoring the backup; there is no down-migration or
-  fabricated step history.
+  processes, migrate main through 0094 and then the Brain schema, restart, and
+  verify. After the table drop, rollback means restoring the backup; there is
+  no down-migration or fabricated step history.
 
 The normative behavior, API status matrix, migration status/store matrix,
 screen states, observability rules and traceability live in

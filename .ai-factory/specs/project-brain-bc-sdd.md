@@ -170,7 +170,7 @@ field names above where the current API style already does so.
 | Duplicate `memory_propose` without `cluster_hash` | T10.1 | Creates a separate proposal unless the closed duplicate policy says otherwise. |
 | Projection task run fails | T12.2 | Proposal remains applied; linked task/run shows normal failure state. |
 | Project delete | T1.1, T9.1 | Cascades all new Brain tables and proposal rows. |
-| SQLite Brain | T1.1, T5.1, T10.1 | Services/routes/tools fail closed; tools may remain listed. |
+| Invalid DB configuration | T1.1, T5.1, T10.1 | Missing, malformed, or non-Postgres DB configuration fails before Brain; Postgres Brain availability keeps its typed service/tool guard. |
 | Reindex vs retain | T4.1, T5.1 | Immutable generation rows plus exact-one embedding target prevent duplicates. |
 | Chunker-version bump | T7.1 | Edges re-anchor by symbol/path; unmapped edges become degraded. |
 | Machine actor accept/reject | T11.1 | Refused; only human/session or explicit autonomy path can conclude. |
@@ -215,8 +215,10 @@ field names above where the current API style already does so.
 
 ## Logical-Holes Pass
 
-- A Brain-disabled or SQLite project fails closed at route/service/tool
-  execution time even when MCP tools stay statically listed.
+- A Brain-disabled project fails closed at route/service/tool execution time
+  even when MCP tools stay statically listed. SQLite is no longer a supported
+  project/runtime state: non-Postgres DB configuration fails at boot before
+  this guard runs.
 - Concurrent retain/reindex paths use immutable embedding generations and exact
   one-of item/chunk embedding constraints in `0003`.
 - B has no write-back surface; all canonical mutation flows enter C proposals,

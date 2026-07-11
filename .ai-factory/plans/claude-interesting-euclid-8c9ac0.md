@@ -1,5 +1,10 @@
 # Plan — Project Brain, Sub-project A (Foundation)
 
+> Historical implementation-plan record. Its SQLite/dialect assumptions predate
+> [ADR-129](../../docs/decisions.md#adr-129-postgres-only-and-graph-only-engine-300-cut-over)
+> and are not current requirements; use the current Postgres-only configuration
+> and Project Brain analytics for live behavior.
+
 **Branch:** `claude/interesting-euclid-8c9ac0` (existing isolated worktree — no new branch)
 **Created:** 2026-07-01 · **Refined:** 2026-07-02 (/aif-improve pass — seams re-verified in code, owner Q1–Q5 resolved)
 **Spec (SSOT):** [`docs/plans/2026-07-01-project-brain-architecture.md`](../../docs/plans/2026-07-01-project-brain-architecture.md) — locked decisions D1–D10, data model §4, pipelines §5, deps §7, JTBD §12, Expectations §13, Acceptance §14. **Spec amended 2026-07-02** in the same pass: §4 embeddings (untyped vector + per-generation HNSW expression indexes), §4 snapshots (consumption-time, nullable `run_id` + actor + trigger), §9 (chunkers → B), §11 (all open items resolved).

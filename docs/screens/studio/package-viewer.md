@@ -2,8 +2,9 @@
 
 ## M43 stored legacy package state (Implemented)
 
-Legacy installed/stored content remains read-only and inspectable with an
-“Incompatible with engine 3.0.0” badge and nodes[] republish remediation.
+Incompatible installed/stored content remains read-only and inspectable. Legacy
+`steps[]` content carries the locked nodes[] republish remediation; a graph
+whose declared engine range excludes the host carries its distinct range reason.
 Attach, enable, upgrade-to and launch controls are disabled.
 
 - **Type:** per-screen template (the Studio package detail + its flow / skill /

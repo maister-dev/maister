@@ -10,6 +10,9 @@
 > is pulled into delivery, the load-bearing choices below graduate to ADRs.
 > Relates to `docs/pv/improvement-roadmap.md` **E3 — Knowledge lifecycle / moat**
 > ("Project memory") and PRODUCT_VIEW §Phase 2.2 (Curated project knowledge).
+> The original SQLite-mode assumption has been superseded by
+> [ADR-129](../decisions.md#adr-129-postgres-only-and-graph-only-engine-300-cut-over):
+> the current engine is Postgres-only.
 
 ## 1. Purpose & scope
 
@@ -37,7 +40,7 @@ catalog artifacts (rules/skills/flows in the M25 authored catalog) remain the
 |---|---|---|
 | D1 | **Build-thin on existing Postgres 16 + pgvector**, not Hindsight/GBrain | The target's defining needs — real multi-project auth isolation, native domain provenance (FKs), transactional coupling to the M25 catalog + readiness/HITL — are exactly where off-the-shelf stores fail, and they grow with scope. The one buy-advantage (recall quality) is isolable behind a seam. |
 | D2 | **Same Postgres instance, separate bounded context via `brain_*` table prefixes** (not a separate DB, not a separate PG schema) | Same instance keeps joins to `projects`/`runs`/`tasks`/`artifact_instances`/`agents`, one transaction with `domain_events`, one backup. Table prefixes over PG schemas avoid multiplying the Drizzle journal/ordering hazards already hit. Boundary enforced in code (`web/lib/brain/*`). |
-| D3 | **SQLite mode → Brain disabled** | pgvector is Postgres-only; SQLite is ultra-light dev only. |
+| D3 | **Postgres-only engine** (supersedes the original SQLite-mode gate) | ADR-129 removes SQLite. Missing, malformed, or non-Postgres DB configuration fails before Brain; Brain availability then depends on its Postgres schema/provider checks. |
 | D4 | **Embedding provider registry, `openai_compatible` default** (`local` = special case), immutable embedding rows, reindex-on-model/dimension-switch | Never hardcode a model; a model or dimension change creates a new embedding generation (per-generation HNSW expression indexes), never mutates old rows, never needs a schema migration. |
 | D5 | **`ChunkerRegistry` — built-in typed chunkers wrapping existing libraries; package-extensible** | The AST/parse work is a dependency; only the MAIster-specific slicing is ours. |
 | D6 | **Brain code-indexing = AST chunking (`code-chunk`/tree-sitter), NOT LSP.** Serena/LSP is an optional agent capability + a Phase-C edge connector | AST chunking is the embeddable memory primitive (in-process, stateless). LSP is a live stateful server (the Python sidecar we rejected) — belongs in the Hands layer, not the memory core. |
@@ -335,10 +338,10 @@ v1; no separate DB; no Python runtime in the Brain core.
   trust (`trust_status` + `exec_trust`); an untrusted chunker MUST NOT execute.
 - Embedding-provider secrets MUST be stored as `env:NAME` refs and MUST NEVER be
   logged, streamed, or embedded in any payload.
-- In SQLite mode the Brain MUST be disabled: Brain routes/services MUST refuse
-  with `PRECONDITION` and MCP memory tools MUST fail closed. (The MCP facade
-  registers `TOOL_SPECS` statically — tools stay *listed*; dynamic tool gating
-  is out of scope.)
+- SQLite is not a supported runtime. Missing, malformed, or non-Postgres DB
+  configuration fails before Brain. On Postgres, Brain routes/services and MCP
+  tools follow the current schema/provider availability guards documented in
+  [`system-analytics/project-brain.md`](../system-analytics/project-brain.md).
 - Every run/node that consumes Brain context MUST record a `brain_snapshots` row.
 - Cross-tier recall of an indexed item MUST return a canonical pointer, NEVER a
   forked copy.
@@ -361,8 +364,9 @@ v1; no separate DB; no Python runtime in the Brain core.
   `brain_snapshots` row is written.
 - Given ambient enabled on a flow, when a node runs, then top-K memories are
   present in the P7 run-context (`.maister/run.json`).
-- Given a project in SQLite mode, the Brain is disabled: routes/services refuse
-  `PRECONDITION`, MCP memory tools fail closed.
+- Given missing, malformed, or non-Postgres DB configuration, application boot
+  fails before Brain. Given Postgres without a usable Brain schema/provider,
+  Brain routes/services follow the current typed availability guard.
 - Cross-project isolation: an agent token for project X can NEVER recall project
   Y items (authz test passes).
 

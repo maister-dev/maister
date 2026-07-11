@@ -26,8 +26,9 @@ triggers, and flow-target schedules that mint a task per fire (Phase 2).
 - **Fire** — one dispatch decision for one schedule row: either a launch
   through `launchRun` (one `runs` row + workspace + worktree, attempt N+1)
   or a recorded skip/queue outcome. Outcome enum: `launched | queued_pending
-  | catchup_queued | skipped_task_busy | skipped_cap |
-  skipped_target_terminal | skipped_crashed | launch_failed | dispatching`,
+| catchup_queued | skipped_task_busy | skipped_cap |
+skipped_target_terminal | skipped_crashed | launch_failed |
+incompatible_disabled | dispatching`,
   plus `skipped_blocked` (Implemented, ADR-078 — task has open relation
   blockers) and `skipped_unconfigured` (M34 — Implemented, ADR-089 — the task
   has no flow yet; simple-intent tasks await a triage verdict or a human
@@ -57,6 +58,7 @@ applied every dispatcher tick while it is enabled and due.
 stateDiagram-v2
     [*] --> Active: POST create<br/>next_fire_at precomputed
     Active --> Paused: PATCH enabled=false<br/>clears queue_one_pending
+    Active --> Paused: structured graph-only incompatibility<br/>clears queue_one_pending
     Paused --> Active: PATCH enabled=true<br/>recompute next_fire_at from now
     Active --> Active: tick fire decision<br/>(launch or skip or queue)
     Paused --> Paused: trigger-now allowed<br/>(explicit user intent)
@@ -67,15 +69,15 @@ stateDiagram-v2
 The per-fire decision (overlap policy × blocked dimensions, in precedence
 order) is the DQ7 matrix:
 
-| Condition (precedence order) | `skip` | `queue_one` | `start_anyway` |
-| --- | --- | --- | --- |
-| `target_terminal` (task or latest run Done, task Abandoned) | `skipped_target_terminal` | `skipped_target_terminal` (no flag) | `skipped_target_terminal` |
-| `crashed` (latest run Crashed — owes recover/discard) | `skipped_crashed` | `skipped_crashed` (no flag) | `skipped_crashed` |
-| `busy` (active run on the task) | `skipped_task_busy` | flag + `catchup_queued` | `skipped_task_busy` — a second concurrent run per task is structurally impossible; `start_anyway` overrides only the CAP dimension |
-| `blocked` (Implemented, ADR-078 — open relation blockers) | `skipped_blocked` | `skipped_blocked` (existing flag kept — fires once unblocked) | `skipped_blocked` — relations gate launching under every policy |
-| `unconfigured` (M34 — Implemented, ADR-089 — task has no flow) | `skipped_unconfigured` | `skipped_unconfigured` (existing flag kept — fires once configured) | `skipped_unconfigured` — a flowless task cannot launch under any policy |
-| cap full (task launchable) | `skipped_cap` | flag + `catchup_queued` | `launchRun` → run lands `Pending` + queue position (`queued_pending`) |
-| free | launch | launch (+ clear flag) | launch |
+| Condition (precedence order)                                   | `skip`                    | `queue_one`                                                         | `start_anyway`                                                                                                                     |
+| -------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `target_terminal` (task or latest run Done, task Abandoned)    | `skipped_target_terminal` | `skipped_target_terminal` (no flag)                                 | `skipped_target_terminal`                                                                                                          |
+| `crashed` (latest run Crashed — owes recover/discard)          | `skipped_crashed`         | `skipped_crashed` (no flag)                                         | `skipped_crashed`                                                                                                                  |
+| `busy` (active run on the task)                                | `skipped_task_busy`       | flag + `catchup_queued`                                             | `skipped_task_busy` — a second concurrent run per task is structurally impossible; `start_anyway` overrides only the CAP dimension |
+| `blocked` (Implemented, ADR-078 — open relation blockers)      | `skipped_blocked`         | `skipped_blocked` (existing flag kept — fires once unblocked)       | `skipped_blocked` — relations gate launching under every policy                                                                    |
+| `unconfigured` (M34 — Implemented, ADR-089 — task has no flow) | `skipped_unconfigured`    | `skipped_unconfigured` (existing flag kept — fires once configured) | `skipped_unconfigured` — a flowless task cannot launch under any policy                                                            |
+| cap full (task launchable)                                     | `skipped_cap`             | flag + `catchup_queued`                                             | `launchRun` → run lands `Pending` + queue position (`queued_pending`)                                                              |
+| free                                                           | launch                    | launch (+ clear flag)                                               | launch                                                                                                                             |
 
 ### Classifier split for manual relaunch (Designed, ADR-085)
 
@@ -114,7 +116,7 @@ flowchart TD
     Decide -- launch path --> Intent[write last_fire_outcome=dispatching<br/>last_fired_at=now, advance next_fire_at<br/>clear queue_one_pending]
     Intent --> Commit2[COMMIT tx1]
     Commit2 --> Launch[launchRun outside the row lock<br/>worktree + its own DB tx]
-    Launch --> Tx2["tx2: CAS final outcome WHERE<br/>last_fire_outcome=dispatching<br/>AND last_fired_at=staged stamp (fence)<br/>launched or queued_pending or launch_failed<br/>+ last_run_id + last_fire_error"]
+    Launch --> Tx2["tx2: CAS final outcome WHERE<br/>last_fire_outcome=dispatching<br/>AND last_fired_at=staged stamp (fence)<br/>launched, queued_pending, launch_failed, or incompatible_disabled<br/>+ last_run_id + last_fire_error"]
     Tx2 -- 0 rows updated --> Stale[WARN stale dispatch result dropped]
     Tx2 -- 1 row updated --> Done[summary into recordJobAttemptResult]
 ```
@@ -215,7 +217,11 @@ flowchart TD
   `skipped_crashed` skip keeps it.
 - A refused fire (`launch_failed` or any skip) MUST record its outcome on the
   schedule row while the dispatcher job attempt records `Succeeded` — one
-  schedule's failure never disables the shared dispatcher.
+  schedule's failure never disables the shared dispatcher. A structured
+  graph-only manifest incompatibility is the bounded exception at the schedule
+  level: it records `incompatible_disabled`, clears `queue_one_pending`, and
+  sets that schedule's `enabled=false`; it still does not disable the shared
+  dispatcher.
 - Mutating routes MUST require `manageSchedules` (member); listing requires
   `readBoard`; cron fires pass `actorUserId: null`, trigger-now passes the
   clicking user's id.
@@ -289,7 +295,12 @@ flowchart TD
   transition recomputes it, so a due fire is never silently pushed forward.
 - **`launchRun` refusal** (dirty repo, branch taken, supervisor down, …):
   recorded as `launch_failed` with `last_fire_error = "CODE: message"`
-  (bounded ≤ 500 chars); the dispatcher does not throw.
+  (bounded ≤ 500 chars); the dispatcher does not throw. A typed graph-only
+  manifest incompatibility (`legacy_steps`, `invalid_manifest`, or
+  `engine_incompatible` in `MaisterError.details`) instead records
+  `incompatible_disabled`, clears any catch-up, and pauses only that schedule.
+  The visible bounded reason remains in `last_fire_error`; repair the Flow and
+  explicitly re-enable to resume cron firing.
 - **Dispatcher auto-disable**: 3 consecutive ENGINE-level failures (handler
   crash, lease expiry — not schedule-level refusals) disable the dispatcher
   job; admin re-enable on `/admin/scheduler` is the documented kill-switch

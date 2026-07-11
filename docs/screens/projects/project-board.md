@@ -2,10 +2,12 @@
 
 ## M43 incompatible task state (Implemented)
 
-A task bound to a legacy revision stays visible and shows “Incompatible with
-engine 3.0.0” plus republish guidance. Launch is unavailable. For D2 runs the
-board shows terminal Failed state and never offers Recover, Resume, Respond,
-Promote or retry.
+A task bound to an incompatible revision stays visible and shows its typed
+reason beside the disabled launch affordance. The board derives it from the
+authoritative enabled revision, not the mutable `flows.manifest` cache: legacy
+`steps[]` receives republish guidance, while an engine-range mismatch reports
+its declared range. Launch is unavailable. For D2 runs the board shows terminal
+Failed state and never offers Recover, Resume, Respond, Promote or retry.
 
 - **Route:** `/projects/{slug}`
 - **Status:** Implemented

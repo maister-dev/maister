@@ -1036,8 +1036,11 @@ returns the full untruncated body. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
 
 **ADR-129 engine bump (Implemented).** Engine `3.0.0` is graph-only. A manifest
 containing top-level `steps[]` is refused with the locked upgrade remediation;
-`nodes[]` is the sole executable Flow shape. Existing graph manifests with an
-open-ended engine range remain compatible.
+`nodes[]` is the sole executable Flow shape. A graph-shaped manifest whose
+declared `compat.engine_min..engine_max` excludes 3.0.0 remains inspectable but
+is typed `engine_incompatible` and refused at stored/executable mutation
+boundaries. Existing graph manifests with an open-ended engine range remain
+compatible.
 
 ### Verdict calibration (M15)
 

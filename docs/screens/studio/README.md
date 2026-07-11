@@ -7,9 +7,9 @@
   `/studio/edit/{...}`, `/studio/local`.
 - **Status:** **Implemented** for overview · sources · packages · package detail ·
   local workspace · local package editor. The package viewer now uses wide flow
-  preview cards with frontmatter, and `/studio/local` owns editable local package
-  creation/import/delete. Remaining planned pieces: standalone artifact kind
-  pickers, move-to-package, and upstream write-back. Supersedes the current `/flows`
+preview cards with frontmatter, and `/studio/local` owns editable local package
+creation/import/delete/version cutting. Remaining planned pieces: standalone
+artifact kind pickers, move-to-package, and upstream write-back. Supersedes the current `/flows`
   (`web/app/(app)/flows/page.tsx`) and consolidates package management that is
   today scattered across admin `/settings`, the project board `?tab=packages`,
   and the `/projects/{slug}/packages/{flowRefId}` viewer.

@@ -3,8 +3,10 @@
 ## M43 ERD transition (Implemented)
 
 Migration 0093 removes STEP_RUNS after terminalizing unfinished legacy runs.
-The implemented ERD will contain NODE_ATTEMPTS as the sole execution-attempt
-ledger; RUNS and all retained evidence/workspace relationships remain.
+Follow-on data migration 0094 clears only stale C2 task claims identified from
+the durable D2 event ledger; it changes no ERD shape. NODE_ATTEMPTS is the sole
+execution-attempt ledger; RUNS and all retained evidence/workspace
+relationships remain.
 
 All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
 `VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), the two **M11a (Implemented)**

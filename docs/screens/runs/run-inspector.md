@@ -2,9 +2,10 @@
 
 ## M43 terminalized legacy state (Implemented)
 
-The inspector repeats the persistent Failed cut-over banner and reason used by
-the run detail/list. Evidence and worktree inspection remain available.
-Recover, Resume, Respond, Promote and retry are absent.
+The page-level persistent Failed cut-over banner is visible with the run detail
+and list; the inspector exposes the same reason and terminal timestamp as facts.
+Evidence and worktree inspection remain available. Recover, Resume, Respond,
+Promote and retry are absent.
 
 - **Type:** block.
 - **Routes:** shared by `/runs/{runId}` and `/scratch-runs/{runId}`.

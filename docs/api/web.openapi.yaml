@@ -7334,7 +7334,14 @@ paths:
                       manifest:
                         schemaVersion: 1
                         name: Bugfix
-                        steps: []
+                        compat: { engine_min: 3.0.0 }
+                        nodes:
+                          - id: implement
+                            type: ai_coding
+                            action:
+                              prompt: "Implement {{ task.prompt }}"
+                            transitions:
+                              success: done
                       schemaVersion: 1
                       contentHash: sha256:abc
                       publishedAt: "2026-06-08T12:00:00Z"
@@ -9225,7 +9232,7 @@ paths:
       tags: [flow-packages]
       summary: Diff the enabled revision against a candidate revision
       description: |
-        M10. Admin-only. Returns a structured contract diff (steps, gates,
+        M10. Admin-only. Returns a structured contract diff (nodes, gates,
         artifacts, capabilities, external ops, schema/setup changes, and the
         M34 `agents` break-impact section joined against this project's live
         attachments/bindings) between the project's enabled revision and
@@ -9524,8 +9531,8 @@ paths:
                 with-both:
                   summary: Both published and draft exist
                   value:
-                    publishedYaml: "schemaVersion: 1\nname: Bugfix\nsteps:\n  - id: plan\n    type: agent\n"
-                    draftYaml: "schemaVersion: 1\nname: Bugfix\nsteps:\n  - id: plan\n    type: agent\n  - id: review\n    type: human\n"
+                    publishedYaml: "schemaVersion: 1\nname: Bugfix\ncompat:\n  engine_min: 3.0.0\nnodes:\n  - id: plan\n    type: ai_coding\n    action:\n      prompt: Implement {{ task.prompt }}\n    transitions:\n      success: done\n"
+                    draftYaml: "schemaVersion: 1\nname: Bugfix\ncompat:\n  engine_min: 3.0.0\nnodes:\n  - id: plan\n    type: ai_coding\n    action:\n      prompt: Implement {{ task.prompt }}\n    transitions:\n      success: review\n  - id: review\n    type: human\n    finish:\n      human:\n        decisions: [approve]\n    transitions:\n      approve: done\n"
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10657,10 +10664,13 @@ paths:
         remnant (crash window W1) is past the window and may be triggered.
 
         A refused launch is NOT an HTTP error: the dispatch itself succeeded
-        and recorded the outcome, so the response is `200` with
-        `outcome: launch_failed` and the `MaisterError` code in `errorCode`
-        (including `EXECUTOR_UNAVAILABLE` when the supervisor is down inside
-        `launchRun`).
+        and recorded the outcome, so the response is `200` with the
+        `MaisterError` code in `errorCode`. Ordinary refusals return
+        `outcome: launch_failed` (including `EXECUTOR_UNAVAILABLE` when the
+        supervisor is down inside `launchRun`). A structured graph-only
+        manifest incompatibility returns `outcome: incompatible_disabled` and
+        atomically pauses the schedule to prevent further cron retries; repair
+        the Flow and explicitly re-enable the schedule to resume it.
       operationId: triggerProjectSchedule
       parameters:
         - name: slug
@@ -10692,6 +10702,13 @@ paths:
                 refused:
                   summary: launchRun refused (dirty parent repo)
                   value: { outcome: launch_failed, errorCode: PRECONDITION }
+                incompatible-disabled:
+                  summary: Graph-only manifest refusal paused the schedule
+                  value:
+                    {
+                      outcome: incompatible_disabled,
+                      errorCode: CONFIG,
+                    }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -13573,11 +13590,15 @@ components:
         - skipped_blocked
         - skipped_unconfigured
         - launch_failed
+        - incompatible_disabled
         - dispatching
       description: |
         (M28) Dispatch decision recorded on the schedule row.
         `dispatching` is the durable in-flight intent marker written before
         `launchRun` (two-phase fire pipeline, ADR-071).
+        `incompatible_disabled` records a structured graph-only manifest
+        refusal, clears a queued catch-up, and sets `enabled=false` so cron
+        does not retry until an operator repairs and re-enables the schedule.
     ScheduleDTO:
       type: object
       required:
@@ -13630,12 +13651,13 @@ components:
             - skipped_blocked
             - skipped_unconfigured
             - launch_failed
+            - incompatible_disabled
             - dispatching
             - null
         lastFireError:
           type: string
           nullable: true
-          description: "Bounded `CODE: message` from a `launch_failed` fire (≤500 chars)."
+          description: "Bounded `CODE: message` from a `launch_failed` or `incompatible_disabled` fire (≤500 chars)."
         lastRunId: { type: string, nullable: true }
         lastRunStatus:
           type: string
@@ -13712,7 +13734,7 @@ components:
         errorCode:
           type: string
           nullable: true
-          description: "`MaisterError` code recorded for a `launch_failed` outcome."
+          description: "`MaisterError` code recorded for a `launch_failed` or `incompatible_disabled` outcome."
     AuthoredCapabilityKind:
       type: string
       enum: [rule, skill, flow]
@@ -13913,11 +13935,11 @@ components:
             status:
               type: string
               enum: [Backlog, InFlight, Done, Abandoned]
-            flowId: { type: string, format: uuid }
+            flowId: { type: string, format: uuid, nullable: true }
         launchability:
           type: object
           additionalProperties: false
-          required: [launchable, reason]
+          required: [launchable, reason, incompatibilityReason, blockers]
           properties:
             launchable: { type: boolean }
             incompatibilityReason: { type: string, nullable: true }
@@ -13927,10 +13949,22 @@ components:
                 [
                   launchable,
                   busy,
+                  crashed,
+                  target_terminal,
+                  flagged,
                   blocked,
                   supervisor_unavailable,
                   runner_unavailable,
                   project_archived,
+                  unconfigured,
+                  flow_missing,
+                  no_revision,
+                  not_enabled,
+                  not_installed,
+                  setup_failed,
+                  setup_pending,
+                  unsupported_schema,
+                  incompatible,
                 ]
             blockers:
               type: array
@@ -13955,7 +13989,7 @@ components:
             first run), so the runs-history button disables up-front instead of
             failing the launch after submit. The runs-history "Run again" button
             reads this field; the page-header button keeps `launchability`.
-          required: [launchable, reason]
+          required: [launchable, reason, incompatibilityReason]
           properties:
             launchable: { type: boolean }
             incompatibilityReason: { type: string, nullable: true }
@@ -15130,7 +15164,13 @@ components:
       additionalProperties: false
       required: [kind, message]
       properties:
-        kind: { type: string, enum: [legacy_steps, invalid_manifest] }
+        kind:
+          type: string
+          enum: [legacy_steps, invalid_manifest, engine_incompatible]
+          description: |
+            `legacy_steps` is the Engine 3 graph-only refusal;
+            `invalid_manifest` fails graph parsing; `engine_incompatible` has
+            a graph shape but its declared engine range excludes this host.
         message: { type: string }
     RunGraphResponse:
       oneOf:
@@ -15228,9 +15268,10 @@ components:
       oneOf:
         - type: object
           additionalProperties: false
-          required: [compatible, currentStepId, runStatus, nodes]
+          required: [compatible, incompatibility, currentStepId, runStatus, nodes]
           properties:
             compatible: { type: boolean, enum: [true] }
+            incompatibility: { type: object, nullable: true, enum: [null] }
             currentStepId: { type: string, nullable: true }
             runStatus: { type: string }
             nodes:
@@ -15330,9 +15371,10 @@ components:
       oneOf:
         - type: object
           additionalProperties: false
-          required: [compatible, messages, usage]
+          required: [compatible, incompatibility, messages, usage]
           properties:
             compatible: { type: boolean, enum: [true] }
+            incompatibility: { type: object, nullable: true, enum: [null] }
             messages:
               type: array
               items: { $ref: "#/components/schemas/TranscriptMessage" }

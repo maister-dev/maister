@@ -5,7 +5,8 @@ Owner: platform
 Decision: [ADR-129](../../docs/decisions.md#adr-129-postgres-only-and-graph-only-engine-300-cut-over)
 Plan: [feature-postgres-graph-only-cutover](../plans/feature-postgres-graph-only-cutover.md)
 Engine: `3.0.0`
-Migration reservation: `0093_postgres_graph_only_cutover`
+Migration sequence: `0093_postgres_graph_only_cutover` then
+`0094_close-m43-cutover-task-claims`
 
 ## Scope and terminology
 
@@ -24,6 +25,13 @@ non-empty `nodes` array and no `steps` key. The locked refusal text is:
 The durable D2 reason is `legacy_steps_engine_3_cutover`; its domain-event
 source is `upgrade_cutover`.
 
+A stored graph manifest whose declared engine range excludes `3.0.0` is a
+separate typed read/execution incompatibility:
+`{ kind: "engine_incompatible", message: <isEngineCompatible reason> }`.
+Shape-only intake parsing still accepts that graph so authors can inspect and
+repair a future-engine manifest; stored/runtime execution refuses it before
+compile or side effects.
+
 ## Requirements
 
 | ID | Current evidence | Required invariant | Acceptance criterion |
@@ -34,7 +42,7 @@ source is `upgrade_cutover`.
 | PG-04 | Brain provisioning branches on database dialect. | Brain remains a separate Postgres migration lineage; only schema-applied checks govern availability. | Missing Brain schema is actionable; no dialect branch exists. |
 | PG-05 | Dependencies and types include `better-sqlite3` and a PG/SQLite union. | Production, test, and dependency graphs contain one typed PG client. | Dependency/static greps are empty and typecheck is green. |
 | GRAPH-01 | `flowYamlV1Schema` accepts `steps` and is `.passthrough()`. | A raw-object precheck rejects every present `steps` key; a non-empty `nodes` array is required. | The manifest truth table below passes with the exact refusal for legacy keys. |
-| GRAPH-02 | Filesystem YAML and stored JSONB use several parsers/casts. | One pure manifest-shape classifier and one parser boundary serve every intake/read/runtime surface. | No raw stored-manifest cast reaches `compileManifest`; all callers receive a typed result. |
+| GRAPH-02 | Filesystem YAML and stored JSONB use several parsers/casts. | One pure graph-shape classifier serves intake; the stored/executable boundary additionally classifies engine-range incompatibility. | No raw stored-manifest cast reaches `compileManifest`; all callers receive a typed result. |
 | GRAPH-03 | Engine version is `2.2.0` and the linear runner remains selectable. | Engine is `3.0.0`; no execution path dispatches to a linear runner or linear guard. | Graph regression tests pass and forbidden linear symbols have no production hits. |
 | GRAPH-04 | Authoring helpers expose legacy steps/guards. | Grammar, assistant skill, editor/scaffold and validation expose graph nodes and graph gates only. | Drift guards and authoring tests contain no positive legacy fixture. |
 | GRAPH-05 | Templates can resolve from `step_runs`. | The public `steps.<nodeId>.*` namespace remains, sourced only from latest `node_attempts`. | A template test resolves node stdout through `steps.*` with no `step_runs` row/table. |
@@ -43,15 +51,17 @@ source is `upgrade_cutover`.
 | MIG-03 | Lifecycle state spans attempts, HITL, assignments, sessions, events and outbox. | The materialized candidate set closes every reachable open store, clears resume state, and emits one terminal event/outbox record per CAS winner. | Store-closure and idempotency tests pass atomically. |
 | MIG-04 | Stored revision identity may be pinned or legacy-unpinned. | Pinned `flow_revisions.manifest` is authoritative; only unpinned runs fall back to `flows.manifest`; unresolved actionable identity aborts. | Pinned/fallback/null/ambiguous rows match the migration matrix. |
 | MIG-05 | Existing consumers react to `run.failed`. | A shared predicate suppresses Ralph, agent triggers, Brain harvesting and source reindex for the D2 reason/source. | Redelivery does not launch/harvest/reindex; cost may reconcile and a graph parent may observe failure. |
+| MIG-06 | A C2 fresh-task admission claim can predate D2 while no new run row exists. | Follow-on data migration 0094 clears only a non-null `tasks.queue_claimed_at` at or before that task's recorded D2 event; a later claim remains intact. | Real-Postgres coverage proves stale-claim cleanup and post-cut-over claim preservation. |
+| MIG-07 | Clearing a stale C2 claim could make a D2 `Failed` run look like an ordinary auto-retry candidate. | When the latest Flow run has a D2 event and `launch_armed_at` is absent or no later than its `occurred_at`, both C2 consumers atomically hold the task without calling `launchRun`; only a later human re-triage re-arms it. | Poll and slot-free integration tests prove no launch/claim, one hold/comment, and successful post-D2 re-triage. |
 | API-01 | Intake endpoints have established status families. | Each operation preserves the exact mapping in the API matrix. | Contract and route tests assert status, code, exact message and zero side effects. |
 | API-02 | Launch can discover errors after worktree/run/session mutation. | JSON and staged-stream launch validate graph compatibility before all side effects. | No run/workspace/session/materialization/task mutation is observed on refusal. |
-| API-03 | Read models can throw a Zod/compile exception on stored legacy JSONB. | Read operations return `200` with a typed incompatibility/failure-reason DTO. | Package, launch-options and run-history pages render without an exception. |
+| API-03 | Read models can throw a Zod/compile exception on stored incompatible JSONB. | Read operations return `200` with a typed incompatibility/failure-reason DTO for legacy, malformed, and engine-range-incompatible manifests. | Package, launch-options and run-history pages render without an exception. |
 | UX-01 | Legacy installed revisions have no uniform compatibility state. | Viewer shows an incompatible badge, exact remediation, and disables attach/enable/upgrade-to/launch. | DOM tests cover badge, disabled controls and accessible reason. |
 | UX-02 | Local editor can enter legacy YAML. | Raw YAML stays editable; canvas, commit, cut and publish are blocked by one validation panel; no converter exists. | Keyboard/focus tests cover the alert and blocked actions. |
 | UX-03 | Registration/install errors may discard context or lack focus. | Input is retained and a typed `role=alert` summary receives focus. | EN/RU component tests assert retained values, focus and equivalent meaning. |
-| UX-04 | Launch selection can expose overrides for an incompatible revision. | The picker shows the exact reason, `launchable=false`, no runner override and no submit path. | Component and route tests prove the bypass is absent. |
+| UX-04 | An incompatible enabled revision can be hidden behind a disabled launch affordance. | The picker and board both show the exact typed reason; the board derives it from the authoritative enabled revision, while the picker has `launchable=false`, no runner override and no submit path. | Board pure/DOM, picker component, and route tests prove the reason and bypass absence. |
 | UX-05 | A D2 failure can resemble a recoverable runtime failure. | Run detail/list/inspector show a persistent cut-over banner, timestamp and retained evidence/worktree links; Recover/Resume/Respond/Promote/retry are absent. | Component plus seeded E2E coverage agree across the three views. |
-| DOC-01 | Current docs promise SQLite/linear behavior. | Current-state code docs, analytics, ERDs, APIs, screens and EN/RU messages describe Postgres/graph-only behavior. | Contract/docs/Mermaid/i18n/ADR-anchor gates pass and forbidden-current-doc grep is empty. |
+| DOC-01 | Current docs promise SQLite/linear behavior. | Current-state code docs, analytics, ERDs, APIs, screens and EN/RU messages describe Postgres/graph-only behavior. | Contract/docs/Mermaid/i18n/ADR-anchor gates pass; the scoped forbidden-current-doc audit has no unmarked current-state hit (historical/negative records are explicitly labeled). |
 | DOC-02 | Upgrade behavior is distributed. | Deployment has one ordered audit/backup/stop/migrate/start/verify runbook and backup-only rollback. | Runbook order matches migration preconditions and ADR-129. |
 | TEST-01 | Legacy tests overlap layers and some positive fixtures use `steps`. | Every invariant has one primary layer; every new test is discovered; positive fixtures use `nodes`. | Bidirectional traceability has no orphan/duplicate owner and Vitest list includes planned paths. |
 | TEST-02 | A broad green suite could miss removed-space regressions. | Static forbidden-symbol/dependency/doc/fixture gates complement behavioral tests. | Final negative-space audit matches only the explicit historical/negative allow-list. |
@@ -68,7 +78,7 @@ source is `upgrade_cutover`.
 | `nodes: []` | malformed | typed `CONFIG` validation error | invalid, distinct from legacy incompatibility |
 | non-object or malformed node | malformed | typed `CONFIG` validation error | invalid |
 | stored legacy JSONB | legacy | never raw-cast/compiled | `200` typed incompatibility on reads; mutation refuses |
-| graph with engine range excluding 3.0.0 | graph | shape accepted | incompatible with engine-bound reason, not legacy text |
+| graph with engine range excluding 3.0.0 | graph | shape-only parse accepted | `200` typed incompatibility `{ kind: engine_incompatible, message: <engine reason> }`; executable boundaries refuse before compile |
 
 Extension fields remain accepted by `.passthrough()`. Only the known legacy
 `steps` key receives the custom refusal; unrelated `x-*` fields are preserved.
@@ -83,8 +93,8 @@ Extension fields remain accepted by `.passthrough()`. Only the known legacy
 | `publishLocalAuthoredCapability` | 422 / `CONFIG` | Locked text | No authored bridge, `flows`, or `flow_revisions` publication | Blocking validation panel |
 | `cutStudioLocalPackageVersion` | 409 / `PRECONDITION` | Existing `details.invalidArtifacts` | No export/install/stamp/attach | Blocking validation panel |
 | enable/upgrade/rollback | 422 / `CONFIG` | Locked text | Enabled revision/cached manifest pointers unchanged | Controls disabled as early as possible |
-| upgrade preview | 200 typed incompatibility | Actionable reason | Read only | Preview remains renderable |
-| launch options | 200 | `flowIssue=incompatible`, reason, `launchable=false` | Read only; no synthetic runner override | No submit/override |
+| upgrade preview | 200 typed incompatibility | Actionable legacy, malformed, or engine-range reason | Read only | Preview remains renderable |
+| launch options | 200 | `flowIssue=incompatible`, reason, `launchable=false`; engine-range reasons use their canonical compatibility text | Read only; no synthetic runner override | No submit/override |
 | `postRun` | 400 / `CONFIG` | Existing error envelope, locked text | No run/workspace/session/materialization/task mutation | Launch dialog stays open |
 | `extLaunchRun` | 422 / `CONFIG` | External error envelope, locked text | Same launch service and zero side effects | Agent receives typed refusal |
 | package/run reads | 200 typed DTO | Compatibility or D2 reason/timestamp | Read only | Viewer/history remain usable |
@@ -92,7 +102,9 @@ Extension fields remain accepted by `.passthrough()`. Only the known legacy
 No route, status, error code, or AsyncAPI webhook field is added. Outbound
 `run.failed` data remains `{errorCode: "CONFIG"}`.
 
-## Migration 0093 executable contract
+## M43 0093/0094 executable contract
+
+### 0093 D2/D1 transaction
 
 ### Preconditions and candidate identity
 
@@ -124,7 +136,7 @@ materialized once and reused.
 2. Close open `node_attempts` as Failed/CONFIG.
 3. System-cancel unanswered `hitl_requests` with `responded_at`.
 4. Cancel open/claimed assignments and append `system_closed` assignment events.
-5. Clear run/session ACP handles, cursors and resume/admission markers.
+5. Clear run/session ACP handles, cursors and resume markers.
 6. CAS the eight actionable statuses to `Failed`, setting terminal timestamps.
 7. For CAS winners only, append exactly one `run.failed` domain event with
    `{reason, source}` and one existing-shape webhook outbox record.
@@ -132,7 +144,28 @@ materialized once and reused.
 
 The transaction retains `runs`, workspaces, artifacts, stored revisions and
 terminal history. Rerun/redelivery produces no duplicate terminal event or
-automation action. Scheduler admission after restart sees no D2 row as live.
+event-fan-out action. Scheduler admission after restart sees no D2 row as live;
+the separate one-time C2 hold is defined below.
+
+### 0094 stale C2-claim closure
+
+Migration 0094 runs immediately after 0093 in the same stopped-service main
+migration sequence. It groups durable D2 `run.failed` events by `task_id` and
+clears `tasks.queue_claimed_at` only when it is non-null and no later than that
+task's latest D2 `occurred_at`. It changes only that stale claim and the task
+`updated_at`; it creates no run/event and leaves a claim written after D2
+(including a later human re-triage) untouched.
+
+### C2 cut-over hold after 0094
+
+C2 is not a D2 event consumer: after the claim cleanup it reads the latest Flow
+run and its exact D2 event. If `launch_armed_at` is absent or at/before that
+event's `occurred_at`, the poll and slot-free admission gate share one atomic
+hold: they set `triage_status='flagged'`, clear `launch_mode`, and append one
+system comment without acquiring a claim or calling `launchRun`. That is a
+terminal automation hold, not an automatic retry. A human re-triage after D2
+writes a later `launch_armed_at`, so the original event cannot clobber the new
+intent and normal C2 admission may resume.
 
 ## Event fan-out
 
@@ -149,6 +182,10 @@ flowchart LR
 ```
 
 Success-gated dependents do not launch from the failed child.
+
+The C2 hold above is deliberately not shown as an event-fan-out consumer: it
+does not dispatch the D2 event or create a run; it reads the latest run/event
+pair only to prevent a post-upgrade auto-launch.
 
 ## Process flows
 
@@ -180,11 +217,13 @@ sequenceDiagram
 ```mermaid
 flowchart TD
   B["Backup Postgres"] --> S["Stop web + supervisor"]
-  S --> Q["Run 0093 transaction"]
-  Q --> N["Run Brain migration/check"]
+  S --> Q["Run 0093 D2/D1 transaction"]
+  Q --> C["Run 0094 stale C2-claim closure"]
+  C --> N["Run Brain migration/check"]
   N --> R["Start supervisor + web"]
   R --> V["Verify no actionable legacy rows/packages"]
-  Q -->|failure| T["Transaction rollback; fix precondition"]
+  Q -->|failure| T["Rollback 0093; fix precondition"]
+  C -->|failure| U["Keep services stopped; fix 0094 error"]
   Q -->|success but release rollback needed| Z["Stop services and restore backup"]
 ```
 
@@ -245,7 +284,8 @@ before deployment.
 | Per-run D2 transition | WARN | runId, priorStatus, reason, source | no prompt/session token |
 | Consumer suppression | DEBUG | consumer, eventId, runId, reason | no payload body |
 
-Configuration and migration failures fail fast. D2 is atomic and idempotent.
+Configuration and migration failures fail fast. D2 is atomic and idempotent;
+0094 idempotently clears only its event-bounded stale C2 claims.
 Queries/events are bounded and indexed on existing identity/status paths. No
 secret, DB credential or manifest body is logged. Implementation uses pure,
 single-purpose classifiers and existing DI seams; no mode flags, fallback
@@ -258,14 +298,18 @@ dialect, converter, duplicated parser, new status or new error code are allowed.
 | PG-01, PG-02 | 4 | `web/lib/db/__tests__/postgres-url.test.ts`, instrumentation unit | `pnpm --filter maister-web exec vitest run --project unit lib/db/__tests__/postgres-url.test.ts lib/__tests__/instrumentation.test.ts` | URL table and rejected boot |
 | PG-03, PG-04 | 5 | scheduler/relation/Brain real-PG integration | `pnpm --filter maister-web exec vitest run --project integration lib/__tests__/scheduler.integration.test.ts lib/social/__tests__/social-domain.integration.test.ts` | lock execution/failure + Brain schema refusal |
 | PG-05 | 6 | typecheck + static/dependency sentinel | `pnpm --filter maister-web typecheck` | no dependency/union FIXME |
-| GRAPH-01, GRAPH-02 | 7 | `manifest-shape.test.ts` pure table | `pnpm --filter maister-web exec vitest run --project unit lib/flows/__tests__/manifest-shape.test.ts` | exact truth table and caller-selected typed code |
+| GRAPH-01, GRAPH-02 | 7 | `manifest-shape.test.ts` pure shape/executable table | `pnpm --filter maister-web exec vitest run --project unit lib/flows/__tests__/manifest-shape.test.ts` | exact legacy truth table plus shape-vs-engine incompatibility boundary |
 | GRAPH-03, GRAPH-04 | 7,10 | engine/grammar/graph runner unit | `pnpm --filter maister-web exec vitest run --project unit lib/flows/__tests__/engine-version.test.ts lib/flows/graph/__tests__/runner-core.test.ts` | engine 3 + no linear dispatch |
 | GRAPH-05 | 10,12 | `templating.test.ts` | `pnpm --filter maister-web exec vitest run --project unit lib/flows/__tests__/templating.test.ts` | preserved `steps.*` namespace |
 | API-01, API-02 | 8 | operation route tests + runs service integration | `pnpm --filter maister-web exec vitest run --project integration app/api/v1/ext/runs/__tests__/route.integration.test.ts` | exact status/code/body and no side effects |
-| API-03 | 8,12 | flow-package/run-manifest query integration | `pnpm --filter maister-web exec vitest run --project integration lib/queries/__tests__/flow-package-detail.integration.test.ts` | typed 200 DTO |
-| UX-01..UX-04 | 9 | focused component/route DOM tests | `pnpm --filter maister-web exec vitest run --project unit components/flows/__tests__/package-viewer.test.ts components/board/__tests__/launch-popover.test.ts app/api/runs/launch-options/__tests__/route.test.ts` | badge/control/alert/focus/EN-RU |
-| UX-05 | 12 | D2 history component + Playwright | `pnpm --dir web exec playwright test m43-cutover-history.spec.ts` | persistent banner and absent actions |
-| MIG-01..MIG-04 | 11 | `migration-0093.integration.test.ts` real PG | `pnpm --filter maister-web exec vitest run --project integration lib/db/__tests__/migration-0093.integration.test.ts` | status/store/atomic/idempotent matrix |
+| API-03 | 8,12 | flow-package query integration; run-manifest and graph/status/transcript route units | `pnpm --filter maister-web exec vitest run --project integration lib/queries/__tests__/flow-package-detail.integration.test.ts` and `pnpm --filter maister-web exec vitest run --project unit lib/queries/__tests__/run-manifest.test.ts 'app/api/runs/[runId]/graph/__tests__/route.test.ts' 'app/api/runs/[runId]/graph-status/__tests__/route.test.ts' 'app/api/runs/[runId]/transcript/__tests__/route.test.ts'` | typed 200 DTO and safe incompatible branches |
+| UX-01 | 9 | installed-viewer, project-package, and Studio attach control DOM tests | `pnpm --filter maister-web exec vitest run --project unit components/flows/__tests__/package-viewer.test.ts components/board/panels/__tests__/project-packages-section.test.ts components/studio/attach-to-project-button.test.ts` | badge, accessible reason, and disabled attach/enable/upgrade controls |
+| UX-02 | 9 | local compatibility classifier plus editor, local-list, and overview Cut-control tests | `pnpm --filter maister-web exec vitest run --project unit lib/local-packages/__tests__/cut-compatibility.test.ts components/studio/__tests__/local-package-editor-blocking.test.ts components/studio/__tests__/local-packages-list.test.ts components/studio/overview-cards.test.ts` | legacy/invalid/engine-range reason; validation panel; canvas/commit/publish suppression; disabled local Cut controls |
+| UX-03 | 9 | localized Attach request-error focus DOM test | `pnpm --filter maister-web exec vitest run --project unit components/studio/__tests__/attach-to-project-button-focus.dom.test.ts` | retained attach context, focused typed CONFIG alert, equivalent EN/RU summary |
+| UX-04 | 9 | board pure/DOM, launch picker component, and route tests | `pnpm --filter maister-web exec vitest run --project unit lib/queries/__tests__/board-flow-incompatibility.test.ts components/board/__tests__/task-card-launch-reason.test.ts components/board/__tests__/launch-popover.test.ts app/api/runs/launch-options/__tests__/route.test.ts` | authoritative enabled-revision reason beside disabled board affordance; exact picker reason, no override, no submit bypass |
+| UX-05 | 12 | D2 history component + authenticated Playwright | `pnpm --dir web exec playwright test m43-cutover-history.spec.ts` | persistent banner and absent actions under the `authed` project |
+| MIG-01..MIG-06 | 11 | `migration-0093.integration.test.ts` real PG | `pnpm --filter maister-web exec vitest run --project integration lib/db/__tests__/migration-0093.integration.test.ts` | D2/D1 status/store matrix plus stale-C2-claim and later-claim matrix |
+| MIG-07 | 11 | C2 poll and slot-free admission integrations | `pnpm --filter maister-web exec vitest run --project integration lib/scheduler/handlers/__tests__/auto-launch-triaged.integration.test.ts lib/__tests__/admission-gate.integration.test.ts` | no D2 auto-launch/claim, one terminal hold, later human re-triage is eligible |
 | MIG-05 | 11 | domain-event consumer unit + emit-site integration | `pnpm --filter maister-web exec vitest run --project unit lib/domain-events/__tests__/cutover.test.ts` | exact suppression predicate; consumer tests exercise fan-out |
 | DOC-01, DOC-02 | 1,14 | contract/docs/ADR/Mermaid/i18n validators | `CI=true pnpm validate:docs:all && CI=true pnpm validate:contracts` plus i18n parity and scoped forbidden-current-doc audit | all current-state surfaces agree |
 | TEST-01, TEST-02 | 3,13,15,16 | Vitest list + forbidden-symbol audit | `pnpm --filter maister-web exec vitest list --project unit` | no dead/orphan/positive legacy test |
@@ -286,11 +330,11 @@ the diff:
 | --- | --- | --- |
 | PG-01..PG-05 | `web/lib/db/postgres-url.ts`, `client.ts`, `instrumentation.ts`, Postgres-only schema/imports and dependency manifests | URL/boot/client units, typecheck, lint, Drizzle journal check |
 | GRAPH-01..GRAPH-05 | `manifest-shape.ts`, `manifest-parser.ts`, `config.schema.ts`, engine `3.0.0`, graph-only `runner.ts`, `context.ts` | 128 focused units; positive first-party graph fixtures; forbidden-symbol audit |
-| API-01..API-03 | shared parser at all intake/read boundaries; per-operation `x-maister-m43-legacy-steps` status/code/message/side-effect contracts | contract validator; route/read-model focused units; operation matrix audit |
-| MIG-01..MIG-04 | migration `0093`: precondition, one materialized candidate relation, lifecycle-store closure, eight-status CAS, winner-scoped event, then `DROP TABLE step_runs` | migration integration is discovered and SQL/snapshot/journal pass static integrity; execution requires a container-capable real-Postgres environment |
+| API-01..API-03 | shared parser at all intake/read boundaries; per-operation legacy status/code/message/side-effect contracts plus typed engine incompatibility | contract validator; route/read-model focused units; operation matrix audit |
+| MIG-01..MIG-07 | migration `0093`: precondition, one materialized candidate relation, lifecycle-store closure, eight-status CAS, winner-scoped event, then `DROP TABLE step_runs`; migration `0094`: event-bounded stale C2-claim cleanup; C2: D2-aware terminal hold with explicit re-triage re-arm | migration/C2 integrations are discovered and SQL/snapshot/journal pass static integrity; execution requires a container-capable real-Postgres environment |
 | MIG-05 | `isGraphOnlyCutoverFailure` shared by Ralph, agents, Brain harvest and source reindex | five-case predicate unit plus deletion-sensitive consumer integration tests |
-| UX-01..UX-05 | typed package/launch incompatibility, blocked Studio controls, `CutoverFailureBanner`, list/board/detail/inspector read models, EN/RU catalogs | focused UI/route tests green; Playwright test discovered as one Chromium scenario |
-| DOC-01..DOC-02 | ADR-129, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | 340 Mermaid blocks, 644 ADR links, all API contracts and EN/RU parity green |
+| UX-01..UX-05 | typed package/launch incompatibility, blocked Studio controls, `CutoverFailureBanner`, list/board/detail/inspector read models, EN/RU catalogs | focused UI/route tests green; Playwright test discovered under the authenticated project |
+| DOC-01..DOC-02 | ADR-129, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | 340 Mermaid blocks, 648 ADR links, all API contracts and EN/RU parity green |
 
 Six final audits were executed: scope/fullness, bidirectional traceability,
 internal consistency, migration crash-window/logical holes, forbidden

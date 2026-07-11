@@ -6,7 +6,10 @@ Direct Flow-package installation maps legacy members to FLOW_INSTALL/502.
 Admin package ingestion maps member-manifest validation to CONFIG/422 while
 transport clone/copy failures remain FLOW_INSTALL. Enable, upgrade and
 rollback refuse a legacy target with CONFIG/422 and never change the enabled
-revision pointer or cached manifest. Reads return typed incompatibility.
+revision pointer or cached manifest. A graph member whose declared engine range
+excludes this host remains inspectable but receives the distinct typed
+`engine_incompatible` reason at stored/executable boundaries. Reads return
+typed incompatibility.
 
 ## Purpose
 

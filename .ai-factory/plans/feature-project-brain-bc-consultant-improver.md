@@ -1,5 +1,10 @@
 # Implementation Plan: Project Brain B/C - Consultant Tier and Improvement Bridge
 
+> Historical implementation-plan record. Its SQLite/dialect assumptions predate
+> [ADR-129](../../docs/decisions.md#adr-129-postgres-only-and-graph-only-engine-300-cut-over)
+> and are not current requirements; use the current Postgres-only configuration
+> and Project Brain analytics for live behavior.
+
 > **For agentic workers:** REQUIRED IMPLEMENTATION STYLE: SDD first, then strict
 > TDD. Do not start production code until Phase 0 contract artifacts are
 > complete and validator-clean. Each behavior task must go RED -> GREEN ->

@@ -2,10 +2,11 @@
 
 ## M43 runs-domain transition (Implemented)
 
-The post-0093 runs domain has no STEP_RUNS entity or fallback join.
+The post-0093/0094 runs domain has no STEP_RUNS entity or fallback join.
 NODE_ATTEMPTS exclusively supplies graph progress, activity, templating and
 resume context. Legacy run rows remain and obtain their durable cut-over reason
-from the run.failed domain-event ledger.
+from the run.failed domain-event ledger. Migration 0094 uses that ledger only
+to clear task C2 claims predating D2; it introduces no ERD shape change.
 
 Tables for the execution lifecycle: tasks (board), runs (Flow attempts and
 scratch sessions), workspaces (worktrees), scratch dialog metadata, messages,

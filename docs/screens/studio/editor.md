@@ -1,11 +1,14 @@
 # Flow editor (Studio)
 
-## M43 local legacy manifest state (Implemented)
+## M43 local Flow compatibility state (Implemented)
 
-Raw YAML containing steps[] remains open for manual rewriting. A focused,
-blocking validation panel carries the exact engine-3 remediation. Canvas,
-commit, cut and publish are disabled until the file is a valid nodes[] graph.
-No automatic conversion action exists.
+Raw YAML containing steps[] remains open for manual rewriting. A visible
+blocking validation panel carries the exact reason: the engine-3 remediation,
+malformed-manifest guidance, or the declared engine-range mismatch. The
+affected graph canvas is unavailable and **Commit state** and **Publish** are
+disabled while any package Flow is incompatible. **Cut version** is offered by
+the Studio overview and local-workspace rows, where the full package receives
+the same compatibility check. No automatic conversion action exists.
 
 - **Type:** screen (artifact editor).
 - **Route(s):** `/studio/edit/{localPackageId}/[[...path]]` (implemented local
@@ -43,7 +46,7 @@ dropping into raw YAML for routine changes.
 | Role | Sees | Notes |
 | --- | --- | --- |
 | Authenticated viewer without the local package edit lock | Read-only canvas + files/YAML/diff | lock state explains who holds the package |
-| Member holding the edit lock | Full edit: canvas, properties, Save, Cut version | writes go through local-package file APIs; cut version installs a local digest |
+| Member holding the edit lock | Full edit: canvas, properties, file save, Commit state, Publish | writes go through local-package file APIs; version cutting is a local-workspace / Studio-overview action |
 
 The route resolves the local package server-side and reads the current lock state;
 write routes enforce member authorization and the edit lock.
@@ -53,15 +56,15 @@ write routes enforce member authorization and the edit lock.
 - **Entry:** the package detail **Rework** affordance (forks installed package to
   local, then opens this editor), the `/studio/local` package row, or a direct
   URL.
-- **Exit:** back to Studio/local package detail; **Cut version** commits a local
-  digest install (stays on the editor); drawer/toggle state changes in place.
+- **Exit:** back to Studio/local package detail; drawer/toggle state changes in
+  place. **Cut version** is available from the local-workspace and Studio
+  overview rows and creates a local digest install there.
 
 ```mermaid
 flowchart LR
     Detail["/studio/packages/{ref}"] -->|rework forks local| Editor["Local package editor"]
     Local["/studio/local"] -->|edit package| Editor
     Editor -->|Save| Editor
-    Editor -->|Cut version| Editor
     Editor -->|Files / YAML / Diff| Drawer["Drawer / central YAML"]
 ```
 
@@ -71,9 +74,9 @@ A 3-pane shell (top bar + canvas + right properties), with toggled drawers and a
 collapsible app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
 
 1. **Top bar (compact)** — identity (package · selected artifact · kind) · lock
-   state · validation chip (valid / N issues, from the pure
-   `validateEditorManifest`) · readiness chip · **Save** · **Cut version** ·
-   toggles `[Files] [YAML] [Diff]`.
+   state · **Commit state** · **Publish** · AI toggle · end-edit action.
+   Per-file Save lives in the Files / YAML editor; the visible blocking
+   validation panel disables Commit state and Publish for an incompatible Flow.
 2. **Canvas (dominant, full height)** — the `FlowEditorToolbar` palette (Add
    node ×6 after M41 `consensus` / Add gate ×6 / Remove), color-coded node cards (icon chip + status
    chip), named-outcome handles, dashed amber rework edges, `<MiniMap>` +
@@ -272,8 +275,6 @@ stateDiagram-v2
     DrawerOpen --> Viewing: close drawer / YAML toggle
     Viewing --> Saving: Save file (lock checked)
     Saving --> Viewing: 200 / 409 lock conflict / 422 invalid
-    Viewing --> Cutting: Cut version
-    Cutting --> Viewing: local digest install created
     Viewing --> CompileFallback: manifest fails to compile
     CompileFallback --> Viewing: edit YAML until it parses
 ```
@@ -289,9 +290,9 @@ The local editor works against the local-package working-dir seam:
   enforcement.
 - Lock refresh/release routes keep a single editing session writable; a second
   session is read-only until it acquires the lock.
-- Cut version uses `POST /api/studio/local-packages/{id}/cut-version` to install
-  the working dir as a `local-<digest>` `package_installs` revision a member then
-  attaches.
+- The local-workspace and Studio-overview **Cut version** controls use
+  `POST /api/studio/local-packages/{id}/cut-version` to install the working dir
+  as a `local-<digest>` `package_installs` revision a member can then attach.
 
 Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md)
 (authored-flow lifecycle, hard-gate, CAS) — not restated here (R7).
