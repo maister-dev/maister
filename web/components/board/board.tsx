@@ -1,5 +1,8 @@
 import type { BoardColumn } from "@/lib/board";
-import type { BoardData } from "@/lib/queries/board";
+import type {
+  BoardData,
+  BoardFlowIncompatibility,
+} from "@/lib/queries/board";
 import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
 import type { TaskQueueControlsLabels } from "@/components/board/task-queue-controls";
 import type { RunStatusKey } from "@/lib/runs/run-status-tone";
@@ -72,6 +75,7 @@ export async function Board({
 }: BoardProps): Promise<ReactElement> {
   const t = await getTranslations("board");
   const tCommon = await getTranslations("common");
+  const tLaunch = await getTranslations("launch");
   const tRun = await getTranslations("run");
   const tRunStatus = await getTranslations("run.runStatus");
   const tReadiness = await getTranslations("readiness");
@@ -132,6 +136,22 @@ export async function Board({
     platformStatus.kind === "ready"
       ? undefined
       : t("launchSupervisorUnavailable");
+  const flowIncompatibilityReason = (
+    incompatibility: BoardFlowIncompatibility | null,
+  ): string | undefined => {
+    if (!incompatibility) return undefined;
+
+    switch (incompatibility.kind) {
+      case "legacy_steps":
+        return tLaunch("boardIncompatibility.legacySteps");
+      case "engine_incompatible":
+        return tLaunch("boardIncompatibility.engine", {
+          reason: incompatibility.reason,
+        });
+      case "invalid_manifest":
+        return tLaunch("boardIncompatibility.invalid");
+    }
+  };
   const launchableLatestRunStatuses = new Set([
     "Done",
     "Review",
@@ -143,6 +163,9 @@ export async function Board({
     card: BoardData["columns"][BoardColumn]["flight"][number],
   ): string | undefined => {
     if (launchDisabledReason) return launchDisabledReason;
+    const flowReason = flowIncompatibilityReason(card.flowIncompatibility);
+
+    if (flowReason) return flowReason;
     if (!launchableLatestRunStatuses.has(card.runStatus)) {
       return t("launchBusy");
     }
@@ -232,6 +255,7 @@ export async function Board({
                     }
                     launchDisabledReason={
                       launchDisabledReason ??
+                      flowIncompatibilityReason(card.flowIncompatibility) ??
                       (card.triageStatus === "flagged"
                         ? t("launchFlagged")
                         : card.blockedBy.length > 0

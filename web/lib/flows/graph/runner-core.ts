@@ -19,7 +19,7 @@ import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
 import { systemCachePath } from "@/lib/flow-paths";
-import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
+import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -40,8 +40,9 @@ export type RunFlowOptions = {
   db?: Db;
   runtimeRoot?: string;
   supervisorApi?: SupervisorApi;
-  // A detached ACP resume driver already completed this node. Claim the
-  // NeedsInput run and continue at its success edge without re-dispatching it.
+  // A detached ACP resume driver already completed this node's action. Claim
+  // the NeedsInput run and execute its normal finish pipeline without
+  // re-dispatching the action.
   completedResume?: { targetStepId: string };
   // M19 crash-recover (ADR-034): set by driveResume when re-dispatching a
   // crashed `retry_safe` session-less node. The runner resumes FROM
@@ -311,7 +312,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       );
     }
 
-    manifest = parseGraphOnlyFlowManifest(revision.manifest, {
+    manifest = parseExecutableStoredFlowManifest(revision.manifest, {
       code: "CONFIG",
       surface: "graph-runner-revision",
       manifestLabel: `flow revision ${run.flowRevisionId}`,
@@ -321,7 +322,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     flowInstallPath = revision.installedPath;
     execTrust = revision.execTrust;
   } else {
-    manifest = parseGraphOnlyFlowManifest(flow.manifest, {
+    manifest = parseExecutableStoredFlowManifest(flow.manifest, {
       code: "CONFIG",
       surface: "graph-runner-flow",
       manifestLabel: `flow ${flow.flowRefId}`,

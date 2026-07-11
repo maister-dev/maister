@@ -195,7 +195,6 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const scopeRevisionId = req.nextUrl.searchParams.get("flowRevisionId");
 
   try {
     await requireActiveSession();
@@ -204,6 +203,8 @@ export async function GET(
     const project = await loadProject(db, slug);
 
     await requireProjectAction(project.id, "editSettings");
+
+    const scopeRevisionId = req.nextUrl.searchParams.get("flowRevisionId");
 
     const [flowRows, remapRows] = await Promise.all([
       db
@@ -248,19 +249,6 @@ export async function PATCH(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { slug } = await params;
-  let body: z.infer<typeof patchBodySchema>;
-
-  try {
-    body = patchBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid PATCH body: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      slug,
-    );
-  }
 
   try {
     await requireActiveSession();
@@ -269,6 +257,17 @@ export async function PATCH(
     const project = await loadProject(db, slug);
 
     await requireProjectAction(project.id, "editSettings");
+
+    let body: z.infer<typeof patchBodySchema>;
+
+    try {
+      body = patchBodySchema.parse(await req.json());
+    } catch (err) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid PATCH body: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // The revision must belong to a flow in THIS project (server-state); the
     // slot_key must be one the revision actually declares.
@@ -296,9 +295,7 @@ export async function PATCH(
     }
 
     const declaredSlots = new Set(
-      enumerateRunnerSlots(flow.manifest).map(
-        (slot) => slot.slotKey,
-      ),
+      enumerateRunnerSlots(flow.manifest).map((slot) => slot.slotKey),
     );
 
     if (!declaredSlots.has(body.slotKey)) {

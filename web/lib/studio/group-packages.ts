@@ -13,6 +13,8 @@ export type PackageInstallLike = {
   sourceUrl: string;
   versionLabel: string;
   trustStatus: string;
+  compatible: boolean;
+  incompatibilityReason: string | null;
   counts: PackageMemberCounts;
 };
 
@@ -25,6 +27,8 @@ export type PackageVersion = {
   installId: string;
   versionLabel: string;
   trustStatus: string;
+  compatible: boolean;
+  incompatibilityReason: string | null;
 };
 
 export type PackageGroup = {
@@ -94,6 +98,8 @@ export function groupPackages(input: {
         installId: version.id,
         versionLabel: version.versionLabel,
         trustStatus: version.trustStatus,
+        compatible: version.compatible,
+        incompatibilityReason: version.incompatibilityReason,
       })),
       counts: newest.counts,
       attachedProjectCount: attachedProjects.size,

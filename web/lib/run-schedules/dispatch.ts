@@ -13,6 +13,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { getFlowManifestIncompatibility } from "@/lib/flows/manifest-parser";
 import { nextFireAt } from "@/lib/run-schedules/cron";
 import {
   classifyTaskLaunchability,
@@ -123,6 +124,7 @@ export type DispatchSummary = {
   skippedUnconfigured: number;
   catchupQueued: number;
   launchFailed: number;
+  incompatibleDisabled: number;
   truncated: boolean;
 };
 
@@ -360,9 +362,16 @@ async function writeFinalOutcome(
   scheduleId: string,
   stagedAt: Date,
   fields: {
-    lastFireOutcome: "launched" | "queued_pending" | "launch_failed";
+    lastFireOutcome:
+      | "launched"
+      | "queued_pending"
+      | "launch_failed"
+      | "incompatible_disabled";
     lastRunId: string | null;
     lastFireError: string | null;
+    enabled?: boolean;
+    queueOnePending?: boolean;
+    queuedFireAt?: Date | null;
   },
 ): Promise<void> {
   // last_fired_at is the fencing token: a reclaim past the attempt timeout
@@ -415,18 +424,33 @@ async function executeLaunch(
     const code = isMaisterError(err) ? err.code : "ERROR";
     const message = err instanceof Error ? err.message : String(err);
     const bounded = `${code}: ${message}`.slice(0, 500);
+    const incompatibility = getFlowManifestIncompatibility(err);
+    const outcome: TriggerResult["outcome"] = incompatibility
+      ? "incompatible_disabled"
+      : "launch_failed";
 
     log.warn(
-      { scheduleId: intent.scheduleId, errorCode: code },
+      {
+        scheduleId: intent.scheduleId,
+        errorCode: code,
+        incompatibilityKind: incompatibility?.kind,
+      },
       "schedule launch failed",
     );
     await writeFinalOutcome(database, intent.scheduleId, intent.stagedAt, {
-      lastFireOutcome: "launch_failed",
+      lastFireOutcome: outcome,
       lastRunId: null,
       lastFireError: bounded,
+      ...(incompatibility
+        ? {
+            enabled: false,
+            queueOnePending: false,
+            queuedFireAt: null,
+          }
+        : {}),
     });
 
-    return { outcome: "launch_failed", errorCode: code };
+    return { outcome, errorCode: code };
   }
 }
 
@@ -452,6 +476,7 @@ export async function dispatchDueSchedules(
     skippedUnconfigured: 0,
     catchupQueued: 0,
     launchFailed: 0,
+    incompatibleDisabled: 0,
     truncated: false,
   };
   const intents: LaunchIntent[] = [];
@@ -522,6 +547,8 @@ export async function dispatchDueSchedules(
 
     if (result.outcome === "launch_failed") {
       summary.launchFailed += 1;
+    } else if (result.outcome === "incompatible_disabled") {
+      summary.incompatibleDisabled += 1;
     } else {
       summary.fired += 1;
     }

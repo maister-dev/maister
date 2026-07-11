@@ -3,6 +3,7 @@ import type {
   LocalPackageOrigin,
 } from "@/components/studio/local-packages-list";
 import type { LocalPackage } from "@/lib/db/schema";
+import type { LocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 import type { LocalPackageSourceInstall } from "@/lib/local-packages/service";
 import type { Metadata } from "next";
 import type { ReactElement } from "react";
@@ -17,6 +18,7 @@ import {
   listAllLocalPackages,
   listSourceInstallsForLocalPackages,
 } from "@/lib/local-packages/service";
+import { getLocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 
 type SourceInstallMap = Map<string, LocalPackageSourceInstall>;
 
@@ -33,8 +35,14 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
   const sourceInstalls = await listSourceInstallsForLocalPackages(rows);
 
   // Client-safe projection: `working_dir` + lock session stay server-side.
-  const packages: LocalPackageListItem[] = rows.map((row) =>
-    toLocalPackageListItem(row, sourceInstalls),
+  const packages: LocalPackageListItem[] = await Promise.all(
+    rows.map(async (row) =>
+      toLocalPackageListItem(
+        row,
+        sourceInstalls,
+        await getLocalPackageCutCompatibility(row),
+      ),
+    ),
   );
 
   return (
@@ -62,6 +70,7 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
 function toLocalPackageListItem(
   row: LocalPackage,
   sourceInstalls: SourceInstallMap,
+  cutCompatibility: LocalPackageCutCompatibility,
 ): LocalPackageListItem {
   return {
     id: row.id,
@@ -69,6 +78,7 @@ function toLocalPackageListItem(
     slug: row.slug,
     isDefault: row.isDefault,
     status: row.status,
+    cutCompatibility,
     origin: localPackageOrigin(row, sourceInstalls),
   };
 }

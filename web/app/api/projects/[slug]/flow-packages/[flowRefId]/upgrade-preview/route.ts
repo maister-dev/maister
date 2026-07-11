@@ -21,14 +21,14 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { slug, flowRefId } = await params;
-  const revisionId = req.nextUrl.searchParams.get("revisionId");
 
   try {
+    const { project, db } = await authorizeManagePackages(slug);
+    const revisionId = req.nextUrl.searchParams.get("revisionId");
+
     if (!revisionId) {
       throw new MaisterError("CONFIG", "missing required ?revisionId");
     }
-
-    const { project, db } = await authorizeManagePackages(slug);
 
     const flowRows = await db
       .select({

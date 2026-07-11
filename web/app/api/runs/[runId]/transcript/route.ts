@@ -110,6 +110,7 @@ export async function GET(
 
     return NextResponse.json({
       compatible: true,
+      incompatibility: null,
       messages: transcript?.messages ?? [],
       usage: transcript?.usage ?? null,
     });

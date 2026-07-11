@@ -25,6 +25,8 @@ const OUTCOME_TONE: Record<
   dispatching: "animate-pulse border-amber-line bg-amber-soft text-amber",
   launch_failed:
     "border-[color-mix(in_oklab,var(--danger)_35%,var(--line))] bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] text-danger",
+  incompatible_disabled:
+    "border-[color-mix(in_oklab,var(--danger)_35%,var(--line))] bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] text-danger",
   launched:
     "border-[color-mix(in_oklab,var(--good)_35%,var(--line))] bg-[color-mix(in_oklab,var(--good)_12%,transparent)] text-good",
   queued_pending: "border-amber-line bg-amber-soft text-amber",

@@ -55,6 +55,7 @@
       "skipped_flagged": "Skipped — flagged for review",
       "skipped_blocked": "Skipped — blocked by relations",
       "launch_failed": "Launch failed",
+      "incompatible_disabled": "Disabled — incompatible Flow",
       "dispatching": "Dispatching…",
       "skipped_unconfigured": "Skipped — no flow configured"
     },
@@ -69,6 +70,7 @@
       "skipped_flagged": "Skipped: task is flagged for review",
       "skipped_blocked": "Skipped: task is blocked by a relation",
       "launch_failed": "Launch failed",
+      "incompatible_disabled": "Schedule disabled: its Flow is incompatible",
       "dispatching": "Dispatching",
       "skipped_unconfigured": "Skipped: task has no flow configured"
     },
@@ -1741,6 +1743,11 @@
       "unsupportedSchema": "The selected Flow manifest schema is not supported by this MAIster version.",
       "incompatible": "The selected Flow is incompatible with this MAIster engine version."
     },
+    "boardIncompatibility": {
+      "legacySteps": "This task's enabled Flow uses the removed steps[] format. Republish the package with a non-empty nodes[] graph before launching.",
+      "engine": "This task's enabled Flow is incompatible with this MAIster engine: {reason}.",
+      "invalid": "This task's enabled Flow manifest is invalid. Fix it and enable a valid revision before launching."
+    },
     "unconfiguredHint": "This task has no flow yet — pick one to set it up; launching saves the choice on the task.",
     "flow": "Flow",
     "default": "default",
@@ -2649,6 +2656,7 @@
         "skipped_flagged": "Skipped — flagged for review",
         "skipped_blocked": "Skipped — blocked by relations",
         "launch_failed": "Launch failed",
+        "incompatible_disabled": "Disabled — incompatible Flow",
         "dispatching": "Dispatching…",
         "skipped_unconfigured": "Skipped — no flow configured"
       }

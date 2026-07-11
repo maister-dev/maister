@@ -4,10 +4,11 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { NodeAttemptType } from "@/lib/db/schema";
 
 import { eq } from "drizzle-orm";
+import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
-import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
+import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { flowRevisions, flows } = schemaModule as unknown as Record<string, any>;
@@ -15,8 +16,37 @@ const { flowRevisions, flows } = schemaModule as unknown as Record<string, any>;
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-// Load the run's authoritative manifest. A revision pin never falls back to
-// mutable flow state; only unpinned historical rows may use `flows.manifest`.
+const log = pino({
+  name: "current-node-kind",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+function readableStoredManifest(
+  rawManifest: unknown,
+  context: { flowId?: string; flowRevisionId?: string },
+): FlowYamlV1 | null {
+  const compatibility = classifyStoredFlowManifest(rawManifest);
+
+  if (compatibility.compatible) return compatibility.manifest;
+
+  log.warn(
+    {
+      flowId: context.flowId,
+      flowRevisionId: context.flowRevisionId,
+      manifestShape: compatibility.manifestShape,
+      incompatibilityKind: compatibility.reason.kind,
+    },
+    "stored flow manifest cannot provide current-node read data",
+  );
+
+  return null;
+}
+
+// Load the run's authoritative executable manifest for graph-dependent reads.
+// A revision pin never falls back to mutable flow state; only unpinned
+// historical rows may use `flows.manifest`. Incompatible retained history
+// resolves to null so read models can render the typed cut-over state instead
+// of compiling a non-executable manifest.
 export async function resolveManifest(
   db: Db,
   run: { flowRevisionId: string | null; flowId: string | null },
@@ -32,11 +62,8 @@ export async function resolveManifest(
     const rawManifest = revisionRows[0]?.manifest;
 
     manifest = rawManifest
-      ? parseGraphOnlyFlowManifest(rawManifest, {
-          code: "CONFIG",
-          surface: "current-node-revision",
-          manifestLabel: `flow revision ${run.flowRevisionId}`,
-          revision: run.flowRevisionId,
+      ? readableStoredManifest(rawManifest, {
+          flowRevisionId: run.flowRevisionId,
         })
       : null;
   }
@@ -50,12 +77,7 @@ export async function resolveManifest(
     const rawManifest = flowRows[0]?.manifest;
 
     manifest = rawManifest
-      ? parseGraphOnlyFlowManifest(rawManifest, {
-          code: "CONFIG",
-          surface: "current-node-flow",
-          manifestLabel: `flow ${run.flowId}`,
-          flowRefId: run.flowId,
-        })
+      ? readableStoredManifest(rawManifest, { flowId: run.flowId })
       : null;
   }
 

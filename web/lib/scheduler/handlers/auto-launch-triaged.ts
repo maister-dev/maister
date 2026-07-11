@@ -132,10 +132,7 @@ export async function runAutoLaunchTriagedJob(
       const eligibility = await evaluateC2Candidate(db, candidate, nowMs);
 
       if (eligibility.kind === "give-up") {
-        const held = await giveUpC2Task(db, candidate, {
-          reason: "auto_launch_attempts_exhausted",
-          detail: `${eligibility.failures} flow runs failed since this enqueue was armed`,
-        });
+        const held = await giveUpC2Task(db, candidate, eligibility);
 
         if (held) summary.gaveUp += 1;
         else summary.skipped += 1;

@@ -80,7 +80,12 @@ export async function GET(
 
     log.info({ runId, nodes: topology.nodes.length }, "graph served");
 
-    return NextResponse.json({ compatible: true, topology, layout });
+    return NextResponse.json({
+      compatible: true,
+      incompatibility: null,
+      topology,
+      layout,
+    });
   } catch (err) {
     return errorResponse(err, runId);
   }

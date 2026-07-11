@@ -516,17 +516,28 @@ async function loadManifestOrThrow(
   opts: {
     roleRefs?: readonly string[];
     capabilityRefIds?: CapabilityRefIdsInput;
+    errorCode?: "CONFIG" | "FLOW_INSTALL";
   } = {},
 ): Promise<FlowYamlV1> {
+  const errorCode = opts.errorCode ?? "FLOW_INSTALL";
+
   try {
     return await loadFlowManifest(flowYamlPath, {
       roleRefs: opts.roleRefs,
       capabilityRefIds: opts.capabilityRefIds,
-      errorCode: "FLOW_INSTALL",
+      errorCode,
       surface: "direct-flow-install",
     });
   } catch (err) {
-    if (isMaisterError(err) && err.code === "FLOW_INSTALL") throw err;
+    if (isMaisterError(err) && err.code === errorCode) throw err;
+
+    if (errorCode === "CONFIG") {
+      throw new MaisterError(
+        "CONFIG",
+        `flow manifest validation failed: ${asError(err).message}`,
+        { cause: asError(err) },
+      );
+    }
 
     throw wrapInstallStage({
       source,
@@ -638,11 +649,15 @@ export async function installRevision(opts: {
   roleRefs?: readonly string[];
   capabilityRefIds?: CapabilityRefIdsInput;
   resolvedRevisionOverride?: string;
+  // Direct installs retain FLOW_INSTALL/502 for transport failures. Upgrade is
+  // a validated mutation and opts into CONFIG/422 for an incompatible manifest.
+  manifestErrorCode?: "CONFIG" | "FLOW_INSTALL";
   db?: any;
   signal?: AbortSignal;
 }): Promise<InstalledRevision> {
   const { source, version, flowId, roleRefs, signal, capabilityRefIds } = opts;
   const db = opts.db ?? getDb();
+  const manifestErrorCode = opts.manifestErrorCode ?? "FLOW_INSTALL";
   const revisionOverride = parseRevisionOverride(
     opts.resolvedRevisionOverride,
     flowId,
@@ -660,7 +675,7 @@ export async function installRevision(opts: {
       join(sourceKind.absPath, "flow.yaml"),
       source,
       version,
-      { roleRefs, capabilityRefIds },
+      { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
     );
     resolvedRevision =
       revisionOverride ??
@@ -689,7 +704,7 @@ export async function installRevision(opts: {
         join(tmpDir, "flow.yaml"),
         source,
         version,
-        { roleRefs, capabilityRefIds },
+        { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
       );
     } catch (err) {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -726,7 +741,7 @@ export async function installRevision(opts: {
         join(target, "flow.yaml"),
         source,
         version,
-        { roleRefs, capabilityRefIds },
+        { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
       );
       const setupRow: Array<{ setupStatus: InstalledRevision["setupStatus"] }> =
         await db
@@ -771,7 +786,7 @@ export async function installRevision(opts: {
       join(target, "flow.yaml"),
       source,
       version,
-      { roleRefs, capabilityRefIds },
+      { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
     );
 
     // SECURITY (ADR-021): NEVER execute a package's setup.sh during install —

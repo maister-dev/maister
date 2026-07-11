@@ -29,6 +29,8 @@ const OUTCOME_TONE: Record<RunScheduleFireOutcome, string> = {
   skipped_unconfigured: "border-line bg-ivory text-mute",
   launch_failed:
     "border-[color-mix(in_oklab,var(--danger)_35%,var(--line))] bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] text-danger",
+  incompatible_disabled:
+    "border-[color-mix(in_oklab,var(--danger)_35%,var(--line))] bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] text-danger",
   dispatching: "animate-pulse border-amber-line bg-amber-soft text-amber",
 };
 

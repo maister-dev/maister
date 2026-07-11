@@ -2195,12 +2195,14 @@ export async function runGraph(
   // paths return BEFORE that section, so the token survives WaitingOnChildren.
   let orchestratorTokenIssued = false;
 
-  const completedResumeNode = isExternallyCompletedResume
-    ? graph.nodes.get(resumeNodeId as string)
+  // The detached ACP driver persists a completed action before handing back to
+  // this runner. Re-enter the node so its normal finish pipeline validates
+  // structured output, runs gates, records artifacts, and evaluates `decide`;
+  // only the action dispatch itself is skipped below.
+  let pendingCompletedResumeNodeId: string | null = isExternallyCompletedResume
+    ? resumeNodeId
     : null;
-  let currentNodeId: string | null = completedResumeNode
-    ? resolveTransition(completedResumeNode, "success")
-    : (resumeNodeId ?? graph.entry);
+  let currentNodeId: string | null = resumeNodeId ?? graph.entry;
   // M30 (ADR-080): set when a failed attempt schedules an auto-retry — the
   // next iteration of the SAME node appends its attempt with auto_retry=true.
   let pendingAutoRetryNodeId: string | null = null;
@@ -2416,6 +2418,24 @@ export async function runGraph(
         .reverse()
         .find((a) => a.nodeId === node.id);
 
+      if (
+        pendingCompletedResumeNodeId === node.id &&
+        lastForNode?.status !== "Succeeded"
+      ) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `completed resume for node "${node.id}" requires a succeeded attempt on run ${runId}`,
+        );
+      }
+
+      const reusesCompletedAttempt =
+        pendingCompletedResumeNodeId === node.id &&
+        lastForNode?.status === "Succeeded";
+
+      // Consume the marker before continuing. A later rework visit to this
+      // node is a real fresh execution, never another completion handoff.
+      if (reusesCompletedAttempt) pendingCompletedResumeNodeId = null;
+
       // ADR-118: the node's CURRENT rework epoch baseline (NULL ⇒ 0). It carries
       // forward from the prior attempt and is re-stamped by a human-node rework
       // with `resetTargets`; subtracting it makes both exhaustion checks count
@@ -2425,11 +2445,11 @@ export async function runGraph(
       const resumingThisNode =
         isResume &&
         node.id === resumeNodeId &&
-        lastForNode?.status === "NeedsInput";
+        (lastForNode?.status === "NeedsInput" || reusesCompletedAttempt);
 
       // A reuse iteration re-enters the CURRENT visit: its attempt row already
-      // exists (NeedsInput resume) or was appended by the takeover claim, so
-      // the ledger count already includes this visit.
+      // exists (NeedsInput or completed-action resume) or was appended by the
+      // takeover claim, so the ledger count already includes this visit.
       const reusesCurrentAttempt =
         (claimedTakeoverAttemptId !== null && node.id === resumeNodeId) ||
         resumingThisNode;
@@ -2510,7 +2530,9 @@ export async function runGraph(
         }
         log2.info(
           { nodeAttemptId, nodeId: node.id },
-          "resuming existing node attempt from NeedsInput",
+          reusesCompletedAttempt
+            ? "resuming completed node attempt through finish pipeline"
+            : "resuming existing node attempt from NeedsInput",
         );
       } else {
         // M30 (ADR-081): a rework re-entry consumes the resolved session
@@ -2613,7 +2635,13 @@ export async function runGraph(
         .update(runs)
         .set({ currentStepId: node.id })
         .where(eq(runs.id, runId));
-      await markNodeRunning(nodeAttemptId, db);
+      // The detached driver already committed this action's Succeeded state.
+      // Keep that durable marker while this invocation performs post-action
+      // work; a normal NeedsInput resume still re-enters Running before its
+      // action is dispatched again.
+      if (!reusesCompletedAttempt) {
+        await markNodeRunning(nodeAttemptId, db);
+      }
 
       // M11c (ADR-032): per-node enforcement gate. For capability-bearing
       // (ai_coding/judge/orchestrator) nodes, record the resolved verdict
@@ -2852,63 +2880,73 @@ export async function runGraph(
 
       let result: NodeResult;
 
-      try {
-        result = await executeNodeAction(node, loaded, context, {
-          runtimeRoot,
-          worktreePath,
-          supervisorApi: opts.supervisorApi,
-          capabilityProfilePath: materialized?.capabilityProfilePath,
-          adapterLaunch: materialized?.adapterLaunch,
-          mcpServers: materialized?.mcpServers,
-          profileDigest: materialized?.plan.profileDigest,
-          enforcementProfile: materialized?.enforcementProfile,
-          nodeAttemptId,
-          nodeAttemptNumber,
-          attempt: nodeAttemptNumber,
-          resumeSessionId: attemptResumeSessionId,
-          sessionName: nodeSessionName,
-          sessionExecutor: nodeExecutor,
-          sessionRunner: nodeRunnerSnapshot,
-          db,
-        });
-      } catch (err) {
-        const e = isMaisterError(err)
-          ? err
-          : new MaisterError("CRASH", asError(err).message, {
-              cause: asError(err),
-            });
-
-        log2.error(
-          { nodeId: node.id, code: e.code },
-          "node action threw — Failed",
-        );
-        await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
-
-        const threwRetry = await scheduleAutoRetry(node, e.code, {
-          nodeAttemptNumber,
-          attemptCheckpointRef,
-        });
-
-        if (threwRetry === "retry") {
-          pendingAutoRetryNodeId = node.id;
-          continue;
-        }
-        if (threwRetry === "escalate") {
-          await escalateAutoRetryExhaustion({
-            db,
-            loaded,
-            node,
-            code: e.code,
-            nodeAttemptId,
-            attemptNumber: nodeAttemptNumber,
+      if (reusesCompletedAttempt && lastForNode) {
+        result = {
+          ok: true,
+          stdout: lastForNode.stdout ?? "",
+          vars: lastForNode.vars,
+          exitCode: lastForNode.exitCode ?? undefined,
+          acpSessionId: lastForNode.acpSessionId ?? undefined,
+        };
+      } else {
+        try {
+          result = await executeNodeAction(node, loaded, context, {
             runtimeRoot,
+            worktreePath,
+            supervisorApi: opts.supervisorApi,
+            capabilityProfilePath: materialized?.capabilityProfilePath,
+            adapterLaunch: materialized?.adapterLaunch,
+            mcpServers: materialized?.mcpServers,
+            profileDigest: materialized?.plan.profileDigest,
+            enforcementProfile: materialized?.enforcementProfile,
+            nodeAttemptId,
+            nodeAttemptNumber,
+            attempt: nodeAttemptNumber,
+            resumeSessionId: attemptResumeSessionId,
+            sessionName: nodeSessionName,
+            sessionExecutor: nodeExecutor,
+            sessionRunner: nodeRunnerSnapshot,
+            db,
           });
-          needsInput = true;
+        } catch (err) {
+          const e = isMaisterError(err)
+            ? err
+            : new MaisterError("CRASH", asError(err).message, {
+                cause: asError(err),
+              });
+
+          log2.error(
+            { nodeId: node.id, code: e.code },
+            "node action threw — Failed",
+          );
+          await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
+
+          const threwRetry = await scheduleAutoRetry(node, e.code, {
+            nodeAttemptNumber,
+            attemptCheckpointRef,
+          });
+
+          if (threwRetry === "retry") {
+            pendingAutoRetryNodeId = node.id;
+            continue;
+          }
+          if (threwRetry === "escalate") {
+            await escalateAutoRetryExhaustion({
+              db,
+              loaded,
+              node,
+              code: e.code,
+              nodeAttemptId,
+              attemptNumber: nodeAttemptNumber,
+              runtimeRoot,
+            });
+            needsInput = true;
+            break;
+          }
+          failed = true;
+          runErrorCode = e.code;
           break;
         }
-        failed = true;
-        runErrorCode = e.code;
-        break;
       }
 
       // M42 (ADR-114): persist this dispatch's acp_session_id onto the node's
@@ -2999,7 +3037,7 @@ export async function runGraph(
             runId,
             nodeAttemptId,
             nodeId: node.id,
-            attempt: nodeAttemptCount + 1,
+            attempt: nodeAttemptNumber,
             projectSlug: loaded.projectSlug,
             workspace: loaded.workspace,
             runtimeRoot,
@@ -3091,7 +3129,7 @@ export async function runGraph(
       const structuredOutput = await validateNodeStructuredOutput({
         node,
         result,
-        attempt: nodeAttemptCount + 1,
+        attempt: nodeAttemptNumber,
         nodeAttemptId,
         runId,
         projectSlug: loaded.projectSlug,
@@ -3245,7 +3283,7 @@ export async function runGraph(
               reason: structuredOutput.reason,
               on_mismatch: onMismatch,
               target: reworkTarget,
-              attempt: nodeAttemptCount + 1,
+              attempt: nodeAttemptNumber,
             },
             "[on_mismatch] engine-initiated rework",
           );
@@ -3316,7 +3354,7 @@ export async function runGraph(
       // gates pass, BEFORE markNodeSucceeded.
       if (artifactEnforcementActive && node.output?.produces) {
         const nodeRunDir = runDir(runtimeRoot, loaded.projectSlug, runId);
-        const currentAttempt = nodeAttemptCount + 1;
+        const currentAttempt = nodeAttemptNumber;
 
         for (const produces of node.output.produces) {
           if (produces.path !== undefined) {
@@ -3591,7 +3629,7 @@ export async function runGraph(
           runId,
           nodeAttemptId,
           nodeId: node.id,
-          attempt: nodeAttemptCount + 1,
+          attempt: nodeAttemptNumber,
           projectSlug: loaded.projectSlug,
           workspace: loaded.workspace,
           runtimeRoot,

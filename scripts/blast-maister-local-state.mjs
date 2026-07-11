@@ -93,13 +93,29 @@ async function removeRoot(root, dryRun) {
   await fs.rm(root, { force: true, recursive: true });
 }
 
-async function resetPostgres(databaseUrl, dryRun) {
+function postgresUrlForReset(databaseUrl) {
   if (!databaseUrl) {
-    throw new Error("--reset-postgres requires DATABASE_URL");
+    throw new Error("--reset-postgres requires DB_URL");
   }
 
+  let parsed;
+
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error("--reset-postgres requires a valid Postgres DB_URL");
+  }
+
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error("--reset-postgres requires a postgres:// or postgresql:// DB_URL");
+  }
+
+  return databaseUrl;
+}
+
+async function resetPostgres(connectionUrl, dryRun) {
   const args = [
-    databaseUrl,
+    connectionUrl,
     "-v",
     "ON_ERROR_STOP=1",
     "-c",
@@ -113,20 +129,14 @@ async function resetPostgres(databaseUrl, dryRun) {
   await execFileAsync("psql", args);
 }
 
-async function removeSqlite(databaseUrl, dryRun, repoCwd) {
-  if (!databaseUrl.startsWith("file:")) return;
-
-  const dbPath = absolutePath(databaseUrl.slice("file:".length));
-
-  assertSafeRoot(dbPath, repoCwd);
-  await removeRoot(dbPath, dryRun);
-}
-
 async function main() {
   const args = process.argv.slice(2);
   const confirm = readArgValue(args, "--confirm");
   const dryRun = confirm !== CONFIRMATION;
   const resetPostgresRequested = hasArg(args, "--reset-postgres");
+  const postgresResetUrl = resetPostgresRequested
+    ? postgresUrlForReset(process.env.DB_URL)
+    : null;
   const repoCwd = process.cwd();
   const roots = candidateRoots(repoCwd);
 
@@ -142,18 +152,11 @@ async function main() {
     await removeRoot(root, dryRun);
   }
 
-  if (process.env.DATABASE_URL?.startsWith("file:")) {
-    const sqlitePath = absolutePath(process.env.DATABASE_URL.slice("file:".length));
-
-    console.log(`${dryRun ? "would remove sqlite db" : "remove sqlite db"} ${sqlitePath}`);
-    await removeSqlite(process.env.DATABASE_URL, dryRun, repoCwd);
-  }
-
-  if (resetPostgresRequested) {
+  if (postgresResetUrl) {
     console.log(
-      `${dryRun ? "would reset postgres schema" : "reset postgres schema"} from DATABASE_URL`,
+      `${dryRun ? "would reset postgres schema" : "reset postgres schema"} from DB_URL`,
     );
-    await resetPostgres(process.env.DATABASE_URL, dryRun);
+    await resetPostgres(postgresResetUrl, dryRun);
   }
 
   console.log("Next steps after confirmed reset:");

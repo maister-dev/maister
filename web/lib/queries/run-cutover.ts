@@ -18,7 +18,7 @@ export async function getGraphOnlyCutoverFailure(
   runId: string,
 ): Promise<GraphOnlyCutoverFailure | null> {
   const rows = await client
-    .select({ occurredAt: schema.domainEvents.createdAt })
+    .select({ occurredAt: schema.domainEvents.occurredAt })
     .from(schema.domainEvents)
     .where(
       and(
@@ -28,7 +28,7 @@ export async function getGraphOnlyCutoverFailure(
         sql`${schema.domainEvents.payload}->>'source' = ${GRAPH_ONLY_CUTOVER_SOURCE}`,
       ),
     )
-    .orderBy(desc(schema.domainEvents.createdAt))
+    .orderBy(desc(schema.domainEvents.occurredAt))
     .limit(1);
 
   return rows[0]

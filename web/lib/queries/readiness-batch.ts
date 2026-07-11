@@ -91,8 +91,7 @@ export async function computeReadinessByRun(
     .where(inArray(gateResults.runId, runIds));
 
   // Required-artifact rows for the review phase, plus the validity of each
-  // (runId, defId)'s current row. requiredFor is JSONB; filter in JS so the
-  // computation is dialect-agnostic.
+  // (runId, defId)'s current row. requiredFor is reduced below.
   const artifactRows: Array<{
     runId: string;
     artifactDefId: string | null;

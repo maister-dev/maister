@@ -1945,6 +1945,7 @@ export type RunScheduleFireOutcome =
   | "skipped_blocked"
   | "skipped_unconfigured"
   | "launch_failed"
+  | "incompatible_disabled"
   | "dispatching";
 
 export const runSchedules = pgTable(
@@ -1995,6 +1996,7 @@ export const runSchedules = pgTable(
         "skipped_blocked",
         "skipped_unconfigured",
         "launch_failed",
+        "incompatible_disabled",
         "dispatching",
       ],
     }),

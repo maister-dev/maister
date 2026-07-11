@@ -19,6 +19,16 @@ export type AttachTarget = {
   attached: boolean;
 };
 
+export type AttachCompatibility = {
+  compatible: boolean;
+  incompatibilityReason: string | null;
+};
+
+const DEFAULT_COMPATIBILITY: AttachCompatibility = {
+  compatible: true,
+  incompatibilityReason: null,
+};
+
 // Studio "attach to a project" dialog: lists the projects the viewer manages,
 // linking the ones this package is already attached to and offering a one-click
 // attach (POST /api/projects/[slug]/packages) for the rest. Attaching the newest
@@ -27,11 +37,13 @@ export type AttachTarget = {
 export function AttachToProjectButton({
   targets,
   installId,
+  compatibility = DEFAULT_COMPATIBILITY,
   triggerClassName,
   defaultOpen = false,
 }: {
   targets: AttachTarget[];
   installId: string;
+  compatibility?: AttachCompatibility;
   triggerClassName: string;
   defaultOpen?: boolean;
 }): ReactElement {
@@ -43,6 +55,11 @@ export function AttachToProjectButton({
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const openRef = useRef(open);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const incompatibilityReason = compatibility.compatible
+    ? null
+    : (compatibility.incompatibilityReason ??
+      "Package flow manifest compatibility is unavailable.");
 
   openRef.current = open;
 
@@ -56,7 +73,13 @@ export function AttachToProjectButton({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
+
   async function attach(slug: string): Promise<void> {
+    if (!compatibility.compatible) return;
+
     setBusy(slug);
     setError(null);
 
@@ -86,13 +109,29 @@ export function AttachToProjectButton({
   return (
     <>
       <button
+        aria-describedby={
+          incompatibilityReason ? "attach-incompatibility" : undefined
+        }
         className={triggerClassName}
         data-testid="attach-to-project"
+        disabled={!compatibility.compatible}
+        title={incompatibilityReason ?? undefined}
         type="button"
         onClick={() => setOpen(true)}
       >
         {t("attach")}
       </button>
+
+      {incompatibilityReason ? (
+        <p
+          className="rounded-md border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
+          data-testid="attach-incompatible"
+          id="attach-incompatibility"
+          role="status"
+        >
+          {incompatibilityReason}
+        </p>
+      ) : null}
 
       {open ? (
         <div
@@ -136,7 +175,9 @@ export function AttachToProjectButton({
                       <button
                         className="shrink-0 rounded-[8px] border border-amber bg-amber px-3 py-1 text-[12px] font-semibold text-white hover:bg-amber-2 disabled:opacity-50"
                         data-testid={`attach-do-${target.slug}`}
-                        disabled={busy === target.slug}
+                        disabled={
+                          busy === target.slug || !compatibility.compatible
+                        }
                         type="button"
                         onClick={() => void attach(target.slug)}
                       >
@@ -152,7 +193,9 @@ export function AttachToProjectButton({
               <p
                 className="rounded-md border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
                 data-testid="attach-error"
+                ref={errorRef}
                 role="alert"
+                tabIndex={-1}
               >
                 {error}
               </p>

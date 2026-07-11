@@ -20,6 +20,7 @@ import {
 } from "@/components/studio/import-dialog";
 import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
 import { readApiError } from "@/lib/api-error";
+import type { LocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 
 // Client-safe local-package list item. `working_dir` and the lock session are
 // server-only and intentionally absent (D1/D10); `isDefault`/`status` are flags.
@@ -29,6 +30,7 @@ export type LocalPackageListItem = {
   slug: string;
   isDefault: boolean;
   status: "active" | "archived";
+  cutCompatibility: LocalPackageCutCompatibility;
   origin: LocalPackageOrigin;
 };
 
@@ -352,6 +354,15 @@ export function LocalPackagesList({
                     <span className="font-mono text-[11.5px] leading-[1.35] text-mute">
                       {localPackageOriginLabel(pkg.origin, t)}
                     </span>
+                    {!pkg.cutCompatibility.compatible ? (
+                      <span
+                        className="font-mono text-[11px] leading-[1.35] text-danger"
+                        data-testid="local-cut-incompatible"
+                        id={`local-cut-incompatibility-${pkg.id}`}
+                      >
+                        {pkg.cutCompatibility.incompatibilityReason}
+                      </span>
+                    ) : null}
                   </Link>
                   <div className="flex items-center gap-1.5 px-2 py-2">
                     <button
@@ -377,11 +388,21 @@ export function LocalPackagesList({
                       <PencilSquareIcon className="h-4 w-4" />
                     </button>
                     <button
+                      aria-describedby={
+                        pkg.cutCompatibility.compatible
+                          ? undefined
+                          : `local-cut-incompatibility-${pkg.id}`
+                      }
                       aria-label={t("local.cutVersion")}
                       className={ICON_BTN}
                       data-testid="local-cut"
-                      disabled={rowBusyId === pkg.id}
-                      title={t("local.cutVersion")}
+                      disabled={
+                        rowBusyId === pkg.id || !pkg.cutCompatibility.compatible
+                      }
+                      title={
+                        pkg.cutCompatibility.incompatibilityReason ??
+                        t("local.cutVersion")
+                      }
                       type="button"
                       onClick={() => void cutVersion(pkg.id)}
                     >

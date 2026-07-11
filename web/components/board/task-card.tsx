@@ -181,7 +181,7 @@ export function TaskCard({
         />
       ) : null}
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">
-        <div className="flex items-center gap-2.5 font-mono text-[10px] tracking-[0.02em] text-mute">
+        <div className="min-w-0 flex-1 font-mono text-[10px] tracking-[0.02em] text-mute">
           {card.triageStatus === "triaged" ? (
             <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold text-accent-4">
               {triagedLabel}
@@ -190,6 +190,14 @@ export function TaskCard({
           {card.triageStatus === "flagged" ? (
             <span className="rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold text-amber">
               {flaggedLabel}
+            </span>
+          ) : null}
+          {launchDisabledReason ? (
+            <span
+              className="block break-words text-[9px] leading-[1.35] text-amber"
+              data-testid="task-card-launch-unavailable-reason"
+            >
+              {launchDisabledReason}
             </span>
           ) : null}
         </div>

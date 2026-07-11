@@ -33,8 +33,7 @@ export function embeddingIndexName(model: string, dimensions: number): string {
 }
 
 // Idempotently create the HNSW expression index for one embedding generation.
-// Returns the index name (for logging / test assertion). Postgres only — the
-// caller must have already established the dialect is pg (guard.ts).
+// Returns the index name (for logging / test assertion).
 export async function ensureEmbeddingIndex(
   db: Executor,
   model: string,

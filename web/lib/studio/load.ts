@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { GlobalRole, LocalPackage } from "@/lib/db/schema";
+import type { LocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 
 import { groupPackages, type PackageGroup } from "./group-packages";
 
@@ -10,7 +11,9 @@ import {
   listSourceInstallsForLocalPackages,
   type LocalPackageSourceInstall,
 } from "@/lib/local-packages/service";
+import { getLocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 import {
+  createPackageCompatibilityResolver,
   getProjectPackageAttachments,
   getStudioPackageInstalls,
   loadPackageSourcesView,
@@ -39,6 +42,7 @@ export type StudioRecentLocalPackage = {
   isDefault: boolean;
   origin: StudioRecentLocalPackageOrigin;
   lastCutInstallId: string | null;
+  cutCompatibility: LocalPackageCutCompatibility;
   updatedAt: string;
 };
 
@@ -93,14 +97,17 @@ export async function loadStudioPackages(
   userId: string,
   userRole: GlobalRole,
 ): Promise<PackageGroup[]> {
+  const compatibilityResolver = createPackageCompatibilityResolver();
   const [installs, projects] = await Promise.all([
-    getStudioPackageInstalls(),
+    getStudioPackageInstalls({ compatibilityResolver }),
     getAccessibleProjects(userId, userRole),
   ]);
 
   const attachmentBatches = await Promise.all(
     projects.map(async (project) => {
-      const attachments = await getProjectPackageAttachments(project.id);
+      const attachments = await getProjectPackageAttachments(project.id, {
+        compatibilityResolver,
+      });
 
       return attachments.map((attachment) => ({
         packageInstallId: attachment.packageInstallId,
@@ -129,9 +136,17 @@ export async function loadStudioOverview(
   return {
     groups,
     localSummary: summarizeLocalPackages(localPackages),
-    recentLocalPackages: localPackages
-      .slice(0, RECENT_LOCAL_PACKAGE_LIMIT)
-      .map((pkg) => toRecentLocalPackage(pkg, sourceInstalls)),
+    recentLocalPackages: await Promise.all(
+      localPackages
+        .slice(0, RECENT_LOCAL_PACKAGE_LIMIT)
+        .map(async (pkg) =>
+          toRecentLocalPackage(
+            pkg,
+            sourceInstalls,
+            await getLocalPackageCutCompatibility(pkg),
+          ),
+        ),
+    ),
     sourceSummary: sourcesView
       ? summarizePackageSources(sourcesView.sources)
       : null,
@@ -155,6 +170,7 @@ function summarizeLocalPackages(
 function toRecentLocalPackage(
   pkg: LocalPackage,
   sourceInstalls: Map<string, LocalPackageSourceInstall>,
+  cutCompatibility: LocalPackageCutCompatibility,
 ): StudioRecentLocalPackage {
   return {
     id: pkg.id,
@@ -164,6 +180,7 @@ function toRecentLocalPackage(
     isDefault: pkg.isDefault,
     origin: recentLocalPackageOrigin(pkg, sourceInstalls),
     lastCutInstallId: pkg.lastCutInstallId,
+    cutCompatibility,
     updatedAt: pkg.updatedAt.toISOString(),
   };
 }

@@ -21,7 +21,8 @@ import {
 } from "@/lib/flows/engine-version";
 import {
   classifyStoredFlowManifest,
-  parseGraphOnlyFlowManifest,
+  flowManifestIncompatibilityDetails,
+  parseExecutableStoredFlowManifest,
   type FlowManifestIncompatibility,
 } from "@/lib/flows/manifest-parser";
 import { ensureSymlink, installRevision, runRevisionSetup } from "@/lib/flows";
@@ -159,10 +160,16 @@ function assertEnableable(
     throw new MaisterError(
       "CONFIG",
       `revision ${rev.id} is incompatible with this MAIster engine: ${compat.reason}`,
+      {
+        details: flowManifestIncompatibilityDetails({
+          kind: "engine_incompatible",
+          message: compat.reason ?? "engine compatibility check failed",
+        }),
+      },
     );
   }
 
-  return parseGraphOnlyFlowManifest(rev.manifest, {
+  return parseExecutableStoredFlowManifest(rev.manifest, {
     code: "CONFIG",
     surface: "flow-lifecycle-enable",
     manifestLabel: `flow revision ${rev.id}`,
@@ -390,6 +397,7 @@ export async function upgradeFlow(args: {
     source: args.source,
     version: args.version,
     flowId: args.flowRefId,
+    manifestErrorCode: "CONFIG",
     db,
   });
 

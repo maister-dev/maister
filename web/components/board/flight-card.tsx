@@ -378,7 +378,20 @@ export function FlightCard({
       ) : null}
 
       {canAct ? (
-        <div className="relative z-10 flex items-center justify-end border-t border-dashed border-line-soft pt-2">
+        <div
+          className={clsx(
+            "relative z-10 flex items-center gap-2 border-t border-dashed border-line-soft pt-2",
+            launchDisabledReason ? "justify-between" : "justify-end",
+          )}
+        >
+          {launchDisabledReason ? (
+            <span
+              className="min-w-0 break-words font-mono text-[9px] leading-[1.35] text-amber"
+              data-testid="flight-card-launch-unavailable-reason"
+            >
+              {launchDisabledReason}
+            </span>
+          ) : null}
           <LaunchPopover
             disabledLabel={labels.launchUnavailable}
             disabledReason={launchDisabledReason}

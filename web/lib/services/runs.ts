@@ -53,7 +53,10 @@ import {
 import { normalizeNodeMcps } from "@/lib/config.schema";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
-import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
+import {
+  flowManifestIncompatibilityDetails,
+  parseExecutableStoredFlowManifest,
+} from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
@@ -842,10 +845,16 @@ export async function* launchRunStaged(
         throw new MaisterError(
           "CONFIG",
           `flow "${flow.flowRefId}" is incompatible with this MAIster engine: ${compat.reason}`,
+          {
+            details: flowManifestIncompatibilityDetails({
+              kind: "engine_incompatible",
+              message: compat.reason ?? "engine compatibility check failed",
+            }),
+          },
         );
       }
     }
-    const manifest = parseGraphOnlyFlowManifest(revision.manifest, {
+    const manifest = parseExecutableStoredFlowManifest(revision.manifest, {
       code: "CONFIG",
       surface: "launch-service",
       manifestLabel: `flow revision ${revision.id}`,

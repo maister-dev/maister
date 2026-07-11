@@ -11,11 +11,17 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import { join } from "node:path";
 
 import { and, eq, inArray } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { loadFlowManifest } from "@/lib/config";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
+import {
+  classifyStoredFlowManifest,
+  type FlowManifestIncompatibility,
+} from "@/lib/flows/manifest-parser";
 import { resolveConfinedFlowYaml } from "@/lib/flows/package-content";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import {
@@ -47,6 +53,11 @@ export type {
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { packageInstalls, packageSources, projectPackageAttachments } =
   schemaModule as unknown as Record<string, any>;
+
+const log = pino({
+  name: "project-package-compatibility",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export type ProjectPackageVersionTarget = PackageVersionTarget & {
   compatible: boolean;
@@ -81,48 +92,137 @@ export type AvailablePackageInstallView = {
   incompatibilityReason: string | null;
 };
 
-type PackageCompatibility = Pick<
+export type PackageCompatibility = Pick<
   AvailablePackageInstallView,
   "compatible" | "incompatibilityReason"
 >;
+
+export const INVALID_PACKAGE_MANIFEST_REMEDIATION =
+  "Package flow manifest is invalid. Fix it and install a new package version.";
 
 const UNKNOWN_PACKAGE_COMPATIBILITY: PackageCompatibility = {
   compatible: false,
   incompatibilityReason: "Package flow manifest compatibility is unavailable",
 };
 
-async function packageCompatibility(
-  install: any,
+export type PackageCompatibilityInstall = {
+  id: string;
+  installedPath: string;
+  manifest: unknown;
+  name?: string;
+};
+
+export type PackageCompatibilityResolver = (
+  install: PackageCompatibilityInstall,
+) => Promise<PackageCompatibility>;
+
+function compatibilityReasonFromIncompatibility(
+  reason: FlowManifestIncompatibility,
+): PackageCompatibility {
+  if (reason.kind === "legacy_steps") {
+    return {
+      compatible: false,
+      incompatibilityReason: LEGACY_STEPS_REFUSAL_MESSAGE,
+    };
+  }
+
+  if (reason.kind === "engine_incompatible") {
+    return { compatible: false, incompatibilityReason: reason.message };
+  }
+
+  return {
+    compatible: false,
+    incompatibilityReason: INVALID_PACKAGE_MANIFEST_REMEDIATION,
+  };
+}
+
+function compatibilityReasonFromError(err: unknown): PackageCompatibility {
+  const message = err instanceof Error ? err.message : String(err);
+
+  return {
+    compatible: false,
+    incompatibilityReason:
+      message === LEGACY_STEPS_REFUSAL_MESSAGE
+        ? LEGACY_STEPS_REFUSAL_MESSAGE
+        : INVALID_PACKAGE_MANIFEST_REMEDIATION,
+  };
+}
+
+async function assessPackageCompatibility(
+  install: PackageCompatibilityInstall,
 ): Promise<PackageCompatibility> {
   const manifest = install.manifest as PackageInstallManifest | undefined;
 
   try {
     for (const flow of manifest?.spec.flows ?? []) {
-      await loadFlowManifest(
+      const flowManifest = await loadFlowManifest(
         join(install.installedPath, flow.path, "flow.yaml"),
         {
           errorCode: "CONFIG",
           surface: "project-package-compatibility",
         },
       );
+      const compatibility = classifyStoredFlowManifest(flowManifest);
+
+      if (!compatibility.compatible) {
+        log.warn(
+          {
+            packageInstallId: install.id,
+            packageName: install.name,
+            flowId: flow.id,
+            incompatibilityKind: compatibility.reason.kind,
+          },
+          "package flow manifest is not executable on this engine",
+        );
+
+        return compatibilityReasonFromIncompatibility(compatibility.reason);
+      }
     }
 
     return { compatible: true, incompatibilityReason: null };
   } catch (err) {
-    return {
-      compatible: false,
-      incompatibilityReason:
-        err instanceof Error ? err.message : "Package flow manifest is invalid",
-    };
+    log.warn(
+      {
+        packageInstallId: install.id,
+        packageName: install.name,
+        flowIds: manifest?.spec.flows.map((flow) => flow.id) ?? [],
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "package flow manifest compatibility check failed",
+    );
+
+    return compatibilityReasonFromError(err);
   }
+}
+
+// The same install may be reached through many project attachments while a
+// Studio request is building its view. Memoize promises, not results, so
+// concurrent callers share one disk parse without hiding failures.
+export function createPackageCompatibilityResolver(): PackageCompatibilityResolver {
+  const cache = new Map<string, Promise<PackageCompatibility>>();
+
+  return (install) => {
+    const cached = cache.get(install.id);
+
+    if (cached) return cached;
+
+    const resolution = assessPackageCompatibility(install);
+
+    cache.set(install.id, resolution);
+
+    return resolution;
+  };
 }
 
 // DTO projections for the project packages tab (ADR-088). `installed_path`
 // never leaves the server.
 export async function getProjectPackageAttachments(
   projectId: string,
+  args: { compatibilityResolver?: PackageCompatibilityResolver } = {},
 ): Promise<ProjectPackageAttachmentView[]> {
   const db = getDb() as any;
+  const resolveCompatibility =
+    args.compatibilityResolver ?? createPackageCompatibilityResolver();
   const attachments = await db
     .select()
     .from(projectPackageAttachments)
@@ -162,7 +262,7 @@ export async function getProjectPackageAttachments(
     await Promise.all(
       siblingInstalls.map(
         async (install: any) =>
-          [install.id as string, await packageCompatibility(install)] as const,
+          [install.id as string, await resolveCompatibility(install)] as const,
       ),
     ),
   );
@@ -231,10 +331,12 @@ export async function getAvailablePackageInstalls(): Promise<
     .from(packageInstalls)
     .where(eq(packageInstalls.packageStatus, "Installed"));
 
+  const resolveCompatibility = createPackageCompatibilityResolver();
+
   return Promise.all(
     installs.map(async (install: any) => {
       const manifest = install.manifest as PackageInstallManifest | undefined;
-      const compatibility = await packageCompatibility(install);
+      const compatibility = await resolveCompatibility(install);
 
       return {
         id: install.id,
@@ -270,6 +372,8 @@ export type StudioPackageInstallView = {
   sourceUrl: string;
   versionLabel: string;
   trustStatus: string;
+  compatible: boolean;
+  incompatibilityReason: string | null;
   counts: {
     flows: number;
     skills: number;
@@ -283,36 +387,43 @@ export type StudioPackageInstallView = {
 // Studio-scoped projection of installed packages: carries `sourceUrl` (for
 // package grouping + the Local badge) and per-kind member counts derived from
 // the stored manifest — fields the project-packages-tab DTO does not expose.
-export async function getStudioPackageInstalls(): Promise<
-  StudioPackageInstallView[]
-> {
+export async function getStudioPackageInstalls(
+  args: { compatibilityResolver?: PackageCompatibilityResolver } = {},
+): Promise<StudioPackageInstallView[]> {
   const db = getDb() as any;
   const installs = await db
     .select()
     .from(packageInstalls)
     .where(eq(packageInstalls.packageStatus, "Installed"));
 
-  return installs.map((install: any) => {
-    const manifest = install.manifest as PackageInstallManifest | undefined;
+  const resolveCompatibility =
+    args.compatibilityResolver ?? createPackageCompatibilityResolver();
 
-    return {
-      id: install.id,
-      name: install.name,
-      sourceUrl: install.sourceUrl,
-      versionLabel: install.versionLabel,
-      trustStatus: install.trustStatus,
-      counts: {
-        flows: manifest?.spec.flows.length ?? 0,
-        skills: manifest?.inventory.skills.length ?? 0,
-        platformAgents: manifest?.inventory.platformAgents?.length ?? 0,
-        subagents: manifest?.inventory.agents.length ?? 0,
-        mcps: manifest?.spec.mcps.length ?? 0,
-        // Rules live inside capability bundles and are not inventoried in the
-        // manifest (only skills/agents are); a real count needs Phase C disk reads.
-        rules: 0,
-      },
-    };
-  });
+  return Promise.all(
+    installs.map(async (install: any) => {
+      const manifest = install.manifest as PackageInstallManifest | undefined;
+      const compatibility = await resolveCompatibility(install);
+
+      return {
+        id: install.id,
+        name: install.name,
+        sourceUrl: install.sourceUrl,
+        versionLabel: install.versionLabel,
+        trustStatus: install.trustStatus,
+        ...compatibility,
+        counts: {
+          flows: manifest?.spec.flows.length ?? 0,
+          skills: manifest?.inventory.skills.length ?? 0,
+          platformAgents: manifest?.inventory.platformAgents?.length ?? 0,
+          subagents: manifest?.inventory.agents.length ?? 0,
+          mcps: manifest?.spec.mcps.length ?? 0,
+          // Rules live inside capability bundles and are not inventoried in the
+          // manifest (only skills/agents are); a real count needs Phase C disk reads.
+          rules: 0,
+        },
+      };
+    }),
+  );
 }
 
 // Props for the platform `PackageSourcesPanel`, shared by the admin `/settings`

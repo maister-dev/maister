@@ -25,6 +25,7 @@ import {
   countOutstandingC2Claims,
   evaluateC2Candidate,
   giveUpC2Task,
+  giveUpC2TaskInTransaction,
   isTerminalLaunchRefusal,
   loadC2CandidateRows,
   type C2CandidateRow,
@@ -814,7 +815,25 @@ export async function promoteNextPending(
 
       const eligibility = await evaluateC2Candidate(tx, candidate, nowMs);
 
-      if (eligibility.kind !== "eligible") continue;
+      if (eligibility.kind === "give-up") {
+        const held = await giveUpC2TaskInTransaction(
+          tx,
+          candidate,
+          eligibility,
+        );
+
+        log.info(
+          {
+            taskId: candidate.taskId,
+            reason: eligibility.reason,
+            held,
+          },
+          "promoteNextPending → C2 give-up evaluated",
+        );
+        continue;
+      }
+
+      if (eligibility.kind === "skip") continue;
 
       const claimed: Array<{ id: string }> = await tx
         .update(tasks)

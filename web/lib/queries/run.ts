@@ -85,7 +85,6 @@ const {
   assignmentEvents,
   assignments,
   capabilityImports,
-  flowRevisions,
   flows,
   gateResults,
   hitlRequests,
@@ -226,6 +225,13 @@ export function isRunRecoverable(input: {
   );
 }
 
+// Only a crashed run can be resumed. Keeping this guard ahead of graph
+// resolution lets terminal D2 history render its cut-over failure without
+// re-parsing the retained legacy manifest.
+export function shouldResolveRunRecoverTarget(status: string): boolean {
+  return status === "Crashed";
+}
+
 // Wrapped in React `cache()` so the run-detail layout + the `?file=` page child
 // (which both need this row) dedupe to a single query per request — the page
 // re-renders on `?file=` soft-navs, the layout does not.
@@ -292,14 +298,14 @@ export const getRunDetail = cache(async function getRunDetail(
   // resume_target_step_id (set at crash time), falling back to current_step_id
   // for live/hand-seeded rows. resolveNodeRecoverInfo yields {nodeKind, retrySafe}.
   const recoverTargetStepId = row.resumeTargetStepId ?? row.currentStepId;
-  const { nodeKind: recoverNodeKind, retrySafe } = await resolveNodeRecoverInfo(
-    client,
-    {
-      flowRevisionId: row.flowRevisionId,
-      flowId: row.flowId,
-      stepId: recoverTargetStepId,
-    },
-  );
+  const { nodeKind: recoverNodeKind, retrySafe } =
+    shouldResolveRunRecoverTarget(row.status)
+      ? await resolveNodeRecoverInfo(client, {
+          flowRevisionId: row.flowRevisionId,
+          flowId: row.flowId,
+          stepId: recoverTargetStepId,
+        })
+      : { nodeKind: null, retrySafe: false };
   const recoverable = isRunRecoverable({
     status: row.status,
     acpSessionId: row.acpSessionId,

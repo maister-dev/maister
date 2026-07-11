@@ -69,7 +69,9 @@ pnpm --filter maister-web db:seed
 
 The confirmed script deletes only MAIster-owned runtime/cache/worktree/config
 roots. `--reset-postgres` additionally resets the `public` schema through
-`DATABASE_URL`; it never removes project repositories.
+`DB_URL`; it accepts only `postgres://` or `postgresql://` URLs and never
+removes project repositories. An invalid URL aborts before any local root is
+removed.
 
 ## Connection pool
 

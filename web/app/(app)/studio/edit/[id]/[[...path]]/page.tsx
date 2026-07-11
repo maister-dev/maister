@@ -14,10 +14,6 @@ import { LocalPackageEditor } from "@/components/studio/local-package-editor";
 import { requireSession } from "@/lib/authz";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
-  classifyFlowManifestShape,
-  LEGACY_STEPS_REFUSAL_MESSAGE,
-} from "@/lib/flows/manifest-shape";
-import {
   buildChangeReviewLabels,
   buildFlowEditorTabsLabels,
   diffViewLabels,
@@ -27,6 +23,7 @@ import {
 } from "@/lib/flows/editor/editor-labels";
 import { getLocalPackageBom } from "@/lib/local-packages/bom";
 import { resolveSkillSubtreePrefix } from "@/lib/local-packages/composition";
+import { classifyLocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
 import { readLockState } from "@/lib/local-packages/lock";
 import {
   getLocalPackage,
@@ -115,19 +112,10 @@ export default async function StudioEditPage({
   let topology: GraphTopology | null = null;
   let layout: FlowLayout | null = null;
   let initialYaml = "";
-  const blockingValidationMessage = files.some((file) => {
-    if (!isFlowPath(file.path)) return false;
-
-    try {
-      const shape = classifyFlowManifestShape(parseYaml(file.content));
-
-      return shape === "legacy_steps" || shape === "mixed";
-    } catch {
-      return false;
-    }
-  })
-    ? LEGACY_STEPS_REFUSAL_MESSAGE
-    : null;
+  const cutCompatibility = classifyLocalPackageCutCompatibility(files);
+  const blockingValidationMessage = cutCompatibility.compatible
+    ? null
+    : cutCompatibility.incompatibilityReason;
 
   if (flowPath) {
     const selected = files.find((f) => f.path === flowPath);

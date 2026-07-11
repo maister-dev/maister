@@ -31,7 +31,7 @@ import { validateGraphManifest } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
-import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { classifyGraphOnlyFlowManifestShape } from "@/lib/flows/manifest-parser";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const log = pino({
@@ -525,16 +525,16 @@ function parseAndValidateManifest(
     return null;
   }
 
-  const compatibility = classifyStoredFlowManifest(parsedYaml);
+  const manifestShape = classifyGraphOnlyFlowManifestShape(parsedYaml);
 
-  if (!compatibility.compatible) {
+  if (!manifestShape.valid) {
     issues.push({
       code:
-        compatibility.reason.kind === "legacy_steps"
+        manifestShape.reason.kind === "legacy_steps"
           ? "legacy_steps"
           : "schema",
       path: "flow.yaml:(root)",
-      message: compatibility.reason.message,
+      message: manifestShape.reason.message,
     });
 
     return null;
@@ -542,8 +542,8 @@ function parseAndValidateManifest(
 
   try {
     validateGraphManifest(
-      compatibility.manifest,
-      compatibility.manifest.nodes,
+      manifestShape.manifest,
+      manifestShape.manifest.nodes,
       "authored-flow-package/flow.yaml",
     );
   } catch (err) {
@@ -554,7 +554,7 @@ function parseAndValidateManifest(
     });
   }
 
-  return compatibility.manifest;
+  return manifestShape.manifest;
 }
 
 function normalizePackageFiles(

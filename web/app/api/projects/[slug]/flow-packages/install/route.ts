@@ -3,9 +3,12 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { authorizeManagePackages, errorResponse } from "../_lib";
+import {
+  authorizeManagePackages,
+  errorResponse,
+  parseAuthorizedJson,
+} from "../_lib";
 
-import { MaisterError } from "@/lib/errors";
 import { installFlowPlugin } from "@/lib/flows";
 
 const postBodySchema = z.object({
@@ -27,22 +30,13 @@ export async function POST(
 ): Promise<NextResponse> {
   const { slug } = await params;
 
-  let body: z.infer<typeof postBodySchema>;
-
-  try {
-    body = postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${(err as Error).message}`,
-      ),
-      slug,
-    );
-  }
-
   try {
     const { project, db } = await authorizeManagePackages(slug);
+    const body = await parseAuthorizedJson({
+      req,
+      schema: postBodySchema,
+      method: "POST",
+    });
 
     const result = await installFlowPlugin({
       source: body.source,

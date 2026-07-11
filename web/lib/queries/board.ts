@@ -7,6 +7,7 @@ import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskRelationView } from "@/lib/social/relations";
 import type { TaskPriority } from "@/lib/tasks/criticality";
+import type { FlowManifestIncompatibility } from "@/lib/flows/manifest-parser";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -19,6 +20,8 @@ import {
   activeSessionCapabilityAgent,
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
+import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { isEngineCompatible } from "@/lib/flows/engine-version";
 import {
   buildFlightProgress,
   type ProgressNodeAttempt,
@@ -35,6 +38,7 @@ import {
 } from "@/lib/social/relations";
 
 const {
+  flowRevisions,
   flows,
   nodeAttempts,
   projects,
@@ -92,6 +96,10 @@ export interface BacklogCard {
   prompt: string;
   // M34: null on a flowless simple-intent task (renders the unconfigured chip).
   flowRef: string | null;
+  // The enabled revision is not executable on this host. This is deliberately
+  // distinct from the launch dialog's detailed options response: the board
+  // must expose an early, visible reason beside the disabled affordance.
+  flowIncompatibility: BoardFlowIncompatibility | null;
   priority: CardPriority;
   // ADR-121: the task's first-class criticality priority (distinct from the
   // cosmetic positional `priority` stripe above). Drives the priority badge and
@@ -124,6 +132,7 @@ export interface FlightCard {
   title: string;
   // null on a flowless simple-intent task.
   flowRef: string | null;
+  flowIncompatibility: BoardFlowIncompatibility | null;
   // ADR-121: the task's first-class criticality priority + queue-pause flag.
   taskPriority: TaskPriority;
   queuePaused: boolean;
@@ -205,6 +214,44 @@ export interface BoardData {
   merged7d: number;
 }
 
+export type BoardFlowIncompatibility = {
+  kind: FlowManifestIncompatibility["kind"];
+  reason: string;
+};
+
+// Board cards launch the project's enabled revision, not the mutable
+// `flows.manifest` cache. Keep the early visual gate aligned with that
+// authoritative launch target so a stale cache cannot disable a valid graph
+// revision (or hide an incompatible one).
+export function boardFlowIncompatibility(
+  enabledRevisionManifest: unknown | null,
+  engineMin: string | null = null,
+  engineMax: string | null = null,
+): BoardFlowIncompatibility | null {
+  if (enabledRevisionManifest === null) return null;
+
+  const engineCompatibility = isEngineCompatible(
+    engineMin ?? undefined,
+    engineMax ?? undefined,
+  );
+
+  if (!engineCompatibility.compatible) {
+    return {
+      kind: "engine_incompatible",
+      reason: engineCompatibility.reason ?? "engine compatibility check failed",
+    };
+  }
+
+  const compatibility = classifyStoredFlowManifest(enabledRevisionManifest);
+
+  if (compatibility.compatible) return null;
+
+  return {
+    kind: compatibility.reason.kind,
+    reason: compatibility.reason.message,
+  };
+}
+
 function relativeTime(from: Date, now: Date): string {
   const seconds = Math.max(
     0,
@@ -271,6 +318,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       createdAt: tasks.createdAt,
       flowRef: flows.flowRefId,
       flowManifest: flows.manifest,
+      enabledRevisionManifest: flowRevisions.manifest,
+      enabledRevisionEngineMin: flowRevisions.engineMin,
+      enabledRevisionEngineMax: flowRevisions.engineMax,
       flowId: tasks.flowId,
       triageStatus: tasks.triageStatus,
       priority: tasks.priority,
@@ -284,6 +334,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     })
     .from(tasks)
     .leftJoin(flows, eq(flows.id, tasks.flowId))
+    .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
     .where(eq(tasks.projectId, projectId))
     .orderBy(desc(tasks.createdAt));
 
@@ -559,6 +610,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         title: task.title,
         prompt: task.prompt,
         flowRef: task.flowRef ?? null,
+        flowIncompatibility: boardFlowIncompatibility(
+          task.enabledRevisionManifest ?? null,
+          task.enabledRevisionEngineMin ?? null,
+          task.enabledRevisionEngineMax ?? null,
+        ),
         priority: priorityFor(backlogPos),
         taskPriority: (task.priority ?? "normal") as TaskPriority,
         queuePaused: task.queuePaused ?? false,
@@ -604,6 +660,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       keyRef: `${projectTaskKey}-${task.number}`,
       title: task.title,
       flowRef: task.flowRef ?? null,
+      flowIncompatibility: boardFlowIncompatibility(
+        task.enabledRevisionManifest ?? null,
+        task.enabledRevisionEngineMin ?? null,
+        task.enabledRevisionEngineMax ?? null,
+      ),
       taskPriority: (task.priority ?? "normal") as TaskPriority,
       queuePaused: task.queuePaused ?? false,
       runCount: runCountByTask.get(task.taskId) ?? 0,

@@ -1,8 +1,11 @@
 import "server-only";
 
+import type { NextRequest } from "next/server";
+
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
+import { z } from "zod";
 
 import {
   requireActiveSession,
@@ -57,6 +60,24 @@ export function errorResponse(err: unknown, slug: string): NextResponse {
     { code: "CRASH", message: "internal error" },
     { status: 500 },
   );
+}
+
+// Parse a route body only after its handler has authenticated and authorized
+// the caller. Every flow-package mutation shares this boundary so malformed
+// input cannot disclose validation details to an unauthenticated caller.
+export async function parseAuthorizedJson<T>(args: {
+  req: NextRequest;
+  schema: z.ZodType<T>;
+  method: string;
+}): Promise<T> {
+  try {
+    return args.schema.parse(await args.req.json());
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `invalid ${args.method} body: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 // FIXME(any): dual drizzle-orm peer-dep variants.

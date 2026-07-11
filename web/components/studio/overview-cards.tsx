@@ -288,6 +288,8 @@ export function OverviewCards({
           <ul className="flex list-none flex-col gap-2">
             {recentLocalPackages.map((pkg) => {
               const archived = pkg.status === "archived";
+              const cutBlocked = !pkg.cutCompatibility.compatible;
+              const cutReason = pkg.cutCompatibility.incompatibilityReason;
 
               return (
                 <li
@@ -319,14 +321,29 @@ export function OverviewCards({
                         })}
                       </span>
                     </div>
+                    {cutBlocked ? (
+                      <p
+                        className="mt-1 font-mono text-[11px] leading-[1.35] text-danger"
+                        data-testid="continue-work-cut-incompatible"
+                        id={`continue-work-cut-incompatibility-${pkg.id}`}
+                      >
+                        {cutReason}
+                      </p>
+                    ) : null}
                   </Link>
 
                   <div className="flex flex-wrap items-center gap-1.5">
                     <button
+                      aria-describedby={
+                        cutBlocked
+                          ? `continue-work-cut-incompatibility-${pkg.id}`
+                          : undefined
+                      }
                       aria-label={t("continueWorkCut")}
                       className="rounded-[9px] border border-line bg-ivory p-2 text-ink-2 transition-colors hover:border-amber hover:text-ink disabled:opacity-50"
-                      disabled={archived || cuttingId === pkg.id}
-                      title={t("continueWorkCut")}
+                      data-testid="continue-work-cut"
+                      disabled={archived || cuttingId === pkg.id || cutBlocked}
+                      title={cutReason ?? t("continueWorkCut")}
                       type="button"
                       onClick={() => void cutVersion(pkg.id)}
                     >

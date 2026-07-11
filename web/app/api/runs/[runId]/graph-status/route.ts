@@ -79,7 +79,11 @@ export async function GET(
       "graph-status served",
     );
 
-    return NextResponse.json({ compatible: true, ...snapshot });
+    return NextResponse.json({
+      compatible: true,
+      incompatibility: null,
+      ...snapshot,
+    });
   } catch (err) {
     return errorResponse(err, runId);
   }

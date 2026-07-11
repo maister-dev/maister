@@ -19,9 +19,9 @@ export async function register(): Promise<void> {
   // never reached this DB — silently skipped by db:migrate on an out-of-order
   // `when`, never run, or partially applied — otherwise surfaces as a confusing
   // runtime "column does not exist" deep in a page. Catch it at boot instead.
-  // A failed CHECK (DB unreachable) is tolerated; only a confirmed gap is loud.
-  // A confirmed gap always aborts boot. Runs before the sweeps, which would
-  // otherwise execute graph-only code against a pre-cut-over schema. See
+  // A failed check, including an unreachable database, aborts boot. Runs before
+  // the sweeps, which would otherwise execute graph-only code against a
+  // pre-cut-over schema. See
   // lib/db/check-migrations.ts + `pnpm db:check`.
   try {
     const { findPendingMigrations, findPendingBrainMigrations } = await import(

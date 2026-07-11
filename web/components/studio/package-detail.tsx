@@ -171,8 +171,12 @@ export function PackageDetail({
           {pkg.sourceUrl}
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
-          {canManage ? (
+          {canManage && newest ? (
             <AttachToProjectButton
+              compatibility={{
+                compatible: newest.compatible,
+                incompatibilityReason: newest.incompatibilityReason,
+              }}
               installId={attachInstallId ?? ""}
               targets={attachTargets ?? []}
               triggerClassName="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"

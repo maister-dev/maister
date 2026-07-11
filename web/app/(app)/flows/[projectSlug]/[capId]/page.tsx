@@ -74,9 +74,8 @@ export default async function FlowDetailPage({
   // the raw-YAML tab only.
   const te = await getTranslations("flowEditor");
   const editorLabels = buildFlowEditorTabsLabels(te);
-  const draftManifest = detail.draft?.manifest ??
-    detail.published?.manifest ??
-    null;
+  const draftManifest =
+    detail.draft?.manifest ?? detail.published?.manifest ?? null;
   const publishedManifest = detail.published?.manifest ?? null;
 
   let canvasAvailable = false;
@@ -99,7 +98,7 @@ export default async function FlowDetailPage({
         publishedManifest,
         detail.capability.draftVersion,
       ).diff;
-      canvasManifest = draftManifest as FlowYamlV1;
+      canvasManifest = graph.manifest;
       canvasAvailable = true;
     } catch {
       canvasAvailable = false;

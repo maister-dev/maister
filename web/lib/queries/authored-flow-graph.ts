@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { FlowYamlV1 } from "@/lib/config.schema";
+
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 import {
@@ -12,6 +14,7 @@ import {
 } from "@/lib/queries/flow-graph-view";
 
 export type AuthoredFlowGraph = {
+  manifest: FlowYamlV1;
   topology: GraphTopology;
   layout: FlowLayout;
   draftVersion: number;
@@ -40,5 +43,5 @@ export function buildAuthoredFlowGraph(
   const topology = buildGraphTopology(compiled);
   const layout = presentationLayout(manifest);
 
-  return { topology, layout, draftVersion, kind: "flow" };
+  return { manifest, topology, layout, draftVersion, kind: "flow" };
 }

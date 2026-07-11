@@ -8,6 +8,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  isNull,
   notInArray,
   sql,
 } from "drizzle-orm";
@@ -20,6 +21,7 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import { getGraphOnlyCutoverFailure } from "@/lib/queries/run-cutover";
 import { actorForUserId } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
@@ -45,9 +47,9 @@ type Db = any;
 // the failure budget all resolve identically on both paths.
 
 // ADR-112 (level-triggered + cap): a triaged+auto flow that keeps FAILING must not
-// relaunch forever. After MAX_AUTO_LAUNCH_ATTEMPTS failed flow runs the funnel
-// GIVES UP (the poll flags the task; the gate simply stops admitting it); after a
-// failure it waits an exponentially-growing backoff window before the next attempt.
+// relaunch forever. After MAX_AUTO_LAUNCH_ATTEMPTS failed flow runs either C2
+// consumer atomically HOLDS the task; after a failure it waits an
+// exponentially-growing backoff window before the next attempt.
 export const MAX_AUTO_LAUNCH_ATTEMPTS = 3;
 export const AUTO_LAUNCH_BACKOFF_BASE_SECONDS = 60;
 
@@ -203,16 +205,22 @@ export function isWithinFailureBackoff(
   return nowMs < latestEndedAt.getTime() + backoffMs;
 }
 
+export type C2GiveUp = {
+  reason: string;
+  detail: string;
+};
+
 export type C2Eligibility =
   | { kind: "eligible" }
   | { kind: "skip" }
-  | { kind: "give-up"; failures: number };
+  | ({ kind: "give-up" } & C2GiveUp);
 
 // The per-candidate C2 eligibility verdict shared by both consumers. Applies, in
-// order: the live-flow-run guard, launchability (incl. open relation blockers), the
-// failure-attempt cap (→ give-up), and the failure backoff (→ skip). It does NOT
-// apply the capacity guards (reserve / maxInFlightAuto / edgeDrain) — those are
-// stateful per-admission and resolved by each consumer in its own loop.
+// order: the live-flow-run guard, launchability (incl. open relation blockers), a
+// latest-run D2 cutover hold, the failure-attempt cap (→ give-up), and the failure
+// backoff (→ skip). It does NOT apply the capacity guards (reserve /
+// maxInFlightAuto / edgeDrain) — those are stateful per-admission and resolved by
+// each consumer in its own loop.
 export async function evaluateC2Candidate(
   db: Db,
   candidate: C2CandidateRow,
@@ -241,6 +249,26 @@ export async function evaluateC2Candidate(
     return { kind: "skip" };
   }
 
+  const cutoverFailure = latestRun
+    ? await getGraphOnlyCutoverFailure(db, latestRun.id)
+    : null;
+
+  // A D2 failure is a historical engine cut-over, not an ordinary retryable run
+  // failure. A fresh human re-triage writes launch_armed_at after the recorded
+  // event, deliberately creating a new intent that may launch normally.
+  if (
+    cutoverFailure &&
+    (candidate.launchArmedAt === null ||
+      candidate.launchArmedAt.getTime() <= cutoverFailure.occurredAt.getTime())
+  ) {
+    return {
+      kind: "give-up",
+      reason: "auto_launch_graph_only_cutover",
+      detail:
+        "latest Flow run was terminalized by the engine 3.0.0 graph-only cut-over; re-triage after updating the Flow to retry",
+    };
+  }
+
   const failures = await countFailedFlowRuns(
     db,
     candidate.taskId,
@@ -248,7 +276,11 @@ export async function evaluateC2Candidate(
   );
 
   if (failures >= MAX_AUTO_LAUNCH_ATTEMPTS) {
-    return { kind: "give-up", failures };
+    return {
+      kind: "give-up",
+      reason: "auto_launch_attempts_exhausted",
+      detail: `${failures} flow runs failed since this enqueue was armed`,
+    };
   }
 
   if (isWithinFailureBackoff(failures, latestRun?.endedAt ?? null, nowMs)) {
@@ -293,46 +325,11 @@ export async function giveUpC2Task(
     C2CandidateRow,
     "taskId" | "projectId" | "flowId" | "launchArmedAt"
   >,
-  opts: { reason: string; detail: string },
+  opts: C2GiveUp,
 ): Promise<boolean> {
-  const held = await db.transaction(async (tx: Db) => {
-    const rows = await tx
-      .update(tasks)
-      .set({
-        launchMode: null,
-        triageStatus: "flagged",
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(tasks.id, candidate.taskId),
-          eq(tasks.projectId, candidate.projectId),
-          eq(tasks.triageStatus, "triaged"),
-          eq(tasks.launchMode, "auto"),
-          eq(tasks.flowId, candidate.flowId),
-          ...(candidate.launchArmedAt
-            ? [eq(tasks.launchArmedAt, candidate.launchArmedAt)]
-            : []),
-        ),
-      )
-      .returning({ id: tasks.id });
-
-    if (rows.length === 0) {
-      return false;
-    }
-
-    await addTaskComment(
-      {
-        taskId: candidate.taskId,
-        body: `Auto-launch gave up (${opts.reason}): ${opts.detail}. This task is now flagged for review — clear the flag or re-send it to triage to retry.`,
-        actor: actorForUserId(null),
-        activityPayloadExtra: { reason: opts.reason, detail: opts.detail },
-      },
-      tx,
-    );
-
-    return true;
-  });
+  const held = await db.transaction((tx: Db) =>
+    giveUpC2TaskInTransaction(tx, candidate, opts),
+  );
 
   if (!held) {
     log.info(
@@ -346,6 +343,53 @@ export async function giveUpC2Task(
   log.info(
     { taskId: candidate.taskId, reason: opts.reason },
     "c2 gave up — flagged + commented",
+  );
+
+  return true;
+}
+
+// The slot-free gate already owns the scheduler transaction and advisory lock.
+// Reusing this mutation avoids a nested transaction while preserving the exact
+// same CAS + comment behavior as the poll backstop.
+export async function giveUpC2TaskInTransaction(
+  tx: Db,
+  candidate: Pick<
+    C2CandidateRow,
+    "taskId" | "projectId" | "flowId" | "launchArmedAt"
+  >,
+  opts: C2GiveUp,
+): Promise<boolean> {
+  const rows = await tx
+    .update(tasks)
+    .set({
+      launchMode: null,
+      triageStatus: "flagged",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(tasks.id, candidate.taskId),
+        eq(tasks.projectId, candidate.projectId),
+        eq(tasks.triageStatus, "triaged"),
+        eq(tasks.launchMode, "auto"),
+        eq(tasks.flowId, candidate.flowId),
+        ...(candidate.launchArmedAt
+          ? [eq(tasks.launchArmedAt, candidate.launchArmedAt)]
+          : [isNull(tasks.launchArmedAt)]),
+      ),
+    )
+    .returning({ id: tasks.id });
+
+  if (rows.length === 0) return false;
+
+  await addTaskComment(
+    {
+      taskId: candidate.taskId,
+      body: `Auto-launch gave up (${opts.reason}): ${opts.detail}. This task is now flagged for review — clear the flag or re-send it to triage to retry.`,
+      actor: actorForUserId(null),
+      activityPayloadExtra: { reason: opts.reason, detail: opts.detail },
+    },
+    tx,
   );
 
   return true;

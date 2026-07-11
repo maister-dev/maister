@@ -266,8 +266,7 @@ export async function getCurrentArtifact(
  * that are required for review or merge. Used by the takeover-return path to
  * re-pin these to the post-takeover branch tip so review/merge evidence reflects
  * the FULL cumulative diff (base..tip), not the pre-takeover range frozen when
- * the producing node ran. `required_for` is filtered in JS — dialect-agnostic,
- * no jsonb `@>` operator dependency.
+ * the producing node ran. `required_for` is filtered after selecting the rows.
  */
 export async function getCurrentRequiredForGitArtifacts(
   runId: string,
