@@ -436,6 +436,34 @@ a mid-session enforcement change. **Resume of an existing attempt reads the pers
 snapshot/profile — it does NOT recompute against the live (post-flip) table**; a
 *fresh* attempt (new node, or a relaunch) computes fresh.
 
+## Operator evidence ritual (ADR-090 + ADR-129, W-F)
+
+Some launches are gated on **cached live-adapter smoke evidence** written by
+`pnpm -C supervisor smoke:acp --cache <path>` into `MAISTER_ADAPTER_SMOKE_CACHE_PATH`.
+Two dimensions ride the same cache and **accumulate** (a single-dimension run never
+clobbers the sibling — see `writeAdapterSmokeCache` merge):
+
+| Dimension | Ritual command | Gates | Pass criterion (per adapter) |
+| --- | --- | --- | --- |
+| `readOnlySession` (ADR-090) | `smoke:acp --cache <path> --read-only-session gemini opencode mimo` | `none`/`repo_read` agent launches | read-kind allowed + write-kind denied + unknown-kind denied |
+| `capabilityEnforcement` (ADR-129) | `smoke:acp --cache <path> --capability-enforcement claude codex gemini opencode mimo` | strict `tools`/`mcps` flow/agent launches | `requestPermission` fires per write-class probe **and** `params.toolCall` carries a stable tool name (+ a resolvable MCP server namespace) |
+
+- **CI** runs each probe against the mock-ACP adapter (`mock-acp-compatibility.mjs`),
+  proving the wire contract green (`smoke-acp-adapter-script.test.ts`). **Live**
+  confirmation for real adapters is this operator ritual; until an adapter's
+  `capabilityEnforcement` dimension is cached `ok`, a strict `tools`/`mcps` launch on
+  it **refuses** with a diagnostic naming the missing evidence (never a false-enforce).
+- **M40 native-hook residual folded here (Resolved-Decision 5).** The one M40 residual
+  — "a claude `PreToolUse` path-guard hook fires + denies in a real agent run" — is the
+  **same** operator action (run a live agent, observe the seam), so it rides this ritual:
+  when caching `capabilityEnforcement` for claude live, also confirm the native
+  `PreToolUse` deny fires. Both are defense-in-depth over the supervisor seam, which is
+  the real guarantee (de-scoping the live native check entirely is a legitimate fallback
+  if operator time is scarce — the universal supervisor layer carries enforcement).
+- The cache path defaults to `<runtimeRoot>/adapter-smoke-cache.json`; `GET /diagnostics`
+  surfaces both dimensions, and the web launch gates (`assertReadOnlySessionEvidence`,
+  `assertEnforcementEvidence`) read them.
+
 ## Expectations (Designed — ADR-108)
 
 - The interceptor MUST run in `requestPermission` after L1 (`readOnlySession`) /

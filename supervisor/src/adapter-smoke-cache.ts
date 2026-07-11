@@ -18,6 +18,8 @@ const AdapterSmokeEvidenceSchema = z
 
 const AdapterSmokeCacheEntrySchema = AdapterSmokeEvidenceSchema.extend({
   readOnlySession: AdapterSmokeEvidenceSchema.optional(),
+  // ADR-129: cached evidence that capability_guard enforcement is safe at the seam.
+  capabilityEnforcement: AdapterSmokeEvidenceSchema.optional(),
 }).strict();
 
 const AdapterSmokeCacheSchema = z
@@ -49,6 +51,7 @@ export type AdapterSmokeDiagnostic = {
   readonly checkedAt: string | null;
   readonly protocolVersion: number | null;
   readonly readOnlySession: AdapterSmokeDimensionDiagnostic;
+  readonly capabilityEnforcement: AdapterSmokeDimensionDiagnostic;
 };
 
 export type AdapterSmokeDimensionDiagnostic = {
@@ -69,6 +72,11 @@ export type AdapterSmokeCacheWriteEntry = {
   readonly reason?: string;
   readonly protocolVersion?: number;
   readonly readOnlySession?: {
+    readonly status: AdapterSmokeEvidence["status"];
+    readonly reason?: string;
+    readonly protocolVersion?: number;
+  };
+  readonly capabilityEnforcement?: {
     readonly status: AdapterSmokeEvidence["status"];
     readonly reason?: string;
     readonly protocolVersion?: number;
@@ -131,6 +139,10 @@ export function smokeDiagnosticForAdapter(
   cache: AdapterSmokeCacheRead,
 ): AdapterSmokeDiagnostic {
   const readOnlySession = readOnlySessionDiagnosticForAdapter(adapter, cache);
+  const capabilityEnforcement = capabilityEnforcementDiagnosticForAdapter(
+    adapter,
+    cache,
+  );
 
   if (!SMOKE_REQUIRED_ADAPTERS.has(adapter)) {
     return {
@@ -139,6 +151,7 @@ export function smokeDiagnosticForAdapter(
       checkedAt: null,
       protocolVersion: null,
       readOnlySession,
+      capabilityEnforcement,
     };
   }
 
@@ -149,6 +162,7 @@ export function smokeDiagnosticForAdapter(
       checkedAt: null,
       protocolVersion: null,
       readOnlySession,
+      capabilityEnforcement,
     };
   }
 
@@ -161,6 +175,7 @@ export function smokeDiagnosticForAdapter(
       checkedAt: null,
       protocolVersion: null,
       readOnlySession,
+      capabilityEnforcement,
     };
   }
 
@@ -170,6 +185,7 @@ export function smokeDiagnosticForAdapter(
     checkedAt: entry.checkedAt,
     protocolVersion: entry.protocolVersion ?? null,
     readOnlySession,
+    capabilityEnforcement,
   };
 }
 
@@ -235,6 +251,57 @@ function readOnlySessionDiagnosticForAdapter(
   return smokeDimensionDiagnostic(entry);
 }
 
+function capabilityEnforcementDiagnosticForAdapter(
+  adapter: ExecutorAgent,
+  cache: AdapterSmokeCacheRead,
+): AdapterSmokeDimensionDiagnostic {
+  if (getAdapterRuntime(adapter).capabilityEnforcementSmoke !== "required") {
+    return {
+      status: "not_required",
+      reason: null,
+      checkedAt: null,
+      protocolVersion: null,
+    };
+  }
+
+  if (cache.error) {
+    return {
+      status: "error",
+      reason: cache.error,
+      checkedAt: null,
+      protocolVersion: null,
+    };
+  }
+
+  const entry = cache.entries[adapter]?.capabilityEnforcement;
+  const genericEntry = cache.entries[adapter];
+
+  if (!entry) {
+    return {
+      status: "pending",
+      reason: `${adapter} capability-enforcement smoke has not been cached`,
+      checkedAt: null,
+      protocolVersion: null,
+    };
+  }
+
+  if (entry.status === "ok" && genericEntry?.status !== "ok") {
+    const genericStatus = genericEntry?.status ?? "missing";
+    const genericReason = genericEntry?.reason
+      ? `: ${genericEntry.reason}`
+      : "";
+
+    return {
+      status: genericEntry?.status ?? "pending",
+      reason: `${adapter} capability-enforcement smoke ignored because adapter ACP compatibility smoke is ${genericStatus}${genericReason}`,
+      checkedAt: genericEntry?.checkedAt ?? null,
+      protocolVersion: null,
+    };
+  }
+
+  return smokeDimensionDiagnostic(entry);
+}
+
 export async function writeAdapterSmokeCache(
   cachePath: string,
   entries: readonly AdapterSmokeCacheWriteEntry[],
@@ -246,12 +313,23 @@ export async function writeAdapterSmokeCache(
   };
 
   for (const entry of entries) {
+    // ADR-129: preserve the OTHER dimension when a write carries only one (the
+    // readOnlySession and capabilityEnforcement rituals run as separate smoke
+    // invocations) — a single-dimension write must not clobber the sibling.
+    const prev = adapters[entry.adapter];
+
     adapters[entry.adapter] = {
       status: entry.status,
       checkedAt,
       ...(entry.reason ? { reason: entry.reason } : {}),
       ...(entry.protocolVersion
         ? { protocolVersion: entry.protocolVersion }
+        : {}),
+      ...(!entry.readOnlySession && prev?.readOnlySession
+        ? { readOnlySession: prev.readOnlySession }
+        : {}),
+      ...(!entry.capabilityEnforcement && prev?.capabilityEnforcement
+        ? { capabilityEnforcement: prev.capabilityEnforcement }
         : {}),
       ...(entry.readOnlySession
         ? {
@@ -263,6 +341,23 @@ export async function writeAdapterSmokeCache(
                 : {}),
               ...(entry.readOnlySession.protocolVersion
                 ? { protocolVersion: entry.readOnlySession.protocolVersion }
+                : {}),
+            },
+          }
+        : {}),
+      ...(entry.capabilityEnforcement
+        ? {
+            capabilityEnforcement: {
+              status: entry.capabilityEnforcement.status,
+              checkedAt,
+              ...(entry.capabilityEnforcement.reason
+                ? { reason: entry.capabilityEnforcement.reason }
+                : {}),
+              ...(entry.capabilityEnforcement.protocolVersion
+                ? {
+                    protocolVersion:
+                      entry.capabilityEnforcement.protocolVersion,
+                  }
                 : {}),
             },
           }

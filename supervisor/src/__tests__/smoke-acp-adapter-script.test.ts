@@ -60,4 +60,24 @@ describe("smoke ACP adapter CLI helpers", () => {
       },
     });
   });
+
+  it("produces ok capability-enforcement evidence after write + MCP tool-identity probes (ADR-129)", async () => {
+    const binaryPath = await fixtureBinary();
+
+    cleanupDirs.push(dirname(binaryPath));
+    process.env.MAISTER_ADAPTER_BINARY_OPENCODE = binaryPath;
+
+    const result = await smokeAdapter("opencode", {
+      capabilityEnforcement: true,
+    });
+
+    expect(result).toMatchObject({
+      adapter: "opencode",
+      status: "ok",
+      capabilityEnforcement: {
+        status: "ok",
+        protocolVersion: expect.any(Number),
+      },
+    });
+  });
 });

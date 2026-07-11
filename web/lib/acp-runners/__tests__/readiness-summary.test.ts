@@ -42,6 +42,12 @@ function diagAdapter(
         checkedAt: null,
         protocolVersion: null,
       },
+      capabilityEnforcement: {
+        status: "pending",
+        reason: null,
+        checkedAt: null,
+        protocolVersion: null,
+      },
     },
   };
 }

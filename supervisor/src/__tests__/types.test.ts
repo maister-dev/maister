@@ -433,6 +433,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            capabilityEnforcement: {
+              status: "pending",
+              reason: null,
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
         {
@@ -450,6 +456,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
             protocolVersion: null,
             readOnlySession: {
               status: "not_required",
+              reason: null,
+              checkedAt: null,
+              protocolVersion: null,
+            },
+            capabilityEnforcement: {
+              status: "pending",
               reason: null,
               checkedAt: null,
               protocolVersion: null,
@@ -475,6 +487,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            capabilityEnforcement: {
+              status: "pending",
+              reason: "gemini capability-enforcement smoke has not been cached",
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
         {
@@ -496,6 +514,13 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            capabilityEnforcement: {
+              status: "pending",
+              reason:
+                "opencode capability-enforcement smoke has not been cached",
+              checkedAt: null,
+              protocolVersion: null,
+            },
           },
         },
         {
@@ -514,6 +539,12 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
             readOnlySession: {
               status: "pending",
               reason: "mimo read-only-session smoke has not been cached",
+              checkedAt: null,
+              protocolVersion: null,
+            },
+            capabilityEnforcement: {
+              status: "pending",
+              reason: "mimo capability-enforcement smoke has not been cached",
               checkedAt: null,
               protocolVersion: null,
             },

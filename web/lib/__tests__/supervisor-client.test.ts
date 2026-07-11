@@ -332,6 +332,12 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
           },
+          capabilityEnforcement: {
+            status: "pending",
+            reason: null,
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
       {
@@ -349,6 +355,12 @@ describe("checkSupervisorDiagnostics", () => {
           protocolVersion: null,
           readOnlySession: {
             status: "not_required",
+            reason: null,
+            checkedAt: null,
+            protocolVersion: null,
+          },
+          capabilityEnforcement: {
+            status: "pending",
             reason: null,
             checkedAt: null,
             protocolVersion: null,
@@ -374,6 +386,12 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
           },
+          capabilityEnforcement: {
+            status: "pending",
+            reason: "gemini capability-enforcement smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
       {
@@ -395,6 +413,12 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
           },
+          capabilityEnforcement: {
+            status: "pending",
+            reason: "opencode capability-enforcement smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
         },
       },
       {
@@ -413,6 +437,12 @@ describe("checkSupervisorDiagnostics", () => {
           readOnlySession: {
             status: "pending",
             reason: "mimo read-only-session smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
+          capabilityEnforcement: {
+            status: "pending",
+            reason: "mimo capability-enforcement smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
           },
@@ -464,6 +494,28 @@ describe("checkSupervisorDiagnostics", () => {
     const smoke: Partial<typeof first.smoke> = { ...first.smoke };
 
     delete smoke.readOnlySession;
+
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          ...diagnostics,
+          adapters: [{ ...first, smoke }, ...rest],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(checkSupervisorDiagnostics()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "malformed",
+    });
+  });
+
+  it("rejects diagnostics bodies missing capability-enforcement smoke evidence (ADR-129)", async () => {
+    const [first, ...rest] = diagnostics.adapters;
+    const smoke: Partial<typeof first.smoke> = { ...first.smoke };
+
+    delete smoke.capabilityEnforcement;
 
     mockOnce(
       new Response(

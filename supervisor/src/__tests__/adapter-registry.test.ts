@@ -65,6 +65,20 @@ describe("adapter registry", () => {
     expect(getAdapterRuntime("mimo").readOnlySessionSmoke).toBe("required");
   });
 
+  it("requires capability-enforcement smoke for every adapter runtime (ADR-129)", () => {
+    for (const adapter of [
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+      "mimo",
+    ] as const) {
+      expect(getAdapterRuntime(adapter).capabilityEnforcementSmoke).toBe(
+        "required",
+      );
+    }
+  });
+
   it("selects adapter-aware resume behavior without falling back to newSession", () => {
     expect(
       resolveResumeAction("claude", {

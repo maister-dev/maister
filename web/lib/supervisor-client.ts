@@ -263,6 +263,20 @@ const SupervisorDiagnosticsSchema = z
                   protocolVersion: z.number().int().positive().nullable(),
                 })
                 .strict(),
+              capabilityEnforcement: z
+                .object({
+                  status: z.enum([
+                    "not_required",
+                    "pending",
+                    "ok",
+                    "skipped",
+                    "error",
+                  ]),
+                  reason: z.string().nullable(),
+                  checkedAt: z.string().datetime().nullable(),
+                  protocolVersion: z.number().int().positive().nullable(),
+                })
+                .strict(),
             })
             .strict(),
         })

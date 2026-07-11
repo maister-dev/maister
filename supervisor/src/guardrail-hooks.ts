@@ -27,7 +27,66 @@ export const WRITE_KINDS: ReadonlySet<string> = new Set([
 export type GuardrailToolCall = {
   kind?: string;
   locations?: Array<{ path?: string; line?: number }>;
+  // ADR-129: capability_guard reads tool IDENTITY. No first-class ACP field
+  // carries a tool name, so it is extracted from `_meta.claudeCode.toolName`
+  // (claude) or `title` (the same fields the web transcript parses). Optional —
+  // path_guard/repetition ignore them.
+  title?: string;
+  _meta?: unknown;
 };
+
+// ADR-129: single-sourced tool-identity extractor, reused by the capability_guard
+// evaluator AND the capabilityEnforcement smoke probe. Returns `name: null` when
+// no stable identity is surfaced → the caller fail-closes (conservative deny for a
+// governed strict class).
+export type ToolIdentity = {
+  readonly name: string | null;
+  readonly mcpServer: string | null;
+};
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+// MCP tool names follow the `mcp__<server>__<tool>` convention (claude-agent-acp /
+// Claude Code). Returns the server namespace, or null for a non-MCP or malformed
+// name (empty server or no tool segment).
+export function mcpServerFromToolName(name: string): string | null {
+  const prefix = "mcp__";
+
+  if (!name.startsWith(prefix)) return null;
+
+  const rest = name.slice(prefix.length);
+  const sep = rest.indexOf("__");
+
+  if (sep <= 0) return null;
+
+  const tool = rest.slice(sep + 2);
+
+  if (tool.length === 0) return null;
+
+  return rest.slice(0, sep);
+}
+
+export function extractToolIdentity(toolCall: unknown): ToolIdentity {
+  const tc = asObject(toolCall);
+
+  if (!tc) return { name: null, mcpServer: null };
+
+  const meta = asObject(tc._meta);
+  const claudeCode = meta ? asObject(meta.claudeCode) : null;
+  const metaName =
+    claudeCode && typeof claudeCode.toolName === "string" && claudeCode.toolName
+      ? claudeCode.toolName
+      : null;
+  const titleName =
+    typeof tc.title === "string" && tc.title ? tc.title : null;
+  const name = metaName ?? titleName;
+
+  return { name, mcpServer: name ? mcpServerFromToolName(name) : null };
+}
 
 // Adapter-agnostic write-path extraction (SDD spec §1.1). `path` is undefined
 // when the adapter omits `locations` → the caller applies the kind-only

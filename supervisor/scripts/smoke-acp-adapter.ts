@@ -31,6 +31,7 @@ import {
   listAdapterRuntimes,
   resolveAdapterBinary,
 } from "../src/adapter-registry";
+import { extractToolIdentity } from "../src/guardrail-hooks";
 import { writeAdapterSmokeCache } from "../src/adapter-smoke-cache";
 import { provisionRunnerLaunch } from "../src/runner-provisioner";
 import { buildChildEnv } from "../src/spawn";
@@ -49,24 +50,43 @@ type SmokeResult = {
     reason?: string;
     protocolVersion?: number;
   };
+  capabilityEnforcement?: {
+    status: SmokeStatus;
+    reason?: string;
+    protocolVersion?: number;
+  };
 };
 
 type ReadOnlySessionSmokeResult = NonNullable<SmokeResult["readOnlySession"]>;
+type CapabilityEnforcementSmokeResult = NonNullable<
+  SmokeResult["capabilityEnforcement"]
+>;
 
 type SmokeAdapterOptions = {
   readonly readOnlySession?: boolean;
+  readonly capabilityEnforcement?: boolean;
 };
 
 type CliArgs = {
   readonly adapters: ExecutorAgent[];
   readonly cachePath?: string;
   readonly readOnlySession: boolean;
+  readonly capabilityEnforcement: boolean;
 };
 
 type PermissionProbeObservation = {
   readonly kind: string | null;
   readonly decision: "allow" | "deny";
   readonly optionId: string | null;
+};
+
+// ADR-129: a single capability_guard probe observation — the tool identity the seam
+// surfaced (name + MCP server), the kind, and the synchronous decision latency.
+type CapabilityProbeObservation = {
+  readonly kind: string | null;
+  readonly name: string | null;
+  readonly mcpServer: string | null;
+  readonly latencyMs: number;
 };
 
 const READ_ONLY_SESSION_PROBES = [
@@ -96,6 +116,22 @@ const WRITE_LIKE_KINDS = new Set([
   "move",
   "execute",
 ]);
+
+// ADR-129 capability_guard smoke (DES-8): prove `requestPermission` fires per
+// write-class call under permissionPolicy=default AND that `params.toolCall`
+// carries a stable tool identity — a plain tool name and an MCP
+// `mcp__<server>__<tool>` name whose server is resolvable. Drives the mock's
+// `tool-name:X` / `permission-kind:X` prompt hints.
+const CAPABILITY_ENFORCEMENT_PROBES = [
+  {
+    prompt:
+      "MAIster capability-enforcement smoke probe tool-name:Bash permission-kind:execute. Request permission for a tool call, then stop.",
+  },
+  {
+    prompt:
+      "MAIster capability-enforcement smoke probe tool-name:mcp__maister__hitl_list permission-kind:other. Request permission for an MCP tool call, then stop.",
+  },
+] as const;
 
 const noopClient: acp.Client = {
   async sessionUpdate() {
@@ -155,6 +191,97 @@ function createReadOnlyProbeClient(
       };
     },
   };
+}
+
+function createCapabilityEnforcementProbeClient(
+  observations: CapabilityProbeObservation[],
+): acp.Client {
+  return {
+    async sessionUpdate() {
+      // Smoke probes inspect the permission request only.
+    },
+    async requestPermission(params) {
+      const started = performance.now();
+      const identity = extractToolIdentity(params.toolCall);
+      const allowOption = params.options[0]?.optionId ?? null;
+
+      observations.push({
+        kind: toolCallKind(params.toolCall),
+        name: identity.name,
+        mcpServer: identity.mcpServer,
+        latencyMs: performance.now() - started,
+      });
+
+      // The probe proves the seam SEES the call with identity; it approves so the
+      // adapter completes the turn (the enforcement decision is exercised by the
+      // interceptor unit/e2e tests, not the smoke).
+      if (!allowOption) return { outcome: { outcome: "cancelled" } };
+
+      return { outcome: { outcome: "selected", optionId: allowOption } };
+    },
+  };
+}
+
+function summarizeCapabilityEnforcementProbe(
+  protocolVersion: number,
+  observations: readonly CapabilityProbeObservation[],
+): CapabilityEnforcementSmokeResult {
+  const firedForEveryProbe =
+    observations.length >= CAPABILITY_ENFORCEMENT_PROBES.length;
+  const identitySurfaced =
+    observations.length > 0 && observations.every((o) => o.name !== null);
+  const mcpResolved = observations.some((o) => o.mcpServer !== null);
+  const missing = [
+    ...(firedForEveryProbe ? [] : ["requestPermission per probe"]),
+    ...(identitySurfaced ? [] : ["a stable tool identity on every call"]),
+    ...(mcpResolved ? [] : ["a resolvable MCP server namespace"]),
+  ];
+
+  if (missing.length === 0) {
+    return { status: "ok", protocolVersion };
+  }
+
+  const observed = observations
+    .map((o) => `${o.kind ?? "?"}:${o.name ?? "no-identity"}`)
+    .join(", ");
+
+  return {
+    status: "error",
+    protocolVersion,
+    reason: `capability-enforcement prompt probe did not observe ${missing.join(
+      ", ",
+    )}; observed ${observed || "none"}`,
+  };
+}
+
+async function smokeCapabilityEnforcement(args: {
+  readonly adapter: ExecutorAgent;
+  readonly connection: acp.ClientSideConnection;
+  readonly sessionId: string;
+  readonly protocolVersion: number;
+  readonly observations: readonly CapabilityProbeObservation[];
+}): Promise<CapabilityEnforcementSmokeResult> {
+  try {
+    for (const probe of CAPABILITY_ENFORCEMENT_PROBES) {
+      await args.connection.prompt({
+        sessionId: args.sessionId,
+        prompt: [{ type: "text", text: probe.prompt }],
+      });
+    }
+  } catch (err) {
+    return {
+      status: "error",
+      protocolVersion: args.protocolVersion,
+      reason: `${args.adapter} capability-enforcement prompt probe failed: ${errorMessage(
+        err,
+      )}`,
+    };
+  }
+
+  return summarizeCapabilityEnforcementProbe(
+    args.protocolVersion,
+    args.observations,
+  );
 }
 
 function isUnknownPermissionKind(kind: string | null): boolean {
@@ -254,6 +381,7 @@ function parseArgs(): CliArgs {
   const requested: string[] = [];
   let cachePath: string | undefined;
   let readOnlySession = false;
+  let capabilityEnforcement = false;
   const argv = process.argv.slice(2);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -275,6 +403,12 @@ function parseArgs(): CliArgs {
       continue;
     }
 
+    if (value === "--capability-enforcement") {
+      capabilityEnforcement = true;
+
+      continue;
+    }
+
     requested.push(value);
   }
 
@@ -283,6 +417,7 @@ function parseArgs(): CliArgs {
       adapters: ["gemini", "opencode", "mimo"],
       cachePath: cachePath ?? process.env.MAISTER_ADAPTER_SMOKE_CACHE_PATH,
       readOnlySession,
+      capabilityEnforcement,
     };
   }
 
@@ -300,6 +435,7 @@ function parseArgs(): CliArgs {
     }),
     cachePath: cachePath ?? process.env.MAISTER_ADAPTER_SMOKE_CACHE_PATH,
     readOnlySession,
+    capabilityEnforcement,
   };
 }
 
@@ -414,9 +550,12 @@ export async function smokeAdapter(
     stdio: ["pipe", "pipe", "ignore"],
   });
   const permissionObservations: PermissionProbeObservation[] = [];
-  const client = options.readOnlySession
-    ? createReadOnlyProbeClient(permissionObservations)
-    : noopClient;
+  const capabilityObservations: CapabilityProbeObservation[] = [];
+  const client = options.capabilityEnforcement
+    ? createCapabilityEnforcementProbeClient(capabilityObservations)
+    : options.readOnlySession
+      ? createReadOnlyProbeClient(permissionObservations)
+      : noopClient;
 
   try {
     await waitForSpawn(child);
@@ -439,13 +578,23 @@ export async function smokeAdapter(
       clientCapabilities: clientCapabilitiesForAdapter(adapter),
     });
     const session = await connection.newSession({ cwd, mcpServers: [] });
-    const readOnlySession = options.readOnlySession
-      ? await smokeReadOnlySession({
+    const readOnlySession =
+      options.readOnlySession && !options.capabilityEnforcement
+        ? await smokeReadOnlySession({
+            adapter,
+            connection,
+            sessionId: session.sessionId,
+            protocolVersion: init.protocolVersion,
+            observations: permissionObservations,
+          })
+        : undefined;
+    const capabilityEnforcement = options.capabilityEnforcement
+      ? await smokeCapabilityEnforcement({
           adapter,
           connection,
           sessionId: session.sessionId,
           protocolVersion: init.protocolVersion,
-          observations: permissionObservations,
+          observations: capabilityObservations,
         })
       : undefined;
 
@@ -456,6 +605,7 @@ export async function smokeAdapter(
       protocolVersion: init.protocolVersion,
       acpSessionId: session.sessionId,
       ...(readOnlySession ? { readOnlySession } : {}),
+      ...(capabilityEnforcement ? { capabilityEnforcement } : {}),
     };
   } catch (err) {
     return {
@@ -477,6 +627,7 @@ async function main(): Promise<void> {
   for (const adapter of args.adapters) {
     const result = await smokeAdapter(adapter, {
       readOnlySession: args.readOnlySession,
+      capabilityEnforcement: args.capabilityEnforcement,
     });
 
     results.push(result);
@@ -499,6 +650,9 @@ async function main(): Promise<void> {
         ...(result.readOnlySession
           ? { readOnlySession: result.readOnlySession }
           : {}),
+        ...(result.capabilityEnforcement
+          ? { capabilityEnforcement: result.capabilityEnforcement }
+          : {}),
       })),
     );
   }
@@ -506,7 +660,9 @@ async function main(): Promise<void> {
   if (
     results.some(
       (result) =>
-        result.status === "error" || result.readOnlySession?.status === "error",
+        result.status === "error" ||
+        result.readOnlySession?.status === "error" ||
+        result.capabilityEnforcement?.status === "error",
     )
   ) {
     process.exitCode = 1;

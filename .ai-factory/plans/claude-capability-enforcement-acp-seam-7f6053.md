@@ -404,7 +404,7 @@ signed off:
 
 ### Phase 1 — Blocking Spike #1: adapter evidence + smoke dimension — Commit B
 
-**T1.1 · Add the `capabilityEnforcement` smoke dimension (mirror `readOnlySession`).**
+**T1.1 · Add the `capabilityEnforcement` smoke dimension (mirror `readOnlySession`).** — ✅ DONE (adapter-smoke-cache.ts schema+diagnostic+resolver+write-merge; adapter-registry.ts + adapter-support.ts field on all 5 = required; wire schemas in types.ts + supervisor-client.ts; mirror tests both sides; migrated 5 diagnostics fixtures; TDD RED→GREEN)
 `supervisor/src/adapter-smoke-cache.ts`: new optional key on `AdapterSmokeCacheEntry` +
 `AdapterSmokeDiagnostic` + the per-dimension resolver (demote-to-generic rule) +
 `writeAdapterSmokeCache` entry field. `supervisor/src/adapter-registry.ts` +
@@ -414,7 +414,7 @@ five adapters (keep the two tables hand-synced — add a sync test if one exists
 *Logging*: DEBUG on diagnostic derivation (`adapter`, dimension `status`, `reason`).
 *Verify*: unit tests mirroring the readOnlySession dimension tests (pending/ok/error/demote).
 
-**T1.2 · Extend the smoke script with a `--capability-enforcement` probe (DES-8).**
+**T1.2 · Extend the smoke script with a `--capability-enforcement` probe (DES-8).** — ✅ DONE (shared `extractToolIdentity`/`mcpServerFromToolName` in guardrail-hooks.ts + unit test; probe client + summarizer + driver in smoke-acp-adapter.ts; `--capability-enforcement` CLI flag + cache-write + exit-gate; mock `tool-name:X` hint; script test GREEN on mock-ACP)
 `supervisor/scripts/smoke-acp-adapter.ts`: drive a real adapter with `permissionPolicy=default`
 and assert (a) `requestPermission` fires for every WRITE_KINDS probe, (b) `params.toolCall`
 carries a stable tool-name + (for an MCP probe) a resolvable server namespace, (c) record
@@ -424,7 +424,7 @@ Reuse the production arbitration path where possible (as the readOnly probe reus
 *Logging*: INFO summary per adapter (observed kinds, identity field name, latency ms).
 *Verify*: script runs green against the mock-ACP adapter in CI; documents the live ritual for claude/codex.
 
-**T1.3 · Operator-ritual checklist deliverable (W-F) + fold the M40 native-hook residual.**
+**T1.3 · Operator-ritual checklist deliverable (W-F) + fold the M40 native-hook residual.** — ✅ DONE (guardrail-hooks.md "Operator evidence ritual" section: pass/fail table for both dimensions, CI-vs-live split, M40 native-hook residual folded per Resolved-Decision 5; getting-started.md ritual commands from T0.4)
 A repeatable checklist/script (docs + a `pnpm` entry if useful) caching the new dimension per
 adapter; CI runs the mock-ACP proof, live confirmation is the documented ritual. Fold the
 existing M40 native-hook live-verification residual into this same checklist.

@@ -33,6 +33,15 @@ function permissionKindForPrompt(params) {
   return match?.[1] ?? permissionKind;
 }
 
+// ADR-129: the capability-enforcement probe drives specific tool identities via a
+// `tool-name:X` prompt hint (mirroring `permission-kind:X`) so the smoke can prove
+// the seam surfaces a stable tool name (+ MCP server namespace).
+function toolNameForPrompt(params) {
+  const match = promptText(params).match(/tool-name:([A-Za-z0-9_-]+)/);
+
+  return match?.[1] ?? "compat permission";
+}
+
 function modelState(currentModelId = "observed-model") {
   return {
     availableModels: [
@@ -123,7 +132,7 @@ class CompatibilityAgent {
       toolCall: {
         toolCallId: "compat-tool-call",
         kind: effectivePermissionKind,
-        title: "compat permission",
+        title: toolNameForPrompt(params),
       },
       options: [
         { optionId: "allow", kind: "allow_always", name: "Allow" },

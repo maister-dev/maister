@@ -40,6 +40,12 @@ describe("AdapterSupportPanel", () => {
                   checkedAt: null,
                   protocolVersion: null,
                 },
+                capabilityEnforcement: {
+                  status: "pending",
+                  reason: null,
+                  checkedAt: null,
+                  protocolVersion: null,
+                },
               },
             },
             {
@@ -57,6 +63,12 @@ describe("AdapterSupportPanel", () => {
                 protocolVersion: null,
                 readOnlySession: {
                   status: "not_required",
+                  reason: null,
+                  checkedAt: null,
+                  protocolVersion: null,
+                },
+                capabilityEnforcement: {
+                  status: "pending",
                   reason: null,
                   checkedAt: null,
                   protocolVersion: null,

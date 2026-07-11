@@ -20,4 +20,12 @@ describe("adapter support descriptors", () => {
       "required",
     );
   });
+
+  it("requires capability-enforcement smoke for every adapter (ADR-129)", () => {
+    for (const id of ["claude", "codex", "gemini", "opencode", "mimo"]) {
+      expect(getAdapterSupportById(id)?.capabilityEnforcementSmoke).toBe(
+        "required",
+      );
+    }
+  });
 });

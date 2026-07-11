@@ -73,6 +73,10 @@ export type AdapterSupport = {
   readonly capabilityAgent: AdapterId;
   readonly readOnlyCapable: boolean;
   readonly readOnlySessionSmoke: ReadOnlySessionSmokeRequirement;
+  // ADR-129: required for every adapter — the launch evidence gate refuses a strict
+  // tools/mcps enforcement launch until this adapter's capabilityEnforcement smoke
+  // is cached ok. Kept in lockstep with adapter-registry.ts (supervisor).
+  readonly capabilityEnforcementSmoke: ReadOnlySessionSmokeRequirement;
   readonly providerKinds: readonly ProviderKind[];
   readonly permissionPolicies: readonly PermissionPolicy[];
   readonly binaryId: string;
@@ -91,6 +95,7 @@ export const ADAPTER_SUPPORT = [
     capabilityAgent: "claude",
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
+    capabilityEnforcementSmoke: "required",
     providerKinds: ["anthropic", "anthropic_compatible"],
     permissionPolicies: ["default", "dangerously_skip_permissions"],
     binaryId: "claude-agent-acp",
@@ -107,6 +112,7 @@ export const ADAPTER_SUPPORT = [
     capabilityAgent: "codex",
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
+    capabilityEnforcementSmoke: "required",
     providerKinds: ["openai", "openai_compatible"],
     permissionPolicies: ["default"],
     binaryId: "codex-acp",
@@ -127,6 +133,7 @@ export const ADAPTER_SUPPORT = [
     capabilityAgent: "gemini",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
+    capabilityEnforcementSmoke: "required",
     providerKinds: ["google_gemini", "google_vertex", "google_gateway"],
     permissionPolicies: ["default"],
     binaryId: "gemini",
@@ -143,6 +150,7 @@ export const ADAPTER_SUPPORT = [
     capabilityAgent: "opencode",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
+    capabilityEnforcementSmoke: "required",
     providerKinds: ["agent_native"],
     permissionPolicies: ["default"],
     binaryId: "opencode",
@@ -163,6 +171,7 @@ export const ADAPTER_SUPPORT = [
     capabilityAgent: "mimo",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
+    capabilityEnforcementSmoke: "required",
     providerKinds: ["agent_native"],
     permissionPolicies: ["default"],
     binaryId: "mimo",

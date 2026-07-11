@@ -9,6 +9,11 @@ export type AdapterRuntime = {
   readonly binaryOverrideEnv: string;
   readonly readOnlyCapable: boolean;
   readonly readOnlySessionSmoke: "required" | "not_required";
+  // ADR-129: cached live evidence that capability_guard enforcement is safe at the
+  // ACP seam (requestPermission fires per write + carries a stable tool identity).
+  // Required for every adapter; the launch evidence gate refuses a strict
+  // tools/mcps enforcement launch until this dimension is cached ok.
+  readonly capabilityEnforcementSmoke: "required" | "not_required";
   readonly modelChannel: "settings_local" | "set_session_model" | "advisory";
   readonly resumeStrategy:
     | "session_resume"
@@ -48,6 +53,7 @@ const ADAPTER_RUNTIMES = [
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_CLAUDE",
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
+    capabilityEnforcementSmoke: "required",
     modelChannel: "settings_local",
     resumeStrategy: "session_resume",
   },
@@ -58,6 +64,7 @@ const ADAPTER_RUNTIMES = [
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_CODEX",
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
+    capabilityEnforcementSmoke: "required",
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume",
   },
@@ -68,6 +75,7 @@ const ADAPTER_RUNTIMES = [
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_GEMINI",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
+    capabilityEnforcementSmoke: "required",
     modelChannel: "advisory",
     resumeStrategy: "load_session_pending_smoke",
   },
@@ -78,6 +86,7 @@ const ADAPTER_RUNTIMES = [
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_OPENCODE",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
+    capabilityEnforcementSmoke: "required",
     modelChannel: "advisory",
     resumeStrategy: "session_resume_pending_smoke",
   },
@@ -88,6 +97,7 @@ const ADAPTER_RUNTIMES = [
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_MIMO",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
+    capabilityEnforcementSmoke: "required",
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume_pending_smoke",
   },
