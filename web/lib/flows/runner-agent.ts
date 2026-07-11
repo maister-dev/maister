@@ -547,8 +547,14 @@ function startEventConsumer(
         if (ev.type === "session.hook_trip" && permissionCtx) {
           if (ev.disposition === "halt" && !hookEscalated) {
             hookEscalated = true;
+            // ADR-129: capability_guard also halts (Nth deny) — pass it through so
+            // the hook_trip HITL carries the real rule (not mislabeled repetition).
             const haltRule =
-              ev.rule === "no_progress" ? "no_progress" : "repetition";
+              ev.rule === "no_progress"
+                ? "no_progress"
+                : ev.rule === "capability_guard"
+                  ? "capability_guard"
+                  : "repetition";
 
             pendingWork.push(
               escalateHookTrip({

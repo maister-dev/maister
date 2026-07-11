@@ -10,11 +10,11 @@
 //     class. Asserts the panel renders the node + an "Instructed" verdict.
 //   • Scenario B `e2e-m11c-refuse` — a launchable Backlog task whose enabled
 //     flow revision pins an ai_coding `implement` node declaring
-//     `enforcement.mcps: "strict"`. On the FROZEN all-instructed enforceability
-//     table no agent can strictly enforce `mcps`, so clicking Launch refuses
-//     with CONFIG (400) BEFORE any worktree/run/workspace is created — no
-//     silent escape hatch. Asserts the UI surfaces the refusal and no run is
-//     created (the task stays in Backlog).
+//     `enforcement.skills: "strict"`. ADR-129 flipped tools/mcps/hooks to
+//     `enforced` but `skills` stays `instructed` (no tool-identity seam mechanism),
+//     so clicking Launch refuses with CONFIG (400) BEFORE any
+//     worktree/run/workspace is created — no silent escape hatch. Asserts the UI
+//     surfaces the refusal and no run is created (the task stays in Backlog).
 //
 // REFUSAL-ASSERTION PATH: the REAL UI Launch click (preferred). The board's
 // LaunchPopover (components/board/launch-popover.tsx) POSTs /api/runs and, on a
@@ -148,7 +148,7 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
 
   expect(body.code).toBe("CONFIG");
   expect(body.message).toContain(fx.nodeId); // "implement"
-  expect(body.message).toContain(fx.refusedClass); // "mcps"
+  expect(body.message).toContain(fx.refusedClass); // "skills" (ADR-129: mcps now enforced; skills stays instructed → refused)
 
   // The UI surfaces the refusal: the dialog renders the typed code inline.
   await expect(dialog.getByRole("alert")).toContainText("CONFIG");

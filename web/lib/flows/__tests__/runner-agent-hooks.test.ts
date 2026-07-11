@@ -106,7 +106,7 @@ function makeApi(events: SupervisorEvent[]) {
 function hookTrip(
   monotonicId: number,
   disposition: "deny" | "halt",
-  rule: "path_guard" | "repetition" | "no_progress",
+  rule: "path_guard" | "repetition" | "no_progress" | "capability_guard",
 ): SupervisorEvent {
   return {
     type: "session.hook_trip",
@@ -160,6 +160,25 @@ describe("runner-agent — session.hook_trip", () => {
     expect(
       stateTransitionsMock.markCheckpointedFromExit,
     ).not.toHaveBeenCalled();
+  });
+
+  it("capability_guard halt: escalates with the REAL rule (not mislabeled repetition) — ADR-129", async () => {
+    escalateHookTripMock.escalateHookTrip.mockClear();
+    const api = makeApi([
+      hookTrip(1, "halt", "capability_guard"),
+      exited(2, "checkpoint"),
+    ]);
+
+    const result = await runAgentStep(
+      { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(),
+      api as never,
+    );
+
+    expect(result.errorCode).toBe("STEP_CHECKPOINTED");
+    expect(escalateHookTripMock.escalateHookTrip).toHaveBeenCalledWith(
+      expect.objectContaining({ rule: "capability_guard", runKind: "flow" }),
+    );
   });
 
   it("escalate rejection: surfaces CRASH (not a clean checkpoint), no markCheckpointedFromExit", async () => {

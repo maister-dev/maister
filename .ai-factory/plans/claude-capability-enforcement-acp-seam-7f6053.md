@@ -545,7 +545,7 @@ prompt — add EN+RU keys.
 
 ### Phase 5 — E2E, deployment wiring, renumber pass — Commit F
 
-**T5.1 · Full e2e via mock-ACP (the acceptance harness).**
+**T5.1 · Full e2e via mock-ACP (the acceptance harness).** — ✅ DONE (as-built: seed-based, mirroring `m40-guardrail-hooks.spec.ts`)
 Seed the mock adapter's `capabilityEnforcement` smoke = `ok` (via
 `MAISTER_ADAPTER_SMOKE_CACHE_PATH`). Drive: strict launch on claude **and** codex → an
 in-profile tool call allowed with **zero extra HITL** → an out-of-profile call denied with a
@@ -553,25 +553,64 @@ structured reason (run continues) → **N** consecutive denials → `hook_trip` 
 inbox → respond `resume` → run resumes. Assert the same strict node on gemini/opencode/mimo
 **refuses launch** with the evidence diagnostic.
 *Verify*: `pnpm test:e2e` green; named spec `capability-enforcement.spec.ts` in the globbed e2e path (confirm `vitest list`/playwright include matches — skill-context runnability).
+> **AS-BUILT (drift folded back):** the plan text assumed a mock-ACP tool-call-driving
+> harness at the **e2e** layer — that harness does **not** exist (the web e2e stub serves
+> only `GET /health`; the M40 spec's own comment documents this exact boundary). So
+> `capability-enforcement.spec.ts` (added to the `AUTHED_SPEC` glob + registered in the
+> playwright config) **seeds** a `capability_guard` `hook_trip` (via a new
+> `seedCapabilityEnforcementFixture` on an `enforcement.tools: "strict"` node) and asserts
+> the unique seam-to-UI fan-out: the run-detail card renders the localized `capability_guard`
+> rule + the out-of-profile offending tool, and **resume round-trips a 2xx** through the real
+> respond route (REQ-21/22/24, AC-2/AC-7). **3 passed, exit 0.** The *dynamic detection*
+> (in-profile allow / out-of-profile deny / N-halt) stays proven at
+> supervisor-unit + `guardrail-interceptor.integration` + web `enforcement-profile`; the
+> *launch refusal* stays `m11c-settings-enforcement.spec.ts` scenario B; the *"Enforced"
+> settings verdict* stays unit (`flow-settings-view`/`flow-settings-panel`) — it now renders
+> behind the run-inspector Flow tab (T-C1), not a load-visible heading. **Flagged separately:**
+> `m11c-settings-enforcement.spec.ts` scenario A is **pre-existing broken** on `main` (the
+> T-C1 inspector move; not this branch — verified by `git diff main`) → spun off as its own task.
 
-**T5.2 · Deployment wiring.**
+**T5.2 · Deployment wiring.** — ✅ DONE (as-built: host-env, not compose — ADR-023)
 `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD` into `.env.example` + `compose.yml` (web +
 supervisor `environment:`) + prod overlay if present. Smoke-cache path availability inside the
 container confirmed.
 *Verify*: `docker compose config` resolves; env var present in both service blocks; `.env.example` documents it.
+> **AS-BUILT (drift folded back):** the plan text assumed web + supervisor have `compose.yml`
+> service blocks — they do **not**. Per ADR-023, only Postgres is containerized; web +
+> supervisor are **host-run** (they spawn agent CLIs, need host agent auth, operate on host
+> git worktrees) and read `.env`. So the threshold lives in **`.env.example`** (documented,
+> commented default 3) + **`docs/configuration.md`** (which already states *"Host/service-env
+> only (ADR-023) — never a container/compose var"*). There is no compose block to wire it
+> into, and adding one would violate ADR-023. No prod overlay exists in-repo.
 
-**T5.3 · Docs as-built reconciliation.**
+**T5.3 · Docs as-built reconciliation.** — ✅ DONE
 Flip Phase-0 Designed→Implemented tags; ensure `docs/getting-started.md` Scripts, the ritual
 checklist, and `docs/configuration.md` match shipped behavior.
 *Verify*: `pnpm validate:docs:all` + ADR-anchor check green.
+> **AS-BUILT:** `capability_guard` Expectations already tagged **Implemented**; corrected the
+> SDD **Source** pointers to the real homes (`web/lib/flows/enforcement-profile.ts` +
+> `enforcement-evidence.ts` + wiring in `graph/runner-graph.ts`, not the Phase-0-guessed
+> `resolver.ts`/`launch.ts`); corrected the migration-free proof bullet (inspection, not the
+> `db:generate` self-check which aborts on the pre-existing `0089/0090` collision); appended a
+> **T5.5 as-built re-run** subsection. `getting-started.md` smoke ritual + `configuration.md`
+> row already match shipped behavior (env-only feature, no new script). **Verify green:**
+> mermaid **342/342**, ADR anchors **649** resolved.
 
-**T5.4 · Renumber pass (own focused step, AFTER rebase onto main).**
+**T5.4 · Renumber pass (own focused step, AFTER rebase onto main).** — ✅ DONE (pre-rebase portion; the number-bump itself is owner-gated at FF-merge)
 Re-grep `docs/decisions.md` for the ADR number (the three-way contest may have moved it to
 130/131); renumber ADR + every citation; confirm **no** migration was taken; run the
 ADR-anchor validator; fold any mid-implementation surprises back into this plan.
 *Verify*: ADR-anchor validator green; `grep -rn "ADR-129" docs/` consistent; no `0093` file from this branch.
+> **AS-BUILT:** on this branch ADR-129 is internally consistent (index row + body anchor
+> `#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam`; 649 ADR anchors resolve).
+> **No** migration taken (0 files under `web/lib/db/migrations/`; no `0093`). The actual
+> renumber (if the still-contested 129 slot resolves to 130/131 at merge) is a mechanical
+> `grep -rln "ADR-129" docs/ | xargs sed` the OWNER runs during the rebase+FF — it cannot be
+> done meaningfully before the winning number is known. All mid-implementation surprises are
+> folded back (T5.1 e2e harness reality, T5.2 host-env-not-compose, T5.3 source pointers,
+> the pre-existing `0089/0090` `db:generate` collision).
 
-**T5.5 · Final grep-sentinels + REQ/acceptance walk + spec-drift re-audit.**
+**T5.5 · Final grep-sentinels + REQ/acceptance walk + spec-drift re-audit.** — ✅ DONE
 Grep-sentinels: `grep -c "TODO(M14)" web/lib/flows/enforcement.ts` → 0; `capability_guard`
 present in `HookRule`, `HOOK_RULE_META`, `HookTripHaltRule`, the SSE mirror + asyncapi enum,
 and the supervisor openapi; `db:generate` reports "No schema changes" (migration-free proof).
@@ -579,6 +618,23 @@ Walk **every REQ in the T0.6 matrix** → its test is green; walk **all §Accept
 against the running system. Re-run the T0.5 audit checklist **against the shipped code** as a
 spec-drift check (docs match behavior).
 *Verify*: all sentinels pass; **every REQ maps to a green test**; §Acceptance all green; zero T0.5 drift items.
+> **AS-BUILT — all sentinels pass:** `TODO(M14)`=**0**; `capability_guard` present in
+> `HookRule` (`types.ts:378`), `HOOK_RULE_META` (`guardrail-hooks.ts:333`), `HookTripHaltRule`
+> (`hook-trip.ts:38`), SSE mirror `SupervisorEvent` (`supervisor-client.ts:394`), **both**
+> asyncapi enums, supervisor openapi. Migration-free proven by **inspection** (0 new migration
+> files; `schema.ts` delta is a jsonb `$type` key only) — `db:generate` aborts on the
+> pre-existing `0089/0090` collision (on `main`, not this branch). **Green gate:** web unit
+> **6123/6123** (597 files); supervisor unit **356/356** + integration **88/88** (incl.
+> `guardrail-interceptor.integration` 16); `capability-enforcement.spec.ts` **3/3** e2e;
+> typecheck clean both tiers. **Every REQ-1..27 maps to a green test** (T0.6 matrix; test files
+> consolidated vs the Phase-0-guessed names — `enforcement-profile.test.ts`,
+> `guardrail-capability.test.ts`, `guardrail-tool-identity.test.ts`,
+> `guardrail-interceptor.integration.test.ts` on the supervisor; `enforcement-profile`,
+> `enforcement-evidence`, `enforcement` (flip), `runner-agent-hooks` on the web). **§Acceptance
+> 1-8 all hold** (2/3/4 seam+launch behavior proven at unit+integration+e2e; 5 verdict unit;
+> 6 ADR-032 invariant via evidence gate; 7 grep=0; 8 traceability+migration-free). **Zero T0.5
+> behavioral drift** — three doc-only reconciliations folded back (SDD source pointers, host-env
+> wiring, e2e harness reality).
 
 > **Commit F.** Gate: full stack green (typecheck·unit·integration·e2e·docs·i18n).
 

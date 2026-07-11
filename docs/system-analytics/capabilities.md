@@ -5,14 +5,14 @@
 > mapping (`agent-map`), per-session native materialization (`materialize`), ACP
 > `newSession params.mcpServers` delivery, the `node_attempts.materialization_plan`
 > ledger, scoped cleanup, and the run-detail capability view have all shipped to
-> the current branch. **The `instructed → enforced` flip is now Designed —
+> the current branch. **The `instructed → enforced` flip is now Implemented —
 > [ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
 > (`capability_guard`, this branch): `tools` / `mcps` flip to `enforced` via an
 > adapter-agnostic supervisor↔ACP-seam interceptor, evidence-gated per adapter, and
 > `hooks` is corrected to `enforced`. ADR-042's per-cell live-spike gating is
 > superseded by that evidence gate. The four remaining classes stay `instructed`
-> with documented reasons. Read every "MUST" tagged `(ADR-129)` as the flip
-> contract ahead of code; everything else is as-built. Locked decisions:
+> with documented reasons. Every "MUST" tagged `(ADR-129)` is now as-built. Locked
+> decisions:
 > [ADR-041](../decisions.md#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
 > (registry refs + agent-aware mapping + runner-owned native materialization),
 > [ADR-042](../decisions.md#adr-042-conservative-spike-gated-enforcement-flip-claude-first)

@@ -125,7 +125,7 @@ type MinimalSupervisorEvent =
   | {
       type: "session.hook_trip";
       monotonicId: number;
-      rule: "path_guard" | "repetition" | "no_progress";
+      rule: "path_guard" | "repetition" | "no_progress" | "capability_guard";
       lifecycle: "pre_tool_call" | "post_turn";
       disposition: "deny" | "halt";
     };

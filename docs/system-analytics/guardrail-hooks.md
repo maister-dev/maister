@@ -1,8 +1,8 @@
-# Guardrail / hook engine (ADR-108, M40 — Implemented; `capability_guard` ADR-129 — Designed)
+# Guardrail / hook engine (ADR-108, M40 — Implemented; `capability_guard` ADR-129 — Implemented)
 
 > Status: **[ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P5 implemented** (capability class + migration 0066 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing; seeded `m40-guardrail-hooks` e2e). **P6: e2e + full gate sweep done (green); dogfood ralph-loop dropped (the universal + native layers stand on unit/integration/e2e coverage; the live native-hook fires/denies confirmation is the one residual); rebased onto main + renumbered (ADR-108 / migration 0066) 2026-06-24.**
 >
-> **[ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam) — `capability_guard` (M14 enforcement flip, Designed).** A fourth,
+> **[ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam) — `capability_guard` (M14 enforcement flip, Implemented).** A fourth,
 > **derived-only** rule kind `capability_guard` extends this same seam to enforce
 > `enforcement.<class>: strict` on `tools` / `mcps` via tool-identity allow-lists,
 > evidence-gated per adapter. It carries a new `enforcementProfile` on
@@ -10,8 +10,8 @@
 > `tools`/`mcps` → `enforced` and corrects `hooks` → `enforced` in
 > `ENFORCEABILITY_BY_AGENT` (see [`flow-settings.md`](flow-settings.md) +
 > [`capabilities.md`](capabilities.md)). **No migration, no engine bump.** Every
-> section tagged `(capability_guard — ADR-129)` below is the frozen spec ahead of
-> code (Phases 2–3); it flips Designed → Implemented at as-built reconciliation.
+> section tagged `(capability_guard — ADR-129)` below is now as-built (the frozen
+> spec drove the implementation; flipped Designed → Implemented at as-built).
 > This file is the design home for the mechanism. ADR rationale is in ADR-108/ADR-129 (R7 — cited, not restated).
 
 ## Purpose
@@ -366,7 +366,7 @@ resumes through the same agent-permission-HITL path that already drives it.
   SDK's `permissionDecision: "deny"`, so the supervisor never sees that permission
   request).
 
-## `capability_guard` mechanics + evidence gate (Designed — ADR-129)
+## `capability_guard` mechanics + evidence gate (Implemented — ADR-129)
 
 **Tool identity at the seam.** The M40 seam narrows a tool call to `kind` +
 `locations[].path`. `capability_guard` additionally reads the tool **name** and, for
@@ -510,7 +510,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
 - A trip MUST NOT raise a new `MaisterError` code; counters are per-session
   in-memory and a resumed run MUST start them fresh.
 
-### Expectations — `capability_guard` (Designed — ADR-129)
+### Expectations — `capability_guard` (Implemented — ADR-129)
 
 - `capability_guard` MUST be armed **iff** `record.enforcementProfile` is present;
   every other session MUST behave exactly as before (untouched).
@@ -646,12 +646,13 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   `web/lib/runs/keepalive-sweeper.ts` (`actBudgetEscalate` precedent),
   `web/lib/capabilities/agent-map.ts` + `web/lib/capabilities/materialize.ts` (native backend),
   `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT`).
-- **Source (`capability_guard` — ADR-129, Designed):**
+- **Source (`capability_guard` — ADR-129, Implemented):**
   `supervisor/src/guardrail-hooks.ts` (`resolveCapabilityGuardDecision` + tool-identity extractor),
   `supervisor/src/acp-client.ts` (interceptor branch + D5 sentinel),
   `supervisor/src/adapter-smoke-cache.ts` + `supervisor/scripts/smoke-acp-adapter.ts` (`capabilityEnforcement` dimension + probe),
-  `web/lib/capabilities/resolver.ts` (`SessionEnforcementProfile` derivation + `profileDigest`),
-  `web/lib/agents/launch.ts` (`assertEnforcementEvidence`),
+  `web/lib/flows/enforcement-profile.ts` (`deriveSessionEnforcementProfile` + `resolveEscalationThreshold` + `foldEnforcementProfileIntoDigest`),
+  `web/lib/flows/enforcement-evidence.ts` (`assertEnforcementEvidence`),
+  `web/lib/flows/graph/runner-graph.ts` (derive→fold→persist `enforcementProfile`, thread to `createInput`, evidence gate) + `web/lib/flows/runner-agent.ts` (`enforcementProfile` in ctx),
   `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT` `tools`/`mcps`/`hooks` → `enforced`).
 
 ## Phase-0 spec audit (T0.5 — `capability_guard` ADR-129, EXIT GATE)
@@ -693,4 +694,32 @@ against the shipped code as a drift check.
   is explicitly **excluded** from `capability_guard` for this reason.
 - **Migration-free / no engine bump** — ✅ no `pgEnum`; rule kind is a TS union +
   jsonb key; `hitl_requests.kind`/`assignments.action_kind` already carry `hook_trip`;
-  no authored manifest surface. Proven at T5.5 by `db:generate` = "No schema changes".
+  no authored manifest surface. Proven at T5.5 **by inspection** (zero new files under
+  `web/lib/db/migrations/`; the only `schema.ts` delta is a jsonb `$type` key on the
+  existing `MaterializationPlan` — no DDL). `db:generate` cannot self-confirm here: it
+  aborts on a **pre-existing** `0089`/`0090` snapshot collision that lives on `main`
+  (from ADR-124/126), untouched by this branch.
+
+### T5.5 as-built re-run (drift check against shipped code)
+
+Re-ran the T0.5 audit against the committed implementation — **zero behavioral drift**;
+three doc-only reconciliations folded back:
+
+- **Source pointers corrected** — `deriveSessionEnforcementProfile` /
+  `resolveEscalationThreshold` / `foldEnforcementProfileIntoDigest` shipped in
+  `web/lib/flows/enforcement-profile.ts` and `assertEnforcementEvidence` in
+  `web/lib/flows/enforcement-evidence.ts` (the Phase-0 SDD had named
+  `capabilities/resolver.ts` + `agents/launch.ts`); the wiring lives in
+  `web/lib/flows/graph/runner-graph.ts`. The **Source** list above is the as-built truth.
+- **Deployment wiring is host-env, not compose** — `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`
+  is consumed by the host-run web + supervisor (ADR-023), delivered on the
+  `enforcementProfile`; it lives in `.env.example` + `configuration.md`
+  (documented "Host/service-env only — never a container/compose var"). No `compose.yml`
+  service block exists for web/supervisor to wire it into.
+- **e2e is seed-based** — `capability-enforcement.spec.ts` seeds a `capability_guard`
+  `hook_trip` and asserts the run-detail card (localized rule + offending tool) + the
+  resume round-trip; the web e2e stub cannot script tool-call streams (same boundary as
+  `m40-guardrail-hooks.spec.ts`), so dynamic detection stays unit/integration-proven and
+  the launch-refusal stays m11c scenario B. The "Enforced" settings-panel verdict is
+  unit-covered (`flow-settings-view` / `flow-settings-panel`); it now renders behind the
+  run-inspector Flow tab, so it is not re-driven e2e.

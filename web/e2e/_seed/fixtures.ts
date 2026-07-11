@@ -137,6 +137,18 @@ export type E2EBudgetForkFixture = {
   taskTitle: string;
 };
 
+// ADR-129 capability-enforcement fixture: one NeedsInput flow run whose
+// `implement` node declares `enforcement.tools: "strict"` (→ "Enforced" verdict
+// on the settings panel), parked on a seeded `capability_guard` hook_trip.
+export type E2ECapabilityEnforcementFixture = {
+  projectSlug: string;
+  projectId: string;
+  runId: string;
+  hitlId: string;
+  taskTitle: string;
+  nodeId: string;
+};
+
 // M19 Phase 5: reconcile + GC UI fixture. One project carrying:
 //   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
 //     node → recoverable: true (run-detail crashed section + board Crashed col);
@@ -208,6 +220,7 @@ export type E2EFixtures = {
     m38: E2EM38Fixture;
     m40: E2EM40Fixture;
     budgetFork: E2EBudgetForkFixture;
+    capabilityEnforcement: E2ECapabilityEnforcementFixture;
   };
 };
 

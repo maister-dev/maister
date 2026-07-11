@@ -3108,8 +3108,14 @@ export async function consumeAgentSession(args: {
       // deny-and-continue).
       case "session.hook_trip": {
         if (event.disposition === "halt") {
+          // ADR-129: capability_guard also halts (Nth deny) — pass it through so the
+          // hook_trip HITL carries the real rule (not mislabeled repetition).
           const haltRule =
-            event.rule === "no_progress" ? "no_progress" : "repetition";
+            event.rule === "no_progress"
+              ? "no_progress"
+              : event.rule === "capability_guard"
+                ? "capability_guard"
+                : "repetition";
 
           try {
             await escalateHookTrip({

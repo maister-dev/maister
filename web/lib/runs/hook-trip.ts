@@ -32,9 +32,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Only the two liveness breakers HALT and reach the escalate path; `path_guard`
-// is deny-and-continue (ADR-108 §2.4) and never escalates.
-export type HookTripHaltRule = "repetition" | "no_progress";
+// The liveness breakers (repetition / no_progress) and the ADR-129 capability_guard
+// N-deny breaker HALT and reach the escalate path; a per-call `path_guard` /
+// `capability_guard` deny is deny-and-continue (never escalates).
+export type HookTripHaltRule = "repetition" | "no_progress" | "capability_guard";
 
 export type EscalateHookTripArgs = {
   db: Db;
@@ -59,7 +60,9 @@ function hookTripPrompt(rule: HookTripHaltRule, toolCall: unknown): string {
   const which =
     rule === "repetition"
       ? "repeated the same tool call too many times"
-      : "made no progress for too many turns";
+      : rule === "capability_guard"
+        ? "requested tool calls outside its enforced allow-list too many times"
+        : "made no progress for too many turns";
 
   return title
     ? `Guardrail "${rule}" tripped: the agent ${which} (last tool: ${title}). Resume the run or abort.`

@@ -466,14 +466,15 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
   keys such as `skills`, `mcp_servers`, or `restrictions` MUST be reported as
   `MaisterError("CONFIG")` during registration/resync and no invalid row may be
   written.
-- **(Designed — ADR-129)** An agent whose effective settings declare
-  `enforcement.mcps: strict` (or a flow-node `settings.agent` binding declaring
-  strict `tools`/`mcps`) is subject to the adapter-agnostic `capability_guard` seam
-  enforcement exactly like a flow `ai_coding` node: the derived `enforcementProfile`
-  is delivered on the agent's `StartSessionRequest`, gated by the resolved adapter's
-  `capabilityEnforcement` smoke evidence, and an out-of-profile call is denied at the
-  seam. The agent `capability_profile` frontmatter (`{ mcps?: string[] }`) is the
-  MCP-server allow-set source for that enforcement; see
+- **(ADR-129)** The adapter-agnostic `capability_guard` seam enforces strict
+  `tools`/`mcps` for **flow `ai_coding`/`judge`/`orchestrator` nodes** (Implemented:
+  derived `enforcementProfile` delivered on `StartSessionRequest`, evidence-gated,
+  out-of-profile call denied at the seam). **Standalone platform-agent launches and
+  flow-node `settings.agent` bindings do NOT yet derive/deliver the profile
+  (follow-up)** — the seam supports it (the interceptor is agent-agnostic), but the
+  agent launch path (`launch.ts`) is not wired to `deriveSessionEnforcementProfile`
+  in this milestone. The agent `capability_profile` frontmatter (`{ mcps?: string[] }`)
+  is the intended MCP-server allow-set source when that wiring lands; see
   [`guardrail-hooks.md`](guardrail-hooks.md) + [`flow-settings.md`](flow-settings.md).
 
 ## Edge cases

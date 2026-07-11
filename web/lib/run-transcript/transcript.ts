@@ -50,7 +50,11 @@ export type ScratchPermissionPayload = {
 // ADR-108 (M40): a guardrail trip surfaced inline in a scratch transcript. A
 // scratch run never escalates to NeedsInput (D2) — the trip is a chat notice
 // only. `deny` = path_guard deny-and-continue; `halt` = a liveness breaker.
-export type ScratchHookTripRule = "path_guard" | "repetition" | "no_progress";
+export type ScratchHookTripRule =
+  | "path_guard"
+  | "repetition"
+  | "no_progress"
+  | "capability_guard";
 export type ScratchHookTripPayload = {
   v: 1;
   kind: "hook_trip";

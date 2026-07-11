@@ -10,8 +10,8 @@
 
 > **Status:** Implemented (M11c subset). M14 materialization **Implemented through
 > Phase 4.5** (delivery mechanism built + CI-verified). The `instructed → enforced`
-> flip is **Designed — [ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
-> (`capability_guard`, this branch; flips to Implemented at as-built).
+> flip is **Implemented — [ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
+> (`capability_guard`, this branch).
 >
 > The typed settings schema, node-level shape validation, the launch-time
 > **refusal boundary**, the `enforcement_snapshot` audit record, the time-limit
@@ -25,7 +25,7 @@
 > `params.mcpServers` (env resolved supervisor-side); the CLI-flag channel
 > was disproven against `claude-agent-acp@0.37.0` and corrected — see ADR-044.
 >
-> **ADR-129 enforcement flip (Designed — `capability_guard`).** ADR-042's
+> **ADR-129 enforcement flip (Implemented — `capability_guard`).** ADR-042's
 > deferred, claude-first, per-cell live spike is superseded by an
 > **adapter-agnostic** enforcement point: the M40 supervisor↔ACP-seam interceptor
 > (ADR-108) gains a derived-only `capability_guard` rule that enforces
@@ -446,7 +446,7 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
   no-skip-permissions + declared allow-set), NOT a table cell; a failing gate MUST
   refuse launch (`EXECUTOR_UNAVAILABLE` / `CONFIG`), never enforce-nothing (ADR-032).
   Full contract: [`guardrail-hooks.md`](guardrail-hooks.md) Expectations —
-  `capability_guard`. (Designed — ADR-129)
+  `capability_guard`. (Implemented — ADR-129)
 - Node-level validation MUST reject unknown `permissionMode` / `failureClass` /
   `thinkingEffort` / `environmentPolicy` / `enforcement` enum values, malformed
   `tools` map, out-of-range `limits`, legacy `settings.executors[]`, and

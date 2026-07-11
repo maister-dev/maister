@@ -598,13 +598,13 @@ const M11C_VISIBLE_REVIEW_SCHEMA = {
 
 // --- M11c fixture B: strict-enforcement REFUSAL at launch -------------------
 // A launchable Backlog task whose enabled flow revision pins an ai_coding
-// `implement` node declaring `enforcement.mcps: "strict"`. On the FROZEN
-// all-instructed enforceability table no agent can strictly enforce `mcps`, so
-// POST /api/runs refuses with CONFIG (400) at the settings-enforcement gate —
-// BEFORE any worktree/run/workspace is created. The flow row is Enabled +
-// trusted and points at a flow_revisions row carrying the strict manifest (the
-// launch path resolves the manifest from flow.enabledRevisionId →
-// flow_revisions.manifest, never from flows.manifest).
+// `implement` node declaring `enforcement.skills: "strict"`. ADR-129 flipped
+// tools/mcps/hooks to `enforced` but `skills` stays `instructed` (no tool-identity
+// seam mechanism), so no agent can strictly enforce `skills` and POST /api/runs
+// refuses with CONFIG (400) at the settings-enforcement gate — BEFORE any
+// worktree/run/workspace is created. The flow row is Enabled + trusted and points
+// at a flow_revisions row carrying the strict manifest (the launch path resolves
+// the manifest from flow.enabledRevisionId → flow_revisions.manifest).
 
 const M11C_REFUSE_SLUG = "e2e-m11c-refuse";
 const M11C_REFUSE_NODE = "implement";
@@ -619,7 +619,9 @@ const M11C_REFUSE_MANIFEST = {
       type: "ai_coding",
       action: { prompt: "/aif-implement {{ task.prompt }}" },
       transitions: { success: "done" },
-      settings: { mcps: ["github"], enforcement: { mcps: "strict" } },
+      // enforcement-only (no data field) → no capability-ref check; skills strict
+      // → refused at the static gate (CONFIG) before the async evidence gate.
+      settings: { enforcement: { skills: "strict" } },
     },
   ],
 };
@@ -2767,7 +2769,7 @@ async function seedM11cRefuseFixture(
     projectSlug: M11C_REFUSE_SLUG,
     taskId: ids.task,
     nodeId: M11C_REFUSE_NODE,
-    refusedClass: "mcps",
+    refusedClass: "skills",
   };
 }
 
@@ -3927,6 +3929,127 @@ async function seedM40Fixture(
     noProgressRunId: noProgress.runId,
     noProgressHitlId: noProgress.hitlId,
     noProgressTaskTitle: M40_NOPROGRESS_TITLE,
+  };
+}
+
+// --- Capability enforcement fixture (ADR-129) ------------------------------
+// One project, one NeedsInput flow run whose `implement` ai_coding node declares
+// `enforcement.tools: "strict"` with a `tools` allow-list, parked on a
+// `capability_guard` `hook_trip` HITL (an out-of-profile tool call that tripped
+// the N-consecutive-deny breaker). Drives THREE e2e slices no other spec covers:
+//  (1) the run-detail settings panel resolves the strict tools class to the
+//      "Enforced" verdict (ADR-129 table flip, evaluated live off the pinned
+//      manifest) — AC-5;
+//  (2) the `capability_guard` rule survives the full fan-out to the run-detail
+//      hook_trip card (supervisor event → hitl schema → localized label) —
+//      REQ-22/24, the exact gap the T5.5 grep-sentinel caught;
+//  (3) resume round-trips a 2xx through the real respond route — AC-2/REQ-21.
+// The DYNAMIC trip DETECTION (in-profile allow / out-of-profile deny / N-halt /
+// evidence-gated launch refusal) is covered at the unit + integration layer
+// (supervisor guardrail-capability + guardrail-interceptor.integration; web
+// enforcement-profile + enforcement-evidence) — the web e2e stub cannot script
+// tool-call streams, identical to the M40 guardrail boundary above.
+const CAP_ENFORCE_SLUG = "e2e-capability-enforcement";
+const CAP_ENFORCE_BRANCH = "maister/e2e-capability-enforcement";
+const CAP_ENFORCE_NODE = "implement";
+const CAP_ENFORCE_TITLE = "Capability guard halt";
+
+const CAP_ENFORCE_MANIFEST = {
+  schemaVersion: 1,
+  name: "Capability enforcement (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: CAP_ENFORCE_NODE,
+      type: "ai_coding",
+      action: { prompt: "implement {{ task.prompt }}" },
+      transitions: { success: "review" },
+      settings: {
+        tools: { claude: ["Edit"] },
+        enforcement: { tools: "strict" },
+      },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: {
+        human: { role: "maintainer", decisions: ["approve", "rework"] },
+      },
+      transitions: { approve: "done", rework: CAP_ENFORCE_NODE },
+      rework: {
+        allowedTargets: [CAP_ENFORCE_NODE],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
+type CapabilityEnforcementFixtureRecord = {
+  projectSlug: string;
+  projectId: string;
+  runId: string;
+  hitlId: string;
+  taskTitle: string;
+  nodeId: string;
+};
+
+async function seedCapabilityEnforcementFixture(
+  pool: Pool,
+  _userId: string,
+): Promise<CapabilityEnforcementFixtureRecord> {
+  const projectId = randomUUID();
+  const flowId = randomUUID();
+  const repoPath = `/tmp/maister-e2e/${projectId}`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [CAP_ENFORCE_SLUG]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      projectId,
+      CAP_ENFORCE_SLUG,
+      "MAIster E2E Capability Enforcement",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      flowId,
+      projectId,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-cap@v0.0.1`,
+      JSON.stringify(CAP_ENFORCE_MANIFEST),
+    ],
+  );
+
+  const { runId, hitlId } = await seedM40HookTripRun(
+    pool,
+    projectId,
+    flowId,
+    CAP_ENFORCE_BRANCH,
+    CAP_ENFORCE_TITLE,
+    {
+      kind: "hook_trip",
+      rule: "capability_guard",
+      decisions: ["resume", "abort"],
+      toolCall: { title: "WebFetch https://example.com" },
+    },
+    'Capability guard denied a tool call outside the enforced allow-list (tool: WebFetch; allowed: Edit). Consecutive denials halted the run. Resume or abort.',
+  );
+
+  return {
+    projectSlug: CAP_ENFORCE_SLUG,
+    projectId,
+    runId,
+    hitlId,
+    taskTitle: CAP_ENFORCE_TITLE,
+    nodeId: CAP_ENFORCE_NODE,
   };
 }
 
@@ -6360,6 +6483,10 @@ async function main(): Promise<void> {
     const orchestrator = await seedOrchestratorE2EFixture(pool, admin.id);
     const m38 = await seedM38DecideFixture(pool, admin.id);
     const m40 = await seedM40Fixture(pool, admin.id);
+    const capabilityEnforcement = await seedCapabilityEnforcementFixture(
+      pool,
+      admin.id,
+    );
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -6415,6 +6542,7 @@ async function main(): Promise<void> {
         orchestrator,
         m38,
         m40,
+        capabilityEnforcement,
       },
     };
     const outDir = path.resolve("e2e/.auth");
