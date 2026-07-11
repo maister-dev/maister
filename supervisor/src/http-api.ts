@@ -30,6 +30,7 @@ import {
   modelCatalogCache,
   type ModelCatalogCache,
 } from "./model-catalog/cache";
+import { probeMcpServer } from "./mcp-probe";
 import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
@@ -67,6 +68,34 @@ const InputBodySchema = z
 // Rejects unknown keys so callers cannot smuggle body-controlled fields
 // onto the checkpoint surface (D11 identifier-table rule).
 export const CheckpointBodySchema = z.object({}).strict();
+
+// ADR-129 (W-F): NAMES-only probe request. Values are resolved supervisor-side.
+const McpProbeRequestSchema = z
+  .object({
+    transport: z.enum(["stdio", "sse", "http"]),
+    command: z.string().min(1).optional(),
+    args: z.array(z.string()).optional(),
+    envKeys: z.array(z.string()).optional(),
+    url: z.string().url().optional(),
+    headerKeys: z.array(z.string()).optional(),
+  })
+  .strict()
+  .superRefine((r, ctx) => {
+    if (r.transport === "stdio" && !r.command) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["command"],
+        message: "stdio probe requires `command`",
+      });
+    }
+    if ((r.transport === "sse" || r.transport === "http") && !r.url) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["url"],
+        message: `${r.transport} probe requires \`url\``,
+      });
+    }
+  });
 
 // ADR-094: admin CCR sidecar id — the path key for every /sidecars/:id route and
 // the start-body `id` field. Constrained to a filesystem-safe segment because it
@@ -1074,6 +1103,25 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         status: 200,
       },
       "http POST /model-catalog/resolve",
+    );
+    reply.status(200).send(result);
+  });
+
+  // ADR-129 (W-F): real MCP `initialize` handshake against a target server. The
+  // body carries NAMES only; the supervisor resolves values from process.env.
+  // The exec-trust gate is enforced WEB-SIDE before this call (this route runs
+  // inside the trust boundary). Deferred-release teardown lives in probeMcpServer.
+  app.post("/mcp-probe", async (req, reply) => {
+    const probe = McpProbeRequestSchema.parse(req.body);
+    const result = await probeMcpServer(probe);
+
+    logger.info(
+      {
+        transport: probe.transport,
+        ok: result.ok,
+        latencyMs: result.latencyMs,
+      },
+      "http POST /mcp-probe",
     );
     reply.status(200).send(result);
   });

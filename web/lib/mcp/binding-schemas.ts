@@ -49,3 +49,11 @@ export const connectSchema = z
   .strict();
 
 export const disconnectSchema = z.object({ refId: z.string().min(1) }).strict();
+
+// ADR-129 (W-F): probe by bound ref OR an explicit target. NAMES only — no secret.
+export const probeSchema = z.union([
+  z.object({ refId: z.string().min(1) }).strict(),
+  z
+    .object({ targetKind: targetKindSchema, targetId: z.string().min(1) })
+    .strict(),
+]);

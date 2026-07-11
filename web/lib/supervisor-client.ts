@@ -700,6 +700,49 @@ export async function resolveModelSuggestions(
   return (await res.json()) as SupervisorModelCatalog;
 }
 
+// ADR-129 (W-F): proxy a NAMES-only MCP health probe to the supervisor. The
+// exec-trust gate is enforced web-side BEFORE this call; the supervisor resolves
+// env/header values from process.env and never returns a secret.
+export type SupervisorMcpProbeRequest = {
+  transport: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  envKeys?: string[];
+  url?: string;
+  headerKeys?: string[];
+};
+
+export type SupervisorMcpProbeResult = {
+  ok: boolean;
+  latencyMs?: number;
+  serverInfo?: { name: string; version: string } | null;
+  reason?: string;
+};
+
+export async function probeMcpViaSupervisor(
+  req: SupervisorMcpProbeRequest,
+): Promise<SupervisorMcpProbeResult> {
+  const url = `${baseUrl()}/mcp-probe`;
+
+  logger.debug({ url, transport: req.transport }, "probeMcpViaSupervisor");
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(req),
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, "probeMcpViaSupervisor");
+  }
+  if (!res.ok) {
+    throw await asMaisterError(res, "EXECUTOR_UNAVAILABLE");
+  }
+
+  return (await res.json()) as SupervisorMcpProbeResult;
+}
+
 async function readErrorMessage(
   res: Response,
   fallback: string,

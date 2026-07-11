@@ -269,7 +269,7 @@ Every promised test names its runner project; a test in a new path family extend
 | Added | Lands in |
 | --- | --- |
 | `@modelcontextprotocol/sdk` supervisor dep | `supervisor/package.json` + `pnpm-lock.yaml` + container import smoke |
-| `MAISTER_MCP_PROBE_TIMEOUT_MS` (8000) + `MAISTER_MCP_PROBE_TEARDOWN_GRACE_MS` (2000) | `.env.example` + supervisor `environment:` in `compose.yml` (+ prod overlay) + `docs/configuration.md` env table |
+| `MAISTER_MCP_PROBE_TIMEOUT_MS` (8000) — teardown grace is fixed by the MCP SDK transport (~2s), so no `MAISTER_MCP_PROBE_TEARDOWN_GRACE_MS` is shipped | `.env.example` + `docs/configuration.md` env table (supervisor runs on the host — compose containerizes Postgres only, no supervisor `environment:` block) |
 | Supervisor `POST /mcp-probe` | rides existing supervisor HTTP (no new port); `docs/api/supervisor.openapi.yaml` |
 
 No new sidecar binary, no new bound port.

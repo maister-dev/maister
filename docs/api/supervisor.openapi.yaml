@@ -563,9 +563,8 @@ paths:
         `initialize` handshake, and returns `{ ok, latencyMs, serverInfo?,
         reason? }`. Bounded by `MAISTER_MCP_PROBE_TIMEOUT_MS` (default 8000);
         the spawned child + timer are released on **every** path (success,
-        handshake error, timeout, spawn error) via SIGTERM →
-        `MAISTER_MCP_PROBE_TEARDOWN_GRACE_MS` (default 2000) → SIGKILL in a
-        `finally`.
+        handshake error, timeout, spawn error) via the MCP SDK transport's
+        `close()` (SIGTERM → ~2s grace → SIGKILL) in a `finally`.
 
         **Identifiers & secrets.** Every body field is probe config
         (`body-controlled`), NAMES only — `envKeys`/`headerKeys` are
