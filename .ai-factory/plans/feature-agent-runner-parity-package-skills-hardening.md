@@ -655,7 +655,7 @@ Dependencies: Tasks 1.3 and 4.1. May run in parallel with Task 4.2 after Task 4.
 
 #### Task 5.1 - Refactor evidence and adapter boundaries without behavior change
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 
@@ -683,7 +683,7 @@ Dependencies: Tasks 2.1-2.4.
 
 #### Task 5.2 - Refactor materialization and profile boundaries without behavior change
 
-- [ ] Status: pending
+- [x] Status: complete
 
 Files:
 

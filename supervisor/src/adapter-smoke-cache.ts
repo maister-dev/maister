@@ -464,6 +464,7 @@ async function persistAdapterSmokeCache(
   adapters: Partial<Record<ExecutorAgent, AdapterSmokeCacheEntry>>,
 ): Promise<void> {
   await mkdir(dirname(cachePath), { recursive: true });
+
   const temporaryPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(
     temporaryPath,

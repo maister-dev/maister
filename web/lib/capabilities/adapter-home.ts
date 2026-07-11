@@ -23,9 +23,7 @@ import {
   FLOW_AUTHORING_SKILL_FILES,
   FLOW_AUTHORING_SKILL_ID,
 } from "@/lib/flows/authoring-skill";
-import {
-  materializeWithAgentLease,
-} from "@/lib/agents/materialization-manifest";
+import { materializeWithAgentLease } from "@/lib/agents/materialization-manifest";
 import { atomicWriteText } from "@/lib/atomic";
 
 const log = pino({
@@ -127,12 +125,28 @@ export async function materializeAdapterCapabilityHome(args: {
     const copied = await materializeWithAgentLease({
       cwd: worktreePath,
       runId: args.runId,
-      materialize: async (ownedRelativePaths) => {
+      materialize: async (ownedRelativePaths, recordIntent) => {
         const ownedPaths = new Set(
           [...ownedRelativePaths].map((relativePath) =>
             path.join(worktreePath, relativePath),
           ),
         );
+        const plannedSkills = await plannedBundleEntries(
+          path.join(worktreePath, materialization.dir, "skills"),
+          args.installedPaths,
+          ownedPaths,
+        );
+        const plannedAgents =
+          args.agent === "claude"
+            ? await plannedBundleEntries(
+                path.join(worktreePath, materialization.dir, "agents"),
+                args.installedPaths,
+                ownedPaths,
+              )
+            : [];
+
+        await recordIntent([...plannedSkills, ...plannedAgents]);
+
         const copiedSkills = await copyBundleSkills(
           path.join(worktreePath, materialization.dir, "skills"),
           args.installedPaths,
@@ -180,7 +194,8 @@ export async function materializeAdapterCapabilityHome(args: {
   await materializeWithAgentLease({
     cwd: worktreePath,
     runId: args.runId,
-    materialize: async () => {
+    materialize: async (_ownedPaths, recordIntent) => {
+      await recordIntent([homeRoot]);
       await mkdir(homeRoot, { recursive: true });
 
       if (args.agent === "codex") {
@@ -291,6 +306,32 @@ async function copyBundleSkills(
   }
 
   return copied;
+}
+
+async function plannedBundleEntries(
+  destinationDirectory: string,
+  installedPaths: readonly string[],
+  ownedPaths: ReadonlySet<string>,
+): Promise<string[]> {
+  const planned: string[] = [];
+
+  for (const installedPath of installedPaths) {
+    const sourceDirectory = path.join(
+      installedPath,
+      path.basename(destinationDirectory),
+    );
+
+    for (const entry of await listDir(sourceDirectory)) {
+      if (entry.startsWith(".")) continue;
+      const destination = path.join(destinationDirectory, entry);
+
+      if (!(await pathExists(destination)) || ownedPaths.has(destination)) {
+        planned.push(destination);
+      }
+    }
+  }
+
+  return [...new Set(planned)];
 }
 
 async function copyBundleAgents(

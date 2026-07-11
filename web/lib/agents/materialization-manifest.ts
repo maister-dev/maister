@@ -1,13 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  rm,
-  stat,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, stat, utimes } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -42,10 +36,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export type AgentMaterializationState =
-  | "preparing"
-  | "active"
-  | "releasing";
+export type AgentMaterializationState = "preparing" | "active" | "releasing";
 
 export type AgentMaterializationRunRecord = {
   readonly version: 1;
@@ -80,7 +71,10 @@ function indexPath(cwd: string): string {
 
 function assertRunId(runId: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId.includes("..")) {
-    throw new MaisterError("CONFIG", `invalid materialization run id: ${runId}`);
+    throw new MaisterError(
+      "CONFIG",
+      `invalid materialization run id: ${runId}`,
+    );
   }
 
   return runId;
@@ -107,7 +101,10 @@ export function normalizeAgentMaterializationPath(value: string): string {
   const parts = value.split("/");
 
   if (parts.includes(".") || parts.includes("..")) {
-    throw new MaisterError("CONFIG", `unsafe agent materialization path: ${value}`);
+    throw new MaisterError(
+      "CONFIG",
+      `unsafe agent materialization path: ${value}`,
+    );
   }
 
   const allowed =
@@ -190,7 +187,7 @@ async function readIndex(cwd: string): Promise<AgentMaterializationIndex> {
 
 async function lockIsStale(lockPath: string): Promise<boolean> {
   try {
-    const metadata = await stat(lockPath);
+    const metadata = await stat(path.join(lockPath, LOCK_OWNER_FILE));
 
     return Date.now() - metadata.mtimeMs >= LOCK_STALE_MS;
   } catch (err) {
@@ -223,7 +220,10 @@ async function withLock<T>(cwd: string, effect: () => Promise<T>): Promise<T> {
       }
 
       if (await lockIsStale(lockPath)) {
-        log.warn({ cwd, lockPath }, "taking over stale agent materialization lock");
+        log.warn(
+          { cwd, lockPath },
+          "taking over stale agent materialization lock",
+        );
         await rm(lockPath, { recursive: true, force: true });
         continue;
       }
@@ -239,9 +239,25 @@ async function withLock<T>(cwd: string, effect: () => Promise<T>): Promise<T> {
     }
   }
 
+  const heartbeat = setInterval(() => {
+    const now = new Date();
+
+    void utimes(ownerPath, now, now).catch((err: unknown) => {
+      log.warn(
+        {
+          cwd,
+          owner,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "agent materialization lock heartbeat failed",
+      );
+    });
+  }, 1_000);
+
   try {
     return await effect();
   } finally {
+    clearInterval(heartbeat);
     const currentOwner = await readFile(ownerPath, "utf8").catch(() => "");
 
     if (currentOwner === owner) {
@@ -255,18 +271,51 @@ export async function materializeWithAgentLease(args: {
   readonly runId: string;
   readonly materialize: (
     ownedPaths: ReadonlySet<string>,
+    recordIntent: (absolutePaths: readonly string[]) => Promise<void>,
   ) => Promise<readonly string[]>;
 }): Promise<string[]> {
   const cwd = path.resolve(args.cwd);
 
   return withLock(cwd, async () => {
     const index = await readIndex(cwd);
-    const existing = await readRunRecord(cwd, args.runId);
+    let existing = await readRunRecord(cwd, args.runId);
 
     if (existing?.state === "releasing") {
       throw new MaisterError(
         "CONFLICT",
         `agent materialization run ${args.runId} is releasing`,
+      );
+    }
+
+    if (existing?.state === "preparing") {
+      const committedPaths = existing.paths.filter((relativePath) =>
+        index.leases[relativePath]?.includes(args.runId),
+      );
+      const rollbackPaths = existing.paths.filter(
+        (relativePath) => !index.leases[relativePath]?.includes(args.runId),
+      );
+
+      for (const relativePath of rollbackPaths) {
+        await assertSafeOwnedTarget(cwd, relativePath);
+        await rm(path.join(cwd, relativePath), {
+          recursive: true,
+          force: true,
+        });
+      }
+
+      existing = {
+        ...existing,
+        state: "active",
+        paths: committedPaths,
+      };
+      log.warn(
+        {
+          runId: args.runId,
+          cwd,
+          ownershipState: "preparing_recovered",
+          rolledBackPathCount: rollbackPaths.length,
+        },
+        "recovered interrupted agent materialization intent",
       );
     }
 
@@ -279,8 +328,20 @@ export async function materializeWithAgentLease(args: {
 
     await atomicWriteJson(runRecordPath(cwd, args.runId), preparing);
 
+    const recordIntent = async (absolutePaths: readonly string[]) => {
+      const intendedPaths = normalizeDistinctPaths(
+        absolutePaths.map((absolutePath) => path.relative(cwd, absolutePath)),
+      );
+      const nextIntent: AgentMaterializationRunRecord = {
+        ...preparing,
+        paths: [...new Set([...preparing.paths, ...intendedPaths])],
+      };
+
+      await atomicWriteJson(runRecordPath(cwd, args.runId), nextIntent);
+    };
     const absolutePaths = await args.materialize(
       new Set(Object.keys(index.leases)),
+      recordIntent,
     );
     const newRelativePaths = normalizeDistinctPaths(
       absolutePaths.map((absolutePath) => path.relative(cwd, absolutePath)),
@@ -292,6 +353,7 @@ export async function materializeWithAgentLease(args: {
 
     for (const relativePath of relativePaths) {
       const owners = leases[relativePath] ?? [];
+
       leases[relativePath] = owners.includes(args.runId)
         ? owners
         : [...owners, args.runId];
@@ -320,7 +382,10 @@ export async function materializeWithAgentLease(args: {
   });
 }
 
-function parseRunRecord(value: unknown, runId: string): AgentMaterializationRunRecord {
+function parseRunRecord(
+  value: unknown,
+  runId: string,
+): AgentMaterializationRunRecord {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -367,8 +432,14 @@ async function readRunRecord(
   }
 }
 
-async function assertSafeOwnedTarget(cwd: string, relativePath: string): Promise<void> {
-  const target = path.join(cwd, normalizeAgentMaterializationPath(relativePath));
+async function assertSafeOwnedTarget(
+  cwd: string,
+  relativePath: string,
+): Promise<void> {
+  const target = path.join(
+    cwd,
+    normalizeAgentMaterializationPath(relativePath),
+  );
 
   try {
     if ((await lstat(target)).isSymbolicLink()) {
@@ -386,7 +457,10 @@ async function assertSafeOwnedTarget(cwd: string, relativePath: string): Promise
 export async function releaseAgentMaterialization(
   cwdInput: string,
   runId: string,
-): Promise<{ readonly restoredPathCount: number; readonly remainingLeaseCount: number }> {
+): Promise<{
+  readonly restoredPathCount: number;
+  readonly remainingLeaseCount: number;
+}> {
   const cwd = path.resolve(cwdInput);
   const initialRecord = await readRunRecord(cwd, runId);
 

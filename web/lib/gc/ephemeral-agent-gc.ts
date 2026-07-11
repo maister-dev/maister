@@ -64,8 +64,7 @@ export async function runEphemeralAgentGcSweep(
 ): Promise<EphemeralAgentGcSummary> {
   const db = opts.db ?? getDb();
   const remove = opts.removeOwnedWorktree ?? removeOwnedWorktree;
-  const restore =
-    opts.restoreMaterialization ?? restoreAgentMaterialization;
+  const restore = opts.restoreMaterialization ?? restoreAgentMaterialization;
   const root = worktreesRoot();
 
   const projectRows: Array<{ slug: string; repoPath: string }> = await db

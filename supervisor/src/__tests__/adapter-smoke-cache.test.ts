@@ -199,31 +199,43 @@ describe("adapter smoke diagnostics", () => {
   it.each([
     ["cache v1", undefined, checkedAt],
     ["probe mismatch", READ_ONLY_SMOKE_PROBE_VERSION + 1, checkedAt],
-    ["future timestamp", READ_ONLY_SMOKE_PROBE_VERSION, "2026-07-12T09:00:00.000Z"],
-    ["seven-day boundary", READ_ONLY_SMOKE_PROBE_VERSION, "2026-07-04T09:00:00.000Z"],
-  ])("derives stale read-only evidence for %s", (caseName, probeVersion, evidenceAt) => {
-    const cache: AdapterSmokeCacheRead = {
-      entries: {
-        opencode: {
-          status: "ok",
-          checkedAt,
-          protocolVersion: 1,
-          readOnlySession: {
+    [
+      "future timestamp",
+      READ_ONLY_SMOKE_PROBE_VERSION,
+      "2026-07-12T09:00:00.000Z",
+    ],
+    [
+      "seven-day boundary",
+      READ_ONLY_SMOKE_PROBE_VERSION,
+      "2026-07-04T09:00:00.000Z",
+    ],
+  ])(
+    "derives stale read-only evidence for %s",
+    (caseName, probeVersion, evidenceAt) => {
+      const cache: AdapterSmokeCacheRead = {
+        entries: {
+          opencode: {
             status: "ok",
-            checkedAt: evidenceAt,
+            checkedAt,
             protocolVersion: 1,
-            ...(probeVersion === undefined ? {} : { probeVersion }),
-          },
-        } as never,
-      },
-      error: null,
-      cacheVersion: caseName === "cache v1" ? 1 : 2,
-    };
+            readOnlySession: {
+              status: "ok",
+              checkedAt: evidenceAt,
+              protocolVersion: 1,
+              ...(probeVersion === undefined ? {} : { probeVersion }),
+            },
+          } as never,
+        },
+        error: null,
+        cacheVersion: caseName === "cache v1" ? 1 : 2,
+      };
 
-    expect(
-      smokeDiagnosticForAdapter("opencode", cache, evaluatedAt).readOnlySession,
-    ).toMatchObject({ status: "stale", probeVersion: probeVersion ?? null });
-  });
+      expect(
+        smokeDiagnosticForAdapter("opencode", cache, evaluatedAt)
+          .readOnlySession,
+      ).toMatchObject({ status: "stale", probeVersion: probeVersion ?? null });
+    },
+  );
 
   it("writes cache v2 with the current read-only probe version", async () => {
     const directory = await mkdtemp(join(tmpdir(), "maister-smoke-cache-"));

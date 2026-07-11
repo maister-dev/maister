@@ -318,38 +318,40 @@ describe("adapter compatibility fixtures", () => {
 
     it.each(
       capableAdapters.flatMap((adapter) =>
-        ([
-          ["read", "allow"],
-          ["edit", "deny"],
-          ["other", "deny"],
-        ] as const).map(([kind, decision]) => [adapter, kind, decision] as const),
+        (
+          [
+            ["read", "allow"],
+            ["edit", "deny"],
+            ["other", "deny"],
+          ] as const
+        ).map(([kind, decision]) => [adapter, kind, decision] as const),
       ),
     )(
       "%s answers %s with %s inline without HITL leakage",
       async (adapter, permissionKind, decision) => {
-      const { events, result, pendingPermissions, sessionId } =
-        await driveReadOnlyPrompt(adapter, permissionKind);
+        const { events, result, pendingPermissions, sessionId } =
+          await driveReadOnlyPrompt(adapter, permissionKind);
 
-      // The prompt completes without a human in the loop.
-      expect(result).toMatchObject({ stopReason: "end_turn" });
-      // The permission was answered inline — it never surfaced to the HITL
-      // layer and never registered a deferred (no leak class).
-      expect(events).not.toContainEqual(
-        expect.objectContaining({ type: "session.permission_request" }),
-      );
-      expect(pendingPermissions.size(sessionId)).toBe(0);
-      // The adapter observed the deny outcome (the reject_once option).
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: "session.update",
-          update: expect.objectContaining({
-            sessionUpdate: "agent_message_chunk",
-            content: expect.objectContaining({
-              text: `permission selected:${decision}`,
+        // The prompt completes without a human in the loop.
+        expect(result).toMatchObject({ stopReason: "end_turn" });
+        // The permission was answered inline — it never surfaced to the HITL
+        // layer and never registered a deferred (no leak class).
+        expect(events).not.toContainEqual(
+          expect.objectContaining({ type: "session.permission_request" }),
+        );
+        expect(pendingPermissions.size(sessionId)).toBe(0);
+        // The adapter observed the deny outcome (the reject_once option).
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "session.update",
+            update: expect.objectContaining({
+              sessionUpdate: "agent_message_chunk",
+              content: expect.objectContaining({
+                text: `permission selected:${decision}`,
+              }),
             }),
           }),
-        }),
-      );
+        );
       },
     );
   });

@@ -37,7 +37,12 @@ describe("package skill materialization manifest", () => {
     const packageRoot = path.join(root, "package");
     const sourceSkill = path.join(packageRoot, "skills", "aif-review");
     const sourceAgent = path.join(packageRoot, "agents", "helper.md");
-    const materializedSkill = path.join(root, ".claude", "skills", "aif-review");
+    const materializedSkill = path.join(
+      root,
+      ".claude",
+      "skills",
+      "aif-review",
+    );
     const materializedAgent = path.join(root, ".claude", "agents", "helper.md");
     const userSkill = path.join(root, ".claude", "skills", "local-review");
     const userAgent = path.join(root, ".claude", "agents", "local.md");
@@ -66,7 +71,14 @@ describe("package skill materialization manifest", () => {
       code: "ENOENT",
     });
     await expect(
-      stat(path.join(root, AGENT_MATERIALIZATION_ROOT_RELATIVE, "runs", "run-1.json")),
+      stat(
+        path.join(
+          root,
+          AGENT_MATERIALIZATION_ROOT_RELATIVE,
+          "runs",
+          "run-1.json",
+        ),
+      ),
     ).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path.join(userSkill, "SKILL.md"), "utf8")).toBe(
       "user-owned",
@@ -114,7 +126,10 @@ describe("package skill materialization manifest", () => {
   });
 
   it("fails closed on a symlinked owned target and preserves the target content", async () => {
-    const outside = path.join(path.dirname(root), `${path.basename(root)}-outside`);
+    const outside = path.join(
+      path.dirname(root),
+      `${path.basename(root)}-outside`,
+    );
     const relativePath = ".claude/skills/linked";
     const ownershipRoot = path.join(root, AGENT_MATERIALIZATION_ROOT_RELATIVE);
 
@@ -144,6 +159,42 @@ describe("package skill materialization manifest", () => {
       "user-owned",
     );
     await rm(outside, { recursive: true, force: true });
+  });
+
+  it("recovers a copy-before-active crash by rolling back the intent and rematerializing", async () => {
+    const packageRoot = path.join(root, "package");
+    const sourceSkill = path.join(packageRoot, "skills", "aif-review");
+    const relativePath = ".claude/skills/aif-review";
+    const targetSkill = path.join(root, relativePath);
+    const ownershipRoot = path.join(root, AGENT_MATERIALIZATION_ROOT_RELATIVE);
+
+    await mkdir(sourceSkill, { recursive: true });
+    await writeFile(path.join(sourceSkill, "SKILL.md"), "fresh");
+    await mkdir(targetSkill, { recursive: true });
+    await writeFile(path.join(targetSkill, "SKILL.md"), "partial");
+    await mkdir(path.join(ownershipRoot, "runs"), { recursive: true });
+    await writeFile(
+      path.join(ownershipRoot, "runs", "run-1.json"),
+      JSON.stringify({
+        version: 1,
+        runId: "run-1",
+        state: "preparing",
+        paths: [relativePath],
+      }),
+    );
+
+    await materializeAdapterCapabilityHome({
+      agent: "claude",
+      worktreePath: root,
+      runId: "run-1",
+      installedPaths: [packageRoot],
+    });
+
+    expect(await readFile(path.join(targetSkill, "SKILL.md"), "utf8")).toBe(
+      "fresh",
+    );
+    await restoreAgentMaterialization(root, "run-1");
+    await expect(stat(targetSkill)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("filters MAIster-owned package skill paths from porcelain only when listed", () => {

@@ -242,10 +242,12 @@ function CapabilityProfileField({
         const issuePaths = result.error.issues
           .map((issue) => issue.path.join(".") || "capability_profile")
           .join(", ");
+
         setError(`${invalidLabel}: ${issuePaths}`);
 
         return;
       }
+
       setError(null);
       onCommit(result.data);
     } catch {

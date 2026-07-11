@@ -18,12 +18,20 @@ describe("AdapterSupportPanel", () => {
     ["ok", null, "evidenceOk"],
     ["skipped", null, "evidenceSkipped"],
     ["error", null, "evidenceError"],
-    ["stale", "read-only-session evidence is seven days old", "evidenceStaleAge"],
-    ["stale", "read-only-session probe version 2 does not match 1", "evidenceStaleVersion"],
+    [
+      "stale",
+      "read-only-session evidence is seven days old",
+      "evidenceStaleAge",
+    ],
+    [
+      "stale",
+      "read-only-session probe version 2 does not match 1",
+      "evidenceStaleVersion",
+    ],
   ])("maps %s evidence to localized key %s", (status, reason, expected) => {
-    expect(
-      smokeStatusTranslationKey({ status, reason, checkedAt: null }),
-    ).toBe(expected);
+    expect(smokeStatusTranslationKey({ status, reason, checkedAt: null })).toBe(
+      expected,
+    );
   });
 
   it("renders a status dot per adapter, a details expansion, and a setup hint only for unavailable adapters", async () => {
@@ -167,8 +175,7 @@ describe("AdapterSupportPanel", () => {
                 protocolVersion: 1,
                 readOnlySession: {
                   status: "stale",
-                  reason:
-                    "read-only-session probe version 2 does not match 1",
+                  reason: "read-only-session probe version 2 does not match 1",
                   checkedAt,
                   protocolVersion: 1,
                   probeVersion: 2,

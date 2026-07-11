@@ -98,11 +98,13 @@ export async function materializeAgentReadOnlySettings(
   const leased = await materializeWithAgentLease({
     cwd,
     runId,
-    materialize: async (ownedPaths) => {
+    materialize: async (ownedPaths, recordIntent) => {
       if (
         ownedPaths.has(SETTINGS_RELATIVE) &&
         ownedPaths.has(MARKER_RELATIVE)
       ) {
+        await recordIntent([settingsPath, markerPath]);
+
         return [settingsPath, markerPath];
       }
 
@@ -115,6 +117,7 @@ export async function materializeAgentReadOnlySettings(
         return [];
       }
 
+      await recordIntent([settingsPath, markerPath]);
       await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
       await atomicWriteText(markerPath, "maister-owned\n");
 

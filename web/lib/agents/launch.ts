@@ -509,16 +509,26 @@ async function assertReadOnlySessionEvidence(args: {
   const adapter = diagnostics.diagnostics.adapters.find(
     (item) => item.id === args.adapterId,
   );
+  const genericSmoke = adapter?.smoke;
   const readOnlySession = adapter?.smoke.readOnlySession;
 
-  if (!readOnlySession || readOnlySession.status !== "ok") {
+  if (
+    !genericSmoke ||
+    genericSmoke.status !== "ok" ||
+    !readOnlySession ||
+    readOnlySession.status !== "ok"
+  ) {
     log.warn(
       {
         runnerId: args.runnerId,
         adapterId: args.adapterId,
         workspace: args.workspace,
+        genericEvidenceStatus: genericSmoke?.status ?? "missing",
+        genericEvidenceReason:
+          genericSmoke?.reason ?? "missing_adapter_diagnostics",
         evidenceStatus: readOnlySession?.status ?? "missing",
-        evidenceReason: readOnlySession?.reason ?? "missing_adapter_diagnostics",
+        evidenceReason:
+          readOnlySession?.reason ?? "missing_adapter_diagnostics",
         evidenceCheckedAt: readOnlySession?.checkedAt ?? null,
         evidenceProbeVersion: readOnlySession?.probeVersion ?? null,
       },
@@ -526,7 +536,7 @@ async function assertReadOnlySessionEvidence(args: {
     );
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `agent runner ${args.runnerId} (adapter ${args.adapterId}) cannot host a ${args.workspace} agent — read-only-session smoke is ${readOnlySession?.status ?? "missing"}: ${readOnlySession?.reason ?? "missing adapter diagnostics"}`,
+      `agent runner ${args.runnerId} (adapter ${args.adapterId}) cannot host a ${args.workspace} agent — generic smoke is ${genericSmoke?.status ?? "missing"}; read-only-session smoke is ${readOnlySession?.status ?? "missing"}: ${readOnlySession?.reason ?? genericSmoke?.reason ?? "missing adapter diagnostics"}`,
     );
   }
 
