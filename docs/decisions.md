@@ -157,7 +157,7 @@
 | [ADR-130](#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) | Adapter-agnostic capability enforcement at the ACP seam: derived-only `capability_guard` interceptor, evidence-gated per-adapter flip of `tools`/`mcps` to `enforced`, `hooks` label corrected, no migration / no engine bump | Accepted | 2026-07-11 |
 | [ADR-131](#adr-131-postgres-only-and-graph-only-engine-300-cut-over) | Postgres-only and graph-only engine 3.0.0 cut-over | Accepted | 2026-07-11 |
 | [ADR-132](#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync) | Forked-package loop — ephemeral pins, package experiment axis, local sources, upstream sync | Accepted | 2026-07-11 |
-| [ADR-129](#adr-129-versioned-read-only-evidence-and-run-owned-package-materialization) | Versioned read-only evidence and run-owned package materialization | Accepted | 2026-07-11 |
+| [ADR-133](#adr-133-versioned-read-only-evidence-and-run-owned-package-materialization) | Versioned read-only evidence and run-owned package materialization | Accepted | 2026-07-11 |
 
 ---
 
@@ -11576,8 +11576,8 @@ re-check (D7) · clone-with-history forks (D5, rejected below).
   cut dialog's multi-adopt lists ONLY projects whose current attachment is
   already a cut of this local package; switching an upstream consumer to a
   fork stays an explicit per-project action.
-||||||| parent of 9801ef71a (docs: freeze agent parity hardening spec)
-### ADR-129: Versioned read-only evidence and run-owned package materialization
+
+### ADR-133: Versioned read-only evidence and run-owned package materialization
 
 **Date:** 2026-07-11
 **Status:** Accepted

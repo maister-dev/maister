@@ -9,7 +9,7 @@
 - Target implementation branch: `feature/agent-runner-parity-package-skills`
 - Suggested base: `main`
 - Roadmap linkage: M34 platform-agent substrate follow-up, with guardrail-read-only parity aligned to M40
-- ADR numbering: expected next ADR is ADR-129; verify on the implementation branch with `rg -n "^### ADR-" docs/decisions.md | tail -20` before editing decisions
+- ADR numbering: expected next ADR is ADR-133; verify on the implementation branch with `rg -n "^### ADR-" docs/decisions.md | tail -20` before editing decisions
 - DB migration: none expected; implementation must prove this by leaving `web/lib/db/migrations/` and migration journal files unchanged
 
 ## Improvement Pass 1
@@ -174,8 +174,8 @@ Files/commands:
 
 Deliverables:
 
-- Confirm next ADR number, expected ADR-129.
-- Decide whether ADR-129 is required. Use it only if the read-only-capability descriptor or package-skill materialization changes a durable product decision.
+- Confirm next ADR number, expected ADR-133.
+- Decide whether ADR-133 is required. Use it only if the read-only-capability descriptor or package-skill materialization changes a durable product decision.
 - Confirm no migration number is reserved.
 - List overlapping files before implementation starts:
   - `web/lib/acp-runners/resolve.ts`

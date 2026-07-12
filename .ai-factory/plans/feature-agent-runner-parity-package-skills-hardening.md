@@ -71,7 +71,7 @@ The historical plan `.ai-factory/plans/agent-runner-parity-package-skills.md` re
 
 ## Numbering and Integration Preflight
 
-- Latest accepted decision at local `main` is ADR-128. ADR-129 is the next free candidate, but is not treated as accepted until Task 0.1 writes its header before any citation.
+- Latest accepted decision at local `main` is ADR-128. ADR-133 is the next free candidate, but is not treated as accepted until Task 0.1 writes its header before any citation.
 - No migration number is reserved.
 - Migration-free is a frozen design constraint for this slice: `runs.agent_workspace` already snapshots the effective workspace, package provenance is resolved from the pinned attachment, and materialization ownership is a durable filesystem artifact. If implementation discovers that a stable repo-read commit must be persisted, stop and re-plan the DB contract instead of smuggling in a column.
 - The old Tact-3/ADR-121 and auto-promotion/ADR-126 overlap warnings are obsolete because those changes are already on `main`.
@@ -99,7 +99,7 @@ The implementation spec created in Task 0.1 is the normative source. It uses the
 
 | Requirement | Expectation | Primary tasks | Contract / screen evidence |
 | --- | --- | --- | --- |
-| `A1` | Read-only compatibility is keyed by adapter id and both registry mirrors agree. | 1.1, 2.1 | ACP runner analytics + ADR-129. |
+| `A1` | Read-only compatibility is keyed by adapter id and both registry mirrors agree. | 1.1, 2.1 | ACP runner analytics + ADR-133. |
 | `A2` | Required smoke is wire-proven, fresh, probe-compatible, and fail-closed before launch side effects. | 1.1, 2.1, 2.2 | Supervisor OpenAPI/prose + Settings screen. |
 | `A3` | L1 denies write/unknown kinds inline; L2 is descriptor-owned; L3 catches real repo dirt. | 1.1, 2.2, 2.3 | ACP runner + agent analytics. |
 | `A4` | Dangerous permission policy and non-Claude subagent refusals remain unchanged. | 1.1, 2.1 | Agent analytics refusal table. |
@@ -143,7 +143,7 @@ Deliverables:
 
 - Create the normative spec with status `Designed`, value, scope/non-goals, requirement ids `A1-A5`, `B1-B5`, `C1-C3`, `Q1-Q2`, domain invariants, refusal/precondition tables, failure modes, UI states, and acceptance criteria.
 - Copy the traceability table from this plan into the spec and give every requirement at least one test owner and one contract/docs owner.
-- Re-read ADR numbers from `main` HEAD; write the next free ADR header before citing it anywhere. Use ADR-129 only if still free.
+- Re-read ADR numbers from `main` HEAD; write the next free ADR header before citing it anywhere. Use ADR-133 only if still free.
 - Record evidence/cache compatibility, stable adapter identity, L1/L2/L3 boundaries, pinned package ownership, materialization lifecycle, report-only resync, and migration-free reasoning.
 - Mark implementation details `Designed`; do not claim `Implemented` until Task 6.1.
 

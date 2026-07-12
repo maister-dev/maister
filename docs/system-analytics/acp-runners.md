@@ -170,7 +170,7 @@ pending, skipped, stale, or failed read-only-session evidence refuses the launch
 with `MaisterError("EXECUTOR_UNAVAILABLE")` before worktree/cwd creation, run
 insertion, or token issuance.
 
-ADR-129 hardens this evidence contract (Implemented). Evidence is keyed by adapter
+ADR-133 hardens this evidence contract (Implemented). Evidence is keyed by adapter
 id, never `capability_agent`; the web and supervisor descriptor mirrors must
 agree. Cache v1 remains valid for generic readiness; only nested read-only
 `ok` evidence is derived as `stale` (a nested `error` remains `error`). Cache v2 adds a probe-contract version. Required evidence
@@ -221,7 +221,7 @@ Notes:
   `settings.local.json` tract; Codex, Gemini, OpenCode, and MiMo select `none`.
   L1 permission arbitration and L3 dirt detection remain load-bearing.
 - The OpenCode native-persona investigation did not establish a bounded,
-  file-only runtime contract. ADR-129 therefore ships no OpenCode persona tract;
+  file-only runtime contract. ADR-133 therefore ships no OpenCode persona tract;
   only its proven skill-home materialization is active.
 
 - **codex** does NOT auto-read cwd `.codex/skills` yet (openai/codex#21907) → it
