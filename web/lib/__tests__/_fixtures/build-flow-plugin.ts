@@ -13,6 +13,8 @@ export type FlowFixtureKind =
 
 const VALID_FLOW_YAML_V1 = `schemaVersion: 1
 name: Test Flow
+compat:
+  engine_min: 1.1.0
 runner_profiles:
   claude-default:
     capability_agent: claude
@@ -31,6 +33,8 @@ nodes:
 
 const VALID_FLOW_YAML_V11 = `schemaVersion: 1
 name: Test Flow v1.1
+compat:
+  engine_min: 1.1.0
 runner_profiles:
   claude-glm:
     capability_agent: claude

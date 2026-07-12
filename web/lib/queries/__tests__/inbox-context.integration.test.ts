@@ -35,9 +35,20 @@ let getInboxCardContext: typeof import("@/lib/queries/inbox-context").getInboxCa
 const TWO_NODE_MANIFEST = {
   schemaVersion: 1,
   name: "two-node",
+  compat: { engine_min: "1.1.0" },
   nodes: [
-    { id: "plan", type: "ai_coding", action: { prompt: "go" } },
-    { id: "checks", type: "check" },
+    {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "go" },
+      transitions: { success: "checks" },
+    },
+    {
+      id: "checks",
+      type: "check",
+      action: { command: "true" },
+      transitions: { success: "done" },
+    },
   ],
 };
 
@@ -105,7 +116,19 @@ async function seedRun(
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: "/tmp/flows/aif",
-    manifest: opts.manifest ?? { schemaVersion: 1, name: "aif", nodes: [] },
+    manifest: opts.manifest ?? {
+      schemaVersion: 1,
+      name: "aif",
+      compat: { engine_min: "1.1.0" },
+      nodes: [
+        {
+          id: "noop",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
     schemaVersion: 1,
   });
   await db.insert(schema.tasks).values({

@@ -194,7 +194,11 @@ describe("T4.1: artifact staleness on rework", () => {
             },
           },
           transitions: { approve: "done", rework: "work" },
-          rework: { allowedTargets: ["work"] },
+          rework: {
+            allowedTargets: ["work"],
+            workspacePolicies: ["keep"],
+            maxLoops: 1,
+          },
         },
       ],
     });

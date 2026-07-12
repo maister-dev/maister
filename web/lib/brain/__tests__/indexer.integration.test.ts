@@ -633,11 +633,16 @@ describe("Project Brain source indexer (ADR-127)", () => {
   });
 
   it("does not enqueue reindex jobs for graph-only cut-over failures", async () => {
+    await updateTrackedFile(
+      repoPath,
+      "docs/api/cutover.openapi.yaml",
+      "openapi: 3.0.3\npaths: {}\n",
+    );
     const source = await createBrainSource(ctx.db, {
       projectId,
       repoPath,
       mainBranch: "main",
-      input: { path: "docs/README.md", kind: "markdown" },
+      input: { path: "docs/api/cutover.openapi.yaml", kind: "openapi" },
     });
     const event = {
       id: 987655,

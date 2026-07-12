@@ -45,7 +45,7 @@ let userId: string;
 const sourceInstall: Record<string, string> = {};
 
 const FLOW_YAML = (name: string): string =>
-  `schemaVersion: 1\nname: ${name}\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`;
+  `schemaVersion: 1\nname: ${name}\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`;
 
 const MANIFEST = (name: string, flowId: string): string =>
   `schemaVersion: 1\nname: ${name}\nflows:\n  - { id: ${flowId}, path: flows/${flowId} }\ncapabilities: []\n`;

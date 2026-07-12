@@ -164,6 +164,17 @@ async function seedRunningNode(opts: {
   const taskId = randomUUID();
   const runId = randomUUID();
   const supervisorSessionId = `sup-${runId.slice(0, 8)}`;
+  const legacyManifest =
+    typeof opts.manifest === "object" &&
+    opts.manifest !== null &&
+    "steps" in opts.manifest;
+  const manifest = legacyManifest
+    ? manifestWithLimits({})
+    : (opts.manifest ??
+      manifestWithLimits({
+        maxDurationMinutes: opts.maxDurationMinutes,
+        maxCostUsd: opts.maxCostUsd,
+      }));
 
   await db.insert(schema.flows).values({
     id: flowId,
@@ -172,12 +183,7 @@ async function seedRunningNode(opts: {
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: "/tmp/flows/g",
-    manifest:
-      opts.manifest ??
-      manifestWithLimits({
-        maxDurationMinutes: opts.maxDurationMinutes,
-        maxCostUsd: opts.maxCostUsd,
-      }),
+    manifest,
     schemaVersion: 1,
   });
   await db.insert(schema.tasks).values({
@@ -212,6 +218,13 @@ async function seedRunningNode(opts: {
     status: "Running",
     startedAt: opts.attemptStartedAt,
   });
+
+  if (legacyManifest) {
+    await db
+      .update(schema.flows)
+      .set({ manifest: opts.manifest })
+      .where(eq(schema.flows.id, flowId));
+  }
 
   return { runId, supervisorSessionId };
 }

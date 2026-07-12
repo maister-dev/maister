@@ -54,6 +54,8 @@ const AIF_FIXTURE_PATH = resolve(__dirname, "_fixtures/aif-flow");
 
 const CLI_FLOW_YAML = `schemaVersion: 1
 name: cli-only
+compat:
+  engine_min: 1.1.0
 nodes:
   - id: hello
     type: cli
@@ -409,14 +411,9 @@ describe("runFlow — workspace ownership regression (Codex critical)", () => {
 
     await runFlow(runIdA, { db, runtimeRoot: workspaceRoot });
 
-    // Now manually start B (the cli runner returns synchronously, so
-    // there is no in-progress promoteNextPending to race with; we
-    // simulate the cap-free dispatch path by tryStartRun + runFlow).
-    const startB = await tryStartRun(runIdB, { db });
-
-    expect(startB.started).toBe(true);
-
-    await runFlow(runIdB, { db, runtimeRoot: workspaceRoot });
+    // Completion of A promotes and runs B. Calling runFlow again here would
+    // create a second attempt and no longer exercise the scheduler handoff.
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const attemptsA = await db
       .select()

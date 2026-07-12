@@ -111,7 +111,9 @@ async function installRevision(opts: {
     `INSERT INTO "flow_revisions"
        ("id", "flow_ref_id", "source", "version_label", "resolved_revision",
         "manifest_digest", "manifest", "schema_version", "installed_path", "package_status")
-     VALUES ($1, $2, 'github.com/acme/pkg', $3, $4, 'digest', '{}'::jsonb, 1, $5, 'Installed')`,
+     VALUES ($1, $2, 'github.com/acme/pkg', $3, $4, 'digest',
+       '{"schemaVersion":1,"name":"agent-package","compat":{"engine_min":"1.1.0"},"nodes":[{"id":"noop","type":"cli","action":{"command":"true"},"transitions":{"success":"done"}}]}'::jsonb,
+       1, $5, 'Installed')`,
     [
       revisionId,
       opts.flowRefId,

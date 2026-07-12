@@ -861,12 +861,23 @@ describe("POST /api/v1/ext/runs/[runId]/gates/[gateId]/report (M16 §D)", () => 
       manifest: {
         schemaVersion: 1,
         name: "Bugfix",
+        compat: { engine_min: "1.1.0" },
         nodes: [
           {
             id: "review",
+            type: "human",
             pre_finish: {
-              gates: [{ id: "ci", external: { staleOnNewCommit: false } }],
+              gates: [
+                {
+                  id: "ci",
+                  kind: "external_check",
+                  mode: "blocking",
+                  external: { staleOnNewCommit: false },
+                },
+              ],
             },
+            finish: { human: { role: "maintainer", decisions: ["approve"] } },
+            transitions: { approve: "done" },
           },
         ],
       },
@@ -889,12 +900,25 @@ describe("POST /api/v1/ext/runs/[runId]/gates/[gateId]/report (M16 §D)", () => 
         manifest: {
           schemaVersion: 1,
           name: "Bugfix",
+          compat: { engine_min: "1.1.0" },
           nodes: [
             {
               id: "review",
+              type: "human",
               pre_finish: {
-                gates: [{ id: "ci", external: { staleOnNewCommit: true } }],
+                gates: [
+                  {
+                    id: "ci",
+                    kind: "external_check",
+                    mode: "blocking",
+                    external: { staleOnNewCommit: true },
+                  },
+                ],
               },
+              finish: {
+                human: { role: "maintainer", decisions: ["approve"] },
+              },
+              transitions: { approve: "done" },
             },
           ],
         },

@@ -193,7 +193,11 @@ describe("T4.4: review refusal when evidence not ready (integration)", () => {
             },
           },
           transitions: { approve: "done", rework: "work" },
-          rework: { allowedTargets: ["work"] },
+          rework: {
+            allowedTargets: ["work"],
+            workspacePolicies: ["keep"],
+            maxLoops: 1,
+          },
         },
       ],
     });

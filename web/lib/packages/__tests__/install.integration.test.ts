@@ -28,7 +28,7 @@ let projectId: string;
 let originalHome: string | undefined;
 
 const FLOW_YAML = (name: string): string =>
-  `schemaVersion: 1\nname: ${name}\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`;
+  `schemaVersion: 1\nname: ${name}\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
