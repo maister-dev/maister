@@ -14,6 +14,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isExperimentMemberRun } from "@/lib/experiments/membership";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
@@ -465,6 +466,27 @@ async function promoteWorkspaceRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
+  // ADR-129 (enforcing ADR-124): experiment-member runs never auto-promote —
+  // winner promotion is the explicit human path. The guard lives HERE, at the
+  // flow/task promotion apply site, because auto delivery
+  // (deliverRunIfAutoReady) and the token/orchestrator auto-promoter (which set
+  // autoOnReady) reach promotion OUTSIDE the ADR-126 sweep, whose SQL prefilter
+  // alone cannot cover them. Only HUMAN promotes set neither flag, so they are
+  // allowed. (`promoteScratchRun` is the other apply site but needs no guard —
+  // `experiment_runs` rows are inserted only in launchRun, so a scratch run can
+  // never be a member.)
+  const isUnattendedPromotion =
+    input.autoOnReady === true ||
+    input.attribution?.source === "auto_promotion";
+
+  if (isUnattendedPromotion && (await isExperimentMemberRun(db, runId))) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "experiment-member run cannot auto-promote — conclude the experiment and promote the winner explicitly",
+      { details: { experimentMember: true } },
+    );
+  }
+
   // ---- Claim tx: short, commits BEFORE any side-effect (§3.2 step 1). The
   // SELECT … FOR UPDATE row lock serializes concurrent claims: the second waits
   // for the first to commit, then sees a fresh `claiming` and is refused.

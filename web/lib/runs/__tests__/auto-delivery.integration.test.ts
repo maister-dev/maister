@@ -6,6 +6,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -187,5 +188,118 @@ describe("deliverRunIfAutoReady — C1 OR-combine with execution policy", () => 
     await deliverRunIfAutoReady(runId, db, promote);
 
     expect(promote).not.toHaveBeenCalled();
+  });
+});
+
+// ADR-129 (enforcing ADR-124): an experiment-member run NEVER auto-promotes —
+// winner promotion is the explicit human path. The two implemented ADR arms (the
+// ADR-126 sweep SQL prefilter + the evaluate `not_applicable` term) do NOT cover
+// the auto_on_ready autopilot that reaches promotion through deliverRunIfAutoReady
+// → promoteRun. These regressions pin the choke-point guard + the ordering
+// short-circuit that close that hole.
+async function seedExperimentMembership(runId: string): Promise<void> {
+  const taskId = randomUUID();
+
+  await db.insert(schema.tasks).values({
+    id: taskId,
+    number: 1,
+    projectId,
+    title: "member task",
+    prompt: "compare",
+  });
+
+  const experimentId = randomUUID();
+
+  await db.insert(schema.experiments).values({
+    id: experimentId,
+    projectId,
+    taskId,
+    title: "fork vs upstream",
+    baseBranch: "main",
+    baseCommit: "abc1230000000000000000000000000000000000",
+    status: "running",
+    variants: [],
+    rubric: {},
+  });
+
+  await db.insert(schema.experimentRuns).values({
+    id: randomUUID(),
+    experimentId,
+    runId,
+    variantKey: "a",
+    replicateOrdinal: 1,
+    launchReason: "initial",
+    baseCommit: "abc1230000000000000000000000000000000000",
+  });
+}
+
+describe("ADR-129 experiment-member auto-promotion exclusion", () => {
+  it("short-circuits an experiment-member run WITHOUT degrading its delivery policy", async () => {
+    const runId = await seedReviewRun({
+      executionPolicy: { preset: "unattended" },
+      deliveryPolicySnapshot: autoDelivery,
+    });
+    await seedExperimentMembership(runId);
+    const promote = mockPromote();
+
+    await deliverRunIfAutoReady(runId, db, promote);
+
+    expect(promote).not.toHaveBeenCalled();
+
+    // The member must NOT be degraded to manual — it simply stays in Review
+    // for the human experiment-conclusion path.
+    const [row] = (await db
+      .select({ deliveryPolicySnapshot: schema.runs.deliveryPolicySnapshot })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))) as Array<Record<string, any>>;
+
+    expect(row.deliveryPolicySnapshot).toMatchObject({
+      trigger: "auto_on_ready",
+    });
+  });
+
+  it("refuses at the promote choke point when an autopilot reaches a member run", async () => {
+    const runId = await seedReviewRun({
+      executionPolicy: { preset: "unattended" },
+      deliveryPolicySnapshot: autoDelivery,
+    });
+    await seedExperimentMembership(runId);
+
+    await expect(
+      promoteRun(
+        runId,
+        { mode: "local_merge", autoOnReady: true },
+        { sessionUser: { id: userId }, authorize: async () => undefined },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { experimentMember: true },
+    });
+  });
+
+  it("does NOT block the explicit human winner-promote (guard is actor-gated, not membership-gated)", async () => {
+    const runId = await seedReviewRun({
+      executionPolicy: { preset: "supervised" },
+      deliveryPolicySnapshot: manualDelivery,
+    });
+    await seedExperimentMembership(runId);
+
+    let caught: any;
+
+    try {
+      await promoteRun(
+        runId,
+        { mode: "local_merge" },
+        { sessionUser: { id: userId }, authorize: async () => undefined },
+        db,
+      );
+    } catch (err) {
+      caught = err;
+    }
+
+    // A human promote passes the guard and fails later (no workspace), never
+    // with the experiment-member refusal.
+    expect(caught?.details?.experimentMember).toBeUndefined();
   });
 });

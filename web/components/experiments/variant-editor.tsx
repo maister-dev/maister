@@ -10,6 +10,8 @@ export interface VariantEditorLabels {
   executionPolicy: string;
   packagePin: string;
   packagePinNone: string;
+  pinLocalCut: string;
+  pinUpstream: string;
   rulesAdd: string;
   rulesRemove: string;
   skillsAdd: string;
@@ -116,7 +118,9 @@ export function VariantEditor({
                 </span>
                 <select
                   className="rounded-md border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink disabled:opacity-50"
-                  defaultValue={variant.config.packagePin?.packageInstallId ?? ""}
+                  defaultValue={
+                    variant.config.packagePin?.packageInstallId ?? ""
+                  }
                   disabled={pinOptions.length === 0}
                   name={`variant.${index}.packagePin`}
                 >
@@ -127,7 +131,10 @@ export function VariantEditor({
                       value={option.packageInstallId}
                     >
                       {option.packageName} · {option.versionLabel} (
-                      {option.kind === "local_cut" ? "local cut" : "upstream"})
+                      {option.kind === "local_cut"
+                        ? labels.pinLocalCut
+                        : labels.pinUpstream}
+                      )
                     </option>
                   ))}
                 </select>

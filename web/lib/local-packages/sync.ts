@@ -15,7 +15,11 @@ import {
   gitCommitWorkingDir,
   gitDiscardPaths,
 } from "./git";
-import { assertHoldsLock } from "./lock";
+import {
+  acquireWorkingDirLock,
+  assertHoldsLock,
+  releaseWorkingDirLock,
+} from "./lock";
 import { getLocalPackage } from "./service";
 import { mergeTrees } from "./sync-merge";
 
@@ -86,97 +90,141 @@ export async function syncFromUpstream(opts: {
   db?: Db;
 }): Promise<SyncResult> {
   const d = resolveDb(opts.db);
-  const pkg = await loadActivePackage(d, opts.localPackageId);
+  let pkg = await loadActivePackage(d, opts.localPackageId);
 
   await assertHoldsLock(pkg.id, opts.sessionId, d);
 
-  if (!pkg.sourceInstallId) {
-    throw new MaisterError(
-      "CONFIG",
-      "source install unavailable: this package has no upstream lineage",
+  // ADR-129 (C3): serialize every working-dir mutation on this package. The
+  // editor lock is not a mutex (same session passes twice), so a double-submit
+  // could run two 3-way merges over one working dir. Re-read pkg UNDER the lock
+  // so the sync_state/dirty decision is TOCTOU-safe.
+  const lockToken = await acquireWorkingDirLock(pkg.id, d);
+
+  try {
+    pkg = await loadActivePackage(d, opts.localPackageId);
+
+    if (!pkg.sourceInstallId) {
+      throw new MaisterError(
+        "CONFIG",
+        "source install unavailable: this package has no upstream lineage",
+      );
+    }
+
+    const pending = pkg.syncState;
+
+    if (pending && pending.targetInstallId !== opts.targetInstallId) {
+      throw new MaisterError(
+        "CONFLICT",
+        `sync in progress towards ${pending.targetRef} — resolve or abort it first`,
+      );
+    }
+
+    const dirtyPaths = await workingTreeDirtyPaths(pkg.workingDir);
+
+    if (pending && dirtyPaths.length > 0) {
+      // Crash window 2 (merge already wrote) — same-target Resume applies only
+      // to window 1 (clean tree). Completing/undoing is Resolve/Abort's job.
+      throw new MaisterError(
+        "CONFLICT",
+        "sync in progress with merged content in the working tree — resolve or abort it",
+      );
+    }
+    if (!pending && dirtyPaths.length > 0) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "commit or discard working-tree changes before syncing",
+        { details: { changedCount: dirtyPaths.length } },
+      );
+    }
+
+    // base = the fork's ORIGINAL lineage install; theirs = the target.
+    const base = await loadInstallDir(d, pkg.sourceInstallId, "source install");
+    const target = await loadInstallDir(
+      d,
+      opts.targetInstallId,
+      "target install",
     );
-  }
+    const targetRow = target.row as {
+      name?: string;
+      sourceUrl?: string;
+      packageStatus?: string;
+    };
+    const baseRow = base.row as { name?: string; sourceUrl?: string };
 
-  const pending = pkg.syncState;
+    if (
+      targetRow.packageStatus !== "Installed" ||
+      targetRow.name !== baseRow.name ||
+      targetRow.sourceUrl !== baseRow.sourceUrl
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        `target install ${opts.targetInstallId} is not an Installed version of the lineage package (${baseRow.name ?? "?"} @ ${baseRow.sourceUrl ?? "?"})`,
+      );
+    }
 
-  if (pending && pending.targetInstallId !== opts.targetInstallId) {
-    throw new MaisterError(
-      "CONFLICT",
-      `sync in progress towards ${pending.targetRef} — resolve or abort it first`,
-    );
-  }
+    const targetRef = target.versionLabel;
+    const syncState: LocalPackageSyncState = pending ?? {
+      targetInstallId: opts.targetInstallId,
+      targetRef,
+      conflictedFiles: [],
+      startedAt: new Date().toISOString(),
+    };
 
-  const dirtyPaths = await workingTreeDirtyPaths(pkg.workingDir);
+    // Phase 1: durable intent BEFORE any disk write.
+    await d
+      .update(lp)
+      .set({ syncState, updatedAt: new Date() })
+      .where(eq(lp.id, pkg.id));
 
-  if (pending && dirtyPaths.length > 0) {
-    // Crash window 2 (merge already wrote) — same-target Resume applies only
-    // to window 1 (clean tree). Completing/undoing is Resolve/Abort's job.
-    throw new MaisterError(
-      "CONFLICT",
-      "sync in progress with merged content in the working tree — resolve or abort it",
-    );
-  }
-  if (!pending && dirtyPaths.length > 0) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "commit or discard working-tree changes before syncing",
-      { details: { changedCount: dirtyPaths.length } },
-    );
-  }
+    // Phase 2: disk merge (idempotent — a window-1 Resume re-runs on identical
+    // inputs; the case table converges).
+    const merged = await mergeTrees({
+      baseDir: base.installedPath,
+      theirsDir: target.installedPath,
+      oursDir: pkg.workingDir,
+      markerLabel: `upstream ${targetRef}`,
+    });
 
-  // base = the fork's ORIGINAL lineage install; theirs = the target.
-  const base = await loadInstallDir(d, pkg.sourceInstallId, "source install");
-  const target = await loadInstallDir(
-    d,
-    opts.targetInstallId,
-    "target install",
-  );
-  const targetRow = target.row as {
-    name?: string;
-    sourceUrl?: string;
-    packageStatus?: string;
-  };
-  const baseRow = base.row as { name?: string; sourceUrl?: string };
+    if (merged.conflictedFiles.length > 0) {
+      await d
+        .update(lp)
+        .set({
+          syncState: { ...syncState, conflictedFiles: merged.conflictedFiles },
+          updatedAt: new Date(),
+        })
+        .where(eq(lp.id, pkg.id));
 
-  if (
-    targetRow.packageStatus !== "Installed" ||
-    targetRow.name !== baseRow.name ||
-    targetRow.sourceUrl !== baseRow.sourceUrl
-  ) {
-    throw new MaisterError(
-      "CONFLICT",
-      `target install ${opts.targetInstallId} is not an Installed version of the lineage package (${baseRow.name ?? "?"} @ ${baseRow.sourceUrl ?? "?"})`,
-    );
-  }
+      log.info(
+        {
+          id: pkg.id,
+          targetRef,
+          conflicts: merged.conflictedFiles.length,
+          clean: merged.cleanFiles.length,
+        },
+        "upstream sync conflicted",
+      );
 
-  const targetRef = target.versionLabel;
-  const syncState: LocalPackageSyncState = pending ?? {
-    targetInstallId: opts.targetInstallId,
-    targetRef,
-    conflictedFiles: [],
-    startedAt: new Date().toISOString(),
-  };
+      return {
+        outcome: "conflicted",
+        conflictedFiles: merged.conflictedFiles,
+        targetInstallId: opts.targetInstallId,
+        targetRef,
+      };
+    }
 
-  // Phase 1: durable intent BEFORE any disk write.
-  await d
-    .update(lp)
-    .set({ syncState, updatedAt: new Date() })
-    .where(eq(lp.id, pkg.id));
-
-  // Phase 2: disk merge (idempotent — a window-1 Resume re-runs on identical
-  // inputs; the case table converges).
-  const merged = await mergeTrees({
-    baseDir: base.installedPath,
-    theirsDir: target.installedPath,
-    oursDir: pkg.workingDir,
-    markerLabel: `upstream ${targetRef}`,
-  });
-
-  if (merged.conflictedFiles.length > 0) {
+    // Phase 3 (clean): at most one commit — a no-change merge skips it.
+    if (merged.cleanFiles.length > 0) {
+      await gitCommitWorkingDir(
+        pkg.workingDir,
+        `Sync from upstream ${targetRef}`,
+      );
+    }
     await d
       .update(lp)
       .set({
-        syncState: { ...syncState, conflictedFiles: merged.conflictedFiles },
+        sourceInstallId: opts.targetInstallId,
+        sourceRef: targetRef,
+        syncState: null,
         updatedAt: new Date(),
       })
       .where(eq(lp.id, pkg.id));
@@ -185,53 +233,21 @@ export async function syncFromUpstream(opts: {
       {
         id: pkg.id,
         targetRef,
-        conflicts: merged.conflictedFiles.length,
-        clean: merged.cleanFiles.length,
+        changed: merged.cleanFiles.length,
+        committed: merged.cleanFiles.length > 0,
       },
-      "upstream sync conflicted",
+      "upstream sync completed clean",
     );
 
     return {
-      outcome: "conflicted",
-      conflictedFiles: merged.conflictedFiles,
+      outcome: "clean",
+      conflictedFiles: [],
       targetInstallId: opts.targetInstallId,
       targetRef,
     };
+  } finally {
+    await releaseWorkingDirLock(pkg.id, lockToken, d).catch(() => undefined);
   }
-
-  // Phase 3 (clean): at most one commit — a no-change merge skips it.
-  if (merged.cleanFiles.length > 0) {
-    await gitCommitWorkingDir(
-      pkg.workingDir,
-      `Sync from upstream ${targetRef}`,
-    );
-  }
-  await d
-    .update(lp)
-    .set({
-      sourceInstallId: opts.targetInstallId,
-      sourceRef: targetRef,
-      syncState: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(lp.id, pkg.id));
-
-  log.info(
-    {
-      id: pkg.id,
-      targetRef,
-      changed: merged.cleanFiles.length,
-      committed: merged.cleanFiles.length > 0,
-    },
-    "upstream sync completed clean",
-  );
-
-  return {
-    outcome: "clean",
-    conflictedFiles: [],
-    targetInstallId: opts.targetInstallId,
-    targetRef,
-  };
 }
 
 // Entry/exit conflict markers only — a bare `=======` line is a legal
@@ -245,87 +261,95 @@ export async function resolveSync(opts: {
   db?: Db;
 }): Promise<SyncResult> {
   const d = resolveDb(opts.db);
-  const pkg = await loadActivePackage(d, opts.localPackageId);
+  let pkg = await loadActivePackage(d, opts.localPackageId);
 
   await assertHoldsLock(pkg.id, opts.sessionId, d);
 
-  const pending = pkg.syncState;
+  const lockToken = await acquireWorkingDirLock(pkg.id, d);
 
-  if (!pending) {
-    // Idempotent retry after a completed resolve: lineage advanced, state
-    // cleared → report completion against the CURRENT lineage.
+  try {
+    pkg = await loadActivePackage(d, opts.localPackageId);
+
+    const pending = pkg.syncState;
+
+    if (!pending) {
+      // Idempotent retry after a completed resolve: lineage advanced, state
+      // cleared → report completion against the CURRENT lineage.
+      return {
+        outcome: "completed",
+        conflictedFiles: [],
+        targetInstallId: pkg.sourceInstallId ?? "",
+        targetRef: pkg.sourceRef ?? "",
+      };
+    }
+
+    const dirtyPaths = await workingTreeDirtyPaths(pkg.workingDir);
+
+    if (pending.conflictedFiles.length === 0 && dirtyPaths.length === 0) {
+      // Crash window 1: intent persisted, merge never wrote — nothing to
+      // resolve; Resume (same-target /sync) is the correct recovery.
+      throw new MaisterError(
+        "PRECONDITION",
+        "nothing to resolve — resume the sync (re-run it towards the same target)",
+      );
+    }
+
+    // Marker scan over the UNION of the listed files' CURRENT bytes and every
+    // dirty file — the stamped list alone is not the boundary (the user may
+    // have copied markers around while editing).
+    const scanPaths = [
+      ...new Set([...pending.conflictedFiles, ...dirtyPaths]),
+    ].sort();
+
+    for (const rel of scanPaths) {
+      let text: string;
+
+      try {
+        text = await readFile(join(pkg.workingDir, rel), "utf8");
+      } catch {
+        continue; // deleted while resolving — nothing to scan
+      }
+      if (CONFLICT_MARKER.test(text)) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `conflict markers remain in ${rel}`,
+          { details: { file: rel } },
+        );
+      }
+    }
+
+    if (dirtyPaths.length > 0) {
+      await gitCommitWorkingDir(
+        pkg.workingDir,
+        opts.commitMessage ?? `Resolve sync from upstream ${pending.targetRef}`,
+      );
+    }
+
+    // The SAME single transaction as the clean case: advance lineage + clear.
+    await d
+      .update(lp)
+      .set({
+        sourceInstallId: pending.targetInstallId,
+        sourceRef: pending.targetRef,
+        syncState: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(lp.id, pkg.id));
+
+    log.info(
+      { id: pkg.id, targetRef: pending.targetRef, resolved: scanPaths.length },
+      "upstream sync resolved",
+    );
+
     return {
       outcome: "completed",
       conflictedFiles: [],
-      targetInstallId: pkg.sourceInstallId ?? "",
-      targetRef: pkg.sourceRef ?? "",
+      targetInstallId: pending.targetInstallId,
+      targetRef: pending.targetRef,
     };
+  } finally {
+    await releaseWorkingDirLock(pkg.id, lockToken, d).catch(() => undefined);
   }
-
-  const dirtyPaths = await workingTreeDirtyPaths(pkg.workingDir);
-
-  if (pending.conflictedFiles.length === 0 && dirtyPaths.length === 0) {
-    // Crash window 1: intent persisted, merge never wrote — nothing to
-    // resolve; Resume (same-target /sync) is the correct recovery.
-    throw new MaisterError(
-      "PRECONDITION",
-      "nothing to resolve — resume the sync (re-run it towards the same target)",
-    );
-  }
-
-  // Marker scan over the UNION of the listed files' CURRENT bytes and every
-  // dirty file — the stamped list alone is not the boundary (the user may
-  // have copied markers around while editing).
-  const scanPaths = [
-    ...new Set([...pending.conflictedFiles, ...dirtyPaths]),
-  ].sort();
-
-  for (const rel of scanPaths) {
-    let text: string;
-
-    try {
-      text = await readFile(join(pkg.workingDir, rel), "utf8");
-    } catch {
-      continue; // deleted while resolving — nothing to scan
-    }
-    if (CONFLICT_MARKER.test(text)) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `conflict markers remain in ${rel}`,
-        { details: { file: rel } },
-      );
-    }
-  }
-
-  if (dirtyPaths.length > 0) {
-    await gitCommitWorkingDir(
-      pkg.workingDir,
-      opts.commitMessage ?? `Resolve sync from upstream ${pending.targetRef}`,
-    );
-  }
-
-  // The SAME single transaction as the clean case: advance lineage + clear.
-  await d
-    .update(lp)
-    .set({
-      sourceInstallId: pending.targetInstallId,
-      sourceRef: pending.targetRef,
-      syncState: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(lp.id, pkg.id));
-
-  log.info(
-    { id: pkg.id, targetRef: pending.targetRef, resolved: scanPaths.length },
-    "upstream sync resolved",
-  );
-
-  return {
-    outcome: "completed",
-    conflictedFiles: [],
-    targetInstallId: pending.targetInstallId,
-    targetRef: pending.targetRef,
-  };
 }
 
 export async function abortSync(opts: {
@@ -334,25 +358,38 @@ export async function abortSync(opts: {
   db?: Db;
 }): Promise<void> {
   const d = resolveDb(opts.db);
-  const pkg = await loadActivePackage(d, opts.localPackageId);
+  let pkg = await loadActivePackage(d, opts.localPackageId);
 
   await assertHoldsLock(pkg.id, opts.sessionId, d);
 
-  if (!pkg.syncState) {
-    throw new MaisterError("CONFLICT", "no sync in progress");
+  const lockToken = await acquireWorkingDirLock(pkg.id, d);
+
+  try {
+    pkg = await loadActivePackage(d, opts.localPackageId);
+
+    if (!pkg.syncState) {
+      // Idempotent: a completed or already-aborted sync has no pending state —
+      // a retried abort is a no-op success (mirrors resolveSync's no-pending
+      // branch), not a 409.
+      return;
+    }
+
+    // The tree was clean pre-merge (a /sync precondition), so restoring HEAD +
+    // dropping untracked merge additions loses nothing user-authored. Fork
+    // commits are never rewritten. Narrow self-healing edge: if a crash landed
+    // the post-merge commit but not the lineage advance, the clean tree makes
+    // discard a no-op and the commit stays — the next sync is a no-change merge
+    // that advances lineage.
+    const targetRef = pkg.syncState.targetRef;
+
+    await gitDiscardPaths(pkg.workingDir);
+    await d
+      .update(lp)
+      .set({ syncState: null, updatedAt: new Date() })
+      .where(eq(lp.id, pkg.id));
+
+    log.info({ id: pkg.id, targetRef }, "upstream sync aborted");
+  } finally {
+    await releaseWorkingDirLock(pkg.id, lockToken, d).catch(() => undefined);
   }
-
-  // The tree was clean pre-merge (a /sync precondition), so restoring HEAD +
-  // dropping untracked merge additions loses nothing user-authored. Fork
-  // commits are never rewritten.
-  await gitDiscardPaths(pkg.workingDir);
-  await d
-    .update(lp)
-    .set({ syncState: null, updatedAt: new Date() })
-    .where(eq(lp.id, pkg.id));
-
-  log.info(
-    { id: pkg.id, targetRef: pkg.syncState.targetRef },
-    "upstream sync aborted",
-  );
 }

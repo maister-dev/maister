@@ -33,6 +33,7 @@ import {
 } from "@/lib/flows/hitl-validate";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
+import { isExperimentMemberRun } from "@/lib/experiments/membership";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { runFlow } from "@/lib/flows/runner";
 import { runtimeRoot } from "@/lib/runtime-root";
@@ -80,7 +81,6 @@ import { headCommit, localBranchHead, remoteBranchHead } from "@/lib/worktree";
 const {
   assignments,
   hitlRequests,
-  experimentRuns,
   projects,
   runs,
   scratchRuns,
@@ -106,19 +106,6 @@ const TERMINAL_RUN_STATUS = new Set([
   "Abandoned",
   "Review",
 ]);
-
-async function isExperimentMemberRun(args: {
-  db: any;
-  runId: string;
-}): Promise<boolean> {
-  const rows = await args.db
-    .select({ runId: experimentRuns.runId })
-    .from(experimentRuns)
-    .where(eq(experimentRuns.runId, args.runId))
-    .limit(1);
-
-  return rows.some((row: { runId: string }) => row.runId === args.runId);
-}
 
 // A form/human/permission HITL is genuinely pending ONLY while the run awaits
 // the response — NeedsInput or its idle checkpoint NeedsInputIdle. Any other
@@ -2240,10 +2227,10 @@ async function preflightBudgetRestartLaunchability(args: {
   }
 
   await requireProjectAction(task.projectId, "launchRun");
-  const experimentMemberRestart = await isExperimentMemberRun({
-    db: args.db,
-    runId: args.runId,
-  });
+  const experimentMemberRestart = await isExperimentMemberRun(
+    args.db,
+    args.runId,
+  );
 
   if (!experimentMemberRestart) {
     const activeTaskRuns = await args.db

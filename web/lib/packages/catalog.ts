@@ -18,7 +18,8 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { localDirectoryContentDigest } from "@/lib/flows";
 import { loadMaisterPackageManifest } from "@/lib/packages/manifest";
-import { redactUrl } from "@/lib/repo-source";
+import { redactUrl, validateUrl } from "@/lib/repo-source";
+import { branchNameSchema } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see flows.ts).
 const { packageSources, packageInstalls, projectPackageAttachments } =
@@ -191,7 +192,9 @@ export const packageSourceCreateBodySchema = z
   .object({
     url: z.string().min(1).max(512),
     kind: z.enum(["git", "local"]).default("git"),
-    baseBranch: z.string().min(1).max(255).optional(),
+    // ADR-129: git-only PR base; reaches the PR adapter as `--base <branch>`,
+    // so it carries the same anti-option-injection shape as any branch ref.
+    baseBranch: branchNameSchema.optional(),
     note: z.string().max(512).optional(),
     enabled: z.boolean().optional(),
   })
@@ -201,7 +204,7 @@ export const packageSourceUpdateBodySchema = z
   .object({
     enabled: z.boolean().optional(),
     note: z.string().max(512).optional(),
-    baseBranch: z.string().min(1).max(255).nullable().optional(),
+    baseBranch: branchNameSchema.nullable().optional(),
   })
   .strict();
 
@@ -225,6 +228,15 @@ async function assertValidLocalPackageSourcePath(path: string): Promise<void> {
     throw new MaisterError(
       "CONFIG",
       "local package source path must be absolute",
+    );
+  }
+  // Reject `..` traversal segments — parity with the admin install route
+  // (`package-installs/route.ts`), which refuses them on the same host-path
+  // class before it reaches `fs.*`/digest reads.
+  if (path.split("/").includes("..")) {
+    throw new MaisterError(
+      "CONFIG",
+      "local package source path must not contain '..' segments",
     );
   }
 
@@ -299,6 +311,12 @@ export async function createPackageSource(opts: {
 }): Promise<{ id: string }> {
   if ((opts.kind ?? "git") === "local") {
     await assertValidLocalPackageSourcePath(opts.url);
+  } else {
+    // ADR-129 hardening: a git source url is a remote that reaches `git remote
+    // add` argv at publish time. Without a scheme allow-list an admin could
+    // register `ext::sh -c '…'` and get code execution on the web host at the
+    // next publish. `validateUrl` restricts to https/http/ssh/scp/file.
+    validateUrl(opts.url);
   }
 
   const db = opts.db ?? getDb();
@@ -552,7 +570,11 @@ export async function refreshPackageSource(opts: {
         .where(eq(packageSources.id, opts.id));
 
       log.info(
-        { id: opts.id, url: redactUrl(source.url), packages: discovered.length },
+        {
+          id: opts.id,
+          url: redactUrl(source.url),
+          packages: discovered.length,
+        },
         "local package source refreshed (re-digest)",
       );
 
@@ -679,6 +701,18 @@ export async function ensureDefaultPackageSources(opts?: {
       log.warn(
         { url: redactUrl(url) },
         "default package source url invalid — skipped",
+      );
+      continue;
+    }
+    try {
+      // Same scheme allow-list the interactive create path enforces — an
+      // env-supplied default is a git remote that reaches `git` at boot
+      // discovery, so it must not carry an `ext::`/option-shaped url either.
+      validateUrl(url);
+    } catch {
+      log.warn(
+        { url: redactUrl(url) },
+        "default package source url scheme not allowed — skipped",
       );
       continue;
     }

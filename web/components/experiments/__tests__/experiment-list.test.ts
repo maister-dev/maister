@@ -70,6 +70,8 @@ const createLabels: CreateExperimentLabels = {
   executionPolicy: "Execution policy JSON",
   packagePin: "Package version pin",
   packagePinNone: "Project pin (no override)",
+  pinLocalCut: "local cut",
+  pinUpstream: "upstream",
   rulesAdd: "Rules add",
   rulesRemove: "Rules remove",
   skillsAdd: "Skills add",

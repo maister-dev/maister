@@ -3780,6 +3780,8 @@
       "executionPolicy": "Execution policy JSON",
       "packagePin": "Закрепить версию пакета",
       "packagePinNone": "Версия проекта (без переопределения)",
+      "pinLocalCut": "локальный срез",
+      "pinUpstream": "апстрим",
       "rulesAdd": "Добавить rules",
       "rulesRemove": "Убрать rules",
       "skillsAdd": "Добавить skills",

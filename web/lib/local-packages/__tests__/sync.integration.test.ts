@@ -19,7 +19,10 @@ import { isMaisterError } from "@/lib/errors";
 import { computeUpstreamDivergence } from "@/lib/local-packages/divergence";
 import { forkPackageToLocal } from "@/lib/local-packages/fork";
 import { gitCommitWorkingDir, gitHeadSha } from "@/lib/local-packages/git";
-import { acquireLock } from "@/lib/local-packages/lock";
+import {
+  acquireLock,
+  acquireWorkingDirLock,
+} from "@/lib/local-packages/lock";
 import {
   getLocalPackage,
   writeWorkingDirFile,
@@ -333,12 +336,38 @@ describe("upstream sync (integration)", () => {
       readFile(join(pkg.workingDir, "docs/CHANGELOG.md"), "utf8"),
     ).rejects.toThrow();
 
-    // A second abort has nothing pending → CONFLICT.
+    // ADR-129: a second abort has nothing pending → idempotent no-op success
+    // (mirrors resolveSync's no-pending branch), NOT a 409.
     await expect(
       abortSync({ localPackageId: pkg.id, sessionId, db }),
-    ).rejects.toSatisfy(
-      (err: unknown) => isMaisterError(err) && err.code === "CONFLICT",
-    );
+    ).resolves.toBeUndefined();
+
+    const afterSecond = await getLocalPackage(pkg.id, db);
+
+    expect(afterSecond!.syncState).toBeNull();
+  });
+
+  it("C3: sync refuses while another working-dir op holds the per-package mutex", async () => {
+    const { pkg, sessionId } = await freshFork();
+
+    // Simulate an in-flight publish/sync/abort holding the working-dir mutex.
+    // The editor lock the fork already holds is NOT a mutex (same session
+    // passes twice), so without this the two ops would run concurrent merges.
+    await acquireWorkingDirLock(pkg.id, db);
+
+    await expect(
+      syncFromUpstream({
+        localPackageId: pkg.id,
+        targetInstallId: installV2.id,
+        sessionId,
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    // The refused sync must not have stamped intent or touched the tree.
+    const after = await getLocalPackage(pkg.id, db);
+
+    expect(after!.syncState).toBeNull();
   });
 
   it("precondition matrix: dirty tree · wrong target · foreign pending target · no lock", async () => {

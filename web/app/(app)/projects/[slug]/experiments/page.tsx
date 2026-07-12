@@ -104,6 +104,8 @@ export default async function ProjectExperimentsPage({
     executionPolicy: t("create.executionPolicy"),
     packagePin: t("create.packagePin"),
     packagePinNone: t("create.packagePinNone"),
+    pinLocalCut: t("create.pinLocalCut"),
+    pinUpstream: t("create.pinUpstream"),
     rulesAdd: t("create.rulesAdd"),
     rulesRemove: t("create.rulesRemove"),
     skillsAdd: t("create.skillsAdd"),

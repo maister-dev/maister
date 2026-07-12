@@ -54,12 +54,14 @@ function rowsFor(table: unknown, state: State): Row[] {
 function selectChain(rows: Row[]): PromiseLike<Row[]> & {
   where: () => ReturnType<typeof selectChain>;
   leftJoin: (table: unknown, on: unknown) => ReturnType<typeof selectChain>;
+  orderBy: (col: unknown) => ReturnType<typeof selectChain>;
   limit: (n: number) => Promise<Row[]>;
 } {
   return {
     then: (onFulfilled) => Promise.resolve(rows).then(onFulfilled),
     where: () => selectChain(rows),
     leftJoin: () => selectChain(rows),
+    orderBy: () => selectChain(rows),
     limit: async (n: number) => rows.slice(0, n),
   };
 }

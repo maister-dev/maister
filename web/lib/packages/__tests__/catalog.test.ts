@@ -302,6 +302,64 @@ describe("defaultPackageSourceUrls (default-source env parse)", () => {
   });
 });
 
+describe("createPackageSource kind:git url validation (ADR-129 hardening)", () => {
+  function recordingDb(): { db: any; inserted: Record<string, unknown>[] } {
+    const inserted: Record<string, unknown>[] = [];
+
+    return {
+      inserted,
+      db: {
+        insert: () => ({
+          values: (values: Record<string, unknown>) => {
+            inserted.push(values);
+
+            return {
+              onConflictDoNothing: () => ({
+                returning: async () => [{ id: values.id }],
+              }),
+            };
+          },
+        }),
+      },
+    };
+  }
+
+  // Both the plain forms AND the scp-shaped bypasses (`<helper>::…@host:` and
+  // `-flag…@host:`) that slip the bare `[^/@]+@[^/:]+:` scp regex.
+  it.each([
+    ["plain ext::", "ext::sh -c 'id'"],
+    ["scp-shaped ext:: (slash-free)", "ext::sh${IFS}-c${IFS}id;x@h:"],
+    ["scp-shaped ext:: (spaced)", "ext::sh -c touch${IFS}MARKER;x@h:"],
+    ["option-shaped scp host", "-oProxyCommand=evil@host:path"],
+    ["option-shaped scheme", "--upload-pack=evil"],
+  ])(
+    "refuses a %s url before any persistence (no RCE remote)",
+    async (_label, url) => {
+      const { db, inserted } = recordingDb();
+
+      await expect(
+        createPackageSource({ url, kind: "git", db }),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
+      expect(inserted).toHaveLength(0);
+    },
+  );
+
+  it("accepts a legitimate scp remote", async () => {
+    const { db, inserted } = recordingDb();
+
+    await createPackageSource({ url: "git@github.com:org/repo.git", db });
+    expect(inserted).toHaveLength(1);
+  });
+
+  it("accepts an https git url (default kind)", async () => {
+    const { db, inserted } = recordingDb();
+
+    await createPackageSource({ url: "https://example.com/repo.git", db });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ kind: "git" });
+  });
+});
+
 describe("createPackageSource kind:local path validation (ADR-129)", () => {
   function recordingDb(): { db: any; inserted: Record<string, unknown>[] } {
     const inserted: Record<string, unknown>[] = [];

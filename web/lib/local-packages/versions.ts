@@ -5,7 +5,7 @@ import type { LocalPackage } from "@/lib/db/schema";
 
 import { rm } from "node:fs/promises";
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { gitHeadSha } from "./git";
@@ -578,9 +578,11 @@ export type RunPackageProvenance = {
 // to the install that shipped it. Two arms (ADR-129): a centralized local-cut
 // install (carries `source_local_package_id`) or a plain upstream install.
 // Derivable with NO `runs` column (ADR-107). Null when no install matches
-// (degradation — the lab renders the run without package badges). When both
-// arms could match one revision string, the local-cut row wins
-// (deterministic).
+// (degradation — the lab renders the run without package badges). A local-cut
+// row wins over an upstream row on a shared revision string; the `asc(pi.id)`
+// tie-break makes the pick STABLE even when two byte-identical forks collide on
+// one digest (their identical `resolved_revision` means the same content ran —
+// only the fork NAME badge is then lossy, deterministically).
 export async function resolvePackageProvenanceByRevision(
   resolvedRevision: string,
   db?: Db,
@@ -597,6 +599,7 @@ export async function resolvePackageProvenanceByRevision(
     .from(pi)
     .leftJoin(lp, eq(lp.id, pi.sourceLocalPackageId))
     .where(eq(pi.resolvedRevision, resolvedRevision))
+    .orderBy(asc(pi.id))
     .limit(2);
   const row =
     rows.find(

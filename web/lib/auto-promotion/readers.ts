@@ -11,7 +11,8 @@ import { promisify } from "node:util";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
-import { experimentRuns, gateResults, hitlRequests } from "@/lib/db/schema";
+import { gateResults, hitlRequests } from "@/lib/db/schema";
+import { isExperimentMemberRun } from "@/lib/experiments/membership";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { getNodeAttemptsForRun } from "@/lib/flows/graph/ledger";
@@ -111,16 +112,12 @@ export function buildAutoPromotionReaders(args: {
 
       return rows.length > 0;
     },
-    // ADR-129 (enforcing ADR-124): experiment membership makes the run
-    // structurally non-promotable at the apply site.
+    // ADR-129 (enforcing ADR-124): experiment membership excludes the run from
+    // the ADR-126 auto-promotion sweep. The authoritative apply-site guard lives
+    // in promoteWorkspaceRun; this shares the one canonical predicate so the two
+    // can never drift.
     async isExperimentMember(): Promise<boolean> {
-      const rows = await db
-        .select({ id: experimentRuns.id })
-        .from(experimentRuns)
-        .where(eq(experimentRuns.runId, runId))
-        .limit(1);
-
-      return rows.length > 0;
+      return isExperimentMemberRun(db, runId);
     },
     async readinessGreen(): Promise<boolean> {
       try {

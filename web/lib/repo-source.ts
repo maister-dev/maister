@@ -378,15 +378,27 @@ async function pathExists(p: string): Promise<boolean> {
 // ADR-093: reused by git-remotes (remote url scheme allow-list). Cred-bearing
 // remotes are accepted (host-ambient auth) — callers redact for display/storage.
 export function validateUrl(url: string): void {
-  const isScp = /^[^/@]+@[^/:]+:/.test(url);
-  const isSchemed = URL_SCHEME_ALLOWLIST.some((s) => url.startsWith(s));
+  if (URL_SCHEME_ALLOWLIST.some((s) => url.startsWith(s))) return;
 
-  if (!isScp && !isSchemed) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "repoUrl scheme not allowed (use https, http, ssh, scp git@host:..., or file)",
-    );
+  // scp-short `user@host:path`. The bare shape `[^/@]+@[^/:]+:` is NOT enough:
+  // it admits git's `<helper>::` smart-transport (`ext::sh -c …@h:` → RCE) and a
+  // `-`-leading user/host (`-oProxyCommand=…@host:` → ssh option injection),
+  // because the colons/dashes live inside the user segment. Reject both.
+  const scp = /^([^/@]+)@([^/:]+):/.exec(url);
+
+  if (
+    scp &&
+    !url.includes("::") &&
+    !scp[1].startsWith("-") &&
+    !scp[2].startsWith("-")
+  ) {
+    return;
   }
+
+  throw new MaisterError(
+    "PRECONDITION",
+    "repoUrl scheme not allowed (use https, http, ssh, scp git@host:..., or file)",
+  );
 }
 
 function resolveDir(reposRootDir: string, nameOrPath: string): string {

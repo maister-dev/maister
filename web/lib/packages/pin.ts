@@ -40,10 +40,15 @@ export async function resolvePinnedFlowRevisionForRefId(
       `packagePin install ${pinInstall.id} is ${pinInstall.packageStatus}, not Installed`,
     );
   }
-  if (pinInstall.trustStatus === "untrusted") {
+  if (
+    pinInstall.trustStatus !== "trusted" &&
+    pinInstall.trustStatus !== "trusted_by_policy"
+  ) {
+    // Allow-list, not a `=== "untrusted"` deny-list: a future trust status
+    // (e.g. `pending`) must fail closed, never silently pin.
     throw new MaisterError(
       "PRECONDITION",
-      `packagePin install ${pinInstall.id} is untrusted — confirm trust before pinning a run to it`,
+      `packagePin install ${pinInstall.id} is not trusted (${pinInstall.trustStatus}) — confirm trust before pinning a run to it`,
     );
   }
 

@@ -519,7 +519,9 @@ completion tx (advance lineage + clear `sync_state`).
 **`POST /sync/abort` allow-list:** live edit-lock · pending `sync_state` →
 `git reset --hard HEAD` (structurally safe: the tree was clean pre-merge, so
 nothing user-authored is lost) + tx clear `sync_state`. Never force-overwrites
-commits.
+commits. Idempotent: no pending `sync_state` (a completed or already-aborted
+sync) is a no-op `200`, not a `409`. All three sync ops (sync/resolve/abort)
+take the per-package working-dir mutex — a concurrent op refuses with `409`.
 
 Merge case table (implemented in `sync-merge.ts` exactly as enumerated):
 unchanged ours + changed theirs → take theirs · changed ours + unchanged

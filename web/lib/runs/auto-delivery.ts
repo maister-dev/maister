@@ -6,6 +6,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { isExperimentMemberRun } from "@/lib/experiments/membership";
 import {
   switchDeliveryPolicyToManual,
   type DeliveryPolicy,
@@ -85,6 +86,13 @@ export async function deliverRunIfAutoReady(
       promotionFromSnapshot(run.executionPolicy) === "auto_on_ready");
 
   if (!run || !autoOnReady || !run.deliveryPolicySnapshot) {
+    return;
+  }
+
+  // ADR-129: an experiment-member run never auto-delivers. The promote choke
+  // point is the authoritative guard; this ordering short-circuit avoids a
+  // spurious degrade-to-manual on the member's delivery policy.
+  if (await isExperimentMemberRun(db, runId)) {
     return;
   }
 

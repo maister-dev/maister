@@ -2711,7 +2711,7 @@ paths:
         shipping a member revision with the flow's ref id (upstream installs
         and local cuts alike). Requires `readExperiments`; `taskId` is
         validated against the slug-derived project (a task outside the
-        project is 422 `CONFIG` — no cross-project install leak through a
+        project is 400 `CONFIG` — no cross-project install leak through a
         forged id). The picker is never free-text.
       operationId: getProjectExperimentPinOptions
       parameters:
@@ -2753,7 +2753,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "422": { $ref: "#/components/responses/Config" }
+        "400": { $ref: "#/components/responses/Config" }
   /api/projects/{slug}/experiments/{experimentId}:
     get:
       tags: [experiments]
@@ -8486,10 +8486,10 @@ paths:
       tags: [flow-packages]
       summary: (ADR-129 — Implemented) Fork-vs-upstream divergence diff
       description: |
-        (ADR-129.) Read-only, viewer-permitted (like `/diff`). Diffs "ours" —
-        the fork working dir (default) or a chosen cut's bundle
-        (`cutInstallId`) — against "theirs" — the fork's lineage source
-        install bytes — via `git diff --no-index` (exit 0/1 both success),
+        (ADR-129.) Read-only, viewer-permitted (like `/diff`). Diffs the
+        `compared` side — the fork working dir (default) or a chosen cut's
+        bundle (`cutInstallId`) — against the `base` side — the fork's lineage
+        source install bytes — via `git diff --no-index` (exit 0/1 both success),
         excluding `.git/`, into the shared diff DTO. Purely local bytes; no
         git-remote fetch. `cutInstallId` is validated against the package's
         OWN cut lineage (`package_installs.source_local_package_id = id`) —
@@ -8647,11 +8647,13 @@ paths:
       tags: [flow-packages]
       summary: (ADR-129 — Implemented) Abort a pending upstream sync
       description: |
-        (ADR-129.) Preconditions: live session edit-lock · pending
-        `sync_state` (else 409 `CONFLICT`). Runs `git reset --hard HEAD`
-        (structurally safe — the tree was clean pre-merge, so nothing
-        user-authored is lost) and clears `sync_state` in a transaction.
-        Never force-overwrites commits.
+        (ADR-129.) Preconditions: live session edit-lock. Idempotent — a
+        no-op `200` success when no `sync_state` is pending (a completed or
+        already-aborted sync). Runs `git reset --hard HEAD` (structurally safe
+        — the tree was clean pre-merge, so nothing user-authored is lost) and
+        clears `sync_state` in a transaction. Never force-overwrites commits.
+        `409 CONFLICT` only when another working-dir op holds the per-package
+        mutex.
       operationId: abortStudioLocalPackageSync
       requestBody:
         required: true
@@ -8672,6 +8674,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
 
   /api/studio/local-packages/{id}/import:
     parameters:
@@ -17214,20 +17217,14 @@ components:
           description: "Prefilled stable `maister/<slug>` branch."
     LocalPackageDivergence:
       type: object
-      required: [ours, theirs, changedCount, truncated, files]
+      required: [base, compared, changedCount, truncated, files, perFile]
       description: |
         (ADR-129) Fork-vs-source divergence as the shared `@git-diff-view`
         DTO shape (same as `/diff`), plus which two inputs were compared.
+        `base` is the lineage source install; `compared` is the fork side
+        (its working dir, or a specific cut install).
       properties:
-        ours:
-          type: object
-          additionalProperties: false
-          required: [kind]
-          properties:
-            kind: { type: string, enum: [working_dir, cut] }
-            cutInstallId: { type: string, nullable: true }
-            versionLabel: { type: string, nullable: true }
-        theirs:
+        base:
           type: object
           additionalProperties: false
           required: [installId, versionLabel]
@@ -17236,20 +17233,29 @@ components:
               type: string
               description: "The lineage source install (`local_packages.source_install_id`)."
             versionLabel: { type: string }
-        element:
-          type: string
-          nullable: true
-          description: "Present when the diff was narrowed to one composition element."
+        compared:
+          type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [working_dir, cut] }
+            installId:
+              type: string
+              description: "Present only when kind = cut (the compared cut install)."
+            versionLabel:
+              type: string
+              description: "Present only when kind = cut."
         changedCount: { type: integer, minimum: 0 }
         truncated: { type: boolean }
         files: { type: array, items: { type: object } }
+        perFile: { type: array, items: { type: object } }
       example:
-        ours: { kind: working_dir, cutInstallId: null, versionLabel: null }
-        theirs: { installId: install-1, versionLabel: "aif/v2.0.0" }
-        element: null
+        base: { installId: install-1, versionLabel: "aif/v2.0.0" }
+        compared: { kind: working_dir }
         changedCount: 2
         truncated: false
         files: []
+        perFile: []
     LocalPackageSyncResult:
       type: object
       required: [outcome, conflictedFiles, targetInstallId, targetRef]

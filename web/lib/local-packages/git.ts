@@ -77,15 +77,17 @@ export async function gitHeadSha(dir: string): Promise<string> {
 
 // (M39 Stream B, ADR-113) Point a named git remote at the publish target URL —
 // idempotent: drop any prior remote of that name, then add. The URL comes from
-// the registered `package_sources` allow-list (host-ambient creds, no inline
-// secrets) and is passed as argv (execFile, never a shell).
+// the registered `package_sources` allow-list — scheme-validated at
+// registration (`validateUrl`, no `ext::`/option-shaped remotes) and passed as
+// argv (execFile, never a shell). `--` terminates option parsing so neither the
+// remote name nor url can be read as a flag.
 export async function gitSetRemote(
   dir: string,
   name: string,
   url: string,
 ): Promise<void> {
   await git(dir, ["remote", "remove", name]).catch(() => undefined);
-  await git(dir, ["remote", "add", name, url]);
+  await git(dir, ["remote", "add", "--", name, url]);
 }
 
 // (M39 Stream B, ADR-113) Force the stable publish branch to the working dir's

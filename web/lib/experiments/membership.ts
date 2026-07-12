@@ -23,6 +23,24 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// ADR-129 (enforcing ADR-124): the single canonical experiment-membership
+// predicate. Membership is immutable per run (abandon/conclude never delete the
+// row), so "is a member now" == "was launched as a member". Reused by the
+// promote apply-site guard, the auto-delivery short-circuit, the ADR-126 sweep
+// reader, and the HITL restart path so the predicate can never drift.
+export async function isExperimentMemberRun(
+  db: Db,
+  runId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ runId: experimentRuns.runId })
+    .from(experimentRuns)
+    .where(eq(experimentRuns.runId, runId))
+    .limit(1);
+
+  return rows.length > 0;
+}
+
 const ACTIVE_INHERITANCE_STATUSES = new Set(["running", "comparable"]);
 
 export type InheritedExperimentMembership = {
