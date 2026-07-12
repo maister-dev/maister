@@ -15,7 +15,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-// ADR-129 Phase-3 capstone (acceptance 1/2/3 + the T9 join): a REAL
+// ADR-132 Phase-3 capstone (acceptance 1/2/3 + the T9 join): a REAL
 // fork-vs-upstream experiment on real Postgres — upstream install → attach →
 // fork → edit → commit → cut → experiment A=upstream / B=fork-cut → launch
 // both → same pinned base commit, different snapshotted flow revisions, both

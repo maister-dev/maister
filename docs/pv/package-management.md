@@ -2,7 +2,7 @@
 
 > **Status:** P0–P2 SHIPPED (M33, `feature/package-management`, 2026-06-12 —
 > ADR-088, migration `0048`); P4 is CLOSED by the Studio local-package line
-> (ADR-096/105/107/113) + the fork-loop completion (ADR-129 — see the
+> (ADR-096/105/107/113) + the fork-loop completion (ADR-132 — see the
 > loop-closure note in §8); P3/P5/P6 remain follow-up planning briefs in §8.
 > As-built deltas: file-edit gates use vacuous-presence `artifact_required`
 > on commit nodes (§6 note); the discovery staleness knob is
@@ -257,7 +257,7 @@ be planned cold; pointers: this doc, `docs/system-analytics/flow-packages.md`,
   documented workflow (+ optionally a maister.yaml for that repo), zero
   platform code. Unblocked immediately after P0.
 - **P4 — Studio package editing + propose-upstream. CLOSED — the fork loop
-  is complete (ADR-096/105/107/113 + ADR-129).** The shipped shape: fork an
+  is complete (ADR-096/105/107/113 + ADR-132).** The shipped shape: fork an
   installed package into a git-backed local package → edit in Studio
   (per-kind editors, commit-gated validation) → **cut** `local-<digest>`
   installs and attach them per-project (or adopt across attached projects
@@ -269,7 +269,7 @@ be planned cold; pointers: this doc, `docs/system-analytics/flow-packages.md`,
   advances) when the upstream re-tags → **publish** (`PublishDialog`,
   PR on the per-source base branch; non-FF refuses "upstream moved — sync
   first", never force). Arbitrary host checkouts join the catalog as
-  `kind: local` sources with digest-as-version (ADR-129 §c), which covers
+  `kind: local` sources with digest-as-version (ADR-132 §c), which covers
   the "test locally before proposing" leg without git round-trips.
 - **P5 — Agent-assisted package editing.** Natural-language package
   editing ("remove X from node Y, add a gate Z") driven by an agent that

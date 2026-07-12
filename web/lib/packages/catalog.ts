@@ -91,7 +91,7 @@ function compareTagsDesc(a: string, b: string): number {
 }
 
 // A newer matching tag exists in the source's discovered snapshot.
-// ADR-129: the local-* carve is by SOURCE KIND — for a `kind: 'local'`
+// ADR-132: the local-* carve is by SOURCE KIND — for a `kind: 'local'`
 // source, a discovered digest ≠ the pinned digest IS an update
 // (digest-as-version); Studio-cut installs (no source row → no kind) keep
 // the off-catalog skip.
@@ -132,7 +132,7 @@ export type PackageVersionTarget = { installId: string; versionLabel: string };
 export function classifyVersionTargets(opts: {
   currentVersionLabel: string;
   candidates: PackageVersionTarget[];
-  // ADR-129: for kind:local sources the only meaningful target is the
+  // ADR-132: for kind:local sources the only meaningful target is the
   // install matching the CURRENT discovered digest — digests are unordered,
   // so there is no downgrade list.
   sourceKind?: "git" | "local";
@@ -183,7 +183,7 @@ export function classifyVersionTargets(opts: {
 
 // --- sources CRUD ------------------------------------------------------------
 
-// (ADR-088; `kind`/`baseBranch` ADR-129) Wire body schemas for the admin
+// (ADR-088; `kind`/`baseBranch` ADR-132) Wire body schemas for the admin
 // package-source routes — exported so the boundary contract is unit-tested
 // against the REAL parse (not a hand-built object). `url` and `kind` are
 // create-only (immutable — delete + re-add to change identity); `baseBranch`
@@ -192,7 +192,7 @@ export const packageSourceCreateBodySchema = z
   .object({
     url: z.string().min(1).max(512),
     kind: z.enum(["git", "local"]).default("git"),
-    // ADR-129: git-only PR base; reaches the PR adapter as `--base <branch>`,
+    // ADR-132: git-only PR base; reaches the PR adapter as `--base <branch>`,
     // so it carries the same anti-option-injection shape as any branch ref.
     baseBranch: branchNameSchema.optional(),
     note: z.string().max(512).optional(),
@@ -218,7 +218,7 @@ export async function listPackageSources(opts?: { db?: any }): Promise<any[]> {
   return db.select().from(packageSources);
 }
 
-// ADR-129 §c: a `kind: 'local'` source path is server-validated BEFORE
+// ADR-132 §c: a `kind: 'local'` source path is server-validated BEFORE
 // persistence (allow-list: absolute + existing directory + a
 // maister-package.yaml at the root OR ≥1 packages/*/maister-package.yaml).
 // Every violation is a typed CONFIG naming the failed check — the stored path
@@ -312,7 +312,7 @@ export async function createPackageSource(opts: {
   if ((opts.kind ?? "git") === "local") {
     await assertValidLocalPackageSourcePath(opts.url);
   } else {
-    // ADR-129 hardening: a git source url is a remote that reaches `git remote
+    // ADR-132 hardening: a git source url is a remote that reaches `git remote
     // add` argv at publish time. Without a scheme allow-list an admin could
     // register `ext::sh -c '…'` and get code execution on the web host at the
     // next publish. `validateUrl` restricts to https/http/ssh/scp/file.
@@ -354,7 +354,7 @@ export async function updatePackageSource(opts: {
   id: string;
   enabled?: boolean;
   note?: string;
-  // ADR-129: string = SET, explicit null = CLEAR back to auto-detect,
+  // ADR-132: string = SET, explicit null = CLEAR back to auto-detect,
   // undefined = untouched (SET/CLEAR symmetry).
   baseBranch?: string | null;
   db?: any;
@@ -491,7 +491,7 @@ async function scanDefaultBranchManifests(
   }
 }
 
-// ADR-129 §c: discover a local source's packages — root manifest (single
+// ADR-132 §c: discover a local source's packages — root manifest (single
 // package) or packages/*/ (monorepo) — each with a digest-derived version
 // label `local-<digest12>` of the package dir's CURRENT bytes.
 async function discoverLocalSourcePackages(
@@ -556,7 +556,7 @@ export async function refreshPackageSource(opts: {
 
   if (!source) return null;
 
-  // ADR-129 §c: a `kind: 'local'` source refreshes by directory walk +
+  // ADR-132 §c: a `kind: 'local'` source refreshes by directory walk +
   // re-digest — no git. Digest-as-version: the discovered "version" is always
   // the PRESENT content digest (`local-<digest12>`); an unchanged dir
   // re-digests to the same label (idempotent re-check). On-demand only (D7).

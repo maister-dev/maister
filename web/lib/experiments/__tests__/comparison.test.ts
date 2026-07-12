@@ -23,7 +23,7 @@ type State = {
   runSessions: Row[];
   gateResults: Row[];
   runCostRollups: Row[];
-  // ADR-129 provenance lookup rows, pre-shaped as the helper's projection
+  // ADR-132 provenance lookup rows, pre-shaped as the helper's projection
   // (the predicate-blind fake returns them for the package_installs select).
   packageInstalls: Row[];
   updates: Row[];
@@ -272,7 +272,7 @@ describe("experiment comparison DTO", () => {
     expect(JSON.stringify(dto)).not.toContain("secret-session");
   });
 
-  it("carries per-run provenance and flags the cross-variant flow-revision delta (ADR-129)", async () => {
+  it("carries per-run provenance and flags the cross-variant flow-revision delta (ADR-132)", async () => {
     const s = state();
 
     s.runs = s.runs.map((row, index) => ({
@@ -307,7 +307,7 @@ describe("experiment comparison DTO", () => {
     });
   });
 
-  it("degrades provenance to null when no install matches and reports no delta for same revisions (ADR-129)", async () => {
+  it("degrades provenance to null when no install matches and reports no delta for same revisions (ADR-132)", async () => {
     const s = state();
 
     s.runs = s.runs.map((row) => ({

@@ -31,6 +31,7 @@ function renderBlockingEditor(): string {
       canManage: true,
       canvasAvailable: false,
       diff: "",
+      divergence: null,
       fileKindLabels: {} as never,
       files: [],
       filesLabels: {} as never,
@@ -73,6 +74,7 @@ function renderBlockingEditor(): string {
       mcpCatalog: [],
       packageId: "local-1",
       skillId: null,
+      sync: null,
       topology: null,
     }),
   );

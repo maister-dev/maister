@@ -23,7 +23,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// ADR-129 (enforcing ADR-124): the single canonical experiment-membership
+// ADR-132 (enforcing ADR-124): the single canonical experiment-membership
 // predicate. Membership is immutable per run (abandon/conclude never delete the
 // row), so "is a member now" == "was launched as a member". Reused by the
 // promote apply-site guard, the auto-delivery short-circuit, the ADR-126 sweep

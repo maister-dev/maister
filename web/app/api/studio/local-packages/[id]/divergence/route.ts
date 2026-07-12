@@ -9,7 +9,7 @@ import { computeUpstreamDivergence } from "@/lib/local-packages/divergence";
 import { getLocalPackage } from "@/lib/local-packages/service";
 import { packageErrorResponse } from "@/lib/packages/http";
 
-// ADR-129 (T17): fork-vs-source divergence, read-only like `/diff`
+// ADR-132 (T17): fork-vs-source divergence, read-only like `/diff`
 // (requireActiveSession, no edit lock — a second viewer may inspect it).
 // `id` is a url-param (→ server row → working_dir, never client-exposed).
 // `cutInstallId` is lineage-validated INSIDE computeUpstreamDivergence

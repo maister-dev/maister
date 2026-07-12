@@ -52,7 +52,7 @@ export interface CreateExperimentFormProps {
   defaultBaseBranch: string;
   defaultVariants: ExperimentVariant[];
   defaultRubric: ExperimentRubric;
-  // ADR-129: server-filtered pin options for the currently selected task.
+  // ADR-132: server-filtered pin options for the currently selected task.
   pinOptions?: ExperimentPinOption[];
   busy: boolean;
   error: string | null;
@@ -427,7 +427,7 @@ export function CreateExperimentModal({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // ADR-129: the pin picker feed for the currently selected task; server
+  // ADR-132: the pin picker feed for the currently selected task; server
   // filters to the T4-valid set (never free-text). Fetch failure degrades to
   // an empty (disabled) picker — pins are optional.
   const [pinOptions, setPinOptions] = useState<ExperimentPinOption[]>([]);

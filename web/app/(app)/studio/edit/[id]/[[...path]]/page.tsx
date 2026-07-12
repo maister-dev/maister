@@ -195,11 +195,11 @@ export default async function StudioEditPage({
     changeReview: buildChangeReviewLabels(ts),
   };
 
-  // ADR-129 (T18): compare affordances exist only for forks with lineage.
+  // ADR-132 (T18): compare affordances exist only for forks with lineage.
   const divergence = pkg.sourceInstallId
     ? { cuts: await listPackageCuts(pkg.id) }
     : null;
-  // ADR-129 §d (T20): sync targets + the pending crash-window banner state.
+  // ADR-132 §d (T20): sync targets + the pending crash-window banner state.
   const syncOptions = await listSyncTargets(pkg);
   const sync = syncOptions
     ? {

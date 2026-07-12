@@ -198,7 +198,7 @@ describe("POST /api/projects/[slug]/experiments", () => {
     expect(mocks.createExperiment).not.toHaveBeenCalled();
   });
 
-  it("accepts variant config.packagePin through the REAL body schema and forwards it (ADR-129)", async () => {
+  it("accepts variant config.packagePin through the REAL body schema and forwards it (ADR-132)", async () => {
     const body = {
       taskId: "task-1",
       title: "Fork vs upstream",
@@ -225,7 +225,7 @@ describe("POST /api/projects/[slug]/experiments", () => {
     );
   });
 
-  it("rejects a packagePin with a non-uuid install id at the body boundary (ADR-129)", async () => {
+  it("rejects a packagePin with a non-uuid install id at the body boundary (ADR-132)", async () => {
     const res = await route.POST(
       request("POST", {
         taskId: "task-1",

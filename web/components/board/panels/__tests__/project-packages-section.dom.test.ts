@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-129 §c (T15): selecting a fork's cut whose package name collides with
+// ADR-132 §c (T15): selecting a fork's cut whose package name collides with
 // an existing attachment must NOT fire a doomed POST — the section shows the
 // rename explainer (fork shares its upstream's name) with a link to the
 // fork's Studio editor and keeps Attach disabled until a non-colliding
@@ -35,7 +35,12 @@ const attachment = {
   attachedAt: "2026-06-12T10:00:00.000Z",
   updateAvailable: false,
   upgradeTarget: null,
-  downgradeTargets: [] as { installId: string; versionLabel: string }[],
+  downgradeTargets: [] as {
+    installId: string;
+    versionLabel: string;
+    compatible: boolean;
+    incompatibilityReason: string | null;
+  }[],
   flows: ["aif-dev"],
 };
 
@@ -47,6 +52,8 @@ const installs = [
     resolvedRevision: "d".repeat(40),
     trustStatus: "trusted_by_policy",
     flows: ["aif-dev"],
+    compatible: true,
+    incompatibilityReason: null,
     sourceLocalPackageId: "lp-9",
   },
   {
@@ -56,6 +63,8 @@ const installs = [
     resolvedRevision: "c".repeat(40),
     trustStatus: "trusted_by_policy",
     flows: ["triager"],
+    compatible: true,
+    incompatibilityReason: null,
     sourceLocalPackageId: null,
   },
 ];

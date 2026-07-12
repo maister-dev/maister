@@ -121,7 +121,7 @@ describe("publishLocalPackage — branch validation", () => {
   });
 });
 
-describe("getPublishOptions — kind allow-list (ADR-129)", () => {
+describe("getPublishOptions — kind allow-list (ADR-132)", () => {
   type Row = Record<string, unknown>;
 
   function chain(rows: Row[]): PromiseLike<Row[]> & {
@@ -200,7 +200,7 @@ describe("getPublishOptions — kind allow-list (ADR-129)", () => {
   });
 });
 
-// ADR-129 (T21): the PR base resolution order is configured base_branch →
+// ADR-132 (T21): the PR base resolution order is configured base_branch →
 // remote default branch → "main".
 describe("resolvePrBase", () => {
   it("a configured base branch wins over the remote default", () => {
@@ -213,7 +213,7 @@ describe("resolvePrBase", () => {
   });
 });
 
-// ADR-129 (T21) regression pin: publish must never force-push — the force
+// ADR-132 (T21) regression pin: publish must never force-push — the force
 // capability stays quarantined outside this module. A `force:` ever appearing
 // in publish.ts is a contract break, whatever the call site.
 describe("no-force regression", () => {

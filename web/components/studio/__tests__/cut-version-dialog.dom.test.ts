@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-129 §c (T16): the cut dialog POSTs `adoptInProjectIds` ONLY for the
+// ADR-132 §c (T16): the cut dialog POSTs `adoptInProjectIds` ONLY for the
 // explicitly checked projects (default none — never background adoption),
 // renders per-project adopt outcomes as glyphs, and retries ONLY the failed
 // projects (the cut is content-addressed, so the re-POST re-uses the install).

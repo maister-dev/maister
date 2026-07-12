@@ -91,7 +91,7 @@ export type ExperimentComparisonRunDTO = {
   };
   files: ExperimentDiffFileSummary[];
   materializationDelta: ExperimentMaterializationDelta | null;
-  // ADR-129: package provenance of the run's snapshotted flow revision
+  // ADR-132: package provenance of the run's snapshotted flow revision
   // (runs.flow_revision ⋈ package_installs.resolved_revision); null when no
   // install matches (degradation — rendered without badges).
   provenance: ExperimentRunProvenanceDTO | null;
@@ -110,7 +110,7 @@ export type ExperimentComparisonDTO = {
   runs: ExperimentComparisonRunDTO[];
   verdict: ExperimentVerdictEnvelope | null;
   generatedAt: string;
-  // ADR-129: true when member runs span >1 distinct snapshotted flow
+  // ADR-132: true when member runs span >1 distinct snapshotted flow
   // revision — the package-version delta marker beside the
   // materialization delta.
   flowRevisionDelta: boolean;
@@ -369,7 +369,7 @@ export async function getExperimentComparison(
     ),
   });
   const runById = new Map(runRows.map((row) => [String(row.id), row]));
-  // ADR-129: provenance per DISTINCT snapshotted revision (replicates share
+  // ADR-132: provenance per DISTINCT snapshotted revision (replicates share
   // one lookup); degradation to null when no install matches.
   const distinctRevisions = [
     ...new Set(

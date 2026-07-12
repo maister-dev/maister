@@ -216,7 +216,7 @@ export async function releaseLock(
     .where(and(eq(lp.id, id), eq(lp.lockedBySession, sessionId)));
 }
 
-// (ADR-113, migration 0075; generalized ADR-129) STRICT per-package working-dir
+// (ADR-113, migration 0075; generalized ADR-132) STRICT per-package working-dir
 // mutex so two long working-dir mutations never interleave. Publish AND upstream
 // sync/resolve/abort all rewrite the same fork working dir, so they share ONE
 // lock — unlike the editor lock there is NO same-user/-session escape: an
@@ -254,7 +254,7 @@ export async function acquirePublishLock(id: string, db?: Db): Promise<Date> {
   return claimedAt;
 }
 
-// ADR-129: sync/resolve/abort mutate the same working dir as publish and must
+// ADR-132: sync/resolve/abort mutate the same working dir as publish and must
 // mutually exclude with it and with each other. They share the ONE per-package
 // working-dir mutex above — these aliases give the sync call sites an honest
 // name without duplicating the CAS logic.

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-129 (T18): drawer states — a CONFIG refusal (GC'd/unlinked source)
+// ADR-132 (T18): drawer states — a CONFIG refusal (GC'd/unlinked source)
 // renders the DEGRADED panel (not a generic failure), an empty divergence
 // renders the clean note, and the cut picker re-queries with cutInstallId.
 

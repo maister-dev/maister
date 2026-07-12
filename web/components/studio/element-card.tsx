@@ -38,7 +38,7 @@ export interface ElementCardProps {
   // user can still copy a meta/description field. Used by the local composition
   // view; the installed viewer keeps the explicit View button + fork control.
   clickableCard?: boolean;
-  // ADR-129 (T18): per-element "compare with upstream" entry. Only passed by
+  // ADR-132 (T18): per-element "compare with upstream" entry. Only passed by
   // CLIENT parents for elements with lineage + a content path — server callers
   // omit it (a callback cannot cross the RSC boundary), so it degrades to
   // absent exactly where element lineage does not exist.

@@ -18,7 +18,7 @@ import {
   refreshPackageSource,
 } from "@/lib/packages/catalog";
 
-// ADR-129 §c: a `kind: 'local'` source's refresh is a directory walk +
+// ADR-132 §c: a `kind: 'local'` source's refresh is a directory walk +
 // re-digest (no git) — digest-as-version. The digest label changes when a
 // file changes and is STABLE when nothing changed (idempotent re-check).
 

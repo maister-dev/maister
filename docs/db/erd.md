@@ -406,8 +406,8 @@ erDiagram
     PACKAGE_SOURCES {
         text id PK "ADR-088 Implemented"
         text url UK "git URL, or abs host path for kind local"
-        text kind "git or local; DEFAULT git (ADR-129, 0093)"
-        text base_branch "nullable; publish PR base for git sources (ADR-129, 0093)"
+        text kind "git or local; DEFAULT git (ADR-132, 0097)"
+        text base_branch "nullable; publish PR base for git sources (ADR-132, 0097)"
         boolean enabled "DEFAULT true"
         jsonb discovered "cached name+tags snapshot; DEFAULT []"
         timestamp last_checked_at "nullable"

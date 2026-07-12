@@ -339,7 +339,7 @@ describe("PR-to-source publish (integration)", () => {
     mockState.mode = "throw";
     const remoteShaBefore = await remoteBranchSha(barePath, branch);
 
-    // ADR-129 (T21): the refusal is TYPED — {reason: upstream_moved, canSync,
+    // ADR-132 (T21): the refusal is TYPED — {reason: upstream_moved, canSync,
     // localPackageId} — and the push is NEVER retried with force.
     await expect(
       publishLocalPackage(pkg.id, {
@@ -365,7 +365,7 @@ describe("PR-to-source publish (integration)", () => {
     expect(await remoteBranchSha(barePath, branch)).toBe(remoteShaBefore);
   });
 
-  // ADR-129 (T21): a fork WITH lineage advertises the sync path in the
+  // ADR-132 (T21): a fork WITH lineage advertises the sync path in the
   // refusal (`canSync: true`) — the dialog renders the sync CTA from it.
   it("upstream_moved on a fork with lineage → canSync: true", async () => {
     mockState.mode = "throw";
@@ -443,7 +443,7 @@ describe("PR-to-source publish (integration)", () => {
     expect(await remoteBranchSha(barePath, branch)).toBe(moved.trim());
   });
 
-  // ADR-129 (T21): a configured `base_branch` feeds the PR base ahead of the
+  // ADR-132 (T21): a configured `base_branch` feeds the PR base ahead of the
   // remote-default lookup (which a bare local remote cannot answer anyway).
   it("configured base_branch becomes the PR target branch", async () => {
     mockState.mode = "succeed";

@@ -13,7 +13,7 @@ import {
   parsePackageTags,
 } from "@/lib/packages/catalog";
 
-describe("packageSourceCreateBodySchema (ADR-129 kind/baseBranch)", () => {
+describe("packageSourceCreateBodySchema (ADR-132 kind/baseBranch)", () => {
   it("defaults kind to git when absent and accepts kind local", () => {
     expect(
       packageSourceCreateBodySchema.parse({ url: "https://example.com/repo" }),
@@ -47,7 +47,7 @@ describe("packageSourceCreateBodySchema (ADR-129 kind/baseBranch)", () => {
   });
 });
 
-describe("packageSourceUpdateBodySchema (ADR-129 baseBranch SET/CLEAR)", () => {
+describe("packageSourceUpdateBodySchema (ADR-132 baseBranch SET/CLEAR)", () => {
   it("accepts a baseBranch set and an explicit null clear", () => {
     expect(
       packageSourceUpdateBodySchema.parse({ baseBranch: "develop" }),
@@ -302,7 +302,7 @@ describe("defaultPackageSourceUrls (default-source env parse)", () => {
   });
 });
 
-describe("createPackageSource kind:git url validation (ADR-129 hardening)", () => {
+describe("createPackageSource kind:git url validation (ADR-132 hardening)", () => {
   function recordingDb(): { db: any; inserted: Record<string, unknown>[] } {
     const inserted: Record<string, unknown>[] = [];
 
@@ -360,7 +360,7 @@ describe("createPackageSource kind:git url validation (ADR-129 hardening)", () =
   });
 });
 
-describe("createPackageSource kind:local path validation (ADR-129)", () => {
+describe("createPackageSource kind:local path validation (ADR-132)", () => {
   function recordingDb(): { db: any; inserted: Record<string, unknown>[] } {
     const inserted: Record<string, unknown>[] = [];
 
@@ -462,7 +462,7 @@ describe("createPackageSource kind:local path validation (ADR-129)", () => {
   });
 });
 
-describe("digest-as-version carve by SOURCE KIND (ADR-129)", () => {
+describe("digest-as-version carve by SOURCE KIND (ADR-132)", () => {
   const localDiscovered = [
     {
       name: "aif",

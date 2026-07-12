@@ -9,7 +9,7 @@ import { getLocalPackage } from "@/lib/local-packages/service";
 import { resolveSync } from "@/lib/local-packages/sync";
 import { packageErrorResponse } from "@/lib/packages/http";
 
-// ADR-129 §d: complete a conflicted (or window-2 crashed) sync. The lib
+// ADR-132 §d: complete a conflicted (or window-2 crashed) sync. The lib
 // scans the UNION of the stamped conflicted files and every dirty file for
 // remaining markers, commits with `commitMessage` when the tree is still
 // uncommitted, then advances lineage + clears `sync_state` in ONE tx.

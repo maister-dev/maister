@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-129 §d (T20): the sync UI wiring — an installed target POSTs /sync
+// ADR-132 §d (T20): the sync UI wiring — an installed target POSTs /sync
 // with {sessionId, targetInstallId}; a discovered tag chains install→sync;
 // the banner's Resolve carries the optional commit message and Abort posts
 // only after confirm.

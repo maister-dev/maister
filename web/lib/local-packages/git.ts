@@ -205,7 +205,7 @@ export async function gitDiscardPaths(
   await git(dir, ["clean", "-fdq", "--", ...targets]);
 }
 
-// (ADR-129 T19) Per-file textual 3-way merge via `git merge-file`: merges
+// (ADR-132 T19) Per-file textual 3-way merge via `git merge-file`: merges
 // `theirs` into `ours` IN PLACE against `base`. Exit 0 = clean; exit > 0 =
 // the number of conflicts (markers already written into `ours`); other
 // failures throw. `markerLabel` names the theirs side in the markers
@@ -246,7 +246,7 @@ export async function gitMergeFile(
   }
 }
 
-// (ADR-129 T17) Two-directory unified diff outside any repo: `git diff
+// (ADR-132 T17) Two-directory unified diff outside any repo: `git diff
 // --no-index` exits 0 on identical trees and 1 on differences — BOTH are
 // success here; other exits (bad path etc.) throw. A diff cut at maxBuffer
 // degrades to the partial text with `truncated: true` (callers surface the

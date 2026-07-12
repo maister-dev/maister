@@ -123,7 +123,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const entry = (source.discovered ?? []).find(
         (d: { name: string; dir: string }) => d.name === body.name,
       );
-      // ADR-129: a kind:local source installs its CURRENT bytes — the version
+      // ADR-132: a kind:local source installs its CURRENT bytes — the version
       // label is server-derived from the content digest (`local-<digest12>`),
       // never the client-echoed body value; a root-manifest source (dir ".")
       // installs from the source root.

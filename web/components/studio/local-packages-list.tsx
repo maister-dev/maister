@@ -28,7 +28,7 @@ import { readApiError } from "@/lib/api-error";
 
 // Client-safe local-package list item. `working_dir` and the lock session are
 // server-only and intentionally absent (D1/D10); `isDefault`/`status` are flags.
-// `adoptTargets` (ADR-129) = projects whose attachment points at a cut of this
+// `adoptTargets` (ADR-132) = projects whose attachment points at a cut of this
 // package — the cut dialog's multi-select; repo paths stay server-side.
 export type LocalPackageListItem = {
   id: string;
@@ -159,7 +159,7 @@ export function LocalPackagesList({
     }
   }
 
-  // ADR-129 (T16): cutting goes through the dialog — it owns the POST and the
+  // ADR-132 (T16): cutting goes through the dialog — it owns the POST and the
   // optional "adopt in attached projects now" multi-select.
   const cuttingPkg =
     cutDialogId === null

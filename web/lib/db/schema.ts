@@ -3147,13 +3147,13 @@ export const capabilityImports = pgTable(
 // successful refresh ([{name, tags[]}]); failures keep the stale snapshot.
 export const packageSources = pgTable("package_sources", {
   id: text("id").primaryKey(),
-  // ADR-129: a git URL for kind 'git'; the ABSOLUTE host directory path for
+  // ADR-132: a git URL for kind 'git'; the ABSOLUTE host directory path for
   // kind 'local' (admin-registered, digest-as-version discovery).
   url: text("url").notNull().unique("package_sources_url_uq"),
   kind: text("kind", { enum: ["git", "local"] })
     .notNull()
     .default("git"),
-  // ADR-129: per-source publish PR base (git sources only). NULL =
+  // ADR-132: per-source publish PR base (git sources only). NULL =
   // auto-detect the remote default branch, fallback "main".
   baseBranch: text("base_branch"),
   enabled: boolean("enabled").notNull().default(true),
@@ -3179,7 +3179,7 @@ export type DiscoveredPackageEntry = {
   // packages/<dir> subdir in the source monorepo (may differ from name).
   dir: string;
   tags: string[];
-  // ADR-129: `local-<digest12>` of the package dir's CURRENT bytes — local
+  // ADR-132: `local-<digest12>` of the package dir's CURRENT bytes — local
   // sources only (digest-as-version; git sources keep tags).
   digestVersionLabel?: string;
 };
@@ -3321,7 +3321,7 @@ export const localPackages = pgTable(
       withTimezone: true,
       mode: "date",
     }),
-    // ADR-129 (migration 0093): durable upstream-sync intent. Persisted in a tx
+    // ADR-132 (migration 0097): durable upstream-sync intent. Persisted in a tx
     // BEFORE the first merge disk write; cleared in the SAME tx that advances
     // the fork lineage (source_install_id/source_ref). NULL = no sync in flight;
     // pending + tree state is the single crash-window discriminant.
@@ -3334,7 +3334,7 @@ export const localPackages = pgTable(
   }),
 );
 
-// ADR-129: the sync_state jsonb contract — {targetInstallId, targetRef,
+// ADR-132: the sync_state jsonb contract — {targetInstallId, targetRef,
 // conflictedFiles, startedAt(ISO)}. conflictedFiles empty = "syncing";
 // non-empty = "conflicted"; the resolve marker scan is the UNION of these
 // files' current bytes and the dirty set (the list is a display hint).

@@ -268,7 +268,7 @@ describe("project packages routes (integration)", () => {
   });
 });
 
-// ADR-129 §c (T15): a fork's cut shares its upstream's package name — the
+// ADR-132 §c (T15): a fork's cut shares its upstream's package name — the
 // (projectId, packageName) unique surfaces as a TYPED 409 naming the
 // collision and the rename path, never an opaque DB error or the downstream
 // flow-id message. After the Studio rename journey (manifest name + flow id

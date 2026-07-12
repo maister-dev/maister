@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// ADR-129 §d: the three sync routes are thin — member-gated, strict bodies
+// ADR-132 §d: the three sync routes are thin — member-gated, strict bodies
 // carrying the edit-lock sessionId (commit-route idiom), 404 pre-check, and
 // typed-error mapping (CONFLICT→409, PRECONDITION→409, CONFIG→422). The
 // precondition MATRIX itself is proven on real PG+git in

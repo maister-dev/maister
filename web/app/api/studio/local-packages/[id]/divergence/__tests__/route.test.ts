@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// ADR-129 (T17): the divergence route is read-only (active session, no lock),
+// ADR-132 (T17): the divergence route is read-only (active session, no lock),
 // shape-validates `element` at the boundary, forwards `cutInstallId` for
 // lineage validation inside the lib, and maps typed errors (CONFIG → 422 —
 // the "source install unavailable" degradation the UI renders).

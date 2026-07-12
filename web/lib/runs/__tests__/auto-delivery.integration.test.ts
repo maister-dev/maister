@@ -191,7 +191,7 @@ describe("deliverRunIfAutoReady — C1 OR-combine with execution policy", () => 
   });
 });
 
-// ADR-129 (enforcing ADR-124): an experiment-member run NEVER auto-promotes —
+// ADR-132 (enforcing ADR-124): an experiment-member run NEVER auto-promotes —
 // winner promotion is the explicit human path. The two implemented ADR arms (the
 // ADR-126 sweep SQL prefilter + the evaluate `not_applicable` term) do NOT cover
 // the auto_on_ready autopilot that reaches promotion through deliverRunIfAutoReady
@@ -233,7 +233,7 @@ async function seedExperimentMembership(runId: string): Promise<void> {
   });
 }
 
-describe("ADR-129 experiment-member auto-promotion exclusion", () => {
+describe("ADR-132 experiment-member auto-promotion exclusion", () => {
   it("short-circuits an experiment-member run WITHOUT degrading its delivery policy", async () => {
     const runId = await seedReviewRun({
       executionPolicy: { preset: "unattended" },

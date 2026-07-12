@@ -35,7 +35,7 @@ export function VariantEditor({
 }: {
   labels: VariantEditorLabels;
   variants: ExperimentVariant[];
-  // ADR-129: server-filtered eligible installs for the task's flow — the
+  // ADR-132: server-filtered eligible installs for the task's flow — the
   // package-pin picker is never free-text.
   pinOptions?: ExperimentPinOption[];
   minVariants?: number;

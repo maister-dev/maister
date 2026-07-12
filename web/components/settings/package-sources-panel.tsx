@@ -252,7 +252,7 @@ export function PackageSourcesPanel({
                       </td>
                       <td className="px-4 py-3">
                         {pkg.tags.length === 0 && pkg.digestVersionLabel ? (
-                          // ADR-129: a local source offers exactly its CURRENT
+                          // ADR-132: a local source offers exactly its CURRENT
                           // digest — one install chip, no tag list.
                           <button
                             className="h-8 rounded-[8px] border border-line px-3 font-mono text-[11.5px] text-ink hover:bg-ivory disabled:opacity-50"

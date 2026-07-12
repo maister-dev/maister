@@ -297,7 +297,7 @@ export async function createExperiment(
     );
   }
 
-  // ADR-129 §b: batch-validate every variant packagePin NOW — "creatable now,
+  // ADR-132 §b: batch-validate every variant packagePin NOW — "creatable now,
   // unlaunchable later" is a design defect, so create refuses early. Launch
   // fan-out re-validates (launch stays authoritative).
   await assertVariantPackagePinsLaunchable({

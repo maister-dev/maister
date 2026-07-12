@@ -109,7 +109,7 @@ describe("ProjectPackagesSection", () => {
     expect(markup).not.toContain("aif@aif/v2.0.0</option>");
   });
 
-  // ADR-129 §c (T15): a local cut stays selectable even when its name
+  // ADR-132 §c (T15): a local cut stays selectable even when its name
   // collides with an attached package (the explainer handles the collision);
   // an upstream sibling version of an attached name stays hidden (upgrade
   // path, not attach path).

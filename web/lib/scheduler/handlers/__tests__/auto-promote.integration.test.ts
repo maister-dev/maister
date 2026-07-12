@@ -349,7 +349,7 @@ describe("runSchedulerTick × auto_promote — through-dispatch (codex F2)", () 
   });
 });
 
-describe("runAutoPromoteJob — ADR-129: experiment members are never candidates", () => {
+describe("runAutoPromoteJob — ADR-132: experiment members are never candidates", () => {
   async function makeMember(runId: string, taskId: string): Promise<void> {
     const experimentId = randomUUID();
 

@@ -8,7 +8,7 @@ import { useTranslations } from "next-intl";
 
 import { readApiError } from "@/lib/api-error";
 
-// ADR-129 §d (T20): the sync UI pair.
+// ADR-132 §d (T20): the sync UI pair.
 // - UpstreamSyncButton lives in the editor's breadcrumb action cluster
 //   (beside the divergence entry) and owns the target-picker dialog:
 //   installed versions POST /sync directly; a discovered-but-uninstalled

@@ -12,7 +12,7 @@ import { useTranslations } from "next-intl";
 
 import { DiffView } from "@/components/workbench/diff-view";
 
-// ADR-129 (T18): read-only fork-vs-upstream divergence drawer — the
+// ADR-132 (T18): read-only fork-vs-upstream divergence drawer — the
 // LocalPackageDiffDrawer pattern minus the commit/discard bar. Ours = the
 // fork working dir (default) or one of its cuts (header picker); theirs =
 // the lineage source install. A GC'd/unlinked source (422 CONFIG) renders a

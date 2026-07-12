@@ -3,7 +3,7 @@
 - **Routes:** `/projects/{slug}/experiments`,
   `/projects/{slug}/experiments/{experimentId}`
 - **Status:** Implemented (ADR-124, Phase 1); package-pin variant axis +
-  per-run provenance header (ADR-129)
+  per-run provenance header (ADR-132)
 - **Source:** `web/app/(app)/projects/[slug]/experiments/page.tsx`,
   `web/app/(app)/projects/[slug]/experiments/[experimentId]/page.tsx`,
   `web/components/experiments/*`
@@ -64,7 +64,7 @@ flowchart TD
   title/description, base branch and optional explicit ref, variant editor, and
   rubric editor pre-filled from the platform default template. Variant config
   validates the closed registry and localizes errors. The variant editor's
-  **package pin picker** (ADR-129) lists only server-filtered eligible
+  **package pin picker** (ADR-132) lists only server-filtered eligible
   installs for the task's flow — upstream installs of the attached package
   plus local cuts carrying the flow's `flowRefId`, each labeled with its
   version (`local-<digest12>` or tag) and a local-cut vs upstream chip; it is
@@ -76,7 +76,7 @@ flowchart TD
   status tone, duration, queue position for `Pending`, launch reason, run link,
   and compact node status strip. Failed/crashed members stay visible and do not
   hide the conclude affordance once the experiment is comparable. Variant
-  headers carry **provenance badges** (ADR-129): package name, the
+  headers carry **provenance badges** (ADR-132): package name, the
   digest/version label (`local-<digest12>` or tag), and a local-cut vs
   upstream chip — following the runnerId badge idiom; runs whose provenance
   cannot be resolved render without badges (null degradation). A
@@ -147,7 +147,7 @@ Uses `experiments`, `experimentLab`, `experimentCreate`, `experimentVerdict`,
 ## Linked Artifacts
 
 - ADR: [#adr-124](../../decisions.md#adr-124-experiment-comparison-studio-for-pinned-base-comparison-runs),
-  [#adr-129](../../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
+  [#adr-132](../../decisions.md#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
   (package pin axis + provenance header).
 - API contracts:
   [`../../api/web.openapi.yaml`](../../api/web.openapi.yaml),

@@ -117,7 +117,7 @@ export function PackageComposition({
     files: AuthoredFlowPackageFile[],
     navigate: string,
   ) => void;
-  // ADR-129 (T18): opens the divergence drawer scoped to one element path.
+  // ADR-132 (T18): opens the divergence drawer scoped to one element path.
   // Absent when the package has no upstream lineage — compare entries degrade
   // silently to absent.
   onCompareElement?: (path: string) => void;
@@ -843,7 +843,7 @@ type InlineItem = {
   id: string;
   description: string | null;
   meta: string | null;
-  // Package-relative content path (ADR-129 T18 compare scope); null where the
+  // Package-relative content path (ADR-132 T18 compare scope); null where the
   // kind has no per-element path (mcps).
   path: string | null;
 };
@@ -870,7 +870,7 @@ function inlineItems(
       }));
     case "mcps":
       // MCPs have no per-element content path — the compare entry degrades
-      // silently to absent (ADR-129 T18).
+      // silently to absent (ADR-132 T18).
       return bom.mcps.map((m) => ({
         id: m.id,
         description: null,

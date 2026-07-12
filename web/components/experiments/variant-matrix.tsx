@@ -89,7 +89,7 @@ export function VariantMatrix({
                     </span>
                   ) : null}
                   {(() => {
-                    // ADR-129: provenance badges — package name · version ·
+                    // ADR-132: provenance badges — package name · version ·
                     // local-cut vs upstream chip (runnerId badge idiom).
                     const provenance = runs.find(
                       (run) => run.provenance !== null,

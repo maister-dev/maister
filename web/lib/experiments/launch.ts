@@ -378,7 +378,7 @@ export async function launchExperimentVariants(
     variants,
     db: _db,
   });
-  // ADR-129 §b: re-validate every variant packagePin against the pin matrix
+  // ADR-132 §b: re-validate every variant packagePin against the pin matrix
   // BEFORE the first side effect — a bad pin on variant B must not launch
   // variant A (launch stays authoritative over the create-time check).
   await assertVariantPackagePinsLaunchable({
@@ -433,7 +433,7 @@ export async function launchExperimentVariants(
         taskId: experiment.taskId,
         runnerId: item.variant.config.runnerId,
         executionPolicy: item.variant.config.executionPolicy,
-        // ADR-129: explicit threading — the pin does NOT auto-flow from the
+        // ADR-132: explicit threading — the pin does NOT auto-flow from the
         // variant config (the capabilityOverlay precedent); launchRun
         // re-validates it via the shared matrix.
         packagePin: item.variant.config.packagePin,

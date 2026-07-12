@@ -12,7 +12,7 @@ import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 const { tasks, flows, packageInstalls, flowRevisions } =
   schemaModule as unknown as Record<string, any>;
 
-// ADR-129 §b: batch-validate every variant `packagePin` against the pin
+// ADR-132 §b: batch-validate every variant `packagePin` against the pin
 // matrix for the experiment task's flow. Runs at CREATE time (an experiment
 // that is creatable now but unlaunchable later is a design defect) and again
 // at launch fan-out BEFORE the first side effect (launch stays
@@ -60,7 +60,7 @@ export async function assertVariantPackagePinsLaunchable(args: {
   }
 }
 
-// ADR-129 §b: the variant-editor picker feed — the T4-valid install set for
+// ADR-132 §b: the variant-editor picker feed — the T4-valid install set for
 // the task's flow: Installed + trusted (allow-list) installs shipping a
 // member revision with the flow's ref id. Never free-text; the client only
 // ever picks from this server-filtered set.

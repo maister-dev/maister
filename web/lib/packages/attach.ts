@@ -688,7 +688,7 @@ export async function attachPackage(opts: {
   const flowIds = manifest.spec.flows.map((f) => f.id);
 
   const attached: AttachResult = await db.transaction(async (tx: any) => {
-    // Name pre-guard (ADR-129 §c): a fork's cut shares its upstream's
+    // Name pre-guard (ADR-132 §c): a fork's cut shares its upstream's
     // package name, so (projectId, packageName) would collide — and a whole-
     // package fork also collides on flow ids, so the flow guard below would
     // otherwise mask the real problem. Refuse with the rename path first.

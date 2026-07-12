@@ -22,7 +22,7 @@ type State = {
   experimentRuns: Row[];
   capabilityRecords?: Row[];
   platformAcpRunners?: Row[];
-  // ADR-129 packagePin batch validation reads: task → flow → pinned installs
+  // ADR-132 packagePin batch validation reads: task → flow → pinned installs
   // → member flow revisions.
   tasks?: Row[];
   flows?: Row[];
@@ -159,7 +159,7 @@ afterEach(() => {
 });
 
 
-describe("launchExperimentVariants — packagePin axis (ADR-129)", () => {
+describe("launchExperimentVariants — packagePin axis (ADR-132)", () => {
   const PIN_ID = "2c2f0f9e-6c1e-4d7a-9b1a-0e6cf4b1a111";
 
   function pinState(overrides: Partial<State> = {}): State {

@@ -308,7 +308,7 @@ export type LaunchRunInput = {
     string,
     "keep" | "adopt" | "cut_and_adopt" | "try_once"
   >;
-  // ADR-129 §a: ephemeral per-run package pin. The task flow's revision
+  // ADR-132 §a: ephemeral per-run package pin. The task flow's revision
   // resolves from THIS `package_installs` row (join on the flow's flowRefId +
   // the install's resolvedRevision) instead of the attachment's enabled
   // pointer; `project_package_attachments` is never mutated. Internal callers
@@ -524,7 +524,7 @@ export type LaunchRunContext = {
 // `precondition → worktree_created → materializing(<adapter>)` and then returns
 // the terminal `{runId, status, queuePosition?}`. `opts.signal` aborts at the
 // materialize boundary → the existing worktree compensation (pre-commit GC).
-// ADR-129 §a: the ephemeral-pin matrix lives in the neutral
+// ADR-132 §a: the ephemeral-pin matrix lives in the neutral
 // `@/lib/packages/pin` module (shared with the experiments create/fan-out
 // batch validation). This wrapper adapts it to the launch path's flow row.
 async function resolvePinnedFlowRevision(
@@ -740,7 +740,7 @@ export async function* launchRunStaged(
     );
   }
 
-  // ADR-129 §a: validate the ephemeral per-run package pin as a cheap
+  // ADR-132 §a: validate the ephemeral per-run package pin as a cheap
   // deterministic precondition, hoisted BEFORE applyPackageVersionChoices so a
   // refused pin never triggers the adopt/revert compensation window. The
   // resolved revision then flows through the SAME downstream guards
@@ -804,7 +804,7 @@ export async function* launchRunStaged(
       flow = reloadedFlow[0];
     }
 
-    // ADR-129: translate try_once choices into the ephemeral per-run pin.
+    // ADR-132: translate try_once choices into the ephemeral per-run pin.
     // Inside the compensation window on purpose — a refused translation after
     // a same-launch adopt must revert that adopt (outer catch). The pin matrix
     // re-validates the target cut; an install that does not ship THIS flow
@@ -870,7 +870,7 @@ export async function* launchRunStaged(
     // Installed revision for this flow_ref_id (a just-published authored revision
     // floats in via the bridge). The per-revision guards below still gate the
     // RESOLVED revision (packageStatus/setupStatus/engine/schema).
-    // ADR-129: an ephemeral packagePin overrides the resolution — the
+    // ADR-132: an ephemeral packagePin overrides the resolution — the
     // already-loaded pinned revision IS the effective revision (no re-select;
     // launch-time decision, persisted via the snapshot columns below).
     const effectiveRevisionId = pinnedRevision

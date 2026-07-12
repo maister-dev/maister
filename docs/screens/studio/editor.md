@@ -166,7 +166,7 @@ correctness and first-class kinds (behavior SSOT:
   Platform Agent / Subagent / Skill, with seeded templates) are **deferred** (#134,
   A4); `newSubagentTemplate` exists but is not yet wired into a create flow.
 
-### Fork ↔ upstream surface (ADR-129)
+### Fork ↔ upstream surface (ADR-132)
 
 For a local package **with fork lineage** (`source_install_id` set), the
 breadcrumb action cluster (next to Commit-state / Publish) gains two entries;
@@ -183,7 +183,7 @@ neither renders for lineage-less packages:
   install unavailable") renders an explanatory panel, never a crash.
 - **Update fork from upstream** — the sync entry: an upstream **tag picker**
   fed from the lineage source's discovered tags; "install & sync" installs
-  the chosen tag through the normal install path, then runs the ADR-129
+  the chosen tag through the normal install path, then runs the ADR-132
   synthetic 3-way merge.
 
 **Sync banner.** While `local_packages.sync_state` is pending, the editor
@@ -206,7 +206,7 @@ Behavior SSOT:
 [`../../system-analytics/local-packages.md`](../../system-analytics/local-packages.md)
 §"Fork ↔ upstream loop".
 
-**Publish refusal (ADR-129).** When publish is rejected non-fast-forward, the
+**Publish refusal (ADR-132).** When publish is rejected non-fast-forward, the
 `PublishDialog` renders the typed "upstream moved — sync first" refusal: with
 fork lineage (`details.canSync`) it offers a **Sync from upstream** CTA
 linking the sync entry above; without lineage it shows manual-reconcile
@@ -359,7 +359,7 @@ labels, the existing node-form / toolbar / validation keys, the M38
 reference-picker keys under `flowEditor.nodeForm.schemaRef*`, and the
 `flowEditor.nodeForm.{promptComposer,multiSelect,stringList}*` structured-control
 keys),
-`flows` (page header + save hint), and the ADR-129 `studio.divergence.*` +
+`flows` (page header + save hint), and the ADR-132 `studio.divergence.*` +
 `studio.sync.*` namespaces (drawer, banner, conflict list, refusals). EN + RU
 parity required.
 
@@ -372,7 +372,7 @@ parity required.
   (M38 `decide` routing panel + outcome-labeled edges),
   [#adr-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)
   (M41 consensus node),
-  [#adr-129](../../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
+  [#adr-132](../../decisions.md#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
   (divergence drawer, sync banner, publish sync-first refusal).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-editor.md`](../../../.ai-factory/specs/feature-flow-studio-editor.md).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-reference-pickers.md`](../../../.ai-factory/specs/feature-flow-studio-reference-pickers.md)

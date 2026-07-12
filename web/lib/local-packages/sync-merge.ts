@@ -16,7 +16,7 @@ import { gitMergeFile } from "./git";
 
 import { MaisterError } from "@/lib/errors";
 
-// ADR-129 §d (T19): synthetic 3-way merge over exported TREES — no shared git
+// ADR-132 §d (T19): synthetic 3-way merge over exported TREES — no shared git
 // history exists between a fork and its source installs, so the merge is
 // byte-level per file: base = the fork's original source install, theirs =
 // the sync-target install, ours = the fork working dir (mutated IN PLACE).

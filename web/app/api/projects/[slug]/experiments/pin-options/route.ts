@@ -21,7 +21,7 @@ const log = pino({
 
 type RouteParams = { params: Promise<{ slug: string }> };
 
-// ADR-129 §b: the variant-editor package-pin picker feed. Read-only,
+// ADR-132 §b: the variant-editor package-pin picker feed. Read-only,
 // `readExperiments`-gated. `taskId` is a query param validated against the
 // slug-derived project (a task outside the project is a CONFIG refusal — the
 // picker never leaks another project's installs through a forged id).

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// ADR-129 §c (T16): `adoptInProjectIds` advances already-attached projects to
+// ADR-132 §c (T16): `adoptInProjectIds` advances already-attached projects to
 // the new cut in the same request. Contract pinned here: authz + eligibility
 // for EVERY id are validated BEFORE the irreversible cut (refusal → nothing
 // mutated); after the cut, adopts are per-project after-writes whose failures
@@ -98,7 +98,7 @@ beforeEach(() => {
   mocks.upgradeAttachment.mockResolvedValue({ upgraded: true });
 });
 
-describe("cut-version adoptInProjectIds (ADR-129)", () => {
+describe("cut-version adoptInProjectIds (ADR-132)", () => {
   it("refuses an INELIGIBLE project id with 409 BEFORE the cut (upstream-pinned project)", async () => {
     const res = await POST(req({ adoptInProjectIds: ["p-upstream"] }), ctx());
 

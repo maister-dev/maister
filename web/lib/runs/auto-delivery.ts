@@ -89,7 +89,7 @@ export async function deliverRunIfAutoReady(
     return;
   }
 
-  // ADR-129: an experiment-member run never auto-delivers. The promote choke
+  // ADR-132: an experiment-member run never auto-delivers. The promote choke
   // point is the authoritative guard; this ordering short-circuit avoids a
   // spurious degrade-to-manual on the member's delivery policy.
   if (await isExperimentMemberRun(db, runId)) {

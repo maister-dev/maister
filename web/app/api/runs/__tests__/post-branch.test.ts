@@ -175,7 +175,7 @@ describe("POST /api/runs — branch-targeting body schema (M18)", () => {
   });
 });
 
-describe("POST /api/runs — ADR-129 packageVersions try_once option", () => {
+describe("POST /api/runs — ADR-132 packageVersions try_once option", () => {
   it("accepts try_once through the REAL body schema and forwards it to launchRun", async () => {
     const res = await POST(
       request({

@@ -21,7 +21,7 @@ import {
 } from "@/lib/packages/catalog";
 import { getProjectPackageAttachments } from "@/lib/queries/packages";
 
-// ADR-129 §c acceptance #6 chain: an arbitrary host directory registers as a
+// ADR-132 §c acceptance #6 chain: an arbitrary host directory registers as a
 // kind:local source → discovers → installs with a digest label → attaches to
 // a project like a git source → `updateAvailable` stays false until the host
 // dir mutates and a re-check re-digests (digest-as-version, by-kind carve).

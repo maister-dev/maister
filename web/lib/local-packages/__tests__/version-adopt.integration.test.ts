@@ -208,7 +208,7 @@ describe("version-adopt launch (integration)", () => {
     expect(install.sourceCommitSha).toBe(await gitHeadSha(pkg.workingDir));
   });
 
-  it("resolvePackageProvenanceByRevision covers BOTH arms + null degradation (ADR-129)", async () => {
+  it("resolvePackageProvenanceByRevision covers BOTH arms + null degradation (ADR-132)", async () => {
     const project = await createProject();
     const { pinInstallId } = await forkCutAttach("srcpkg", project);
 
@@ -234,7 +234,7 @@ describe("version-adopt launch (integration)", () => {
     });
 
     // Upstream arm: a never-forked install's revision resolves with kind
-    // upstream — the ADR-129 extension beyond local cuts.
+    // upstream — the ADR-132 extension beyond local cuts.
     const [neverForked] = await db
       .select()
       .from(schema.packageInstalls)
@@ -295,7 +295,7 @@ describe("version-adopt launch (integration)", () => {
     ).toHaveLength(0);
   });
 
-  it("`try_once` returns a per-run pin instruction — no revert, attachment untouched (ADR-129)", async () => {
+  it("`try_once` returns a per-run pin instruction — no revert, attachment untouched (ADR-132)", async () => {
     const project = await createProject();
     const { pkg, pinInstallId, attachmentId } = await forkCutAttach(
       "srcpkg",

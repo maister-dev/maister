@@ -9,7 +9,7 @@ import { abortSync } from "@/lib/local-packages/sync";
 import { getLocalPackage } from "@/lib/local-packages/service";
 import { packageErrorResponse } from "@/lib/packages/http";
 
-// ADR-129 §d: abort a pending sync — `git reset --hard HEAD` semantics
+// ADR-132 §d: abort a pending sync — `git reset --hard HEAD` semantics
 // (checkout HEAD + clean untracked; structurally safe: the tree was clean
 // pre-merge) + clear `sync_state`. Never rewrites fork commits. Idempotent:
 // no pending sync → no-op 200. 409 only when another working-dir op holds the

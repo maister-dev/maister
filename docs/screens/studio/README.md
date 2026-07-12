@@ -156,7 +156,7 @@ palette (muted, not rainbow); these are roles, not hex.
 
 ### 2. Sources — `/studio/sources` (Implemented — Phase A; relocated panel)
 
-Dedicated doc: [`sources.md`](sources.md) — including the ADR-129 additions
+Dedicated doc: [`sources.md`](sources.md) — including the ADR-132 additions
 (kind toggle `git | local`, local-path validation errors, per-source base
 branch, per-source re-check button).
 

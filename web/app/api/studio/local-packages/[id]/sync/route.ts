@@ -9,7 +9,7 @@ import { getLocalPackage } from "@/lib/local-packages/service";
 import { syncFromUpstream } from "@/lib/local-packages/sync";
 import { packageErrorResponse } from "@/lib/packages/http";
 
-// ADR-129 §d: start (or window-1 Resume — the same-target re-POST) an
+// ADR-132 §d: start (or window-1 Resume — the same-target re-POST) an
 // upstream sync. `id` is a url-param (→ server row → working_dir);
 // `targetInstallId` is a body id resolved to a server row and validated
 // against the lineage (same package name + source URL) INSIDE the lib —

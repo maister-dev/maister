@@ -43,7 +43,7 @@ export type VersionAdoptOption =
   | "keep"
   | "adopt"
   | "cut_and_adopt"
-  // ADR-129: ephemeral per-run pin to the newest cut — the attachment is
+  // ADR-132: ephemeral per-run pin to the newest cut — the attachment is
   // never advanced; offered exactly when `adopt` is offered.
   | "try_once";
 
@@ -107,7 +107,7 @@ export async function cutLocalPackageVersion(
   }
 }
 
-// ADR-129 §c (T16): the projects eligible for "adopt in attached projects
+// ADR-132 §c (T16): the projects eligible for "adopt in attached projects
 // now" at cut time — those whose CURRENT attachment for this package points
 // at a cut of THIS local package (`package_installs.source_local_package_id`
 // = the package id). Projects attached to the UPSTREAM install of the same
@@ -123,7 +123,7 @@ export type AdoptTargetProject = {
   attachmentId: string;
 };
 
-// ADR-129 §d (T20): the sync dialog's target set for a fork with lineage —
+// ADR-132 §d (T20): the sync dialog's target set for a fork with lineage —
 // already-installed OTHER versions of the lineage package (same name +
 // sourceUrl), plus the lineage source's discovered-but-uninstalled tags for
 // the "install & sync" path. Null when the lineage row is gone (the
@@ -192,7 +192,7 @@ export async function listSyncTargets(
 }
 
 // The package's OWN cuts (newest first) — the divergence drawer's picker
-// (ADR-129 T18). Client-safe pair only; installed paths stay server-side.
+// (ADR-132 T18). Client-safe pair only; installed paths stay server-side.
 export async function listPackageCuts(
   localPackageId: string,
   db?: Db,
@@ -349,7 +349,7 @@ export async function detectAvailablePackageVersions(opts: {
 // attachment to its prior install if the launch fails after the adopt.
 export type AdoptRevert = { attachmentId: string; priorInstallId: string };
 
-// ADR-129: a `try_once` choice translated into an ephemeral per-run pin
+// ADR-132: a `try_once` choice translated into an ephemeral per-run pin
 // instruction — the launch resolves the flow revision from this TARGET cut
 // install; no attachment mutation happened and no AdoptRevert exists.
 export type TryOncePin = { packageInstallId: string; packageName: string };
@@ -367,7 +367,7 @@ const NO_CHOICES: PackageVersionChoicesResult = {
 // Apply the launcher's per-package version choices BEFORE the enablement check in
 // `launchRunStaged`. Returns the per-attachment reverts it made (empty = nothing
 // advanced) so the caller can re-pin if the launch fails AFTER the adopt
-// (adopt+launch is atomic), plus the ADR-129 `try_once` pin instructions
+// (adopt+launch is atomic), plus the ADR-132 `try_once` pin instructions
 // (validated like `adopt` but with NO attachment write and NO compensation).
 // `keep` / absent choices = no-op. A key not in the
 // detected set, or an option not offered for that package, → CONFLICT (409); a
@@ -430,7 +430,7 @@ export async function applyPackageVersionChoices(opts: {
         `package "${avail.packageName}" has no newer cut to ${choice === "adopt" ? "adopt" : "try"}`,
       );
     }
-    // ADR-129: try_once validates like adopt but mutates NOTHING — it becomes
+    // ADR-132: try_once validates like adopt but mutates NOTHING — it becomes
     // an ephemeral per-run pin instruction the launch translates into the
     // packagePin resolution (which re-validates the full pin matrix).
     if (choice === "try_once") {
@@ -569,13 +569,13 @@ export type RunPackageProvenance = {
   packageName: string;
   versionLabel: string;
   localPackageName: string | null;
-  // ADR-129: provenance kind + short digest for the comparison-lab badges.
+  // ADR-132: provenance kind + short digest for the comparison-lab badges.
   kind: "local_cut" | "upstream";
   installDigest12: string;
 };
 
 // Provenance for a run's snapshotted flow revision: match `runs.flow_revision`
-// to the install that shipped it. Two arms (ADR-129): a centralized local-cut
+// to the install that shipped it. Two arms (ADR-132): a centralized local-cut
 // install (carries `source_local_package_id`) or a plain upstream install.
 // Derivable with NO `runs` column (ADR-107). Null when no install matches
 // (degradation — the lab renders the run without package badges). A local-cut

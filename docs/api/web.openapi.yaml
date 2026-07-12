@@ -2661,7 +2661,7 @@ paths:
         are explicit DTOs and never include worktree paths, adapter argv/env, or
         internal materialization paths.
 
-        (ADR-129) Variant `config.packagePin` is batch-validated at create —
+        (ADR-132) Variant `config.packagePin` is batch-validated at create —
         every pinned install must exist (`CONFIG`), be `Installed` + trusted
         (`PRECONDITION`), and carry the task-flow's `flowRefId` (`CONFIG`) —
         so an unlaunchable pin refuses here, not at fan-out.
@@ -2703,9 +2703,9 @@ paths:
   /api/projects/{slug}/experiments/pin-options:
     get:
       tags: [experiments]
-      summary: (ADR-129 — Implemented) Eligible package-pin installs for a task's flow
+      summary: (ADR-132 — Implemented) Eligible package-pin installs for a task's flow
       description: |
-        (ADR-129 §b.) The variant-editor package-pin picker feed — the
+        (ADR-132 §b.) The variant-editor package-pin picker feed — the
         server-filtered eligible install set for the task's flow: `Installed`
         + trusted (`trusted` / `trusted_by_policy` allow-list) installs
         shipping a member revision with the flow's ref id (upstream installs
@@ -2786,7 +2786,7 @@ paths:
         `PRECONDITION`. The whole batch is validated before the first side
         effect: pinned `baseCommit` exists, overlay refs resolve, class x
         adapter compatibility holds, runner/policy settings are valid, and
-        (ADR-129) every variant `config.packagePin` re-validates against the
+        (ADR-132) every variant `config.packagePin` re-validates against the
         pin matrix (launch stays authoritative; the pin is threaded into
         `launchRun` and never mutates `project_package_attachments`).
         Each member run then goes through standard `launchRun`; the
@@ -8000,11 +8000,11 @@ paths:
       tags: [flow-packages, admin]
       summary: (ADR-088 — Implemented) Add a platform package source
       description: |
-        (ADR-088 — Implemented; `kind`/`baseBranch` ADR-129.) Admin-only.
+        (ADR-088 — Implemented; `kind`/`baseBranch` ADR-132.) Admin-only.
         Creates a `package_sources` row.
         For `kind: git` (default), `url` is the git monorepo URL
         (`packages/<name>/maister-package.yaml` layout). For `kind: local`
-        (ADR-129), `url` is an ABSOLUTE host directory path validated
+        (ADR-132), `url` is an ABSOLUTE host directory path validated
         server-side BEFORE persistence: it must exist and contain
         `maister-package.yaml` at the root or ≥1
         `packages/*/maister-package.yaml` — a relative path, missing
@@ -8038,7 +8038,7 @@ paths:
       tags: [flow-packages, admin]
       summary: (ADR-088 — Implemented) Update a platform package source
       description: |
-        (ADR-088 — Implemented; `baseBranch` ADR-129.) Admin-only. Mutable
+        (ADR-088 — Implemented; `baseBranch` ADR-132.) Admin-only. Mutable
         fields: `enabled`, `note`, `baseBranch` (git sources; `null` clears
         back to auto-detect).
         The `url` and `kind` are immutable (delete + re-add to change
@@ -8065,7 +8065,7 @@ paths:
                   type: string
                   nullable: true
                   minLength: 1
-                  description: "(ADR-129) Publish PR base override; null clears to auto-detect."
+                  description: "(ADR-132) Publish PR base override; null clears to auto-detect."
       responses:
         "200": { $ref: "#/components/responses/OkResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -8100,17 +8100,17 @@ paths:
       tags: [flow-packages, admin]
       summary: (ADR-088 — Implemented) Refresh package discovery for a source
       description: |
-        (ADR-088 — Implemented; `kind: local` semantics ADR-129.) Admin-only.
+        (ADR-088 — Implemented; `kind: local` semantics ADR-132.) Admin-only.
         For `kind: git`: runs `git ls-remote --tags` plus a
         shallow default-branch scan of `packages/*/maister-package.yaml`,
         rewrites the source's `discovered` snapshot + `lastCheckedAt`. For
-        `kind: local` (ADR-129): walks the host directory (no git),
+        `kind: local` (ADR-132): walks the host directory (no git),
         re-digests each package dir, and writes `discovered` entries with
         `tags: []` + a digest-derived `digestVersionLabel`
         (`local-<digest12>`) — an unchanged dir re-digests to the same label
         (idempotent re-check); a changed dir flips `updateAvailable` for
         attachments pinned to the old digest. Re-check is on-demand only
-        (no scheduler wiring — ADR-129 D7). A git
+        (no scheduler wiring — ADR-132 D7). A git
         or scan failure degrades: the stale snapshot is kept and the response
         carries `degraded: true` (HTTP 200 — degradation is a result, not an
         error). The same routine runs at web startup for enabled sources
@@ -8367,7 +8367,7 @@ paths:
         to a project the caller is a **member** of (`manageLocalPackages`).
         Stamps `last_cut_install_id` after success.
 
-        (ADR-129) `adoptInProjectIds` additionally advances already-attached
+        (ADR-132) `adoptInProjectIds` additionally advances already-attached
         projects to the new cut. Two-phase: authz + eligibility for EVERY id
         is validated BEFORE the irreversible cut (an ineligible or
         upstream-pinned project id → 409, no cut); after the cut, adopts are
@@ -8426,7 +8426,7 @@ paths:
       tags: [flow-packages]
       summary: (ADR-113 — Implemented) Publish the package to a registered source as a PR
       description: |
-        (ADR-113 — Implemented; base branch + typed refusal ADR-129.) Pushes
+        (ADR-113 — Implemented; base branch + typed refusal ADR-132.) Pushes
         the local package's committed working tree to a
         **registered** `package_sources` target (server-side allow-list — never a
         body-supplied raw URL; only `kind: git` sources are offered) on a
@@ -8434,11 +8434,11 @@ paths:
         opens or updates a pull request when a provider CLI + host token is detected
         (gh/glab/Gitea/Gitverse); otherwise push-only with a best-effort compare URL.
         The PR base resolves as `package_sources.base_branch ??
-        gitRemoteDefaultBranch(...) ?? "main"` (ADR-129).
+        gitRemoteDefaultBranch(...) ?? "main"` (ADR-132).
         Two-phase: `last_pushed_branch`/`last_pr_url` are written only after the push
         acks. Member-gated (`manageLocalPackages`).
 
-        (ADR-129) A non-fast-forward push (the upstream `maister/<slug>`
+        (ADR-132) A non-fast-forward push (the upstream `maister/<slug>`
         branch moved) refuses with 409 `CONFLICT` whose details are
         `{reason: "upstream_moved", canSync: <fork lineage present>,
         localPackageId}` — the UI renders "upstream moved — sync first" with
@@ -8462,7 +8462,7 @@ paths:
         "409":
           description: |
             Typed refusal: target not in the allow-list, invalid branch, or
-            (ADR-129) the non-fast-forward `upstream_moved` shape with
+            (ADR-132) the non-fast-forward `upstream_moved` shape with
             `details: {reason: "upstream_moved", canSync, localPackageId}`.
           content:
             application/json:
@@ -8484,9 +8484,9 @@ paths:
         schema: { type: string }
     get:
       tags: [flow-packages]
-      summary: (ADR-129 — Implemented) Fork-vs-upstream divergence diff
+      summary: (ADR-132 — Implemented) Fork-vs-upstream divergence diff
       description: |
-        (ADR-129.) Read-only, viewer-permitted (like `/diff`). Diffs the
+        (ADR-132.) Read-only, viewer-permitted (like `/diff`). Diffs the
         `compared` side — the fork working dir (default) or a chosen cut's
         bundle (`cutInstallId`) — against the `base` side — the fork's lineage
         source install bytes — via `git diff --no-index` (exit 0/1 both success),
@@ -8530,9 +8530,9 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-129 — Implemented) Start an upstream sync (synthetic 3-way merge)
+      summary: (ADR-132 — Implemented) Start an upstream sync (synthetic 3-way merge)
       description: |
-        (ADR-129.) Merges a newer upstream install into the fork working dir:
+        (ADR-132.) Merges a newer upstream install into the fork working dir:
         base = the lineage source install bytes, theirs = the target install
         bytes, ours = the working dir at HEAD. Precondition allow-list
         (violations in order): live session edit-lock (else 409 `CONFLICT`) ·
@@ -8592,9 +8592,9 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-129 — Implemented) Complete a conflicted upstream sync
+      summary: (ADR-132 — Implemented) Complete a conflicted upstream sync
       description: |
-        (ADR-129.) Preconditions: live session edit-lock · pending
+        (ADR-132.) Preconditions: live session edit-lock · pending
         `sync_state` (else 409 `CONFLICT`) · something to resolve —
         `conflictedFiles` non-empty OR a dirty tree; the crash-window-1
         state (empty list + clean tree, merge never ran) refuses with 409
@@ -8645,9 +8645,9 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-129 — Implemented) Abort a pending upstream sync
+      summary: (ADR-132 — Implemented) Abort a pending upstream sync
       description: |
-        (ADR-129.) Preconditions: live session edit-lock. Idempotent — a
+        (ADR-132.) Preconditions: live session edit-lock. Idempotent — a
         no-op `200` success when no `sync_state` is pending (a completed or
         already-aborted sync). Runs `git reset --hard HEAD` (structurally safe
         — the tree was clean pre-merge, so nothing user-authored is lost) and
@@ -9261,19 +9261,19 @@ paths:
       summary: (ADR-088 — Implemented) Attach a package install to a project
       description: |
         (ADR-088 — Implemented; local-cut picker + typed name collision
-        ADR-129.) Admin-only (`managePackages`). One transaction
+        ADR-132.) Admin-only (`managePackages`). One transaction
         writes member `flows` rows + `capability_imports` + MCP/restriction
         ingestion + the attachment + group FK links. Identifiers: `slug` =
         url-param → project row; `packageInstallId` = body id resolved to a
         server row (404 on miss) — Studio local cuts (installs with
-        `source_local_package_id` set) are valid values (ADR-129). A manifest
+        `source_local_package_id` set) are valid values (ADR-132). A manifest
         flow id colliding with an
         existing standalone flow (`flows_project_ref_uq`) → 409 (`CONFLICT`),
         no partial group. A same-`(kind, id)` MCP/restriction record already
         provided by another attached package → 409 (`CONFLICT`) as well
         (same-id different-kind records coexist).
 
-        (ADR-129) A package-NAME collision — the install's `name` equals an
+        (ADR-132) A package-NAME collision — the install's `name` equals an
         existing attachment's `package_name`
         (`project_package_attachments_project_name_uq`) — is a typed 409
         `CONFLICT` whose `details` name the colliding `packageName` and the
@@ -9320,7 +9320,7 @@ paths:
         "409":
           description: |
             Typed conflicts: standalone flow-id collision, cross-package
-            `(kind, id)` record collision, or (ADR-129) the package-name
+            `(kind, id)` record collision, or (ADR-132) the package-name
             collision with rename guidance in `details`.
           content:
             application/json:
@@ -10591,7 +10591,7 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Bind a ref to a concrete MCP target
       description: |
-        (ADR-129 — Implemented.) Requires `editSettings` on the project. Creates a
+        (ADR-132 — Implemented.) Requires `editSettings` on the project. Creates a
         `project_mcp_bindings` row; the enabled binding's target then WINS over
         `project > platform > flow-package` precedence for that `refId`.
         `project_id` is server-state (from `slug`). `targetKind`/`targetId` are
@@ -10740,7 +10740,7 @@ paths:
   /api/projects/{slug}/mcp/disconnect:
     post:
       tags: [mcp-management]
-      summary: (ADR-129) Disconnect (opt-out) a ref in the project
+      summary: (ADR-132) Disconnect (opt-out) a ref in the project
       description: |
         (ADR-129 — Implemented.) Requires `editSettings`. Writes a disabled binding
         for `refId` (explicit opt-out); the ref becomes unresolvable in this
@@ -10776,7 +10776,7 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Test-connection probe (web→supervisor proxy, trust-gated)
       description: |
-        (ADR-129 — Implemented.) Requires `editSettings`. Resolves the target's
+        (ADR-132 — Implemented.) Requires `editSettings`. Resolves the target's
         material NAMES, enforces the WEB-SIDE trust gate — probing an
         untrusted-source stdio MCP is refused with a typed `CONFIG` reason
         (**no override in v1**) — then calls supervisor `POST /mcp-probe` and
@@ -13229,12 +13229,12 @@ components:
               type: string
               format: uuid
           description: |
-            (ADR-129) Ephemeral per-run package pin for this variant: the
+            (ADR-132) Ephemeral per-run package pin for this variant: the
             variant's runs resolve the task-flow's revision from this
             `package_installs` row (upstream install or local cut carrying the
             flow's `flowRefId`) without touching
             `project_package_attachments`. Validated at create time (exists +
-            Installed + trusted + carries the flowRefId — the ADR-129 pin
+            Installed + trusted + carries the flowRefId — the ADR-132 pin
             matrix; violations are `CONFIG`/`PRECONDITION`) and re-validated
             at launch fan-out. Composes with `runnerId` and `executionPolicy`
             on the same variant.
@@ -13626,7 +13626,7 @@ components:
               enum: [local_cut, upstream]
             installDigest12: { type: string }
           description: |
-            (ADR-129) Package provenance of the run's snapshotted flow
+            (ADR-132) Package provenance of the run's snapshotted flow
             revision, derived by joining `runs.flow_revision` to
             `package_installs.resolved_revision` (two arms: local cut via
             `local_packages` lineage, or upstream install). `null` when no
@@ -13659,7 +13659,7 @@ components:
         flowRevisionDelta:
           type: boolean
           description: |
-            (ADR-129) `true` when the member runs span more than one distinct
+            (ADR-132) `true` when the member runs span more than one distinct
             snapshotted `runs.flow_revision` — rendered as a marker beside the
             materialization delta so a package-version difference between
             variants is visible at a glance.
@@ -13757,14 +13757,14 @@ components:
             type: string
             enum: [keep, adopt, cut_and_adopt, try_once]
           description: |
-            (M39 Stream B, ADR-107 — Implemented; `try_once` ADR-129) Per-package
+            (M39 Stream B, ADR-107 — Implemented; `try_once` ADR-132) Per-package
             version-adopt decision
             for the centralized Studio packages backing the task's flow. Keys are
             `package_installs` ids (the project's currently-attached cut); each
             value is `keep` (launch on the pin), `adopt` (advance the project
             attachment to the package's newest cut), `cut_and_adopt` (mint a
             fresh cut from uncut Studio edits via the cut gate, then adopt), or
-            `try_once` (ADR-129 — run THIS launch on the newest cut as an
+            `try_once` (ADR-132 — run THIS launch on the newest cut as an
             ephemeral per-run pin: the run's `flow_revision_id`/`flow_revision`
             snapshot points at the newer cut while
             `project_package_attachments` stays byte-identical; offered exactly
@@ -14576,7 +14576,7 @@ components:
           type: array
           items: { type: string, enum: [keep, adopt, cut_and_adopt, try_once] }
           description: |
-            (ADR-129) `try_once` is offered exactly when `adopt` is offered (a
+            (ADR-132) `try_once` is offered exactly when `adopt` is offered (a
             newer cut exists): an ephemeral per-run pin to the newest cut that
             never mutates the attachment.
     ScratchLaunchOptionsResponse:
@@ -16210,7 +16210,7 @@ components:
           description: |
             (ADR-093, additive) Thrower-set client-facing context — e.g. the
             publish `{reason: "upstream_moved", canSync, localPackageId}`
-            (ADR-129) or the commit gate's `{invalidArtifacts: [...]}`.
+            (ADR-132) or the commit gate's `{invalidArtifacts: [...]}`.
             Never a server-only handle.
 
     CloneFailureReason:
@@ -17108,7 +17108,7 @@ components:
           items: { type: string, minLength: 1 }
           maxItems: 100
           description: |
-            (ADR-129) Advance these projects' attachments to the new cut in
+            (ADR-132) Advance these projects' attachments to the new cut in
             the same request. Eligibility is server-checked BEFORE the
             irreversible cut: each project must grant the caller
             `manageLocalPackages` AND its CURRENT attachment for this package
@@ -17145,7 +17145,7 @@ components:
               projectId: { type: string }
               status: { type: string, enum: [adopted, failed] }
               error: { type: string, nullable: true }
-          description: "(ADR-129) Per-project adopt outcomes for `adoptInProjectIds`; present only when it was supplied. Failed adopts are retryable from the dialog."
+          description: "(ADR-132) Per-project adopt outcomes for `adoptInProjectIds`; present only when it was supplied. Failed adopts are retryable from the dialog."
           example: [{ projectId: "proj-1", status: adopted }]
     PublishLocalPackageBody:
       type: object
@@ -17206,8 +17206,8 @@ components:
               baseBranch:
                 type: string
                 nullable: true
-                description: "(ADR-129) The source's configured publish PR base; null = auto-detect."
-          description: "(ADR-129) Only `kind: git` sources — local sources are never publish targets (allow-list filter)."
+                description: "(ADR-132) The source's configured publish PR base; null = auto-detect."
+          description: "(ADR-132) Only `kind: git` sources — local sources are never publish targets (allow-list filter)."
         preselectedSourceId:
           type: string
           nullable: true
@@ -17219,7 +17219,7 @@ components:
       type: object
       required: [base, compared, changedCount, truncated, files, perFile]
       description: |
-        (ADR-129) Fork-vs-source divergence as the shared `@git-diff-view`
+        (ADR-132) Fork-vs-source divergence as the shared `@git-diff-view`
         DTO shape (same as `/diff`), plus which two inputs were compared.
         `base` is the lineage source install; `compared` is the fork side
         (its working dir, or a specific cut install).
@@ -17260,7 +17260,7 @@ components:
       type: object
       required: [outcome, conflictedFiles, targetInstallId, targetRef]
       description: |
-        (ADR-129) Outcome of `/sync` or `/sync/resolve`. `clean` = merged +
+        (ADR-132) Outcome of `/sync` or `/sync/resolve`. `clean` = merged +
         committed + lineage advanced + `sync_state` cleared; `conflicted` =
         markers written, `sync_state.conflictedFiles` stamped, resolution
         pending; `completed` = a resolve finished (incl. the idempotent
@@ -17317,7 +17317,7 @@ components:
     PackageSource:
       type: object
       description: |
-        (ADR-088 — Implemented; `kind`/`baseBranch` ADR-129) A
+        (ADR-088 — Implemented; `kind`/`baseBranch` ADR-132) A
         `package_sources` row with the cached
         discovery snapshot. Discovery failures keep the stale snapshot.
       required:
@@ -17342,11 +17342,11 @@ components:
         kind:
           type: string
           enum: [git, local]
-          description: "(ADR-129) Source kind. `local` = an admin-registered host directory with digest-as-version discovery."
+          description: "(ADR-132) Source kind. `local` = an admin-registered host directory with digest-as-version discovery."
         baseBranch:
           type: string
           nullable: true
-          description: "(ADR-129) Per-source publish PR base (git sources only). `null` = auto-detect the remote default branch, fallback `main`."
+          description: "(ADR-132) Per-source publish PR base (git sources only). `null` = auto-detect the remote default branch, fallback `main`."
         enabled: { type: boolean }
         note: { type: string, nullable: true }
         discovered:
@@ -17366,7 +17366,7 @@ components:
       type: object
       description: |
         (ADR-088 — Implemented) One package found in a source. Git sources
-        list per-package tags; `kind: local` sources (ADR-129) list one
+        list per-package tags; `kind: local` sources (ADR-132) list one
         digest-derived version instead — `tags` stays `[]`, `dir` names the
         package directory, and `digestVersionLabel` carries
         `local-<digest12>` of the CURRENT bytes (digest-as-version;
@@ -17380,11 +17380,11 @@ components:
           description: "Per-package tags (<name>/vX.Y.Z), newest first. Empty for local sources."
         dir:
           type: string
-          description: "The `packages/<dir>` subdir in the source (may differ from `name`; pre-existing field, documented with ADR-129)."
+          description: "The `packages/<dir>` subdir in the source (may differ from `name`; pre-existing field, documented with ADR-132)."
         digestVersionLabel:
           type: string
           nullable: true
-          description: "(ADR-129) `local-<digest12>` of the package dir's current bytes (local sources only; absent/null on git sources)."
+          description: "(ADR-132) `local-<digest12>` of the package dir's current bytes (local sources only; absent/null on git sources)."
 
     PackageSourceBody:
       type: object
@@ -17398,11 +17398,11 @@ components:
           type: string
           enum: [git, local]
           default: git
-          description: "(ADR-129) `local` requires `url` to be an absolute existing directory containing `maister-package.yaml` at the root or ≥1 `packages/*/maister-package.yaml`; violations are 422 `CONFIG` naming the failed check."
+          description: "(ADR-132) `local` requires `url` to be an absolute existing directory containing `maister-package.yaml` at the root or ≥1 `packages/*/maister-package.yaml`; violations are 422 `CONFIG` naming the failed check."
         baseBranch:
           type: string
           minLength: 1
-          description: "(ADR-129) Publish PR base for git sources; ignored for local sources."
+          description: "(ADR-132) Publish PR base for git sources; ignored for local sources."
         note: { type: string }
         enabled: { type: boolean, default: true }
       example: { url: "/Users/dev/maister-plugins", kind: local }

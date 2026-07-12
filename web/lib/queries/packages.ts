@@ -252,7 +252,7 @@ export async function getProjectPackageAttachments(
   const discoveredByUrl = new Map<string, DiscoveredPackageEntry[]>(
     sources.map((s: any) => [s.url, s.discovered ?? []]),
   );
-  // ADR-129: the update-available carve is by SOURCE KIND — thread it (an
+  // ADR-132: the update-available carve is by SOURCE KIND — thread it (an
   // install with no source row, e.g. a Studio cut, has no kind).
   const kindByUrl = new Map<string, "git" | "local">(
     sources.map((s: any) => [s.url, (s.kind ?? "git") as "git" | "local"]),

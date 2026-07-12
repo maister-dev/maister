@@ -466,7 +466,7 @@ async function promoteWorkspaceRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
-  // ADR-129 (enforcing ADR-124): experiment-member runs never auto-promote —
+  // ADR-132 (enforcing ADR-124): experiment-member runs never auto-promote —
   // winner promotion is the explicit human path. The guard lives HERE, at the
   // flow/task promotion apply site, because auto delivery
   // (deliverRunIfAutoReady) and the token/orchestrator auto-promoter (which set

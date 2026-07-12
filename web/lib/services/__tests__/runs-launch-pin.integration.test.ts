@@ -13,7 +13,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ADR-129 §a integration proof on real Postgres: an ephemeral pin (direct
+// ADR-132 §a integration proof on real Postgres: an ephemeral pin (direct
 // `packagePin` and the `try_once` launch choice) resolves the run's flow
 // revision from the pinned install while `project_package_attachments` stays
 // BYTE-IDENTICAL, and a refused pin leaves no run/workspace behind
@@ -200,7 +200,7 @@ async function createProject(): Promise<{
 }
 
 // Fork a local package from an installed source, cut v1, attach to the
-// project, cut v2 (the newer target) — the ADR-129 fixture chain.
+// project, cut v2 (the newer target) — the ADR-132 fixture chain.
 async function forkAttachWithNewerCut(
   project: { id: string; slug: string; repoPath: string },
   sourceName: string,

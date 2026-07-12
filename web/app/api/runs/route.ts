@@ -42,7 +42,7 @@ const postBodySchema = z
     targetBranch: z.string().min(1).optional(),
     deliveryPolicy: storedDeliveryPolicySchema.optional(),
     executionPolicy: executionPolicySchema.optional(),
-    // ADR-129: `try_once` = ephemeral per-run pin to the newest cut — the
+    // ADR-132: `try_once` = ephemeral per-run pin to the newest cut — the
     // attachment is never advanced. Offered exactly when `adopt` is offered;
     // server-constrained like the other options (unoffered → CONFLICT).
     packageVersions: z

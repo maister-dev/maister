@@ -26,7 +26,7 @@ throwaway packages that are not attached anywhere.
 ## Fork lifecycle (concepts)
 
 A local package forked from an installed git package carries lineage and
-participates in the full fork loop (ADR-129): edit → commit → cut → attach or
+participates in the full fork loop (ADR-132): edit → commit → cut → attach or
 run `try_once`/experiment variants → **compare with upstream** (divergence
 drawer) → **update fork from upstream** when a new tag lands (synthetic 3-way
 sync; conflicts resolve in the editor) → **publish** back as a PR on the

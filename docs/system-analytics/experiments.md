@@ -25,7 +25,7 @@ budgets, and a second review-comment surface.
 - **Variant** — immutable JSON entry `{key, label, config}`. Config is a
   closed registry: `runnerId?`, `executionPolicy?`, `capabilityOverlay?` over
   rules, skills, MCPs, and subagents, and `packagePin?: {packageInstallId}`
-  (ADR-129) — an ephemeral per-run package pin resolving the task-flow's
+  (ADR-132) — an ephemeral per-run package pin resolving the task-flow's
   revision from the named `package_installs` row without touching
   `project_package_attachments`.
 - **Rubric** — immutable JSON criteria snapshot. The default template contains
@@ -40,7 +40,7 @@ budgets, and a second review-comment surface.
 - **Comparison DTO** — explicit public projection combining experiment fields,
   member run statuses, gate results, cost rollups, diff snapshots, files
   summaries, materialization deltas, and verdict/advisory state. Each member
-  run additionally carries a `provenance` object (ADR-129) —
+  run additionally carries a `provenance` object (ADR-132) —
   `{packageName, versionLabel, kind: "local_cut" | "upstream",
   installDigest12}` or `null` — derived by joining the run's snapshotted
   `runs.flow_revision` to `package_installs.resolved_revision`, plus a
@@ -174,13 +174,13 @@ runs after the verdict transaction through the standard dispatcher.
 - The launch route MUST validate the whole variant batch, including overlay
   refs, class-adapter compatibility, and every `packagePin` install
   (exists, `Installed`, trusted, carries the task-flow's `flowRefId` — the
-  ADR-129 pin matrix), before the first side effect; experiment create MUST
+  ADR-132 pin matrix), before the first side effect; experiment create MUST
   run the same pin batch validation so an unlaunchable pin refuses at create.
 - A `packagePin` variant launch MUST leave `project_package_attachments`
   byte-identical; the pinned revision is recorded only on the run snapshot
-  columns (`flow_revision_id` / `flow_revision` / `flow_version`). (ADR-129)
+  columns (`flow_revision_id` / `flow_revision` / `flow_version`). (ADR-132)
 - Experiment member runs MUST never auto-promote (ADR-124 invariant, enforced
-  by ADR-129): the auto-promotion sweep's candidate query excludes runs with
+  by ADR-132): the auto-promotion sweep's candidate query excludes runs with
   an `experiment_runs` row, and `evaluateAutoPromotion` returns a
   `not_applicable` term on membership at the apply site.
 - Each member launch MUST lock and validate the experiment row before attempt
@@ -267,7 +267,7 @@ runs after the verdict transaction through the standard dispatcher.
 
 - ADR: [`ADR-124`](../decisions.md#adr-124-experiment-comparison-studio-for-pinned-base-comparison-runs);
   package pin axis, provenance, and the enforced auto-promotion exclusion:
-  [`ADR-129`](../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync).
+  [`ADR-132`](../decisions.md#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync).
 - Database narrative: [`../database-schema.md`](../database-schema.md).
 - ERD: [`../db/erd.md`](../db/erd.md).
 - Web API contract: [`../api/web.openapi.yaml`](../api/web.openapi.yaml).

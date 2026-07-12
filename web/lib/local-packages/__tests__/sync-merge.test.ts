@@ -6,7 +6,7 @@ import { beforeEach, afterEach, describe, expect, it } from "vitest";
 
 import { mergeTrees } from "@/lib/local-packages/sync-merge";
 
-// ADR-129 §d (T19): the synthetic 3-way merge over exported trees — base =
+// ADR-132 §d (T19): the synthetic 3-way merge over exported trees — base =
 // the fork's ORIGINAL source install bytes, theirs = the sync-target install
 // bytes, ours = the fork working dir (mutated IN PLACE). Pure lib: no DB, no
 // git history required — `git merge-file` only for textual per-file merges.

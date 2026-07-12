@@ -72,9 +72,9 @@ erDiagram
         text trust_status "untrusted|trusted|trusted_by_policy (DEFAULT untrusted)"
         text readiness_status "Unknown|Ready|NotReady (DEFAULT Unknown)"
         jsonb readiness_reasons "DEFAULT []"
-        text last_probe_status "ADR-129 Designed: nullable Ok|Failed"
-        timestamp last_probe_at "ADR-129 Designed: nullable"
-        text last_probe_reason "ADR-129 Designed: nullable"
+        text last_probe_status "ADR-132 Designed: nullable Ok|Failed"
+        timestamp last_probe_at "ADR-132 Designed: nullable"
+        text last_probe_reason "ADR-132 Designed: nullable"
         boolean enabled "DEFAULT true"
         timestamp created_at
         timestamp updated_at
@@ -127,8 +127,8 @@ erDiagram
     PACKAGE_SOURCES {
         text id PK
         text url UK "git URL, or abs host path for kind local"
-        text kind "git or local; NOT NULL DEFAULT git (ADR-129, 0093)"
-        text base_branch "nullable; publish PR base, git sources only (ADR-129, 0093)"
+        text kind "git or local; NOT NULL DEFAULT git (ADR-132, 0097)"
+        text base_branch "nullable; publish PR base, git sources only (ADR-132, 0097)"
         boolean enabled "DEFAULT true"
         text note "nullable"
         jsonb discovered "cached: [{name, tags[]}] DEFAULT []"
@@ -168,14 +168,14 @@ erDiagram
         text slug UK "kebab; working-dir name"
         text working_dir "abs path under localPackagesRoot(); server-only"
         text status "active|archived (DEFAULT active)"
-        text source_install_id FK "nullable; fork lineage (SET NULL); advanced by sync (ADR-129)"
+        text source_install_id FK "nullable; fork lineage (SET NULL); advanced by sync (ADR-132)"
         text source_repo_url "nullable; fork git source (ADR-113 publish preselect)"
         text source_ref "nullable; base commit/tag forked from; advanced by sync"
         text branch_name "nullable; fork branch in working_dir"
         text last_cut_install_id FK "nullable; latest cut revision (SET NULL)"
         text last_pushed_branch "nullable; PR-to-source publish branch (ADR-113)"
         text last_pr_url "nullable; opened PR URL (ADR-113)"
-        jsonb sync_state "nullable; durable upstream-sync intent (ADR-129, 0093)"
+        jsonb sync_state "nullable; durable upstream-sync intent (ADR-132, 0097)"
         text locked_by_user_id FK "nullable; current editor (SET NULL)"
         text locked_by_session "nullable; session holding the lock"
         timestamp lock_expires_at "nullable; lock TTL (mirrors runs.keepalive_until)"
@@ -192,7 +192,7 @@ a `local-<digest>` `package_installs` revision, which a project `member` then
 attaches). `working_dir` is server-only; the `locked_*`/`lock_expires_at` columns
 mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
 `branch_name` capture fork lineage — the base for the ADR-113 PR-to-source
-publish and the ADR-129 divergence/sync (an upstream sync advances
+publish and the ADR-132 divergence/sync (an upstream sync advances
 `source_install_id`/`source_ref` and drives the `sync_state` jsonb:
 `{targetInstallId, targetRef, conflictedFiles, startedAt}`, NULL = no sync in
 flight).
@@ -220,7 +220,7 @@ flight).
   working-package identity; the working-dir name derives from it. `working_dir`
   is never exposed to the client; `source_install_id` / `last_cut_install_id`
   FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing —
-  ADR-129 divergence/sync degrade to a typed `CONFIG` when it is gone).
+  ADR-132 divergence/sync degrade to a typed `CONFIG` when it is gone).
 - **(M36, migration `0058`)** `local_packages_default_per_project` — a
   **partial-unique** index on `(project_id) WHERE is_default` enforcing at most
   one default "virtual" local package per project. `project_id` (FK `projects`,

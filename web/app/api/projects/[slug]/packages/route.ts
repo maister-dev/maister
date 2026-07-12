@@ -60,7 +60,7 @@ export async function GET(
     const discoveredByUrl = new Map<string, DiscoveredPackageEntry[]>(
       sources.map((s: any) => [s.url, s.discovered ?? []]),
     );
-    // ADR-129: update-available carve is by SOURCE KIND.
+    // ADR-132: update-available carve is by SOURCE KIND.
     const kindByUrl = new Map<string, "git" | "local">(
       sources.map((s: any) => [s.url, (s.kind ?? "git") as "git" | "local"]),
     );

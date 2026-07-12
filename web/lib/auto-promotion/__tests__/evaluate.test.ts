@@ -386,7 +386,7 @@ describe("verdict reason-code i18n closure (EN+RU)", () => {
   });
 });
 
-describe("evaluateAutoPromotion — ADR-129 experiment-member exclusion", () => {
+describe("evaluateAutoPromotion — ADR-132 experiment-member exclusion", () => {
   it("returns not_applicable experiment_member for a member run (enforces the ADR-124 invariant at the apply site)", async () => {
     const evaluation = await evaluateAutoPromotion(
       baseInput({ readers: { isExperimentMember: async () => true } }),

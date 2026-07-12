@@ -19,7 +19,7 @@ afterEach(() => {
   dbState.rows = [];
 });
 
-// ADR-129 §c (T15): the attach picker must distinguish local cuts (installs
+// ADR-132 §c (T15): the attach picker must distinguish local cuts (installs
 // carrying `source_local_package_id`) from upstream installs — the UI badges
 // them and routes the name-collision explainer to the fork's editor.
 describe("getAvailablePackageInstalls", () => {

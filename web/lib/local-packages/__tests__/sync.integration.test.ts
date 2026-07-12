@@ -34,7 +34,7 @@ import {
 } from "@/lib/local-packages/sync";
 import { installPackageRevision } from "@/lib/packages/attach";
 
-// ADR-129 §d (T20): the sync operation over REAL PG + git working dirs.
+// ADR-132 §d (T20): the sync operation over REAL PG + git working dirs.
 // The upstream is a local directory source (digest-as-version): two installs
 // of the SAME name + sourceUrl with different bytes play v1 (lineage base)
 // and v2 (sync target).
@@ -336,7 +336,7 @@ describe("upstream sync (integration)", () => {
       readFile(join(pkg.workingDir, "docs/CHANGELOG.md"), "utf8"),
     ).rejects.toThrow();
 
-    // ADR-129: a second abort has nothing pending → idempotent no-op success
+    // ADR-132: a second abort has nothing pending → idempotent no-op success
     // (mirrors resolveSync's no-pending branch), NOT a 409.
     await expect(
       abortSync({ localPackageId: pkg.id, sessionId, db }),

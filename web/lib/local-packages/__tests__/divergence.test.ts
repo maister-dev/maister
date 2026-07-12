@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { computeUpstreamDivergence } from "@/lib/local-packages/divergence";
 import { isMaisterError } from "@/lib/errors";
 
-// ADR-129 §d prerequisite (T17): fork-vs-source divergence is a pure local
+// ADR-132 §d prerequisite (T17): fork-vs-source divergence is a pure local
 // byte comparison — ours = the fork working dir (or a chosen cut's bundle),
 // theirs = the lineage source install's bundle. Paths in the DTO are
 // PACKAGE-RELATIVE (never absolute host paths), `.git/` and runtime dirs are

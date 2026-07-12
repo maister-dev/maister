@@ -48,7 +48,7 @@ export type SyncResult = {
   targetRef: string;
 };
 
-// ADR-129 §d: the upstream sync is merge-shaped (fork commits are NEVER
+// ADR-132 §d: the upstream sync is merge-shaped (fork commits are NEVER
 // rewritten) and `sync_state` is the single crash-window discriminant:
 //   pending + clean tree  → the merge never wrote (window 1) → Resume = the
 //                           idempotent same-target re-POST of /sync.
@@ -94,7 +94,7 @@ export async function syncFromUpstream(opts: {
 
   await assertHoldsLock(pkg.id, opts.sessionId, d);
 
-  // ADR-129 (C3): serialize every working-dir mutation on this package. The
+  // ADR-132 (C3): serialize every working-dir mutation on this package. The
   // editor lock is not a mutex (same session passes twice), so a double-submit
   // could run two 3-way merges over one working dir. Re-read pkg UNDER the lock
   // so the sync_state/dirty decision is TOCTOU-safe.

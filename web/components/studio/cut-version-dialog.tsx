@@ -8,7 +8,7 @@ import { useTranslations } from "next-intl";
 
 import { readApiError } from "@/lib/api-error";
 
-// ADR-129 §c (T16): the Studio cut dialog. Cutting is the primary action; the
+// ADR-132 §c (T16): the Studio cut dialog. Cutting is the primary action; the
 // multi-select additionally advances ALREADY-ATTACHED projects (only those
 // whose attachment points at a cut of THIS package — server-validated again
 // pre-cut) to the new cut. Default: none selected — adopting is an explicit

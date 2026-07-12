@@ -113,7 +113,7 @@ The board is a horizontally scrollable set of columns:
   disclosure toggle. The flow preview card surface is described in
   [`../studio/package-viewer.md`](../studio/package-viewer.md).
 
-  The **Add package** picker (ADR-129) lists, beside upstream installs,
+  The **Add package** picker (ADR-132) lists, beside upstream installs,
   **local-cut installs** (Studio cuts — `package_installs` with
   `sourceLocalPackageId` set), each labeled `local-<digest12>` with a
   local-cut badge. When the selected install's package name equals an
@@ -174,7 +174,7 @@ Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, and
 
 - ADRs: [#adr-018](../../decisions.md#adr-018-task--run-cardinality-is-1n),
   [#adr-083](../../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
-  [#adr-129](../../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
+  [#adr-132](../../decisions.md#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
   (local-cut attach picker + name-collision explainer).
 - Source: `web/components/board/board.tsx`,
   `web/components/board/task-card.tsx`,

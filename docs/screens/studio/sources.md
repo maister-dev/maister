@@ -4,7 +4,7 @@
 - **Route:** `/studio/sources`.
 - **Status:** Implemented (Phase A relocated panel); source kinds
   (`git | local`), local-path validation surface, per-source base branch, and
-  the per-source re-check button are ADR-129.
+  the per-source re-check button are ADR-132.
 - **Source:** `web/app/(app)/studio/sources/page.tsx`,
   `web/components/settings/package-sources-panel.tsx`,
   `web/components/settings/package-source-modal.tsx`.
@@ -29,7 +29,7 @@ the PR base branch per source so contributions target the right branch.
 
 All routes are `requireGlobalRole("admin")`-gated. Admin-only registration is
 the trust boundary for `kind: 'local'` sources (they resolve
-`trusted_by_policy` — ADR-129 §c).
+`trusted_by_policy` — ADR-132 §c).
 
 ## Navigation
 
@@ -90,7 +90,7 @@ snapshot with a WARN — it never blocks the page.
   `baseBranch`; delete is usage-guarded (`CONFLICT`).
 - `POST /api/admin/package-sources/{id}/refresh` — git: `ls-remote` + manifest
   scan; local: directory walk + re-digest (`kind: local` re-digest semantics,
-  ADR-129).
+  ADR-132).
 - `GET/POST /api/admin/package-installs` — install a discovered version.
 
 ## i18n
@@ -102,7 +102,7 @@ field + hint, re-check) plus the existing `settings` package-sources keys and
 ## Linked Artifacts
 
 - ADR:
-  [#adr-129](../../decisions.md#adr-129-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
+  [#adr-132](../../decisions.md#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
   §c (local sources, digest-as-version, base branch);
   [#adr-088](../../decisions.md#adr-088-multi-flow-package-management)
   (sources substrate).

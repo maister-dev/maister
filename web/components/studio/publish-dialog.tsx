@@ -48,7 +48,7 @@ export function PublishDialog({
   const [branch, setBranch] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // ADR-129 (T21): the typed non-fast-forward refusal — upstream maister/<slug>
+  // ADR-132 (T21): the typed non-fast-forward refusal — upstream maister/<slug>
   // moved. `canSync` selects the sync CTA vs manual-reconcile guidance.
   const [upstreamMoved, setUpstreamMoved] = useState<{
     canSync: boolean;

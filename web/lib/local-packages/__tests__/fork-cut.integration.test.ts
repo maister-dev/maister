@@ -623,7 +623,7 @@ describe("cut version (integration)", () => {
     for (const f of flowRows) expect(f.packageInstallId).toBe(install.id);
   });
 
-  // ADR-129 §c (T16): "adopt in attached projects now" — eligibility is the
+  // ADR-132 §c (T16): "adopt in attached projects now" — eligibility is the
   // back-edge (attachment's install has source_local_package_id = this
   // package), NEVER the package name: a project attached to the UPSTREAM
   // install of the same name is not offered and stays untouched.
@@ -730,7 +730,7 @@ describe("cut version (integration)", () => {
     expect(pinByProject.get(projC.projectId)).toBe(sourceInstallId);
   });
 
-  // ADR-129 (T17): divergence = fork bytes (INCLUDING uncommitted edits) vs
+  // ADR-132 (T17): divergence = fork bytes (INCLUDING uncommitted edits) vs
   // the lineage source install — package-relative paths, no absolute leaks.
   it("divergence shows the fork's uncommitted delta against the source install", async () => {
     const { computeUpstreamDivergence } = await import(

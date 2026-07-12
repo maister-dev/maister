@@ -8,7 +8,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { loadFixtures } from "./_seed/fixtures";
 import { withE2EDb } from "./_seed/db";
 
-// ADR-129 — the forked-package loop through the UI. The heavy git/DB
+// ADR-132 — the forked-package loop through the UI. The heavy git/DB
 // semantics are integration-proven (runs-launch-pin / package-pin /
 // fork-cut / sync / publish integration suites); this spec walks the UI
 // journey those tests cannot: source → install → fork → edit → commit →
@@ -340,7 +340,7 @@ test("install → fork → edit → cut → experiment lab shows fork-vs-upstrea
       data: {
         taskId,
         title: `Fork vs upstream ${RUN_TAG}`,
-        description: "ADR-129 packagePin axis.",
+        description: "ADR-132 packagePin axis.",
         baseBranch: "main",
         variants: [
           { key: "control", label: "Upstream", config: {} },
@@ -398,7 +398,7 @@ test("install → fork → edit → cut → experiment lab shows fork-vs-upstrea
     page.getByRole("heading", { name: `Fork vs upstream ${RUN_TAG}` }),
   ).toBeVisible();
 
-  // ADR-129 provenance: per-variant chips + the cross-variant delta marker.
+  // ADR-132 provenance: per-variant chips + the cross-variant delta marker.
   await expect(page.getByText("package versions differ")).toBeVisible({
     timeout: 30_000,
   });

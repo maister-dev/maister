@@ -44,7 +44,7 @@ export type UpstreamDivergence = DiffPrepResult & {
 // Install row + on-disk bundle guard (mirrors fork.ts loadInstallSource):
 // a missing row, a `set null`-orphaned path, or GC'd bytes all degrade to a
 // typed CONFIG the UI can render — never a raw fs error. Shared with the
-// sync operation (ADR-129 §d).
+// sync operation (ADR-132 §d).
 export async function loadInstallDir(
   d: Db,
   installId: string,
@@ -163,7 +163,7 @@ function blockPathAllowed(
   return true;
 }
 
-// ADR-129 (T17): fork-vs-source divergence — ours = the fork's working dir
+// ADR-132 (T17): fork-vs-source divergence — ours = the fork's working dir
 // (default) or one of ITS OWN cuts (`cutInstallId` is lineage-validated,
 // never used as a raw path); theirs = the lineage source install's bundle.
 // Purely local bytes (D3 — no network); a GC'd or unlinked source degrades

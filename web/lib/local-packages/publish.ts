@@ -53,7 +53,7 @@ export type PublishResult = {
   crossRepo: boolean;
 };
 
-// ADR-129: `baseBranch` = the source's configured publish PR base
+// ADR-132: `baseBranch` = the source's configured publish PR base
 // (null = auto-detect the remote default branch, fallback DEFAULT_PR_BASE).
 export type PublishSourceOption = {
   id: string;
@@ -95,7 +95,7 @@ function normalizeForCompare(url: string): string {
   ).toLowerCase();
 }
 
-// ADR-129 (T21): PR base resolution order — the source's configured
+// ADR-132 (T21): PR base resolution order — the source's configured
 // `base_branch` wins; else the remote's detected default; else "main".
 export function resolvePrBase(
   configuredBase: string | null,
@@ -158,7 +158,7 @@ export async function getPublishOptions(
       baseBranch: ps.baseBranch,
     })
     .from(ps);
-  // ADR-129 §c: only kind:git sources are publish targets (allow-list — a
+  // ADR-132 §c: only kind:git sources are publish targets (allow-list — a
   // local source is a read-only host directory, never a push destination).
   const sources = rows
     .filter((r) => r.enabled && r.kind === "git")
@@ -199,7 +199,7 @@ export async function publishLocalPackage(
   }
 
   // Resolve the target ONLY from the registered allow-list (server-state) — a
-  // body-supplied raw URL is never accepted, and (ADR-129) only kind:git
+  // body-supplied raw URL is never accepted, and (ADR-132) only kind:git
   // sources are valid push destinations.
   const [source] = await d
     .select({
@@ -232,7 +232,7 @@ export async function publishLocalPackage(
   try {
     // Point the remote at the target, then push. A non-fast-forward (the
     // upstream `maister/<slug>` branch moved) is a TYPED refusal carrying the
-    // sync path (ADR-129) — the push is NEVER retried with force.
+    // sync path (ADR-132) — the push is NEVER retried with force.
     await gitSetRemote(pkg.workingDir, PUBLISH_REMOTE, sourceUrl);
     await gitSetPublishBranchToHead(pkg.workingDir, opts.branchName);
     try {
@@ -256,7 +256,7 @@ export async function publishLocalPackage(
       throw err;
     }
 
-    // The PR base: the source's configured base branch wins (ADR-129); else
+    // The PR base: the source's configured base branch wins (ADR-132); else
     // the target's real default branch (best-effort network lookup); else
     // "main" — a hardcoded base would open the PR against a wrong/absent one.
     const prBase = resolvePrBase(

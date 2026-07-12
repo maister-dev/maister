@@ -233,10 +233,10 @@ export function LocalPackageEditor({
   filesLabels: PackageFilesEditorLabels;
   fileKindLabels: Record<AuthoredFlowPackageFileKind, string>;
   mcpCatalog: PlatformMcpCatalogEntry[];
-  // ADR-129 (T18): non-null iff the package has upstream lineage — carries the
+  // ADR-132 (T18): non-null iff the package has upstream lineage — carries the
   // cut-picker options; null hides every compare affordance.
   divergence: { cuts: DivergenceCutOption[] } | null;
-  // ADR-129 §d (T20): non-null iff lineage exists — the sync target picker +
+  // ADR-132 §d (T20): non-null iff lineage exists — the sync target picker +
   // (when a sync is pending) the crash-window recovery banner state.
   sync: { pending: SyncPendingState | null; options: SyncOptions } | null;
 }): ReactElement {

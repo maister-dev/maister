@@ -1358,7 +1358,7 @@ const PACKAGE_ENV_REF = /^env:[A-Z0-9_]+$/;
 export const packageManifestMcpSchema = z
   .object({
     id: capabilityRefIdSchema,
-    // ADR-129 (D3): all three impl fields are optional — an entry with NEITHER
+    // ADR-132 (D3): all three impl fields are optional — an entry with NEITHER
     // command NOR url NOR transport is a REQUIREMENT (a needed ref, no impl).
     transport: z.enum(["stdio", "http"]).optional(),
     command: z.string().min(1).optional(),
@@ -1372,7 +1372,7 @@ export const packageManifestMcpSchema = z
       )
       .optional(),
     description: z.string().min(1).optional(),
-    // ADR-129 (D3): optional hint pre-selecting a platform server to match this
+    // ADR-132 (D3): optional hint pre-selecting a platform server to match this
     // requirement in the project MCP hub match dialog.
     recommendedPlatformServerId: capabilityRefIdSchema.optional(),
   })

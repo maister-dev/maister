@@ -3,7 +3,7 @@ import type { MaisterError as RuntimeMaisterError } from "@/lib/errors";
 import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ADR-129 §a — ephemeral per-run package pin. The launch resolves the task
+// ADR-132 §a — ephemeral per-run package pin. The launch resolves the task
 // flow's revision from an explicitly named `package_installs` row instead of
 // the project attachment's enabled revision; the validation matrix below is
 // the allow-list the code gates (every row refuses BEFORE any worktree side
@@ -73,7 +73,7 @@ const state: {
   packageInstallRows: Record<string, unknown>[];
   // Awaited-where results: the UN-pinned enabled-revision site select.
   flowRevisionRows: Record<string, unknown>[];
-  // .where().limit(1) results: the ADR-129 pin revision lookup — a DIFFERENT
+  // .where().limit(1) results: the ADR-132 pin revision lookup — a DIFFERENT
   // chain shape, so the predicate-blind fake can discriminate the two sites.
   pinRevisionLookupRows: Record<string, unknown>[];
 } = {
@@ -372,7 +372,7 @@ function runInsert(): Record<string, unknown> | undefined {
   )?.values;
 }
 
-describe("launchRun packagePin — refusal matrix (ADR-129 §a, allow-list)", () => {
+describe("launchRun packagePin — refusal matrix (ADR-132 §a, allow-list)", () => {
   it("refuses an unknown packageInstallId with CONFIG before any worktree", async () => {
     state.packageInstallRows = [];
 

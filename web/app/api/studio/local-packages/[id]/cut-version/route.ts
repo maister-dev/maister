@@ -43,7 +43,7 @@ const bodySchema = z
 
 // `id` is a url-param (→ server row → working_dir). `attachToProjectId` is a
 // BODY id; requireProjectAction(member) validates membership against it before
-// any attach. `adoptInProjectIds` (ADR-129 §c) are BODY ids; EACH is validated
+// any attach. `adoptInProjectIds` (ADR-132 §c) are BODY ids; EACH is validated
 // pre-cut via requireProjectAction(manageLocalPackages) + server-state
 // eligibility (the project's current attachment must point at a cut of THIS
 // package — upstream-pinned projects → 409, nothing mutated). The cut is
@@ -63,7 +63,7 @@ const bodySchema = z
 //   (c) stamp done, attach pending → the package is cut + recorded; the attach
 //       simply did not happen. Re-run with attachToProjectId, or attach later.
 //       attachPackage is itself one-tx (its own crash windows apply).
-//   (d) cut done, adopts partial (ADR-129) → the cut is NEVER rolled back;
+//   (d) cut done, adopts partial (ADR-132) → the cut is NEVER rolled back;
 //       each adopt is an idempotent per-project after-write
 //       (upgradeAttachment), reported per-project in `adoptions[]` and
 //       re-runnable from the dialog (re-adopting an already-adopted project
@@ -125,7 +125,7 @@ export async function POST(
       attachTarget = { id: row.id, slug: row.slug, repoPath: row.repoPath };
     }
 
-    // Gate EVERY adopt id BEFORE the irreversible cut (ADR-129): per-project
+    // Gate EVERY adopt id BEFORE the irreversible cut (ADR-132): per-project
     // authz first (an inaccessible id must not leak eligibility state), then
     // server-state eligibility — the id's current attachment must be a cut of
     // THIS package. Any refusal → nothing mutated.

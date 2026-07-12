@@ -380,7 +380,7 @@ describe("retain — decision/direction home resolution (T6.1)", () => {
   it("allows owned decision and direction retain when the project has no covering canonical source", async () => {
     const decision = await retain(
       projectId,
-      { kind: "decision", content: "ADR-129 chooses pgvector for Brain" },
+      { kind: "decision", content: "ADR-132 chooses pgvector for Brain" },
       {},
       { db: ctx.db, client },
     );

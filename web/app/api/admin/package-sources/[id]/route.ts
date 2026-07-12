@@ -10,7 +10,7 @@ import {
 } from "@/lib/packages/catalog";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
 
-// (ADR-088; `baseBranch` ADR-129) `id` is a url-param resolved to the server
+// (ADR-088; `baseBranch` ADR-132) `id` is a url-param resolved to the server
 // row (404 on miss); mutable fields: enabled, note, baseBranch. The url and
 // kind are immutable (delete + re-add).
 const patchBodySchema = packageSourceUpdateBodySchema;

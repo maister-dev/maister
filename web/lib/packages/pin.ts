@@ -11,7 +11,7 @@ const { packageInstalls, flowRevisions } = schemaModule as unknown as Record<
   any
 >;
 
-// ADR-129 §a: the ephemeral-pin allow-list matrix — resolve the flow revision
+// ADR-132 §a: the ephemeral-pin allow-list matrix — resolve the flow revision
 // an explicitly named `package_installs` row ships for a flow ref id.
 // Refusals: unknown install → CONFIG; not Installed / untrusted →
 // PRECONDITION; no member revision with the flow's ref id → CONFIG naming

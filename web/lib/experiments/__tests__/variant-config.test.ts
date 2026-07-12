@@ -18,7 +18,7 @@ describe("experiment variant config", () => {
     ).toThrow();
   });
 
-  it("accepts a packagePin with a uuid packageInstallId (ADR-129 axis)", () => {
+  it("accepts a packagePin with a uuid packageInstallId (ADR-132 axis)", () => {
     expect(
       experimentVariantConfigSchema.parse({
         packagePin: {

@@ -8,7 +8,7 @@ import { useTranslations } from "next-intl";
 export interface PackageSourceRow {
   id: string;
   url: string;
-  // ADR-129: source kind — `local` = an admin-registered host directory with
+  // ADR-132: source kind — `local` = an admin-registered host directory with
   // digest-as-version discovery; `baseBranch` = the publish PR base override
   // (git sources only).
   kind: "git" | "local";
@@ -157,7 +157,7 @@ export function PackageSourceModal({
         : await sendJson(`/api/admin/package-sources/${source!.id}`, "PATCH", {
             enabled,
             note,
-            // ADR-129 SET/CLEAR symmetry: empty field clears back to
+            // ADR-132 SET/CLEAR symmetry: empty field clears back to
             // auto-detect (explicit null), git sources only.
             ...(source!.kind === "git"
               ? { baseBranch: trimmedBase ? trimmedBase : null }

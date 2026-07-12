@@ -41,7 +41,7 @@ export function packageErrorResponse(
       {
         code: err.code,
         message: err.message,
-        // ADR-129: machine-readable refusal context (e.g. the attach
+        // ADR-132: machine-readable refusal context (e.g. the attach
         // package_name_taken reason) — additive, absent when unset.
         ...(err.details !== undefined ? { details: err.details } : {}),
       },
