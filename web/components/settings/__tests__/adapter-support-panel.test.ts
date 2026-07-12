@@ -178,6 +178,12 @@ describe("AdapterSupportPanel", () => {
                   probeVersion: 2,
                   staleReason: "probe_contract",
                 },
+                capabilityEnforcement: {
+                  status: "ok",
+                  reason: null,
+                  checkedAt,
+                  protocolVersion: 1,
+                },
               },
             },
           ],

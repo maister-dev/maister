@@ -3,7 +3,7 @@ import "server-only";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -16,7 +16,7 @@ const SQLITE_AUXILIARY_FILES = [
 ] as const;
 
 export type MaterializationLockHandle = {
-  readonly connection: Database.Database;
+  readonly connection: DatabaseSync;
   released: boolean;
 };
 
@@ -66,10 +66,14 @@ async function assertSafeMutexFiles(rootPath: string): Promise<void> {
 }
 
 function isSqliteBusy(err: unknown): boolean {
-  return isCode(err, "SQLITE_BUSY", "SQLITE_BUSY_RECOVERY", "SQLITE_LOCKED");
+  return (
+    isCode(err, "ERR_SQLITE_ERROR") &&
+    err instanceof Error &&
+    /database is locked/i.test(err.message)
+  );
 }
 
-function closeAfterAcquireFailure(connection: Database.Database): void {
+function closeAfterAcquireFailure(connection: DatabaseSync): void {
   try {
     connection.close();
   } catch {
@@ -88,11 +92,11 @@ export async function tryAcquireMaterializationLock(
   await assertSafeMutexFiles(rootPath);
 
   const mutexPath = path.join(rootPath, MUTEX_FILE);
-  let connection: Database.Database | null = null;
+  let connection: DatabaseSync | null = null;
 
   try {
-    connection = new Database(mutexPath);
-    connection.pragma("busy_timeout = 0");
+    connection = new DatabaseSync(mutexPath);
+    connection.exec("PRAGMA busy_timeout = 0");
     connection.exec("BEGIN IMMEDIATE");
   } catch (err) {
     if (connection) closeAfterAcquireFailure(connection);
@@ -121,11 +125,12 @@ export async function releaseMaterializationLock(
   handle.released = true;
 
   try {
-    if (handle.connection.inTransaction) {
-      // The mutex transaction holds no application data. Rolling it back makes
-      // that intent explicit while still releasing SQLite's OS-backed lock.
-      handle.connection.exec("ROLLBACK");
-    }
+    // The mutex transaction holds no application data. Rolling it back makes
+    // that intent explicit while still releasing SQLite's OS-backed lock.
+    handle.connection.exec("ROLLBACK");
+  } catch {
+    // A crashed owner may have already lost the transaction; closing still
+    // releases SQLite's OS-backed lock.
   } finally {
     handle.connection.close();
   }

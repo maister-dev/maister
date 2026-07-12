@@ -448,7 +448,8 @@ export async function writeAdapterSmokeCache(
   for (const entry of entries) {
     // ADR-130: preserve the OTHER dimension when a write carries only one (the
     // readOnlySession and capabilityEnforcement rituals run as separate smoke
-    // invocations) — a single-dimension write must not clobber the sibling.
+    // invocations) — a single-dimension write must not clobber the sibling. A
+    // generic write (neither dimension) replaces the entry and clears both.
     const prev = adapters[entry.adapter];
 
     adapters[entry.adapter] = {
@@ -458,10 +459,14 @@ export async function writeAdapterSmokeCache(
       ...(entry.protocolVersion
         ? { protocolVersion: entry.protocolVersion }
         : {}),
-      ...(!entry.readOnlySession && prev?.readOnlySession
+      ...(entry.capabilityEnforcement &&
+      !entry.readOnlySession &&
+      prev?.readOnlySession
         ? { readOnlySession: prev.readOnlySession }
         : {}),
-      ...(!entry.capabilityEnforcement && prev?.capabilityEnforcement
+      ...(entry.readOnlySession &&
+      !entry.capabilityEnforcement &&
+      prev?.capabilityEnforcement
         ? { capabilityEnforcement: prev.capabilityEnforcement }
         : {}),
       ...(entry.readOnlySession
