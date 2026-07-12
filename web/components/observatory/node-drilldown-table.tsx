@@ -3,6 +3,8 @@ import type { ObservatoryNodeDrilldownProps } from "@/components/observatory/typ
 
 import Link from "next/link";
 
+import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
+
 export function NodeDrilldownTable({
   detail,
   labels,
@@ -10,9 +12,12 @@ export function NodeDrilldownTable({
   if (detail.runs.length === 0) {
     return (
       <section className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="m-0 text-sm font-semibold text-ink">
-          {labels.historicalAttempts}
-        </h2>
+        <header className="flex items-center justify-between gap-2">
+          <h2 className="m-0 text-sm font-semibold text-ink">
+            {labels.historicalAttempts}
+          </h2>
+          <FlowLedgerScope labels={labels} />
+        </header>
         <p className="mt-2 text-sm text-mute">{labels.noNodes}</p>
       </section>
     );
@@ -24,7 +29,10 @@ export function NodeDrilldownTable({
         <h2 className="m-0 text-sm font-semibold text-ink">
           {labels.historicalAttempts}
         </h2>
-        <span className="font-mono text-xs text-mute">{detail.nodeId}</span>
+        <div className="flex items-center gap-2">
+          <FlowLedgerScope labels={labels} />
+          <span className="font-mono text-xs text-mute">{detail.nodeId}</span>
+        </div>
       </header>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">

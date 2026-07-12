@@ -945,6 +945,9 @@
     "artifactDefId": "Определение артефакта",
     "artifactKind": "Тип артефакта",
     "flow": "Флоу",
+    "runKind": "Тип run-а",
+    "flowRuns": "Flow run-ы",
+    "flowLedgerOnly": "Неприменимо — только flow ledger.",
     "node": "Нода",
     "lookback": "Окно",
     "apply": "Применить",
@@ -980,7 +983,9 @@
       "escalations": "Эскалации",
       "terminations": "Остановки",
       "guardrailTrips": "Срабатывания гардрейла",
-      "warnNotSurfaced": "Сигналы warn-полосы логируются, но здесь не считаются — domain-события создают только эскалации и остановки."
+      "warnNotSurfaced": "Сигналы warn-полосы логируются, но здесь не считаются — domain-события создают только эскалации и остановки.",
+      "byKind": "По типу run-а",
+      "unattributedLegacy": "Неатрибутированное legacy"
     },
     "costBreakdown": {
       "byModelTitle": "По модели",
@@ -991,7 +996,42 @@
       "outputHeader": "Выход",
       "cacheHeader": "Кэш",
       "totalHeader": "Итого",
-      "empty": "Нет затрат в этом окне"
+      "empty": "Нет затрат в этом окне",
+      "byKindTitle": "По типу run-а",
+      "storedLifetime": "Накопленная сохранённая стоимость; окно не фильтрует token rollup-ы."
+    },
+    "agentization": {
+      "title": "Агентизация",
+      "subtitle": "Read-only доля delivery в target-ветке, атрибутированная run-ам MAIster.",
+      "lines": "Строки",
+      "deliveryUnits": "Merge / PR units",
+      "additions": "добавления",
+      "deletions": "удаления",
+      "asOf": "Данные на",
+      "insufficient": "Недостаточно delivery-доказательств",
+      "volatility": "Активные run-ы ещё могут доставить изменения.",
+      "flow": "Flow",
+      "scratch": "Scratch",
+      "agent": "Агент",
+      "trend": "Дневной тренд"
+    },
+    "funnel": {
+      "title": "Воронка автономности run-ов",
+      "subtitle": "Только существующие доказательства run-ов; без контролей и write-back.",
+      "runKind": "Тип run-а",
+      "launchMode": "Режим запуска",
+      "triggerSource": "Источник запуска",
+      "humanTouch": "Участие человека",
+      "throughput": "Терминальный throughput",
+      "promotionLane": "Линия promotion",
+      "pureAutonomous": "Чистая автономность",
+      "aiWithCorrection": "AI + коррекция",
+      "humanTakeover": "Перехват человеком",
+      "platformPromoted": "Promoted платформой",
+      "failed": "Ошибка",
+      "crashed": "Сбой",
+      "abandoned": "Заброшено",
+      "unrecorded": "Не записано"
     },
     "harness": {
       "sectionTitle": "Контур контроля",
@@ -2678,7 +2718,8 @@
       "webhook_delivery": "webhook_delivery",
       "domain_event_dispatch": "domain_event_dispatch",
       "auto_launch_triaged": "auto_launch_triaged",
-      "auto_promote": "auto_promote"
+      "auto_promote": "auto_promote",
+      "repo_delivery_scan": "repo_delivery_scan"
     },
     "state": {
       "active": "активна",

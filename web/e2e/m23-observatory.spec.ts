@@ -31,8 +31,12 @@ test.describe("M23 Observatory", () => {
     await expect(
       page.getByRole("heading", { name: /Observatory/ }),
     ).toBeVisible();
-    await expect(page.getByLabel("Flow")).toHaveValue(fx.flowId);
-    await expect(page.getByLabel("Node")).toHaveValue(fx.nodeId);
+    await expect(page.getByRole("textbox", { name: "Flow" })).toHaveValue(
+      fx.flowId,
+    );
+    await expect(page.getByRole("textbox", { name: "Node" })).toHaveValue(
+      fx.nodeId,
+    );
     await expect(page.getByText("Latest attempt by run")).toBeVisible();
     await expect(page.getByText("#2 · Succeeded").first()).toBeVisible();
 
@@ -73,7 +77,49 @@ test.describe("M23 Observatory", () => {
     ).toBeVisible();
   });
 
+  test("project Observatory shows cached scratch delivery without relabeling flow metrics", async ({
+    page,
+  }) => {
+    const fx = loadM23();
+
+    await page.goto(`/projects/${fx.projectSlug}/observatory?runKind=scratch`);
+
+    await expect(page.getByLabel("Run kind")).toHaveValue("scratch");
+    await expect(
+      page.getByRole("heading", { name: "Agentization" }),
+    ).toBeVisible();
+    await expect(page.getByTestId("observatory-agentization")).toContainText(
+      "2 / 10",
+    );
+    await expect(page.getByTestId("observatory-agentization")).toContainText(
+      "Scratch",
+    );
+    await expect(
+      page.getByRole("heading", { name: "Run autonomy funnel" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Not applicable — flow ledger only.").first(),
+    ).toBeVisible();
+  });
+
+  test("a project with no cache and no usable repository renders read-only insufficient evidence", async ({
+    page,
+  }) => {
+    const fx = loadM23();
+
+    await page.goto(`/projects/${fx.noCacheProjectSlug}/observatory`);
+
+    await expect(
+      page.getByRole("heading", { name: "Agentization" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Insufficient delivery evidence"),
+    ).toBeVisible();
+  });
+
   test("RU locale renders Observatory labels", async ({ page, context }) => {
+    const fx = loadM23();
+
     await context.addCookies([
       {
         name: "NEXT_LOCALE",
@@ -93,6 +139,11 @@ test.describe("M23 Observatory", () => {
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Карта покрытия" }),
+    ).toBeVisible();
+
+    await page.goto(`/projects/${fx.projectSlug}/observatory`);
+    await expect(
+      page.getByRole("heading", { name: "Агентизация" }),
     ).toBeVisible();
   });
 });

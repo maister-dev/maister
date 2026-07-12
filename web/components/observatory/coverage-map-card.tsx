@@ -1,6 +1,8 @@
 import type { ReactElement } from "react";
 import type { CoverageMapCardProps } from "@/components/observatory/types";
 
+import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
+
 export function CoverageMapCard({
   coverage,
   labels,
@@ -10,9 +12,12 @@ export function CoverageMapCard({
   if (coverage.length === 0) {
     return (
       <section className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="m-0 text-sm font-semibold text-ink">
-          {harness.coverageTitle}
-        </h2>
+        <header className="flex items-center justify-between gap-2">
+          <h2 className="m-0 text-sm font-semibold text-ink">
+            {harness.coverageTitle}
+          </h2>
+          <FlowLedgerScope labels={labels} />
+        </header>
         <p className="mt-2 text-sm text-mute">{harness.noCoverage}</p>
       </section>
     );
@@ -20,9 +25,12 @@ export function CoverageMapCard({
 
   return (
     <section className="rounded-lg border border-line bg-paper p-4">
-      <h2 className="m-0 text-sm font-semibold text-ink">
-        {harness.coverageTitle}
-      </h2>
+      <header className="flex items-center justify-between gap-2">
+        <h2 className="m-0 text-sm font-semibold text-ink">
+          {harness.coverageTitle}
+        </h2>
+        <FlowLedgerScope labels={labels} />
+      </header>
       <div className="mt-3 flex flex-col gap-3">
         {coverage.map((flow) => (
           <article

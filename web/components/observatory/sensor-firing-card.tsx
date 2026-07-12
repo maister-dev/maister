@@ -4,6 +4,7 @@ import type { SensorFiringCardProps } from "@/components/observatory/types";
 import Link from "next/link";
 
 import { formatRateWithN } from "@/components/observatory/harness-format";
+import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 import { MIN_GROUP_EXECUTIONS } from "@/lib/queries/observatory-core";
 
 export function SensorFiringCard({
@@ -11,6 +12,7 @@ export function SensorFiringCard({
   labels,
   neverFired,
   projectSlug,
+  runKind = "all",
 }: SensorFiringCardProps): ReactElement {
   const harness = labels.harness;
 
@@ -35,15 +37,18 @@ export function SensorFiringCard({
         <h2 className="m-0 text-sm font-semibold text-ink">
           {harness.firingTitle}
         </h2>
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-          {harness.byKind}:{" "}
-          {firing.byKind
-            .map(
-              (kind) =>
-                `${kind.kind} ${formatRateWithN(kind.failRate, kind.executions)}`,
-            )
-            .join(" · ")}
-        </span>
+        <div className="flex items-center gap-2">
+          <FlowLedgerScope labels={labels} />
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+            {harness.byKind}:{" "}
+            {firing.byKind
+              .map(
+                (kind) =>
+                  `${kind.kind} ${formatRateWithN(kind.failRate, kind.executions)}`,
+              )
+              .join(" · ")}
+          </span>
+        </div>
       </header>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">
@@ -76,6 +81,7 @@ export function SensorFiringCard({
               const nodeParams = new URLSearchParams({
                 flowId: group.flowId,
                 nodeId: group.nodeId,
+                runKind,
               });
 
               return (

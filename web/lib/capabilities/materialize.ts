@@ -22,9 +22,7 @@ import {
   nativeGuardScriptPath,
   resolveNativeHookMaterializer,
 } from "@/lib/capabilities/native-hook-materializer";
-import {
-  materializeCapabilitySettings,
-} from "@/lib/capabilities/settings-ownership";
+import { materializeCapabilitySettings } from "@/lib/capabilities/settings-ownership";
 import {
   assertSafeAgentMaterializationPath,
   materializeWithAgentLease,
@@ -44,6 +42,7 @@ const WORKTREE_EXCLUDE_PATTERNS = [
   "*.maister-bak",
   "*.maister-owned",
   "*.maister-operation",
+  ".maister-managed/",
   // M38 (ADR-103): the run-context blackboard lives at
   // <worktree>/.maister/run.json — keep MAIster's whole runtime subtree out of
   // git so run.json never appears in `git status` or the base→run diff.

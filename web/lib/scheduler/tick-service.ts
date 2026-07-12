@@ -18,6 +18,7 @@ import { runAutoPromoteJob } from "@/lib/scheduler/handlers/auto-promote";
 import { runCommandJob } from "@/lib/scheduler/handlers/command";
 import { runDomainEventDispatchJob } from "@/lib/scheduler/handlers/domain-event-dispatch";
 import { runScheduledFlowJob } from "@/lib/scheduler/handlers/flow-run";
+import { runRepoDeliveryScanJob } from "@/lib/scheduler/handlers/repo-delivery-scan";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { runSystemSweep } from "@/lib/scheduler/system-sweeps";
 import { isMaisterError } from "@/lib/errors";
@@ -186,10 +187,26 @@ async function runClaimedJob(
         });
 
         return succeeded(job);
+      case "repo_delivery_scan":
+        await recordJobAttemptResult({
+          jobId: job.id,
+          attemptId: job.attemptId,
+          status: "Succeeded",
+          summary: await runRepoDeliveryScanJob({ projectId: job.projectId }),
+        });
+
+        return succeeded(job);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const isSkip = isMaisterError(err) && err.code === "PRECONDITION";
+    // A malformed/missing repository is a project-scoped scanner failure, not
+    // a harmless no-op: it must consume that job's bounded retry budget while
+    // every other due project remains claimable. Other scheduler PRECONDITION
+    // outcomes retain their established skipped semantics.
+    const isSkip =
+      isMaisterError(err) &&
+      err.code === "PRECONDITION" &&
+      job.jobKind !== "repo_delivery_scan";
     const status = isSkip ? "Skipped" : "Failed";
     const errorCode = isMaisterError(err) ? err.code : "SCHEDULER_HANDLER";
 

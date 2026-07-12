@@ -98,6 +98,11 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import {
+  clearWorktreeProvenanceNode,
+  hasManagedWorktreeProvenance,
+  setWorktreeProvenanceNode,
+} from "@/lib/worktree-provenance";
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
 import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
@@ -2890,24 +2895,36 @@ export async function runGraph(
         };
       } else {
         try {
-          result = await executeNodeAction(node, loaded, context, {
-            runtimeRoot,
-            worktreePath,
-            supervisorApi: opts.supervisorApi,
-            capabilityProfilePath: materialized?.capabilityProfilePath,
-            adapterLaunch: materialized?.adapterLaunch,
-            mcpServers: materialized?.mcpServers,
-            profileDigest: materialized?.plan.profileDigest,
-            enforcementProfile: materialized?.enforcementProfile,
-            nodeAttemptId,
-            nodeAttemptNumber,
-            attempt: nodeAttemptNumber,
-            resumeSessionId: attemptResumeSessionId,
-            sessionName: nodeSessionName,
-            sessionExecutor: nodeExecutor,
-            sessionRunner: nodeRunnerSnapshot,
-            db,
-          });
+          const usesManagedProvenance =
+            await hasManagedWorktreeProvenance(worktreePath);
+
+          if (usesManagedProvenance) {
+            await setWorktreeProvenanceNode({ worktreePath, nodeId: node.id });
+          }
+          try {
+            result = await executeNodeAction(node, loaded, context, {
+              runtimeRoot,
+              worktreePath,
+              supervisorApi: opts.supervisorApi,
+              capabilityProfilePath: materialized?.capabilityProfilePath,
+              adapterLaunch: materialized?.adapterLaunch,
+              mcpServers: materialized?.mcpServers,
+              profileDigest: materialized?.plan.profileDigest,
+              enforcementProfile: materialized?.enforcementProfile,
+              nodeAttemptId,
+              nodeAttemptNumber,
+              attempt: nodeAttemptNumber,
+              resumeSessionId: attemptResumeSessionId,
+              sessionName: nodeSessionName,
+              sessionExecutor: nodeExecutor,
+              sessionRunner: nodeRunnerSnapshot,
+              db,
+            });
+          } finally {
+            if (usesManagedProvenance) {
+              await clearWorktreeProvenanceNode(worktreePath);
+            }
+          }
         } catch (err) {
           const e = isMaisterError(err)
             ? err

@@ -9,7 +9,8 @@ export type SchedulerBudgetKey =
   | "webhook_delivery"
   | "domain_event_dispatch"
   | "auto_launch_triaged"
-  | "auto_promote";
+  | "auto_promote"
+  | "repo_delivery_scan";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
@@ -21,6 +22,7 @@ export type SchedulerBudgetLimits = {
   domainEventDispatch: number;
   autoLaunchTriaged: number;
   autoPromote: number;
+  repoDeliveryScan: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -43,6 +45,9 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     // ADR-126: the seeded singleton auto-promotion sweep — one attempt at a
     // time. The singleton lease prevents overlapping ticks during a long merge.
     autoPromote: 1,
+    // ADR-134: project-scoped remote scans are network-bound and sequentially
+    // bounded. This is deliberately not operator-configurable.
+    repoDeliveryScan: 1,
   };
 }
 

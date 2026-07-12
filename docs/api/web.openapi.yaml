@@ -433,8 +433,12 @@ paths:
         `domain_event_dispatch`, and `agent_tick` are deliberately NOT
         creatable here — the singletons `run_schedule.dispatcher` (M28,
         ADR-071), `domain_event_dispatch.default` (ADR-086), and
-        `agent_tick.dispatcher` (M34 — Implemented, ADR-089) are seeded by
-        the tick; all three kinds are rejected at the schema.
+        `agent_tick.dispatcher` (M34 — Implemented, ADR-089),
+        `auto_launch_triaged.default` (ADR-112), `auto_promote.default`
+        (ADR-126), and `repo_delivery_scan.<projectId>` (Implemented, ADR-134)
+        are system-managed and not creatable here. The tick creates or
+        maintains their rows; the admin-create schema rejects every
+        system-managed kind.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -7485,6 +7489,7 @@ paths:
                 domain_event_dispatch,
                 auto_launch_triaged,
                 auto_promote,
+                repo_delivery_scan,
               ]
       responses:
         "200":
@@ -7524,6 +7529,7 @@ paths:
                 domain_event_dispatch,
                 auto_launch_triaged,
                 auto_promote,
+                repo_delivery_scan,
               ]
       responses:
         "200":
@@ -13957,6 +13963,9 @@ components:
               run_schedule,
               webhook_delivery,
               domain_event_dispatch,
+              auto_launch_triaged,
+              auto_promote,
+              repo_delivery_scan,
             ]
         attempts:
           type: array
@@ -13977,6 +13986,9 @@ components:
                     run_schedule,
                     webhook_delivery,
                     domain_event_dispatch,
+                    auto_launch_triaged,
+                    auto_promote,
+                    repo_delivery_scan,
                   ]
               status:
                 type: string

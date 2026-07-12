@@ -4,15 +4,21 @@ import type { CorrectionHeatmapProps } from "@/components/observatory/types";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
+
 export function CorrectionHeatmap({
   labels,
   nodes,
   projectSlug,
+  runKind = "all",
 }: CorrectionHeatmapProps): ReactElement {
   if (nodes.length === 0) {
     return (
       <section className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="m-0 text-sm font-semibold text-ink">{labels.nodes}</h2>
+        <header className="flex items-center justify-between gap-2">
+          <h2 className="m-0 text-sm font-semibold text-ink">{labels.nodes}</h2>
+          <FlowLedgerScope labels={labels} />
+        </header>
         <p className="mt-2 text-sm text-mute">{labels.noNodes}</p>
       </section>
     );
@@ -22,6 +28,7 @@ export function CorrectionHeatmap({
     <section className="rounded-lg border border-line bg-paper p-4">
       <header className="mb-3 flex items-center justify-between gap-3">
         <h2 className="m-0 text-sm font-semibold text-ink">{labels.nodes}</h2>
+        <FlowLedgerScope labels={labels} />
         <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-mute">
           {labels.correctionFormula}
         </span>
@@ -32,6 +39,7 @@ export function CorrectionHeatmap({
           const params = new URLSearchParams({
             flowId: node.flowId,
             nodeId: node.nodeId,
+            runKind,
           });
 
           return projectSlug ? (

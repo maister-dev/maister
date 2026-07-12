@@ -1,12 +1,15 @@
 import type { ObservatoryFilters } from "@/lib/queries/observatory";
+import type { ObservatoryRunKind } from "@/lib/observatory/run-kind";
 
 import { ARTIFACT_KINDS, type ArtifactKind } from "@/lib/config.schema";
+import { isObservatoryRunKind } from "@/lib/observatory/run-kind";
 
 export interface ObservatorySearchParams {
   artifactDefId?: string | string[];
   artifactKind?: string | string[];
   flowId?: string | string[];
   nodeId?: string | string[];
+  runKind?: string | string[];
   windowDays?: string | string[];
 }
 
@@ -17,6 +20,7 @@ export interface ParsedObservatoryFilters {
     artifactKind?: string;
     flowId?: string;
     nodeId?: string;
+    runKind: ObservatoryRunKind;
     windowDays: number;
   };
 }
@@ -33,6 +37,7 @@ export function parseObservatorySearchParams(
   const validArtifactKind = parseArtifactKind(artifactKind);
   const flowId = firstNonEmpty(params.flowId);
   const nodeId = firstNonEmpty(params.nodeId);
+  const runKind = parseRunKind(params.runKind);
   const windowDays = clampWindowDays(firstNonEmpty(params.windowDays));
 
   return {
@@ -41,6 +46,7 @@ export function parseObservatorySearchParams(
       artifactKind: validArtifactKind,
       flowId,
       nodeId,
+      runKind,
       windowDays,
     },
     current: {
@@ -48,9 +54,20 @@ export function parseObservatorySearchParams(
       artifactKind,
       flowId,
       nodeId,
+      runKind,
       windowDays,
     },
   };
+}
+
+function parseRunKind(
+  value: ObservatorySearchParams["runKind"],
+): ObservatoryRunKind {
+  if (Array.isArray(value)) return "all";
+
+  const normalized = value?.trim();
+
+  return normalized && isObservatoryRunKind(normalized) ? normalized : "all";
 }
 
 function firstNonEmpty(

@@ -83,6 +83,33 @@ export function BudgetSurfaceCard({
           </div>
         </div>
       </div>
+      <div className="mt-4">
+        <h4 className="m-0 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+          {budgetLabels.byKind}
+        </h4>
+        <ul className="m-0 mt-2 grid list-none grid-cols-1 gap-1 p-0 text-xs text-ink sm:grid-cols-2">
+          {budget.byKind.map((row) => (
+            <li
+              key={row.kind}
+              className="flex justify-between rounded-md bg-ivory px-2 py-1.5"
+            >
+              <span>
+                {row.kind === "unattributed_legacy"
+                  ? budgetLabels.unattributedLegacy
+                  : row.kind}
+              </span>
+              <span className="font-mono">
+                {formatCount(
+                  locale,
+                  row.budgetEscalations +
+                    row.budgetTerminations +
+                    row.hookTripEscalations,
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
       <p className="mt-3 text-[10.5px] text-mute">
         {budgetLabels.warnNotSurfaced}
       </p>

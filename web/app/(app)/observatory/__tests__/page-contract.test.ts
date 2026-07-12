@@ -11,6 +11,7 @@ describe("observatory page contract", () => {
       artifactKind: " log ",
       flowId: " aif ",
       nodeId: ["checks"],
+      runKind: "scratch",
       windowDays: "999",
     });
 
@@ -19,10 +20,22 @@ describe("observatory page contract", () => {
       artifactKind: "log",
       flowId: "aif",
       nodeId: "checks",
+      runKind: "scratch",
       windowDays: 365,
     });
     expect(parsed.current.artifactKind).toBe("log");
     expect(parsed.current.windowDays).toBe(365);
+  });
+
+  it("treats absent, repeated, and invalid run-kind values as all", () => {
+    expect(parseObservatorySearchParams({}).filters.runKind).toBe("all");
+    expect(
+      parseObservatorySearchParams({ runKind: ["flow", "flow"] }).filters
+        .runKind,
+    ).toBe("all");
+    expect(
+      parseObservatorySearchParams({ runKind: "unknown" }).filters.runKind,
+    ).toBe("all");
   });
 
   it("does not cast invalid artifact kind query values into DB filters", () => {

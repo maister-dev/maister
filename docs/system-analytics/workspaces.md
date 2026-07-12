@@ -552,6 +552,23 @@ flowchart LR
   losing claim returns `409 CONFLICT`; a transient push failure leaves the
   operation retryable rather than marking promotion done.
 
+## Implemented: delivery-root evidence and worktree provenance (ADR-134)
+
+**Status: Implemented.** A workspace remains the mutable worktree lifecycle row;
+final delivery evidence belongs to `runs` because a shared workspace can serve
+several runs. An own workspace's promoted run is its delivery root. In shared
+mode exactly one root run owns the tree-level SHA/stat and its run kind bucket;
+sibling rows stay null rather than receiving a fabricated line split. The same
+root owns a shared-tree PR's body and provisional source head; all tree children
+settle together, but only that root can receive scanner-finalized evidence.
+
+Every common worktree-creation path (flow, scratch, and worktree agent)
+atomically write managed run metadata, enable Git worktree configuration, and
+install the worktree-local trailer hook/template. Shared-worktree reuse keeps
+root metadata; entering a graph node may update only the optional Node pointer.
+GC can remove a worktree without removing persisted final evidence. Installation
+failure compensates the new branch/worktree before it returns a typed error.
+
 ## Linked artifacts
 
 - ADRs: [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),

@@ -1016,6 +1016,31 @@ whose ACTIVE `run_sessions` row carries a non-null `acp_session_id`
 Always-on, no feature flag. Idempotent — a second invocation finds no
 matching rows.
 
+## Implemented: promoted delivery evidence (ADR-134)
+
+**Status: Implemented.** `runs.promoted_head_sha`, `runs.merge_commit_sha`, and
+`runs.diff_stat` are the durable final-evidence contract for a shipped
+delivery. The columns remain null for non-promoted, failed, abandoned, and
+superseded runs. `diff_stat` is `{ files, additions, deletions }` after the
+one shared delivery-path cleaning policy; it must survive worktree GC.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active
+    Active --> Review
+    Review --> Promoting
+    Promoting --> Shipped: final target SHA and cleaned delta persist atomically
+    Promoting --> Review: typed promotion failure, no final evidence
+    Active --> TerminalUnshipped: failed / crashed / abandoned
+```
+
+Local merge records the merge SHA and first-parent delta. Rebase/fast-forward
+records the resulting target head and ordered introduced target commits. PR
+open stores provisional source linkage only; provider/repository proof resolves
+final target delivery before it counts. Scratch and promotable worktree agents
+reach distinct promotion entry points but one shared final-evidence helper. The
+evidence has no effect on promotion eligibility.
+
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),

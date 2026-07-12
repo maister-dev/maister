@@ -1,5 +1,7 @@
 import type {
   CostDimensionRow,
+  CostKindRow,
+  BudgetKindRow,
   ObservatoryArtifactSummary,
   ObservatoryBudgetSummary,
   ObservatoryNodeDetail,
@@ -7,6 +9,11 @@ import type {
   ObservatoryPortfolio,
   ObservatoryProject,
 } from "@/lib/queries/observatory";
+import type {
+  AgentizationSummary,
+  ObservatoryFunnel,
+} from "@/lib/queries/observatory-agentization-core";
+import type { ObservatoryRunKind } from "@/lib/observatory/run-kind";
 import type {
   CoverageFlow,
   GateFiringRollup,
@@ -58,6 +65,8 @@ export interface ObservatoryBudgetLabels {
   terminations: string;
   guardrailTrips: string;
   warnNotSurfaced: string;
+  byKind: string;
+  unattributedLegacy: string;
 }
 
 export interface ObservatoryCostBreakdownLabels {
@@ -70,6 +79,43 @@ export interface ObservatoryCostBreakdownLabels {
   cacheHeader: string;
   totalHeader: string;
   empty: string;
+  byKindTitle: string;
+  storedLifetime: string;
+}
+
+export interface ObservatoryAgentizationLabels {
+  title: string;
+  subtitle: string;
+  lines: string;
+  deliveryUnits: string;
+  additions: string;
+  deletions: string;
+  asOf: string;
+  insufficient: string;
+  volatility: string;
+  flow: string;
+  scratch: string;
+  agent: string;
+  trend: string;
+}
+
+export interface ObservatoryFunnelLabels {
+  title: string;
+  subtitle: string;
+  runKind: string;
+  launchMode: string;
+  triggerSource: string;
+  humanTouch: string;
+  throughput: string;
+  promotionLane: string;
+  pureAutonomous: string;
+  aiWithCorrection: string;
+  humanTakeover: string;
+  platformPromoted: string;
+  failed: string;
+  crashed: string;
+  abandoned: string;
+  unrecorded: string;
 }
 
 export interface ObservatoryLabels {
@@ -97,6 +143,9 @@ export interface ObservatoryLabels {
   artifactDefId: string;
   artifactKind: string;
   flow: string;
+  runKind: string;
+  flowRuns: string;
+  flowLedgerOnly: string;
   node: string;
   lookback: string;
   apply: string;
@@ -111,6 +160,8 @@ export interface ObservatoryLabels {
   harness: ObservatoryHarnessLabels;
   budget: ObservatoryBudgetLabels;
   costBreakdown: ObservatoryCostBreakdownLabels;
+  agentization: ObservatoryAgentizationLabels;
+  funnel: ObservatoryFunnelLabels;
 }
 
 export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
@@ -119,6 +170,7 @@ export interface ObservatoryDashboardProps {
   data: ObservatorySummaryData;
   labels: ObservatoryLabels;
   projectSlug?: string;
+  runKind?: ObservatoryRunKind;
 }
 
 export interface ObservatoryNodeDrilldownProps {
@@ -133,6 +185,7 @@ export interface ObservatoryFilterProps {
     artifactKind?: string;
     flowId?: string;
     nodeId?: string;
+    runKind?: ObservatoryRunKind;
     windowDays: number;
   };
 }
@@ -141,6 +194,7 @@ export interface CorrectionHeatmapProps {
   labels: ObservatoryLabels;
   nodes: readonly ObservatoryNodeSummary[];
   projectSlug?: string;
+  runKind?: ObservatoryRunKind;
 }
 
 export interface ArtifactListProps {
@@ -153,6 +207,7 @@ export interface SensorFiringCardProps {
   neverFired: readonly NeverFiredFlag[];
   labels: ObservatoryLabels;
   projectSlug?: string;
+  runKind?: ObservatoryRunKind;
 }
 
 export interface CoverageMapCardProps {
@@ -178,4 +233,28 @@ export interface CostBreakdownCardProps {
   labels: ObservatoryLabels;
   locale: string;
   testId?: string;
+}
+
+export interface CostKindBreakdownProps {
+  rows: readonly CostKindRow[];
+  labels: ObservatoryLabels;
+  locale: string;
+}
+
+export interface BudgetKindBreakdownProps {
+  rows: readonly BudgetKindRow[];
+  labels: ObservatoryLabels;
+  locale: string;
+}
+
+export interface AgentizationPanelProps {
+  data: AgentizationSummary;
+  labels: ObservatoryLabels;
+  locale: string;
+}
+
+export interface AutonomyFunnelCardProps {
+  data: ObservatoryFunnel;
+  labels: ObservatoryLabels;
+  locale: string;
 }

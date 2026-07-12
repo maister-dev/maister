@@ -17,6 +17,7 @@ import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { selectPrAdapter } from "@/lib/runs/pr-adapter";
 import {
   branchExists,
+  headCommit,
   promoteLocalMerge,
   pushBranch,
   resolveBaseCommit,
@@ -137,6 +138,13 @@ vi.mock("@/lib/runs/pr-adapter", () => ({
 
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
+  deliveryCommitStats: vi.fn(async () => ({
+    files: 0,
+    additions: 0,
+    deletions: 0,
+  })),
+  findTargetMergeByRunId: vi.fn(async () => null),
+  headCommit: vi.fn(async () => "source-head-000"),
   promoteLocalMerge: vi.fn(async () => "merged00"),
   promoteRebaseMerge: vi.fn(async () => "rebased00"),
   pushBranch: vi.fn(async () => undefined),
@@ -243,6 +251,7 @@ async function expectMaisterCode(p: Promise<unknown>, code: string) {
 beforeEach(() => {
   dbState.tables = { runs: [], scratch_runs: [], workspaces: [], projects: [] };
   vi.mocked(branchExists).mockReset().mockResolvedValue(true);
+  vi.mocked(headCommit).mockReset().mockResolvedValue("source-head-000");
   vi.mocked(promoteLocalMerge).mockReset().mockResolvedValue("merged00");
   vi.mocked(pushBranch).mockReset().mockResolvedValue(undefined);
   vi.mocked(resolveBaseCommit).mockReset().mockResolvedValue("tip00000");
@@ -326,6 +335,11 @@ describe("promoteRun — pull_request happy path (github)", () => {
 
     // Finalize: run Done, pr_url/pr_number persisted on the workspace.
     expect(dbState.tables.runs[0].status).toBe("Done");
+    expect(dbState.tables.runs[0]).toMatchObject({
+      promotedHeadSha: "source-head-000",
+      mergeCommitSha: null,
+      diffStat: null,
+    });
     expect(dbState.tables.workspaces[0].promotionState).toBe("done");
     expect(dbState.tables.workspaces[0].prUrl).toBe(
       "https://github.com/org/repo/pull/77",

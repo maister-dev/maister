@@ -109,10 +109,27 @@ vi.mock("@/lib/authz", () => ({
 
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
+  deliveryCommitStats: vi.fn(async () => ({
+    files: 1,
+    additions: 1,
+    deletions: 0,
+  })),
+  deliveryHistoryStats: vi.fn(async () => ({
+    files: 1,
+    additions: 1,
+    deletions: 0,
+  })),
+  findTargetMergeByRunId: vi.fn(async () => null),
   promoteLocalMerge: vi.fn(async () => "def5678"),
   promoteRebaseMerge: vi.fn(async () => "rebased00"),
   pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
+}));
+
+vi.mock("@/lib/worktree-provenance", () => ({
+  readWorktreeProvenanceForPromotion: vi.fn(async () => ({
+    runId: "run-promote",
+  })),
 }));
 
 vi.mock("@/lib/assignments/service", () => ({
@@ -232,6 +249,7 @@ describe("POST /api/runs/[runId]/promote", () => {
       projectRepoPath: "/repos/demo",
       sourceBranch: "scratch/demo",
       targetBranch: "main",
+      provenance: { runId },
     });
     expect(body.commit).toBe("def5678");
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
@@ -369,6 +387,7 @@ describe("POST /api/runs/[runId]/promote", () => {
       projectRepoPath: "/repos/demo",
       sourceBranch: "scratch/demo",
       targetBranch: "main",
+      provenance: { runId },
     });
     expect(dbState.tables.runs[0].status).toBe("Done");
     expect(dbState.tables.workspaces[0].promotionState).toBe("done");
@@ -446,6 +465,7 @@ describe("POST /api/runs/[runId]/promote", () => {
         projectRepoPath: "/repos/demo",
         sourceBranch: "scratch/demo",
         targetBranch: "main",
+        provenance: { runId },
       });
       // Merge succeeded: run is Done
       expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
@@ -469,6 +489,7 @@ describe("POST /api/runs/[runId]/promote", () => {
         projectRepoPath: "/repos/demo",
         sourceBranch: "scratch/demo",
         targetBranch: "main",
+        provenance: { runId },
       });
       expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
       expect(dbState.tables.runs[0].status).toBe("Done");

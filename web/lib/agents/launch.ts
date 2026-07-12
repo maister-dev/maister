@@ -110,6 +110,7 @@ import {
   resolveBaseCommit,
   statusPorcelain,
 } from "@/lib/worktree";
+import { ensureWorktreeProvenance } from "@/lib/worktree-provenance";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -1066,6 +1067,7 @@ export async function launchAgentRun(
 
     if (isShared) {
       const rootRunId = input.rootRunId as string;
+      let provenanceRunId: string = runId;
 
       branch = `${ctx.project.branchPrefix ?? "maister/"}agents/${rootRunId}`;
       worktreePath = sharedAgentWorktreePath(ctx.project.slug, rootRunId);
@@ -1082,6 +1084,7 @@ export async function launchAgentRun(
         // A row exists ⇒ a sibling genuinely allocated the tree. Reuse the dir,
         // own no row.
         reuseSharedTree = true;
+        provenanceRunId = treeRow.runId;
       } else {
         // No row ⇒ THIS child owns the tree's row. Branch on whether the dir is
         // already present.
@@ -1110,6 +1113,7 @@ export async function launchAgentRun(
               worktreePath,
               branch,
               startPoint: resolvedBranchBase,
+              provenance: { runId },
             });
             allocatedWorktree = true;
           } catch (err) {
@@ -1134,6 +1138,11 @@ export async function launchAgentRun(
           }
         }
       }
+
+      await ensureWorktreeProvenance({
+        worktreePath,
+        metadata: { runId: provenanceRunId },
+      });
 
       // M37 (ADR-102): record the allocator-vs-reuser decision for the shared
       // tree. The allocator/claimer owns the single `workspaces` row (UNIQUE
@@ -1166,6 +1175,7 @@ export async function launchAgentRun(
         worktreePath,
         branch,
         startPoint: resolvedBranchBase,
+        provenance: { runId },
       });
       allocatedWorktree = true;
     }

@@ -163,6 +163,7 @@ flowchart TD
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`account.md`](account.md) | Account settings (profile, password, personal API tokens) | `/account` | Implemented profile/password; personal API tokens Designed |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
+| [`observatory.md`](observatory.md) | Observatory (delivery attribution, cost/budget, flow-ledger process metrics) | `/observatory`, `/projects/{slug}/observatory` | Existing panels and ADR-134 additions Implemented |
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |

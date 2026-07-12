@@ -6,6 +6,7 @@ import {
   formatRateWithN,
   formatRatioWithN,
 } from "@/components/observatory/harness-format";
+import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 
 export function ControlEffectivenessCard({
   effectiveness,
@@ -15,9 +16,12 @@ export function ControlEffectivenessCard({
 
   return (
     <section className="rounded-lg border border-line bg-paper p-4">
-      <h2 className="m-0 text-sm font-semibold text-ink">
-        {harness.effectivenessTitle}
-      </h2>
+      <header className="flex items-center justify-between gap-2">
+        <h2 className="m-0 text-sm font-semibold text-ink">
+          {harness.effectivenessTitle}
+        </h2>
+        <FlowLedgerScope labels={labels} />
+      </header>
       {effectiveness.gates.length === 0 ? (
         <p className="mt-2 text-sm text-mute">{harness.noEffectiveness}</p>
       ) : (

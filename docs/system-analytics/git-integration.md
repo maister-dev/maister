@@ -407,6 +407,39 @@ schemas, and secret-bearing remote output is redacted before errors surface.
   non-admin/owner caller → `UNAUTHORIZED` (HTTP 403); push/fetch auth failure is
   an **advisory** (no DB write, nothing to roll back).
 
+## Implemented: managed-worktree commit provenance (ADR-134)
+
+**Status: Implemented.** Every MAIster-created worktree receives provenance
+independently of the host Git identity. The creator first enables
+`extensions.worktreeConfig=true`, then writes worktree-scoped
+`core.hooksPath` and `commit.template`; the shared repository config is never
+used as a leaking per-run marker.
+
+```mermaid
+flowchart LR
+    Add["git worktree add"] --> Config["enable worktree config"]
+    Config --> Metadata["atomic .maister-managed/provenance"]
+    Metadata --> Hook["prepare-commit-msg hook"]
+    Template["commit template"] --> Hook
+    Hook --> Commit["commit with Maister trailers"]
+```
+
+The portable `/bin/sh` hook fills missing expected trailers, preserves existing
+author identity, rejects a conflicting `Maister-Run-Id`, and avoids duplicate
+trailers. Task and Flow are omitted when not truthful and an unexpected Task or
+Flow trailer in taskless metadata aborts the commit; Run ID remains enough
+for attribution. It covers ordinary, `-m`, amend, and `--no-verify` commits.
+Platform-mediated snapshots, squash/rebase output, and non-FF merges explicitly
+preserve or compose equivalent trailers because Git's default merge message has
+none. A hook/config installation failure compensates a newly created worktree
+and returns a typed `MaisterError`; a silently unstamped managed worktree is not
+valid. This is provenance, not an AI author-identity claim.
+
+Pre-cutover worktrees with no managed provenance directory remain promotable so
+the feature does not change their delivery policy. They cannot use trailer
+recovery, while a recognizable managed directory with missing or malformed
+metadata fails closed.
+
 ## Linked artifacts
 
 - ADRs: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),

@@ -11,6 +11,7 @@ import {
   schedulerAgentTickMaxFailures,
   type SchedulerJobKind,
 } from "@/lib/scheduler/jobs";
+import { isSystemManagedSchedulerJobKind } from "@/lib/scheduler/job-catalog";
 import { normalizeSchedulerTargetDraft } from "@/lib/scheduler/job-targets";
 
 type AdminDb = {
@@ -168,6 +169,21 @@ export async function deleteSchedulerJob(
   db?: AdminDb,
 ): Promise<void> {
   const database = db ?? (getDb() as unknown as AdminDb);
+  const existing = await database.execute(sql`
+    SELECT job_kind FROM scheduler_jobs WHERE id = ${jobId} LIMIT 1
+  `);
+  const row = rowsOf<{ job_kind: SchedulerJobKind }>(existing)[0];
+
+  if (!row) {
+    throw new MaisterError("PRECONDITION", `scheduler job not found: ${jobId}`);
+  }
+  if (isSystemManagedSchedulerJobKind(row.job_kind)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `system-managed scheduler job cannot be deleted: ${jobId}`,
+    );
+  }
+
   const result = await database.execute(sql`
     DELETE FROM scheduler_jobs WHERE id = ${jobId} RETURNING id
   `);

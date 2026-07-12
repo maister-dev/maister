@@ -4,16 +4,25 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { ProjectTabs } from "@/components/board/project-tabs";
+import { AgentizationPanel } from "@/components/observatory/agentization-panel";
+import { AutonomyFunnelCard } from "@/components/observatory/autonomy-funnel-card";
+import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
 import { CostBreakdownCard } from "@/components/observatory/cost-breakdown-card";
+import { CostKindBreakdown } from "@/components/observatory/cost-kind-breakdown";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { labelsFromTranslations } from "@/components/observatory/labels";
 import { NodeDrilldownTable } from "@/components/observatory/node-drilldown-table";
 import { ObservatoryFilters } from "@/components/observatory/observatory-filters";
 import { ObservatorySummary } from "@/components/observatory/observatory-summary";
 import { SensorFiringCard } from "@/components/observatory/sensor-firing-card";
+import {
+  FlowLedgerNotApplicable,
+  FlowLedgerScope,
+} from "@/components/observatory/flow-ledger-scope";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { parseObservatorySearchParams } from "@/lib/observatory/filters";
+import { isFlowLedgerApplicable } from "@/lib/observatory/run-kind";
 import { reposRoot } from "@/lib/instance-config";
 import { formatProjectRepoPath } from "@/lib/project-path-display";
 import {
@@ -30,6 +39,7 @@ interface PageProps {
     artifactKind?: string | string[];
     flowId?: string | string[];
     nodeId?: string | string[];
+    runKind?: string | string[];
     windowDays?: string | string[];
   }>;
 }
@@ -64,7 +74,9 @@ export default async function ProjectObservatoryPage({
     getBoardData(project.id),
   ]);
   const nodeDetail = current.nodeId
-    ? await getNodeObservatoryDetail(project.id, current.nodeId, filters)
+    ? isFlowLedgerApplicable(current.runKind)
+      ? await getNodeObservatoryDetail(project.id, current.nodeId, filters)
+      : null
     : null;
 
   return (
@@ -87,16 +99,33 @@ export default async function ProjectObservatoryPage({
         slug={slug}
       />
       <ObservatoryFilters current={current} labels={labels} />
+      <section className="mb-6">
+        <AgentizationPanel
+          data={observatory.agentization}
+          labels={labels}
+          locale={locale}
+        />
+        <div className="mt-4">
+          <AutonomyFunnelCard
+            data={observatory.funnel}
+            labels={labels}
+            locale={locale}
+          />
+        </div>
+      </section>
       <ObservatorySummary
         data={observatory}
         labels={labels}
         projectSlug={slug}
+        runKind={current.runKind}
       />
       <section className="mt-6" data-testid="observatory-cost">
         <header className="mb-3">
-          <h2 className="m-0 text-lg font-semibold text-ink">
-            {t("cost.title")}
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="m-0 text-lg font-semibold text-ink">
+              {t("cost.title")}
+            </h2>
+          </div>
           <p className="mt-1 max-w-[72ch] text-sm text-mute">
             {t("cost.subtitle")}
           </p>
@@ -119,32 +148,52 @@ export default async function ProjectObservatoryPage({
             title={labels.costBreakdown.byRunnerTitle}
           />
         </div>
-      </section>
-      <section className="mt-6">
-        <header className="mb-3">
-          <h2 className="m-0 text-lg font-semibold text-ink">
-            {labels.harness.sectionTitle}
-          </h2>
-          <p className="mt-1 max-w-[72ch] text-sm text-mute">
-            {labels.harness.sectionSubtitle}
-          </p>
-        </header>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <SensorFiringCard
-            firing={observatory.harness.firing}
+        <div className="mt-4">
+          <CostKindBreakdown
             labels={labels}
-            neverFired={observatory.harness.neverFired}
-            projectSlug={slug}
-          />
-          <ControlEffectivenessCard
-            effectiveness={observatory.harness.effectiveness}
-            labels={labels}
-          />
-          <CoverageMapCard
-            coverage={observatory.harness.coverage}
-            labels={labels}
+            locale={locale}
+            rows={observatory.cost.byKind}
           />
         </div>
+        <BudgetSurfaceCard
+          budget={observatory.budget}
+          labels={labels}
+          locale={locale}
+        />
+      </section>
+      <section className="mt-6">
+        {isFlowLedgerApplicable(current.runKind) ? (
+          <>
+            <header className="mb-3">
+              <h2 className="m-0 text-lg font-semibold text-ink">
+                {labels.harness.sectionTitle}
+              </h2>
+              <FlowLedgerScope labels={labels} />
+              <p className="mt-1 max-w-[72ch] text-sm text-mute">
+                {labels.harness.sectionSubtitle}
+              </p>
+            </header>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <SensorFiringCard
+                firing={observatory.harness.firing}
+                labels={labels}
+                neverFired={observatory.harness.neverFired}
+                projectSlug={slug}
+                runKind={current.runKind}
+              />
+              <ControlEffectivenessCard
+                effectiveness={observatory.harness.effectiveness}
+                labels={labels}
+              />
+              <CoverageMapCard
+                coverage={observatory.harness.coverage}
+                labels={labels}
+              />
+            </div>
+          </>
+        ) : (
+          <FlowLedgerNotApplicable labels={labels} />
+        )}
       </section>
       {nodeDetail ? (
         <div className="mt-4">

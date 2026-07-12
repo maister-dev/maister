@@ -69,6 +69,7 @@ erDiagram
     PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "group FK (ADR-088 Implemented)"
     PROJECTS ||--o{ AUTHORED_CAPABILITIES : "authored catalog (M25)"
     PROJECTS ||--o{ SCHEDULER_JOBS : "optional scheduler scope (M24)"
+    PROJECTS ||--o{ REPO_DELIVERY_ROLLUPS : "ADR-134 cached denominator"
     PROJECTS ||--o{ AGENT_SCHEDULES : "agent trigger bindings (M34)"
     AGENTS ||--o{ AGENT_SCHEDULES : "cron + event bindings (M34)"
     AGENTS ||--o{ AGENT_PROJECT_LINKS : "attachments (M34)"
@@ -95,7 +96,7 @@ erDiagram
     PLATFORM_ACP_RUNNERS ||--o{ TASKS : "triage runner verdict (M34, SET NULL)"
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner default"
 
-    RUNS ||--|| WORKSPACES : "one worktree per run"
+    RUNS }o--o| WORKSPACES : "own or shared worktree"
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (M42 Implemented)"
@@ -470,7 +471,7 @@ erDiagram
     SCHEDULER_JOBS {
         text id PK
         text project_id FK
-        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged"
+        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged|auto_promote|repo_delivery_scan"
         jsonb target
         integer cadence_interval_seconds
         timestamp next_run_at
@@ -495,6 +496,24 @@ erDiagram
         jsonb summary
         text error_code
         text error_message
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    REPO_DELIVERY_ROLLUPS {
+        text id PK
+        text project_id FK
+        text branch
+        timestamp bucket_start
+        timestamp bucket_end
+        integer commits
+        integer merge_pr_units
+        integer additions
+        integer deletions
+        jsonb delivery_refs
+        boolean provider_complete
+        timestamp fetched_at
+        text head_sha
         timestamp created_at
         timestamp updated_at
     }

@@ -14,8 +14,25 @@ import pino from "pino";
 import { z } from "zod";
 
 import { MaisterError } from "@/lib/errors";
+import {
+  DELIVERY_PATHSPEC,
+  type DeliveryDiffStat,
+} from "@/lib/delivery-pathspec";
+import {
+  DELIVERY_HISTORY_NUL_GIT_FORMAT,
+  parseTimestampedDeliveryHistory,
+  summarizeDeliveryHistory,
+} from "@/lib/delivery-history-core";
 import { containmentAssert } from "@/lib/flows/graph/workspace-checkpoint";
 import { redactUrl } from "@/lib/repo-source";
+import {
+  installWorktreeProvenance,
+  type MaisterProvenance,
+} from "@/lib/worktree-provenance";
+import {
+  composeCommitMessage,
+  parseMaisterTrailers,
+} from "@/lib/worktree-provenance-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -170,6 +187,7 @@ export type AddWorktreeArgs = {
   branch: string;
   worktreePath: string;
   startPoint?: string;
+  provenance?: MaisterProvenance;
 };
 
 export async function addWorktree(args: AddWorktreeArgs): Promise<void> {
@@ -198,7 +216,37 @@ export async function addWorktree(args: AddWorktreeArgs): Promise<void> {
     const { stdout, stderr } = await runGit(repo, gitArgs);
 
     log.debug({ stdout, stderr }, "addWorktree done");
+
+    if (args.provenance) {
+      try {
+        await installWorktreeProvenance({
+          worktreePath: wt,
+          metadata: args.provenance,
+        });
+      } catch (error) {
+        try {
+          await runGit(repo, ["worktree", "remove", "--force", "--", wt]);
+          await runGit(repo, ["branch", "-D", "--", br]);
+        } catch (compensationError) {
+          log.error(
+            {
+              branch: br,
+              worktreePath: wt,
+              error:
+                compensationError instanceof Error
+                  ? compensationError.message
+                  : String(compensationError),
+            },
+            "failed to compensate worktree provenance installation",
+          );
+        }
+
+        throw error;
+      }
+    }
   } catch (err) {
+    if (err instanceof MaisterError) throw err;
+
     const stderrText = errorText(err);
 
     if (
@@ -708,6 +756,11 @@ export type PromoteLocalMergeArgs = {
   projectRepoPath: string;
   sourceBranch: string;
   targetBranch: string;
+  provenance?: MaisterProvenance;
+};
+
+export type PromoteRebaseMergeArgs = PromoteLocalMergeArgs & {
+  worktreePath: string;
 };
 
 export async function promoteLocalMerge(
@@ -731,7 +784,21 @@ export async function promoteLocalMerge(
 
     try {
       await runGit(repo, ["switch", "--", targetBranch]);
-      await runGit(repo, ["merge", "--no-ff", "--no-edit", "--", sourceBranch]);
+      const mergeArgs = args.provenance
+        ? [
+            "merge",
+            "--no-ff",
+            "-m",
+            composeCommitMessage(
+              `Merge branch '${sourceBranch}' into ${targetBranch}`,
+              args.provenance,
+            ),
+            "--",
+            sourceBranch,
+          ]
+        : ["merge", "--no-ff", "--no-edit", "--", sourceBranch];
+
+      await runGit(repo, mergeArgs);
 
       const { stdout } = await runGit(repo, ["rev-parse", "HEAD"]);
 
@@ -763,7 +830,7 @@ export async function promoteLocalMerge(
 }
 
 export async function promoteRebaseMerge(
-  args: PromoteLocalMergeArgs,
+  args: PromoteRebaseMergeArgs,
 ): Promise<string> {
   const repo = validate(
     absolutePathSchema,
@@ -772,18 +839,22 @@ export async function promoteRebaseMerge(
   );
   const sourceBranch = validate(branchNameSchema, args.sourceBranch, "source");
   const targetBranch = validate(branchNameSchema, args.targetBranch, "target");
+  const worktreePath = validate(
+    absolutePathSchema,
+    args.worktreePath,
+    "worktreePath",
+  );
 
   return withRepoPromotionLock(repo, async () => {
     const previousBranch = await currentBranch(repo);
 
     log.info(
-      { projectRepoPath: repo, sourceBranch, targetBranch },
+      { projectRepoPath: repo, sourceBranch, targetBranch, worktreePath },
       "promoteRebaseMerge acquired repo promotion lock",
     );
 
     try {
-      await runGit(repo, ["switch", "--", sourceBranch]);
-      await runGit(repo, ["rebase", "--", targetBranch]);
+      await runGit(worktreePath, ["rebase", "--", targetBranch]);
       await runGit(repo, ["switch", "--", targetBranch]);
       await runGit(repo, ["merge", "--ff-only", "--", sourceBranch]);
 
@@ -791,7 +862,7 @@ export async function promoteRebaseMerge(
 
       return stdout.trim();
     } catch (err) {
-      await abortRebase(repo);
+      await abortRebase(worktreePath);
       throw new MaisterError(
         "CONFLICT",
         `git rebase/merge failed: ${errorText(err) || asError(err).message}`,
@@ -1460,6 +1531,52 @@ export async function remoteBranchHead(
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
       `git ls-remote ${remote} ${branch} failed: ${redactUrl(errorText(err) || asError(err).message)}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type RemoteTrackingBranchHeadArgs = {
+  projectRepoPath: string;
+  remote: string;
+  branch: string;
+};
+
+// Reads only the ref materialized by a preceding fetch. The delivery scanner
+// must not fall back to a stale local branch or make a second network request.
+export async function remoteTrackingBranchHead(
+  args: RemoteTrackingBranchHeadArgs,
+): Promise<string | null> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const remote = validate(remoteNameSchema, args.remote, "remote");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+  const ref = `refs/remotes/${remote}/${branch}`;
+
+  log.debug(
+    { projectRepoPath: repo, remote, branch },
+    "remoteTrackingBranchHead",
+  );
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      "--end-of-options",
+      `${ref}^{commit}`,
+    ]);
+
+    return validate(gitCommitSchema, stdout.trim(), "commit").toLowerCase();
+  } catch (err) {
+    if (isGitMissingRef(err)) return null;
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git rev-parse ${ref} failed: ${errorText(err) || asError(err).message}`,
       { cause: asError(err) },
     );
   }
@@ -2274,6 +2391,198 @@ export async function diffChangeStats(
       "CONFLICT",
       `git diff --numstat ${base}..${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
       { cause: asError(err) },
+    );
+  }
+}
+
+export type FirstParentDeliveryHistoryArgs = {
+  projectRepoPath: string;
+  headRef: string;
+  baseRef?: string;
+  since?: Date;
+};
+
+export async function firstParentDeliveryHistory(
+  args: FirstParentDeliveryHistoryArgs,
+): Promise<ReturnType<typeof parseTimestampedDeliveryHistory>> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const head = validate(gitRefSchema, args.headRef, "headRef");
+  const base =
+    args.baseRef === undefined
+      ? undefined
+      : validate(gitRefSchema, args.baseRef, "baseRef");
+
+  if (args.since !== undefined && Number.isNaN(args.since.getTime())) {
+    throw new MaisterError("CONFIG", "delivery-history since must be a date");
+  }
+
+  const range = base === undefined ? head : `${base}..${head}`;
+  const sinceArgs =
+    args.since === undefined ? [] : [`--since=${args.since.toISOString()}`];
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "log",
+      "--first-parent",
+      "--diff-merges=first-parent",
+      `--format=${DELIVERY_HISTORY_NUL_GIT_FORMAT}`,
+      "--numstat",
+      "-z",
+      "--find-renames",
+      "--no-color",
+      ...sinceArgs,
+      "--end-of-options",
+      range,
+      "--",
+      ...DELIVERY_PATHSPEC,
+    ]);
+
+    return parseTimestampedDeliveryHistory(stdout);
+  } catch (error) {
+    if (error instanceof MaisterError) throw error;
+
+    if (error instanceof RangeError) {
+      throw new MaisterError("CONFIG", error.message, { cause: error });
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git log --numstat ${range} failed: ${
+        errorText(error) || asError(error).message
+      }`,
+      { cause: asError(error) },
+    );
+  }
+}
+
+export async function deliveryHistoryStats(
+  args: DiffNameStatusArgs,
+): Promise<DeliveryDiffStat> {
+  const history = await firstParentDeliveryHistory({
+    projectRepoPath: args.worktreePath,
+    baseRef: args.baseRef,
+    headRef: args.branch,
+  });
+
+  return summarizeDeliveryHistory(history);
+}
+
+export async function deliveryCommitStats(args: {
+  projectRepoPath: string;
+  commit: string;
+}): Promise<DeliveryDiffStat> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const commit = validate(gitCommitSchema, args.commit, "commit");
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "rev-list",
+      "--parents",
+      "-n",
+      "1",
+      "--end-of-options",
+      commit,
+    ]);
+    const [, firstParent] = stdout.trim().split(" ");
+
+    if (!firstParent) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `delivery commit has no first parent: ${commit}`,
+      );
+    }
+
+    return summarizeDeliveryHistory(
+      await firstParentDeliveryHistory({
+        projectRepoPath: repo,
+        baseRef: validate(gitCommitSchema, firstParent, "firstParent"),
+        headRef: commit,
+      }),
+    );
+  } catch (error) {
+    if (error instanceof MaisterError) throw error;
+
+    throw new MaisterError(
+      "CONFLICT",
+      `could not read delivery commit ${commit}: ${
+        errorText(error) || asError(error).message
+      }`,
+      { cause: asError(error) },
+    );
+  }
+}
+
+export async function findTargetMergeByRunId(args: {
+  projectRepoPath: string;
+  targetBranch: string;
+  runId: string;
+}): Promise<string | null> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const targetBranch = validate(
+    branchNameSchema,
+    args.targetBranch,
+    "targetBranch",
+  );
+
+  composeCommitMessage("validate", { runId: args.runId });
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "log",
+      "--first-parent",
+      "--merges",
+      "--format=%H%x00%B%x00",
+      "--no-color",
+      "--end-of-options",
+      targetBranch,
+    ]);
+    const fields = stdout.split("\0");
+    const matches: string[] = [];
+
+    for (let index = 0; index + 1 < fields.length; index += 2) {
+      const rawSha = fields[index]?.trim();
+      const message = fields[index + 1] ?? "";
+
+      if (!rawSha) continue;
+
+      const sha = validate(gitCommitSchema, rawSha, "mergeCommit");
+      const trailers = parseMaisterTrailers(message);
+
+      if (trailers.runId === args.runId) matches.push(sha);
+    }
+
+    if (matches.length > 1) {
+      throw new MaisterError(
+        "CONFLICT",
+        `multiple target merge commits carry Maister-Run-Id ${args.runId}`,
+      );
+    }
+
+    return matches[0] ?? null;
+  } catch (error) {
+    if (error instanceof MaisterError) throw error;
+    if (error instanceof RangeError) {
+      throw new MaisterError("CONFIG", error.message, { cause: error });
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `could not inspect target merge provenance: ${
+        errorText(error) || asError(error).message
+      }`,
+      { cause: asError(error) },
     );
   }
 }

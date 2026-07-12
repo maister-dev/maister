@@ -52,7 +52,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
-| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
+| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. **(ADR-134 — Implemented, migration `0098`)** adds final promoted-delivery evidence. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `experiments`                 | **(ADR-124 — Implemented, migration `0090`)** Task-bound Experiment Comparison Studio container: pinned `base_commit`, immutable variants/rubric snapshots, five-state FSM, and optional human/advisory verdict envelope.                                                                                                    | `projects.id`, `tasks.id`, optional `users.id`                             |
 | `experiment_runs`             | **(ADR-124 — Implemented, migration `0090`)** Membership rows linking ordinary runs to an experiment variant/replicate, with launch lineage, pinned `base_commit`, capped diff snapshot, structured truncation fields, full-file summary, and materialization delta.                                                            | `experiments.id`, `runs.id`                                                |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
@@ -63,6 +63,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `node_attempts`               | Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(M41, migration `0070`)** adds node type `consensus`. **(ADR-118 — Implemented, migration `0086`)** adds the nullable `rework_baseline integer` (attempt number at which the node's current rework epoch began; `NULL ⇒ 0`; effective attempts = `attempt − (rework_baseline ?? 0)`). | `runs.id`, `users.id` (takeover owner, M11b)                               |
 | `run_cost_rollups`            | **(ADR-087 — Implemented, migration `0047`; `by_runner` ADR-117, migration `0083`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, per-model breakdown (`by_model`), per-runner breakdown (`by_runner`, keyed `"<adapter>/<model>"`), and source cursor; no duration columns.                                                                                | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`         |
 | `node_attempt_cost_rollups`   | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                | `runs.id`, `projects.id`, `node_attempts.id`                               |
+| `repo_delivery_rollups`       | **(ADR-134 — Implemented, migration `0098`)** Cached, path-cleaned daily target-branch delivery denominator, written only by the scheduled repository scanner and read by project Observatory.                                                                                                                         | `projects.id`                                                               |
 | `gate_results`                | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
 | `consensus_round_verdicts`    | **(M41 — Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                | `runs.id`, `node_attempts.id`                                              |
 | `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview/plan; + `mutation_report`, M29 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                  | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
@@ -78,7 +79,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `project_package_attachments` | **(Implemented — ADR-088, migration `0048`)** Per-project package enablement. UNIQUE `(project_id, package_name)`. FK to `package_installs` (restrict) + `projects` (cascade).                                                                              | `projects.id`, `package_installs.id`                                       |
 | `local_packages`              | **(Implemented — ADR-096, migration `0057`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). **(M36, migration `0058`)** `project_id` (FK `projects`, CASCADE, nullable) + `is_default` for the per-project default virtual package (partial-unique `(project_id) WHERE is_default`). **(ADR-132, `0097`)** `sync_state` jsonb (nullable durable upstream-sync intent). | `package_installs.id`, `users.id`, `projects.id`                           |
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
-| `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
+| `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions. **(ADR-134 — Implemented, migration `0098`)** adds the system-managed per-project `repo_delivery_scan` kind. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
 | `agent_schedules`             | **(M24 table, reworked M34 — Implemented, migration `0049`)** Per-agent cron/event trigger bindings. The dead M24 `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows) and `event_match` jsonb (event rows). Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer.                                                                                                                                                             | `projects.id`, `agents.id`                                         |
 | `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
@@ -716,6 +717,9 @@ scheduler_jobs {
          | 'run_schedule'           // M28 — singleton dispatcher
          | 'webhook_delivery'       // ADR-077 — singleton drainer
          | 'domain_event_dispatch', // ADR-086 — singleton dispatcher
+         | 'auto_launch_triaged'    // ADR-112 — singleton dispatcher
+         | 'auto_promote'           // ADR-126 — singleton dispatcher
+         | 'repo_delivery_scan',    // ADR-134 — per-project scanner
   target,                         // jsonb; validated per jobKind
   cadenceIntervalSeconds,          // fixed-interval only in M24
   nextRunAt, lastFiredAt?,
@@ -1253,6 +1257,12 @@ unread badge and inbox panel.
                                  //   'own' | 'shared'; nullable. 'shared' joins the
                                  //   run-tree root worktree (delegated child only —
                                  //   a top-level 'shared' run is refused CONFIG).
+  promotedHeadSha?,              // ADR-134 (migration 0098): final target head;
+                                 //   null until shipped delivery evidence exists
+  mergeCommitSha?,               // ADR-134 (migration 0098): non-FF merge or
+                                 //   provider-resolved PR merge; null for FF/rebase
+  diffStat?,                     // ADR-134 (migration 0098): cleaned
+                                 //   {files, additions, deletions}; final evidence only
   startedAt, endedAt?
 }
 ```
@@ -1500,6 +1510,38 @@ Logging requirements: rollup recompute logs structured DEBUG rows with `runId`,
 WARN logs malformed or unattributable bounded metadata only. Raw prompts, env
 values, adapter lines, and full cost payloads are never logged.
 
+## `repo_delivery_rollups` (Implemented — ADR-134, migration `0098`)
+
+The repository scanner owns this cache; page reads never fetch a remote or
+replace its rows. Each row is one UTC half-open daily bucket for one project and
+target branch. Successful scans delete-and-replace their full bounded horizon in
+one transaction, preserve the prior cache on failure, and stamp a shared
+`fetchedAt` and `headSha` for freshness display.
+
+```ts
+{
+  id, projectId, branch,
+  bucketStart, bucketEnd,
+  commits, mergePrUnits,
+  additions, deletions,
+  deliveryRefs,                 // bounded repository evidence + per-commit cleaned delta; never DB numerator
+  providerComplete,
+  fetchedAt, headSha,
+  createdAt, updatedAt
+}
+```
+
+UNIQUE `(project_id, branch, bucket_start, bucket_end)` makes a repeated scan
+idempotent. Index `(project_id, branch, bucket_start)` serves the bounded
+Observatory range read. Project delete cascades; branch changes remove obsolete
+branch rows during the successful replacement.
+
+Each `deliveryRefs` entry contains its commit SHA, parent count, stamped run
+IDs, optional resolved PR number, and that commit's cleaned `--numstat` delta.
+The per-commit delta is repository evidence for an exact daily attribution
+trend; it is distinct from the final per-run `diffStat` used for the headline
+numerator.
+
 ## `workspaces`
 
 ```ts
@@ -1543,7 +1585,10 @@ values, adapter lines, and full cost payloads are never logged.
 }
 ```
 
-One workspace per run. `worktreePath` is globally unique across the host.
+An own run has at most one workspace; a shared-mode run tree can have many run
+rows referring to one workspace. `worktreePath` remains globally unique across
+the host. ADR-134 stores final delivery evidence on the root `runs` row, never
+on the shared workspace.
 
 **(M18 — Implemented, migration `0021`, additive.)**
 Branch/promotion columns record the run ledger so branch-targeted promotion is

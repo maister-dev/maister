@@ -33,7 +33,7 @@ erDiagram
     FLOWS ||--o{ RUNS : "selected at launch"
     PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
     TASKS ||--o{ RUNS : "1:N retry loop"
-    RUNS ||--|| WORKSPACES : "one worktree per run"
+    RUNS }o--o| WORKSPACES : "own or shared worktree"
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (M42 Implemented)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (M42 Implemented, SET NULL)"
@@ -129,6 +129,9 @@ erDiagram
         jsonb promotion_hold "ADR-126 0089: {source,reason?,createdAt} auto-promotion hold, nullable (NULL = no hold)"
         timestamptz review_entered_at "ADR-126 0089: auto-promotion grace anchor stamped at Review-flip, nullable"
         jsonb withheld_mcps "ADR-129 Designed: run-level withheld-MCP sink {refId,transport,reason,scope}[] for flow AND agent, nullable"
+        text promoted_head_sha "ADR-134 Implemented: final target delivery head, nullable"
+        text merge_commit_sha "ADR-134 Implemented: non-FF/provider merge SHA, nullable"
+        jsonb diff_stat "ADR-134 Implemented: cleaned {files,additions,deletions}, nullable"
         timestamp started_at
         timestamp ended_at
     }
@@ -569,11 +572,11 @@ only for explicit HITL or permission waits.
 
 ## Notes on cardinality
 
-- `RUNS ||--|| WORKSPACES` is one-to-one *at most* — the workspace
-  row may be missing while the run is still `Pending` (worktree not
-  yet created) or after GC (`workspaces.removed_at IS NOT NULL` and
-  the row is purged). Drawn as `||--||` because every active run has
-  exactly one workspace.
+- `RUNS }o--o| WORKSPACES` is own-or-shared. The workspace row can be missing
+  while a run is `Pending` or after GC; own runs reference one tree, while a
+  shared-mode run tree can reference one common workspace from several runs.
+  ADR-134 records final delivery evidence on the one root run rather than
+  duplicating it on the shared workspace or siblings.
 - `TASKS ||--o{ RUNS` — 1:N attempts. The "latest" run on a card is
   the row with `MAX(started_at)` for the task today; the designed
   run-attempt schema switches to `MAX(runs.attempt_number)` once that

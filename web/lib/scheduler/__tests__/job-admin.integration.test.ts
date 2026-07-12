@@ -7,6 +7,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import * as schema from "@/lib/db/schema";
 import { listSchedulerStatusRows } from "@/lib/queries/scheduler";
 import {
   createSchedulerJob,
@@ -164,5 +165,26 @@ describe("scheduler job admin service integration", () => {
     await expect(deleteSchedulerJob("del", db)).rejects.toMatchObject({
       code: "PRECONDITION",
     });
+  });
+
+  it("keeps a project delivery scanner system-managed", async () => {
+    await db.insert(schema.schedulerJobs).values({
+      id: "repo_delivery_scan.project-1",
+      jobKind: "repo_delivery_scan",
+      target: { projectId: "project-1" },
+      cadenceIntervalSeconds: 3_600,
+      nextRunAt: new Date(),
+      maxFailures: 3,
+    });
+
+    await expect(
+      deleteSchedulerJob("repo_delivery_scan.project-1", db),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const rows = await listSchedulerStatusRows({ db });
+
+    expect(rows.some((row) => row.id === "repo_delivery_scan.project-1")).toBe(
+      true,
+    );
   });
 });

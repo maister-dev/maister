@@ -41,12 +41,17 @@ import {
 import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import {
   branchExists,
+  deliveryCommitStats,
+  deliveryHistoryStats,
+  findTargetMergeByRunId,
+  headCommit,
   promoteLocalMerge,
   promoteRebaseMerge,
   pushBranch,
   resolveBaseCommit,
   squashRunBranch,
 } from "@/lib/worktree";
+import { readWorktreeProvenanceForPromotion } from "@/lib/worktree-provenance";
 import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
@@ -292,13 +297,16 @@ async function promoteMergeSideEffect(args: {
   mode: "local_merge" | "rebase_merge";
   projectRepoPath: string;
   sourceBranch: string;
+  sourceWorktreePath: string;
   targetBranch: string;
+  provenance?: { runId: string; task?: string; flow?: string };
 }): Promise<string> {
   if (args.mode === "rebase_merge") {
     return promoteRebaseMerge({
       projectRepoPath: args.projectRepoPath,
       sourceBranch: args.sourceBranch,
       targetBranch: args.targetBranch,
+      worktreePath: args.sourceWorktreePath,
     });
   }
 
@@ -306,6 +314,44 @@ async function promoteMergeSideEffect(args: {
     projectRepoPath: args.projectRepoPath,
     sourceBranch: args.sourceBranch,
     targetBranch: args.targetBranch,
+    provenance: args.provenance,
+  });
+}
+
+async function promotionProvenance(args: {
+  expectedRunId: string;
+  worktreePath: string;
+}): Promise<{ runId: string; task?: string; flow?: string } | null> {
+  const metadata = await readWorktreeProvenanceForPromotion(args.worktreePath);
+
+  if (metadata === null) {
+    log.info(
+      { runId: args.expectedRunId, worktreePath: args.worktreePath },
+      "[FIX:legacy-provenance] promoting legacy worktree without trailer recovery",
+    );
+
+    return null;
+  }
+
+  if (metadata.runId !== args.expectedRunId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `managed provenance Run ID conflicts with promotion root: expected ${args.expectedRunId}`,
+    );
+  }
+
+  return metadata;
+}
+
+async function captureFinalDeliveryStat(args: {
+  projectRepoPath: string;
+  targetBefore: string;
+  targetBranch: string;
+}): Promise<{ files: number; additions: number; deletions: number }> {
+  return await deliveryHistoryStats({
+    worktreePath: args.projectRepoPath,
+    baseRef: args.targetBefore,
+    branch: args.targetBranch,
   });
 }
 
@@ -759,18 +805,57 @@ async function promoteWorkspaceRun(
   }
 
   let commit: string;
+  const targetBefore = await resolveBaseCommit({
+    projectRepoPath: claim.workspace.parentRepoPath,
+    baseRef: claim.resolvedTarget,
+  });
+  let diffStat: { files: number; additions: number; deletions: number };
 
   try {
     const mergeMode =
       claim.promotionMode === "rebase_merge" ? "rebase_merge" : "local_merge";
 
-    commit = await promoteMergeSideEffect({
-      mode: mergeMode,
-      projectRepoPath: claim.workspace.parentRepoPath,
-      sourceBranch: claim.workspace.branch,
-      targetBranch: claim.resolvedTarget,
+    const provenance = await promotionProvenance({
+      expectedRunId: claim.workspace.runId,
+      worktreePath: claim.workspace.worktreePath,
     });
+
+    const recoveredCommit =
+      mergeMode === "local_merge" && provenance !== null
+        ? await findTargetMergeByRunId({
+            projectRepoPath: claim.workspace.parentRepoPath,
+            targetBranch: claim.resolvedTarget,
+            runId: provenance.runId,
+          })
+        : null;
+
+    commit =
+      recoveredCommit ??
+      (await promoteMergeSideEffect({
+        mode: mergeMode,
+        projectRepoPath: claim.workspace.parentRepoPath,
+        sourceBranch: claim.workspace.branch,
+        sourceWorktreePath: claim.workspace.worktreePath,
+        targetBranch: claim.resolvedTarget,
+        provenance: provenance ?? undefined,
+      }));
+    if (recoveredCommit) {
+      log.info(
+        { runId, commit, targetBranch: claim.resolvedTarget },
+        "recovered target merge before promotion finalization",
+      );
+    }
     await maybePushTargetBranch({ db, claim, commit });
+    diffStat = recoveredCommit
+      ? await deliveryCommitStats({
+          projectRepoPath: claim.workspace.parentRepoPath,
+          commit,
+        })
+      : await captureFinalDeliveryStat({
+          projectRepoPath: claim.workspace.parentRepoPath,
+          targetBefore,
+          targetBranch: claim.resolvedTarget,
+        });
   } catch (err) {
     if (isMaisterError(err) && err.code === "CONFLICT") {
       if (claim.resolvedMode === "ai_rebase_merge") {
@@ -817,6 +902,8 @@ async function promoteWorkspaceRun(
             ),
           );
       });
+    } else if (isMaisterError(err) && err.code === "PRECONDITION") {
+      await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
     }
 
     throw err;
@@ -978,6 +1065,14 @@ async function promoteWorkspaceRun(
           runKind: runs.runKind,
           parentRunId: runs.parentRunId,
         });
+      await tx
+        .update(runs)
+        .set({
+          promotedHeadSha: commit,
+          mergeCommitSha: claim.promotionMode === "local_merge" ? commit : null,
+          diffStat,
+        })
+        .where(eq(runs.id, claim.workspace.runId));
     } else {
       await tx
         .update(runs)
@@ -985,6 +1080,9 @@ async function promoteWorkspaceRun(
           status: "Done",
           currentStepId: null,
           endedAt: now,
+          promotedHeadSha: commit,
+          mergeCommitSha: claim.promotionMode === "local_merge" ? commit : null,
+          diffStat,
         })
         .where(eq(runs.id, runId));
       settledChildren = [
@@ -1169,6 +1267,9 @@ async function promotePullRequestSideEffect(args: {
       // PR push a non-forced fast-forward.
       ...(args.forcePush ? { force: true } : {}),
     });
+    const sourceHead = await headCommit({
+      worktreePath: claim.workspace.worktreePath,
+    });
 
     const pr = await adapter.createOrUpdatePr({
       repoPath: claim.workspace.parentRepoPath,
@@ -1185,6 +1286,7 @@ async function promotePullRequestSideEffect(args: {
       db,
       claim,
       pr,
+      sourceHead,
       promotionLane: args.promotionLane,
     });
   } catch (err) {
@@ -1205,7 +1307,7 @@ function prTitle(claim: FlowClaim): string {
 }
 
 function prBody(claim: FlowClaim): string {
-  return `Promotes \`${claim.workspace.branch}\` into \`${claim.resolvedTarget}\` (run ${claim.run.id}).`;
+  return `Promotes \`${claim.workspace.branch}\` into \`${claim.resolvedTarget}\` (run ${claim.workspace.runId}).`;
 }
 
 async function finalizePullRequest(args: {
@@ -1214,12 +1316,13 @@ async function finalizePullRequest(args: {
   db: Db;
   claim: FlowClaim;
   pr: { url: string; number: number };
+  sourceHead: string;
   promotionLane: LaneClass | null;
 }): Promise<PromoteRunResult> {
-  const { runId, db, claim, pr, promotionLane } = args;
+  const { runId, ctx, db, claim, pr, sourceHead, promotionLane } = args;
 
   const result = await db.transaction(async (tx: Db) => {
-    const ws = await loadWorkspaceForUpdate(tx, runId);
+    const ws = await loadPromotionWorkspaceForUpdate(tx, claim.run);
 
     if (
       ws.promotionState !== "claiming" ||
@@ -1245,14 +1348,124 @@ async function finalizePullRequest(args: {
       now.getTime() + gcAgeDays() * 86_400_000,
     );
 
-    await tx
-      .update(runs)
-      .set({
-        status: "Done",
-        currentStepId: null,
-        endedAt: now,
-      })
-      .where(eq(runs.id, runId));
+    const isSharedTree =
+      claim.run.workspaceMode === "shared" &&
+      claim.run.agentWorkspace === "worktree";
+    let settledChildren: Array<{
+      id: string;
+      taskId: string | null;
+      flowId: string | null;
+      runKind: string;
+      parentRunId: string | null;
+    }>;
+
+    if (isSharedTree) {
+      const resettled = await countUnsettledSharedSiblings(
+        tx,
+        claim.run.rootRunId,
+      );
+
+      if (resettled > 0) {
+        await tx
+          .update(workspaces)
+          .set({ promotionState: "failed" })
+          .where(
+            and(
+              eq(workspaces.id, claim.workspace.id),
+              eq(workspaces.promotionAttemptId, claim.attemptId),
+            ),
+          );
+
+        log.warn(
+          {
+            runId,
+            rootRunId: claim.run.rootRunId,
+            resettledSiblingCount: resettled,
+          },
+          "[FIX:shared-pr] finalize aborted — a sibling left Review during PR dispatch",
+        );
+
+        return { aborted: true as const };
+      }
+
+      if (!isHumanPromotion(ctx)) {
+        const failureTerminal = await countFailureTerminalSharedSiblings(
+          tx,
+          claim.run.rootRunId,
+        );
+
+        if (failureTerminal > 0) {
+          await tx
+            .update(workspaces)
+            .set({ promotionState: "failed" })
+            .where(
+              and(
+                eq(workspaces.id, claim.workspace.id),
+                eq(workspaces.promotionAttemptId, claim.attemptId),
+              ),
+            );
+
+          return { aborted: true as const };
+        }
+      }
+
+      settledChildren = await tx
+        .update(runs)
+        .set({
+          status: "Done",
+          currentStepId: null,
+          endedAt: now,
+        })
+        .where(
+          and(
+            eq(runs.rootRunId, claim.run.rootRunId),
+            eq(runs.workspaceMode, "shared"),
+            eq(runs.agentWorkspace, "worktree"),
+            eq(runs.status, "Review"),
+          ),
+        )
+        .returning({
+          id: runs.id,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
+        });
+      await tx
+        .update(runs)
+        .set({
+          // A PR opening is not shipped output. The allocator root keeps the
+          // pushed source head until the scanner proves target-branch delivery.
+          promotedHeadSha: sourceHead,
+          mergeCommitSha: null,
+          diffStat: null,
+        })
+        .where(eq(runs.id, claim.workspace.runId));
+    } else {
+      await tx
+        .update(runs)
+        .set({
+          status: "Done",
+          currentStepId: null,
+          endedAt: now,
+          // A PR opening is not shipped output. Preserve only the pushed source
+          // head so the scanner can later prove an actual target-branch delivery.
+          promotedHeadSha: sourceHead,
+          mergeCommitSha: null,
+          diffStat: null,
+        })
+        .where(eq(runs.id, runId));
+      settledChildren = [
+        {
+          id: runId,
+          taskId: claim.run.taskId ?? null,
+          flowId: claim.run.flowId ?? null,
+          runKind: claim.run.runKind,
+          parentRunId: claim.run.parentRunId ?? null,
+        },
+      ];
+    }
+
     await tx
       .update(workspaces)
       .set({
@@ -1270,12 +1483,6 @@ async function finalizePullRequest(args: {
           eq(workspaces.promotionAttemptId, claim.attemptId),
         ),
       );
-    await systemCloseActiveAssignmentsForRun({
-      db: tx,
-      runId,
-      reason: "run promoted to Done",
-    });
-    await syncExperimentStatusForRun({ db: tx, runId });
 
     await emitWebhookEvent({
       db: tx,
@@ -1289,32 +1496,43 @@ async function finalizePullRequest(args: {
         pullRequestUrl: pr.url,
       },
     });
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.done",
-      projectId: claim.run.projectId,
-      runId,
-      data: {},
-    });
-    await emitDomainEvent({
-      db: tx,
-      kind: "run.done",
-      projectId: claim.run.projectId,
-      runId,
-      taskId: claim.run.taskId ?? null,
-      actor: { type: "system", id: null },
-      parentRunId: claim.run.parentRunId,
-      payload: {
-        runId,
-        taskId: claim.run.taskId ?? null,
-        flowId: claim.run.flowId ?? null,
-        runKind: claim.run.runKind,
-      },
-    });
+
+    for (const child of settledChildren) {
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId: child.id,
+        reason: "run promoted to Done",
+      });
+      await syncExperimentStatusForRun({ db: tx, runId: child.id });
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.done",
+        projectId: claim.run.projectId,
+        runId: child.id,
+        data: {},
+      });
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.done",
+        projectId: claim.run.projectId,
+        runId: child.id,
+        taskId: child.taskId ?? null,
+        actor: { type: "system", id: null },
+        parentRunId: child.parentRunId,
+        payload: {
+          runId: child.id,
+          taskId: child.taskId ?? null,
+          flowId: child.flowId ?? null,
+          runKind: child.runKind,
+        },
+      });
+    }
 
     log.info(
       {
         runId,
+        rootRunId: claim.run.rootRunId ?? null,
+        settledChildIds: settledChildren.map((child) => child.id),
         mode: claim.responseMode,
         prUrl: pr.url,
         prNumber: pr.number,
@@ -1331,6 +1549,13 @@ async function finalizePullRequest(args: {
       prNumber: pr.number,
     };
   });
+
+  if ("aborted" in result) {
+    throw new MaisterError(
+      "CONFLICT",
+      "shared-tree PR finalize aborted — a sibling changed during dispatch",
+    );
+  }
 
   // PR artifact AFTER the finalize commit — same decoupling as the diff artifact.
   await recordPrArtifact({
@@ -1509,13 +1734,51 @@ async function promoteScratchRun(
   }
 
   let commit: string;
+  const targetBefore = await resolveBaseCommit({
+    projectRepoPath: claim.workspace.parentRepoPath,
+    baseRef: claim.targetBranch,
+  });
+  let diffStat: { files: number; additions: number; deletions: number };
 
   try {
-    commit = await promoteLocalMerge({
-      projectRepoPath: claim.workspace.parentRepoPath,
-      sourceBranch: claim.workspace.branch,
-      targetBranch: claim.targetBranch,
+    const provenance = await promotionProvenance({
+      expectedRunId: claim.workspace.runId,
+      worktreePath: claim.workspace.worktreePath,
     });
+
+    const recoveredCommit =
+      provenance === null
+        ? null
+        : await findTargetMergeByRunId({
+            projectRepoPath: claim.workspace.parentRepoPath,
+            targetBranch: claim.targetBranch,
+            runId: provenance.runId,
+          });
+
+    commit =
+      recoveredCommit ??
+      (await promoteLocalMerge({
+        projectRepoPath: claim.workspace.parentRepoPath,
+        sourceBranch: claim.workspace.branch,
+        targetBranch: claim.targetBranch,
+        provenance: provenance ?? undefined,
+      }));
+    if (recoveredCommit) {
+      log.info(
+        { runId, commit, targetBranch: claim.targetBranch },
+        "recovered scratch target merge before promotion finalization",
+      );
+    }
+    diffStat = recoveredCommit
+      ? await deliveryCommitStats({
+          projectRepoPath: claim.workspace.parentRepoPath,
+          commit,
+        })
+      : await captureFinalDeliveryStat({
+          projectRepoPath: claim.workspace.parentRepoPath,
+          targetBefore,
+          targetBranch: claim.targetBranch,
+        });
   } catch (err) {
     if (isMaisterError(err) && err.code === "CONFLICT") {
       await db.transaction(async (tx: Db) => {
@@ -1544,6 +1807,8 @@ async function promoteScratchRun(
             ),
           );
       });
+    } else if (isMaisterError(err) && err.code === "PRECONDITION") {
+      await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
     }
 
     throw err;
@@ -1582,6 +1847,9 @@ async function promoteScratchRun(
         status: "Done",
         currentStepId: null,
         endedAt: now,
+        promotedHeadSha: commit,
+        mergeCommitSha: commit,
+        diffStat,
       })
       .where(eq(runs.id, runId));
     await tx

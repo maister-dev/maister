@@ -2,13 +2,27 @@ import "server-only";
 
 import type { GlobalRole } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type {
+  AgentizationSummary,
+  ObservatoryFunnel,
+} from "@/lib/queries/observatory-agentization-core";
+import type {
+  DeliveryRunKind,
+  ObservatoryRunKind,
+} from "@/lib/observatory/run-kind";
 
-import { and, eq, gte, inArray, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { harnessNeverFiredMin } from "@/lib/instance-config";
+import { getProjectAgentization } from "@/lib/queries/observatory-agentization";
+import {
+  rollupAgentization,
+  rollupObservatoryFunnel,
+} from "@/lib/queries/observatory-agentization-core";
+import { isDeliveryRunKind } from "@/lib/observatory/run-kind";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
   buildCoverageMap,
@@ -74,6 +88,7 @@ export interface ObservatoryFilters {
   nodeId?: string;
   artifactKind?: ArtifactKind;
   artifactDefId?: string;
+  runKind?: ObservatoryRunKind;
 }
 
 export interface ObservatoryProjectSummary {
@@ -121,6 +136,16 @@ export interface CostDimensionRow {
   totalTokens: number;
 }
 
+export interface CostKindRow {
+  kind: DeliveryRunKind;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  resumeTokens: number;
+  totalTokens: number;
+}
+
 export interface ObservatoryCostSummary {
   inputTokens: number;
   outputTokens: number;
@@ -135,6 +160,16 @@ export interface ObservatoryCostSummary {
   // columns, each sorted by totalTokens desc then key.
   byModel: CostDimensionRow[];
   byRunner: CostDimensionRow[];
+  byKind: CostKindRow[];
+}
+
+export type BudgetKind = DeliveryRunKind | "unattributed_legacy";
+
+export interface BudgetKindRow {
+  kind: BudgetKind;
+  budgetEscalations: number;
+  budgetTerminations: number;
+  hookTripEscalations: number;
 }
 
 export interface ObservatoryBudgetSummary {
@@ -143,6 +178,7 @@ export interface ObservatoryBudgetSummary {
   // ADR-108 (M40): run.escalated events with reason "hook_trip" — a guardrail
   // liveness breaker (repetition / no_progress) halted + escalated a run.
   hookTripEscalations: number;
+  byKind: BudgetKindRow[];
 }
 
 export interface ObservatoryTotals {
@@ -172,6 +208,8 @@ export interface ObservatoryProject {
   budget: ObservatoryBudgetSummary;
   topSignals: SignalCluster[];
   harness: ObservatoryHarness;
+  agentization: AgentizationSummary;
+  funnel: ObservatoryFunnel;
 }
 
 export interface ObservatoryNodeDetail {
@@ -215,6 +253,7 @@ type ProjectScopeRow = {
   id: string;
   slug: string;
   name: string;
+  mainBranch?: string;
 };
 
 type RunRow = {
@@ -252,6 +291,12 @@ type RevisionRow = {
   manifest: unknown;
 };
 
+const DELIVERY_COST_KINDS: readonly DeliveryRunKind[] = [
+  "flow",
+  "scratch",
+  "agent",
+];
+
 function emptyCostSummary(): ObservatoryCostSummary {
   return {
     inputTokens: 0,
@@ -265,6 +310,7 @@ function emptyCostSummary(): ObservatoryCostSummary {
     nodeCount: 0,
     byModel: [],
     byRunner: [],
+    byKind: emptyCostKinds(),
   };
 }
 
@@ -341,12 +387,17 @@ export async function getCostSummary(
   if (filters.nodeId) {
     nodeCostConditions.push(eq(nodeAttemptCostRollups.nodeId, filters.nodeId));
   }
+  if (filters.runKind && filters.runKind !== "all") {
+    runCostConditions.push(eq(runs.runKind, filters.runKind));
+    nodeCostConditions.push(eq(runs.runKind, filters.runKind));
+  }
 
   const [runRows, nodeRows] = await Promise.all([
     client
       .select({
         projectId: runCostRollups.projectId,
         flowId: runCostRollups.flowId,
+        runKind: runs.runKind,
         inputTokens: runCostRollups.inputTokens,
         outputTokens: runCostRollups.outputTokens,
         cacheReadTokens: runCostRollups.cacheReadTokens,
@@ -359,10 +410,12 @@ export async function getCostSummary(
         byRunner: runCostRollups.byRunner,
       })
       .from(runCostRollups)
+      .innerJoin(runs, eq(runs.id, runCostRollups.runId))
       .where(and(...runCostConditions)),
     client
       .select({ nodeId: nodeAttemptCostRollups.nodeId })
       .from(nodeAttemptCostRollups)
+      .innerJoin(runs, eq(runs.id, nodeAttemptCostRollups.runId))
       .where(and(...nodeCostConditions)),
   ]);
 
@@ -408,6 +461,8 @@ export async function getCostSummary(
     "[FIX:observatory-cost-read] cost summary read from stored rollups",
   );
 
+  const byKind = foldCostKinds(runRows);
+
   return {
     ...totals,
     totalTokens:
@@ -420,6 +475,10 @@ export async function getCostSummary(
     nodeCount: nodesWithCost.size,
     byModel: foldCostDimension(runRows.map((row) => row.byModel)),
     byRunner: foldCostDimension(runRows.map((row) => row.byRunner)),
+    byKind:
+      filters.runKind && filters.runKind !== "all"
+        ? byKind.filter((row) => row.kind === filters.runKind)
+        : byKind,
   };
 }
 
@@ -428,7 +487,80 @@ function emptyBudgetSummary(): ObservatoryBudgetSummary {
     budgetEscalations: 0,
     budgetTerminations: 0,
     hookTripEscalations: 0,
+    byKind: emptyBudgetKinds(),
   };
+}
+
+function emptyCostKinds(): CostKindRow[] {
+  return DELIVERY_COST_KINDS.map((kind) => ({
+    kind,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    resumeTokens: 0,
+    totalTokens: 0,
+  }));
+}
+
+function foldCostKinds(
+  rows: ReadonlyArray<{
+    runKind: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    resumeInputTokens: number;
+    resumeOutputTokens: number;
+    resumeCacheReadTokens: number;
+    resumeCacheCreationTokens: number;
+  }>,
+): CostKindRow[] {
+  return emptyCostKinds().map((empty) => {
+    const totals = rows
+      .filter((row) => row.runKind === empty.kind)
+      .reduce(
+        (acc, row) => ({
+          inputTokens: acc.inputTokens + row.inputTokens,
+          outputTokens: acc.outputTokens + row.outputTokens,
+          cacheReadTokens: acc.cacheReadTokens + row.cacheReadTokens,
+          cacheCreationTokens:
+            acc.cacheCreationTokens + row.cacheCreationTokens,
+          resumeTokens:
+            acc.resumeTokens +
+            row.resumeInputTokens +
+            row.resumeOutputTokens +
+            row.resumeCacheReadTokens +
+            row.resumeCacheCreationTokens,
+        }),
+        {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          resumeTokens: 0,
+        },
+      );
+
+    return {
+      kind: empty.kind,
+      ...totals,
+      totalTokens:
+        totals.inputTokens +
+        totals.outputTokens +
+        totals.cacheReadTokens +
+        totals.cacheCreationTokens,
+    };
+  });
+}
+
+function emptyBudgetKinds(): BudgetKindRow[] {
+  return ["flow", "scratch", "agent", "unattributed_legacy"].map((kind) => ({
+    kind: kind as BudgetKind,
+    budgetEscalations: 0,
+    budgetTerminations: 0,
+    hookTripEscalations: 0,
+  }));
 }
 
 async function getBudgetSummary(
@@ -444,35 +576,94 @@ async function getBudgetSummary(
     now.getTime() - (filters.windowDays ?? 30) * 24 * 60 * 60 * 1000,
   );
 
-  // Terminate emits are not normalized — flow/scratch use BUDGET_EXCEEDED, the
-  // agent finalizer uses budget_breach, the tree-root uses budget_exceeded;
-  // all three must be matched. WARN is a logExecPolicyAction log line (no
-  // domain event) so it is not surfaceable here. ADR-108: a hook_trip escalate
-  // shares the run.escalated kind, distinguished by reason. One grouped scan,
-  // no N+1.
+  const conditions: SQL[] = [
+    inArray(domainEvents.projectId, projectIds),
+    gte(domainEvents.occurredAt, since),
+    lte(domainEvents.occurredAt, now),
+    inArray(domainEvents.kind, ["run.escalated", "run.failed"]),
+  ];
+
+  if (filters.runKind && filters.runKind !== "all") {
+    conditions.push(eq(runs.runKind, filters.runKind));
+  }
+
   const rows = await client
     .select({
-      escalations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.escalated' and ${domainEvents.payload}->>'reason' = 'budget_exceeded')::int`,
-      terminations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.failed' and ${domainEvents.payload}->>'reason' in ('budget_exceeded', 'BUDGET_EXCEEDED', 'budget_breach', 'budget_restart', 'budget_abandoned'))::int`,
-      hookTrips: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.escalated' and ${domainEvents.payload}->>'reason' = 'hook_trip')::int`,
+      kind: domainEvents.kind,
+      payload: domainEvents.payload,
+      runKind: runs.runKind,
     })
     .from(domainEvents)
-    .where(
-      and(
-        inArray(domainEvents.projectId, projectIds),
-        gte(domainEvents.createdAt, since),
-        lte(domainEvents.createdAt, now),
-        inArray(domainEvents.kind, ["run.escalated", "run.failed"]),
-      ),
-    );
+    .leftJoin(runs, eq(runs.id, domainEvents.runId))
+    .where(and(...conditions));
 
-  const row = rows[0];
+  const summary = foldBudgetRows(rows);
 
   return {
-    budgetEscalations: row?.escalations ?? 0,
-    budgetTerminations: row?.terminations ?? 0,
-    hookTripEscalations: row?.hookTrips ?? 0,
+    ...summary,
+    byKind:
+      filters.runKind && filters.runKind !== "all"
+        ? summary.byKind.filter((row) => row.kind === filters.runKind)
+        : summary.byKind,
   };
+}
+
+function foldBudgetRows(
+  rows: ReadonlyArray<{
+    kind: string;
+    payload: Record<string, unknown>;
+    runKind: string | null;
+  }>,
+): ObservatoryBudgetSummary {
+  const byKind = emptyBudgetKinds();
+
+  for (const row of rows) {
+    const kind = isDeliveryRunKind(row.runKind ?? "")
+      ? row.runKind
+      : "unattributed_legacy";
+    const bucket = byKind.find((candidate) => candidate.kind === kind);
+
+    if (!bucket) continue;
+
+    const reason = row.payload.reason;
+
+    if (row.kind === "run.escalated" && reason === "budget_exceeded") {
+      bucket.budgetEscalations += 1;
+    }
+    if (row.kind === "run.escalated" && reason === "hook_trip") {
+      bucket.hookTripEscalations += 1;
+    }
+    if (
+      row.kind === "run.failed" &&
+      typeof reason === "string" &&
+      [
+        "budget_exceeded",
+        "BUDGET_EXCEEDED",
+        "budget_breach",
+        "budget_restart",
+        "budget_abandoned",
+      ].includes(reason)
+    ) {
+      bucket.budgetTerminations += 1;
+    }
+  }
+
+  return byKind.reduce(
+    (summary, bucket) => ({
+      budgetEscalations: summary.budgetEscalations + bucket.budgetEscalations,
+      budgetTerminations:
+        summary.budgetTerminations + bucket.budgetTerminations,
+      hookTripEscalations:
+        summary.hookTripEscalations + bucket.hookTripEscalations,
+      byKind: summary.byKind,
+    }),
+    {
+      budgetEscalations: 0,
+      budgetTerminations: 0,
+      hookTripEscalations: 0,
+      byKind,
+    },
+  );
 }
 
 function db(): NodePgDatabase<typeof schema> {
@@ -536,13 +727,14 @@ export async function getProjectObservatory(
       id: projects.id,
       slug: projects.slug,
       name: projects.name,
+      mainBranch: projects.mainBranch,
     })
     .from(projects)
     .where(and(eq(projects.id, projectId), isNull(projects.archivedAt)));
   const project = projectRows[0];
 
   if (!project) {
-    return emptyProject(projectId, now);
+    return emptyProject(projectId, now, filters.runKind ?? "all");
   }
 
   const readModel = await loadObservatoryRows(client, [project], filters, now);
@@ -552,9 +744,15 @@ export async function getProjectObservatory(
     now,
     harnessNeverFiredMin(),
   );
-  const [cost, budget] = await Promise.all([
+  const [cost, budget, delivery] = await Promise.all([
     getCostSummary(client, [project], filters),
     getBudgetSummary(client, [project], filters, now),
+    getProjectAgentization(client, {
+      projectId: project.id,
+      mainBranch: project.mainBranch,
+      filters: { ...filters, runKind: filters.runKind ?? "all" },
+      now,
+    }),
   ]);
 
   log.info(
@@ -562,6 +760,9 @@ export async function getProjectObservatory(
       projectId,
       runCount: portfolio.totals.correction.runCount,
       nodeCount: portfolio.nodes.length,
+      runKind: filters.runKind ?? "all",
+      agentizationAvailability: delivery.agentization.availability,
+      agentizationFetchedAt: delivery.agentization.fetchedAt,
     },
     "getProjectObservatory aggregated",
   );
@@ -576,6 +777,8 @@ export async function getProjectObservatory(
     budget,
     topSignals: portfolio.topSignals,
     harness: portfolio.harness,
+    agentization: delivery.agentization,
+    funnel: delivery.funnel,
   };
 }
 
@@ -595,6 +798,7 @@ export async function getNodeObservatoryDetail(
       id: projects.id,
       slug: projects.slug,
       name: projects.name,
+      mainBranch: projects.mainBranch,
     })
     .from(projects)
     .where(and(eq(projects.id, projectId), isNull(projects.archivedAt)));
@@ -711,6 +915,7 @@ async function getVisibleProjects(
         id: projects.id,
         slug: projects.slug,
         name: projects.name,
+        mainBranch: projects.mainBranch,
       })
       .from(projects)
       .where(isNull(projects.archivedAt));
@@ -721,6 +926,7 @@ async function getVisibleProjects(
       id: projects.id,
       slug: projects.slug,
       name: projects.name,
+      mainBranch: projects.mainBranch,
     })
     .from(projects)
     .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
@@ -1412,7 +1618,11 @@ function summarizeArtifacts(
   }));
 }
 
-function emptyProject(projectId: string, now: Date): ObservatoryProject {
+function emptyProject(
+  projectId: string,
+  now: Date,
+  runKind: ObservatoryRunKind,
+): ObservatoryProject {
   return {
     projectId,
     totals: {
@@ -1426,6 +1636,8 @@ function emptyProject(projectId: string, now: Date): ObservatoryProject {
     budget: emptyBudgetSummary(),
     topSignals: [],
     harness: emptyHarness(),
+    agentization: rollupAgentization({ runKind, runs: [], buckets: [] }),
+    funnel: rollupObservatoryFunnel({ runKind, runs: [] }),
   };
 }
 

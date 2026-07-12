@@ -10,6 +10,7 @@ export const ALL_SCHEDULER_JOB_KINDS = [
   "domain_event_dispatch",
   "auto_launch_triaged",
   "auto_promote",
+  "repo_delivery_scan",
 ] as const satisfies readonly SchedulerJobKind[];
 
 export const CREATABLE_SCHEDULER_JOB_KINDS = [
@@ -72,6 +73,11 @@ export const SCHEDULER_JOB_KIND_CATALOG: Record<
     systemManaged: true,
   },
   auto_promote: {
+    creatable: false,
+    filterable: true,
+    systemManaged: true,
+  },
+  repo_delivery_scan: {
     creatable: false,
     filterable: true,
     systemManaged: true,

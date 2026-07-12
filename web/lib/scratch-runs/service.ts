@@ -870,6 +870,7 @@ export async function* launchScratchRunStaged(
     branch,
     worktreePath,
     startPoint: args.body.baseBranch,
+    provenance: { runId },
   });
   worktreeCreated = true;
   yield launchProgress("worktree_created");
@@ -1605,74 +1606,74 @@ export async function* launchLocalPackageAssistantStaged(
     // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
     // scratch_runs enforces local_package_id-set / project_id-null.
     await db.transaction(async (tx: Db) => {
-    await assertAssistantCapacityAvailableInTransaction(tx);
+      await assertAssistantCapacityAvailableInTransaction(tx);
 
-    await tx.insert(runs).values({
-      id: runId,
-      runKind: "scratch",
-      taskId: null,
-      projectId: null,
-      localPackageId: pkg.id,
-      flowId: null,
-      // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
-      status: "Running",
-      currentStepId: scratchStepId(),
-      flowVersion: "scratch",
-      flowRevision: "manual",
-      flowRevisionId: null,
-      createdByUserId: args.userId,
-      startedAt: now,
-    });
-    // M42 (ADR-114): a local-package assistant run is single-`default`-session.
-    await tx.insert(runSessions).values({
-      id: randomUUID(),
-      ...defaultRunSessionValues(runId, runnerResolution),
-    });
-    await tx.insert(scratchRuns).values({
-      runId,
-      projectId: null,
-      localPackageId: pkg.id,
-      name,
-      initialPrompt: args.body.prompt,
-      workMode: policy.workMode,
-      reasoningEffort: policy.reasoningEffort,
-      planMode: policy.planMode,
-      linkedTaskId: null,
-      linkedIssueUrl: null,
-      baseBranch,
-      baseCommit,
-      targetBranch: baseBranch,
-      dialogStatus: "Starting",
-      createdByUserId: args.userId,
-      lastUserMessageAt: hasInitialPrompt ? now : null,
-      updatedAt: now,
-    });
-    if (initialMessage && messageId) {
-      await tx.insert(scratchMessages).values({
-        id: messageId,
-        runId,
-        sequence: initialMessage.sequence,
-        role: initialMessage.role,
-        content: initialMessage.content,
-        supervisorEventId: initialMessage.supervisorEventId ?? null,
-        createdAt: now,
+      await tx.insert(runs).values({
+        id: runId,
+        runKind: "scratch",
+        taskId: null,
+        projectId: null,
+        localPackageId: pkg.id,
+        flowId: null,
+        // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
+        status: "Running",
+        currentStepId: scratchStepId(),
+        flowVersion: "scratch",
+        flowRevision: "manual",
+        flowRevisionId: null,
+        createdByUserId: args.userId,
+        startedAt: now,
       });
-    }
-    await tx.insert(scratchCapabilityProfiles).values({
-      id: randomUUID(),
-      runId,
-      profileDigest: profile.profileDigest,
-      materializedPath: materialized.rootPath,
-      selectedMcpIds: profile.selectedMcpIds,
-      selectedSkillIds: profile.selectedSkillIds,
-      selectedRuleIds: profile.selectedRuleIds,
-      restrictions: {
-        selectedRestrictionIds: profile.selectedRestrictionIds,
-        selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
-      },
-      adapterLaunch: materialized.adapterLaunch,
-      downgradeNotes: downgradeNotes(profile),
-    });
+      // M42 (ADR-114): a local-package assistant run is single-`default`-session.
+      await tx.insert(runSessions).values({
+        id: randomUUID(),
+        ...defaultRunSessionValues(runId, runnerResolution),
+      });
+      await tx.insert(scratchRuns).values({
+        runId,
+        projectId: null,
+        localPackageId: pkg.id,
+        name,
+        initialPrompt: args.body.prompt,
+        workMode: policy.workMode,
+        reasoningEffort: policy.reasoningEffort,
+        planMode: policy.planMode,
+        linkedTaskId: null,
+        linkedIssueUrl: null,
+        baseBranch,
+        baseCommit,
+        targetBranch: baseBranch,
+        dialogStatus: "Starting",
+        createdByUserId: args.userId,
+        lastUserMessageAt: hasInitialPrompt ? now : null,
+        updatedAt: now,
+      });
+      if (initialMessage && messageId) {
+        await tx.insert(scratchMessages).values({
+          id: messageId,
+          runId,
+          sequence: initialMessage.sequence,
+          role: initialMessage.role,
+          content: initialMessage.content,
+          supervisorEventId: initialMessage.supervisorEventId ?? null,
+          createdAt: now,
+        });
+      }
+      await tx.insert(scratchCapabilityProfiles).values({
+        id: randomUUID(),
+        runId,
+        profileDigest: profile.profileDigest,
+        materializedPath: materialized.rootPath,
+        selectedMcpIds: profile.selectedMcpIds,
+        selectedSkillIds: profile.selectedSkillIds,
+        selectedRuleIds: profile.selectedRuleIds,
+        restrictions: {
+          selectedRestrictionIds: profile.selectedRestrictionIds,
+          selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
+        },
+        adapterLaunch: materialized.adapterLaunch,
+        downgradeNotes: downgradeNotes(profile),
+      });
     });
   } catch (err) {
     await cleanupLocalPackageAssistantMaterialization({

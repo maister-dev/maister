@@ -12,9 +12,22 @@ export function ObservatoryFilters({
   return (
     <form
       aria-label={labels.filters}
-      className="mb-5 grid grid-cols-1 gap-3 rounded-lg border border-line bg-paper p-3 md:grid-cols-[1fr_1fr_1fr_1fr_120px_auto]"
+      className="mb-5 grid grid-cols-1 gap-3 rounded-lg border border-line bg-paper p-3 md:grid-cols-[120px_1fr_1fr_1fr_1fr_120px_auto]"
       method="get"
     >
+      <label className="grid gap-1.5 text-xs font-medium text-ink">
+        {labels.runKind}
+        <select
+          className="h-9 rounded-medium border border-line bg-ivory px-2 text-xs text-ink"
+          defaultValue={current.runKind ?? "all"}
+          name="runKind"
+        >
+          <option value="all">{labels.all}</option>
+          <option value="flow">{labels.agentization.flow}</option>
+          <option value="scratch">{labels.agentization.scratch}</option>
+          <option value="agent">{labels.agentization.agent}</option>
+        </select>
+      </label>
       <label className="grid gap-1.5 text-xs font-medium text-ink">
         {labels.flow}
         <Input

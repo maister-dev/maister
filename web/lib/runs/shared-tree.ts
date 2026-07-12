@@ -99,9 +99,13 @@ export async function resolveSharedTreeWorkspaceForUpdate(
 export async function findSharedTreeWorkspace(
   db: Db,
   rootRunId: string,
-): Promise<{ id: string; worktreePath: string } | null> {
+): Promise<{ id: string; runId: string; worktreePath: string } | null> {
   const rows = await db
-    .select({ id: workspaces.id, worktreePath: workspaces.worktreePath })
+    .select({
+      id: workspaces.id,
+      runId: workspaces.runId,
+      worktreePath: workspaces.worktreePath,
+    })
     .from(workspaces)
     .innerJoin(runs, eq(runs.id, workspaces.runId))
     .where(

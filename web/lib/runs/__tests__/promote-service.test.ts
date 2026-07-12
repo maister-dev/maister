@@ -13,8 +13,12 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
+import { readWorktreeProvenanceForPromotion } from "@/lib/worktree-provenance";
 import {
   branchExists,
+  deliveryCommitStats,
+  deliveryHistoryStats,
+  findTargetMergeByRunId,
   promoteLocalMerge,
   promoteRebaseMerge,
   pushBranch,
@@ -106,11 +110,33 @@ vi.mock("@/lib/webhooks/outbox", () => ({
 
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
+  deliveryCommitStats: vi.fn(async () => ({
+    files: 0,
+    additions: 0,
+    deletions: 0,
+  })),
+  deliveryHistoryStats: vi.fn(async () => ({
+    files: 0,
+    additions: 0,
+    deletions: 0,
+  })),
+  headCommit: vi.fn(async () => "source-head-000"),
+  findTargetMergeByRunId: vi.fn(async () => null),
   promoteLocalMerge: vi.fn(async () => "merged00"),
   promoteRebaseMerge: vi.fn(async () => "rebased00"),
   pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
   resolveBaseRef: vi.fn(async () => "base0000"),
+}));
+
+vi.mock("@/lib/worktree-provenance", () => ({
+  readWorktreeProvenanceForPromotion: vi.fn(async (worktreePath: string) => ({
+    runId: worktreePath.includes("scratch")
+      ? "run-scratch-promote"
+      : worktreePath.includes("agent")
+        ? "run-agent-promote"
+        : "run-flow-promote",
+  })),
 }));
 
 vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
@@ -299,6 +325,17 @@ async function expectMaisterCode(p: Promise<unknown>, code: string) {
 beforeEach(() => {
   dbState.tables = { runs: [], scratch_runs: [], workspaces: [] };
   vi.mocked(branchExists).mockReset().mockResolvedValue(true);
+  vi.mocked(deliveryHistoryStats).mockReset().mockResolvedValue({
+    files: 0,
+    additions: 0,
+    deletions: 0,
+  });
+  vi.mocked(deliveryCommitStats).mockReset().mockResolvedValue({
+    files: 0,
+    additions: 0,
+    deletions: 0,
+  });
+  vi.mocked(findTargetMergeByRunId).mockReset().mockResolvedValue(null);
   vi.mocked(promoteLocalMerge).mockReset().mockResolvedValue("merged00");
   vi.mocked(promoteRebaseMerge).mockReset().mockResolvedValue("rebased00");
   vi.mocked(pushBranch).mockReset().mockResolvedValue(undefined);
@@ -306,6 +343,15 @@ beforeEach(() => {
   vi.mocked(assertEvidenceReady)
     .mockReset()
     .mockResolvedValue({ ready: true, reasons: [] });
+  vi.mocked(readWorktreeProvenanceForPromotion)
+    .mockReset()
+    .mockImplementation(async (worktreePath: string) => ({
+      runId: worktreePath.includes("scratch")
+        ? "run-scratch-promote"
+        : worktreePath.includes("agent")
+          ? "run-agent-promote"
+          : "run-flow-promote",
+    }));
   vi.mocked(createAssignment)
     .mockReset()
     .mockResolvedValue({ id: "assignment-1" } as never);
@@ -555,10 +601,14 @@ describe("promoteRun — happy path (flow local_merge)", () => {
       projectRepoPath: "/repos/demo",
       sourceBranch: "maister/flow-1",
       targetBranch: "main",
+      provenance: { runId: "run-flow-promote" },
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Done",
       currentStepId: null,
+      promotedHeadSha: "merged00",
+      mergeCommitSha: "merged00",
+      diffStat: { files: 0, additions: 0, deletions: 0 },
     });
     expect(dbState.tables.runs[0].endedAt).toBeInstanceOf(Date);
     expect(dbState.tables.workspaces[0].promotionState).toBe("done");
@@ -577,6 +627,35 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     });
   });
 
+  it("recovers a stamped target merge without creating a second merge", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(findTargetMergeByRunId).mockResolvedValueOnce("recovered00");
+    vi.mocked(deliveryCommitStats).mockResolvedValueOnce({
+      files: 1,
+      additions: 4,
+      deletions: 2,
+    });
+
+    await expect(
+      callPromote(runId, {
+        mode: "local_merge",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).resolves.toMatchObject({ ok: true, commit: "recovered00" });
+
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(deliveryCommitStats).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      commit: "recovered00",
+    });
+    expect(dbState.tables.runs[0]).toMatchObject({
+      promotedHeadSha: "recovered00",
+      mergeCommitSha: "recovered00",
+      diffStat: { files: 1, additions: 4, deletions: 2 },
+    });
+  });
+
   it("allows a flow target branch that differs from the base", async () => {
     const runId = seedFlowRun({ baseBranch: "main", targetBranch: "release" });
 
@@ -590,6 +669,71 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     expect(promoteLocalMerge).toHaveBeenCalledWith(
       expect.objectContaining({ targetBranch: "release" }),
     );
+  });
+
+  it("refuses conflicting managed provenance before the target merge", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(readWorktreeProvenanceForPromotion).mockResolvedValueOnce({
+      runId: "another-run",
+    });
+
+    await expectMaisterCode(
+      callPromote(runId, {
+        mode: "local_merge",
+        reviewedTargetCommit: "tip00000",
+      }),
+      "PRECONDITION",
+    );
+
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+  });
+
+  it("preserves legacy flow promotion without manufacturing a recovery trailer", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(readWorktreeProvenanceForPromotion).mockResolvedValueOnce(null);
+
+    await expect(
+      callPromote(runId, {
+        mode: "local_merge",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).resolves.toMatchObject({ ok: true, commit: "merged00" });
+
+    expect(findTargetMergeByRunId).not.toHaveBeenCalled();
+    expect(promoteLocalMerge).toHaveBeenCalledWith(
+      expect.objectContaining({ provenance: undefined }),
+    );
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "merged00",
+      diffStat: { files: 0, additions: 0, deletions: 0 },
+    });
+    expect(dbState.tables.workspaces[0].promotionState).toBe("done");
+  });
+
+  it("fails a recognizable managed worktree with missing provenance and releases its claim", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(readWorktreeProvenanceForPromotion).mockRejectedValueOnce(
+      new MaisterError(
+        "PRECONDITION",
+        "managed provenance metadata is missing",
+      ),
+    );
+
+    await expectMaisterCode(
+      callPromote(runId, {
+        mode: "local_merge",
+        reviewedTargetCommit: "tip00000",
+      }),
+      "PRECONDITION",
+    );
+
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
   });
 
   it("pushes the target branch before Done when policy push is on_success", async () => {
@@ -645,6 +789,7 @@ describe("promoteRun — happy path (flow local_merge)", () => {
       projectRepoPath: "/repos/demo",
       sourceBranch: "maister/flow-1",
       targetBranch: "main",
+      worktreePath: "/wt/flow-1",
     });
     expect(pushBranch).not.toHaveBeenCalled();
     expect(dbState.tables.workspaces[0]).toMatchObject({
@@ -708,6 +853,7 @@ describe("promoteRun — happy path (flow local_merge)", () => {
       projectRepoPath: "/repos/demo",
       sourceBranch: "maister/flow-1",
       targetBranch: "main",
+      worktreePath: "/wt/flow-1",
     });
     expect(promoteLocalMerge).not.toHaveBeenCalled();
     expect(dbState.tables.runs[0].status).toBe("Done");
@@ -734,7 +880,10 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
       "merge",
       expect.anything(),
     );
-    expect(resolveBaseCommit).not.toHaveBeenCalled();
+    expect(resolveBaseCommit).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      baseRef: "main",
+    });
     // Target locked to the scratch base branch.
     expect(promoteLocalMerge).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -743,7 +892,12 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
       }),
     );
     expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
-    expect(dbState.tables.runs[0].status).toBe("Done");
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "merged00",
+      mergeCommitSha: "merged00",
+      diffStat: { files: 0, additions: 0, deletions: 0 },
+    });
 
     // The scratch finalize tx emits the same run.promoted + run.done pair.
     expect(
@@ -751,6 +905,25 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
         (c) => (c[0] as { type: string }).type,
       ),
     ).toEqual(["run.promoted", "run.done"]);
+  });
+
+  it("preserves legacy scratch promotion without manufacturing a recovery trailer", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(readWorktreeProvenanceForPromotion).mockResolvedValueOnce(null);
+
+    await expect(
+      callPromote(runId, { mode: "local_merge" }),
+    ).resolves.toMatchObject({
+      ok: true,
+      commit: "merged00",
+    });
+
+    expect(findTargetMergeByRunId).not.toHaveBeenCalled();
+    expect(promoteLocalMerge).toHaveBeenCalledWith(
+      expect.objectContaining({ provenance: undefined }),
+    );
+    expect(dbState.tables.workspaces[0].promotionState).toBe("done");
   });
 
   it("refuses a not-ready scratch promotion (M15 merge-readiness guard, no claim)", async () => {
@@ -821,6 +994,7 @@ describe("promoteRun — agent worktree dispatch", () => {
       projectRepoPath: "/repos/demo",
       sourceBranch: "maister/agent-pkg-agent-12345678",
       targetBranch: "main",
+      provenance: { runId: "run-agent-promote" },
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Done",

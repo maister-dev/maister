@@ -93,6 +93,8 @@ export type E2EM23Fixture = {
   projectSlug: string;
   flowId: string;
   nodeId: string;
+  scratchRunId: string;
+  noCacheProjectSlug: string;
 };
 
 // M38 (ADR-103) decide/on_mismatch routing fixture: two launchable all-cli

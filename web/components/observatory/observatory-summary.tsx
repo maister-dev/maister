@@ -7,12 +7,22 @@ import type {
 import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
 import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
 import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
+import {
+  FlowLedgerNotApplicable,
+  FlowLedgerScope,
+} from "@/components/observatory/flow-ledger-scope";
+import { isFlowLedgerApplicable } from "@/lib/observatory/run-kind";
 
 export function ObservatorySummary({
   data,
   labels,
   projectSlug,
+  runKind = "all",
 }: ObservatoryDashboardProps): ReactElement {
+  if (!isFlowLedgerApplicable(runKind)) {
+    return <FlowLedgerNotApplicable labels={labels} />;
+  }
+
   const correction = data.totals.correction;
 
   return (
@@ -20,7 +30,7 @@ export function ObservatorySummary({
       <section className="grid grid-cols-1 gap-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <MetricTile
-            label={labels.correctionRate}
+            label={`${labels.correctionRate} · ${labels.flowRuns}`}
             sub={labels.correctionFormula}
             value={correction.correctionRate.toFixed(2)}
           />
@@ -37,6 +47,7 @@ export function ObservatorySummary({
           labels={labels}
           nodes={data.nodes}
           projectSlug={projectSlug}
+          runKind={runKind}
         />
       </section>
       <aside className="grid grid-cols-1 gap-4">
@@ -44,6 +55,7 @@ export function ObservatorySummary({
         <SignalClusterList
           labels={labels}
           projectSlug={projectSlug}
+          runKind={runKind}
           signals={data.topSignals}
         />
         <ArtifactList artifacts={data.artifacts} labels={labels} />
@@ -77,7 +89,12 @@ function MetricTile({
 function ArtifactList({ artifacts, labels }: ArtifactListProps): ReactElement {
   return (
     <section className="rounded-lg border border-line bg-paper p-4">
-      <h2 className="m-0 text-sm font-semibold text-ink">{labels.artifacts}</h2>
+      <header className="flex items-center justify-between gap-2">
+        <h2 className="m-0 text-sm font-semibold text-ink">
+          {labels.artifacts}
+        </h2>
+        <FlowLedgerScope labels={labels} />
+      </header>
       {artifacts.length === 0 ? (
         <p className="mt-2 text-sm text-mute">{labels.noArtifacts}</p>
       ) : (

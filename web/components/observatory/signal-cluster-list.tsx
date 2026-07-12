@@ -3,18 +3,23 @@
 import type { SignalCluster } from "@/lib/queries/observatory-signals";
 import type { ReactElement } from "react";
 import type { ObservatoryLabels } from "@/components/observatory/types";
+import type { ObservatoryRunKind } from "@/lib/observatory/run-kind";
 
 import Link from "next/link";
 import { Chip } from "@heroui/react";
+
+import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 
 export function SignalClusterList({
   labels,
   projectSlug,
   signals,
+  runKind,
 }: {
   labels: ObservatoryLabels;
   projectSlug?: string;
   signals: readonly SignalCluster[];
+  runKind?: ObservatoryRunKind;
 }): ReactElement {
   return (
     <section className="rounded-lg border border-line bg-paper p-4">
@@ -27,6 +32,7 @@ export function SignalClusterList({
             {labels.observationsOnly}
           </p>
         </div>
+        <FlowLedgerScope labels={labels} />
       </header>
       {signals.length === 0 ? (
         <p className="text-sm text-mute">{labels.noSignals}</p>
@@ -74,6 +80,7 @@ export function SignalClusterList({
                   className="mt-2 inline-flex text-xs font-semibold text-amber hover:underline"
                   href={`/projects/${projectSlug}/observatory?${drillDownParams(
                     signal,
+                    runKind,
                   )}`}
                 >
                   {labels.drillDown}
@@ -87,7 +94,10 @@ export function SignalClusterList({
   );
 }
 
-function drillDownParams(signal: SignalCluster): string {
+function drillDownParams(
+  signal: SignalCluster,
+  runKind: ObservatoryRunKind = "all",
+): string {
   const params = new URLSearchParams();
 
   if (signal.drillDown.flowId) params.set("flowId", signal.drillDown.flowId);
@@ -98,6 +108,7 @@ function drillDownParams(signal: SignalCluster): string {
   if (signal.drillDown.artifactDefId) {
     params.set("artifactDefId", signal.drillDown.artifactDefId);
   }
+  params.set("runKind", runKind);
 
   return params.toString();
 }

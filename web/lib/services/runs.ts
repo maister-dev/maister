@@ -1413,6 +1413,11 @@ export async function* launchRunStaged(
       branch,
       worktreePath,
       startPoint: baseCommit,
+      provenance: {
+        runId,
+        task: `${project.taskKey}-${task.number}`,
+        flow: `${flow.flowRefId}@${revision.resolvedRevision}`,
+      },
     });
     yield launchProgress("worktree_created");
 

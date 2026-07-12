@@ -20,6 +20,7 @@ const ALL_JOB_KINDS = [
   "domain_event_dispatch",
   "auto_launch_triaged",
   "auto_promote",
+  "repo_delivery_scan",
 ] as const;
 
 describe("scheduler job catalog", () => {
@@ -44,6 +45,7 @@ describe("scheduler job catalog", () => {
     expect(isCreatableSchedulerJobKind("domain_event_dispatch")).toBe(false);
     expect(isCreatableSchedulerJobKind("auto_launch_triaged")).toBe(false);
     expect(isCreatableSchedulerJobKind("auto_promote")).toBe(false);
+    expect(isCreatableSchedulerJobKind("repo_delivery_scan")).toBe(false);
   });
 
   it("classifies seeded singleton rows separately from creatable kinds", () => {
@@ -52,6 +54,7 @@ describe("scheduler job catalog", () => {
     expect(isSystemManagedSchedulerJobKind("domain_event_dispatch")).toBe(true);
     expect(isSystemManagedSchedulerJobKind("auto_launch_triaged")).toBe(true);
     expect(isSystemManagedSchedulerJobKind("auto_promote")).toBe(true);
+    expect(isSystemManagedSchedulerJobKind("repo_delivery_scan")).toBe(true);
     expect(isSystemManagedSchedulerJobKind("command")).toBe(false);
 
     expect(

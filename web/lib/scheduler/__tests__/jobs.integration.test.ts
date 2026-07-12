@@ -21,7 +21,9 @@ import {
 import * as schema from "@/lib/db/schema";
 import {
   claimDueJobs,
+  disableArchivedRepoDeliveryScanJobs,
   ensureDefaultSchedulerJobs,
+  ensureRepoDeliveryScanJobs,
   reapStuckSchedulerAttempts,
   recordJobAttemptResult,
   type ClaimDueJobsInput,
@@ -54,6 +56,7 @@ afterEach(async () => {
   await db.delete(schema.agentSchedules);
   await db.delete(schema.schedulerJobRuns);
   await db.delete(schema.schedulerJobs);
+  await db.delete(schema.projects);
 });
 
 afterAll(async () => {
@@ -62,6 +65,94 @@ afterAll(async () => {
 });
 
 describe("scheduler job SQL integration", () => {
+  it("seeds an active project scan, claims its database project id, and re-enables it after unarchive", async () => {
+    const now = new Date("2026-06-05T10:00:00.000Z");
+    const projectId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      slug: `scan-${projectId.slice(0, 8)}`,
+      name: "Scan project",
+      repoPath: `/repos/${projectId}`,
+      taskKey: `SCAN${projectId.replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+    });
+    await ensureRepoDeliveryScanJobs({ now, db: schedulerDb });
+
+    const claimed = await claimDueJobs({
+      now,
+      jobKind: "repo_delivery_scan",
+      db: schedulerDb,
+    });
+
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]).toMatchObject({
+      id: `repo_delivery_scan.${projectId}`,
+      jobKind: "repo_delivery_scan",
+      projectId,
+      target: { projectId },
+    });
+
+    await db
+      .update(schema.projects)
+      .set({ archivedAt: now })
+      .where(eq(schema.projects.id, projectId));
+    await disableArchivedRepoDeliveryScanJobs({ now, db: schedulerDb });
+
+    let job = (
+      await db
+        .select()
+        .from(schema.schedulerJobs)
+        .where(eq(schema.schedulerJobs.id, `repo_delivery_scan.${projectId}`))
+    )[0];
+
+    expect(job.disabledAt).toEqual(now);
+
+    await db
+      .update(schema.projects)
+      .set({ archivedAt: null })
+      .where(eq(schema.projects.id, projectId));
+    await ensureRepoDeliveryScanJobs({ now, db: schedulerDb });
+
+    job = (
+      await db
+        .select()
+        .from(schema.schedulerJobs)
+        .where(eq(schema.schedulerJobs.id, `repo_delivery_scan.${projectId}`))
+    )[0];
+    expect(job.disabledAt).toBeNull();
+    expect(job.consecutiveFailures).toBe(0);
+  });
+
+  it("preserves a poison-disabled scan while seeding active projects", async () => {
+    const now = new Date("2026-06-05T10:00:00.000Z");
+    const projectId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      slug: `scan-${projectId.slice(0, 8)}`,
+      name: "Poisoned scan project",
+      repoPath: `/repos/${projectId}`,
+      taskKey: `SCAN${projectId.replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+    });
+    await ensureRepoDeliveryScanJobs({ now, db: schedulerDb });
+    await db
+      .update(schema.schedulerJobs)
+      .set({ disabledAt: now, consecutiveFailures: 3 })
+      .where(eq(schema.schedulerJobs.id, `repo_delivery_scan.${projectId}`));
+
+    await ensureRepoDeliveryScanJobs({ now, db: schedulerDb });
+
+    const job = (
+      await db
+        .select()
+        .from(schema.schedulerJobs)
+        .where(eq(schema.schedulerJobs.id, `repo_delivery_scan.${projectId}`))
+    )[0];
+
+    expect(job.disabledAt).toEqual(now);
+    expect(job.consecutiveFailures).toBe(3);
+  });
+
   it("two overlapping claims for one due job create exactly one attempt", async () => {
     const now = new Date("2026-06-05T10:00:00.000Z");
     const jobId = await insertSchedulerJob({

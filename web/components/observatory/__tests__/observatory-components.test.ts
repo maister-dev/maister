@@ -16,6 +16,8 @@ import { labelsForTest } from "./labels.fixture";
 
 import ru from "@/messages/ru.json";
 import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
+import { AgentizationPanel } from "@/components/observatory/agentization-panel";
+import { AutonomyFunnelCard } from "@/components/observatory/autonomy-funnel-card";
 import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
 import { CostBreakdownCard } from "@/components/observatory/cost-breakdown-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
@@ -85,11 +87,13 @@ function portfolio(): ObservatoryPortfolio {
       nodeCount: 0,
       byModel: [],
       byRunner: [],
+      byKind: [],
     },
     budget: {
       budgetEscalations: 0,
       budgetTerminations: 0,
       hookTripEscalations: 0,
+      byKind: [],
     },
     topSignals: [
       {
@@ -293,7 +297,7 @@ describe("Observatory harness cards", () => {
     expect(html).toContain("— (n=2)");
     expect(html).toContain("never fired");
     expect(html).toContain(
-      "/projects/alpha/observatory?flowId=flow-1&amp;nodeId=checks",
+      "/projects/alpha/observatory?flowId=flow-1&amp;nodeId=checks&amp;runKind=all",
     );
     expect(html).toContain("command_check");
   });
@@ -424,7 +428,116 @@ describe("Observatory components", () => {
     expect(html).toContain('name="flowId"');
     expect(html).toContain('name="artifactKind"');
     expect(html).toContain('name="artifactDefId"');
+    expect(html).toContain('name="runKind"');
     expect(html).toContain('value="14"');
+  });
+
+  it("renders selected-kind flow-ledger scope as not applicable", () => {
+    const html = renderToStaticMarkup(
+      createElement(ObservatorySummary, {
+        data: portfolio(),
+        labels,
+        runKind: "scratch",
+      }),
+    );
+
+    expect(html).toContain("Flow runs");
+    expect(html).toContain("Not applicable — flow ledger only.");
+  });
+
+  it("renders cache-backed agentization and all-run funnel without actions", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        "div",
+        null,
+        createElement(AgentizationPanel, {
+          data: {
+            lines: {
+              numerator: 12,
+              denominator: 40,
+              sampleSize: 3,
+              value: 0.3,
+            },
+            deliveryUnits: {
+              numerator: 1,
+              denominator: 3,
+              sampleSize: 3,
+              value: 1 / 3,
+            },
+            buckets: [
+              {
+                kind: "flow",
+                runs: 1,
+                deliveryUnits: 1,
+                additions: 10,
+                deletions: 2,
+                lines: 12,
+              },
+              {
+                kind: "scratch",
+                runs: 0,
+                deliveryUnits: 0,
+                additions: 0,
+                deletions: 0,
+                lines: 0,
+              },
+              {
+                kind: "agent",
+                runs: 0,
+                deliveryUnits: 0,
+                additions: 0,
+                deletions: 0,
+                lines: 0,
+              },
+            ],
+            trend: [],
+            fetchedAt: new Date("2026-07-01T00:00:00.000Z"),
+            volatile: false,
+            availability: "ready",
+          },
+          labels,
+          locale: "en-US",
+        }),
+        createElement(AutonomyFunnelCard, {
+          data: {
+            runKinds: [
+              { key: "flow", count: 1 },
+              { key: "scratch", count: 0 },
+              { key: "agent", count: 0 },
+            ],
+            launchModes: [
+              { key: "auto", count: 0 },
+              { key: "manual", count: 1 },
+              { key: "unrecorded", count: 0 },
+            ],
+            triggerSources: [{ key: "manual", count: 1 }],
+            humanTouch: [
+              { key: "pure_autonomous", count: 1 },
+              { key: "ai_with_correction", count: 0 },
+              { key: "human_takeover", count: 0 },
+            ],
+            throughput: [
+              { key: "platform_promoted", count: 1 },
+              { key: "failed", count: 0 },
+              { key: "crashed", count: 0 },
+              { key: "abandoned", count: 0 },
+            ],
+            promotionLanes: [
+              { key: "auto", count: 1 },
+              { key: "manual", count: 0 },
+            ],
+            volatile: false,
+          },
+          labels,
+          locale: "en-US",
+        }),
+      ),
+    );
+
+    expect(html).toContain("Agentization");
+    expect(html).toContain("30%");
+    expect(html).toContain("Run autonomy funnel");
+    expect(html).toContain("Pure autonomous");
   });
 
   it("renders signal drill-down links for project scope", () => {
@@ -437,7 +550,7 @@ describe("Observatory components", () => {
     );
 
     expect(html).toContain(
-      "/projects/alpha/observatory?flowId=flow&amp;nodeId=checks",
+      "/projects/alpha/observatory?flowId=flow&amp;nodeId=checks&amp;runKind=all",
     );
     expect(html).toContain("access_token=[redacted] failed");
   });
@@ -498,6 +611,7 @@ describe("Observatory components", () => {
           budgetEscalations: 1234,
           budgetTerminations: 0,
           hookTripEscalations: 7,
+          byKind: [],
         },
         labels,
         locale: "en-US",
@@ -525,6 +639,7 @@ describe("Observatory components", () => {
           budgetEscalations: 2,
           budgetTerminations: 3,
           hookTripEscalations: 4,
+          byKind: [],
         },
         labels: ruLabels,
         locale: "ru-RU",

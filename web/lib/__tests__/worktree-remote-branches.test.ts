@@ -5,7 +5,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { listBranches, resolveBaseCommit } from "@/lib/worktree";
+import {
+  listBranches,
+  remoteTrackingBranchHead,
+  resolveBaseCommit,
+} from "@/lib/worktree";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -107,5 +111,23 @@ describe("listBranches / resolveBaseCommit (remote-aware)", () => {
         preferRemote: "origin",
       }),
     ).toBe(seedSha);
+  });
+
+  it("reads only the fetched tracking ref without falling back to local main", async () => {
+    expect(
+      await remoteTrackingBranchHead({
+        projectRepoPath: clone,
+        remote: "origin",
+        branch: "main",
+      }),
+    ).toBe(aheadSha);
+
+    expect(
+      await remoteTrackingBranchHead({
+        projectRepoPath: clone,
+        remote: "origin",
+        branch: "missing",
+      }),
+    ).toBeNull();
   });
 });

@@ -42,6 +42,13 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 // Git side-effects: a local_merge promote resolves the target tip then merges.
 // Both are stubbed (no real repo); the DB claim/finalize CAS stays real.
 const promoteLocalMergeSpy = vi.fn(async () => "mergedcommit00");
+const pushBranchSpy = vi.fn(async () => undefined);
+const createOrUpdatePrSpy = vi.fn(async () => ({
+  url: "https://github.com/acme/shared/pull/7",
+  number: 7,
+}));
+const preflightPrSpy = vi.fn(async () => undefined);
+const provenanceByWorktree = new Map<string, string>();
 
 vi.mock("@/lib/worktree", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/worktree")>();
@@ -50,11 +57,35 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
     ...actual,
     resolveBaseCommit: vi.fn(async () => "targettip000000"),
     branchExists: vi.fn(async () => true),
-    pushBranch: vi.fn(async () => undefined),
+    deliveryHistoryStats: vi.fn(async () => ({
+      files: 1,
+      additions: 1,
+      deletions: 0,
+    })),
+    findTargetMergeByRunId: vi.fn(async () => null),
+    headCommit: vi.fn(async () => "shared-source-head"),
+    pushBranch: (...args: unknown[]) => pushBranchSpy(...(args as [])),
     promoteLocalMerge: (...args: unknown[]) =>
       promoteLocalMergeSpy(...(args as [])),
   };
 });
+
+vi.mock("@/lib/runs/pr-adapter", () => ({
+  selectPrAdapter: vi.fn(() => ({
+    preflight: preflightPrSpy,
+    createOrUpdatePr: createOrUpdatePrSpy,
+  })),
+}));
+
+vi.mock("@/lib/worktree-provenance", () => ({
+  readWorktreeProvenanceForPromotion: vi.fn(async (worktreePath: string) => {
+    const runId = provenanceByWorktree.get(worktreePath);
+
+    if (!runId) throw new Error(`missing test provenance for ${worktreePath}`);
+
+    return { runId };
+  }),
+}));
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -89,6 +120,9 @@ let executorId: string;
 
 beforeEach(async () => {
   promoteLocalMergeSpy.mockClear();
+  pushBranchSpy.mockClear();
+  createOrUpdatePrSpy.mockClear();
+  preflightPrSpy.mockClear();
 
   await pool.query(`DELETE FROM "domain_events"`);
   await pool.query(`DELETE FROM "workspaces"`);
@@ -134,6 +168,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  provenanceByWorktree.clear();
 });
 
 // An orchestrator parent run (run_kind=agent, its own tree root).
@@ -197,6 +232,7 @@ async function seedSharedChild(args: {
         `/repos/${projectId}`,
       ],
     );
+    provenanceByWorktree.set(`/tmp/shared-wt-${args.rootRunId}`, childRunId);
   }
 
   return childRunId;
@@ -208,6 +244,23 @@ async function runStatus(runId: string): Promise<string | null> {
   ]);
 
   return r.rows[0]?.status ?? null;
+}
+
+async function deliveryEvidence(runId: string): Promise<{
+  promotedHeadSha: string | null;
+  mergeCommitSha: string | null;
+  diffStat: unknown;
+}> {
+  const result = await pool.query(
+    `SELECT "promoted_head_sha" AS "promotedHeadSha",
+            "merge_commit_sha" AS "mergeCommitSha",
+            "diff_stat" AS "diffStat"
+       FROM "runs"
+      WHERE "id" = $1`,
+    [runId],
+  );
+
+  return result.rows[0];
 }
 
 // Seed a minimal task row (satisfies runs.task_id FK). Returns the task id.
@@ -261,6 +314,7 @@ async function seedSharedChildWithTask(args: {
         `/repos/${projectId}`,
       ],
     );
+    provenanceByWorktree.set(`/tmp/shared-wt-${args.rootRunId}`, childRunId);
   }
 
   return { childRunId, taskId };
@@ -388,6 +442,67 @@ describe("ADR-102 — promoteChildRunForToken resolves the tree workspace for a 
     // the reuser child reaches Done.
     expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
     expect(await runStatus(reuserChildRunId)).toBe("Done");
+  });
+});
+
+describe("ADR-134 — shared pull-request promotion owns one tree root", () => {
+  it("opens one PR for a reuser and settles the tree while retaining provisional evidence only on the allocator", async () => {
+    const root = await seedRoot();
+    const allocator = await seedSharedChild({
+      rootRunId: root,
+      withWorkspace: true,
+    });
+    const reuser = await seedSharedChild({
+      rootRunId: root,
+      withWorkspace: false,
+    });
+    const userId = await seedUser();
+
+    await pool.query(
+      `UPDATE "projects"
+          SET "provider" = 'github', "repo_url" = 'https://github.com/acme/shared.git'
+        WHERE "id" = $1`,
+      [projectId],
+    );
+
+    const result = await promoteRun(
+      reuser,
+      { mode: "pull_request", reviewedTargetCommit: "targettip000000" },
+      {
+        sessionUser: { id: userId },
+        authorize: async () => undefined,
+      },
+      db as never,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      mode: "pull_request",
+      prNumber: 7,
+    });
+    expect(pushBranchSpy).toHaveBeenCalledTimes(1);
+    expect(createOrUpdatePrSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceBranch: `maister/agents/${root}`,
+        body: expect.stringContaining(`run ${allocator}`),
+      }),
+    );
+    expect(await runStatus(allocator)).toBe("Done");
+    expect(await runStatus(reuser)).toBe("Done");
+    expect(await workspacePromotionState(root)).toBe("done");
+    expect(await deliveryEvidence(allocator)).toEqual({
+      promotedHeadSha: "shared-source-head",
+      mergeCommitSha: null,
+      diffStat: null,
+    });
+    expect(await deliveryEvidence(reuser)).toEqual({
+      promotedHeadSha: null,
+      mergeCommitSha: null,
+      diffStat: null,
+    });
+    expect((await runDoneEvents()).map((event) => event.runId).sort()).toEqual(
+      [allocator, reuser].sort(),
+    );
   });
 });
 

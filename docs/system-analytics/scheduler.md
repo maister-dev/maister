@@ -93,6 +93,16 @@ without turning recovery sweeps into live-path polling.
   `system_sweep`, `run_schedule`, `webhook_delivery`,
   `domain_event_dispatch`, `agent_tick`, and `auto_launch_triaged` use `{}`
   in the seeded rows.
+- **`repo_delivery_scan` job kind** (**Implemented, ADR-134**) — one
+  system-managed job per non-archived project, targeted at `{ projectId }` and
+  never creatable from the admin API. It fetches the configured `origin`, then
+  scans only `origin/<target branch>` into cached daily repository-delivery
+  rollups. Fetch/provider parsing finishes before its one delete-and-replace
+  transaction; a failed scan preserves the prior successful cache and native
+  `maxFailures=3` isolates the bad project. Archive skips/disables the job;
+  unarchive idempotently re-enables/seeds archive-style disabled jobs, but
+  never clears a native threshold-poisoned job. This is the sole Git-fetch
+  path for agentization—Observatory reads never fetch.
 
 ## State machine
 
@@ -331,6 +341,8 @@ flowchart TD
 - Triaged-task launcher (Implemented, ADR-112): [`triage.md`](triage.md).
 - Platform-agent triggers (M34 — Implemented, ADR-089): [`agents.md`](agents.md).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
+- Implemented: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance)
+  and [`observatory.md`](observatory.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,
   `web/lib/runs/keepalive-sweeper.ts`,

@@ -117,6 +117,11 @@ describe("getCostSummary — model + runner breakdown", () => {
 
     // Scratch tokens are included in the flat totals.
     expect(cost.inputTokens).toBe(160);
+    expect(cost.byKind.map((row) => [row.kind, row.totalTokens])).toEqual([
+      ["flow", 110],
+      ["scratch", 50],
+      ["agent", 0],
+    ]);
 
     expect(cost.byModel).toEqual([
       {
@@ -142,6 +147,18 @@ describe("getCostSummary — model + runner breakdown", () => {
     expect(cost.byRunner.map((r) => [r.key, r.totalTokens] as const)).toEqual([
       ["claude/sonnet", 150],
       ["codex/gpt5", 10],
+    ]);
+  });
+
+  it("filters cost and its node companion by the selected run kind", async () => {
+    await seedRollup({ runKind: "flow", input: 10 });
+    await seedRollup({ runKind: "scratch", input: 20 });
+
+    const cost = await getCostSummary(db, scope(), { runKind: "scratch" });
+
+    expect(cost.inputTokens).toBe(20);
+    expect(cost.byKind).toEqual([
+      expect.objectContaining({ kind: "scratch", totalTokens: 20 }),
     ]);
   });
 

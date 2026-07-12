@@ -4045,7 +4045,7 @@ async function seedCapabilityEnforcementFixture(
       decisions: ["resume", "abort"],
       toolCall: { title: "WebFetch https://example.com" },
     },
-    'Capability guard denied a tool call outside the enforced allow-list (tool: WebFetch; allowed: Edit). Consecutive denials halted the run. Resume or abort.',
+    "Capability guard denied a tool call outside the enforced allow-list (tool: WebFetch; allowed: Edit). Consecutive denials halted the run. Resume or abort.",
   );
 
   return {
@@ -5118,6 +5118,8 @@ type M23FixtureRecord = {
   projectSlug: string;
   flowId: string;
   nodeId: string;
+  scratchRunId: string;
+  noCacheProjectSlug: string;
 };
 
 // --- M23 fixture: read-only Observatory metrics ----------------------------
@@ -5126,6 +5128,7 @@ type M23FixtureRecord = {
 // worktree is needed: Observatory reads only existing DB evidence.
 
 const M23_SLUG = "e2e-m23";
+const M23_NO_CACHE_SLUG = "e2e-m23-no-cache";
 const M23_NODE_ID = "checks";
 const M23_GATE_ID = "unit";
 
@@ -5172,6 +5175,7 @@ async function seedM23Fixture(
 ): Promise<M23FixtureRecord> {
   const ids = {
     project: randomUUID(),
+    noCacheProject: randomUUID(),
     runner: randomUUID(),
     flow: randomUUID(),
     revision: randomUUID(),
@@ -5179,7 +5183,9 @@ async function seedM23Fixture(
     secondTask: randomUUID(),
     firstRun: randomUUID(),
     secondRun: randomUUID(),
+    scratchRun: randomUUID(),
     member: randomUUID(),
+    noCacheMember: randomUUID(),
     firstCheck1: randomUUID(),
     firstCheck2: randomUUID(),
     firstReview: randomUUID(),
@@ -5198,6 +5204,7 @@ async function seedM23Fixture(
   const repoPath = `/tmp/maister-e2e/${ids.project}`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M23_SLUG]);
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M23_NO_CACHE_SLUG]);
 
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
@@ -5208,6 +5215,53 @@ async function seedM23Fixture(
       "MAIster E2E M23 Observatory",
       repoPath,
       `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, 'MAIster E2E M23 no cache', $3, $4,
+       'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      ids.noCacheProject,
+      M23_NO_CACHE_SLUG,
+      `/tmp/maister-e2e/no-cache-${ids.noCacheProject}`,
+      `/tmp/maister-e2e/no-cache-${ids.noCacheProject}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs
+       (id, project_id, run_kind, status, flow_version, launch_mode,
+        started_at, ended_at, promoted_head_sha, diff_stat)
+     VALUES
+       ($1, $2, 'scratch', 'Done', 'scratch', 'manual',
+        now() - interval '2 hours', now() - interval '1 hour', $3,
+        $4::jsonb)`,
+    [
+      ids.scratchRun,
+      ids.project,
+      "e2e-scratch-delivery",
+      JSON.stringify({ files: 1, additions: 2, deletions: 0 }),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO repo_delivery_rollups
+       (id, project_id, branch, bucket_start, bucket_end,
+        commits, merge_pr_units, additions, deletions, delivery_refs,
+        provider_complete, fetched_at, head_sha)
+     VALUES
+       ($1, $2, 'main', date_trunc('day', now()),
+        date_trunc('day', now()) + interval '1 day',
+        3, 3, 10, 0, $3::jsonb, true, now(), 'e2e-observatory-head')`,
+    [
+      randomUUID(),
+      ids.project,
+      JSON.stringify([
+        {
+          sha: "e2e-scratch-delivery",
+          parentCount: 2,
+          runIds: [ids.scratchRun],
+        },
+      ]),
     ],
   );
   await pool.query(
@@ -5379,12 +5433,19 @@ async function seedM23Fixture(
      VALUES ($1, $2, $3, 'owner')`,
     [ids.member, ids.project, userId],
   );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.noCacheMember, ids.noCacheProject, userId],
+  );
 
   return {
     projectId: ids.project,
     projectSlug: M23_SLUG,
     flowId: ids.flow,
     nodeId: M23_NODE_ID,
+    scratchRunId: ids.scratchRun,
+    noCacheProjectSlug: M23_NO_CACHE_SLUG,
   };
 }
 

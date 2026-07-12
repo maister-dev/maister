@@ -945,6 +945,9 @@
     "artifactDefId": "Artifact definition",
     "artifactKind": "Artifact kind",
     "flow": "Flow",
+    "runKind": "Run kind",
+    "flowRuns": "Flow runs",
+    "flowLedgerOnly": "Not applicable — flow ledger only.",
     "node": "Node",
     "lookback": "Lookback",
     "apply": "Apply",
@@ -980,7 +983,9 @@
       "escalations": "Escalations",
       "terminations": "Terminations",
       "guardrailTrips": "Guardrail trips",
-      "warnNotSurfaced": "Warn-band signals are logged, not counted here — only escalations and terminations emit domain events."
+      "warnNotSurfaced": "Warn-band signals are logged, not counted here — only escalations and terminations emit domain events.",
+      "byKind": "By run kind",
+      "unattributedLegacy": "Unattributed legacy"
     },
     "costBreakdown": {
       "byModelTitle": "By model",
@@ -991,7 +996,42 @@
       "outputHeader": "Output",
       "cacheHeader": "Cache",
       "totalHeader": "Total",
-      "empty": "No cost recorded in this window"
+      "empty": "No cost recorded in this window",
+      "byKindTitle": "By run kind",
+      "storedLifetime": "Stored lifetime cost; lookback does not filter token rollups."
+    },
+    "agentization": {
+      "title": "Agentization",
+      "subtitle": "Read-only share of target-branch delivery attributable to MAIster-hosted runs.",
+      "lines": "Lines",
+      "deliveryUnits": "Merge / PR units",
+      "additions": "additions",
+      "deletions": "deletions",
+      "asOf": "As of",
+      "insufficient": "Insufficient delivery evidence",
+      "volatility": "Active runs may still ship delivery.",
+      "flow": "Flow",
+      "scratch": "Scratch",
+      "agent": "Agent",
+      "trend": "Daily trend"
+    },
+    "funnel": {
+      "title": "Run autonomy funnel",
+      "subtitle": "Existing run evidence only; no controls or write-back.",
+      "runKind": "Run kind",
+      "launchMode": "Launch mode",
+      "triggerSource": "Trigger source",
+      "humanTouch": "Human touch",
+      "throughput": "Terminal throughput",
+      "promotionLane": "Promotion lane",
+      "pureAutonomous": "Pure autonomous",
+      "aiWithCorrection": "AI + correction",
+      "humanTakeover": "Human takeover",
+      "platformPromoted": "Platform-promoted",
+      "failed": "Failed",
+      "crashed": "Crashed",
+      "abandoned": "Abandoned",
+      "unrecorded": "Unrecorded"
     },
     "harness": {
       "sectionTitle": "Harness",
@@ -2678,7 +2718,8 @@
       "webhook_delivery": "webhook_delivery",
       "domain_event_dispatch": "domain_event_dispatch",
       "auto_launch_triaged": "auto_launch_triaged",
-      "auto_promote": "auto_promote"
+      "auto_promote": "auto_promote",
+      "repo_delivery_scan": "repo_delivery_scan"
     },
     "state": {
       "active": "active",

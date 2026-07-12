@@ -653,7 +653,8 @@ export type SchedulerJobKind =
   | "webhook_delivery"
   | "domain_event_dispatch"
   | "auto_launch_triaged"
-  | "auto_promote";
+  | "auto_promote"
+  | "repo_delivery_scan";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -679,6 +680,7 @@ export const schedulerJobs = pgTable(
         "domain_event_dispatch",
         "auto_launch_triaged",
         "auto_promote",
+        "repo_delivery_scan",
       ],
     }).notNull(),
     target: jsonb("target")
@@ -739,6 +741,7 @@ export const schedulerJobRuns = pgTable(
         "domain_event_dispatch",
         "auto_launch_triaged",
         "auto_promote",
+        "repo_delivery_scan",
       ],
     }).notNull(),
     status: text("status", {
@@ -1338,6 +1341,20 @@ export const flowRunnerRemaps = pgTable(
 
 export type RunKind = "flow" | "scratch" | "agent";
 
+export type DeliveryDiffStat = {
+  files: number;
+  additions: number;
+  deletions: number;
+};
+
+export type RepoDeliveryRef = {
+  sha: string;
+  parentCount: number;
+  runIds: string[];
+  prNumber?: number;
+  diffStat?: DeliveryDiffStat;
+};
+
 // M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
 // the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
 // whether the resolved flow revision came from the authored bridge or git.
@@ -1570,6 +1587,11 @@ export const runs = pgTable(
     // at most one shared sibling Running per root). A shared-mode delegation
     // with no root_run_id is refused at launch (CONFIG).
     workspaceMode: text("workspace_mode", { enum: ["own", "shared"] }),
+    // ADR-134: final target delivery evidence. Kept on the run because a shared
+    // workspace can serve N runs; only the root run receives a shared-tree stat.
+    promotedHeadSha: text("promoted_head_sha"),
+    mergeCommitSha: text("merge_commit_sha"),
+    diffStat: jsonb("diff_stat").$type<DeliveryDiffStat>(),
     executionPolicy: jsonb("execution_policy")
       .$type<ExecutionPolicy>()
       .notNull()
@@ -1622,6 +1644,12 @@ export const runs = pgTable(
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
     idxParentRun: index("runs_parent_run_id_idx").on(t.parentRunId),
     idxRootRun: index("runs_root_run_id_idx").on(t.rootRunId),
+    idxPromotedHeadSha: index("runs_promoted_head_sha_idx")
+      .on(t.promotedHeadSha)
+      .where(sql`${t.promotedHeadSha} IS NOT NULL`),
+    idxMergeCommitSha: index("runs_merge_commit_sha_idx")
+      .on(t.mergeCommitSha)
+      .where(sql`${t.mergeCommitSha} IS NOT NULL`),
     // M34 (ADR-089): outbox→spawn no-dup claim under at-least-once redelivery.
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
@@ -1875,6 +1903,65 @@ export const runCostRollups = pgTable(
     idxProjectFlow: index("run_cost_rollups_project_flow_idx").on(
       t.projectId,
       t.flowId,
+    ),
+  }),
+);
+
+export const repoDeliveryRollups = pgTable(
+  "repo_delivery_rollups",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    branch: text("branch").notNull(),
+    bucketStart: timestamp("bucket_start", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    bucketEnd: timestamp("bucket_end", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    commits: integer("commits").notNull().default(0),
+    mergePrUnits: integer("merge_pr_units").notNull().default(0),
+    additions: bigint("additions", { mode: "number" }).notNull().default(0),
+    deletions: bigint("deletions", { mode: "number" }).notNull().default(0),
+    deliveryRefs: jsonb("delivery_refs")
+      .$type<RepoDeliveryRef[]>()
+      .notNull()
+      .default([]),
+    providerComplete: boolean("provider_complete").notNull().default(true),
+    fetchedAt: timestamp("fetched_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    headSha: text("head_sha").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectBranchBucket: unique(
+      "repo_delivery_rollups_project_branch_bucket_uq",
+    ).on(t.projectId, t.branch, t.bucketStart, t.bucketEnd),
+    idxProjectBranchBucket: index(
+      "repo_delivery_rollups_project_branch_bucket_idx",
+    ).on(t.projectId, t.branch, t.bucketStart),
+    idxProjectFetched: index("repo_delivery_rollups_project_fetched_idx").on(
+      t.projectId,
+      t.fetchedAt,
+    ),
+    nonNegativeCheck: check(
+      "repo_delivery_rollups_non_negative_check",
+      sql`${t.commits} >= 0 AND ${t.mergePrUnits} >= 0 AND ${t.additions} >= 0 AND ${t.deletions} >= 0`,
+    ),
+    bucketOrderCheck: check(
+      "repo_delivery_rollups_bucket_order_check",
+      sql`${t.bucketEnd} > ${t.bucketStart}`,
     ),
   }),
 );

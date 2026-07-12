@@ -11,6 +11,11 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { deleteChatCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
 import {
+  clearWorktreeProvenanceNode,
+  hasManagedWorktreeProvenance,
+  setWorktreeProvenanceNode,
+} from "@/lib/worktree-provenance";
+import {
   discardWorktree,
   snapshotDirtyWorktree,
   statusPorcelain,
@@ -44,6 +49,34 @@ export interface DirtySummary {
   total: number;
 }
 
+async function snapshotDirtyWorktreeForNode(args: {
+  worktreePath: string;
+  nodeId: string;
+  commitMessage: string;
+}): Promise<boolean> {
+  const usesManagedProvenance = await hasManagedWorktreeProvenance(
+    args.worktreePath,
+  );
+
+  if (usesManagedProvenance) {
+    await setWorktreeProvenanceNode({
+      worktreePath: args.worktreePath,
+      nodeId: args.nodeId,
+    });
+  }
+
+  try {
+    return await snapshotDirtyWorktree({
+      worktreePath: args.worktreePath,
+      commitMessage: args.commitMessage,
+    });
+  } finally {
+    if (usesManagedProvenance) {
+      await clearWorktreeProvenanceNode(args.worktreePath);
+    }
+  }
+}
+
 // C3 (execution-policy dirtyResolve): auto-resolve a dirty worktree AT a review
 // gate's creation, per policy. `ask` (supervised default) / a clean tree / a
 // missing worktree → no auto-resolution (interactive banner, returns null).
@@ -66,8 +99,9 @@ export async function autoResolveDirtyAtReview(args: {
     if (porcelain.trim() === "") return null;
 
     if (args.policy === "commit") {
-      await snapshotDirtyWorktree({
+      await snapshotDirtyWorktreeForNode({
         worktreePath: args.worktreePath,
+        nodeId: args.nodeId,
         commitMessage: `maister: auto-commit dirty worktree before review ${args.nodeId}`,
       });
     }
@@ -252,8 +286,9 @@ export async function resolveDirtyWorktree(
 
   try {
     if (args.choice === "commit") {
-      committed = await snapshotDirtyWorktree({
+      committed = await snapshotDirtyWorktreeForNode({
         worktreePath: workspace.worktreePath,
+        nodeId: hitl.stepId,
         commitMessage: `wip after node ${hitl.stepId}`,
       });
     } else if (args.choice === "discard") {

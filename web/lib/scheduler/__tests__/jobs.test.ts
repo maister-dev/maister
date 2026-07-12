@@ -51,6 +51,8 @@ describe("schedulerBudgetForKind", () => {
       "webhook_delivery",
       "domain_event_dispatch",
       "auto_launch_triaged",
+      "auto_promote",
+      "repo_delivery_scan",
     ] satisfies SchedulerJobKind[];
 
     expect(kinds.map((kind) => [kind, schedulerBudgetForKind(kind)])).toEqual([
@@ -62,6 +64,8 @@ describe("schedulerBudgetForKind", () => {
       ["webhook_delivery", "webhook_delivery"],
       ["domain_event_dispatch", "domain_event_dispatch"],
       ["auto_launch_triaged", "auto_launch_triaged"],
+      ["auto_promote", "auto_promote"],
+      ["repo_delivery_scan", "repo_delivery_scan"],
     ]);
   });
 
@@ -83,6 +87,13 @@ describe("schedulerBudgetForKind", () => {
     );
     expect(schedulerBudgetLimits().autoLaunchTriaged).toBe(1);
   });
+
+  it("isolates project repository scans behind a fixed single-job budget", () => {
+    expect(schedulerBudgetForKind("repo_delivery_scan")).toBe(
+      "repo_delivery_scan",
+    );
+    expect(schedulerBudgetLimits().repoDeliveryScan).toBe(1);
+  });
 });
 
 describe("isSchedulerJobKind", () => {
@@ -92,6 +103,10 @@ describe("isSchedulerJobKind", () => {
 
   it("accepts domain_event_dispatch as a registered job kind", () => {
     expect(isSchedulerJobKind("domain_event_dispatch")).toBe(true);
+  });
+
+  it("accepts repo_delivery_scan as a registered job kind", () => {
+    expect(isSchedulerJobKind("repo_delivery_scan")).toBe(true);
   });
 
   it("rejects unknown kinds", () => {

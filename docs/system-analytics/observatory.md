@@ -428,7 +428,7 @@ flowchart TD
   any group with `executions < 3` MUST render as "—" (insufficient data), never
   as `0%`.
 - **(ADR-101 / ADR-125 — Implemented)** Budget surfacing MUST read
-  `domain_events` project-scoped within the window via ONE grouped SELECT
+  `domain_events` project-scoped by `occurred_at` within the window via ONE grouped SELECT
   (escalations = `run.escalated`/`budget_exceeded`; terminations =
   `run.failed`/{`budget_exceeded`, `BUDGET_EXCEEDED`, `budget_breach`,
   `budget_restart`, `budget_abandoned`}); it MUST count only budget-reason
@@ -462,6 +462,72 @@ flowchart TD
   stats from the runs that declared it. A manifest that fails to parse skips
   that revision with a WARN and the coverage map omits it.
 
+## Implemented: agentization and run-kind scope (ADR-134)
+
+**Status: Implemented.** ADR-134 extends the per-project, read-only Observatory
+with delivery attribution. It does not change promotion policy, make a git
+network call from a page request, write a row, or surface a portfolio headline.
+
+### Entities and calculation
+
+- **AI delivery evidence** is final, cleaned `runs.diff_stat` plus the final
+  target SHA(s); it exists only for a promoted delivery root.
+- **Repository delivery cache** is a daily, branch-scoped denominator written by
+  the `repo_delivery_scan` scheduler job after fetching `origin`.
+- **Agentization** is `(AI additions + AI deletions) / (repository additions +
+  repository deletions)`. The secondary rate compares AI-attributed merge/PR
+  delivery units with all target merge/PR units.
+- **Run-kind segment** is `all | flow | scratch | agent`. Invalid, absent, or
+  repeated query values resolve to `all`.
+
+Each cached delivery reference also retains its own cleaned commit delta. A
+rebase/fast-forward root is deduplicated by its final target SHA for the
+headline, while its trailered commits contribute their individual deltas to the
+daily trend. First-parent commits do not become merge/PR units merely because
+they are MAIster-attributed.
+
+```mermaid
+flowchart LR
+    Repo["origin/<target branch>"] --> Scan["repo_delivery_scan<br/>background only"]
+    Scan --> Cache["repo_delivery_rollups<br/>fetched_at + cleaned daily deltas"]
+    Promoted["promoted run root"] --> Evidence["runs final SHA + diff_stat"]
+    Cache --> Read["project Observatory pure read"]
+    Evidence --> Read
+    Read --> Panel["lines %, merge/PR ratio, trend, freshness"]
+```
+
+### Scope and states
+
+The agentization numerator includes project-scoped promoted `flow`, `scratch`,
+and worktree-backed `agent` roots. A concrete kind narrows only the AI
+numerator; the repository denominator remains all delivery on the target
+branch. Project-less scratch and non-promotable agent sessions are absent by
+eligibility, not hidden under a different kind. Shared worktree delivery is
+root-owned; siblings do not receive copied line totals.
+
+| Panel family | `all` / `flow` | `scratch` / `agent` |
+| --- | --- | --- |
+| Correction, autonomy, signals, harness, artifacts, coverage, node drill-down | Flow-ledger values, visibly labeled **flow runs** | Not applicable — flow ledger only |
+| Cost | Stored/lifetime all-kind breakdown or selected kind | Selected-kind rows |
+| Budget | Windowed kind breakdown plus `unattributed_legacy` in `all` | Selected-kind rows; legacy excluded |
+| Agentization and all-run funnel | All eligible delivery roots/runs | Selected kind |
+
+```mermaid
+stateDiagram-v2
+    [*] --> Insufficient: cache missing / zero denominator / low N
+    [*] --> Fresh: cache + sufficient denominator
+    Fresh --> Volatile: nonterminal project run exists
+    Volatile --> Fresh: all active runs terminal
+    Fresh --> Insufficient: cache no longer covers selected window
+```
+
+`fetched_at`, zero and low-denominator states, ambiguous PR attribution, and
+the volatile marker are displayed honestly; the page never estimates a rate.
+The read model uses bulk queries, explicit `now`, fixed query count for one or
+many rows, and no fetch/reconcile/seed side effect. EN and RU render the same
+labels and states. The complete calculation and test contract are in
+[`../../.ai-factory/specs/feature-observatory-agentization-provenance.md`](../../.ai-factory/specs/feature-observatory-agentization-provenance.md).
+
 ## Linked artifacts
 
 - ADR: [ADR-059](../decisions.md#adr-059-read-only-observatory-formulas-and-harvest-priority)
@@ -478,3 +544,6 @@ flowchart TD
 - DB schema reference: [`../database-schema.md`](../database-schema.md)
 - Web API: no OpenAPI change in M23 because Observatory uses server-component
   read models, not external HTTP API routes.
+- Source: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance),
+  [`scheduler.md`](scheduler.md), [`runs.md`](runs.md), and
+  [`../screens/observatory.md`](../screens/observatory.md).

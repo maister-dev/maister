@@ -582,6 +582,14 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
   (attachments and run history keep their FK anchor); there is no agent delete
   endpoint — definitions leave through their package.
 
+## Implemented: worktree-agent delivery attribution (ADR-134)
+
+**Status: Implemented.** Worktree-backed agent runs install the same mandatory
+Run-ID provenance hook as flow and scratch worktrees. Only a promotable agent
+with final target delivery evidence joins the project `agent` bucket;
+`none`/`repo_read` sessions do not. This reuses the agent promotion substrate
+and does not change its launch, policy, or enforcement behavior.
+
 ## Linked artifacts
 
 - **Decisions:** [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),

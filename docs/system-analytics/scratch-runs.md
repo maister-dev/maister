@@ -480,6 +480,19 @@ secret material.
 - Native runner provisioning remains explicitly Designed until a later milestone
   implements adapter-native MCP/settings/skills/restrictions files.
 
+## Implemented: scratch delivery attribution (ADR-134)
+
+**Status: Implemented.** Project-scoped scratch worktrees use the same managed
+commit-provenance installation as flow and worktree-agent worktrees. A taskless
+scratch run emits `Maister-Run-Id` but never invents Task or Flow trailers. A
+promoted scratch delivery persists final SHA and cleaned diff evidence through
+its scratch finalizer, then contributes to the `scratch` agentization bucket.
+Project-less local-package scratch remains outside every project rollup.
+
+This is a read-model extension only: scratch promotion policy, workspace
+retention, chat, and runner provisioning remain unchanged. A no-worktree or
+non-promotable scratch session has no delivery evidence.
+
 ## Linked artifacts
 
 - Product model: [`../PRODUCT_VIEW.md`](../PRODUCT_VIEW.md).
