@@ -600,13 +600,29 @@ async function register(
     const packageCapabilityDerived: AgentDefinitionCapabilityConfig[] = [];
 
     for (const pkg of config.packages) {
-      const installedPkg = await installPackageRevision({
-        source: pkg.source,
-        version: pkg.version,
-        path: pkg.path,
-        trustStatus: resolveTrust(pkg.source),
-        db,
-      });
+      let installedPkg: Awaited<ReturnType<typeof installPackageRevision>>;
+
+      try {
+        installedPkg = await installPackageRevision({
+          source: pkg.source,
+          version: pkg.version,
+          path: pkg.path,
+          trustStatus: resolveTrust(pkg.source),
+          db,
+        });
+      } catch (err) {
+        // `packages[]` is an external package installation boundary. Its
+        // member manifest refusal follows the locked FLOW_INSTALL contract,
+        // while initial maister.yaml validation remains CONFIG above.
+        if (isMaisterError(err) && err.code === "CONFIG") {
+          throw new MaisterError("FLOW_INSTALL", err.message, {
+            cause: err,
+            details: err.details,
+          });
+        }
+
+        throw err;
+      }
       const attached = await attachPackage({
         projectId,
         projectSlug: slug,

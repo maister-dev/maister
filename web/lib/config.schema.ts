@@ -897,10 +897,24 @@ export const decideSchema = z
 
 export type DecideDef = z.infer<typeof decideSchema>;
 
+// Node ids become both keys in the `steps` template namespace and filesystem
+// path segments for run artifacts. Keep the author-facing kebab/snake/dot
+// convention, but reject traversal/prototype-polluting names at the shared
+// manifest boundary.
+export const flowNodeIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "node id must be a safe path segment")
+  .refine(
+    (id) => id !== "__proto__" && id !== "constructor" && id !== "prototype",
+    "node id is reserved",
+  );
+
 // Fields common to every node type. `settings` is NOT here — it is typed per
 // node-type member below (M11c).
 const nodeCommon = {
-  id: z.string().min(1),
+  id: flowNodeIdSchema,
   // M38 (ADR-103): optional dynamic-routing table (any node declaring
   // output.result for `from: output`, or a verdict gate for `from: verdict`).
   decide: decideSchema.optional(),

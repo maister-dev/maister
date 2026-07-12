@@ -23,6 +23,8 @@ let db: NodePgDatabase;
 let homeDir: string;
 let projectDir: string;
 let pkgDir: string;
+let legacyProjectDir: string;
+let legacyPkgDir: string;
 let originalHome: string | undefined;
 
 const SLUG = "reg-pkg-proj";
@@ -53,8 +55,8 @@ vi.mock("@/lib/repo-source", () => ({
   redactUrl: (url: string) => url,
   detectProvider: vi.fn(() => null),
   readRemoteOrigin: vi.fn(async () => null),
-  resolveProjectSource: vi.fn(async () => ({
-    dir: projectDir,
+  resolveProjectSource: vi.fn(async (input: { target?: string }) => ({
+    dir: input.target ?? projectDir,
     repoUrl: null,
     provider: null,
     gitStatus: "no-remote",
@@ -83,7 +85,7 @@ beforeAll(async () => {
   await mkdir(join(pkgDir, "flows/reg-flow"), { recursive: true });
   await writeFile(
     join(pkgDir, "flows/reg-flow/flow.yaml"),
-    "schemaVersion: 1\nname: reg-flow\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
+    "schemaVersion: 1\nname: reg-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
   );
   await mkdir(join(pkgDir, "capability/skills/skill-one"), { recursive: true });
   await mkdir(join(pkgDir, "capability/agents"), { recursive: true });
@@ -116,6 +118,32 @@ packages:
 `,
   );
 
+  legacyPkgDir = await mkdtemp(join(tmpdir(), "reg-pkg-legacy-fixture-"));
+  await mkdir(join(legacyPkgDir, "flows/legacy-flow"), { recursive: true });
+  await writeFile(
+    join(legacyPkgDir, "flows/legacy-flow/flow.yaml"),
+    "schemaVersion: 1\nname: legacy-flow\nsteps: []\n",
+  );
+  await writeFile(
+    join(legacyPkgDir, "maister-package.yaml"),
+    `schemaVersion: 1
+name: legacyregpkg
+flows:
+  - { id: legacy-flow, path: flows/legacy-flow }
+`,
+  );
+  legacyProjectDir = await mkdtemp(join(tmpdir(), "reg-pkg-legacy-proj-"));
+  await writeFile(
+    join(legacyProjectDir, "maister.yaml"),
+    `schemaVersion: 2
+project:
+  name: Legacy registration
+flows: []
+packages:
+  - { id: legacyregpkg, source: ${legacyPkgDir}, version: local }
+`,
+  );
+
   ({ POST } = await import("@/app/api/projects/route"));
   ({ GET: packagesGET } = await import(
     "@/app/api/projects/[slug]/packages/route"
@@ -127,7 +155,13 @@ afterAll(async () => {
   else process.env.HOME = originalHome;
   await pool?.end();
   await container?.stop();
-  for (const dir of [homeDir, projectDir, pkgDir]) {
+  for (const dir of [
+    homeDir,
+    projectDir,
+    pkgDir,
+    legacyProjectDir,
+    legacyPkgDir,
+  ]) {
     await rm(dir, { recursive: true, force: true });
   }
   // Member-flow symlinks land under the route's default workspace root (cwd).
@@ -138,6 +172,43 @@ afterAll(async () => {
 });
 
 describe("POST /api/projects — packages[] bootstrap materializes the attachment model (real fixture)", () => {
+  it("maps a legacy package member to 502 FLOW_INSTALL and compensates every registration write", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: legacyProjectDir }),
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({
+      code: "FLOW_INSTALL",
+      message:
+        "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
+    });
+    expect(
+      await db
+        .select()
+        .from(schema.projects)
+        .where(eq(schema.projects.slug, "legacy-registration")),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.packageInstalls)
+        .where(eq(schema.packageInstalls.name, "legacyregpkg")),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.projectPackageAttachments)
+        .where(
+          eq(schema.projectPackageAttachments.packageName, "legacyregpkg"),
+        ),
+    ).toHaveLength(0);
+  });
+
   it("registers with packages[] and produces install + attachment + FK-wired members + ingestion", async () => {
     const res = await POST(
       new NextRequest("http://localhost/api/projects", {

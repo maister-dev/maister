@@ -1,3 +1,4 @@
+import type { FlowManifestIncompatibility } from "@/lib/flows/manifest-parser";
 import type { ReactElement, ReactNode } from "react";
 
 // Pure presentational pieces for the installed-package viewer (T1.3). All are
@@ -18,7 +19,9 @@ export interface PackageViewerHeaderLabels {
   execUntrusted: string;
   execTrusted: string;
   incompatible: string;
-  incompatibleRemediation: string;
+  incompatibleLegacyRemediation: string;
+  incompatibleEngineRemediation: string;
+  incompatibleInvalidRemediation: string;
 }
 
 export interface PackageViewerHeaderProps {
@@ -29,7 +32,21 @@ export interface PackageViewerHeaderProps {
   trustStatus: string;
   execTrust: string;
   labels: PackageViewerHeaderLabels;
-  incompatibilityMessage?: string | null;
+  incompatibility?: FlowManifestIncompatibility | null;
+}
+
+export function packageViewerIncompatibilityRemediation(
+  incompatibility: FlowManifestIncompatibility,
+  labels: PackageViewerHeaderLabels,
+): string {
+  switch (incompatibility.kind) {
+    case "legacy_steps":
+      return labels.incompatibleLegacyRemediation;
+    case "engine_incompatible":
+      return `${labels.incompatibleEngineRemediation} ${incompatibility.message}`;
+    case "invalid_manifest":
+      return labels.incompatibleInvalidRemediation;
+  }
 }
 
 function trustLabel(trust: string, labels: PackageViewerHeaderLabels): string {
@@ -62,7 +79,7 @@ export function PackageViewerHeader({
   trustStatus,
   execTrust,
   labels,
-  incompatibilityMessage = null,
+  incompatibility = null,
 }: PackageViewerHeaderProps): ReactElement {
   return (
     <header
@@ -89,7 +106,7 @@ export function PackageViewerHeader({
             execTrust === "trusted" ? labels.execTrusted : labels.execUntrusted
           }
         />
-        {incompatibilityMessage ? (
+        {incompatibility ? (
           <span
             className="inline-flex rounded-full border border-danger-line bg-danger-soft px-2.5 py-1 font-mono text-[10.5px] font-semibold text-danger"
             data-testid="package-incompatible-badge"
@@ -98,13 +115,13 @@ export function PackageViewerHeader({
           </span>
         ) : null}
       </div>
-      {incompatibilityMessage ? (
+      {incompatibility ? (
         <p
           className="mt-3 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
           data-testid="package-incompatible-alert"
           role="alert"
         >
-          {labels.incompatibleRemediation}
+          {packageViewerIncompatibilityRemediation(incompatibility, labels)}
         </p>
       ) : null}
     </header>

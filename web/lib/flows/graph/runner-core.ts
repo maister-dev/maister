@@ -347,3 +347,19 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     execTrust,
   };
 }
+
+// Minimal authorization lookup for read paths that must not parse a stored
+// manifest before project RBAC. Full `loadRun` remains the authoritative
+// execution loader after this gate.
+export async function loadRunProjectId(
+  db: Db,
+  runId: string,
+): Promise<string | null> {
+  const rows: Array<{ projectId: string | null }> = await db
+    .select({ projectId: runs.projectId })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1);
+
+  return rows[0]?.projectId ?? null;
+}

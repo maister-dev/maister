@@ -16,7 +16,7 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { claimTakeover } from "@/lib/flows/graph/ledger";
 import { compileManifest } from "@/lib/flows/graph/compile";
-import { loadRun } from "@/lib/flows/graph/runner-core";
+import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
 import { markHumanWorking } from "@/lib/runs/state-transitions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — Db handle.
@@ -41,6 +41,8 @@ function httpStatusForCode(code: string): number {
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
+    case "CONFIG":
+      return 400;
     default:
       return 500;
   }
@@ -85,6 +87,19 @@ export async function POST(
 
     const db = getDb() as Db;
 
+    const projectId = await loadRunProjectId(db, runId);
+
+    if (!projectId) {
+      return NextResponse.json(
+        { code: "PRECONDITION", message: `run not found: ${runId}` },
+        { status: 404 },
+      );
+    }
+
+    // Authorize before `loadRun` parses the pinned manifest. This keeps a
+    // malformed stored revision and its identifiers invisible to non-members.
+    await requireProjectAction(projectId, "answerHitl");
+
     // Run-not-found (loadRun throws PRECONDITION) → 404, distinct from a
     // wrong-state precondition (409).
     let loaded;
@@ -102,9 +117,6 @@ export async function POST(
     }
 
     const run = loaded.run;
-
-    // RBAC: projectId is server-state (the run row), never body-supplied.
-    await requireProjectAction(run.projectId, "answerHitl");
 
     if (run.status !== "NeedsInput") {
       throw new MaisterError(

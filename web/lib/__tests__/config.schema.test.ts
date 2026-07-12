@@ -456,6 +456,18 @@ describe("flowYamlV1Schema — graph (nodes[])", () => {
     expect(() => flowYamlV1Schema.parse(noWalker)).toThrow();
   });
 
+  it.each(["__proto__", "constructor", "prototype", "../escape", "node/path"])(
+    "rejects unsafe node id %s",
+    (id) => {
+      expect(() =>
+        flowYamlV1Schema.parse({
+          ...goldenGraphYaml,
+          nodes: [{ ...goldenGraphYaml.nodes[0], id }],
+        }),
+      ).toThrow();
+    },
+  );
+
   // M11c: settings is now a TYPED per-node-type block (was an opaque passthrough
   // in M11a). The typed ai_coding shape must round-trip known fields with their
   // parsed types — replacing the M11a "opaque passthrough" assertion.

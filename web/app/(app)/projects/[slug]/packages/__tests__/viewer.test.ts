@@ -36,8 +36,12 @@ const headerLabels: PackageViewerHeaderLabels = {
   execUntrusted: "Scripts blocked",
   execTrusted: "Scripts allowed",
   incompatible: "Incompatible with engine 3.0.0",
-  incompatibleRemediation:
+  incompatibleLegacyRemediation:
     "Legacy steps[] flows are unsupported; republish this package with nodes[].",
+  incompatibleEngineRemediation:
+    "Use a package version compatible with engine 3.0.0.",
+  incompatibleInvalidRemediation:
+    "Fix the invalid package manifest and republish it.",
 };
 
 const fileLabels: PackageFileViewLabels = {

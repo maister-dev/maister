@@ -20,6 +20,7 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 import {
   classifyStoredFlowManifest,
+  getFlowManifestIncompatibility,
   type FlowManifestIncompatibility,
 } from "@/lib/flows/manifest-parser";
 import { resolveConfinedFlowYaml } from "@/lib/flows/package-content";
@@ -136,15 +137,18 @@ function compatibilityReasonFromIncompatibility(
   };
 }
 
-function compatibilityReasonFromError(err: unknown): PackageCompatibility {
-  const message = err instanceof Error ? err.message : String(err);
+export function packageCompatibilityReasonFromError(
+  err: unknown,
+): PackageCompatibility {
+  const incompatibility = getFlowManifestIncompatibility(err);
+
+  if (incompatibility) {
+    return compatibilityReasonFromIncompatibility(incompatibility);
+  }
 
   return {
     compatible: false,
-    incompatibilityReason:
-      message === LEGACY_STEPS_REFUSAL_MESSAGE
-        ? LEGACY_STEPS_REFUSAL_MESSAGE
-        : INVALID_PACKAGE_MANIFEST_REMEDIATION,
+    incompatibilityReason: INVALID_PACKAGE_MANIFEST_REMEDIATION,
   };
 }
 
@@ -191,7 +195,7 @@ async function assessPackageCompatibility(
       "package flow manifest compatibility check failed",
     );
 
-    return compatibilityReasonFromError(err);
+    return packageCompatibilityReasonFromError(err);
   }
 }
 

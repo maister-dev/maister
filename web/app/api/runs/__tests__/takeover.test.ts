@@ -117,6 +117,7 @@ const runFlowSpy = vi.fn(async () => undefined);
 const recordArtifactSpy = vi.fn(async () => ({ id: "art-1" }));
 const supersedePriorSpy = vi.fn(async () => undefined);
 const getCurrentRequiredForGitArtifactsSpy = vi.fn(async () => [] as unknown[]);
+const resolveRefShaSpy = vi.fn(async () => "headsha");
 
 // A db whose transaction passes the same fake through. The claim/return
 // CAS + selects are exercised through the mocked helpers above, so the db
@@ -220,6 +221,8 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 vi.mock("@/lib/flows/graph/runner-core", () => ({
+  loadRunProjectId: async () =>
+    loadedRef.value ? ((loadedRef.value.run as Row).projectId as string) : null,
   loadRun: async () => {
     if (!loadedRef.value) {
       throw new MaisterError("PRECONDITION", "run not found: run-1");
@@ -253,6 +256,7 @@ vi.mock("@/lib/runs/state-transitions", () => ({
 
 vi.mock("@/lib/worktree", () => ({
   resolveBaseRef: (...a: unknown[]) => resolveBaseRefSpy(...(a as [])),
+  resolveRefSha: (...a: unknown[]) => resolveRefShaSpy(...(a as [])),
   logRange: (...a: unknown[]) => logRangeSpy(...(a as [])),
   diffRange: (...a: unknown[]) => diffRangeSpy(...(a as [])),
   statusPorcelain: (...a: unknown[]) => statusPorcelainSpy(...(a as [])),
@@ -322,6 +326,8 @@ beforeEach(() => {
   });
   resolveBaseRefSpy.mockReset();
   resolveBaseRefSpy.mockResolvedValue("basesha");
+  resolveRefShaSpy.mockReset();
+  resolveRefShaSpy.mockResolvedValue("headsha");
   logRangeSpy.mockReset();
   logRangeSpy.mockResolvedValue("abc def Commit one\n");
   diffRangeSpy.mockReset();

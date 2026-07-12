@@ -24,7 +24,7 @@ import {
   supersedePrior,
 } from "@/lib/flows/graph/artifact-store";
 import { downstreamOf } from "@/lib/flows/graph/runner-graph";
-import { loadRun } from "@/lib/flows/graph/runner-core";
+import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
 import { runFlow } from "@/lib/flows/runner";
 import { loadProjectMainBranch } from "@/lib/runs/takeover-context";
 import { markReturnedToRunning } from "@/lib/runs/state-transitions";
@@ -64,6 +64,8 @@ function httpStatusForCode(code: string): number {
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
+    case "CONFIG":
+      return 400;
     case "EXECUTOR_UNAVAILABLE":
       return 503;
     default:
@@ -109,6 +111,20 @@ export async function POST(
 
     const db = getDb() as Db;
 
+    const projectId = await loadRunProjectId(db, runId);
+
+    if (!projectId) {
+      return NextResponse.json(
+        { code: "PRECONDITION", message: `run not found: ${runId}` },
+        { status: 404 },
+      );
+    }
+
+    // Stored-manifest parsing happens only after the server-derived project
+    // authorization gate, preventing revision details from leaking to a
+    // caller who cannot answer HITL for this run.
+    await requireProjectAction(projectId, "answerHitl");
+
     let loaded;
 
     try {
@@ -124,8 +140,6 @@ export async function POST(
     }
 
     const run = loaded.run;
-
-    await requireProjectAction(run.projectId, "answerHitl");
 
     // ---- Phase 1: intent read (no AFTER-side marker yet) -------------------
     // FOR UPDATE on the run row: assert HumanWorking AND owner == session user.

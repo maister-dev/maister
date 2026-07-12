@@ -74,6 +74,7 @@ vi.mock("@/lib/worktree", () => ({
   addWorktree: (input: unknown) => addWorktreeMock(input),
   removeWorktree: (input: unknown) => removeWorktreeMock(input),
   listBranches: async () => ["main"],
+  listRemoteUrls: async () => [],
   resolveBaseCommit: async () => "0000000000000000000000000000000000000000",
 }));
 vi.mock("@/lib/flows/runner", () => ({
@@ -137,8 +138,14 @@ const instructManifest = {
   ],
 };
 
-// Retired settings.executors metadata must not remain launch source-of-truth;
-// runner resolution now uses platform ACP runners and runner/remap fields.
+const legacyManifest = {
+  schemaVersion: 1,
+  name: "Legacy",
+  steps: [],
+};
+
+// Retired settings.executors metadata is forbidden by the strict graph schema;
+// runner resolution uses platform ACP runners and runner/remap fields.
 const unknownExecutorManifest = {
   schemaVersion: 1,
   name: "UnknownExec",
@@ -153,8 +160,7 @@ const unknownExecutorManifest = {
   ],
 };
 
-// settings.executors resolves against the seeded executor ref ("claude-default")
-// → the AC-4 check must NOT false-positive; launch proceeds.
+// A value that happens to look like a historical runner ref is still forbidden.
 const knownExecutorManifest = {
   schemaVersion: 1,
   name: "KnownExec",
@@ -323,6 +329,7 @@ beforeAll(async () => {
     "proj-instruct",
     instructManifest,
   );
+  await seedProjectWithManifest("proj-legacy", "proj-legacy", legacyManifest);
   await seedProjectWithManifest(
     "proj-badexec",
     "proj-badexec",
@@ -434,6 +441,43 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     expect(task[0].status).toBe("Backlog");
   });
 
+  it("refuses a legacy pinned revision with 400 CONFIG before launch mutations", async () => {
+    const sessionCountBefore = (await db.select().from(schema.runSessions))
+      .length;
+    const response = await POST(request("task-proj-legacy"));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "CONFIG",
+      message:
+        "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
+    });
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+    expect(
+      await db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.taskId, "task-proj-legacy")),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.projectId, "proj-legacy")),
+    ).toHaveLength(0);
+    expect(await db.select().from(schema.runSessions)).toHaveLength(
+      sessionCountBefore,
+    );
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.tasks)
+          .where(eq(schema.tasks.id, "task-proj-legacy"))
+      )[0],
+    ).toMatchObject({ status: "Backlog", attemptNumber: 1 });
+  });
+
   it("refuses a strict-mcps judge manifest with 400 CONFIG too", async () => {
     const res = await POST(request("task-proj-judge"));
 
@@ -535,52 +579,41 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     expect(taskRows[0].status).toBe("Backlog");
   });
 
-  it("ignores retired settings.executors refs during platform-runner launch resolution", async () => {
+  it("refuses an unknown retired settings.executors ref before launch mutations", async () => {
     const res = await POST(request("task-proj-badexec"));
 
-    expect(res.status).toBe(202);
-    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("CONFIG");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
 
     const runs = await db
       .select()
       .from(schema.runs)
       .where(eq(schema.runs.taskId, "task-proj-badexec"));
 
-    expect(runs).toHaveLength(1);
-
-    const sessionRows = await db
-      .select()
-      .from(schema.runSessions)
-      .where(eq(schema.runSessions.runId, runs[0].id));
-
-    // The retired settings.executors:["ghost"] ref is ignored — it is NOT a
-    // step runner target, so resolution falls through the real chain. The seed
-    // sets no launch override / step target / flow default, so the project
-    // default runner (exec-proj-badexec, seeded by seedProjectWithManifest)
-    // legitimately wins over the platform default per the §5 resolution order.
-    expect(sessionRows[0].runnerId).toBe("exec-proj-badexec");
-    expect(sessionRows[0].runnerResolutionTier).toBe("projectDefault");
+    expect(runs).toHaveLength(0);
 
     const task = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, "task-proj-badexec"));
 
-    expect(task[0].status).toBe("InFlight");
+    expect(task[0].status).toBe("Backlog");
   });
 
-  it("launches when retired settings.executors happens to match a legacy project executor", async () => {
+  it("refuses a matching retired settings.executors ref just as strictly", async () => {
     const res = await POST(request("task-proj-goodexec"));
 
-    expect(res.status).toBe(202);
-    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("CONFIG");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
 
     const runRows = await db
       .select()
       .from(schema.runs)
       .where(eq(schema.runs.taskId, "task-proj-goodexec"));
 
-    expect(runRows).toHaveLength(1);
+    expect(runRows).toHaveLength(0);
   });
 
   it("refuses a manifest role ref missing from the active project Flow role registry before worktree creation", async () => {

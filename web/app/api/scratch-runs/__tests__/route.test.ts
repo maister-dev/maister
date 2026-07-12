@@ -32,7 +32,6 @@ const mocks = vi.hoisted(() => ({
 type InsertCall = { table: unknown; values: unknown };
 type UpdateCall = { table: unknown; values: unknown };
 type FakeDb = {
-  execute: (query: unknown) => Promise<void>;
   select: () => {
     from: (table: unknown) => {
       where: (predicate: unknown) => {

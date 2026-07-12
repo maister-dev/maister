@@ -25,6 +25,7 @@ import {
   PackageBundleMissingNotice,
   PackageFileView,
   PackageViewerHeader,
+  packageViewerIncompatibilityRemediation,
   type PackageFileReadState,
   type PackageFileViewLabels,
   type PackageViewerHeaderLabels,
@@ -211,7 +212,9 @@ export default async function FlowPackageViewerPage({
     execUntrusted: tViewer("execUntrusted"),
     execTrusted: tViewer("execTrusted"),
     incompatible: tViewer("incompatible"),
-    incompatibleRemediation: tViewer("incompatibleRemediation"),
+    incompatibleLegacyRemediation: tViewer("incompatibleLegacyRemediation"),
+    incompatibleEngineRemediation: tViewer("incompatibleEngineRemediation"),
+    incompatibleInvalidRemediation: tViewer("incompatibleInvalidRemediation"),
   };
 
   const fileLabels: PackageFileViewLabels = {
@@ -305,7 +308,7 @@ export default async function FlowPackageViewerPage({
         enablementState={dto.enablementState}
         execTrust={revision.execTrust}
         flowRef={dto.ref}
-        incompatibilityMessage={revision.incompatibility?.message ?? null}
+        incompatibility={revision.incompatibility}
         labels={headerLabels}
         resolvedRevision={revision.resolvedRevision}
         trustStatus={dto.trustStatus}
@@ -333,7 +336,10 @@ export default async function FlowPackageViewerPage({
                 {staticGraph
                   ? tViewer("graphEmpty")
                   : revision.incompatibility
-                    ? tViewer("incompatibleRemediation")
+                    ? packageViewerIncompatibilityRemediation(
+                        revision.incompatibility,
+                        headerLabels,
+                      )
                     : tViewer("graphUnavailable")}
               </p>
             )}

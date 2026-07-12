@@ -99,7 +99,21 @@ beforeAll(async () => {
   POST = routeModule.POST;
 });
 
-async function seedProject(slug: string) {
+async function seedProject(
+  slug: string,
+  manifest: Record<string, unknown> = {
+    schemaVersion: 1,
+    name: "Bugfix",
+    nodes: [
+      {
+        id: "run",
+        type: "cli",
+        action: { command: "echo ok" },
+        transitions: { success: "done" },
+      },
+    ],
+  },
+) {
   const projectId = randomUUID();
   const flowId = randomUUID();
   const executorId = randomUUID();
@@ -139,18 +153,7 @@ async function seedProject(slug: string) {
     resolvedRevision: `abc-${revisionId}`,
     manifestDigest: `sha256-${revisionId}`,
     installedPath: "/tmp/flows/bugfix",
-    manifest: {
-      schemaVersion: 1,
-      name: "Bugfix",
-      nodes: [
-        {
-          id: "run",
-          type: "cli",
-          action: { command: "echo ok" },
-          transitions: { success: "done" },
-        },
-      ],
-    },
+    manifest,
     schemaVersion: 1,
     packageStatus: "Installed",
     setupStatus: "done",
@@ -163,25 +166,14 @@ async function seedProject(slug: string) {
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: "/tmp/flows/bugfix",
-    manifest: {
-      schemaVersion: 1,
-      name: "Bugfix",
-      nodes: [
-        {
-          id: "run",
-          type: "cli",
-          action: { command: "echo ok" },
-          transitions: { success: "done" },
-        },
-      ],
-    },
+    manifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
     enablementState: "Enabled",
     trustStatus: "trusted",
   });
 
-  return { slug, projectId, flowId, executorId };
+  return { slug, projectId, flowId, executorId, revisionId };
 }
 
 async function seedTask(projectId: string, flowId: string, status = "Backlog") {
@@ -352,6 +344,56 @@ describe("POST /api/v1/ext/runs", () => {
       scope_used: "runs:launch",
       endpoint: "POST /api/v1/ext/runs",
     });
+  });
+
+  it("refuses a legacy pinned revision with CONFIG before creating launch side effects", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-runs-legacy-${randomUUID().slice(0, 8)}`,
+      { schemaVersion: 1, name: "Legacy bugfix", steps: [] },
+    );
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+    const token = await issueToken({ projectId, name: "Legacy Token" }, db);
+    const req = makeRequest({ taskId });
+    const sessionCountBefore = (
+      await (db as any).select().from(schema.runSessions).execute()
+    ).length;
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const response = await POST(req, {});
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      code: "CONFIG",
+      message:
+        "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
+    });
+    expect(
+      await (db as any)
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.taskId, taskId))
+        .execute(),
+    ).toHaveLength(0);
+    expect(
+      await (db as any)
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.projectId, projectId))
+        .execute(),
+    ).toHaveLength(0);
+    expect(
+      await (db as any).select().from(schema.runSessions).execute(),
+    ).toHaveLength(sessionCountBefore);
+    expect(
+      (
+        await (db as any)
+          .select()
+          .from(schema.tasks)
+          .where(eq(schema.tasks.id, taskId))
+          .execute()
+      )[0],
+    ).toMatchObject({ status: "Backlog", attemptNumber: 1 });
   });
 
   it("accepts deprecated executorOverrideId as a runnerId alias", async () => {

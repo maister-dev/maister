@@ -58,8 +58,7 @@ export function AttachToProjectButton({
   const errorRef = useRef<HTMLParagraphElement>(null);
   const incompatibilityReason = compatibility.compatible
     ? null
-    : (compatibility.incompatibilityReason ??
-      "Package flow manifest compatibility is unavailable.");
+    : (compatibility.incompatibilityReason ?? t("compatibilityUnavailable"));
 
   openRef.current = open;
 
@@ -99,8 +98,8 @@ export function AttachToProjectButton({
       // Re-fetch the page so `targets` reflects the new attachment (the row
       // flips to the already-attached link).
       startTransition(() => router.refresh());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("attachUnexpectedError"));
     } finally {
       setBusy(null);
     }
