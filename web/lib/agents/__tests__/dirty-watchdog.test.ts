@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -622,6 +623,56 @@ describe("package skill materialization manifest", () => {
     await expect(
       materializeAgentReadOnlySettings(root, "claude", "run-1"),
     ).resolves.toEqual({ materialized: true });
+  });
+
+  it("writes the agent-L2 marker before the settings file and reclaims both on restore", async () => {
+    // realpath so the macOS /var -> /private/var tmp symlink does not trip the
+    // materialization path-confinement check.
+    const cwd = await realpath(root);
+    const settingsPath = path.join(cwd, ".claude", "settings.local.json");
+    const markerPath = `${settingsPath}.maister-owned`;
+
+    await materializeAgentReadOnlySettings(cwd, "claude", "run-1");
+
+    // Invariant: a MAIster-created settings file always has its ownership marker.
+    expect(await readFile(markerPath, "utf8")).toContain("agent-l2:run-1");
+    expect(await stat(settingsPath)).toBeDefined();
+
+    await restoreAgentMaterialization(cwd, "run-1");
+
+    await expect(stat(settingsPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reclaims an agent-L2 settings orphan whose materialization lease never committed", async () => {
+    const cwd = await realpath(root);
+    const settingsPath = path.join(cwd, ".claude", "settings.local.json");
+    const markerPath = `${settingsPath}.maister-owned`;
+
+    // Simulate a crash mid-materialize: the marker (written first) and the
+    // settings file are on disk, but the lease/index never committed because the
+    // materializer threw before returning.
+    await materializeWithAgentLease({
+      cwd,
+      runId: "run-1",
+      materialize: async (_owned, recordIntent) => {
+        await recordIntent([settingsPath, markerPath]);
+        await mkdir(path.join(cwd, ".claude"), { recursive: true });
+        await writeFile(markerPath, "agent-l2:run-1\n");
+        await writeFile(settingsPath, "{}\n");
+
+        throw new Error("simulated crash before lease commit");
+      },
+    }).catch(() => undefined);
+
+    expect(await stat(settingsPath)).toBeDefined();
+
+    // The marker attributes the orphan to this run, so terminal/GC cleanup
+    // removes it rather than preserving it as an un-owned artifact.
+    await restoreAgentMaterialization(cwd, "run-1");
+
+    await expect(stat(settingsPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("filters MAIster-owned package skill paths from porcelain only when listed", () => {

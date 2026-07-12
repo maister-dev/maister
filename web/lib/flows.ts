@@ -299,7 +299,9 @@ export async function repairPackageRootSchemaCache(args: {
     const targetPath = join(args.cachedSchemaDir, relativePath);
 
     await mkdir(dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, content);
+    // Coerce Buffer -> Uint8Array: @types/node 20.9.0 predates TS 5.6's stricter
+    // iterator lib, so its Buffer is not assignable to the lib `Uint8Array`.
+    await writeFile(targetPath, Uint8Array.from(content));
   }
 
   log.debug(
@@ -362,7 +364,10 @@ async function materializeSharedPackageRootSchemas(args: {
   for (const [relativePath, sourceContent] of source) {
     const targetContent = target.get(relativePath);
 
-    if (targetContent && !targetContent.equals(sourceContent)) {
+    if (
+      targetContent &&
+      !targetContent.equals(Uint8Array.from(sourceContent))
+    ) {
       throw new MaisterError(
         "FLOW_INSTALL",
         `member flow schema conflicts with package-root schema: ${relativePath}`,
@@ -373,7 +378,8 @@ async function materializeSharedPackageRootSchemas(args: {
     const targetPath = join(targetSchemaDir, relativePath);
 
     await mkdir(dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, sourceContent);
+    // Coerce Buffer -> Uint8Array (see repairPackageRootSchemaCache).
+    await writeFile(targetPath, Uint8Array.from(sourceContent));
   }
 
   return source.size;

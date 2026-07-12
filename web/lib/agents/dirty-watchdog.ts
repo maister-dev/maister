@@ -19,6 +19,7 @@ import {
 } from "@/lib/agents/materialization-manifest";
 import {
   agentL2SettingsMarker,
+  reclaimAgentL2Settings,
   reclaimCapabilitySettings,
   readSettingsOwner,
   SETTINGS_BACKUP_RELATIVE,
@@ -177,11 +178,15 @@ export async function materializeAgentReadOnlySettings(
       }
 
       await recordIntent([settingsPath, markerPath]);
-      if (!settingsExists) {
-        await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
-      }
+      // Marker before settings: a MAIster-created settings file must never
+      // exist without its ownership marker, so a crash mid-materialize leaves an
+      // attributable artifact (not a file mislabeled as user-owned) that
+      // terminal/GC cleanup can reclaim by marker even before the lease commits.
       if (owner === null) {
         await atomicWriteText(markerPath, agentL2SettingsMarker(runId));
+      }
+      if (!settingsExists) {
+        await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
       }
 
       return [settingsPath, markerPath];
@@ -232,6 +237,19 @@ export async function restoreAgentMaterialization(
       throw new MaisterError(
         "CONFLICT",
         `capability settings cleanup is waiting for ${settings.owner.kind === "unknown" ? "an unknown MAIster writer" : `${settings.owner.kind} run ${settings.owner.runId}`}`,
+      );
+    }
+  } else if (trackedPaths.includes(SETTINGS_RELATIVE)) {
+    // Agent-L2 read-only settings: reclaim this run's file+marker by marker
+    // even if the lease never committed, so a crash between the marker and
+    // settings writes cannot orphan them. A foreign marker (another live run
+    // claimed the shared file) is left for that run's own cleanup.
+    const settings = await reclaimAgentL2Settings({ cwd, runId });
+
+    if (settings.status === "foreign") {
+      throw new MaisterError(
+        "CONFLICT",
+        `agent read-only settings cleanup is waiting for another run at ${cwd}`,
       );
     }
   }

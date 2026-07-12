@@ -558,6 +558,33 @@ export async function materializeCapabilitySettings(args: {
 }
 
 /**
+ * Removes an agent-L2 read-only settings file and its marker when this exact run
+ * still owns the marker. An agent-L2 marker proves MAIster created the file
+ * (the agent-L2 writer only ever writes settings when absent and writes the
+ * marker before the settings file), so this can never touch user content — even
+ * when the run's materialization lease never committed (crash mid-materialize).
+ * A foreign or unknown marker is left untouched for the live owner to reclaim.
+ */
+export async function reclaimAgentL2Settings(args: {
+  readonly cwd: string;
+  readonly runId: string;
+}): Promise<{ readonly status: "absent" | "reclaimed" | "foreign" }> {
+  return withAgentMaterializationLock(args.cwd, async (cwd) => {
+    const owner = await readSettingsOwnerAtCwd(cwd);
+
+    if (owner === null) return { status: "absent" };
+    if (owner.kind !== "agent-l2" || owner.runId !== args.runId) {
+      return { status: "foreign" };
+    }
+
+    await rm(path.join(cwd, SETTINGS_RELATIVE), { force: true });
+    await rm(path.join(cwd, SETTINGS_MARKER_RELATIVE), { force: true });
+
+    return { status: "reclaimed" };
+  });
+}
+
+/**
  * Restores a capability-owned settings file only when this exact run still owns
  * the marker. Foreign and malformed markers are retained so a terminal cleanup
  * can retry after the live owner exits instead of deleting another run's state.
