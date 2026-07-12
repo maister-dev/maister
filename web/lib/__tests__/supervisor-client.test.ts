@@ -332,6 +332,7 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
             probeVersion: null,
+            staleReason: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -360,6 +361,7 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
             probeVersion: null,
+            staleReason: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -388,6 +390,7 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
             probeVersion: null,
+            staleReason: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -416,6 +419,7 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
             probeVersion: null,
+            staleReason: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -444,6 +448,7 @@ describe("checkSupervisorDiagnostics", () => {
             checkedAt: null,
             protocolVersion: null,
             probeVersion: null,
+            staleReason: null,
           },
           capabilityEnforcement: {
             status: "pending",
@@ -527,6 +532,36 @@ describe("checkSupervisorDiagnostics", () => {
         JSON.stringify({
           ...diagnostics,
           adapters: [{ ...first, smoke }, ...rest],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(checkSupervisorDiagnostics()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "malformed",
+    });
+  });
+
+  it("rejects diagnostics bodies with an omitted read-only stale reason", async () => {
+    const [first, ...rest] = diagnostics.adapters;
+    const readOnlySession: Partial<typeof first.smoke.readOnlySession> = {
+      ...first.smoke.readOnlySession,
+    };
+
+    delete readOnlySession.staleReason;
+
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          ...diagnostics,
+          adapters: [
+            {
+              ...first,
+              smoke: { ...first.smoke, readOnlySession },
+            },
+            ...rest,
+          ],
         }),
         { status: 200 },
       ),

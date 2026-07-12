@@ -227,6 +227,26 @@ const SupervisorHealthSchema = z
   })
   .strict();
 
+const ReadOnlySmokeEvidenceBaseSchema = z
+  .object({
+    reason: z.string().nullable(),
+    checkedAt: z.string().datetime().nullable(),
+    protocolVersion: z.number().int().positive().nullable(),
+    probeVersion: z.number().int().positive().nullable(),
+  })
+  .strict();
+
+const ReadOnlySmokeEvidenceSchema = z.discriminatedUnion("status", [
+  ReadOnlySmokeEvidenceBaseSchema.extend({
+    status: z.literal("stale"),
+    staleReason: z.enum(["probe_contract", "freshness"]),
+  }).strict(),
+  ReadOnlySmokeEvidenceBaseSchema.extend({
+    status: z.enum(["not_required", "pending", "ok", "skipped", "error"]),
+    staleReason: z.null(),
+  }).strict(),
+]);
+
 const SupervisorDiagnosticsSchema = z
   .object({
     status: z.literal("ready"),
@@ -254,22 +274,9 @@ const SupervisorDiagnosticsSchema = z
               reason: z.string().nullable(),
               checkedAt: z.string().datetime().nullable(),
               protocolVersion: z.number().int().positive().nullable(),
-              readOnlySession: z
-                .object({
-                  status: z.enum([
-                    "not_required",
-                    "pending",
-                    "ok",
-                    "skipped",
-                    "stale",
-                    "error",
-                  ]),
-                  reason: z.string().nullable(),
-                  checkedAt: z.string().datetime().nullable(),
-                  protocolVersion: z.number().int().positive().nullable(),
-                  probeVersion: z.number().int().positive().nullable(),
-                })
-                .strict(),
+              readOnlySession: ReadOnlySmokeEvidenceSchema,
+              // capabilityEnforcement is a simple dimension (no probe version /
+              // staleness) — distinct from the richer read-only-session evidence.
               capabilityEnforcement: z
                 .object({
                   status: z.enum([

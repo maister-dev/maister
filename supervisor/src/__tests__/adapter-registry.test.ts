@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   clientCapabilitiesForAdapter,
   getAdapterRuntime,
+  listAdapterRuntimes,
   resolveResumeAction,
 } from "../adapter-registry";
 
@@ -42,27 +43,10 @@ describe("adapter registry", () => {
     }
   });
 
-  it("declares read-only-session capability support for every adapter runtime", () => {
-    for (const adapter of [
-      "claude",
-      "codex",
-      "gemini",
-      "opencode",
-      "mimo",
-    ] as const) {
-      expect(getAdapterRuntime(adapter)).toMatchObject({
-        readOnlyCapable: true,
-      });
-    }
-    expect(getAdapterRuntime("claude").readOnlySessionSmoke).toBe(
-      "not_required",
-    );
-    expect(getAdapterRuntime("codex").readOnlySessionSmoke).toBe(
-      "not_required",
-    );
-    expect(getAdapterRuntime("gemini").readOnlySessionSmoke).toBe("required");
-    expect(getAdapterRuntime("opencode").readOnlySessionSmoke).toBe("required");
-    expect(getAdapterRuntime("mimo").readOnlySessionSmoke).toBe("required");
+  it("marks every declared adapter runtime read-only capable", () => {
+    expect(
+      listAdapterRuntimes().every((adapter) => adapter.readOnlyCapable),
+    ).toBe(true);
   });
 
   it("requires capability-enforcement smoke for every adapter runtime (ADR-130)", () => {

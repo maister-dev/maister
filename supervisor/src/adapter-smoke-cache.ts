@@ -63,23 +63,42 @@ export type AdapterSmokeStatus =
   | "pending"
   | AdapterSmokeCacheEntry["status"];
 
-export type AdapterSmokeDimensionStatus = AdapterSmokeStatus | "stale";
-
 export type AdapterSmokeDiagnostic = {
   readonly status: AdapterSmokeStatus;
   readonly reason: string | null;
   readonly checkedAt: string | null;
   readonly protocolVersion: number | null;
   readonly readOnlySession: AdapterSmokeDimensionDiagnostic;
-  readonly capabilityEnforcement: AdapterSmokeDimensionDiagnostic;
+  readonly capabilityEnforcement: AdapterSmokeCapabilityDiagnostic;
 };
 
-export type AdapterSmokeDimensionDiagnostic = {
-  readonly status: AdapterSmokeDimensionStatus;
+type AdapterSmokeDimensionDiagnosticBase = {
   readonly reason: string | null;
   readonly checkedAt: string | null;
   readonly protocolVersion: number | null;
   readonly probeVersion: number | null;
+};
+
+type NonStaleAdapterSmokeDimensionDiagnostic =
+  AdapterSmokeDimensionDiagnosticBase & {
+    readonly status: AdapterSmokeStatus;
+    readonly staleReason: null;
+  };
+
+export type AdapterSmokeDimensionDiagnostic =
+  | NonStaleAdapterSmokeDimensionDiagnostic
+  | (AdapterSmokeDimensionDiagnosticBase & {
+      readonly status: "stale";
+      readonly staleReason: "probe_contract" | "freshness";
+    });
+
+// ADR-130: capability-enforcement evidence is a simple dimension — no read-only
+// probe version and no staleness, unlike the richer read-only-session evidence.
+export type AdapterSmokeCapabilityDiagnostic = {
+  readonly status: AdapterSmokeStatus;
+  readonly reason: string | null;
+  readonly checkedAt: string | null;
+  readonly protocolVersion: number | null;
 };
 
 export type AdapterSmokeCacheRead = {
@@ -225,7 +244,7 @@ export function smokeDiagnosticForAdapter(
 
 function smokeDimensionDiagnostic(
   entry: AdapterSmokeEvidence,
-): AdapterSmokeDimensionDiagnostic {
+): NonStaleAdapterSmokeDimensionDiagnostic {
   return {
     status: entry.status,
     reason: entry.reason ?? null,
@@ -235,31 +254,49 @@ function smokeDimensionDiagnostic(
       "probeVersion" in entry && typeof entry.probeVersion === "number"
         ? entry.probeVersion
         : null,
+    staleReason: null,
   };
 }
+
+type StaleReadOnlyReason = {
+  readonly code: "probe_contract" | "freshness";
+  readonly message: string;
+};
 
 function staleReadOnlyReason(
   cacheVersion: 1 | 2 | undefined,
   entry: z.infer<typeof ReadOnlySmokeEvidenceSchema>,
   evaluatedAt: Date,
-): string | null {
+): StaleReadOnlyReason | null {
   if (cacheVersion !== 2) {
-    return "read-only-session evidence uses legacy cache format";
+    return {
+      code: "probe_contract",
+      message: "read-only-session evidence uses legacy cache format",
+    };
   }
 
   if (entry.probeVersion !== READ_ONLY_SMOKE_PROBE_VERSION) {
-    return `read-only-session probe version ${entry.probeVersion ?? "missing"} does not match ${READ_ONLY_SMOKE_PROBE_VERSION}`;
+    return {
+      code: "probe_contract",
+      message: `read-only-session probe version ${entry.probeVersion ?? "missing"} does not match ${READ_ONLY_SMOKE_PROBE_VERSION}`,
+    };
   }
 
   const checkedAtMs = Date.parse(entry.checkedAt);
   const evaluatedAtMs = evaluatedAt.getTime();
 
   if (checkedAtMs > evaluatedAtMs) {
-    return "read-only-session evidence is future-dated";
+    return {
+      code: "freshness",
+      message: "read-only-session evidence is future-dated",
+    };
   }
 
   if (evaluatedAtMs - checkedAtMs >= READ_ONLY_SMOKE_MAX_AGE_MS) {
-    return "read-only-session evidence is seven days old or older";
+    return {
+      code: "freshness",
+      message: "read-only-session evidence is seven days old or older",
+    };
   }
 
   return null;
@@ -277,6 +314,7 @@ function readOnlySessionDiagnosticForAdapter(
       checkedAt: null,
       protocolVersion: null,
       probeVersion: null,
+      staleReason: null,
     };
   }
 
@@ -287,6 +325,7 @@ function readOnlySessionDiagnosticForAdapter(
       checkedAt: null,
       protocolVersion: null,
       probeVersion: null,
+      staleReason: null,
     };
   }
 
@@ -300,6 +339,7 @@ function readOnlySessionDiagnosticForAdapter(
       checkedAt: null,
       protocolVersion: null,
       probeVersion: null,
+      staleReason: null,
     };
   }
 
@@ -315,6 +355,7 @@ function readOnlySessionDiagnosticForAdapter(
       checkedAt: genericEntry?.checkedAt ?? null,
       protocolVersion: null,
       probeVersion: null,
+      staleReason: null,
     };
   }
 
@@ -329,7 +370,8 @@ function readOnlySessionDiagnosticForAdapter(
       return {
         ...smokeDimensionDiagnostic(entry),
         status: "stale",
-        reason: staleReason,
+        reason: staleReason.message,
+        staleReason: staleReason.code,
       };
     }
   }
@@ -340,14 +382,13 @@ function readOnlySessionDiagnosticForAdapter(
 function capabilityEnforcementDiagnosticForAdapter(
   adapter: ExecutorAgent,
   cache: AdapterSmokeCacheRead,
-): AdapterSmokeDimensionDiagnostic {
+): AdapterSmokeCapabilityDiagnostic {
   if (getAdapterRuntime(adapter).capabilityEnforcementSmoke !== "required") {
     return {
       status: "not_required",
       reason: null,
       checkedAt: null,
       protocolVersion: null,
-      probeVersion: null,
     };
   }
 
@@ -357,7 +398,6 @@ function capabilityEnforcementDiagnosticForAdapter(
       reason: cache.error,
       checkedAt: null,
       protocolVersion: null,
-      probeVersion: null,
     };
   }
 
@@ -370,7 +410,6 @@ function capabilityEnforcementDiagnosticForAdapter(
       reason: `${adapter} capability-enforcement smoke has not been cached`,
       checkedAt: null,
       protocolVersion: null,
-      probeVersion: null,
     };
   }
 
@@ -385,11 +424,15 @@ function capabilityEnforcementDiagnosticForAdapter(
       reason: `${adapter} capability-enforcement smoke ignored because adapter ACP compatibility smoke is ${genericStatus}${genericReason}`,
       checkedAt: genericEntry?.checkedAt ?? null,
       protocolVersion: null,
-      probeVersion: null,
     };
   }
 
-  return smokeDimensionDiagnostic(entry);
+  return {
+    status: entry.status,
+    reason: entry.reason ?? null,
+    checkedAt: entry.checkedAt,
+    protocolVersion: entry.protocolVersion ?? null,
+  };
 }
 
 export async function writeAdapterSmokeCache(

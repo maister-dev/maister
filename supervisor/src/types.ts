@@ -412,42 +412,41 @@ export type SupervisorHealthResponse = z.infer<
   typeof SupervisorHealthResponseSchema
 >;
 
+const AdapterSmokeReadOnlySessionBaseSchema = z
+  .object({
+    reason: z.string().min(1).nullable(),
+    checkedAt: z.string().datetime().nullable(),
+    protocolVersion: z.number().int().positive().nullable(),
+    probeVersion: z.number().int().positive().nullable(),
+  })
+  .strict();
+
+const AdapterSmokeReadOnlySessionSchema = z.discriminatedUnion("status", [
+  AdapterSmokeReadOnlySessionBaseSchema.extend({
+    status: z.literal("stale"),
+    staleReason: z.enum(["probe_contract", "freshness"]),
+  }).strict(),
+  AdapterSmokeReadOnlySessionBaseSchema.extend({
+    status: z.enum(["not_required", "pending", "ok", "skipped", "error"]),
+    staleReason: z.null(),
+  }).strict(),
+]);
+
 const AdapterSmokeDiagnosticSchema = z
   .object({
     status: z.enum(["not_required", "pending", "ok", "skipped", "error"]),
     reason: z.string().min(1).nullable(),
     checkedAt: z.string().datetime().nullable(),
     protocolVersion: z.number().int().positive().nullable(),
-    readOnlySession: z
-      .object({
-        status: z.enum([
-          "not_required",
-          "pending",
-          "ok",
-          "skipped",
-          "stale",
-          "error",
-        ]),
-        reason: z.string().min(1).nullable(),
-        checkedAt: z.string().datetime().nullable(),
-        protocolVersion: z.number().int().positive().nullable(),
-        probeVersion: z.number().int().positive().nullable(),
-      })
-      .strict(),
+    readOnlySession: AdapterSmokeReadOnlySessionSchema,
+    // ADR-130: capabilityEnforcement is a simple dimension (no probe version /
+    // staleness) — distinct from the richer read-only-session evidence.
     capabilityEnforcement: z
       .object({
-        status: z.enum([
-          "not_required",
-          "pending",
-          "ok",
-          "skipped",
-          "stale",
-          "error",
-        ]),
+        status: z.enum(["not_required", "pending", "ok", "skipped", "error"]),
         reason: z.string().min(1).nullable(),
         checkedAt: z.string().datetime().nullable(),
         protocolVersion: z.number().int().positive().nullable(),
-        probeVersion: z.number().int().positive().nullable(),
       })
       .strict(),
   })

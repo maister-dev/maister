@@ -13,20 +13,21 @@ vi.mock("next-intl/server", () => ({
 
 describe("AdapterSupportPanel", () => {
   it.each([
-    ["read-only-session evidence is seven days old", "evidenceStaleAge"],
-    [
-      "read-only-session probe version 2 does not match 1",
-      "evidenceStaleVersion",
-    ],
-  ])("maps stale reason %s to its localized key", (reason, expected) => {
-    expect(
-      smokeStatusTranslationKey({
-        status: "stale",
-        reason,
-        checkedAt: null,
-      }),
-    ).toBe(expected);
-  });
+    ["freshness", "evidenceStaleAge"],
+    ["probe_contract", "evidenceStaleVersion"],
+  ] as const)(
+    "maps stale reason %s to its localized key",
+    (staleReason, expected) => {
+      expect(
+        smokeStatusTranslationKey({
+          status: "stale",
+          reason: "localized prose must not drive this branch",
+          checkedAt: null,
+          staleReason,
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it("renders a status dot per adapter, a details expansion, and a setup hint only for unavailable adapters", async () => {
     const element = await AdapterSupportPanel({
@@ -59,6 +60,7 @@ describe("AdapterSupportPanel", () => {
                   checkedAt: null,
                   protocolVersion: null,
                   probeVersion: null,
+                  staleReason: null,
                 },
                 capabilityEnforcement: {
                   status: "pending",
@@ -87,6 +89,7 @@ describe("AdapterSupportPanel", () => {
                   checkedAt: null,
                   protocolVersion: null,
                   probeVersion: null,
+                  staleReason: null,
                 },
                 capabilityEnforcement: {
                   status: "pending",
@@ -173,6 +176,7 @@ describe("AdapterSupportPanel", () => {
                   checkedAt,
                   protocolVersion: 1,
                   probeVersion: 2,
+                  staleReason: "probe_contract",
                 },
               },
             },

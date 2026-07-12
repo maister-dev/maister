@@ -12,11 +12,19 @@ type Props = {
   diagnostics: SupervisorDiagnosticsStatus | null;
 };
 
-type SmokeEvidence = {
-  readonly status: string;
-  readonly reason: string | null;
-  readonly checkedAt: string | null;
-};
+type SmokeEvidence =
+  | {
+      readonly status: "stale";
+      readonly reason: string | null;
+      readonly checkedAt: string | null;
+      readonly staleReason: "probe_contract" | "freshness";
+    }
+  | {
+      readonly status: "not_required" | "pending" | "ok" | "skipped" | "error";
+      readonly reason: string | null;
+      readonly checkedAt: string | null;
+      readonly staleReason?: null;
+    };
 
 export function smokeStatusTranslationKey(evidence: SmokeEvidence): string {
   switch (evidence.status) {
@@ -31,8 +39,7 @@ export function smokeStatusTranslationKey(evidence: SmokeEvidence): string {
     case "error":
       return "evidenceError";
     case "stale":
-      return evidence.reason?.includes("probe version") ||
-        evidence.reason?.includes("legacy cache")
+      return evidence.staleReason === "probe_contract"
         ? "evidenceStaleVersion"
         : "evidenceStaleAge";
     default:

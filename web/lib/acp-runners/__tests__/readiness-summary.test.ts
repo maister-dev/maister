@@ -42,6 +42,7 @@ function diagAdapter(
         checkedAt: null,
         protocolVersion: null,
         probeVersion: null,
+        staleReason: null,
       },
       capabilityEnforcement: {
         status: "pending",

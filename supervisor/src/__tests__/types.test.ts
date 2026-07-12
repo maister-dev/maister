@@ -408,6 +408,36 @@ describe("StartSessionRequestSchema", () => {
 });
 
 describe("SupervisorDiagnosticsResponseSchema", () => {
+  function diagnosticsWithReadOnlySession(
+    readOnlySession: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      status: "ready",
+      version: "0.0.1",
+      checkedAt: "2026-06-11T12:00:00.000Z",
+      adapters: [
+        {
+          id: "opencode",
+          binary: "opencode",
+          source: "path",
+          path: "/bin/opencode",
+          available: true,
+          version: null,
+          error: null,
+          smoke: {
+            status: "ok",
+            reason: null,
+            checkedAt: "2026-06-11T12:00:00.000Z",
+            protocolVersion: 1,
+            readOnlySession,
+          },
+        },
+      ],
+      sidecars: [],
+      envRefs: [],
+    };
+  }
+
   it("accepts diagnostics entries for all adapter ids", () => {
     const result = SupervisorDiagnosticsResponseSchema.safeParse({
       status: "ready",
@@ -433,6 +463,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
               probeVersion: null,
+              staleReason: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -461,6 +492,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
               probeVersion: null,
+              staleReason: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -489,6 +521,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
               probeVersion: null,
+              staleReason: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -517,6 +550,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
               probeVersion: null,
+              staleReason: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -546,6 +580,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
               probeVersion: null,
+              staleReason: null,
             },
             capabilityEnforcement: {
               status: "pending",
@@ -561,6 +596,47 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it.each([
+    [
+      "omits staleReason",
+      {
+        status: "ok",
+        reason: null,
+        checkedAt: "2026-06-11T12:00:00.000Z",
+        protocolVersion: 1,
+        probeVersion: 1,
+      },
+    ],
+    [
+      "uses null staleReason for stale evidence",
+      {
+        status: "stale",
+        reason: "probe is old",
+        checkedAt: "2026-06-01T12:00:00.000Z",
+        protocolVersion: 1,
+        probeVersion: 1,
+        staleReason: null,
+      },
+    ],
+    [
+      "uses a stale reason for non-stale evidence",
+      {
+        status: "ok",
+        reason: null,
+        checkedAt: "2026-06-11T12:00:00.000Z",
+        protocolVersion: 1,
+        probeVersion: 1,
+        staleReason: "freshness",
+      },
+    ],
+  ])("rejects read-only evidence that %s", (_caseName, readOnlySession) => {
+    expect(
+      SupervisorDiagnosticsResponseSchema.safeParse(
+        diagnosticsWithReadOnlySession(readOnlySession),
+      ).success,
+    ).toBe(false);
   });
 });
 

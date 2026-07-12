@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startHeartbeatWatcher } from "../heartbeat";
 import { registerRoutes, type SpawnOverrides } from "../http-api";
 import { SessionRegistry } from "../registry";
+import { SupervisorDiagnosticsResponseSchema } from "../types";
 
 const FIXTURE_PATH = resolve(
   fileURLToPath(import.meta.url),
@@ -355,6 +356,39 @@ describe("supervisor lifecycle integration", () => {
     });
     expect(JSON.stringify(body)).not.toContain("diagnostic-secret");
     expect(JSON.stringify(body)).not.toContain("gemini-secret");
+  });
+
+  it("GET /diagnostics emits a schema-valid nested stale reason", async () => {
+    const { url, runtimeRoot } = await bootFor(["--hang"]);
+
+    await writeFile(
+      join(runtimeRoot, "adapter-smoke-cache.json"),
+      JSON.stringify({
+        version: 1,
+        adapters: {
+          opencode: {
+            status: "ok",
+            checkedAt: "2020-01-01T00:00:00.000Z",
+            readOnlySession: {
+              status: "ok",
+              checkedAt: "2020-01-01T00:00:00.000Z",
+              protocolVersion: 1,
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const response = await fetch(`${url}/diagnostics`);
+    const body = await response.json();
+    const parsed = SupervisorDiagnosticsResponseSchema.parse(body);
+    const opencode = parsed.adapters.find((adapter) => adapter.id === "opencode");
+
+    expect(opencode?.smoke.readOnlySession).toMatchObject({
+      status: "stale",
+      staleReason: "probe_contract",
+    });
   });
 
   it("POST /sessions returns 201 with sessionId+pid; GET /sessions lists it", async () => {

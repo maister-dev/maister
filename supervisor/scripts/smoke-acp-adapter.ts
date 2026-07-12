@@ -36,6 +36,7 @@ import {
   invalidateAdapterReadOnlySmokeCache,
   writeAdapterSmokeCache,
 } from "../src/adapter-smoke-cache";
+import { withAdapterSmokeCacheLock } from "../src/adapter-smoke-cache-lock";
 import { provisionRunnerLaunch } from "../src/runner-provisioner";
 import { buildChildEnv } from "../src/spawn";
 
@@ -120,6 +121,7 @@ const WRITE_LIKE_KINDS = new Set([
   "execute",
 ]);
 const SMOKE_OPERATION_TIMEOUT_MS = 10_000;
+const SMOKE_TEARDOWN_GRACE_MS = 2_000;
 
 // ADR-130 capability_guard smoke (DES-8): prove `requestPermission` fires per
 // write-class call under permissionPolicy=default AND that `params.toolCall`
@@ -539,13 +541,59 @@ async function waitForSpawn(child: ChildProcess): Promise<void> {
   });
 }
 
-async function terminate(child: ChildProcess): Promise<void> {
-  if (child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGTERM");
-  }
+function childIsDead(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
 
-  child.stdin?.destroy();
-  child.stdout?.destroy();
+function isMissingProcess(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { readonly code?: unknown }).code === "ESRCH"
+  );
+}
+
+function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    child.kill(signal);
+  } catch (err) {
+    if (!isMissingProcess(err)) throw err;
+  }
+}
+
+function waitForChildExit(child: ChildProcess, ms: number): Promise<boolean> {
+  if (childIsDead(child)) return Promise.resolve(true);
+
+  return new Promise<boolean>((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, ms);
+
+    child.once("exit", onExit);
+  });
+}
+
+async function terminate(child: ChildProcess): Promise<void> {
+  try {
+    if (childIsDead(child)) return;
+
+    signalChild(child, "SIGTERM");
+    if (await waitForChildExit(child, SMOKE_TEARDOWN_GRACE_MS)) return;
+
+    signalChild(child, "SIGKILL");
+    if (await waitForChildExit(child, SMOKE_TEARDOWN_GRACE_MS)) return;
+
+    throw new Error("smoke adapter child did not exit after SIGKILL");
+  } finally {
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+  }
 }
 
 export async function smokeAdapter(
@@ -660,8 +708,7 @@ export async function smokeAdapter(
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs();
+async function smokeAndCache(args: CliArgs): Promise<SmokeResult[]> {
   const results: SmokeResult[] = [];
 
   for (const adapter of args.adapters) {
@@ -700,6 +747,15 @@ async function main(): Promise<void> {
       })),
     );
   }
+
+  return results;
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs();
+  const results = args.cachePath
+    ? await withAdapterSmokeCacheLock(args.cachePath, () => smokeAndCache(args))
+    : await smokeAndCache(args);
 
   if (
     results.some(
