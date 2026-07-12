@@ -6,12 +6,12 @@
 > `newSession params.mcpServers` delivery, the `node_attempts.materialization_plan`
 > ledger, scoped cleanup, and the run-detail capability view have all shipped to
 > the current branch. **The `instructed → enforced` flip is now Implemented —
-> [ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
+> [ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
 > (`capability_guard`, this branch): `tools` / `mcps` flip to `enforced` via an
 > adapter-agnostic supervisor↔ACP-seam interceptor, evidence-gated per adapter, and
 > `hooks` is corrected to `enforced`. ADR-042's per-cell live-spike gating is
 > superseded by that evidence gate. The four remaining classes stay `instructed`
-> with documented reasons. Every "MUST" tagged `(ADR-129)` is now as-built. Locked
+> with documented reasons. Every "MUST" tagged `(ADR-130)` is now as-built. Locked
 > decisions:
 > [ADR-041](../decisions.md#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
 > (registry refs + agent-aware mapping + runner-owned native materialization),
@@ -253,14 +253,14 @@ The boundary stays the M11c machinery
 ([ADR-032](../decisions.md#adr-032-settings-enforcement-refusal-boundary)):
 `evaluateNodeEnforcement` + `assertNodeLaunchable`, fired at BOTH the launch
 precondition (`POST /api/runs`) and the per-node runtime build
-(`runner-graph.ts`). ADR-129 flips cells in `ENFORCEABILITY_BY_AGENT` from
+(`runner-graph.ts`). ADR-130 flips cells in `ENFORCEABILITY_BY_AGENT` from
 `instructed` to `enforced` and adds a second, **async evidence gate** for per-adapter
 admission. The guard is an **allow-list of `enforced` cells** (never a deny-list);
 launch proceeds iff every `strict` capability-bearing setting on every
 `ai_coding`/`judge`/`orchestrator` node resolves to an `enforced` cell for the
 resolved agent **and** clears the evidence gate.
 
-**Mechanism per class (ADR-129, adapter-agnostic).** The enforcement point for
+**Mechanism per class (ADR-130, adapter-agnostic).** The enforcement point for
 `tools`/`mcps` is the supervisor↔ACP-seam `capability_guard` interceptor
 ([`guardrail-hooks.md`](guardrail-hooks.md)) — **not** the `settings.local.json`
 materialized-delivery channel (that channel still *materializes* the profile for the
@@ -268,7 +268,7 @@ agent's own use; the *enforcement* is the seam). The table is uniform across all
 adapters; per-adapter readiness is the `capabilityEnforcement` evidence gate, not a
 cell.
 
-| `(class)` | enforcement mechanism (ADR-129) | enforced? |
+| `(class)` | enforcement mechanism (ADR-130) | enforced? |
 | --------- | ------------------------------- | --------- |
 | `tools` | `capability_guard` **tool-name allow-list** at the ACP seam (identity from `_meta.claudeCode.toolName ?? title`) | **enforced** (all adapters; evidence-gated at launch) |
 | `mcps` | `capability_guard` **MCP-server allow-list** at the ACP seam (server from `mcp__<server>__<tool>`) | **enforced** (all adapters; evidence-gated at launch) |
@@ -380,7 +380,7 @@ they hold once the milestone lands, not before).
   `setupStatus ∈ {done, not_required}`, NEVER merely because `trustStatus` is set;
   a `trusted`+`failed` row MUST re-run setup on re-POST.
 - `ENFORCEABILITY_BY_AGENT` MUST only ever flip `instructed → enforced`; the
-  launch/runtime guard MUST stay an allow-list of `enforced` cells. Since ADR-129,
+  launch/runtime guard MUST stay an allow-list of `enforced` cells. Since ADR-130,
   `tools`/`mcps`/`hooks` are `enforced` for **all five** adapters (adapter-agnostic
   `capability_guard` seam); per-adapter admission for a `strict` `tools`/`mcps`
   launch MUST be the async `capabilityEnforcement` evidence gate, never a table cell.

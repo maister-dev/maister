@@ -16,7 +16,7 @@ import {
 
 import { MaisterError } from "@/lib/errors";
 
-// ADR-129: the web-derived capability-enforcement set delivered to the supervisor
+// ADR-130: the web-derived capability-enforcement set delivered to the supervisor
 // on `enforcementProfile` (structurally validated by the supervisor's zod schema).
 // Distinct from the M14 capabilityProfilePath (child-env only).
 export type SessionEnforcementProfile = {
@@ -113,7 +113,7 @@ export function deriveSessionEnforcementProfile(args: {
   };
 }
 
-// ADR-129: admit a system-injected MCP server (the maister delegation facade)
+// ADR-130: admit a system-injected MCP server (the maister delegation facade)
 // into an enforced mcps allow-list. The facade is appended to a session's
 // mcpServers AFTER capability derivation, so without this an
 // `enforcement.mcps: strict` orchestrator would deny its own `mcp__<facade>__*`
@@ -152,7 +152,7 @@ function stableStringify(value: unknown): string {
 // Fold the enforcement profile into the capability profileDigest so the long-lived
 // session consistency guard (assertSessionProfileConsistent) refuses a mid-session
 // enforcement change. Absent profile → the base digest is returned unchanged, so a
-// non-enforced node's digest is byte-identical to before ADR-129.
+// non-enforced node's digest is byte-identical to before ADR-130.
 export function foldEnforcementProfileIntoDigest(
   baseDigest: string,
   profile: SessionEnforcementProfile | undefined,

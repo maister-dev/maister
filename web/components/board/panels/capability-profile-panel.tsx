@@ -4,7 +4,7 @@ import clsx from "clsx";
 
 export interface CapabilityProfilePanelLabels {
   title: string;
-  // Honesty caption (ADR-129): `enforced` classes (tools/mcps/hooks) ARE enforced
+  // Honesty caption (ADR-130): `enforced` classes (tools/mcps/hooks) ARE enforced
   // at the supervisor↔ACP seam by capability_guard, evidence-gated per adapter;
   // `instructed` classes are declared intent only. Threaded so EN/RU stay in one
   // catalog.

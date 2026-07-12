@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { isMaisterError } from "@/lib/errors";
 import { assertEnforcementEvidence } from "@/lib/flows/enforcement-evidence";
 
-// ADR-129 T3.3: the async launch evidence gate. Refuses a strict tools/mcps launch
+// ADR-130 T3.3: the async launch evidence gate. Refuses a strict tools/mcps launch
 // unless the resolved adapter's capabilityEnforcement smoke === "ok", the runner is
 // not skip-permissions, and diagnostics are reachable.
 

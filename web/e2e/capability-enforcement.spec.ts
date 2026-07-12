@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
-// ADR-129 — the capability enforcement flip's run-detail UI surface. The
+// ADR-130 — the capability enforcement flip's run-detail UI surface. The
 // `implement` ai_coding node declares `enforcement.tools: "strict"` with a
 // `tools` allow-list, and the run is parked on a seeded `capability_guard`
 // `hook_trip` HITL (an out-of-profile tool call that tripped the
@@ -34,7 +34,7 @@ import { loadFixtures } from "./_seed/fixtures";
 // asserts on (parallel same-file workers would race the shared row).
 test.describe.configure({ mode: "serial" });
 
-test.describe("ADR-129 capability enforcement: capability_guard hook_trip surface", () => {
+test.describe("ADR-130 capability enforcement: capability_guard hook_trip surface", () => {
   test("capability_guard trip renders the hook_trip card with the localized rule + offending tool call", async ({
     page,
   }) => {

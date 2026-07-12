@@ -2004,7 +2004,7 @@
     "checkoutContext": "Check out locally",
     "copy": "Copy",
     "settingsTitle": "Node settings",
-    "settingsDeclaredIntentNote": "Declared intent, shown for visibility. `Enforced` classes (tools/mcps/hooks) are enforced at the supervisor↔ACP seam by capability_guard, evidence-gated per adapter (ADR-129); `Instructed` classes are declared intent only.",
+    "settingsDeclaredIntentNote": "Declared intent, shown for visibility. `Enforced` classes (tools/mcps/hooks) are enforced at the supervisor↔ACP seam by capability_guard, evidence-gated per adapter (ADR-130); `Instructed` classes are declared intent only.",
     "settingsVerdictEnforced": "Enforced",
     "settingsVerdictInstructed": "Instructed",
     "settingsVerdictRefused": "Refused",

@@ -357,7 +357,7 @@ export async function createAcpConnection(
   // ADR-108 (M40): emit a session.hook_trip stamped with the rule's frozen
   // lifecycle/disposition. The web tier escalates on `halt`; `deny` is
   // record-only there. `toolCall` is the pre_tool_call call (null for no_progress).
-  // ADR-129: `capability_guard` is dual-disposition (per-call `deny`, Nth-deny
+  // ADR-130: `capability_guard` is dual-disposition (per-call `deny`, Nth-deny
   // `halt`), so the caller may override the frozen `HOOK_RULE_META` disposition.
   const emitHookTrip = (
     rule: HookRule,
@@ -442,7 +442,7 @@ export async function createAcpConnection(
         }
       }
 
-      // ADR-129 D5: always-ask sentinel. A WRITE that EXECUTES without ever
+      // ADR-130 D5: always-ask sentinel. A WRITE that EXECUTES without ever
       // reaching the always-ask seam (requestPermission) means the adapter stopped
       // honoring always-ask → fail-closed halt. The claude adapter STREAMS the
       // pending `tool_call` BEFORE it calls requestPermission (canUseTool runs
@@ -472,7 +472,7 @@ export async function createAcpConnection(
           // path_guard) — a mid-session bash bypass is not caught by this sentinel.
           // Bash is covered by the primary path instead: the capabilityEnforcement
           // smoke proves it reaches requestPermission before an adapter is admitted
-          // (ADR-129, M3).
+          // (ADR-130, M3).
           record.capabilityPendingWriteIds?.add(id);
         } else if (
           u?.sessionUpdate === "tool_call_update" &&
@@ -694,7 +694,7 @@ export async function createAcpConnection(
         }
       }
 
-      // ADR-129: capability_guard — enforce strict tools/mcps by tool identity.
+      // ADR-130: capability_guard — enforce strict tools/mcps by tool identity.
       // Runs AFTER path_guard and BEFORE B1 so an out-of-profile call is denied even
       // on unattended/auto-approve sessions. Armed only when the session carries a
       // derived enforcementProfile. In-profile → auto-allow inline (zero HITL);

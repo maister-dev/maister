@@ -42,7 +42,7 @@ function parsedAiCodingSettings(
 }
 
 // FROZEN SPEC encoding — docs/system-analytics/flow-settings.md + capabilities.md
-// (ADR-129) + ADR-032. These tests are the executable mirror of the two frozen
+// (ADR-130) + ADR-032. These tests are the executable mirror of the two frozen
 // tables: `ENFORCEABILITY_BY_AGENT` (tools/mcps/hooks `enforced` for all adapters
 // via the adapter-agnostic capability_guard seam; the four other classes
 // `instructed`) and the `evaluateNodeEnforcement` truth table. MUST NOT drift.
@@ -75,7 +75,7 @@ type EnforcementEntry = {
 // 1. ENFORCEABILITY_BY_AGENT frozen — every cell instructed, no `enforced`.
 // ---------------------------------------------------------------------------
 
-describe("ENFORCEABILITY_BY_AGENT — adapter-agnostic seam flip (ADR-129)", () => {
+describe("ENFORCEABILITY_BY_AGENT — adapter-agnostic seam flip (ADR-130)", () => {
   // tools/mcps/hooks enforced for every adapter; the four other classes stay
   // instructed (skills/restrictions/permissionMode/workspaceAccess).
   const expectedRow: Record<CapabilityClass, Capability> = {
@@ -123,8 +123,8 @@ describe("ENFORCEABILITY_BY_AGENT — adapter-agnostic seam flip (ADR-129)", () 
 // 1b. hooks capability class (ADR-108, M40) — 7th class, all `instructed`.
 // ---------------------------------------------------------------------------
 
-describe("hooks capability class — enforcement (ADR-108, corrected by ADR-129)", () => {
-  // hooks has been supervisor-enforced at the ACP seam since M40; ADR-129 corrects
+describe("hooks capability class — enforcement (ADR-108, corrected by ADR-130)", () => {
+  // hooks has been supervisor-enforced at the ACP seam since M40; ADR-130 corrects
   // its label to `enforced`, so strict hooks now PASSES the launch gate.
   it("evaluateNodeEnforcement reports an enforced verdict for strict hooks", () => {
     const result = evaluateNodeEnforcement(
@@ -295,7 +295,7 @@ describe("evaluateNodeEnforcement — FROZEN truth table", () => {
     });
   }
 
-  it("with the default (real ADR-129) table: strict skills → refused, strict tools → enforced", () => {
+  it("with the default (real ADR-130) table: strict skills → refused, strict tools → enforced", () => {
     // skills stays instructed → strict skills refuses.
     const refused = evaluateNodeEnforcement(
       settingsDeclaring("skills", "strict"),
@@ -391,7 +391,7 @@ describe("evaluateNodeEnforcement — parsed-manifest sparse map", () => {
     const result = evaluateNodeEnforcement(settings, "claude");
 
     expect(result.map((e: EnforcementEntry) => e.class)).toEqual(["mcps"]);
-    // mcps flipped to enforced (ADR-129) → strict mcps resolves to enforced.
+    // mcps flipped to enforced (ADR-130) → strict mcps resolves to enforced.
     expect(result[0].verdict).toBe("enforced");
   });
 
@@ -449,7 +449,7 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
     expect(message).toContain("claude");
   });
 
-  // ADR-129: strict tools/mcps now PASS the static launch gate (the evidence gate
+  // ADR-130: strict tools/mcps now PASS the static launch gate (the evidence gate
   // enforces per-adapter readiness at the real launch sites, not here).
   it("strict tools → does NOT throw (enforced via capability_guard)", () => {
     const node = aiNode("implement", { tools: "strict" });

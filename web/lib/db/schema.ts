@@ -1242,7 +1242,7 @@ export const projectFlowRunnerDefaults = pgTable(
   }),
 );
 
-// ADR-129: per-binding config overlay. Rewrites env/header/arg/url NAMES only —
+// ADR-130: per-binding config overlay. Rewrites env/header/arg/url NAMES only —
 // NEVER a secret value. Validated against the target's declared slots at write
 // and materialization (unknown slot -> CONFIG).
 export type McpConfigOverlay = {
@@ -1252,7 +1252,7 @@ export type McpConfigOverlay = {
   urlOverride?: string;
 };
 
-// ADR-129: the explicit binding of a capability ref to a concrete MCP target in
+// ADR-130: the explicit binding of a capability ref to a concrete MCP target in
 // one project. An enabled binding wins over SOURCE_PRECEDENCE for its ref; a
 // disabled binding makes the ref unresolvable (opt-out); an absent binding is
 // grandfather (unchanged). target_id is polymorphic (validated app-side against
@@ -1341,7 +1341,7 @@ export type RunKind = "flow" | "scratch" | "agent";
 // M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
 // the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
 // whether the resolved flow revision came from the authored bridge or git.
-// ADR-129: an MCP excluded from the executable set. `reason` distinguishes the
+// ADR-130: an MCP excluded from the executable set. `reason` distinguishes the
 // two withhold causes; NEVER carries a secret value.
 export type WithheldMcp = {
   refId: string;
@@ -1367,12 +1367,12 @@ export type ResolvedCapabilitySet = {
     refId: string;
     sha: string | null;
     scope: string;
-    // ADR-129: how this MCP won its slot. Optional so pre-migration snapshots
+    // ADR-130: how this MCP won its slot. Optional so pre-migration snapshots
     // deserialize without the field.
     provenance?: "binding" | "precedence";
     boundTarget?: { kind: "platform" | "project" | "package"; id: string };
   }>;
-  // ADR-129: MCPs excluded from the executable set at launch (trust / exec-trust),
+  // ADR-130: MCPs excluded from the executable set at launch (trust / exec-trust),
   // snapshotted for run-detail visibility. Optional for pre-migration runs.
   withheldMcps?: WithheldMcp[];
 };
@@ -1538,7 +1538,7 @@ export const runs = pgTable(
     resolvedCapabilitySet: jsonb(
       "resolved_capability_set",
     ).$type<ResolvedCapabilitySet>(),
-    // ADR-129: run-level withheld-MCP sink for flow AND agent launches (agent
+    // ADR-130: run-level withheld-MCP sink for flow AND agent launches (agent
     // runs persist no node_attempts materialization_plan). Nullable; never a secret.
     withheldMcps: jsonb("withheld_mcps").$type<WithheldMcp[]>(),
     deliveryPolicySnapshot: jsonb(
@@ -3122,10 +3122,10 @@ export type MaterializationPlan = {
   enforcedClasses: string[];
   instructedClasses: string[];
   refusedClasses: string[];
-  // ADR-129: per-node MCPs withheld from materialization (trust / exec-trust).
+  // ADR-130: per-node MCPs withheld from materialization (trust / exec-trust).
   // Optional so pre-migration plans deserialize without the field.
   withheldMcps?: WithheldMcp[];
-  // ADR-129: the derived capability-enforcement set delivered to the supervisor
+  // ADR-130: the derived capability-enforcement set delivered to the supervisor
   // (jsonb, no migration). Null when the node enforces no strict tools/mcps. The
   // Durable launch-time AUDIT snapshot of what was delivered. Not read back on
   // resume — a fresh attempt re-derives it (deterministic on stable inputs).

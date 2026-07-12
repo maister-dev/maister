@@ -70,7 +70,7 @@ describe("adapter smoke diagnostics", () => {
     const diag = smokeDiagnosticForAdapter("claude", cache);
 
     // claude's generic + read-only-session dimensions are not_required, but
-    // capability-enforcement is required for every adapter (ADR-129).
+    // capability-enforcement is required for every adapter (ADR-130).
     expect(diag.status).toBe("not_required");
     expect(diag.readOnlySession.status).toBe("not_required");
     expect(diag.capabilityEnforcement).toEqual({

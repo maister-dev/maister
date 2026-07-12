@@ -511,7 +511,7 @@ describe("checkSupervisorDiagnostics", () => {
     });
   });
 
-  it("rejects diagnostics bodies missing capability-enforcement smoke evidence (ADR-129)", async () => {
+  it("rejects diagnostics bodies missing capability-enforcement smoke evidence (ADR-130)", async () => {
     const [first, ...rest] = diagnostics.adapters;
     const smoke: Partial<typeof first.smoke> = { ...first.smoke };
 

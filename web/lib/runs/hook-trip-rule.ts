@@ -1,8 +1,8 @@
 // Pure guardrail-halt rule mapping — no server-only / DB deps, so consumers can
 // import it without pulling in the escalation machinery (and unit tests that mock
-// `@/lib/runs/hook-trip` keep the real mapper). ADR-108 (M40) + ADR-129.
+// `@/lib/runs/hook-trip` keep the real mapper). ADR-108 (M40) + ADR-130.
 
-// The liveness breakers (repetition / no_progress) and the ADR-129 capability_guard
+// The liveness breakers (repetition / no_progress) and the ADR-130 capability_guard
 // N-deny breaker HALT and reach the escalate path; a per-call `path_guard` /
 // `capability_guard` deny is deny-and-continue (never escalates).
 export type HookTripHaltRule =

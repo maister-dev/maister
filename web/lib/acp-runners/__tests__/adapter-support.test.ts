@@ -21,7 +21,7 @@ describe("adapter support descriptors", () => {
     );
   });
 
-  it("requires capability-enforcement smoke for every adapter (ADR-129)", () => {
+  it("requires capability-enforcement smoke for every adapter (ADR-130)", () => {
     for (const id of ["claude", "codex", "gemini", "opencode", "mimo"]) {
       expect(getAdapterSupportById(id)?.capabilityEnforcementSmoke).toBe(
         "required",

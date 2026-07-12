@@ -73,7 +73,7 @@ export type AdapterSupport = {
   readonly capabilityAgent: AdapterId;
   readonly readOnlyCapable: boolean;
   readonly readOnlySessionSmoke: ReadOnlySessionSmokeRequirement;
-  // ADR-129: required for every adapter — the launch evidence gate refuses a strict
+  // ADR-130: required for every adapter — the launch evidence gate refuses a strict
   // tools/mcps enforcement launch until this adapter's capabilityEnforcement smoke
   // is cached ok. Kept in lockstep with adapter-registry.ts (supervisor).
   readonly capabilityEnforcementSmoke: ReadOnlySessionSmokeRequirement;

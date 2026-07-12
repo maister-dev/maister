@@ -137,7 +137,7 @@ export type E2EBudgetForkFixture = {
   taskTitle: string;
 };
 
-// ADR-129 capability-enforcement fixture: one NeedsInput flow run whose
+// ADR-130 capability-enforcement fixture: one NeedsInput flow run whose
 // `implement` node declares `enforcement.tools: "strict"` (→ "Enforced" verdict
 // on the settings panel), parked on a seeded `capability_guard` hook_trip.
 export type E2ECapabilityEnforcementFixture = {

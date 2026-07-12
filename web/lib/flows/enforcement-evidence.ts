@@ -16,7 +16,7 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
-// ADR-129 (DES-6): the async launch evidence gate for strict tools/mcps. Mirrors
+// ADR-130 (DES-6): the async launch evidence gate for strict tools/mcps. Mirrors
 // `assertReadOnlySessionEvidence`. It admits a strict-enforced launch only when the
 // resolved adapter's `capabilityEnforcement` smoke is cached `ok`, the runner is not
 // `dangerously_skip_permissions` (the seam is structurally inert under skip-perms,
@@ -48,7 +48,7 @@ export async function assertEnforcementEvidence(args: {
   if (args.permissionPolicy === "dangerously_skip_permissions") {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `agent "${args.agent}" uses dangerously_skip_permissions — incompatible with strict tools/mcps enforcement (capability_guard requires permissionPolicy=default; ADR-129)`,
+      `agent "${args.agent}" uses dangerously_skip_permissions — incompatible with strict tools/mcps enforcement (capability_guard requires permissionPolicy=default; ADR-130)`,
     );
   }
 

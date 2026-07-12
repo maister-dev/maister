@@ -466,7 +466,7 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
   keys such as `skills`, `mcp_servers`, or `restrictions` MUST be reported as
   `MaisterError("CONFIG")` during registration/resync and no invalid row may be
   written.
-- **(ADR-129)** The adapter-agnostic `capability_guard` seam enforces strict
+- **(ADR-130)** The adapter-agnostic `capability_guard` seam enforces strict
   `tools`/`mcps` for **flow `ai_coding`/`judge`/`orchestrator` nodes** (Implemented:
   derived `enforcementProfile` delivered on `StartSessionRequest`, evidence-gated,
   out-of-profile call denied at the seam). **Standalone platform-agent launches and

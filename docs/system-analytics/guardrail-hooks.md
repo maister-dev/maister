@@ -1,8 +1,8 @@
-# Guardrail / hook engine (ADR-108, M40 — Implemented; `capability_guard` ADR-129 — Implemented)
+# Guardrail / hook engine (ADR-108, M40 — Implemented; `capability_guard` ADR-130 — Implemented)
 
 > Status: **[ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P5 implemented** (capability class + migration 0066 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing; seeded `m40-guardrail-hooks` e2e). **P6: e2e + full gate sweep done (green); dogfood ralph-loop dropped (the universal + native layers stand on unit/integration/e2e coverage; the live native-hook fires/denies confirmation is the one residual); rebased onto main + renumbered (ADR-108 / migration 0066) 2026-06-24.**
 >
-> **[ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam) — `capability_guard` (M14 enforcement flip, Implemented).** A fourth,
+> **[ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) — `capability_guard` (M14 enforcement flip, Implemented).** A fourth,
 > **derived-only** rule kind `capability_guard` extends this same seam to enforce
 > `enforcement.<class>: strict` on `tools` / `mcps` via tool-identity allow-lists,
 > evidence-gated per adapter. It carries a new `enforcementProfile` on
@@ -10,9 +10,9 @@
 > `tools`/`mcps` → `enforced` and corrects `hooks` → `enforced` in
 > `ENFORCEABILITY_BY_AGENT` (see [`flow-settings.md`](flow-settings.md) +
 > [`capabilities.md`](capabilities.md)). **No migration, no engine bump.** Every
-> section tagged `(capability_guard — ADR-129)` below is now as-built (the frozen
+> section tagged `(capability_guard — ADR-130)` below is now as-built (the frozen
 > spec drove the implementation; flipped Designed → Implemented at as-built).
-> This file is the design home for the mechanism. ADR rationale is in ADR-108/ADR-129 (R7 — cited, not restated).
+> This file is the design home for the mechanism. ADR rationale is in ADR-108/ADR-130 (R7 — cited, not restated).
 
 ## Purpose
 
@@ -54,13 +54,13 @@ optional claude-native backend delivered through a clean seam.
 - **`NativeHookMaterializer`** — the adapter→materializer seam (interface +
   registry). The universal core registers a no-op; the claude `PreToolUse`
   materializer is spike-gated (path_guard only).
-- **`capability_guard` rule** _(capability_guard — ADR-129)_ — a fourth,
+- **`capability_guard` rule** _(capability_guard — ADR-130)_ — a fourth,
   **derived-only** guardrail rule kind. It is **not** authorable in the `hooks`
   node-settings block; the web tier derives it from the node/agent capability
   `settings` (`tools` / `mcps`) filtered to classes declared `strict` **and**
   enforceable. Adapter-agnostic by construction.
 - **`enforcementProfile` / `SessionEnforcementProfile`** _(capability_guard —
-  ADR-129)_ — the resolved, flat enforcement set delivered to the supervisor on
+  ADR-130)_ — the resolved, flat enforcement set delivered to the supervisor on
   `StartSessionRequest` (beside `hooksConfig` / `readOnlySession`), seeded onto the
   in-memory `SessionRecord`. Persistence: none as a wire payload; the derived plan
   is also recorded in `node_attempts.enforcement_snapshot` +
@@ -72,12 +72,12 @@ optional claude-native backend delivered through a clean seam.
   supervisor stays config-free — the M40 `repetition.max` pattern). Distinct from
   the M14 `capabilityProfilePath` (child-env only) and the platform-agent
   `capability_profile` frontmatter — the name collision is deliberately avoided.
-- **`capabilityDenyCount`** _(capability_guard — ADR-129)_ — a per-session counter
+- **`capabilityDenyCount`** _(capability_guard — ADR-130)_ — a per-session counter
   on the in-memory `SessionRecord` (`supervisor/src/types.ts`). Counts consecutive
   out-of-profile denials; reset to 0 on any in-profile call; the Nth
   (`MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`, default 3) latches a `halt`.
   In-memory only; a resume rebuilds the record and counts from zero.
-- **`capabilityEnforcement` smoke dimension** _(capability_guard — ADR-129)_ — an
+- **`capabilityEnforcement` smoke dimension** _(capability_guard — ADR-130)_ — an
   optional per-adapter evidence dimension on the adapter smoke cache (mirroring
   `readOnlySession`), surfaced through `GET /diagnostics`. An adapter enforces only
   once its dimension is cached `ok`; see [`configuration.md`](../configuration.md)
@@ -90,7 +90,7 @@ optional claude-native backend delivered through a clean seam.
 | `path_guard` | `pre_tool_call` | `deny` | Deny the tool call inline (cancelled outcome); **the run continues** (deny-and-continue). No web round-trip. |
 | `repetition` | `pre_tool_call` | `halt` | Cancel the tool call, stop issuing work; the **web** consumer checkpoints + escalates. |
 | `no_progress` | `post_turn` | `halt` | Stop issuing work; the **web** consumer checkpoints + escalates. (Driven from `sessionUpdate`, which fires after a tool already ran — post-hoc, never blocking.) |
-| `capability_guard` _(ADR-129)_ | `pre_tool_call` | `deny` **and** `halt` (dual) | Per governed call: in-profile → auto-allow inline (zero HITL, reset counter); out-of-profile → deny the call inline (cancelled outcome), **the run continues** (deny-and-continue). The **Nth** consecutive out-of-profile deny → `halt` (cancel the call + stop issuing work; the web consumer checkpoints + escalates). |
+| `capability_guard` _(ADR-130)_ | `pre_tool_call` | `deny` **and** `halt` (dual) | Per governed call: in-profile → auto-allow inline (zero HITL, reset counter); out-of-profile → deny the call inline (cancelled outcome), **the run continues** (deny-and-continue). The **Nth** consecutive out-of-profile deny → `halt` (cancel the call + stop issuing work; the web consumer checkpoints + escalates). |
 
 `deny` is resolved entirely inside the supervisor `requestPermission` callback.
 `halt` returns the cancelled outcome and stops further prompts; the supervisor
@@ -161,7 +161,7 @@ supervisor-side).
 `toolCall` is present for `pre_tool_call` rules (path_guard / repetition /
 capability_guard), `null` for `no_progress`.
 
-### Resolved `enforcementProfile` (wire — `StartSessionRequest`) _(capability_guard — ADR-129)_
+### Resolved `enforcementProfile` (wire — `StartSessionRequest`) _(capability_guard — ADR-130)_
 
 Present **iff** the resolved node/agent declares `enforcement.tools: strict` or
 `enforcement.mcps: strict` on an enforceable adapter. Each class key is present
@@ -190,7 +190,7 @@ a launch-time `CONFIG` refusal (never enforce-nothing).
 The supervisor enforces exactly what it is given (no policy interpretation
 supervisor-side); the profile is a data input, not a policy grammar.
 
-### `session.hook_trip` event — `capability_guard` _(ADR-129)_
+### `session.hook_trip` event — `capability_guard` _(ADR-130)_
 
 ```json
 {
@@ -286,7 +286,7 @@ flowchart TD
   B1 -- "pass" --> HITL["fall through to the HITL deferred path"]
 ```
 
-`capability_guard` _(ADR-129)_ slots **after `path_guard`, before B1** — same
+`capability_guard` _(ADR-130)_ slots **after `path_guard`, before B1** — same
 rationale as the M40 rules: it must win over auto-approve so an out-of-profile call
 is denied even on unattended/auto-approve sessions. It runs **only** when
 `record.enforcementProfile` is present, and only decides calls it *governs* (a
@@ -366,7 +366,7 @@ resumes through the same agent-permission-HITL path that already drives it.
   SDK's `permissionDecision: "deny"`, so the supervisor never sees that permission
   request).
 
-## `capability_guard` mechanics + evidence gate (Implemented — ADR-129)
+## `capability_guard` mechanics + evidence gate (Implemented — ADR-130)
 
 **Tool identity at the seam.** The M40 seam narrows a tool call to `kind` +
 `locations[].path`. `capability_guard` additionally reads the tool **name** and, for
@@ -455,7 +455,7 @@ a mid-session enforcement change. **Resume of an existing attempt reads the pers
 snapshot/profile — it does NOT recompute against the live (post-flip) table**; a
 *fresh* attempt (new node, or a relaunch) computes fresh.
 
-## Operator evidence ritual (ADR-090 + ADR-129, W-F)
+## Operator evidence ritual (ADR-090 + ADR-130, W-F)
 
 Some launches are gated on **cached live-adapter smoke evidence** written by
 `pnpm -C supervisor smoke:acp --cache <path>` into `MAISTER_ADAPTER_SMOKE_CACHE_PATH`.
@@ -465,7 +465,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
 | Dimension | Ritual command | Gates | Pass criterion (per adapter) |
 | --- | --- | --- | --- |
 | `readOnlySession` (ADR-090) | `smoke:acp --cache <path> --read-only-session gemini opencode mimo` | `none`/`repo_read` agent launches | read-kind allowed + write-kind denied + unknown-kind denied |
-| `capabilityEnforcement` (ADR-129) | `smoke:acp --cache <path> --capability-enforcement claude codex gemini opencode mimo` | strict `tools`/`mcps` flow/agent launches | `requestPermission` fires per write-class probe **and** `params.toolCall` carries a stable tool name (+ a resolvable MCP server namespace) |
+| `capabilityEnforcement` (ADR-130) | `smoke:acp --cache <path> --capability-enforcement claude codex gemini opencode mimo` | strict `tools`/`mcps` flow/agent launches | `requestPermission` fires per write-class probe **and** `params.toolCall` carries a stable tool name (+ a resolvable MCP server namespace) |
 
 - **CI** runs each probe against the mock-ACP adapter (`mock-acp-compatibility.mjs`),
   proving the wire contract green (`smoke-acp-adapter-script.test.ts`). **Live**
@@ -523,7 +523,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
 - A trip MUST NOT raise a new `MaisterError` code; counters are per-session
   in-memory and a resumed run MUST start them fresh.
 
-### Expectations — `capability_guard` (Implemented — ADR-129)
+### Expectations — `capability_guard` (Implemented — ADR-130)
 
 - `capability_guard` MUST be armed **iff** `record.enforcementProfile` is present;
   every other session MUST behave exactly as before (untouched).
@@ -603,7 +603,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   supervisor sees the permission; the supervisor remains the backstop for
   codex/etc. and the sole layer for `repetition` / `no_progress`.
 
-### Edge cases — `capability_guard` (ADR-129)
+### Edge cases — `capability_guard` (ADR-130)
 
 - **A call governed by two strict classes** (an MCP call, both `tools` and `mcps`
   enforced) → allowed **iff both** allow-lists admit it (AND-of-allows,
@@ -656,7 +656,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
 ## Linked artifacts
 
 - **ADR:** [ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation);
-  [ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam) (`capability_guard`).
+  [ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) (`capability_guard`).
 - **Wire:** [`supervisor.openapi.yaml`](../api/supervisor.openapi.yaml) (`StartSessionRequest.hooksConfig` + `StartSessionRequest.enforcementProfile`),
   [`supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml) +
   [`web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml) (`session.hook_trip` `rule` enum incl. `capability_guard`),
@@ -672,7 +672,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   `web/lib/runs/keepalive-sweeper.ts` (`actBudgetEscalate` precedent),
   `web/lib/capabilities/agent-map.ts` + `web/lib/capabilities/materialize.ts` (native backend),
   `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT`).
-- **Source (`capability_guard` — ADR-129, Implemented):**
+- **Source (`capability_guard` — ADR-130, Implemented):**
   `supervisor/src/guardrail-hooks.ts` (`resolveCapabilityGuardDecision` + tool-identity extractor),
   `supervisor/src/acp-client.ts` (interceptor branch + D5 sentinel),
   `supervisor/src/adapter-smoke-cache.ts` + `supervisor/scripts/smoke-acp-adapter.ts` (`capabilityEnforcement` dimension + probe),
@@ -681,9 +681,9 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   `web/lib/flows/graph/runner-graph.ts` (derive→fold→persist `enforcementProfile`, thread to `createInput`, evidence gate) + `web/lib/flows/runner-agent.ts` (`enforcementProfile` in ctx),
   `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT` `tools`/`mcps`/`hooks` → `enforced`).
 
-## Phase-0 spec audit (T0.5 — `capability_guard` ADR-129, EXIT GATE)
+## Phase-0 spec audit (T0.5 — `capability_guard` ADR-130, EXIT GATE)
 
-Adversarial self-review of all Phase-0 artifacts (ADR-129, this SDD, `flow-settings.md`,
+Adversarial self-review of all Phase-0 artifacts (ADR-130, this SDD, `flow-settings.md`,
 `capabilities.md`, `supervisor.openapi.yaml`, `supervisor-sse.asyncapi.yaml` +
 `web-runs.asyncapi.yaml`, `configuration.md`, `agents.md`, `getting-started.md`, the
 T0.6 REQ matrix). **Zero open items** — this gate authorizes Phase 1. T5.5 re-runs it

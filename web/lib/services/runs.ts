@@ -1069,7 +1069,7 @@ export async function* launchRunStaged(
           { id: node.id, nodeType: node.nodeType, settings },
           capabilityAgent,
         );
-        // ADR-129 (DES-6): refuse a strict tools/mcps launch BEFORE run creation
+        // ADR-130 (DES-6): refuse a strict tools/mcps launch BEFORE run creation
         // when the resolved adapter lacks cached capabilityEnforcement smoke
         // evidence (EXECUTOR_UNAVAILABLE), OR uses dangerously_skip_permissions
         // (the seam is structurally inert under skip-perms → never a false-enforce).
@@ -1100,7 +1100,7 @@ export async function* launchRunStaged(
         requiredMcpRefs.add(ref);
       }
 
-      // ADR-129 (W-B): project MCP bindings redirect which record is the winner
+      // ADR-130 (W-B): project MCP bindings redirect which record is the winner
       // for a ref (enabled binding beats precedence; disabled = unresolvable).
       // Loaded once here; reused by the agent-support gate and the launch
       // snapshot. Absent = grandfather (unchanged). Thread the caller's `_db`
@@ -1115,7 +1115,7 @@ export async function* launchRunStaged(
       // refuse launch (EXECUTOR_UNAVAILABLE → 503), before any side-effect.
       // ADDITIONAL mcps degrade gracefully at materialization (non-fatal).
       if (requiredMcpRefs.size > 0) {
-        // ADR-129 (W-B): a REQUIRED ref that has been explicitly disconnected
+        // ADR-130 (W-B): a REQUIRED ref that has been explicitly disconnected
         // (disabled binding) is unresolvable — refuse launch naming the reconnect,
         // before any side-effect. CONFIG (422/409), not a silent drop.
         const disconnectedRequired = [...requiredMcpRefs].find((ref) =>
@@ -1348,7 +1348,7 @@ export async function* launchRunStaged(
         source: string;
         revision: string | null;
       }>;
-      // ADR-129 (W-B): thread bindings into the frozen snapshot so mcps[] records
+      // ADR-130 (W-B): thread bindings into the frozen snapshot so mcps[] records
       // provenance and the bound target wins over precedence. Uses the caller's
       // `_db` (never getDb()) for transaction / injected-connection correctness.
       const snapshotMcpBindings = await loadProjectMcpBindings(

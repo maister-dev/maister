@@ -122,7 +122,7 @@ export type CreateSessionInput = {
   // interceptor (path_guard / repetition / no_progress) for this session; each
   // rule key is optional and an absent key means that rule is not armed.
   hooksConfig?: HooksConfig;
-  // ADR-129: derived capability-enforcement set. The supervisor arms the
+  // ADR-130: derived capability-enforcement set. The supervisor arms the
   // capability_guard interceptor (strict tools/mcps by tool identity) for this
   // session; absent → capability_guard is inert.
   enforcementProfile?: SessionEnforcementProfile;

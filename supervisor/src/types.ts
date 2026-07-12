@@ -165,7 +165,7 @@ export const McpServerInputSchema = z
     }
   });
 
-// ADR-129: derived capability-enforcement set for the capability_guard seam
+// ADR-130: derived capability-enforcement set for the capability_guard seam
 // interceptor. Present iff the resolved node/agent declares strict tools/mcps on an
 // enforceable adapter. Seeded onto SessionRecord like hooksConfig; read at the
 // requestPermission seam. `tools.allow` is never empty (a strict class with no
@@ -276,7 +276,7 @@ export const StartSessionRequestSchema = z
       .partial()
       .strict()
       .optional(),
-    // ADR-129: derived capability-enforcement set (capability_guard). Optional;
+    // ADR-130: derived capability-enforcement set (capability_guard). Optional;
     // present only for a session enforcing strict tools/mcps.
     enforcementProfile: SessionEnforcementProfileSchema.optional(),
   })
@@ -520,18 +520,18 @@ export type SessionRecord = {
   // universal supervisor interceptor; absent → the interceptor is a no-op
   // (byte-identical to a pre-hook run). Mirrors StartSessionRequest.hooksConfig.
   hooksConfig?: HooksConfig;
-  // ADR-129: the derived capability-enforcement set for this session. Arms the
+  // ADR-130: the derived capability-enforcement set for this session. Arms the
   // capability_guard interceptor; absent → capability_guard is inert. Mirrors
   // StartSessionRequest.enforcementProfile.
   enforcementProfile?: SessionEnforcementProfile;
-  // ADR-129: out-of-profile denial counter — reset only by an in-profile ALLOW
+  // ADR-130: out-of-profile denial counter — reset only by an in-profile ALLOW
   // (a governed call that cleared the allow-list). An UNGOVERNED pass_through call
   // does NOT reset it (deliberate: an agent must not evade the breaker by
   // interleaving reads between forbidden calls). The Nth
   // (enforcementProfile.escalationThreshold) latches a halt. In-memory only (lost
   // on crash, reset on resume) — mirrors the M40 counters.
   capabilityDenyCount?: number;
-  // ADR-129: D5 always-ask sentinel — WRITE_KINDS toolCallIds announced by a
+  // ADR-130: D5 always-ask sentinel — WRITE_KINDS toolCallIds announced by a
   // streaming `tool_call` (status:"pending") that have NOT yet reached the
   // always-ask seam. An id is added when the pending write streams and removed
   // when it reaches `requestPermission` (arbitrated). The sentinel halts iff such

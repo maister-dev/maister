@@ -139,7 +139,7 @@ class GuardrailAgent {
     });
   }
 
-  // ADR-129: a permission request carrying a tool NAME via `title` (the identity
+  // ADR-130: a permission request carrying a tool NAME via `title` (the identity
   // capability_guard extracts). `kind` defaults to a write-class "edit".
   async requestTool(sessionId, name, id, kind = "edit") {
     const res = await this.connection.requestPermission({
@@ -151,7 +151,7 @@ class GuardrailAgent {
     this.outcomes.push(res.outcome.outcome);
   }
 
-  // ADR-129 D5: the real claude ordering for an ARBITRATED write — the pending
+  // ADR-130 D5: the real claude ordering for an ARBITRATED write — the pending
   // `tool_call` (status:"pending") STREAMS first, THEN requestPermission
   // (canUseTool) reaches the seam, THEN the execution `tool_call_update`
   // (status:"completed"). The sentinel must NOT halt: the write reached the seam.
@@ -183,7 +183,7 @@ class GuardrailAgent {
     });
   }
 
-  // ADR-129 D5: a write that EXECUTES (tool_call_update status:"completed") after
+  // ADR-130 D5: a write that EXECUTES (tool_call_update status:"completed") after
   // being announced (pending tool_call) but WITHOUT any requestPermission — the
   // adapter ran a write without ever asking (always-ask bypass) → sentinel halts.
   async unarbitratedWrite(sessionId, id) {
@@ -278,7 +278,7 @@ class GuardrailAgent {
       // must NOT halt (regression guard for the pending-notification false-halt).
       await this.arbitratedWrite(sessionId, "Edit", "tc-cap-arbitrated");
     } else if (scenario === "capability_passthrough_no_reset") {
-      // ADR-129 anti-evasion (REQ-8): under mcps-strict a NON-MCP call is ungoverned
+      // ADR-130 anti-evasion (REQ-8): under mcps-strict a NON-MCP call is ungoverned
       // (pass_through) and MUST NOT reset the consecutive-deny counter — else an
       // agent could dodge the breaker by interleaving one ungoverned call between
       // forbidden ones. Two out-of-profile MCP denies, one pass_through (non-MCP),

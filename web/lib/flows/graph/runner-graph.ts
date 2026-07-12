@@ -1146,7 +1146,7 @@ async function executeNodeAction(
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     profileDigest?: string;
-    // ADR-129: derived capability-enforcement set delivered to the supervisor.
+    // ADR-130: derived capability-enforcement set delivered to the supervisor.
     enforcementProfile?: SessionEnforcementProfile;
     nodeAttemptId: string;
     // 1-based ledger attempt number of THIS visit (ADR-072 gateAttempt source).
@@ -1309,7 +1309,7 @@ async function executeNodeAction(
             ),
             mcpServers: ctx.mcpServers,
             profileDigest: ctx.profileDigest,
-            // ADR-129: derived capability-enforcement set for the capability_guard
+            // ADR-130: derived capability-enforcement set for the capability_guard
             // interceptor (absent → inert).
             enforcementProfile: ctx.enforcementProfile,
             // B1 (execution-policy permissions=auto_approve): fail-closed to
@@ -1623,7 +1623,7 @@ async function materializeNodeCapabilities(
       // M29 (ADR-074, D-C2): the node's resolved restriction path sets,
       // threaded into GateRunContext for must_not_touch evaluation.
       restrictionPaths: RestrictionPathSet[];
-      // ADR-129: the derived capability-enforcement set delivered to the supervisor.
+      // ADR-130: the derived capability-enforcement set delivered to the supervisor.
       enforcementProfile?: SessionEnforcementProfile;
     }
   | undefined
@@ -1711,7 +1711,7 @@ async function materializeNodeCapabilities(
   const selectedAgentDefinitionIds =
     materializationSelection?.selection.selectedAgentDefinitionIds ?? [];
 
-  // ADR-129 (W-B): bindings redirect the winning MCP record per ref so the
+  // ADR-130 (W-B): bindings redirect the winning MCP record per ref so the
   // materialized server matches the launch snapshot's bound target. Thread the
   // caller's `db` (a transaction or the injected test connection) — never fall
   // back to getDb(), which would query a different connection.
@@ -1760,7 +1760,7 @@ async function materializeNodeCapabilities(
     },
   });
 
-  // ADR-129 (W-C/W-E): one shared gate+overlay pass (spec §13) — platform-trust
+  // ADR-130 (W-C/W-E): one shared gate+overlay pass (spec §13) — platform-trust
   // + exec-trust withhold (visible-but-not-executable, persisted to the run-level
   // sink), then per-binding NAME-only overlays on the executable set (wire shape
   // unchanged; the supervisor still resolves values from process.env). The
@@ -1786,7 +1786,7 @@ async function materializeNodeCapabilities(
     );
   }
 
-  // ADR-129: derive the capability-enforcement set (allow-list, DES-7) from the
+  // ADR-130: derive the capability-enforcement set (allow-list, DES-7) from the
   // node settings filtered to strict + enforceable tools/mcps. The mcps allow-set
   // is the resolved (exec-trust-gated + overlaid) server namespaces. A strict tools
   // class with no declared allow-set throws CONFIG here (never enforce-nothing).
@@ -1819,7 +1819,7 @@ async function materializeNodeCapabilities(
       .map((e) => e.capabilityRefId),
     refusedClasses: profile.refused.map((e) => e.capabilityRefId),
     withheldMcps,
-    // ADR-129: durable launch-time AUDIT snapshot of the DERIVED profile (author
+    // ADR-130: durable launch-time AUDIT snapshot of the DERIVED profile (author
     // intent). The orchestrator `maister` facade, when present, is admitted into the
     // DELIVERED copy AFTER this write (see admitFacadeServer below), so the snapshot
     // records the author's allow-lists, not the platform's injected delegation
@@ -2659,7 +2659,7 @@ export async function runGraph(
             { id: node.id, nodeType: node.nodeType, settings },
             nodeExecutor.agent,
           );
-          // ADR-129 (DES-6): a strict tools/mcps node launches only once the
+          // ADR-130 (DES-6): a strict tools/mcps node launches only once the
           // resolved adapter's capabilityEnforcement smoke is cached ok — else
           // refuse (EXECUTOR_UNAVAILABLE) naming the missing evidence. Never a
           // false-enforce (ADR-032). Runs before the agent session is spawned.
@@ -2838,7 +2838,7 @@ export async function runGraph(
             materialized = {
               ...materialized,
               mcpServers: [...materialized.mcpServers, facade],
-              // ADR-129: the maister delegation facade is system-injected AFTER
+              // ADR-130: the maister delegation facade is system-injected AFTER
               // capability derivation. An `enforcement.mcps: strict` orchestrator
               // would otherwise deny its own `mcp__maister__*` delegation calls and
               // halt with no author remedy — admit the facade into the mcps

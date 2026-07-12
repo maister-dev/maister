@@ -598,7 +598,7 @@ const M11C_VISIBLE_REVIEW_SCHEMA = {
 
 // --- M11c fixture B: strict-enforcement REFUSAL at launch -------------------
 // A launchable Backlog task whose enabled flow revision pins an ai_coding
-// `implement` node declaring `enforcement.skills: "strict"`. ADR-129 flipped
+// `implement` node declaring `enforcement.skills: "strict"`. ADR-130 flipped
 // tools/mcps/hooks to `enforced` but `skills` stays `instructed` (no tool-identity
 // seam mechanism), so no agent can strictly enforce `skills` and POST /api/runs
 // refuses with CONFIG (400) at the settings-enforcement gate — BEFORE any
@@ -3932,13 +3932,13 @@ async function seedM40Fixture(
   };
 }
 
-// --- Capability enforcement fixture (ADR-129) ------------------------------
+// --- Capability enforcement fixture (ADR-130) ------------------------------
 // One project, one NeedsInput flow run whose `implement` ai_coding node declares
 // `enforcement.tools: "strict"` with a `tools` allow-list, parked on a
 // `capability_guard` `hook_trip` HITL (an out-of-profile tool call that tripped
 // the N-consecutive-deny breaker). Drives THREE e2e slices no other spec covers:
 //  (1) the run-detail settings panel resolves the strict tools class to the
-//      "Enforced" verdict (ADR-129 table flip, evaluated live off the pinned
+//      "Enforced" verdict (ADR-130 table flip, evaluated live off the pinned
 //      manifest) — AC-5;
 //  (2) the `capability_guard` rule survives the full fan-out to the run-detail
 //      hook_trip card (supervisor event → hitl schema → localized label) —

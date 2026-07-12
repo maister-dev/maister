@@ -127,7 +127,7 @@ describe("buildSettingsView — hooks capability class (M40)", () => {
     });
   });
 
-  it("enforcement.hooks: strict → enforced (ADR-129 corrected the seam-enforced label)", () => {
+  it("enforcement.hooks: strict → enforced (ADR-130 corrected the seam-enforced label)", () => {
     const node = aiNode("guarded", {
       enforcement: { hooks: "strict" },
     } as AiCodingSettings);
@@ -150,10 +150,10 @@ describe("buildSettingsView — hooks capability class (M40)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. strict mcps against the ADR-129 table → `mcps` enforced; strict skills refused.
+// 2. strict mcps against the ADR-130 table → `mcps` enforced; strict skills refused.
 // ---------------------------------------------------------------------------
 
-describe("buildSettingsView — strict class against the ADR-129 table", () => {
+describe("buildSettingsView — strict class against the ADR-130 table", () => {
   it("marks `mcps` verdict `enforced` (declared strict, capability enforced)", () => {
     const node = aiNode("implement", {
       enforcement: { mcps: "strict" },
@@ -219,7 +219,7 @@ describe("buildSettingsView — non-capability nodes excluded", () => {
 
     expect(v).toBeDefined();
     expect(v!.nodeType).toBe("judge");
-    // tools flipped to enforced (ADR-129).
+    // tools flipped to enforced (ADR-130).
     expect(classOf(v!, "tools")?.verdict).toBe("enforced");
   });
 });

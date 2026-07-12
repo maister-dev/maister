@@ -28,7 +28,7 @@ export const WRITE_KINDS: ReadonlySet<string> = new Set([
 export type GuardrailToolCall = {
   kind?: string;
   locations?: Array<{ path?: string; line?: number }>;
-  // ADR-129: capability_guard reads tool IDENTITY. No first-class ACP field
+  // ADR-130: capability_guard reads tool IDENTITY. No first-class ACP field
   // carries a tool name, so it is extracted from `_meta.claudeCode.toolName`
   // (claude) or `title` (the same fields the web transcript parses). Optional —
   // path_guard/repetition ignore them.
@@ -36,7 +36,7 @@ export type GuardrailToolCall = {
   _meta?: unknown;
 };
 
-// ADR-129: single-sourced tool-identity extractor, reused by the capability_guard
+// ADR-130: single-sourced tool-identity extractor, reused by the capability_guard
 // evaluator AND the capabilityEnforcement smoke probe. Returns `name: null` when
 // no stable identity is surfaced → the caller fail-closes (conservative deny for a
 // governed strict class).
@@ -89,7 +89,7 @@ export function extractToolIdentity(toolCall: unknown): ToolIdentity {
   return { name, mcpServer: name ? mcpServerFromToolName(name) : null };
 }
 
-// ADR-129: the pure capability_guard decision. SOLID single-responsibility —
+// ADR-130: the pure capability_guard decision. SOLID single-responsibility —
 // evaluate only, no I/O, no record mutation. `pass_through` means no strict class
 // governs this call (fall through to B1/HITL unchanged). Governance is by field
 // PRESENCE (`profile.tools`/`profile.mcps`), never `enforcedClasses` (audit-only).
@@ -328,7 +328,7 @@ export const HOOK_RULE_META: Record<
   path_guard: { lifecycle: "pre_tool_call", disposition: "deny" },
   repetition: { lifecycle: "pre_tool_call", disposition: "halt" },
   no_progress: { lifecycle: "post_turn", disposition: "halt" },
-  // ADR-129: dual-disposition. The frozen value is the per-call `deny`; the
+  // ADR-130: dual-disposition. The frozen value is the per-call `deny`; the
   // Nth-consecutive-deny `halt` is emitted with an explicit disposition override.
   capability_guard: { lifecycle: "pre_tool_call", disposition: "deny" },
 };

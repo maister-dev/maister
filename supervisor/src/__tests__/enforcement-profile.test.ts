@@ -5,7 +5,7 @@ import {
   StartSessionRequestSchema,
 } from "../types";
 
-// ADR-129 T2.1: the wire acceptor for the derived capability-enforcement set.
+// ADR-130 T2.1: the wire acceptor for the derived capability-enforcement set.
 const validRequest = {
   runId: "run-1",
   projectSlug: "my-project",

@@ -1,6 +1,6 @@
 schemaVersion: 1
 name: Strict Refusal (fixture)
-# ADR-129: an ai_coding node declaring `enforcement: strict` on a capability class
+# ADR-130: an ai_coding node declaring `enforcement: strict` on a capability class
 # the ENFORCEABILITY_BY_AGENT table can only INSTRUCT (skills has no tool-identity
 # seam mechanism). Launch MUST be refused with MaisterError("CONFIG"). Drives
 # Verify #2/#3 + e2e. (tools/mcps flipped to enforced — they launch; skills does not.)

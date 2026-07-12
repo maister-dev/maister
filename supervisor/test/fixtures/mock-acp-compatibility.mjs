@@ -33,7 +33,7 @@ function permissionKindForPrompt(params) {
   return match?.[1] ?? permissionKind;
 }
 
-// ADR-129: the capability-enforcement probe drives specific tool identities via a
+// ADR-130: the capability-enforcement probe drives specific tool identities via a
 // `tool-name:X` prompt hint (mirroring `permission-kind:X`) so the smoke can prove
 // the seam surfaces a stable tool name (+ MCP server namespace).
 function toolNameForPrompt(params) {

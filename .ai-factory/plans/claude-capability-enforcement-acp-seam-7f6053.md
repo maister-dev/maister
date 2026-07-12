@@ -3,7 +3,7 @@
 > Branch: `claude/capability-enforcement-acp-seam-7f6053` · Created: 2026-07-11
 > Base: `main` @ `52e72ade3` (worktree HEAD `5916d4ea8` = one ai-factory chore atop base; code anchors intact)
 > Milestone: **completes the deferred enforcement half of M14** (unblocks ADR-041/042)
-> ADR: **ADR-129** (contested three-way — see §Numbering) · Migration: **none** · Engine: **no bump**
+> ADR: **ADR-130** (contested three-way — see §Numbering) · Migration: **none** · Engine: **no bump**
 
 ## Goal
 
@@ -33,7 +33,7 @@ degrades to instruction) holds everywhere.
 ## Load-bearing design (frozen at Phase 0 — the SDD is the SSOT; this is the summary)
 
 All decisions below are owner-locked (D1/D3/W-C/W-D) or code-verified during planning.
-Do not silently walk them back — reopen only with new evidence, and record it in ADR-129.
+Do not silently walk them back — reopen only with new evidence, and record it in ADR-130.
 
 ### DES-1 · `capability_guard` is a derived-only interceptor rule (D3)
 
@@ -45,7 +45,7 @@ Do not silently walk them back — reopen only with new evidence, and record it 
   (`web/lib/config.schema.ts:636-663`). It is **derived** by the web tier from the
   node/agent capability `settings` (`tools`/`mcps`/`restrictions`/`workspaceAccess`)
   filtered to classes declared `enforcement.<class>: strict` and enforceable.
-  → **no engine bump** (no new authored manifest surface; ADR-129 documents why).
+  → **no engine bump** (no new authored manifest surface; ADR-130 documents why).
 - The interceptor contract must **not preclude** a future generic ALLOW/DENY/ASK policy
   layer (separate plan) — the profile is a data input, not a policy language.
 
@@ -234,7 +234,7 @@ never a false-enforce). This is why the flip is evidence-gated, not a hard prere
 | Agent `capability_profile` enforcement note | `docs/system-analytics/agents.md` |
 | New env vars | `docs/configuration.md` env-var table + `.env.example` |
 | New smoke dimension + operator ritual | `docs/getting-started.md` "Scripts" (`pnpm smoke:acp`) + a ritual checklist |
-| ADR | `docs/decisions.md` (`### ADR-129`) |
+| ADR | `docs/decisions.md` (`### ADR-130`) |
 | Analytics doc status flip + index | `docs/system-analytics/guardrail-hooks.md` (Designed→Implemented, R5/R6) + the `docs/CLAUDE.md` doc-index row |
 | No new domain error code | `docs/error-taxonomy.md` — confirm reuse of `CONFIG`/`PRECONDITION`/`EXECUTOR_UNAVAILABLE`; no edit unless reuse proven insufficient |
 
@@ -262,22 +262,22 @@ Guards are **allow-list** (DES-7): in-profile = an explicit allow-set membership
 
 ## Numbering & process (skill-context: reserve numbers up front; budget a renumber pass)
 
-- **ADR-129** — next free at HEAD is 129 (`docs/decisions.md` max = ADR-128; 123 absent).
+- **ADR-130** — next free at HEAD is 129 (`docs/decisions.md` max = ADR-128; 123 absent).
   **Four-way contested**: `enforcement-flip` (this) + `postgres-graph-cutover` +
   `agent-format-superset` + `fork-loop` all target 129, none landed. Whoever lands
   2nd/3rd/4th renumbers to 130/131/132. **Re-grep `docs/decisions.md` at implementation
   entry** and again before merge. (`fork-loop` also takes one migration + no engine bump;
   this plan takes neither a migration nor an engine bump, so only the ADR number collides.)
-  ADR-129 amends/executes ADR-042 (generalizes claude-first-per-cell → adapter-agnostic
+  ADR-130 amends/executes ADR-042 (generalizes claude-first-per-cell → adapter-agnostic
   seam), unblocks the ADR-041 gating notes, and corrects the `hooks`-cell label. Never
   renumber ADR-041/042/044 history.
 - **Migration: none.** Verified: no `pgEnum` in the repo; guardrail rule kinds are jsonb
   keys + TS unions; `enforcement_snapshot`/`materialization_plan` are existing jsonb columns;
   `hitl_requests.kind`/`assignments.actionKind` already include `hook_trip`. Precedent for a
   DB-layer no-op is `0066_hook_trip.sql` (a documentation marker). **Do not take migration
-  0093** (contested with the cutover plan) — this change needs no DDL; ADR-129 records the
+  0093** (contested with the cutover plan) — this change needs no DDL; ADR-130 records the
   no-op rationale.
-- **Engine: no bump.** No new authored manifest surface (DES-1). Document in ADR-129.
+- **Engine: no bump.** No new authored manifest surface (DES-1). Document in ADR-130.
 - **No code overlap** with the parallel Postgres/graph cut-over plan (`enforcement.ts`,
   `guardrail-hooks.ts`, `acp-client.ts`, `adapter-*` are untouched there). Note both in the
   rebase section of each plan.
@@ -331,13 +331,13 @@ without `// FIXME(any):`, server-only secrets (env NAMES only), EN+RU for every 
 
 ### Phase 0 — SDD + analytics spec (docs-first gate; NO code) — Commit A
 
-**T0.1 · Reserve ADR-129 + write the SDD/decision stub.** — ✅ DONE (ADR-129 body + Index row; anchor validated; honest 3-class-flip scope recorded with evidence)
+**T0.1 · Reserve ADR-130 + write the SDD/decision stub.** — ✅ DONE (ADR-130 body + Index row; anchor validated; honest 3-class-flip scope recorded with evidence)
 Re-grep `docs/decisions.md` for the max ADR at HEAD (expect 128 → 129). Write
-`### ADR-129: Adapter-agnostic capability enforcement at the ACP seam` (executes ADR-042's
+`### ADR-130: Adapter-agnostic capability enforcement at the ACP seam` (executes ADR-042's
 authorized flip generalized to the seam; unblocks ADR-041 gating; corrects the `hooks`
 label; records **no migration / no engine bump** rationale; contest note naming the two
 siblings). Include the D1/D3/W-C/D2/D4/D5 decisions verbatim.
-*Deliverable*: ADR-129 section. *Logging*: n/a (docs). *Verify*: anchor resolves via `scripts/validate-docs-adr-anchors.mjs`; ADR records the migration-free/no-engine-bump rationale that T5.5 proves via `db:generate`.
+*Deliverable*: ADR-130 section. *Logging*: n/a (docs). *Verify*: anchor resolves via `scripts/validate-docs-adr-anchors.mjs`; ADR records the migration-free/no-engine-bump rationale that T5.5 proves via `db:generate`.
 
 **T0.2 · Author the SDD (analytics) as the implementation SSOT.** — ✅ DONE (guardrail-hooks.md: capability_guard rule row + dual-disposition, waterfall placement, N-breaker, D5 sentinel, deferred-release invariant, evidence gate, derivation posture, Expectations + Edge cases blocks, Linked artifacts; doc-index row updated)
 Write/extend `docs/system-analytics/guardrail-hooks.md` following **docs/CLAUDE.md R5**
@@ -361,7 +361,7 @@ permanent-instructed). Reconcile the `hooks`-cell rationale (`flow-settings.md:2
 the corrected `enforced` label.
 *Deliverable*: doc tables matching DES-6/DES-7. *Verify*: `skills` row explicitly documents why it stays instructed.
 
-**T0.4 · Author the wire/API + config specs.** — ✅ DONE (supervisor.openapi.yaml: enforcementProfile + capabilityEnforcement smoke dimension; supervisor-sse.asyncapi.yaml + web-runs mirror: capability_guard rule enum; configuration.md: MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD row; agents.md: capability_profile enforcement note; getting-started.md: smoke:acp + ritual; error-taxonomy.md reuse confirmed — no edit, recorded in ADR-129)
+**T0.4 · Author the wire/API + config specs.** — ✅ DONE (supervisor.openapi.yaml: enforcementProfile + capabilityEnforcement smoke dimension; supervisor-sse.asyncapi.yaml + web-runs mirror: capability_guard rule enum; configuration.md: MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD row; agents.md: capability_profile enforcement note; getting-started.md: smoke:acp + ritual; error-taxonomy.md reuse confirmed — no edit, recorded in ADR-130)
 `docs/api/supervisor.openapi.yaml` (`StartSessionRequest.enforcementProfile` shape per DES-2),
 `docs/api/async/supervisor-sse.asyncapi.yaml` (`SessionHookTripEvent.rule` enum + `capability_guard`),
 `docs/configuration.md` (new env var row), `docs/system-analytics/agents.md` (agent
@@ -388,7 +388,7 @@ signed off:
 - **Fullness** — every capability class has `{mechanism, expectation, acceptance, edge-cases}`
   defined; every REQ has an AC and a planned test; no "TBD".
 - **Consistency** — no contradiction across `guardrail-hooks.md` ↔ `flow-settings.md` ↔
-  `capabilities.md` ↔ `supervisor.openapi.yaml` ↔ `supervisor-sse.asyncapi.yaml` ↔ ADR-129 ↔
+  `capabilities.md` ↔ `supervisor.openapi.yaml` ↔ `supervisor-sse.asyncapi.yaml` ↔ ADR-130 ↔
   the REQ matrix (rule names, enum values, field shapes, refusal messages all agree).
 - **No logical holes** — each named hole has a written resolution: two-strict-class precedence
   (which class governs a call matching both `tools` and `mcps`); missing/ambiguous tool
@@ -600,12 +600,12 @@ checklist, and `docs/configuration.md` match shipped behavior.
 Re-grep `docs/decisions.md` for the ADR number (the three-way contest may have moved it to
 130/131); renumber ADR + every citation; confirm **no** migration was taken; run the
 ADR-anchor validator; fold any mid-implementation surprises back into this plan.
-*Verify*: ADR-anchor validator green; `grep -rn "ADR-129" docs/` consistent; no `0093` file from this branch.
-> **AS-BUILT:** on this branch ADR-129 is internally consistent (index row + body anchor
-> `#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam`; 649 ADR anchors resolve).
+*Verify*: ADR-anchor validator green; `grep -rn "ADR-130" docs/` consistent; no `0093` file from this branch.
+> **AS-BUILT:** on this branch ADR-130 is internally consistent (index row + body anchor
+> `#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam`; 649 ADR anchors resolve).
 > **No** migration taken (0 files under `web/lib/db/migrations/`; no `0093`). The actual
 > renumber (if the still-contested 129 slot resolves to 130/131 at merge) is a mechanical
-> `grep -rln "ADR-129" docs/ | xargs sed` the OWNER runs during the rebase+FF — it cannot be
+> `grep -rln "ADR-130" docs/ | xargs sed` the OWNER runs during the rebase+FF — it cannot be
 > done meaningfully before the winning number is known. All mid-implementation surprises are
 > folded back (T5.1 e2e harness reality, T5.2 host-env-not-compose, T5.3 source pointers,
 > the pre-existing `0089/0090` `db:generate` collision).
@@ -644,7 +644,7 @@ spec-drift check (docs match behavior).
 
 | Commit | After | Message (conventional) |
 | --- | --- | --- |
-| A | Phase 0 | `docs(enforcement): ADR-129 + SDD for adapter-agnostic capability_guard (M14 flip)` |
+| A | Phase 0 | `docs(enforcement): ADR-130 + SDD for adapter-agnostic capability_guard (M14 flip)` |
 | B | Phase 1 | `feat(supervisor): capabilityEnforcement smoke dimension + adapter probe` |
 | C | Phase 2 | `feat(supervisor): capability_guard interceptor + N-deny escalation + always-ask sentinel` |
 | D | Phase 3 | `feat(web): derive+deliver enforcement profile, evidence gate, flip ENFORCEABILITY_BY_AGENT` |
@@ -713,7 +713,7 @@ the cited phase.
   `acp-runners/resolve.ts` read-only refusal, `definition.ts` typing). **Watch:**
   `agent-format-superset` also edits `resolve.ts` near the skip-permissions/read-only
   refusal DES-4 adds a sibling refusal to — coordinate that hunk at rebase.
-- **Contested at merge:** ADR-129 (three-way) — renumber pass T5.4 is mandatory. Migration
+- **Contested at merge:** ADR-130 (three-way) — renumber pass T5.4 is mandatory. Migration
   0093 is contested with the cutover plan — this plan takes **no** migration, sidestepping it.
 
 ---

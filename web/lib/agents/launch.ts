@@ -2540,7 +2540,7 @@ export async function resolveAgentProfileMcpServers(args: {
     import("@/lib/mcp/materialization-gate"),
   ]);
   const catalog = await loadSelectableCapabilities(args.projectId, args.db);
-  // ADR-129 (D5): an agent's declared capability_profile.mcps resolve through the
+  // ADR-130 (D5): an agent's declared capability_profile.mcps resolve through the
   // SAME binding-aware resolver as flows/scratch — one resolution path.
   const mcpBindings = await loadProjectMcpBindings(
     args.projectId,
@@ -2562,7 +2562,7 @@ export async function resolveAgentProfileMcpServers(args: {
     agent: args.capabilityAgent as never,
   });
 
-  // ADR-129 (W-C/W-E): the SAME shared gate+overlay pass as the flow seam
+  // ADR-130 (W-C/W-E): the SAME shared gate+overlay pass as the flow seam
   // (spec §13). platform-trust + exec-trust withhold is persisted to the
   // run-level sink (agent runs carry no node_attempts materialization_plan),
   // then per-binding NAME-only overlays apply to the executable set.
@@ -3109,7 +3109,7 @@ export async function consumeAgentSession(args: {
       // deny-and-continue).
       case "session.hook_trip": {
         if (event.disposition === "halt") {
-          // ADR-129: capability_guard also halts (Nth deny) — carry the real rule
+          // ADR-130: capability_guard also halts (Nth deny) — carry the real rule
           // (not mislabeled repetition) via the single exhaustive mapper.
           const haltRule = haltRuleFromEvent(event.rule);
 

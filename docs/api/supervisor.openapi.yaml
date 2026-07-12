@@ -558,7 +558,7 @@ paths:
       tags: [mcp-probe]
       summary: Probe an MCP server with a real `initialize` handshake
       description: |
-        (ADR-129 — Implemented.) Opens the MCP server per its transport
+        (ADR-130 — Implemented.) Opens the MCP server per its transport
         (`stdio` spawns a child; `sse`/`http` connect), performs the MCP
         `initialize` handshake, and returns `{ ok, latencyMs, serverInfo?,
         reason? }`. Bounded by `MAISTER_MCP_PROBE_TIMEOUT_MS` (default 8000);
@@ -914,7 +914,7 @@ components:
                     required: [status, reason, checkedAt, protocolVersion]
                     additionalProperties: false
                     description: |
-                      (Implemented — ADR-129) Cached adapter-specific evidence that
+                      (Implemented — ADR-130) Cached adapter-specific evidence that
                       `capability_guard` enforcement behaves safely at the ACP
                       seam: the probe proved `requestPermission` fires for every
                       write-class tool call under `permissionPolicy=default` and
@@ -1309,7 +1309,7 @@ components:
           additionalProperties: false
           required: [enforcedClasses, escalationThreshold]
           description: |
-            (Implemented — ADR-129) Resolved, derived capability-enforcement set for the
+            (Implemented — ADR-130) Resolved, derived capability-enforcement set for the
             `capability_guard` seam interceptor. Present iff the resolved node/agent
             declares `enforcement.tools: strict` and/or `enforcement.mcps: strict` on
             an enforceable adapter. Seeded onto the in-memory SessionRecord like

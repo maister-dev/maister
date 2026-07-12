@@ -389,7 +389,7 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 });
 
-describe("capability_guard interceptor (ADR-129)", () => {
+describe("capability_guard interceptor (ADR-130)", () => {
   const toolsProfile = {
     tools: { allow: ["Read"] },
     enforcedClasses: ["tools"],

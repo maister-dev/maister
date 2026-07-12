@@ -7,7 +7,7 @@ import {
   resolveCapabilityGuardDecision,
 } from "../guardrail-hooks";
 
-// ADR-129 T2.2: the pure capability_guard evaluator. Identity is read from
+// ADR-130 T2.2: the pure capability_guard evaluator. Identity is read from
 // `title`/`_meta.claudeCode.toolName` (the extractor is unit-tested separately);
 // here we assert the allow-list decision + two-strict-class precedence + fail-closed.
 const toolsProfile: SessionEnforcementProfile = {

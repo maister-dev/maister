@@ -1330,7 +1330,7 @@ describe("HitlDecisionControls — hook_trip card (M40)", () => {
     expect(html).not.toContain('data-testid="hook-trip-tool-call"');
   });
 
-  it("localizes a capability_guard trip + shows the offending tool identity (ADR-129)", () => {
+  it("localizes a capability_guard trip + shows the offending tool identity (ADR-130)", () => {
     const html = render({
       kind: "hook_trip",
       schema: {

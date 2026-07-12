@@ -18,7 +18,7 @@ const AdapterSmokeEvidenceSchema = z
 
 const AdapterSmokeCacheEntrySchema = AdapterSmokeEvidenceSchema.extend({
   readOnlySession: AdapterSmokeEvidenceSchema.optional(),
-  // ADR-129: cached evidence that capability_guard enforcement is safe at the seam.
+  // ADR-130: cached evidence that capability_guard enforcement is safe at the seam.
   capabilityEnforcement: AdapterSmokeEvidenceSchema.optional(),
 }).strict();
 
@@ -313,7 +313,7 @@ export async function writeAdapterSmokeCache(
   };
 
   for (const entry of entries) {
-    // ADR-129: preserve the OTHER dimension when a write carries only one (the
+    // ADR-130: preserve the OTHER dimension when a write carries only one (the
     // readOnlySession and capabilityEnforcement rituals run as separate smoke
     // invocations) — a single-dimension write must not clobber the sibling.
     const prev = adapters[entry.adapter];

@@ -5,7 +5,7 @@ import {
   mcpServerFromToolName,
 } from "../guardrail-hooks";
 
-// ADR-129: the capability_guard seam needs a tool NAME (and, for MCP calls, a
+// ADR-130: the capability_guard seam needs a tool NAME (and, for MCP calls, a
 // server namespace). Identity is single-sourced here and reused by both the
 // smoke probe (Phase 1) and resolveCapabilityGuardDecision (Phase 2).
 describe("extractToolIdentity", () => {

@@ -9,7 +9,7 @@ export type AdapterRuntime = {
   readonly binaryOverrideEnv: string;
   readonly readOnlyCapable: boolean;
   readonly readOnlySessionSmoke: "required" | "not_required";
-  // ADR-129: cached live evidence that capability_guard enforcement is safe at the
+  // ADR-130: cached live evidence that capability_guard enforcement is safe at the
   // ACP seam (requestPermission fires per write + carries a stable tool identity).
   // Required for every adapter; the launch evidence gate refuses a strict
   // tools/mcps enforcement launch until this dimension is cached ok.

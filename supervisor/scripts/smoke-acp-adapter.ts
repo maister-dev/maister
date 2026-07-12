@@ -80,7 +80,7 @@ type PermissionProbeObservation = {
   readonly optionId: string | null;
 };
 
-// ADR-129: a single capability_guard probe observation — the tool identity the seam
+// ADR-130: a single capability_guard probe observation — the tool identity the seam
 // surfaced (name + MCP server), the kind, and the synchronous decision latency.
 type CapabilityProbeObservation = {
   readonly kind: string | null;
@@ -117,7 +117,7 @@ const WRITE_LIKE_KINDS = new Set([
   "execute",
 ]);
 
-// ADR-129 capability_guard smoke (DES-8): prove `requestPermission` fires per
+// ADR-130 capability_guard smoke (DES-8): prove `requestPermission` fires per
 // write-class call under permissionPolicy=default AND that `params.toolCall`
 // carries a stable tool identity — a plain tool name and an MCP
 // `mcp__<server>__<tool>` name whose server is resolvable. Drives the mock's
@@ -232,7 +232,7 @@ export function summarizeCapabilityEnforcementProbe(
   // plain tool name is a STABLE identifier (vs a per-call human `title` that would never
   // match an allow-list). Stability is operator-verified from the observed names in the
   // failure reason below: claude surfaces the stable `_meta.claudeCode.toolName`; a
-  // `title`-only adapter must be inspected before its `ok` is cached (ADR-129, M2). The
+  // `title`-only adapter must be inspected before its `ok` is cached (ADR-130, M2). The
   // MCP probe is stronger — `mcpResolved` requires the `mcp__<server>__<tool>` structure.
   const identitySurfaced =
     observations.length > 0 && observations.every((o) => o.name !== null);

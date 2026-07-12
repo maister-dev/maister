@@ -106,7 +106,7 @@ export type RunAgentStepCtx = {
   // ADR-108 (M40): resolved guardrail rule set (resolveHooksConfig in runGraph),
   // threaded onto the supervisor session body so the hook interceptor arms.
   hooksConfig?: HooksConfig;
-  // ADR-129: derived capability-enforcement set (deriveSessionEnforcementProfile in
+  // ADR-130: derived capability-enforcement set (deriveSessionEnforcementProfile in
   // runGraph), threaded onto the session body so the capability_guard interceptor arms.
   enforcementProfile?: SessionEnforcementProfile;
   db?: DbClientLike;
@@ -548,7 +548,7 @@ function startEventConsumer(
         if (ev.type === "session.hook_trip" && permissionCtx) {
           if (ev.disposition === "halt" && !hookEscalated) {
             hookEscalated = true;
-            // ADR-129: capability_guard also halts (Nth deny) — carry the real rule
+            // ADR-130: capability_guard also halts (Nth deny) — carry the real rule
             // (not mislabeled repetition) via the single exhaustive mapper.
             const haltRule = haltRuleFromEvent(ev.rule);
 

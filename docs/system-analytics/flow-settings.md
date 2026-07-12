@@ -10,7 +10,7 @@
 
 > **Status:** Implemented (M11c subset). M14 materialization **Implemented through
 > Phase 4.5** (delivery mechanism built + CI-verified). The `instructed → enforced`
-> flip is **Implemented — [ADR-129](../decisions.md#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
+> flip is **Implemented — [ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
 > (`capability_guard`, this branch).
 >
 > The typed settings schema, node-level shape validation, the launch-time
@@ -25,7 +25,7 @@
 > `params.mcpServers` (env resolved supervisor-side); the CLI-flag channel
 > was disproven against `claude-agent-acp@0.37.0` and corrected — see ADR-044.
 >
-> **ADR-129 enforcement flip (Implemented — `capability_guard`).** ADR-042's
+> **ADR-130 enforcement flip (Implemented — `capability_guard`).** ADR-042's
 > deferred, claude-first, per-cell live spike is superseded by an
 > **adapter-agnostic** enforcement point: the M40 supervisor↔ACP-seam interceptor
 > (ADR-108) gains a derived-only `capability_guard` rule that enforces
@@ -98,11 +98,11 @@ stateDiagram-v2
     Refused --> [*]: verdict = refused -> launch throws
 ```
 
-## FROZEN SPEC — `ENFORCEABILITY_BY_AGENT` (`tools`/`mcps`/`hooks` enforced, adapter-agnostic; evidence-gated at launch — ADR-129)
+## FROZEN SPEC — `ENFORCEABILITY_BY_AGENT` (`tools`/`mcps`/`hooks` enforced, adapter-agnostic; evidence-gated at launch — ADR-130)
 
 `tools`, `mcps`, and `hooks` are **`enforced` for ALL five adapters**. The
 enforcement point is the **adapter-agnostic** `capability_guard` interceptor at the
-supervisor↔ACP seam (ADR-129, [`guardrail-hooks.md`](guardrail-hooks.md)) — one code
+supervisor↔ACP seam (ADR-130, [`guardrail-hooks.md`](guardrail-hooks.md)) — one code
 path, not a per-adapter flag — so the static table is **uniform** across adapters.
 **Per-adapter admission moves out of the table to an async launch evidence gate**
 (`assertEnforcementEvidence`): a strict-enforced launch refuses unless the resolved
@@ -113,7 +113,7 @@ false-enforce (ADR-032). The remaining four classes stay `instructed`, each for 
 **documented, permanent** reason (they have no tool-identity seam mechanism). No
 `TODO(M14)` remains.
 
-> **MCP note (ADR-129, 2026-07-11).** Per-session MCP config **is** materialized
+> **MCP note (ADR-130, 2026-07-11).** Per-session MCP config **is** materialized
 > today (M14 delivers it via `settings.local.json` + ACP `mcpServers`), so the
 > `mcps` cells being `instructed` reflect only the un-flipped *enforcement of
 > declared limits*, not a missing materialization path. Orthogonally, MCP
@@ -136,7 +136,7 @@ false-enforce (ADR-032). The remaining four classes stay `instructed`, each for 
 section below.)
 
 ```ts
-// FROZEN — web/lib/flows/enforcement.ts (ADR-129). `tools`/`mcps`/`hooks` enforced
+// FROZEN — web/lib/flows/enforcement.ts (ADR-130). `tools`/`mcps`/`hooks` enforced
 // via the adapter-agnostic capability_guard seam; per-adapter admission is the
 // async launch evidence gate (capabilityEnforcement smoke), NOT the table.
 export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
@@ -147,7 +147,7 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
     restrictions: "instructed",    // path-based mustNotTouch deny-sets (mutation-check gate), not tool identity
     permissionMode: "instructed",  // claude-only defaultMode delivery, end-to-end constraint unverified (spike 0.10)
     workspaceAccess: "instructed", // not delivered to the seam on the flow path (no readOnlySession); follow-up
-    hooks: "enforced",             // supervisor-enforced at the ACP seam since M40 (ADR-108); label corrected by ADR-129
+    hooks: "enforced",             // supervisor-enforced at the ACP seam since M40 (ADR-108); label corrected by ADR-130
   },
   codex: {
     mcps: "enforced",
@@ -171,7 +171,7 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
 Gemini, OpenCode, and MiMo widen the agent axis only after the schema and
 enforcement table are updated together. The extension is conservative:
 
-Since ADR-129 (`capability_guard`, adapter-agnostic), gemini/opencode/mimo carry the
+Since ADR-130 (`capability_guard`, adapter-agnostic), gemini/opencode/mimo carry the
 **same** `tools`/`mcps`/`hooks` = `enforced` cells as claude/codex (folded into the
 table above). Their per-adapter difference is **not** a table cell — it is the
 **launch evidence gate**: each refuses a strict-enforced launch until its own
@@ -179,7 +179,7 @@ table above). Their per-adapter difference is **not** a table cell — it is the
 (`instructed → enforced`), never weakens; if a class is proven impossible for an
 adapter the implementation may use `unsupported`; `strict` still refuses. The old
 "no non-default cell may ship as `enforced`" constraint (ADR-084/085) is retired by
-ADR-129 — the interceptor is one adapter-agnostic code path, so the evidence gate,
+ADR-130 — the interceptor is one adapter-agnostic code path, so the evidence gate,
 not the table, encodes per-adapter readiness.
 
 The schema and table changes are atomic SDD/TDD work:
@@ -195,7 +195,7 @@ The schema and table changes are atomic SDD/TDD work:
 
 ### Spike 0.10 verdict (permissionMode)
 
-**Verdict: `permissionMode` stays `instructed` — by ADR-129 design, not a
+**Verdict: `permissionMode` stays `instructed` — by ADR-130 design, not a
 tool-identity seam class.** The M11c `--permission-mode` CLI mechanism was disproven
 against `claude-agent-acp@0.37.0` (the adapter ignores those flags); `permissionMode`
 is delivered via `<worktree>/.claude/settings.local.json` `permissions.defaultMode`
@@ -231,14 +231,14 @@ capability === "enforced"`; otherwise `verdict = "instructed"`; `off` is omitted
 The evaluator is pure — no DB, no logging — and takes the table as an injectable
 parameter defaulting to `ENFORCEABILITY_BY_AGENT`.
 
-## FROZEN SPEC — launch-refusal allow-list & error branch (+ evidence gate — ADR-129)
+## FROZEN SPEC — launch-refusal allow-list & error branch (+ evidence gate — ADR-130)
 
 **Launch proceeds iff** BOTH hold, for every `ai_coding` / `judge` / `orchestrator`
 node and for every capability-bearing setting on it with `enforcement: strict`:
 
 1. **Static table** — `ENFORCEABILITY_BY_AGENT[resolvedAgent][class] === "enforced"`.
    Any other `strict` class is `refused` (no class with verdict `refused`).
-2. **Evidence gate (ADR-129)** — for a `tools`/`mcps` strict-enforced launch, the
+2. **Evidence gate (ADR-130)** — for a `tools`/`mcps` strict-enforced launch, the
    resolved adapter's `capabilityEnforcement` smoke `=== "ok"`, the runner is not
    `permissionPolicy = "dangerously_skip_permissions"`, and the strict class has a
    **declared allow-set** for the resolved agent.
@@ -249,7 +249,7 @@ node and for every capability-bearing setting on it with `enforcement: strict`:
   (the build cannot strictly enforce this class **at all**). With `tools`/`mcps`/`hooks`
   now `enforced`, this is the refusal for a `strict` on `skills` / `restrictions` /
   `permissionMode` / `workspaceAccess` (no agent enforces them). Also the code for a
-  `strict` `tools`/`mcps` with **no declared allow-set** (ADR-129).
+  `strict` `tools`/`mcps` with **no declared allow-set** (ADR-130).
 - **`MaisterError("EXECUTOR_UNAVAILABLE")`** — some agent has the class `enforced`
   but the *resolved* executor's agent has it `instructed` / `unsupported`. With the
   adapter-agnostic table this is no longer reachable from the table alone; the
@@ -262,7 +262,7 @@ The error message names the offending node id + class + resolved agent + the
 code** (ADR-008 closed union) — `capability_guard` reuses `CONFIG` /
 `EXECUTOR_UNAVAILABLE`.
 
-### Run-detail UX (ADR-129)
+### Run-detail UX (ADR-130)
 
 The run-detail settings panel (`FlowSettingsPanel`) and the capability-profile panel
 render each class's verdict tone by branching on the typed verdict (never string
@@ -287,7 +287,7 @@ M40) declares the per-tool-call guardrail rules (`path_guard` / `repetition` /
 `hooks` requires `compat.engine_min >= 1.8.0`.
 
 `hooks` is `enforced` for every agent in `ENFORCEABILITY_BY_AGENT` (a 7th column,
-all `enforced` — corrected by ADR-129):
+all `enforced` — corrected by ADR-130):
 
 | agent → class | `hooks` |
 | ------------- | ------- |
@@ -297,11 +297,11 @@ all `enforced` — corrected by ADR-129):
 | `opencode` | enforced |
 | `mimo`     | enforced |
 
-**Why `enforced` now (ADR-129 correction).** The supervisor's hook interceptor has
+**Why `enforced` now (ADR-130 correction).** The supervisor's hook interceptor has
 enforced `hooks` *deterministically* at the ACP seam since M40. ADR-108 modeled it
 `instructed` as an honest under-claim — because at that time no peer capability class
 was seam-`enforced`, and flipping `hooks` alone would have reopened the then-frozen
-ADR-041 flip. ADR-129 opens that flip for `tools`/`mcps` via the same seam, so the
+ADR-041 flip. ADR-130 opens that flip for `tools`/`mcps` via the same seam, so the
 under-claim is retired: `hooks` is labeled `enforced` to match its real behavior. A
 `strict` `enforcement.hooks` now **passes** the static launch gate. (`hooks` has no
 separate `capabilityEnforcement`-smoke requirement — its rules are supervisor-side
@@ -438,7 +438,7 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 - `node_attempts.enforcement_snapshot` MUST be written at launch/first-attempt
   on BOTH the pass and refusal paths and is append-only (never a mutable mirror).
 - `ENFORCEABILITY_BY_AGENT` MUST only ever flip `instructed → enforced` (the
-  contract tightens, never loosens). Since ADR-129, `tools` / `mcps` / `hooks` are
+  contract tightens, never loosens). Since ADR-130, `tools` / `mcps` / `hooks` are
   `enforced` for **all five** adapters (adapter-agnostic `capability_guard` seam);
   the four remaining classes stay `instructed` with documented reasons.
 - Per-adapter readiness for a `strict` `tools`/`mcps` launch MUST be the async
@@ -446,7 +446,7 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
   no-skip-permissions + declared allow-set), NOT a table cell; a failing gate MUST
   refuse launch (`EXECUTOR_UNAVAILABLE` / `CONFIG`), never enforce-nothing (ADR-032).
   Full contract: [`guardrail-hooks.md`](guardrail-hooks.md) Expectations —
-  `capability_guard`. (Implemented — ADR-129)
+  `capability_guard`. (Implemented — ADR-130)
 - Node-level validation MUST reject unknown `permissionMode` / `failureClass` /
   `thinkingEffort` / `environmentPolicy` / `enforcement` enum values, malformed
   `tools` map, out-of-range `limits`, legacy `settings.executors[]`, and

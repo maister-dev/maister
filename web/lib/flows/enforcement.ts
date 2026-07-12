@@ -28,7 +28,7 @@ export type OverlayClassSupportTable = Record<
   Record<OverlayCapabilityClass, boolean>
 >;
 
-// ADR-129 (docs/system-analytics/flow-settings.md + capabilities.md): `tools`,
+// ADR-130 (docs/system-analytics/flow-settings.md + capabilities.md): `tools`,
 // `mcps`, and `hooks` are `enforced` for ALL adapters via the adapter-agnostic
 // capability_guard seam interceptor; per-adapter admission is the async launch
 // evidence gate (`assertEnforcementEvidence`), NOT the static table. The four
@@ -40,7 +40,7 @@ export type OverlayClassSupportTable = Record<
 //                     a 3-valued ask|allow|deny intent is not a tool-identity allow-list
 //   workspaceAccess — not delivered to the seam on the flow path (follow-up)
 // The table is uniform across adapters (the interceptor is one code path). The
-// M14-deferred flip is complete — see ADR-129 §scope refinement for why the four
+// M14-deferred flip is complete — see ADR-130 §scope refinement for why the four
 // classes above stay instructed.
 const SEAM_ENFORCED_ROW: Record<CapabilityClass, Capability> = {
   mcps: "enforced", // capability_guard MCP-server allow-list (evidence-gated at launch)
@@ -49,7 +49,7 @@ const SEAM_ENFORCED_ROW: Record<CapabilityClass, Capability> = {
   restrictions: "instructed", // path deny-set via mutation-check gate, not tool identity
   permissionMode: "instructed", // claude-only defaultMode, unverified; not an allow-list
   workspaceAccess: "instructed", // not delivered to the seam on the flow path (follow-up)
-  hooks: "enforced", // supervisor-enforced at the ACP seam since M40 (ADR-108); label corrected by ADR-129
+  hooks: "enforced", // supervisor-enforced at the ACP seam since M40 (ADR-108); label corrected by ADR-130
 };
 
 export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {

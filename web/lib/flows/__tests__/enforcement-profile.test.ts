@@ -8,7 +8,7 @@ import {
   resolveEscalationThreshold,
 } from "@/lib/flows/enforcement-profile";
 
-// ADR-129 T3.1: derive the SessionEnforcementProfile (allow-list, DES-7) + the
+// ADR-130 T3.1: derive the SessionEnforcementProfile (allow-list, DES-7) + the
 // profileDigest fold (mid-session drift guard).
 
 function toolsStrict(agent = "claude") {

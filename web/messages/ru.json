@@ -2004,7 +2004,7 @@
     "checkoutContext": "Локальный чекаут",
     "copy": "Копировать",
     "settingsTitle": "Настройки узла",
-    "settingsDeclaredIntentNote": "Заявленное намерение, показано для наглядности. Классы `Enforced` (tools/mcps/hooks) применяются на стыке supervisor↔ACP через capability_guard, с проверкой по адаптеру (ADR-129); классы `Instructed` — только заявленное намерение.",
+    "settingsDeclaredIntentNote": "Заявленное намерение, показано для наглядности. Классы `Enforced` (tools/mcps/hooks) применяются на стыке supervisor↔ACP через capability_guard, с проверкой по адаптеру (ADR-130); классы `Instructed` — только заявленное намерение.",
     "settingsVerdictEnforced": "Принудительно",
     "settingsVerdictInstructed": "Инструктивно",
     "settingsVerdictRefused": "Отклонено",

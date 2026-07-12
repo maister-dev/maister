@@ -168,14 +168,14 @@ test:integration   # 9 lifecycle scenarios via the fake-acp.mjs fixture
 smoke:acp          # cache adapter smoke evidence (readOnlySession + capabilityEnforcement dimensions)
 ```
 
-**Adapter evidence ritual (ADR-090 / ADR-129).** Some launches are gated on cached
+**Adapter evidence ritual (ADR-090 / ADR-130).** Some launches are gated on cached
 live-adapter smoke evidence written by `smoke:acp` into
 `MAISTER_ADAPTER_SMOKE_CACHE_PATH`:
 
 ```bash
 # Read-only-session evidence (none/repo_read platform-agent runs — ADR-090):
 pnpm -C supervisor smoke:acp --cache <path> --read-only-session gemini opencode mimo
-# Capability-enforcement evidence (strict tools/mcps flow/agent runs — ADR-129):
+# Capability-enforcement evidence (strict tools/mcps flow/agent runs — ADR-130):
 pnpm -C supervisor smoke:acp --cache <path> --capability-enforcement claude codex gemini opencode mimo
 ```
 

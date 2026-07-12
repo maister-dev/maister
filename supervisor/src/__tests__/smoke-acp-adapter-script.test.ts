@@ -64,7 +64,7 @@ describe("smoke ACP adapter CLI helpers", () => {
     });
   });
 
-  it("produces ok capability-enforcement evidence after write + MCP tool-identity probes (ADR-129)", async () => {
+  it("produces ok capability-enforcement evidence after write + MCP tool-identity probes (ADR-130)", async () => {
     const binaryPath = await fixtureBinary();
 
     cleanupDirs.push(dirname(binaryPath));
@@ -84,7 +84,7 @@ describe("smoke ACP adapter CLI helpers", () => {
     });
   });
 
-  it("capability-enforcement summary is 'error' when no stable identity is surfaced (ADR-129 REQ-16 negative)", () => {
+  it("capability-enforcement summary is 'error' when no stable identity is surfaced (ADR-130 REQ-16 negative)", () => {
     // requestPermission fired for every probe, but neither call carried a resolvable
     // tool name (a title-only adapter that never surfaces identity). The summary MUST
     // be `error` — never cache `ok` for an adapter whose calls the seam cannot govern.

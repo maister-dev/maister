@@ -154,7 +154,7 @@
 | [ADR-127](#adr-127-project-brain-consultant-indexed-tier) | Project Brain Consultant indexed tier | Accepted | 2026-07-03 |
 | [ADR-128](#adr-128-project-brain-self-improvement-proposal-bridge) | Project Brain self-improvement proposal bridge | Accepted | 2026-07-03 |
 | [ADR-129](#adr-129-mcp-management-v2--requirements--bindings-per-project-overlay-trust--health-activation) | MCP management v2: requirements & bindings across package/platform/project, per-project env-slot overlay (names-only), load-bearing trust, supervisor health probe | Accepted | 2026-07-11 |
-| [ADR-129](#adr-129-adapter-agnostic-capability-enforcement-at-the-acp-seam) | Adapter-agnostic capability enforcement at the ACP seam: derived-only `capability_guard` interceptor, evidence-gated per-adapter flip of `tools`/`mcps` to `enforced`, `hooks` label corrected, no migration / no engine bump | Accepted | 2026-07-11 |
+| [ADR-130](#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) | Adapter-agnostic capability enforcement at the ACP seam: derived-only `capability_guard` interceptor, evidence-gated per-adapter flip of `tools`/`mcps` to `enforced`, `hooks` label corrected, no migration / no engine bump | Accepted | 2026-07-11 |
 
 ---
 
@@ -10989,8 +10989,10 @@ project-local servers. This ADR adds the explicit requirements & bindings layer.
   and risk than a maintained MCP SDK dependency.
 - _A separate project MCP page_: rejected by owner — the board `?tab=mcps` tab is
   the one place for all three sources.
-||||||| parent of 939a34f7a (docs(enforcement): ADR-129 + SDD for adapter-agnostic capability_guard (M14 flip))
-### ADR-129: Adapter-agnostic capability enforcement at the ACP seam
+
+---
+
+### ADR-130: Adapter-agnostic capability enforcement at the ACP seam
 
 **Date:** 2026-07-11
 **Status:** Accepted
@@ -11189,13 +11191,12 @@ identity is a per-adapter empirical question (the "tool-identity spike").
   is involved; the rule kind is a TS union + jsonb key. A DDL-free change with an
   ADR record (ADR-108 precedent) is correct.
 
-> **Numbering note (four-way contest).** At HEAD the next free number is 129
-> (max = ADR-128; 123 is a real gap — do not backfill it). Four unlanded branches
-> target 129: this (`enforcement-flip`), `postgres-graph-cutover`,
-> `agent-format-superset`, and `fork-loop`. Whoever lands 2nd/3rd/4th renumbers to
-> 130/131/132 and re-points every citation; re-grep `docs/decisions.md` at merge.
-> This change takes neither a migration nor an engine bump, so only the ADR number
-> collides.
+> **Numbering note (four-way contest — resolved).** This branch originally reserved
+> ADR-129; the `MCP management v2` branch landed on `main` first and took ADR-129, so
+> this ADR was renumbered to **ADR-130** at rebase (the anchor slug and every citation
+> were re-pointed). `postgres-graph-cutover` and `agent-format-superset` remain
+> unlanded (next free is 131). This change takes neither a migration nor an engine
+> bump, so only the ADR number moved.
 
 ---
 

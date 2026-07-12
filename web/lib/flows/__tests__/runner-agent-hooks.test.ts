@@ -5,7 +5,7 @@
 // completes normally. escalateHookTrip + markCheckpointedFromExit are mocked so
 // this stays a pure wiring test (no DB).
 //
-// ADR-129 (REQ-20 / REQ-17): the second describe block covers the enforcementProfile
+// ADR-130 (REQ-20 / REQ-17): the second describe block covers the enforcementProfile
 // DELIVERY seam — runAgentStep threads ctx.enforcementProfile onto the createSession
 // body on BOTH the new-session and the resume paths (a resume re-delivers the
 // re-derived profile), and omits it (inert) for a non-enforced node.
@@ -167,7 +167,7 @@ describe("runner-agent — session.hook_trip", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("capability_guard halt: escalates with the REAL rule (not mislabeled repetition) — ADR-129", async () => {
+  it("capability_guard halt: escalates with the REAL rule (not mislabeled repetition) — ADR-130", async () => {
     escalateHookTripMock.escalateHookTrip.mockClear();
     const api = makeApi([
       hookTrip(1, "halt", "capability_guard"),
@@ -271,7 +271,7 @@ describe("runner-agent — session.hook_trip", () => {
   });
 });
 
-describe("runner-agent — enforcementProfile delivery (ADR-129)", () => {
+describe("runner-agent — enforcementProfile delivery (ADR-130)", () => {
   const profile = {
     tools: { allow: ["Edit"] },
     enforcedClasses: ["tools"] as Array<"tools" | "mcps">,
@@ -314,7 +314,7 @@ describe("runner-agent — enforcementProfile delivery (ADR-129)", () => {
     );
   });
 
-  it("omits enforcementProfile for a non-enforced node (inert — byte-identical to pre-ADR-129)", async () => {
+  it("omits enforcementProfile for a non-enforced node (inert — byte-identical to pre-ADR-130)", async () => {
     const api = makeApi([exited(1)]);
 
     await runAgentStep(
@@ -324,7 +324,7 @@ describe("runner-agent — enforcementProfile delivery (ADR-129)", () => {
     );
 
     // Not called with any defined enforcementProfile (expect.anything() excludes
-    // undefined) → the field is inert exactly as before ADR-129.
+    // undefined) → the field is inert exactly as before ADR-130.
     expect(api.createSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ enforcementProfile: expect.anything() }),
     );
