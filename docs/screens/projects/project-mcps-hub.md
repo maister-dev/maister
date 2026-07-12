@@ -2,8 +2,8 @@
 
 - **Type:** block (board tab).
 - **Route:** `/projects/{slug}?tab=mcps`.
-- **Status:** Implemented (M27 project-local list); requirements ledger + 3-source hub + match/connect/overlay + test-connection **Designed (ADR-129)**.
-- **Source:** `web/components/board/mcp-panel.tsx` (rebuilt), `web/lib/mcp/hub-service.ts`, `web/lib/mcp/requirements-ledger.ts`, `web/lib/mcp/binding-service.ts`.
+- **Status:** Implemented — M27 project-local list + the ADR-129 hub (requirements ledger, 3-source servers list, match/connect/overlay dialogs, test-connection with inline result).
+- **Source:** `web/components/board/panels/mcp-panel.tsx` (rebuilt) + `mcp-bind-dialogs.tsx`, `web/components/mcp/mcp-select.tsx`, `web/lib/mcp/{hub-service,requirements-ledger,binding-service}.ts`.
 
 ## JTBD
 
@@ -51,10 +51,10 @@ Two regions:
    `unbound` · `misconfigured` · `not_ready`. An `unbound`/`auto` requirement
    offers **Match**; a `bound` one offers **Rebind / Disconnect / Configure**.
 2. **Servers list** — all three sources merged (platform / project / package)
-   with columns: source, transport, target, **readiness**, **trust**, **bound
-   to**, **used by N**, actions. Keeps existing project-local CRUD. The match
-   dialog only offers **bindable** candidates (existing, kind-matching,
-   trusted-or-warned).
+   with columns: id, source, transport, **trust**, **readiness**, **used by N**,
+   enabled, actions. Platform rows offer connect/disconnect; project rows keep
+   the existing project-local CRUD (edit modal). The match dialog only offers
+   **bindable** candidates (existing, kind-matching, trusted-or-warned).
 
 The board-header MCP **metacell** shows the project-effective MCP count (from the
 hub read model), replacing the previous hardcoded `—`.
@@ -80,7 +80,7 @@ stateDiagram-v2
 
 - Read: `web/lib/mcp/hub-service.ts` (merged list + used-by via
   `web/lib/mcp/usage.ts`) + `web/lib/mcp/requirements-ledger.ts` (derived ledger).
-- Mutations (Designed, ADR-129):
+- Mutations (Implemented, ADR-129):
   `POST /api/projects/{slug}/mcp/bindings`,
   `PATCH/DELETE /api/projects/{slug}/mcp/bindings/{refId}`,
   `POST /api/projects/{slug}/mcp/connect`, `POST /api/projects/{slug}/mcp/disconnect`,
@@ -91,9 +91,11 @@ stateDiagram-v2
 
 ## i18n
 
-`mcpPanel` (board tab, extended for hub columns/actions) + new `mcpHub`
-(ledger/match/overlay labels). Trust + used-by mirror the `studio` namespace
-(`trust`, `needsTrust`, `usedBy`). EN + RU parity enforced by
+`mcpPanel` (board tab, extended for the hub columns/actions/dialogs, including
+`bind`/`rebind`/`configure`/`disconnect`/`connect`/`match*`/`overlay*`/`probing`).
+The shared MCP-select reuses `mcpPanel`/`flowEditor.nodeForm` labels (node) +
+new `scratch.mcpSource*` keys; the agent effective-MCPs column adds
+`agentsAttach.colEffectiveMcps`. EN + RU parity enforced by
 `web/lib/__tests__/i18n-parity.test.ts`.
 
 ## Linked artifacts
@@ -103,4 +105,4 @@ stateDiagram-v2
 - Behavior: [`../../system-analytics/mcp-management.md`](../../system-analytics/mcp-management.md).
 - SDD: [`../../../.ai-factory/specs/feature-mcp-management-v2.md`](../../../.ai-factory/specs/feature-mcp-management-v2.md).
 - Platform-scope screen: [`../mcps.md`](../mcps.md).
-- Source: `web/components/board/mcp-panel.tsx`, `web/lib/mcp/{hub-service,requirements-ledger,binding-service}.ts`.
+- Source: `web/components/board/panels/{mcp-panel,mcp-bind-dialogs}.tsx`, `web/components/mcp/mcp-select.tsx`, `web/lib/mcp/{hub-service,requirements-ledger,binding-service}.ts`.

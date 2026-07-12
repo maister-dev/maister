@@ -60,6 +60,7 @@ const ATTACHED: AttachedAgentRow = {
     quarantinedAt: null,
     recommended: null,
     configSchema: null,
+    effectiveMcps: [],
   },
 };
 
@@ -110,6 +111,28 @@ describe("AgentsAttachPanel (M34 D11)", () => {
     expect(html).toContain("budget:terminate_restorable");
     // ADR-122: canReadBrain=true / canWriteBrain=false → the read-only chip.
     expect(html).toContain("brain:r");
+  });
+
+  it("renders each agent's effective MCPs resolved through bindings (ADR-129 T7.2)", () => {
+    const html = render({
+      attached: [
+        {
+          ...ATTACHED,
+          agent: {
+            ...ATTACHED.agent,
+            effectiveMcps: [
+              { refId: "github", classification: "bound" },
+              { refId: "postgres", classification: "unbound" },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(html).toContain("agentsAttach.colEffectiveMcps");
+    expect(html).toContain('data-testid="agent-mcps-aif:triager"');
+    expect(html).toContain("github");
+    expect(html).toContain("postgres");
   });
 
   it("shows a disabled attachment and an em-dash policy when nothing is overridden", () => {

@@ -82,6 +82,7 @@ function buildRow(over?: {
       recommended,
       configSchema:
         over?.configSchema === undefined ? CONFIG_SCHEMA : over.configSchema,
+      effectiveMcps: [],
     },
   };
 }

@@ -7,10 +7,11 @@ import type {
 } from "@/lib/mcp/mcp-form";
 import type { ReactElement } from "react";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { useModalFocusTrap } from "@/components/board/panels/use-modal-focus-trap";
 import {
   MCP_AGENTS,
   MCP_TRANSPORTS,
@@ -155,63 +156,8 @@ export function ProjectMcpModal({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const dialogRef = useRef<HTMLDivElement>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useRef(onClose);
 
-  onCloseRef.current = onClose;
-
-  useEffect(() => {
-    restoreFocusRef.current = document.activeElement as HTMLElement | null;
-
-    const focusable = (): HTMLElement[] =>
-      dialogRef.current
-        ? Array.from(
-            dialogRef.current.querySelectorAll<HTMLElement>(
-              'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
-            ),
-          )
-        : [];
-
-    focusable()[0]?.focus();
-
-    const previousOverflow = document.body.style.overflow;
-
-    document.body.style.overflow = "hidden";
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-
-        return;
-      }
-
-      if (event.key !== "Tab") return;
-
-      const items = focusable();
-
-      if (items.length === 0) return;
-
-      const first = items[0];
-      const last = items[items.length - 1];
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      restoreFocusRef.current?.focus();
-    };
-  }, []);
+  useModalFocusTrap(dialogRef, onClose);
 
   const draft = toDraft(form);
   const validation = validateMcpServerDraft(draft);

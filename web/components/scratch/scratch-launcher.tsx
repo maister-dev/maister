@@ -11,6 +11,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
 import { CapabilityComposer } from "@/components/capabilities/capability-composer";
+import { McpSelect } from "@/components/mcp/mcp-select";
 import { readLaunchStream } from "@/lib/runs/launch-progress";
 
 type AttachmentKind = "issue_url" | "file_path" | "text_note";
@@ -1011,12 +1012,37 @@ export function ScratchLauncher({
           </span>
         </summary>
         <div className="grid gap-2 border-t border-line-soft p-3 md:grid-cols-2 xl:grid-cols-5">
-          <CapabilityGroup
-            label={t("mcps")}
-            options={options?.capabilities.mcps ?? []}
-            selectedIds={mcpIds}
-            onToggle={(id) => setMcpIds((current) => toggleId(current, id))}
-          />
+          <details className="rounded-lg border border-line bg-paper">
+            <summary className={summaryButton}>
+              <span>{t("mcps")}</span>
+              <span className="rounded-full bg-ivory px-2 py-0.5 text-[10px] text-mute">
+                {mcpIds.length}/{options?.capabilities.mcps.length ?? 0}
+              </span>
+            </summary>
+            <div className="border-t border-line-soft p-1.5">
+              <McpSelect
+                labels={{
+                  empty: t("mcpNoneSelected"),
+                  sourceLabels: {
+                    platform: t("mcpSourcePlatform"),
+                    project: t("mcpSourceProject"),
+                    package: t("mcpSourcePackage"),
+                    "flow-package": t("mcpSourcePackage"),
+                    custom: t("mcpSourceCustom"),
+                  },
+                }}
+                options={(options?.capabilities.mcps ?? []).map((option) => ({
+                  value: option.id,
+                  label: option.label,
+                  source: option.source,
+                  detail: option.enforceability,
+                }))}
+                testid="scratch-mcps"
+                values={mcpIds}
+                onChange={setMcpIds}
+              />
+            </div>
+          </details>
           <CapabilityGroup
             readOnly
             label={t("skills")}

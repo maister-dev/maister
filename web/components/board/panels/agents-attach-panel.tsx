@@ -73,6 +73,10 @@ export type AttachedAgentRow = {
     recommended: AgentRecommendedView | null;
     // (ADR-111) The package-declared config params; null → no config section.
     configSchema: AgentConfigParam[] | null;
+    // (ADR-129 W-G, T7.2) The agent's declared MCP refs resolved through the
+    // project's bindings — read-only "effective MCPs" (D5). Empty when the agent
+    // declares none or the link is disabled (no materialization).
+    effectiveMcps: Array<{ refId: string; classification: string }>;
   };
 };
 
@@ -154,6 +158,16 @@ function configSummary(row: AttachedAgentRow): string {
     : `${overridden.length} set`;
 }
 
+// (ADR-129 W-G, T7.2) Colour an effective-MCP chip by its resolution class:
+// resolved (bound/auto) green, withheld/not-ready amber, unresolved red.
+function mcpClassTone(classification: string): string {
+  if (classification === "bound" || classification === "auto")
+    return "border-emerald-500/30 text-emerald-700";
+  if (classification === "not_ready") return "border-amber/40 text-amber-2";
+
+  return "border-red-500/30 text-red-700";
+}
+
 // M34 (ADR-089 D11): the per-project attach panel — links CRUD, runner
 // override, cron + domain-event trigger bindings.
 export function AgentsAttachPanel({
@@ -228,7 +242,7 @@ export function AgentsAttachPanel({
       ) : null}
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[820px] border-collapse text-left">
+        <table className="w-full min-w-[940px] border-collapse text-left">
           <thead className="border-b border-line bg-ivory">
             <tr className="font-mono text-[10px] uppercase tracking-[0.12em] text-mute">
               <th className="px-4 py-3">{t("colAgent")}</th>
@@ -236,6 +250,7 @@ export function AgentsAttachPanel({
               <th className="px-4 py-3">{t("colRunnerOverride")}</th>
               <th className="px-4 py-3">{t("colPolicy")}</th>
               <th className="px-4 py-3">{t("colConfig")}</th>
+              <th className="px-4 py-3">{t("colEffectiveMcps")}</th>
               <th className="px-4 py-3">{t("colSchedules")}</th>
               <th className="px-4 py-3">{t("colEnabled")}</th>
               {canManage ? (
@@ -248,7 +263,7 @@ export function AgentsAttachPanel({
               <tr>
                 <td
                   className="px-4 py-6 text-[12px] text-mute"
-                  colSpan={canManage ? 8 : 7}
+                  colSpan={canManage ? 9 : 8}
                 >
                   {t("empty")}
                 </td>
@@ -280,6 +295,28 @@ export function AgentsAttachPanel({
                 </td>
                 <td className="px-4 py-3 font-mono text-[11px] text-ink-2">
                   {configSummary(row)}
+                </td>
+                <td
+                  className="px-4 py-3"
+                  data-testid={`agent-mcps-${row.agent.id}`}
+                >
+                  {row.agent.effectiveMcps.length === 0 ? (
+                    <span className="text-mute">—</span>
+                  ) : (
+                    <span className="flex flex-wrap gap-1">
+                      {row.agent.effectiveMcps.map((mcp) => (
+                        <span
+                          key={mcp.refId}
+                          className={`rounded-full border px-1.5 py-0.5 font-mono text-[10px] ${mcpClassTone(
+                            mcp.classification,
+                          )}`}
+                          title={mcp.classification}
+                        >
+                          {mcp.refId}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 font-mono text-[11px] text-ink-2">
                   {scheduleSummary(row.schedules)}
@@ -394,6 +431,7 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
       quarantinedAt: null,
       recommended: rec,
       configSchema: agent.configSchema,
+      effectiveMcps: [],
     },
   };
 }

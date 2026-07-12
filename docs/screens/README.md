@@ -167,7 +167,7 @@ flowchart TD
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
-| [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (M27 list); hub Designed (ADR-129) |
+| [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (M27 list + ADR-129 hub) |
 | [`projects/project-experiments.md`](projects/project-experiments.md) | Experiment Comparison Studio (list, create flow, lab) | `/projects/{slug}/experiments` and `/projects/{slug}/experiments/{experimentId}` | Implemented (ADR-124) |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |

@@ -29,6 +29,7 @@ import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { CapabilityComposer } from "@/components/capabilities/capability-composer";
 import { GateForm } from "@/components/flows/node-form/gate-form";
 import { MultiSelectField } from "@/components/flows/node-form/multi-select-field";
+import { McpSelect } from "@/components/mcp/mcp-select";
 import { ReferenceCombobox } from "@/components/flows/node-form/reference-combobox";
 import { SchemaRefField } from "@/components/flows/node-form/schema-ref-field";
 import { StringListField } from "@/components/flows/node-form/string-list-field";
@@ -830,11 +831,14 @@ export function NodeSideForm({
               value={str(settings.permissionMode)}
               onChange={(v) => setSetting("permissionMode", v || undefined)}
             />
-            <MultiSelectField
+            <McpSelect
+              allowFreeAdd
               label={labels.skills}
               labels={labels.multiSelect}
-              mode="catalog"
-              options={skillOptions ?? []}
+              options={(skillOptions ?? []).map((o) => ({
+                value: o.value,
+                label: o.label,
+              }))}
               readOnly={readOnly}
               testid="node-skills"
               values={strList(settings.skills)}
@@ -852,11 +856,14 @@ export function NodeSideForm({
                 setSetting("restrictions", next.length ? next : undefined)
               }
             />
-            <MultiSelectField
+            <McpSelect
+              allowFreeAdd
               label={labels.mcps}
               labels={labels.multiSelect}
-              mode="catalog"
-              options={mcpOptions ?? []}
+              options={(mcpOptions ?? []).map((o) => ({
+                value: o.value,
+                label: o.label,
+              }))}
               readOnly={readOnly}
               testid="node-mcps"
               values={strList(settings.mcps)}

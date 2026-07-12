@@ -103,6 +103,45 @@ function toDto(row: BindingRow): McpBindingDto {
   };
 }
 
+// ADR-129 (W-D, T6.2): the platform servers a project can connect / bind to. In
+// this catalog model a platform server's `id` IS its ref. env/header key NAMES
+// feed the board overlay form's slot hints — no secret VALUE is ever read.
+export type PlatformBindCandidate = {
+  id: string;
+  transport: string;
+  trustStatus: string;
+  enabled: boolean;
+  envKeys: string[];
+  headerKeys: string[];
+};
+
+export async function listPlatformBindCandidates(
+  injected?: BindingDb,
+): Promise<PlatformBindCandidate[]> {
+  const rows = rowsOf<{
+    id: string;
+    transport: string;
+    trust_status: string;
+    enabled: boolean;
+    env_keys: string[] | null;
+    header_keys: string[] | null;
+  }>(
+    await db(injected).execute(sql`
+      SELECT id, transport, trust_status, enabled, env_keys, header_keys
+      FROM platform_mcp_servers ORDER BY id ASC
+    `),
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    transport: r.transport,
+    trustStatus: r.trust_status,
+    enabled: r.enabled,
+    envKeys: r.env_keys ?? [],
+    headerKeys: r.header_keys ?? [],
+  }));
+}
+
 // W-C: config_overlay is validated against the target's DECLARED slots. An
 // unknown slot or a non-`env:` remap value is a CONFIG (422). Pure — the sink's
 // invariant lives here so both the write path and the materialization defensive

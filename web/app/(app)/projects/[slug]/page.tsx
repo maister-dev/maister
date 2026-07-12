@@ -63,6 +63,10 @@ import { reposRoot } from "@/lib/instance-config";
 import { formatProjectRepoPath } from "@/lib/project-path-display";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
 import { getProjectMcpHub } from "@/lib/mcp/hub-service";
+import {
+  listBindings,
+  listPlatformBindCandidates,
+} from "@/lib/mcp/binding-service";
 import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
 import { listProjectSchedules } from "@/lib/run-schedules/queries";
@@ -225,6 +229,17 @@ export default async function ProjectBoardPage({
     tab === "integrations" && isAdmin
       ? await listTokenAudit(project.id, auditFilters)
       : null;
+  // ADR-129 (W-D, T6.2): the board MCP tab's write surfaces (bindings, connect
+  // candidates, project-local rows). Loaded only for an admin on the mcps tab;
+  // the requirements ledger + effective count come from the always-loaded hub.
+  const mcpPanelData =
+    tab === "mcps" && isAdmin
+      ? {
+          bindings: await listBindings(project.id),
+          platformCandidates: await listPlatformBindCandidates(),
+          projectServers: await listProjectMcps(project.id),
+        }
+      : { bindings: [], platformCandidates: [], projectServers: [] };
   // Branch picker for the repo tab; a broken repo_path falls back to the
   // default branch rather than crashing the page. currentRef is constrained to
   // a real branch (or the default), and always present in branchOptions so the
@@ -582,12 +597,12 @@ export default async function ProjectBoardPage({
       ) : null}
       {tab === "mcps" ? (
         <McpPanel
+          bindings={mcpPanelData.bindings}
           isAdmin={isAdmin}
-          requirements={mcpHub.requirements.map((r) => ({
-            refId: r.refId,
-            classification: r.classification,
-          }))}
-          servers={isAdmin ? await listProjectMcps(project.id) : []}
+          platformCandidates={mcpPanelData.platformCandidates}
+          projectServers={mcpPanelData.projectServers}
+          requirements={mcpHub.requirements}
+          servers={isAdmin ? mcpHub.servers : []}
           slug={slug}
         />
       ) : null}
@@ -661,6 +676,7 @@ export default async function ProjectBoardPage({
       {tab === "agents" ? (
         <AgentsAttachPanelLoader
           canManage={isAdmin}
+          mcpRequirements={mcpHub.requirements}
           projectId={project.id}
           runners={pageData.runners
             .filter((runner) => runner.enabled)
@@ -721,13 +737,29 @@ async function AgentsAttachPanelLoader({
   projectId,
   canManage,
   runners,
+  mcpRequirements,
 }: {
   slug: string;
   projectId: string;
   canManage: boolean;
   runners: Array<{ id: string; label: string }>;
+  mcpRequirements: Array<{
+    refId: string;
+    declaredBy: string[];
+    classification: string;
+  }>;
 }): Promise<ReactElement> {
   const view = await getProjectAgentsView(projectId);
+  // ADR-129 (W-G, T7.2): an agent's effective MCPs = the refs it declares,
+  // resolved through the project's bindings. The hub already threads bindings
+  // into `requirements` and stamps `declaredBy: ["agent:<id>", …]`, so filtering
+  // by that label yields each agent's effective set (D5 — one resolution path).
+  const effectiveMcpsFor = (
+    agentId: string,
+  ): Array<{ refId: string; classification: string }> =>
+    mcpRequirements
+      .filter((r) => r.declaredBy.includes(`agent:${agentId}`))
+      .map((r) => ({ refId: r.refId, classification: r.classification }));
 
   return (
     <AgentsAttachPanel
@@ -756,6 +788,7 @@ async function AgentsAttachPanelLoader({
           recommended: toRecommendedView(row.agent.recommended),
           configSchema:
             (row.agent.configSchema as AgentConfigParam[] | null) ?? null,
+          effectiveMcps: effectiveMcpsFor(row.agent.id as string),
         },
       }))}
       available={view.available.map((agent) => ({

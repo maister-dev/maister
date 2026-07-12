@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+  useTranslations:
+    () =>
+    (key: string, vars?: Record<string, unknown>): string =>
+      vars ? `${key}:${JSON.stringify(vars)}` : key,
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -12,34 +15,42 @@ vi.mock("next/navigation", () => ({
 
 import {
   McpPanel,
-  type ProjectMcpRow,
+  type HubServerView,
 } from "@/components/board/panels/mcp-panel";
 
-const server: ProjectMcpRow = {
-  id: "row-1",
-  mcpId: "local-fs",
+const platformServer: HubServerView = {
+  refId: "github",
+  source: "platform",
   transport: "stdio",
-  command: "npx",
-  args: [],
-  envKeys: [],
-  url: null,
-  headerKeys: [],
-  supportedAgents: ["claude"],
   enabled: true,
+  trust: "trusted",
+  readiness: "ready",
+  usedByCount: 2,
+  boundByRefs: ["github"],
+  lastProbeStatus: "ok",
 };
 
-describe("McpPanel — requirements ledger (W-D)", () => {
-  it("renders the requirements section with a classification per ref", () => {
+describe("McpPanel — requirements ledger + 3-source servers (W-D)", () => {
+  it("renders the requirements section with classification + required tag per ref", () => {
     const markup = renderToStaticMarkup(
       createElement(McpPanel, {
-        servers: [server],
-        requirements: [
-          { refId: "github", classification: "bound" },
-          { refId: "postgres", classification: "unbound" },
-          { refId: "serena", classification: "not_ready" },
-        ],
         slug: "proj",
         isAdmin: true,
+        servers: [platformServer],
+        requirements: [
+          {
+            refId: "github",
+            required: true,
+            declaredBy: ["package:x"],
+            classification: "bound",
+          },
+          {
+            refId: "postgres",
+            required: false,
+            declaredBy: [],
+            classification: "unbound",
+          },
+        ],
       }),
     );
 
@@ -48,21 +59,55 @@ describe("McpPanel — requirements ledger (W-D)", () => {
     expect(markup).toContain('data-testid="mcp-req-postgres"');
     expect(markup).toContain("classification.bound");
     expect(markup).toContain("classification.unbound");
-    expect(markup).toContain("classification.not_ready");
-    // A bound ref exposes a Test-connection action; an unbound one does not.
+    expect(markup).toContain("requiredTag");
+    expect(markup).toContain("optionalTag");
+    // A bound ref (with an enabled binding source) exposes probe; an unbound one
+    // exposes the bind action.
     expect(markup).toContain("testConnection");
+    expect(markup).toContain("bind");
+  });
+
+  it("renders the 3-source servers overview with source + trust columns", () => {
+    const markup = renderToStaticMarkup(
+      createElement(McpPanel, {
+        slug: "proj",
+        isAdmin: true,
+        requirements: [],
+        servers: [platformServer],
+      }),
+    );
+
+    expect(markup).toContain('data-testid="mcp-server-github"');
+    expect(markup).toContain("sourcePlatform");
+    expect(markup).toContain("colTrust");
+    // A platform row can be disconnected.
+    expect(markup).toContain("disconnect");
   });
 
   it("omits the requirements section when there are none", () => {
     const markup = renderToStaticMarkup(
       createElement(McpPanel, {
-        servers: [server],
-        requirements: [],
         slug: "proj",
         isAdmin: true,
+        requirements: [],
+        servers: [platformServer],
       }),
     );
 
     expect(markup).not.toContain('data-testid="mcp-requirements"');
+  });
+
+  it("shows the admin-only notice and no servers table for a non-admin", () => {
+    const markup = renderToStaticMarkup(
+      createElement(McpPanel, {
+        slug: "proj",
+        isAdmin: false,
+        requirements: [],
+        servers: [],
+      }),
+    );
+
+    expect(markup).toContain("adminOnly");
+    expect(markup).not.toContain('data-testid="mcp-server-github"');
   });
 });
