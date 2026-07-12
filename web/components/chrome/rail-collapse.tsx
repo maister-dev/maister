@@ -29,7 +29,7 @@ export function RailCollapseView({
     <aside
       aria-label="Sections & active workspaces"
       className={clsx(
-        "sticky top-[60px] z-[100] hidden h-[calc(100vh-60px-56px)] flex-col self-start border-r border-line bg-paper pb-0 pt-2.5 md:flex",
+        "sticky top-[64px] z-10 hidden h-[calc(100vh-64px-36px)] flex-col self-start border-r border-line bg-paper pb-0 pt-2.5 md:flex",
         collapsed ? "overflow-visible" : "overflow-x-hidden",
         collapsed ? "w-12 px-1.5" : "w-[260px] px-3.5",
       )}

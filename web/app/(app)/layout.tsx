@@ -73,12 +73,12 @@ export default async function AppLayout({
     : undefined;
 
   return (
-    <div className="flex min-h-screen flex-col bg-paper-warm pb-14">
+    <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
       <TopNav crumb={<NavCrumb />} user={navUser} />
 
       <div
         data-shell
-        className="grid min-h-[calc(100vh-60px-56px)] grid-cols-1 md:grid-cols-[auto_1fr]"
+        className="grid flex-1 grid-cols-1 md:grid-cols-[auto_1fr]"
         data-density="comfy"
       >
         <LeftRail
