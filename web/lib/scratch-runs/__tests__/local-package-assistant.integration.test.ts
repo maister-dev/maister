@@ -17,7 +17,7 @@ import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -85,6 +85,7 @@ let launchLocalPackageAssistant: typeof import("@/lib/scratch-runs/service").lau
 let launchLocalPackageAssistantStaged: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistantStaged;
 let sendLocalPackageAssistantMessage: typeof import("@/lib/scratch-runs/service").sendLocalPackageAssistantMessage;
 let listLocalPackageAssistantRunners: typeof import("@/lib/scratch-runs/service").listLocalPackageAssistantRunners;
+let stopScratchWorkbench: typeof import("@/lib/scratch-runs/service").stopScratchWorkbench;
 let createLocalPackage: typeof import("@/lib/local-packages/service").createLocalPackage;
 let diffWorkingDir: typeof import("@/lib/local-packages/service").diffWorkingDir;
 let getLocalPackage: typeof import("@/lib/local-packages/service").getLocalPackage;
@@ -128,6 +129,7 @@ beforeAll(async () => {
     launchLocalPackageAssistantStaged,
     sendLocalPackageAssistantMessage,
     listLocalPackageAssistantRunners,
+    stopScratchWorkbench,
   } = await import("@/lib/scratch-runs/service"));
   ({ createLocalPackage, diffWorkingDir, getLocalPackage } = await import(
     "@/lib/local-packages/service"
@@ -632,6 +634,73 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
     );
 
     expect(skillMd).toContain("name: flow-authoring");
+  });
+
+  it("reclaims local-package assistant materialization when the session is stopped", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-stop-cleanup-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-stop-cleanup");
+    const launched = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "" },
+      userId,
+    });
+    const capabilityRoot = join(
+      pkg.workingDir,
+      ".maister",
+      "capabilities",
+      launched.runId,
+    );
+    const authoringSkill = join(
+      pkg.workingDir,
+      ".claude",
+      "skills",
+      "flow-authoring",
+    );
+
+    await expect(stat(capabilityRoot)).resolves.toBeDefined();
+    await expect(stat(authoringSkill)).resolves.toBeDefined();
+
+    const stopped = await stopScratchWorkbench(launched.runId, { db });
+
+    expect(stopped).toMatchObject({
+      runStatus: "Abandoned",
+      dialogStatus: "Abandoned",
+    });
+    await expect(stat(capabilityRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(authoringSkill)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("compensates materialization when the pre-session run transaction fails", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-insert-failure-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-insert-failure");
+    const transaction = vi
+      .spyOn(db, "transaction")
+      .mockRejectedValueOnce(new Error("run insert failed"));
+
+    try {
+      await expect(
+        launchLocalPackageAssistant({
+          body: { localPackageId: pkg.id, sessionId, prompt: "" },
+          userId,
+        }),
+      ).rejects.toThrow("run insert failed");
+    } finally {
+      transaction.mockRestore();
+    }
+
+    await expect(
+      readdir(join(pkg.workingDir, ".maister", "capabilities")),
+    ).resolves.toEqual([]);
+    await expect(
+      stat(join(pkg.workingDir, ".claude", "skills", "flow-authoring")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("a turn on the assistant run (loadScratchRows) works WITHOUT a workspace row", async () => {

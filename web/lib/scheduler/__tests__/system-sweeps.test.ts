@@ -7,6 +7,7 @@ const runWorkspaceGcSweepMock = vi.hoisted(() => vi.fn());
 const runRevisionGcSweepMock = vi.hoisted(() => vi.fn());
 const runCapabilitiesCleanupSweepMock = vi.hoisted(() => vi.fn());
 const runEphemeralAgentGcSweepMock = vi.hoisted(() => vi.fn());
+const runAgentMaterializationCleanupSweepMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -28,6 +29,9 @@ vi.mock("@/lib/capabilities/cleanup", () => ({
 }));
 vi.mock("@/lib/gc/ephemeral-agent-gc", () => ({
   runEphemeralAgentGcSweep: runEphemeralAgentGcSweepMock,
+}));
+vi.mock("@/lib/gc/agent-materialization-gc", () => ({
+  runAgentMaterializationCleanupSweep: runAgentMaterializationCleanupSweepMock,
 }));
 
 const workspaceSummary = {
@@ -60,6 +64,9 @@ describe("scheduler system sweeps", () => {
     runEphemeralAgentGcSweepMock
       .mockReset()
       .mockResolvedValue({ scanned: 0, removed: 0, live: 0, failed: 0 });
+    runAgentMaterializationCleanupSweepMock
+      .mockReset()
+      .mockResolvedValue({ scanned: 0, restored: 0, live: 0, failed: 0 });
   });
 
   it("runGcCompatibilitySweep runs GC + capabilities but NOT keepalive/reconcile", async () => {
@@ -71,6 +78,7 @@ describe("scheduler system sweeps", () => {
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
+    expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runSweepTickMock).not.toHaveBeenCalled();
     expect(runReconcileSweepMock).not.toHaveBeenCalled();
     expect(summary).toEqual({
@@ -104,6 +112,7 @@ describe("scheduler system sweeps", () => {
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
+    expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
   });
 
   it("runGcCompatibilitySweep does NOT run the cost-rollup reconcile", async () => {

@@ -8,8 +8,9 @@
  *  2. An rm failure NEVER throws; it records cleanup.failed (+ error) and the
  *     plan body stays intact.
  *  3. runCapabilitiesCleanupSweep scans terminal (Abandoned/Done/Failed/Crashed)
- *     runs whose workspace is not yet removed, cleans each run's node dirs, and
- *     does NOT touch a non-terminal (Running) run's dir.
+ *     runs whose workspace is not yet removed, except crash-recoverable agent
+ *     and scratch worktrees, and does NOT touch a non-terminal (Running) run's
+ *     dir.
  *  4. updateMaterializationCleanup is a partial update of ONLY the .cleanup
  *     sub-object (read-modify-write), preserving the plan body.
  *
@@ -18,14 +19,22 @@
  * (materialize.ts:88-94). `worktreePath` is a mkdtemp temp dir, and the node
  * dir is provisioned with a real file so the rm is observable on disk.
  *
- * Expected RED reason: `@/lib/capabilities/cleanup` does not exist yet, and
- * `capabilityMaterializationRootPath` / `updateMaterializationCleanup` are not
- * exported yet → the import block fails to resolve (feature-absent RED).
+ * The cases use real cleanup exports and filesystem paths; their assertions
+ * remain focused on terminal state, fail-closed path fencing, and recovery
+ * preservation rather than internal implementation calls.
  */
 import type { MaterializationPlan } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,6 +112,8 @@ type Seeded = {
 // mkdtemp dir (unique per call — workspaces.worktree_path is UNIQUE).
 async function seed(opts: {
   runStatus?: string;
+  runKind?: "agent" | "flow" | "scratch";
+  agentWorkspace?: "none" | "repo_read" | "worktree" | null;
   removedAt?: Date | null;
   plan?: MaterializationPlan;
 }): Promise<Seeded> {
@@ -146,6 +157,8 @@ async function seed(opts: {
   });
   await db.insert(schema.runs).values({
     id: runId,
+    runKind: opts.runKind ?? "flow",
+    agentWorkspace: opts.agentWorkspace ?? null,
     taskId,
     projectId,
     flowId,
@@ -282,40 +295,115 @@ describe("capability-dir cleanup (M14 T4.3 / C1)", () => {
     ]);
   });
 
-  it("runCapabilitiesCleanupSweep cleans a terminal run and skips a Running run (Test 3)", async () => {
-    const terminal = await seed({ runStatus: "Crashed", removedAt: null });
-    const terminalDir = await provisionNodeDir(
-      terminal.worktreePath,
-      terminal.runId,
-      terminal.nodeAttemptId,
-    );
+  it("fails closed before recursive rm when a capability path component is symlinked", async () => {
+    const { runId, nodeAttemptId, worktreePath } = await seed({});
+    const outside = await mkdtemp(join(tmpdir(), "cleanup-symlink-outside-"));
+    const protectedDir = join(outside, runId, nodeAttemptId);
+    const protectedFile = join(protectedDir, "KEEP");
 
-    const running = await seed({ runStatus: "Running", removedAt: null });
-    const runningDir = await provisionNodeDir(
-      running.worktreePath,
-      running.runId,
-      running.nodeAttemptId,
-    );
+    try {
+      await mkdir(protectedDir, { recursive: true });
+      await writeFile(protectedFile, "user-owned");
+      await mkdir(join(worktreePath, ".maister"), { recursive: true });
+      await symlink(outside, join(worktreePath, ".maister", "capabilities"));
 
-    expect(await exists(terminalDir)).toBe(true);
-    expect(await exists(runningDir)).toBe(true);
+      const result = await cleanupNodeMaterialization({
+        nodeAttemptId,
+        runId,
+        worktreePath,
+        db,
+      });
 
-    const summary = await runCapabilitiesCleanupSweep({ db });
+      expect(result).toEqual({ removed: false });
+      await expect(readFile(protectedFile, "utf8")).resolves.toBe(
+        "user-owned",
+      );
 
-    expect(summary.scanned).toBeGreaterThanOrEqual(1);
+      const plan = await reloadPlan(nodeAttemptId);
 
-    // The terminal run's node dir is removed + recorded done.
-    expect(await exists(terminalDir)).toBe(false);
-    const terminalPlan = await reloadPlan(terminal.nodeAttemptId);
-
-    expect(terminalPlan!.cleanup.status).toBe("done");
-
-    // The non-terminal (Running) run's dir is left untouched.
-    expect(await exists(runningDir)).toBe(true);
-    const runningPlan = await reloadPlan(running.nodeAttemptId);
-
-    expect(runningPlan!.cleanup.status).toBe("pending");
+      expect(plan!.cleanup.status).toBe("failed");
+      expect(plan!.cleanup.error).toContain("symlinked path component");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
+
+  it(
+    "runCapabilitiesCleanupSweep preserves recoverable crashed worktrees and skips a Running run (Test 3)",
+    async () => {
+      const terminal = await seed({ runStatus: "Crashed", removedAt: null });
+      const terminalDir = await provisionNodeDir(
+        terminal.worktreePath,
+        terminal.runId,
+        terminal.nodeAttemptId,
+      );
+
+      const running = await seed({ runStatus: "Running", removedAt: null });
+      const runningDir = await provisionNodeDir(
+        running.worktreePath,
+        running.runId,
+        running.nodeAttemptId,
+      );
+      const crashedAgent = await seed({
+        runStatus: "Crashed",
+        runKind: "agent",
+        agentWorkspace: "worktree",
+        removedAt: null,
+      });
+      const crashedAgentDir = await provisionNodeDir(
+        crashedAgent.worktreePath,
+        crashedAgent.runId,
+        crashedAgent.nodeAttemptId,
+      );
+      const crashedScratch = await seed({
+        runStatus: "Crashed",
+        runKind: "scratch",
+        removedAt: null,
+      });
+      const crashedScratchDir = await provisionNodeDir(
+        crashedScratch.worktreePath,
+        crashedScratch.runId,
+        crashedScratch.nodeAttemptId,
+      );
+
+      expect(await exists(terminalDir)).toBe(true);
+      expect(await exists(runningDir)).toBe(true);
+      expect(await exists(crashedAgentDir)).toBe(true);
+      expect(await exists(crashedScratchDir)).toBe(true);
+
+      const summary = await runCapabilitiesCleanupSweep({ db });
+
+      expect(summary.scanned).toBeGreaterThanOrEqual(1);
+
+      // The terminal run's node dir is removed + recorded done.
+      expect(await exists(terminalDir)).toBe(false);
+      const terminalPlan = await reloadPlan(terminal.nodeAttemptId);
+
+      expect(terminalPlan!.cleanup.status).toBe("done");
+
+      // The non-terminal (Running) run's dir is left untouched.
+      expect(await exists(runningDir)).toBe(true);
+      const runningPlan = await reloadPlan(running.nodeAttemptId);
+
+      expect(runningPlan!.cleanup.status).toBe("pending");
+
+      // A crashed worktree-backed agent remains recoverable; its node-scoped
+      // materialization must stay available until recovery/discard resolves it.
+      expect(await exists(crashedAgentDir)).toBe(true);
+      const crashedAgentPlan = await reloadPlan(crashedAgent.nodeAttemptId);
+
+      expect(crashedAgentPlan!.cleanup.status).toBe("pending");
+
+      // Scratch recovery resumes with scratchCapabilityProfiles.materializedPath,
+      // so its crashed worktree must remain intact too.
+      expect(await exists(crashedScratchDir)).toBe(true);
+      const crashedScratchPlan = await reloadPlan(
+        crashedScratch.nodeAttemptId,
+      );
+
+      expect(crashedScratchPlan!.cleanup.status).toBe("pending");
+    },
+  );
 
   it("updateMaterializationCleanup partially updates only .cleanup, preserving the body (Test 4)", async () => {
     const { nodeAttemptId } = await seed({});

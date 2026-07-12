@@ -114,6 +114,7 @@ export async function resolveFlowBoundAgent(args: {
     // FR-C4: shared materialize step (also used for scratch broad materialization).
     const targetPath = await materializeSubagentDefinition({
       worktreePath: args.worktreePath,
+      runId: args.runId,
       agentId: args.agentId,
       source,
     });

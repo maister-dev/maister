@@ -1949,7 +1949,7 @@ export async function logRangeBounded(
 // `git add -N` against the real index would flip untracked files to
 // intent-to-add and corrupt `git status` for every other consumer.
 export type WorkingTreeDiffResult = DiffResult & {
-  nameStatus: Array<{ path: string; status: string }>;
+  nameStatus: DiffFileEntry[];
 };
 
 async function withIntentToAddTempIndex<T>(

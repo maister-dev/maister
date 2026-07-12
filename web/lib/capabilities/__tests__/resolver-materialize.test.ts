@@ -815,6 +815,7 @@ describe("materializeCapabilityProfile", () => {
 
     expect(first).toContain(".claude/settings.local.json");
     expect(first).toContain("*.maister-bak");
+    expect(first).toContain("*.maister-operation");
 
     await materializeCapabilityProfile({
       runId: "run-2",
@@ -827,6 +828,7 @@ describe("materializeCapabilityProfile", () => {
 
     expect(occurrences(second, ".claude/settings.local.json")).toBe(1);
     expect(occurrences(second, "*.maister-bak")).toBe(1);
+    expect(occurrences(second, "*.maister-operation")).toBe(1);
 
     const status = execFileSync(
       "git",

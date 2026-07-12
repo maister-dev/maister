@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { EphemeralAgentGcSummary } from "@/lib/gc/ephemeral-agent-gc";
+import type { AgentMaterializationGcSummary } from "@/lib/gc/agent-materialization-gc";
 import type { RevisionGcSummary } from "@/lib/gc/revision-gc";
 import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 
@@ -10,6 +11,7 @@ import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
+import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { runReconcileSweep } from "@/lib/reconcile";
@@ -31,6 +33,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   revision: RevisionGcSummary | null;
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
   ephemeralAgent: EphemeralAgentGcSummary | null;
+  agentMaterialization: AgentMaterializationGcSummary | null;
   // ADR-122: the Project Brain decay sweep (self-throttled hourly; expires items
   // past expires_at). null when it never ran this process.
   brain: Awaited<ReturnType<typeof runBrainDecaySweep>> | null;
@@ -50,6 +53,7 @@ type GcBundleResult = {
   revision: RevisionGcSummary | null;
   capabilities: SystemSweepSummary["capabilities"];
   ephemeralAgent: EphemeralAgentGcSummary | null;
+  agentMaterialization: AgentMaterializationGcSummary | null;
   errors: string[];
 };
 
@@ -59,6 +63,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let revision: RevisionGcSummary | null = null;
   let capabilities: SystemSweepSummary["capabilities"] = null;
   let ephemeralAgent: EphemeralAgentGcSummary | null = null;
+  let agentMaterialization: AgentMaterializationGcSummary | null = null;
 
   try {
     workspace = await runWorkspaceGcSweep();
@@ -96,14 +101,35 @@ async function runGcBundle(): Promise<GcBundleResult> {
     log.error({ err: message }, "gc bundle ephemeral agent threw");
   }
 
+  try {
+    agentMaterialization = await runAgentMaterializationCleanupSweep();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`agent materialization sweep failed: ${message}`);
+    log.error({ err: message }, "gc bundle agent materialization threw");
+  }
+
   errors.push(...gcFailureMessages(workspace, revision, capabilities));
   if (ephemeralAgent && ephemeralAgent.failed > 0) {
     errors.push(
       `${ephemeralAgent.failed} ephemeral -ro checkout(s) failed to remove (left for retry)`,
     );
   }
+  if (agentMaterialization && agentMaterialization.failed > 0) {
+    errors.push(
+      `${agentMaterialization.failed} agent materialization cleanup(s) failed (left for retry)`,
+    );
+  }
 
-  return { workspace, revision, capabilities, ephemeralAgent, errors };
+  return {
+    workspace,
+    revision,
+    capabilities,
+    ephemeralAgent,
+    agentMaterialization,
+    errors,
+  };
 }
 
 export async function runSystemSweep(): Promise<SystemSweepSummary> {
@@ -177,6 +203,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     revision: gc.revision,
     capabilities: gc.capabilities,
     ephemeralAgent: gc.ephemeralAgent,
+    agentMaterialization: gc.agentMaterialization,
     worktreesPreserved: gc.workspace?.preserved ?? 0,
     worktreesRemoved: gc.workspace?.pruned ?? 0,
     revisionsRemoved: gc.revision?.deleted ?? 0,

@@ -11,7 +11,7 @@ import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
 
 import { execFile } from "node:child_process";
-import { appendFile, copyFile, mkdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -22,6 +22,13 @@ import {
   nativeGuardScriptPath,
   resolveNativeHookMaterializer,
 } from "@/lib/capabilities/native-hook-materializer";
+import {
+  materializeCapabilitySettings,
+} from "@/lib/capabilities/settings-ownership";
+import {
+  assertSafeAgentMaterializationPath,
+  materializeWithAgentLease,
+} from "@/lib/agents/materialization-manifest";
 import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
 
@@ -36,17 +43,16 @@ const WORKTREE_EXCLUDE_PATTERNS = [
   ".claude/settings.local.json",
   "*.maister-bak",
   "*.maister-owned",
+  "*.maister-operation",
   // M38 (ADR-103): the run-context blackboard lives at
   // <worktree>/.maister/run.json — keep MAIster's whole runtime subtree out of
   // git so run.json never appears in `git status` or the base→run diff.
   ".maister/",
 ] as const;
 
-// Sibling marker written next to a materialized settings.local.json. Its presence
-// means "M14 owns the current settings.local.json and has not reclaimed it yet";
-// reclaim consumes it and refuses to touch the file when it is absent. This makes
-// worktree-settings reclaim idempotent — a repeated run-terminal / cron-sweep pass
-// can never delete a user's restored original (#data-loss).
+// Kept as a public compatibility constant for existing cleanup consumers. The
+// marker's content now carries an explicit writer kind and run id in
+// settings-ownership.ts; a pathname alone is never treated as ownership.
 export const SETTINGS_OWNED_MARKER_SUFFIX = ".maister-owned";
 
 export type MaterializeCapabilityProfileArgs = {
@@ -228,7 +234,10 @@ export async function ensureWorktreeGitExclude(
 export async function materializeCapabilityProfile(
   args: MaterializeCapabilityProfileArgs,
 ): Promise<MaterializedCapabilityProfile> {
-  const worktreePath = path.resolve(args.worktreePath);
+  const worktreePath = await assertSafeAgentMaterializationPath(
+    args.worktreePath,
+    ".maister/capabilities",
+  );
   const rootPath = capabilityMaterializationRootPath(
     worktreePath,
     args.runId,
@@ -236,7 +245,6 @@ export async function materializeCapabilityProfile(
   );
 
   assertInsideWorktree(worktreePath, rootPath);
-  await mkdir(rootPath, { recursive: true });
 
   const agent: CapabilityAgent = args.profile.executorAgent;
   // ADR-108 (M40) P4: resolve the native path-guard hook via the per-adapter seam
@@ -267,42 +275,50 @@ export async function materializeCapabilityProfile(
     reasoningEffort: args.reasoningEffort ?? args.profile.reasoningEffort,
   };
 
-  await atomicWriteJson(profilePath, materializedProfile);
-  await atomicWriteText(
-    instructionsPath,
-    `${instructionLines(materializedProfile).join("\n")}\n`,
-  );
+  const rootRelativePath = path.relative(worktreePath, rootPath);
+
+  await materializeWithAgentLease({
+    cwd: worktreePath,
+    runId: args.runId,
+    materialize: async (ownedPaths, recordIntent, ownedByRunPaths) => {
+      const rootExists = await fileExists(rootPath);
+
+      if (rootExists && !ownedByRunPaths.has(rootRelativePath)) {
+        if (ownedPaths.has(rootRelativePath)) {
+          throw new MaisterError(
+            "CONFLICT",
+            `capability profile root is leased by another run: ${rootRelativePath}`,
+          );
+        }
+        throw new MaisterError(
+          "CONFIG",
+          `refusing to overwrite user-owned capability profile root: ${rootRelativePath}`,
+        );
+      }
+
+      await recordIntent([rootPath]);
+      await mkdir(rootPath, { recursive: true });
+      await assertSafeAgentMaterializationPath(worktreePath, rootRelativePath);
+      await atomicWriteJson(profilePath, materializedProfile);
+      await atomicWriteText(
+        instructionsPath,
+        `${instructionLines(materializedProfile).join("\n")}\n`,
+      );
+
+      return [rootPath];
+    },
+  });
 
   // settings.local.json lives at the WORKTREE ROOT `.claude/` — the SDK reads
   // it as the "local" settings tier via cwd, NOT from the node-scoped dir.
   let settingsLocalPath: string | null = null;
 
   if (artifacts.settingsLocal !== null) {
-    const claudeDir = path.join(worktreePath, ".claude");
-    const target = path.join(claudeDir, "settings.local.json");
-
-    assertInsideWorktree(worktreePath, target);
-    await mkdir(claudeDir, { recursive: true });
-
-    // Preserve a pre-existing settings.local.json so cleanup can restore it.
-    // Back up ONCE: create the bak only if it does not already exist, so across
-    // multiple materialize calls in one worktree the backup keeps the FIRST
-    // (user's original) state, never a later node's config.
-    if (
-      (await fileExists(target)) &&
-      !(await fileExists(`${target}.maister-bak`))
-    ) {
-      await copyFile(target, `${target}.maister-bak`);
-    }
-
-    await atomicWriteJson(target, artifacts.settingsLocal);
-    settingsLocalPath = target;
-    // Ownership marker: reclaim only touches settings.local.json while this
-    // exists, so a restored user-original is never re-deleted (#data-loss).
-    await atomicWriteText(
-      `${target}${SETTINGS_OWNED_MARKER_SUFFIX}`,
-      args.runId,
-    );
+    settingsLocalPath = await materializeCapabilitySettings({
+      cwd: worktreePath,
+      runId: args.runId,
+      content: `${JSON.stringify(artifacts.settingsLocal, null, 2)}\n`,
+    });
 
     await ensureWorktreeGitExclude(worktreePath);
   }

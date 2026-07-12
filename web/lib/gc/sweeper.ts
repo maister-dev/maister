@@ -3,6 +3,10 @@ import "server-only";
 import pino from "pino";
 
 import {
+  runAgentMaterializationCleanupSweep,
+  type AgentMaterializationGcSummary,
+} from "@/lib/gc/agent-materialization-gc";
+import {
   runRevisionGcSweep,
   type RevisionGcSummary,
 } from "@/lib/gc/revision-gc";
@@ -20,15 +24,18 @@ const log = pino({
 export type GcSweepsResult = {
   workspace: WorkspaceGcSummary;
   revision: RevisionGcSummary;
+  agentMaterialization: AgentMaterializationGcSummary;
 };
 
 // Run both GC sweeps. Each is wrapped so one failure does not abort the other —
 // the workspace sweep and the revision sweep are independent.
 export async function runGcSweeps(): Promise<GcSweepsResult> {
-  const [workspaceSettled, revisionSettled] = await Promise.allSettled([
-    runWorkspaceGcSweep(),
-    runRevisionGcSweep(),
-  ]);
+  const [workspaceSettled, revisionSettled, materializationSettled] =
+    await Promise.allSettled([
+      runWorkspaceGcSweep(),
+      runRevisionGcSweep(),
+      runAgentMaterializationCleanupSweep(),
+    ]);
 
   if (workspaceSettled.status === "rejected") {
     log.error(
@@ -52,6 +59,17 @@ export async function runGcSweeps(): Promise<GcSweepsResult> {
       "revision GC sweep threw",
     );
   }
+  if (materializationSettled.status === "rejected") {
+    log.error(
+      {
+        err:
+          materializationSettled.reason instanceof Error
+            ? materializationSettled.reason.message
+            : String(materializationSettled.reason),
+      },
+      "agent materialization GC sweep threw",
+    );
+  }
 
   return {
     workspace:
@@ -68,6 +86,10 @@ export async function runGcSweeps(): Promise<GcSweepsResult> {
       revisionSettled.status === "fulfilled"
         ? revisionSettled.value
         : { scanned: 0, deleted: 0, skippedReferenced: 0, failed: 0 },
+    agentMaterialization:
+      materializationSettled.status === "fulfilled"
+        ? materializationSettled.value
+        : { scanned: 0, restored: 0, live: 0, failed: 0 },
   };
 }
 

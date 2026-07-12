@@ -10,12 +10,24 @@ import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 import { atomicWriteText } from "@/lib/atomic";
 import {
   AGENT_MATERIALIZATION_ROOT_RELATIVE,
-  agentMaterializationPathsForRun,
   PACKAGE_SKILLS_MANIFEST_RELATIVE,
+  agentMaterializationPathsForRun,
+  listAgentMaterializationRunIds,
   materializeWithAgentLease,
+  normalizeAgentMaterializationPath,
   releaseAgentMaterialization,
 } from "@/lib/agents/materialization-manifest";
+import {
+  agentL2SettingsMarker,
+  reclaimCapabilitySettings,
+  readSettingsOwner,
+  SETTINGS_BACKUP_RELATIVE,
+  SETTINGS_MARKER_RELATIVE,
+  SETTINGS_OPERATION_RELATIVE,
+  SETTINGS_RELATIVE,
+} from "@/lib/capabilities/settings-ownership";
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { recordTaskActivity } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { statusPorcelain } from "@/lib/worktree";
@@ -30,13 +42,15 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const SETTINGS_RELATIVE = ".claude/settings.local.json";
-const MARKER_RELATIVE = ".claude/settings.local.json.maister-owned";
-const PACKAGE_MATERIALIZATION_ROOTS = [
-  ".claude/skills",
-  ".claude/agents",
-  ".gemini/skills",
+const MARKER_RELATIVE = SETTINGS_MARKER_RELATIVE;
+const AGENT_MATERIALIZATION_MUTEX_FILES = [
+  "mutex.sqlite",
+  "mutex.sqlite-journal",
+  "mutex.sqlite-shm",
+  "mutex.sqlite-wal",
 ] as const;
+const AGENT_MATERIALIZATION_INDEX_RELATIVE =
+  `${AGENT_MATERIALIZATION_ROOT_RELATIVE}/index.json`;
 
 // ADR-090 L2 (materialize-only, ADR-041 boundary unchanged): instructed
 // deny rules for write-class tools. Best-effort instruction for well-behaved
@@ -60,6 +74,8 @@ export function agentMaterializationManifest(cwd: string): string[] {
   return [
     path.join(cwd, SETTINGS_RELATIVE),
     path.join(cwd, MARKER_RELATIVE),
+    path.join(cwd, SETTINGS_BACKUP_RELATIVE),
+    path.join(cwd, SETTINGS_OPERATION_RELATIVE),
     path.join(cwd, PACKAGE_SKILLS_MANIFEST_RELATIVE),
   ];
 }
@@ -98,17 +114,60 @@ export async function materializeAgentReadOnlySettings(
   const leased = await materializeWithAgentLease({
     cwd,
     runId,
-    materialize: async (ownedPaths, recordIntent) => {
+    materialize: async (ownedPaths, recordIntent, ownedByRunPaths) => {
+      const ownsReadOnlySettings =
+        ownedByRunPaths.has(SETTINGS_RELATIVE) &&
+        ownedByRunPaths.has(MARKER_RELATIVE);
+      const foreignSettingsLeasePaths = [
+        SETTINGS_RELATIVE,
+        SETTINGS_MARKER_RELATIVE,
+        SETTINGS_BACKUP_RELATIVE,
+        SETTINGS_OPERATION_RELATIVE,
+      ].filter(
+        (relativePath) =>
+          ownedPaths.has(relativePath) && !ownedByRunPaths.has(relativePath),
+      );
+      const settingsExists = await fileExists(settingsPath);
+      const owner = await readSettingsOwner(cwd);
+
+      if (owner === null && foreignSettingsLeasePaths.length > 0) {
+        throw new MaisterError(
+          "CONFIG",
+          `settings.local.json foreign materialization lease lacks an ownership marker: ${foreignSettingsLeasePaths.join(", ")}`,
+        );
+      }
+
       if (
-        ownedPaths.has(SETTINGS_RELATIVE) &&
-        ownedPaths.has(MARKER_RELATIVE)
+        owner !== null &&
+        (owner.kind !== "agent-l2" || owner.runId !== runId)
       ) {
+        if (ownsReadOnlySettings) {
+          throw new MaisterError(
+            "CONFIG",
+            `agent materialization lease conflicts with ${owner.kind} settings ownership`,
+          );
+        }
+        log.warn(
+          { adapterId, runId, cwd, materializer, settingsOwner: owner.kind },
+          "L2 skipped because another MAIster writer owns adapter settings",
+        );
+
+        return [];
+      }
+
+      if (owner?.kind === "agent-l2" && settingsExists) {
         await recordIntent([settingsPath, markerPath]);
 
         return [settingsPath, markerPath];
       }
 
-      if ((await fileExists(settingsPath)) && !(await fileExists(markerPath))) {
+      if (settingsExists && owner === null) {
+        if (ownsReadOnlySettings) {
+          throw new MaisterError(
+            "CONFIG",
+            `agent materialization lease is inconsistent for ${SETTINGS_RELATIVE}`,
+          );
+        }
         log.warn(
           { adapterId, runId, cwd, materializer },
           "L2 skipped because a user-owned adapter settings file is present",
@@ -118,8 +177,12 @@ export async function materializeAgentReadOnlySettings(
       }
 
       await recordIntent([settingsPath, markerPath]);
-      await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
-      await atomicWriteText(markerPath, "maister-owned\n");
+      if (!settingsExists) {
+        await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
+      }
+      if (owner === null) {
+        await atomicWriteText(markerPath, agentL2SettingsMarker(runId));
+      }
 
       return [settingsPath, markerPath];
     },
@@ -142,67 +205,112 @@ export async function materializeAgentReadOnlySettings(
   return { materialized };
 }
 
-// Removes exactly MAIster-owned materialization. The package-skill manifest is
-// session-owned; read-only settings are removed only when our marker is present.
+// Removes exactly MAIster-owned materialization. Capability settings are
+// reclaimed only when this run's manifest tracks their dedicated operation
+// artifacts; adapter-home-only paths never imply settings ownership.
 export async function restoreAgentMaterialization(
   cwd: string,
   runId: string,
 ): Promise<void> {
-  await releaseAgentMaterialization(cwd, runId);
-  log.info({ cwd, runId }, "L2 materialization restored");
+  const trackedPaths = await agentMaterializationPathsForRun(cwd, runId);
+  const tracksCapabilitySettings = [
+    SETTINGS_BACKUP_RELATIVE,
+    SETTINGS_OPERATION_RELATIVE,
+  ].some((relativePath) => trackedPaths.includes(relativePath));
+  const preservesCapabilitySettings = tracksCapabilitySettings;
+
+  if (preservesCapabilitySettings) {
+    const settings = await reclaimCapabilitySettings({ cwd, runId });
+
+    if (settings.status === "failed") {
+      throw new MaisterError(
+        "CONFIG",
+        `capability settings cleanup failed for ${runId}: ${settings.error}`,
+      );
+    }
+    if (settings.status === "foreign") {
+      throw new MaisterError(
+        "CONFLICT",
+        `capability settings cleanup is waiting for ${settings.owner.kind === "unknown" ? "an unknown MAIster writer" : `${settings.owner.kind} run ${settings.owner.runId}`}`,
+      );
+    }
+  }
+
+  await releaseAgentMaterialization(cwd, runId, {
+    preservePaths: preservesCapabilitySettings ? [SETTINGS_RELATIVE] : [],
+  });
+  log.info({ cwd, runId }, "agent materialization restored");
 }
 
-// Drops porcelain lines that name manifest-tracked paths — the watchdog
-// never attributes our own materialization as agent dirt (belt for the
-// restore above).
+function isSafeMaterializationRunId(runId: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(runId) && !runId.includes("..");
+}
+
+function materializationMetadataPaths(runIds: readonly string[]): string[] {
+  return [
+    AGENT_MATERIALIZATION_INDEX_RELATIVE,
+    ...AGENT_MATERIALIZATION_MUTEX_FILES.map(
+      (fileName) => `${AGENT_MATERIALIZATION_ROOT_RELATIVE}/${fileName}`,
+    ),
+    ...runIds.flatMap((runId) =>
+      isSafeMaterializationRunId(runId)
+        ? [`${AGENT_MATERIALIZATION_ROOT_RELATIVE}/runs/${runId}.json`]
+        : [],
+    ),
+  ];
+}
+
+function normalizeMetadataPath(value: string): string | null {
+  if (
+    value === AGENT_MATERIALIZATION_INDEX_RELATIVE ||
+    AGENT_MATERIALIZATION_MUTEX_FILES.some(
+      (fileName) =>
+        value === `${AGENT_MATERIALIZATION_ROOT_RELATIVE}/${fileName}`,
+    )
+  ) {
+    return value;
+  }
+
+  const runRecordPrefix = `${AGENT_MATERIALIZATION_ROOT_RELATIVE}/runs/`;
+
+  if (!value.startsWith(runRecordPrefix) || !value.endsWith(".json")) {
+    return null;
+  }
+
+  const runId = value.slice(runRecordPrefix.length, -".json".length);
+
+  return isSafeMaterializationRunId(runId) ? value : null;
+}
+
+function normalizeOwnedMaterializationPath(value: string): string | null {
+  try {
+    return normalizeAgentMaterializationPath(value);
+  } catch {
+    return normalizeMetadataPath(value);
+  }
+}
+
+// Drops porcelain lines only for explicitly owned artifacts. The watchdog must
+// not suppress a user-owned settings file or arbitrary data placed under the
+// materialization directory by a misbehaving repo_read agent.
 export function filterManifestPorcelain(
   porcelain: string,
-  extraRelativePaths: readonly string[] = [],
+  ownedRelativePaths: readonly string[] = [],
 ): string {
-  const ownedRelativePaths = [
-    SETTINGS_RELATIVE,
-    MARKER_RELATIVE,
-    PACKAGE_SKILLS_MANIFEST_RELATIVE,
-    AGENT_MATERIALIZATION_ROOT_RELATIVE,
-    ...extraRelativePaths.flatMap((relPath) => {
-      const normalized = normalizePackageSkillRelativePath(relPath);
+  const ownedPaths = ownedRelativePaths.flatMap((relativePath) => {
+    const normalized = normalizeOwnedMaterializationPath(relativePath);
 
-      return normalized ? [normalized] : [];
-    }),
-  ];
+    return normalized ? [normalized] : [];
+  });
 
   return porcelain
     .split("\n")
     .filter(
       (line) =>
         line.trim() !== "" &&
-        !ownedRelativePaths.some((relPath) =>
-          porcelainLineReferencesPath(line, relPath),
-        ),
+        !porcelainLineOnlyReferencesOwnedPaths(line, ownedPaths),
     )
     .join("\n");
-}
-
-function normalizePackageSkillRelativePath(value: string): string | null {
-  if (
-    value === "" ||
-    value.endsWith("/") ||
-    value.includes("\\") ||
-    path.isAbsolute(value) ||
-    value !== path.posix.normalize(value)
-  ) {
-    return null;
-  }
-
-  const parts = value.split("/");
-
-  if (parts.includes("..") || parts.includes(".")) return null;
-
-  return PACKAGE_MATERIALIZATION_ROOTS.some(
-    (root) => value.startsWith(`${root}/`) && value.length > root.length + 1,
-  )
-    ? value
-    : null;
 }
 
 function unquotePorcelainPath(value: string): string {
@@ -211,24 +319,47 @@ function unquotePorcelainPath(value: string): string {
     : value;
 }
 
-function porcelainLinePath(line: string): string {
+function porcelainLinePaths(line: string): string[] {
   const pathPart = line.length > 3 ? line.slice(3).trim() : line.trim();
   const renameIndex = pathPart.lastIndexOf(" -> ");
-  const currentPath =
-    renameIndex >= 0 ? pathPart.slice(renameIndex + 4) : pathPart;
 
-  return unquotePorcelainPath(currentPath);
+  if (renameIndex < 0) return [unquotePorcelainPath(pathPart)];
+
+  return [
+    unquotePorcelainPath(pathPart.slice(0, renameIndex)),
+    unquotePorcelainPath(pathPart.slice(renameIndex + 4)),
+  ];
 }
 
-function porcelainLineReferencesPath(line: string, relPath: string): boolean {
-  const changedPath = porcelainLinePath(line);
+function pathMatchesOwnedPath(changedPath: string, ownedPath: string): boolean {
+  return (
+    changedPath === ownedPath || changedPath.startsWith(`${ownedPath}/`)
+  );
+}
 
-  return changedPath === relPath || changedPath.startsWith(`${relPath}/`);
+// A rename touches both names. It is ignorable only when every name is
+// explicitly owned; otherwise an agent could move a user file into an owned
+// directory and make the resulting deletion invisible to L3.
+function porcelainLineOnlyReferencesOwnedPaths(
+  line: string,
+  ownedPaths: readonly string[],
+): boolean {
+  const changedPaths = porcelainLinePaths(line);
+
+  return (
+    changedPaths.length > 0 &&
+    changedPaths.every((changedPath) =>
+      ownedPaths.some((ownedPath) =>
+        pathMatchesOwnedPath(changedPath, ownedPath),
+      ),
+    )
+  );
 }
 
 export type DirtyWatchdogVerdict =
-  | { dirty: false }
-  | { dirty: true; porcelain: string };
+  | { readonly kind: "clean" }
+  | { readonly kind: "dirty"; readonly porcelain: string }
+  | { readonly kind: "indeterminate"; readonly error: string };
 
 // ADR-090 L3: verify the no-write invariant for a repo_read run against the
 // parent checkout. The launch-time clean-baseline precondition makes any
@@ -237,20 +368,42 @@ export async function checkRepoReadDirt(
   repoPath: string,
   runId: string,
 ): Promise<DirtyWatchdogVerdict> {
-  const packageMaterializationPaths = await agentMaterializationPathsForRun(
-    repoPath,
-    runId,
-  );
+  let ownedMaterializationPaths: string[];
+
+  try {
+    const recordedRunIds = await listAgentMaterializationRunIds(repoPath);
+    const materializationRunIds = [
+      ...new Set([...recordedRunIds, runId]),
+    ];
+    const pathsByRun = await Promise.all(
+      materializationRunIds.map((materializationRunId) =>
+        agentMaterializationPathsForRun(repoPath, materializationRunId),
+      ),
+    );
+    ownedMaterializationPaths = [
+      ...pathsByRun.flat(),
+      ...materializationMetadataPaths(materializationRunIds),
+    ];
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+
+    log.error(
+      { repoPath, runId, error },
+      "[FIX:repo-read-watchdog-indeterminate] materialization ownership could not be read",
+    );
+
+    return { kind: "indeterminate", error };
+  }
 
   const porcelain = await statusPorcelain({ worktreePath: repoPath });
   const meaningful = filterManifestPorcelain(
     porcelain,
-    packageMaterializationPaths,
+    ownedMaterializationPaths,
   );
 
-  if (meaningful === "") return { dirty: false };
+  if (meaningful === "") return { kind: "clean" };
 
-  return { dirty: true, porcelain: meaningful };
+  return { kind: "dirty", porcelain: meaningful };
 }
 
 // The quarantine transaction (ADR-090): agent flag + reason, plus — when the

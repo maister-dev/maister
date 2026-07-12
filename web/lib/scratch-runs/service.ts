@@ -100,6 +100,7 @@ import {
   nextScratchMessageSequence,
   userScratchMessageDraft,
 } from "@/lib/scratch-runs/messages";
+import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import {
   assertScratchCanAcceptUserMessage,
   dialogStatusAfterPromptCompletion,
@@ -1567,40 +1568,43 @@ export async function* launchLocalPackageAssistantStaged(
     ? userScratchMessageDraft({ sequence: 1, content: rawPrompt })
     : null;
 
-  // Cancel here (pre-commit) propagates out with no run row and no session —
-  // materialization is post-`precondition` (an in-stream error frame), so a
-  // failure leaves nothing to compensate (createdSessionId null).
+  // Before the run row commits, every materialization failure needs an explicit
+  // compensator: there is no durable scratch record yet for a terminal sweep.
   opts.signal?.throwIfAborted();
   yield launchProgress("materializing", executor.agent);
 
-  const materialized = await materializeCapabilityProfile({
-    runId,
-    worktreePath: workingDir,
-    executor: {
+  let materialized: Awaited<ReturnType<typeof materializeCapabilityProfile>>;
+  let authoringSkill: Awaited<ReturnType<typeof materializeFlowAuthoringSkill>>;
+
+  try {
+    materialized = await materializeCapabilityProfile({
+      runId,
+      worktreePath: workingDir,
+      executor: {
+        agent: executor.agent,
+        model: executor.model,
+        executorRefId: executor.executorRefId,
+        router: executor.router ?? null,
+      },
+      workMode: policy.workMode,
+      reasoningEffort: policy.reasoningEffort,
+      profile,
+    });
+
+    // T5.3: seed the flow-authoring skill into the session's per-adapter target
+    // (the assistant has no project catalog, so this is its only skill). The
+    // returned env (codex CODEX_HOME redirect; empty for cwd adapters) is merged
+    // into the session adapterLaunch below.
+    authoringSkill = await materializeFlowAuthoringSkill({
       agent: executor.agent,
-      model: executor.model,
-      executorRefId: executor.executorRefId,
-      router: executor.router ?? null,
-    },
-    workMode: policy.workMode,
-    reasoningEffort: policy.reasoningEffort,
-    profile,
-  });
+      worktreePath: workingDir,
+      runId,
+    });
 
-  // T5.3: seed the flow-authoring skill into the session's per-adapter target
-  // (the assistant has no project catalog, so this is its only skill). The
-  // returned env (codex CODEX_HOME redirect; empty for cwd adapters) is merged
-  // into the session adapterLaunch below.
-  const authoringSkill = await materializeFlowAuthoringSkill({
-    agent: executor.agent,
-    worktreePath: workingDir,
-    runId,
-  });
-
-  // Single launch insert: project-less runs + scratch_runs rows, snapshotting
-  // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
-  // scratch_runs enforces local_package_id-set / project_id-null.
-  await db.transaction(async (tx: Db) => {
+    // Single launch insert: project-less runs + scratch_runs rows, snapshotting
+    // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
+    // scratch_runs enforces local_package_id-set / project_id-null.
+    await db.transaction(async (tx: Db) => {
     await assertAssistantCapacityAvailableInTransaction(tx);
 
     await tx.insert(runs).values({
@@ -1669,7 +1673,14 @@ export async function* launchLocalPackageAssistantStaged(
       adapterLaunch: materialized.adapterLaunch,
       downgradeNotes: downgradeNotes(profile),
     });
-  });
+    });
+  } catch (err) {
+    await cleanupLocalPackageAssistantMaterialization({
+      workingDir,
+      runId,
+    });
+    throw err;
+  }
 
   // Tracked so a turn failure AFTER the session exists tears it down — the
   // supervisor's session-delete purges any open permission deferred (HARD RULE:
@@ -2520,6 +2531,37 @@ export async function stopScratchWorkbench(
       })
       .where(eq(runs.id, runId));
   });
+
+  if (nextDialogStatus === "Abandoned" && run.localPackageId) {
+    const packageRows = await db
+      .select({ workingDir: localPackages.workingDir })
+      .from(localPackages)
+      .where(eq(localPackages.id, run.localPackageId));
+    const localPackage = packageRows[0];
+
+    if (!localPackage) {
+      log.error(
+        { runId, localPackageId: run.localPackageId },
+        "local-package scratch stop could not resolve materialization root",
+      );
+    } else {
+      const cleanup = await cleanupLocalPackageAssistantMaterialization({
+        workingDir: localPackage.workingDir,
+        runId,
+      });
+
+      if (!cleanup.released || !cleanup.capabilityRootRemoved) {
+        log.error(
+          {
+            runId,
+            workingDir: localPackage.workingDir,
+            ...cleanup,
+          },
+          "local-package scratch stop left materialization for a later retry",
+        );
+      }
+    }
+  }
 
   return {
     runId,

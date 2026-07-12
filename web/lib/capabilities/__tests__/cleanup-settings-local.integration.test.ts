@@ -1,44 +1,10 @@
 /**
- * M14 T4.5-E (RED): cleanup must reclaim/restore the worktree enforcement file
- * `<worktree>/.claude/settings.local.json`.
- *
- * Phase 4.5 made `materializeCapabilityProfile` write the SDK "local" settings
- * tier at `<worktree>/.claude/settings.local.json` and copy any PRE-EXISTING
- * file to `<worktree>/.claude/settings.local.json.maister-bak`. T4.3 cleanup
- * reclaims only the node-scoped `.maister/capabilities/...` dir — it does NOT
- * touch the worktree settings.local.json. T4.5-E extends cleanup to reclaim it
- * and fixes a backup-once bug in materialize.
- *
- * Contract under test (DO NOT implement here — RED only):
- *  1. backup-once (materialize): the `.maister-bak` is created ONLY if it does
- *     not already exist, so across multiple materialize calls in one worktree
- *     the backup preserves the FIRST (user's original) settings.local.json,
- *     never a later node's config.
- *  2. cleanup reclaims settings.local.json (cleanup.ts):
- *     `cleanupNodeMaterialization` ALSO handles
- *     `<worktree>/.claude/settings.local.json`:
- *       - if `<...>.maister-bak` exists → restore it (copy bak → settings.local
- *         .json) and remove the bak;
- *       - else → remove `<worktree>/.claude/settings.local.json` (if present);
- *       - best-effort, NEVER throws; the node-dir removal still happens.
- *
- * Mirrors the T4.3 harness (cleanup.integration.test.ts): direct db.insert seed
- * of project/run/workspace + ONE node_attempts row with a materializationPlan,
- * real mkdtemp worktree, real on-disk files. The settings.local.json path
- * cleanup must derive from `worktreePath`:
- *   `<worktreePath>/.claude/settings.local.json` (+ `.maister-bak`).
- *
- * Expected RED:
- *  - Test 1: cleanup does not touch settings.local.json yet → the M14-created
- *    file SURVIVES (expected gone).
- *  - Test 2: cleanup does not restore from `.maister-bak` → settings.local.json
- *    still holds the M14 config, bak still present (expected restored + bak
- *    gone).
- *  - Test 3: materialize backup is UNCONDITIONAL → the 2nd materialize
- *    overwrites the bak with the 1st node's settings.local.json (expected bak
- *    == user's ORIGINAL).
- *  - Test 4: best-effort never-throw across an rm failure that also covers the
- *    settings.local.json path.
+ * Capability-settings lifecycle integration coverage. The settings protocol is
+ * run-owned: the manifest leases the capability profile and its settings
+ * artifacts; terminal restore reclaims settings exactly once before dropping
+ * those leases. An unleased marker is never sufficient authority to mutate a
+ * file. The harness seeds real Postgres rows and a real worktree so node cleanup
+ * and shared-settings cleanup exercise the production boundary together.
  */
 import type { MaterializationPlan } from "@/lib/db/schema";
 
@@ -52,7 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   PostgreSqlContainer,
@@ -74,6 +40,16 @@ import {
   materializeCapabilityProfile,
   SETTINGS_OWNED_MARKER_SUFFIX,
 } from "@/lib/capabilities/materialize";
+import {
+  materializeWithAgentLease,
+} from "@/lib/agents/materialization-manifest";
+import {
+  capabilitySettingsMarker,
+  capabilitySettingsOperation,
+  SETTINGS_BACKUP_RELATIVE,
+  SETTINGS_OPERATION_RELATIVE,
+  SETTINGS_RELATIVE,
+} from "@/lib/capabilities/settings-ownership";
 import { resolveCapabilityProfile } from "@/lib/capabilities/resolver";
 import {
   cleanupNodeMaterialization,
@@ -219,6 +195,40 @@ async function provisionNodeDir(
   return dir;
 }
 
+async function provisionCapabilityLease(
+  worktreePath: string,
+  runId: string,
+  hadSettings: boolean,
+): Promise<void> {
+  const root = capabilityMaterializationRootPath(worktreePath, runId);
+  const settingsPath = join(worktreePath, SETTINGS_RELATIVE);
+  const markerPath = settingsLocalOwnedPath(worktreePath);
+  const backupPath = join(worktreePath, SETTINGS_BACKUP_RELATIVE);
+  const operationPath = join(worktreePath, SETTINGS_OPERATION_RELATIVE);
+
+  await materializeWithAgentLease({
+    cwd: worktreePath,
+    runId,
+    materialize: async (_ownedPaths, recordIntent) => {
+      await recordIntent([
+        root,
+        settingsPath,
+        markerPath,
+        backupPath,
+        operationPath,
+      ]);
+      await mkdir(root, { recursive: true });
+
+      return [root, settingsPath, markerPath, backupPath, operationPath];
+    },
+  });
+  await mkdir(dirname(operationPath), { recursive: true });
+  await writeFile(
+    operationPath,
+    capabilitySettingsOperation(runId, hadSettings, "active"),
+  );
+}
+
 function settingsLocalPath(worktreePath: string): string {
   return join(worktreePath, ".claude", "settings.local.json");
 }
@@ -291,10 +301,15 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     const { runId, nodeAttemptId, worktreePath } = await seed();
     const dir = await provisionNodeDir(worktreePath, runId, nodeAttemptId);
 
+    await provisionCapabilityLease(worktreePath, runId, false);
+
     const slPath = settingsLocalPath(worktreePath);
 
     await writeJson(slPath, { permissions: { allow: ["Read"] } });
-    await writeFile(settingsLocalOwnedPath(worktreePath), runId);
+    await writeFile(
+      settingsLocalOwnedPath(worktreePath),
+      capabilitySettingsMarker(runId),
+    );
 
     expect(await exists(slPath)).toBe(true);
     expect(await exists(settingsLocalBakPath(worktreePath))).toBe(false);
@@ -322,13 +337,18 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     const { runId, nodeAttemptId, worktreePath } = await seed();
     const dir = await provisionNodeDir(worktreePath, runId, nodeAttemptId);
 
+    await provisionCapabilityLease(worktreePath, runId, true);
+
     const slPath = settingsLocalPath(worktreePath);
     const bakPath = settingsLocalBakPath(worktreePath);
 
     // M14's live config + the user's original captured as the backup.
     await writeJson(slPath, { user: "current-m14-config" });
     await writeJson(bakPath, { user: "ORIGINAL" });
-    await writeFile(settingsLocalOwnedPath(worktreePath), runId);
+    await writeFile(
+      settingsLocalOwnedPath(worktreePath),
+      capabilitySettingsMarker(runId),
+    );
 
     // Settings reclaim is run-level (once per run), not per-node.
     await cleanupRunMaterializations({ runId, worktreePath, db });
@@ -347,6 +367,27 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     const plan = await reloadPlan(nodeAttemptId);
 
     expect(plan!.cleanup.status).toBe("done");
+  });
+
+  it("does not bypass manifest ownership to reclaim unleased settings", async () => {
+    const { runId, nodeAttemptId, worktreePath } = await seed();
+    const dir = await provisionNodeDir(worktreePath, runId, nodeAttemptId);
+    const slPath = settingsLocalPath(worktreePath);
+    const markerPath = settingsLocalOwnedPath(worktreePath);
+
+    await writeJson(slPath, { permissions: { allow: ["Read"] } });
+    await writeFile(markerPath, capabilitySettingsMarker(runId));
+
+    const result = await cleanupRunMaterializations({
+      runId,
+      worktreePath,
+      db,
+    });
+
+    expect(result).toEqual({ cleaned: 1, failed: 0 });
+    expect(await exists(dir)).toBe(false);
+    expect(await exists(slPath)).toBe(true);
+    expect(await exists(markerPath)).toBe(true);
   });
 
   it("backup-once: the bak preserves the user's ORIGINAL across two materialize calls (Test 3)", async () => {
@@ -474,9 +515,9 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     expect(await exists(settingsLocalOwnedPath(worktreePath))).toBe(true);
 
     // First reclaim → restores the user's original, consumes bak + marker.
-    expect(await reclaimWorktreeSettings(worktreePath)).toEqual({
-      reclaimed: true,
-    });
+    expect(
+      await reclaimWorktreeSettings({ worktreePath, runId: "run-idem" }),
+    ).toEqual({ reclaimed: true, retryable: false });
     expect(JSON.parse(await readFile(slPath, "utf8"))).toEqual({
       user: "ORIGINAL",
     });
@@ -485,9 +526,9 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
 
     // Second reclaim (e.g. a later cron sweep over the same lingering run) must
     // be a NO-OP — the marker is gone, so the restored original is preserved.
-    expect(await reclaimWorktreeSettings(worktreePath)).toEqual({
-      reclaimed: false,
-    });
+    expect(
+      await reclaimWorktreeSettings({ worktreePath, runId: "run-idem" }),
+    ).toEqual({ reclaimed: false, retryable: false });
     expect(await exists(slPath)).toBe(true);
     expect(JSON.parse(await readFile(slPath, "utf8"))).toEqual({
       user: "ORIGINAL",

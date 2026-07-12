@@ -9,6 +9,7 @@ import {
   rm,
   symlink,
 } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,13 +19,18 @@ import {
   type AdapterId,
   getAdapterSupportById,
 } from "@/lib/acp-runners/adapter-support";
+import { assertAgentId, assertAgentStem } from "@/lib/agents/definition";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import {
   FLOW_AUTHORING_SKILL_FILES,
   FLOW_AUTHORING_SKILL_ID,
 } from "@/lib/flows/authoring-skill";
-import { materializeWithAgentLease } from "@/lib/agents/materialization-manifest";
+import {
+  assertSafeAgentMaterializationPath,
+  materializeWithAgentLease,
+} from "@/lib/agents/materialization-manifest";
 import { atomicWriteText } from "@/lib/atomic";
+import { MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "capabilities",
@@ -43,9 +49,54 @@ async function pathExists(p: string): Promise<boolean> {
     await lstat(p);
 
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (isCode(err, "ENOENT")) return false;
+    throw err;
   }
+}
+
+function isCode(err: unknown, code: string): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { readonly code?: unknown }).code === code
+  );
+}
+
+async function findOwnedAdapterHome(args: {
+  readonly worktreePath: string;
+  readonly capabilityRoot: string;
+  readonly homePrefix: string;
+  readonly ownedByRunPaths: ReadonlySet<string>;
+}): Promise<string | null> {
+  const candidates = [...args.ownedByRunPaths]
+    .map((relativePath) => path.join(args.worktreePath, relativePath))
+    .filter(
+      (candidate) =>
+        path.dirname(candidate) === args.capabilityRoot &&
+        path.basename(candidate).startsWith(args.homePrefix),
+    )
+    .sort();
+
+  for (const candidate of candidates) {
+    try {
+      const metadata = await lstat(candidate);
+
+      if (metadata.isSymbolicLink()) {
+        throw new MaisterError(
+          "CONFIG",
+          `refusing to reuse symlinked adapter home: ${candidate}`,
+        );
+      }
+      if (metadata.isDirectory()) return candidate;
+    } catch (err) {
+      if (isCode(err, "ENOENT")) continue;
+      throw err;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -57,19 +108,58 @@ async function pathExists(p: string): Promise<boolean> {
  */
 export async function materializeSubagentDefinition(args: {
   worktreePath: string;
+  runId: string;
   agentId: string;
   source: string;
 }): Promise<string> {
-  const targetDir = path.join(
-    path.resolve(args.worktreePath),
-    ".claude",
-    "agents",
+  const worktreePath = await assertSafeAgentMaterializationPath(
+    args.worktreePath,
+    ".claude/agents",
   );
-  const stem = args.agentId.split(":").pop() ?? args.agentId;
+  const agentId = assertAgentId(args.agentId);
+  const stem = assertAgentStem(agentId.split(":").at(-1) ?? agentId);
+  const targetDir = path.join(worktreePath, ".claude", "agents");
   const targetPath = path.join(targetDir, `${stem}.md`);
+  const targetRelativePath = `.claude/agents/${stem}.md`;
 
-  await mkdir(targetDir, { recursive: true });
-  await atomicWriteText(targetPath, args.source);
+  await materializeWithAgentLease({
+    cwd: worktreePath,
+    runId: args.runId,
+    materialize: async (ownedPaths, recordIntent, ownedByRunPaths) => {
+      const targetExists = await pathExists(targetPath);
+
+      if (targetExists && !ownedByRunPaths.has(targetRelativePath)) {
+        if (ownedPaths.has(targetRelativePath)) {
+          throw new MaisterError(
+            "CONFLICT",
+            `subagent definition is leased by another run: ${targetRelativePath}`,
+          );
+        }
+        throw new MaisterError(
+          "CONFIG",
+          `refusing to overwrite user-owned subagent definition: ${targetRelativePath}`,
+        );
+      }
+
+      await recordIntent([targetPath]);
+      await mkdir(targetDir, { recursive: true });
+      await assertSafeAgentMaterializationPath(
+        worktreePath,
+        targetRelativePath,
+      );
+
+      if (targetExists && (await lstat(targetPath)).isSymbolicLink()) {
+        throw new MaisterError(
+          "CONFIG",
+          `refusing to overwrite symlinked subagent definition: ${targetPath}`,
+        );
+      }
+
+      await atomicWriteText(targetPath, args.source);
+
+      return [targetPath];
+    },
+  });
 
   return targetPath;
 }
@@ -112,7 +202,10 @@ export async function materializeAdapterCapabilityHome(args: {
   // Injectable for tests; defaults to the host's global codex home.
   codexGlobalHome?: string;
 }): Promise<AdapterHomeResult> {
-  const worktreePath = path.resolve(args.worktreePath);
+  const worktreePath = await assertSafeAgentMaterializationPath(
+    args.worktreePath,
+    ".maister/capabilities",
+  );
   const materialization = getAdapterSupportById(args.agent)?.materialization;
 
   if (!materialization) {
@@ -182,21 +275,46 @@ export async function materializeAdapterCapabilityHome(args: {
     return { env: {}, materializedRoots: copied };
   }
 
-  const homeRoot = path.join(
-    capabilityMaterializationRootPath(
-      worktreePath,
-      args.runId,
-      args.nodeAttemptId,
-    ),
-    materialization.dir,
+  const capabilityRoot = capabilityMaterializationRootPath(
+    worktreePath,
+    args.runId,
+    args.nodeAttemptId,
   );
+  const homePrefix = `${materialization.dir}-`;
+  let homeRoot = "";
 
   await materializeWithAgentLease({
     cwd: worktreePath,
     runId: args.runId,
-    materialize: async (_ownedPaths, recordIntent) => {
+    materialize: async (_ownedPaths, recordIntent, ownedByRunPaths) => {
+      const reusableHome = await findOwnedAdapterHome({
+        worktreePath,
+        capabilityRoot,
+        homePrefix,
+        ownedByRunPaths,
+      });
+
+      homeRoot = reusableHome ?? path.join(
+        capabilityRoot,
+        `${homePrefix}${randomUUID()}`,
+      );
+
       await recordIntent([homeRoot]);
-      await mkdir(homeRoot, { recursive: true });
+
+      if (!reusableHome) {
+        try {
+          await mkdir(capabilityRoot, { recursive: true });
+          await mkdir(homeRoot);
+        } catch (err) {
+          if (isCode(err, "EEXIST")) {
+            throw new MaisterError(
+              "CONFLICT",
+              `adapter capability home already exists: ${homeRoot}`,
+            );
+          }
+          throw err;
+        }
+      }
 
       if (args.agent === "codex") {
         await composeCodexHome({

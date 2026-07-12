@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,6 +16,7 @@ import {
   materializeAdapterCapabilityHome,
   materializeSubagentDefinition,
 } from "@/lib/capabilities/adapter-home";
+import { releaseAgentMaterialization } from "@/lib/agents/materialization-manifest";
 
 let base: string;
 let work: string; // worktree
@@ -195,6 +197,68 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
     );
   });
 
+  it.each([
+    ["codex", "codex-home", "CODEX_HOME"],
+    ["opencode", "opencode-home", "OPENCODE_CONFIG_DIR"],
+    ["mimo", "mimo-home", "XDG_CONFIG_HOME"],
+  ] as const)(
+    "%s leaves an interrupted unleased legacy home untouched",
+    async (agent, legacyDirectory, envKey) => {
+      const runId = `interrupted-${agent}`;
+      const legacyHome = path.join(
+        work,
+        ".maister",
+        "capabilities",
+        runId,
+        legacyDirectory,
+      );
+      const recordPath = path.join(
+        work,
+        ".maister",
+        "agent-materialization",
+        "runs",
+        `${runId}.json`,
+      );
+
+      await mkdir(legacyHome, { recursive: true });
+      await writeFile(path.join(legacyHome, "keep.txt"), "user-content");
+      await mkdir(path.dirname(recordPath), { recursive: true });
+      await writeFile(
+        recordPath,
+        JSON.stringify({
+          version: 1,
+          runId,
+          state: "preparing",
+          paths: [
+            `.maister/capabilities/${runId}/${legacyDirectory}`,
+          ],
+        }),
+      );
+
+      const result = await materializeAdapterCapabilityHome({
+        agent,
+        worktreePath: work,
+        runId,
+        installedPaths: [pkg],
+        codexGlobalHome: codexGlobal,
+      });
+      const ownedHome = result.env[envKey];
+
+      expect(ownedHome).toContain(`${legacyDirectory}-`);
+      expect(ownedHome).not.toBe(legacyHome);
+      await expect(readFile(path.join(legacyHome, "keep.txt"), "utf8")).resolves.toBe(
+        "user-content",
+      );
+
+      await releaseAgentMaterialization(work, runId);
+
+      await expect(lstat(ownedHome)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readFile(path.join(legacyHome, "keep.txt"), "utf8")).resolves.toBe(
+        "user-content",
+      );
+    },
+  );
+
   it("gemini (cwd-dir): materializes project skills into worktree .gemini without redirecting native auth", async () => {
     const res = await materializeAdapterCapabilityHome({
       agent: "gemini",
@@ -214,17 +278,89 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
       lstat(path.join(work, ".gemini", "agents", "helper.md")),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("refuses to materialize through a symlinked adapter root", async () => {
+    const outside = path.join(base, "outside");
+
+    await mkdir(outside, { recursive: true });
+    await mkdir(path.join(work, ".claude"), { recursive: true });
+    await symlink(outside, path.join(work, ".claude", "skills"));
+
+    await expect(
+      materializeAdapterCapabilityHome({
+        agent: "claude",
+        worktreePath: work,
+        runId: "r1",
+        installedPaths: [pkg],
+      }),
+    ).rejects.toThrow(/symlinked path component/);
+    await expect(lstat(path.join(outside, "aif-plan"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
 
 describe("materializeSubagentDefinition (FR-C4)", () => {
   it("writes .claude/agents/<stem>.md from a package-qualified id", async () => {
     const target = await materializeSubagentDefinition({
       worktreePath: work,
+      runId: "subagent-run",
       agentId: "test-pkg:reviewer",
       source: "AGENT BODY",
     });
 
     expect(target).toBe(path.join(work, ".claude", "agents", "reviewer.md"));
     expect(await readFile(target, "utf8")).toBe("AGENT BODY");
+  });
+
+  it("refuses a symlinked .claude path before writing a subagent definition", async () => {
+    const outside = path.join(base, "outside");
+
+    await mkdir(outside, { recursive: true });
+    await symlink(outside, path.join(work, ".claude"));
+
+    await expect(
+      materializeSubagentDefinition({
+        worktreePath: work,
+        runId: "subagent-run",
+        agentId: "test-pkg:reviewer",
+        source: "AGENT BODY",
+      }),
+    ).rejects.toThrow(/symlinked path component/);
+    await expect(readFile(path.join(outside, "agents", "reviewer.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("records an owned definition for terminal cleanup", async () => {
+    const target = await materializeSubagentDefinition({
+      worktreePath: work,
+      runId: "subagent-run",
+      agentId: "test-pkg:reviewer",
+      source: "AGENT BODY",
+    });
+
+    await releaseAgentMaterialization(work, "subagent-run");
+
+    await expect(readFile(target, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("preserves a user-owned definition with the same stem", async () => {
+    const target = path.join(work, ".claude", "agents", "reviewer.md");
+
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "USER BODY");
+
+    await expect(
+      materializeSubagentDefinition({
+        worktreePath: work,
+        runId: "subagent-run",
+        agentId: "test-pkg:reviewer",
+        source: "AGENT BODY",
+      }),
+    ).rejects.toThrow(/user-owned subagent definition/);
+    await expect(readFile(target, "utf8")).resolves.toBe("USER BODY");
   });
 });

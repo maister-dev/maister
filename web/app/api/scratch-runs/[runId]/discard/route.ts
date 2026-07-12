@@ -10,11 +10,12 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
+import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, scratchRuns, workspaces } = schemaModule as unknown as Record<
+const { localPackages, runs, scratchRuns, workspaces } = schemaModule as unknown as Record<
   string,
   any
 >;
@@ -236,6 +237,37 @@ export async function POST(
           },
           "scratch discard marked abandoned but worktree removal failed",
         );
+      }
+    }
+
+    if (run.localPackageId) {
+      const packageRows = await db
+        .select({ workingDir: localPackages.workingDir })
+        .from(localPackages)
+        .where(eq(localPackages.id, run.localPackageId));
+      const localPackage = packageRows[0];
+
+      if (!localPackage) {
+        log.error(
+          { runId, localPackageId: run.localPackageId },
+          "local-package scratch discard could not resolve materialization root",
+        );
+      } else {
+        const cleanup = await cleanupLocalPackageAssistantMaterialization({
+          workingDir: localPackage.workingDir,
+          runId,
+        });
+
+        if (!cleanup.released || !cleanup.capabilityRootRemoved) {
+          log.error(
+            {
+              runId,
+              workingDir: localPackage.workingDir,
+              ...cleanup,
+            },
+            "local-package scratch discard left materialization for a later retry",
+          );
+        }
       }
     }
 

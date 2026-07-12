@@ -1936,6 +1936,18 @@ function finalStatusForCleanAgentExit(hasWorkspace: boolean): AgentFinalStatus {
   return hasWorkspace ? "Review" : "Done";
 }
 
+function shouldReleaseAgentMaterialization(
+  status: AgentFinalStatus,
+  workspace: "none" | "repo_read" | "worktree",
+): boolean {
+  if (status === "Review") return false;
+
+  // A worktree-backed crash is resumable through the workspace/session
+  // recovery flow. The other workspace modes have no recovery workspace and
+  // must release before their terminal cleanup can remove their cwd.
+  return status !== "Crashed" || workspace !== "worktree";
+}
+
 // The terminal choke point for agent runs (ADR-090 sequencing rule): the
 // dirty-watchdog (Phase 4) and the token revoke run BEFORE/WITHIN the
 // status-flip transaction; nothing writes the run row after the flip.
@@ -2040,68 +2052,81 @@ export async function finalizeAgentRun(
         .where(eq(workspaces.runId, runId));
     }
 
-    // ADR-090 L3 (terminal choke point): the dirty-watchdog runs WITHIN the
-    // status-flip transaction — a repo_read run that left the parent
-    // checkout dirty quarantines its agent atomically with the terminal
-    // write. The porcelain read is read-only git; a failure here rolls the
-    // flip back and the reconcile sweep re-finalizes later.
-    if (row.agentId) {
-      const wsCtx = await loadAgentWorkspaceContext(
-        tx,
-        row.agentId,
-        row.projectId,
-      );
-      // Gate on the workspace the run ACTUALLY launched with (persisted at
-      // insert from the project's effective pin), NOT the catalog index — the
-      // index projects the newest revision and can diverge from the pin,
-      // which would silently skip L3 and leak the ephemeral checkout. Fall
-      // back to the index only for rows that predate agent_workspace.
-      const ranAs = row.agentWorkspace ?? wsCtx?.workspace;
+    // Cleanup cwd derives from immutable run/workspace/project provenance, not
+    // the mutable catalog agent row. Agent deletion is ON DELETE SET NULL and
+    // runner-backed consensus drafts intentionally have no agent id; both still
+    // own L2/package materialization that must release after the terminal flip.
+    const wsCtx = row.agentId
+      ? await loadAgentWorkspaceContext(tx, row.agentId, row.projectId)
+      : null;
+    const projectRows = row.projectId
+      ? await tx
+          .select({ slug: projects.slug, repoPath: projects.repoPath })
+          .from(projects)
+          .where(eq(projects.id, row.projectId))
+      : [];
+    const project = projectRows[0] ?? null;
+    // Persisted agent_workspace is authoritative. The live agent definition is
+    // only a compatibility fallback for historical rows that predate the run
+    // snapshot and still have an agent row.
+    const ranAs = row.agentWorkspace ?? wsCtx?.workspace;
 
-      // M37 Phase 10 (ADR-099): L3 guards repo_read ONLY. A shared WRITE tree
-      // (workspace=worktree, workspace_mode='shared') is intentionally dirtied
-      // by multiple children, so the dirty-watchdog does not apply — never
-      // quarantine a shared write child.
-      if (wsCtx && ranAs === "repo_read") {
-        // workspace_ref runs leave a deterministic `-ro` checkout: when it
-        // exists, the L3 target IS that ephemeral dir (the parent checkout
-        // was never the session cwd).
-        const ephemeralPath = agentReadOnlyWorkdirPath(wsCtx.slug, runId);
-        const usedEphemeral = await pathIsDirectory(ephemeralPath);
-        const l3Target = usedEphemeral ? ephemeralPath : wsCtx.repoPath;
+    if (project && ranAs === "repo_read") {
+      // workspace_ref runs leave a deterministic `-ro` checkout: when it
+      // exists, the L3 target IS that ephemeral dir (the parent checkout was
+      // never the session cwd).
+      const ephemeralPath = agentReadOnlyWorkdirPath(project.slug, runId);
+      const usedEphemeral = await pathIsDirectory(ephemeralPath);
+      const l3Target = usedEphemeral ? ephemeralPath : project.repoPath;
+
+      if (shouldReleaseAgentMaterialization(status, ranAs)) {
+        materializationCleanup = { cwd: l3Target, workspace: ranAs };
+      }
+
+      // ADR-090 L3 is agent-specific: only a live catalog agent can be
+      // quarantined. Its read-only porcelain inspection remains inside the
+      // transaction, while all filesystem release stays post-commit.
+      if (wsCtx && row.agentId) {
         const verdict = await checkRepoReadDirt(l3Target, runId);
 
-        materializationCleanup = { cwd: l3Target, workspace: ranAs };
+        if (verdict.kind !== "clean") {
+          const violation =
+            verdict.kind === "dirty"
+              ? verdict.porcelain.slice(0, 512)
+              : `watchdog indeterminate: ${verdict.error.slice(0, 512)}`;
 
-        if (verdict.dirty) {
           await quarantineAgentInTx({
             tx,
             agentId: row.agentId,
             runId,
             projectId: row.projectId,
             taskId: row.taskId,
-            reason: `repo_read run left ${l3Target} dirty: ${verdict.porcelain.slice(0, 512)}`,
+            reason: `repo_read workspace contract failed for ${l3Target}: ${violation}`,
           });
         }
+      }
 
-        if (usedEphemeral) {
-          ephemeralCleanup = {
-            repoPath: wsCtx.repoPath,
-            worktreePath: ephemeralPath,
-          };
-        }
-      } else if (wsCtx && ranAs === "none") {
+      if (usedEphemeral) {
+        ephemeralCleanup = {
+          repoPath: project.repoPath,
+          worktreePath: ephemeralPath,
+        };
+      }
+    } else if (project && ranAs === "none") {
+      if (shouldReleaseAgentMaterialization(status, ranAs)) {
         materializationCleanup = {
-          cwd: agentWorkdirPath(wsCtx.slug, runId),
+          cwd: agentWorkdirPath(project.slug, runId),
           workspace: ranAs,
         };
-      } else if (wsCtx && ranAs === "worktree") {
-        const worktreePath =
-          workspaceRows[0]?.worktreePath ??
-          (preRows[0]?.workspaceMode === "shared" && preRows[0]?.rootRunId
-            ? sharedAgentWorktreePath(wsCtx.slug, preRows[0].rootRunId)
-            : agentWorkdirPath(wsCtx.slug, runId));
+      }
+    } else if (project && ranAs === "worktree") {
+      const worktreePath =
+        workspaceRows[0]?.worktreePath ??
+        (preRows[0]?.workspaceMode === "shared" && preRows[0]?.rootRunId
+          ? sharedAgentWorktreePath(project.slug, preRows[0].rootRunId)
+          : agentWorkdirPath(project.slug, runId));
 
+      if (shouldReleaseAgentMaterialization(status, ranAs)) {
         materializationCleanup = { cwd: worktreePath, workspace: ranAs };
       }
     }
@@ -2191,6 +2216,8 @@ export async function finalizeAgentRun(
   });
 
   if (finalizeResult !== false) {
+    let materializationReleaseFailedFor: string | null = null;
+
     if (materializationCleanup) {
       const cleanup = materializationCleanup as {
         cwd: string;
@@ -2199,6 +2226,7 @@ export async function finalizeAgentRun(
 
       await restoreAgentMaterialization(cleanup.cwd, runId).catch(
         (err: unknown) => {
+          materializationReleaseFailedFor = cleanup.cwd;
           log.error(
             {
               runId,
@@ -2231,16 +2259,23 @@ export async function finalizeAgentRun(
         worktreePath: string;
       };
 
-      await removeWorktree({
-        projectRepoPath: cleanup.repoPath,
-        worktreePath: cleanup.worktreePath,
-        force: true,
-      }).catch((err: unknown) => {
+      if (materializationReleaseFailedFor === cleanup.worktreePath) {
         log.warn(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "ephemeral checkout removal failed — next spawn recreates it",
+          { runId, worktreePath: cleanup.worktreePath },
+          "ephemeral checkout retained because materialization release must be retried",
         );
-      });
+      } else {
+        await removeWorktree({
+          projectRepoPath: cleanup.repoPath,
+          worktreePath: cleanup.worktreePath,
+          force: true,
+        }).catch((err: unknown) => {
+          log.warn(
+            { runId, err: err instanceof Error ? err.message : String(err) },
+            "ephemeral checkout removal failed — next spawn recreates it",
+          );
+        });
+      }
     }
 
     await promoteNextPending({ db: _db, pool: "agent" }).catch(

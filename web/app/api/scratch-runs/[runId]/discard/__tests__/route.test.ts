@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  localPackages as localPackagesTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
@@ -9,11 +10,13 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
+import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
 
 type Row = Record<string, unknown>;
 type Tables = {
+  local_packages: Row[];
   runs: Row[];
   scratch_runs: Row[];
   workspaces: Row[];
@@ -25,11 +28,12 @@ type FakeDb = {
 };
 
 const dbState: { tables: Tables } = {
-  tables: { runs: [], scratch_runs: [], workspaces: [] },
+  tables: { local_packages: [], runs: [], scratch_runs: [], workspaces: [] },
 };
 let transactionFailure: Error | null = null;
 
 function tableOf(t: unknown): keyof Tables {
+  if (t === localPackagesTable) return "local_packages";
   if (t === runsTable) return "runs";
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
@@ -97,6 +101,13 @@ vi.mock("@/lib/scratch-runs/service", () => ({
   assertLocalPackageAssistantActor: vi.fn(async () => undefined),
 }));
 
+vi.mock("@/lib/scratch-runs/local-package-materialization", () => ({
+  cleanupLocalPackageAssistantMaterialization: vi.fn(async () => ({
+    released: true,
+    capabilityRootRemoved: true,
+  })),
+}));
+
 function seedScratchRun(
   overrides: Partial<{
     runKind: "flow" | "scratch";
@@ -161,7 +172,12 @@ async function invokePost(runId: string) {
 }
 
 beforeEach(() => {
-  dbState.tables = { runs: [], scratch_runs: [], workspaces: [] };
+  dbState.tables = {
+    local_packages: [],
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+  };
   transactionFailure = null;
   vi.mocked(deleteSession).mockClear();
   vi.mocked(removeOwnedWorktree).mockClear();
@@ -169,6 +185,7 @@ beforeEach(() => {
   vi.mocked(worktreesRoot).mockReturnValue("/tmp/maister-worktrees");
   vi.mocked(assertLocalPackageAssistantActor).mockClear();
   vi.mocked(assertLocalPackageAssistantActor).mockResolvedValue(undefined);
+  vi.mocked(cleanupLocalPackageAssistantMaterialization).mockClear();
 });
 
 describe("POST /api/scratch-runs/[runId]/discard", () => {
@@ -298,6 +315,10 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
       workspace: false,
       supervisorSessionId: "sup-live",
     });
+    dbState.tables.local_packages.push({
+      id: "lp-1",
+      workingDir: "/local-packages/lp-1",
+    });
 
     const res = await invokePost(runId);
     const body = (await res.json()) as {
@@ -320,6 +341,10 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     expect(deleteSession).toHaveBeenCalledWith("sup-live");
     // A project-less assistant run has no workspace — nothing to remove.
     expect(removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(cleanupLocalPackageAssistantMaterialization).toHaveBeenCalledWith({
+      workingDir: "/local-packages/lp-1",
+      runId,
+    });
     expect(body).toMatchObject({
       dialogStatus: "Abandoned",
       supervisorStopped: true,

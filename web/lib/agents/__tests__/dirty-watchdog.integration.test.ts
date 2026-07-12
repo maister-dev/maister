@@ -31,12 +31,17 @@ import {
 } from "vitest";
 
 import {
+  checkRepoReadDirt,
   filterManifestPorcelain,
   materializeAgentReadOnlySettings,
 } from "@/lib/agents/dirty-watchdog";
 import { finalizeAgentRun } from "@/lib/agents/launch";
-import { AGENT_MATERIALIZATION_ROOT_RELATIVE } from "@/lib/agents/materialization-manifest";
+import {
+  AGENT_MATERIALIZATION_ROOT_RELATIVE,
+  materializeWithAgentLease,
+} from "@/lib/agents/materialization-manifest";
 import { isMaisterError } from "@/lib/errors";
+import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 
 const exec = promisify(execFile);
 
@@ -132,23 +137,88 @@ async function seedWorld(): Promise<{
 }
 
 describe("filterManifestPorcelain", () => {
-  it("drops only the manifest-tracked lines", () => {
+  it("drops only explicitly owned lines", () => {
     const porcelain = [
       "?? .claude/settings.local.json",
       "?? .claude/settings.local.json.maister-owned",
+      "?? .claude/settings.local.json.maister-bak",
+      "?? .claude/settings.local.json.maister-operation",
       " M src/index.ts",
     ].join("\n");
 
-    expect(filterManifestPorcelain(porcelain)).toBe(" M src/index.ts");
+    const ownedPaths = [
+      ".claude/settings.local.json",
+      ".claude/settings.local.json.maister-owned",
+      ".claude/settings.local.json.maister-bak",
+      ".claude/settings.local.json.maister-operation",
+    ];
+
+    expect(filterManifestPorcelain(porcelain, ownedPaths)).toBe(
+      " M src/index.ts",
+    );
     expect(
       filterManifestPorcelain(
-        "?? .claude/settings.local.json\n?? .claude/settings.local.json.maister-owned\n",
+        [
+          "?? .claude/settings.local.json",
+          "?? .claude/settings.local.json.maister-owned",
+          "?? .claude/settings.local.json.maister-bak",
+          "?? .claude/settings.local.json.maister-operation",
+          "",
+        ].join("\n"),
+        ownedPaths,
       ),
     ).toBe("");
   });
 });
 
 describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
+  it("reports an unknown agent-materialization descendant as repo_read dirt", async () => {
+    const { runId } = await seedWorld();
+    const unexpectedPath = path.join(
+      repoPath,
+      AGENT_MATERIALIZATION_ROOT_RELATIVE,
+      "unexpected-agent-write.txt",
+    );
+
+    await materializeAgentReadOnlySettings(repoPath, "claude", runId);
+    await writeFile(unexpectedPath, "not MAIster ownership metadata\n");
+
+    await expect(checkRepoReadDirt(repoPath, runId)).resolves.toMatchObject({
+      kind: "dirty",
+      porcelain: expect.stringContaining("unexpected-agent-write.txt"),
+    });
+  });
+
+  it("reports a change to a user-owned settings file as repo_read dirt", async () => {
+    const { runId } = await seedWorld();
+    const settingsPath = path.join(
+      repoPath,
+      ".claude",
+      "settings.local.json",
+    );
+
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await writeFile(settingsPath, '{"owner":"user"}\n');
+    await exec("git", ["-C", repoPath, "add", ".claude/settings.local.json"]);
+    await exec("git", [
+      "-C",
+      repoPath,
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "user.name=t",
+      "commit",
+      "-qm",
+      "track user settings",
+    ]);
+    await writeFile(settingsPath, '{"owner":"agent-overwrite"}\n');
+
+    await expect(checkRepoReadDirt(repoPath, runId)).resolves.toMatchObject({
+      kind: "dirty",
+      porcelain: expect.stringContaining(".claude/settings.local.json"),
+    });
+  });
+
   it("dirty repo_read run → quarantine + system comment + activity, relaunch refused", async () => {
     const { taskId, runId } = await seedWorld();
 
@@ -238,42 +308,101 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
     await rm(repoPath, { recursive: true, force: true });
   });
 
+  it("releases repo_read materialization from persisted run provenance after its agent row is absent", async () => {
+    const { runId } = await seedWorld();
+
+    await materializeAgentReadOnlySettings(repoPath, "claude", runId);
+    await pool.query(`UPDATE "runs" SET "agent_id" = NULL WHERE "id" = $1`, [
+      runId,
+    ]);
+
+    await expect(finalizeAgentRun(runId, "Done", { db })).resolves.toEqual({
+      finalized: true,
+      status: "Done",
+    });
+    await expect(
+      statSafe(path.join(repoPath, ".claude/settings.local.json")),
+    ).resolves.toBe(false);
+  });
+
   it("clean worktree run → Review, not Done, so promotion remains explicit", async () => {
     const { runId, projectId } = await seedWorld();
-
-    await pool.query(
-      `UPDATE "agents" SET "workspace" = 'worktree' WHERE "id" = 'watchdog-agent'`,
+    const worktreePath = await mkdtemp(
+      path.join(os.tmpdir(), "maister-review-materialization-"),
     );
-    await pool.query(
-      `INSERT INTO "workspaces" ("id", "run_id", "project_id", "branch", "worktree_path", "parent_repo_path", "base_branch", "base_commit", "target_branch")
-       VALUES ($1, $2, $3, 'maister/agent-watchdog-agent-12345678', $4, $5, 'main', 'base0000', 'main')`,
-      [randomUUID(), runId, projectId, `/tmp/${runId}-agent-wt`, repoPath],
-    );
-
-    const result = await finalizeAgentRun(runId, "Done", { db });
-
-    expect(result).toMatchObject({ finalized: true, status: "Review" });
-
-    const run = await pool.query(
-      `SELECT "status" FROM "runs" WHERE "id" = $1`,
-      [runId],
+    const materializedPath = path.join(
+      worktreePath,
+      ".claude",
+      "skills",
+      "reworkable",
     );
 
-    expect(run.rows[0].status).toBe("Review");
+    try {
+      await pool.query(
+        `UPDATE "agents" SET "workspace" = 'worktree' WHERE "id" = 'watchdog-agent'`,
+      );
+      await pool.query(
+        `INSERT INTO "workspaces" ("id", "run_id", "project_id", "branch", "worktree_path", "parent_repo_path", "base_branch", "base_commit", "target_branch")
+         VALUES ($1, $2, $3, 'maister/agent-watchdog-agent-12345678', $4, $5, 'main', 'base0000', 'main')`,
+        [randomUUID(), runId, projectId, worktreePath, repoPath],
+      );
+      await materializeWithAgentLease({
+        cwd: worktreePath,
+        runId,
+        materialize: async (_ownedPaths, recordIntent) => {
+          await recordIntent([materializedPath]);
+          await mkdir(materializedPath, { recursive: true });
 
-    const webhookRows = await pool.query(
-      `SELECT "type" FROM "webhook_events" WHERE "run_id" = $1 ORDER BY "created_at"`,
-      [runId],
-    );
+          return [materializedPath];
+        },
+      });
 
-    expect(webhookRows.rows.map((row) => row.type)).toEqual(["run.review"]);
+      const result = await finalizeAgentRun(runId, "Done", { db });
 
-    const domainRows = await pool.query(
-      `SELECT "kind" FROM "domain_events" WHERE "run_id" = $1`,
-      [runId],
-    );
+      expect(result).toMatchObject({ finalized: true, status: "Review" });
 
-    expect(domainRows.rows).toHaveLength(0);
+      const run = await pool.query(
+        `SELECT "status" FROM "runs" WHERE "id" = $1`,
+        [runId],
+      );
+
+      expect(run.rows[0].status).toBe("Review");
+      await expect(stat(materializedPath)).resolves.toBeDefined();
+      await expect(
+        readFile(
+          path.join(
+            worktreePath,
+            AGENT_MATERIALIZATION_ROOT_RELATIVE,
+            "runs",
+            `${runId}.json`,
+          ),
+          "utf8",
+        ),
+      ).resolves.toContain(runId);
+      await expect(
+        materializeWithAgentLease({
+          cwd: worktreePath,
+          runId,
+          materialize: async () => [materializedPath],
+        }),
+      ).resolves.toEqual(expect.arrayContaining([materializedPath]));
+
+      const webhookRows = await pool.query(
+        `SELECT "type" FROM "webhook_events" WHERE "run_id" = $1 ORDER BY "created_at"`,
+        [runId],
+      );
+
+      expect(webhookRows.rows.map((row) => row.type)).toEqual(["run.review"]);
+
+      const domainRows = await pool.query(
+        `SELECT "kind" FROM "domain_events" WHERE "run_id" = $1`,
+        [runId],
+      );
+
+      expect(domainRows.rows).toHaveLength(0);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
   });
 
   it("gates L3 on the run's persisted agent_workspace, not the drifted catalog index", async () => {
@@ -339,6 +468,36 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
     expect(
       await statSafe(path.join(repoPath, ".claude/settings.local.json")),
     ).toBe(false);
+  });
+
+  it("commits and quarantines when repo_read ownership metadata is corrupt", async () => {
+    const { runId } = await seedWorld();
+    const runRecord = path.join(
+      repoPath,
+      AGENT_MATERIALIZATION_ROOT_RELATIVE,
+      "runs",
+      `${runId}.json`,
+    );
+
+    await mkdir(path.dirname(runRecord), { recursive: true });
+    await writeFile(runRecord, "{not-json");
+
+    await expect(finalizeAgentRun(runId, "Done", { db })).resolves.toEqual({
+      finalized: true,
+      status: "Done",
+    });
+
+    const [run, agent] = await Promise.all([
+      pool.query(`SELECT "status" FROM "runs" WHERE "id" = $1`, [runId]),
+      pool.query(
+        `SELECT "quarantined_at", "quarantine_reason" FROM "agents" WHERE "id" = 'watchdog-agent'`,
+      ),
+    ]);
+
+    expect(run.rows[0].status).toBe("Done");
+    expect(agent.rows[0].quarantined_at).not.toBeNull();
+    expect(agent.rows[0].quarantine_reason).toMatch(/watchdog indeterminate/);
+    expect(await readFile(runRecord, "utf8")).toBe("{not-json");
   });
 
   it("commits a none-workspace terminal status when post-commit cleanup refuses a symlink", async () => {
@@ -524,6 +683,55 @@ describe("workspace_ref ephemeral checkout (ADR-090 rework, RD6)", () => {
     expect(agentRow.rows[0].quarantine_reason).toMatch(/-ro/);
     expect(agentRow.rows[0].quarantine_reason).toMatch(/stray\.txt/);
     expect(await statSafe(ephemeralPath)).toBe(false);
+  });
+
+  it("retains a failed materialization release for the ephemeral GC retry", async () => {
+    const { runId, ephemeralPath } = await seedEphemeralRun();
+    const outside = await mkdtemp(
+      path.join(os.tmpdir(), "maister-ephemeral-release-failure-"),
+    );
+    const relativePath = ".claude/skills/linked";
+    const linkedPath = path.join(ephemeralPath, relativePath);
+    const ownershipRoot = path.join(
+      ephemeralPath,
+      AGENT_MATERIALIZATION_ROOT_RELATIVE,
+    );
+    const runRecord = path.join(ownershipRoot, "runs", `${runId}.json`);
+
+    try {
+      await mkdir(path.dirname(linkedPath), { recursive: true });
+      await symlink(outside, linkedPath);
+      await mkdir(path.dirname(runRecord), { recursive: true });
+      await writeFile(
+        path.join(ownershipRoot, "index.json"),
+        JSON.stringify({ version: 1, leases: { [relativePath]: [runId] } }),
+      );
+      await writeFile(
+        runRecord,
+        JSON.stringify({
+          version: 1,
+          runId,
+          state: "active",
+          paths: [relativePath],
+        }),
+      );
+
+      await expect(finalizeAgentRun(runId, "Done", { db })).resolves.toEqual({
+        finalized: true,
+        status: "Done",
+      });
+      await expect(stat(ephemeralPath)).resolves.toBeDefined();
+      await expect(readFile(runRecord, "utf8")).resolves.toContain(runId);
+
+      await rm(linkedPath, { force: true });
+      const sweep = await runEphemeralAgentGcSweep({ db });
+
+      expect(sweep.removed).toBe(1);
+      expect(sweep.failed).toBe(0);
+      await expect(stat(ephemeralPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 

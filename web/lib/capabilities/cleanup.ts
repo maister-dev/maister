@@ -1,6 +1,6 @@
 import "server-only";
 
-import { access, copyFile, rm as fsRm } from "node:fs/promises";
+import { rm as fsRm } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -8,10 +8,14 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
 import {
-  capabilityMaterializationRootPath,
-  SETTINGS_OWNED_MARKER_SUFFIX,
-} from "@/lib/capabilities/materialize";
+  assertSafeAgentMaterializationPath,
+} from "@/lib/agents/materialization-manifest";
+import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
+import {
+  reclaimCapabilitySettings,
+} from "@/lib/capabilities/settings-ownership";
 import {
   getNodeAttemptsForRun,
   updateMaterializationCleanup,
@@ -44,13 +48,20 @@ export async function cleanupNodeMaterialization(args: {
     args.runId,
     args.nodeAttemptId,
   );
+  const relativeDir = path.relative(path.resolve(args.worktreePath), dir);
   const nowIso = new Date().toISOString();
 
   let removed = false;
   let error: string | undefined;
 
   try {
-    await (args.rm ?? fsRm)(dir, { recursive: true, force: true });
+    const safeWorktreePath = await assertSafeAgentMaterializationPath(
+      args.worktreePath,
+      relativeDir,
+    );
+    const safeDir = path.join(safeWorktreePath, relativeDir);
+
+    await (args.rm ?? fsRm)(safeDir, { recursive: true, force: true });
     removed = true;
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
@@ -82,65 +93,37 @@ export async function cleanupNodeMaterialization(args: {
   return { removed };
 }
 
-// R-DEFER: worktree-level reclaim of `<worktree>/.claude/settings.local.json`.
-// Done ONCE per run (not per node), since the file is a single shared worktree
-// resource. Gated on the `.maister-owned` ownership marker that `materialize`
-// writes next to the file: if the marker is absent, M14 does NOT own the current
-// settings.local.json (already reclaimed, or never materialized), so we never
-// touch it. This makes reclaim fully IDEMPOTENT — a repeated run-terminal or
-// cron-sweep pass can never re-remove a user's restored original (#data-loss).
-// When owned: a `.maister-bak` means the user had an original → restore it;
-// otherwise the file was M14-created → remove it. The marker is dropped either
-// way. NEVER throws.
-export async function reclaimWorktreeSettings(
-  worktreePath: string,
-  rm: typeof fsRm = fsRm,
-): Promise<{ reclaimed: boolean }> {
-  const target = path.join(worktreePath, ".claude", "settings.local.json");
-  const bak = `${target}.maister-bak`;
-  const owned = `${target}${SETTINGS_OWNED_MARKER_SUFFIX}`;
+// Restores a capability-owned settings file only when the marker names this
+// exact run. A foreign or malformed marker is a retryable ownership conflict,
+// never permission to delete another session's settings.
+export async function reclaimWorktreeSettings(args: {
+  worktreePath: string;
+  runId: string;
+}): Promise<{ reclaimed: boolean; retryable: boolean }> {
+  const result = await reclaimCapabilitySettings({
+    cwd: args.worktreePath,
+    runId: args.runId,
+  });
 
-  try {
-    if (!(await pathExists(owned))) {
-      return { reclaimed: false };
-    }
-
-    if (await pathExists(bak)) {
-      await copyFile(bak, target);
-      await rm(bak, { force: true });
-    } else {
-      await rm(target, { force: true });
-    }
-    await rm(owned, { force: true });
-
-    return { reclaimed: true };
-  } catch (err) {
-    log.error(
-      {
-        worktreePath,
-        target,
-        err: err instanceof Error ? err.message : String(err),
-      },
-      "settings.local.json reclaim failed",
-    );
-
-    return { reclaimed: false };
+  if (result.status === "reclaimed" || result.status === "absent") {
+    return { reclaimed: result.status === "reclaimed", retryable: false };
   }
+
+  log.error(
+    {
+      worktreePath: args.worktreePath,
+      runId: args.runId,
+      result,
+    },
+    "settings.local.json reclaim deferred for retry",
+  );
+
+  return { reclaimed: false, retryable: true };
 }
 
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Clean every plan-bearing node of a run, then reclaim the worktree-level
-// settings.local.json ONCE. Loops cleanupNodeMaterialization (which never
-// throws) and tallies. NEVER throws.
+// Clean every plan-bearing node and every lease-owned direct artifact of a run.
+// `restoreAgentMaterialization` is the sole owner of capability-settings
+// reclamation because it first verifies that this run owns the profile lease.
 export async function cleanupRunMaterializations(args: {
   runId: string;
   worktreePath: string;
@@ -167,7 +150,19 @@ export async function cleanupRunMaterializations(args: {
     else failed += 1;
   }
 
-  await reclaimWorktreeSettings(args.worktreePath, args.rm);
+  try {
+    await restoreAgentMaterialization(args.worktreePath, args.runId);
+  } catch (err) {
+    failed += 1;
+    log.error(
+      {
+        runId: args.runId,
+        worktreePath: args.worktreePath,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "lease-owned capability cleanup failed; record retained for retry",
+    );
+  }
 
   return { cleaned, failed };
 }
@@ -176,17 +171,28 @@ export async function cleanupRunMaterializations(args: {
 // NULL) and clean their per-node capability dirs. Broader than workspace-gc
 // loadCandidates (which only scans Abandoned/Done past their deadline) — this
 // reclaims capability dirs the moment a run reaches any terminal state. The
-// whole sweep is bulletproof: each run is cleaned inside a try/catch.
+// whole sweep is bulletproof: each run is cleaned inside a try/catch. Crashed
+// agent worktrees and scratch worktrees remain recovery-owned and are
+// deliberately skipped.
 export async function runCapabilitiesCleanupSweep(opts?: {
   db?: Db;
   rm?: typeof fsRm;
 }): Promise<{ scanned: number; cleaned: number; failed: number }> {
   const d = opts?.db ?? getDb();
 
-  const rows: Array<{ runId: string; worktreePath: string }> = await d
+  const rows: Array<{
+    runId: string;
+    worktreePath: string;
+    runKind: string;
+    status: string;
+    agentWorkspace: string | null;
+  }> = await d
     .select({
       runId: workspaces.runId,
       worktreePath: workspaces.worktreePath,
+      runKind: runs.runKind,
+      status: runs.status,
+      agentWorkspace: runs.agentWorkspace,
     })
     .from(workspaces)
     .innerJoin(runs, eq(runs.id, workspaces.runId))
@@ -202,6 +208,23 @@ export async function runCapabilitiesCleanupSweep(opts?: {
   let failed = 0;
 
   for (const row of rows) {
+    const preservesRecoveryMaterialization =
+      row.status === "Crashed" &&
+      (row.runKind === "scratch" ||
+        (row.runKind === "agent" && row.agentWorkspace === "worktree"));
+
+    if (preservesRecoveryMaterialization) {
+      log.info(
+        {
+          runId: row.runId,
+          runKind: row.runKind,
+          worktreePath: row.worktreePath,
+        },
+        "capabilities cleanup sweep skipped resumable crashed worktree",
+      );
+      continue;
+    }
+
     try {
       const res = await cleanupRunMaterializations({
         runId: row.runId,
