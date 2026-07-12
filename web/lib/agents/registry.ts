@@ -7,6 +7,7 @@ import { desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import {
+  agentDefinitionArtifactPathForStem,
   parseAgentDefinition,
   qualifyAgentId,
   type ParsedAgentDefinition,
@@ -53,7 +54,7 @@ export type AgentRegistrationSummary = {
 
 export type AgentRegistrationIssue = {
   readonly id: string;
-  readonly sourcePath: string;
+  readonly artifactPath: string;
   readonly error: string;
 };
 
@@ -68,13 +69,38 @@ async function listAgentFileStems(installedPath: string): Promise<string[]> {
     entries = await readdir(join(installedPath, "maister-agents"), {
       withFileTypes: true,
     });
-  } catch {
-    return []; // no maister-agents/ dir — a perfectly normal package
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { readonly code?: unknown }).code === "ENOENT"
+    ) {
+      return []; // no maister-agents/ dir — a perfectly normal package
+    }
+
+    log.error(
+      {
+        installedPath,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "package agent definition directory could not be enumerated",
+    );
+    throw new MaisterError(
+      "CONFIG",
+      "package agent definition directory cannot be read",
+    );
   }
 
   return entries
     .filter((e) => e.isFile() && e.name.endsWith(".md"))
     .map((e) => basename(e.name, ".md"));
+}
+
+function agentRegistrationIssueMessage(err: unknown): string {
+  if (err instanceof MaisterError) return err.message;
+
+  return "agent definition could not be read or indexed";
 }
 
 // `recommended.cron` is shape-validated by the parser (client-safe); the
@@ -206,8 +232,8 @@ export async function registerPackageAgents(
     } catch (err) {
       invalid.push({
         id,
-        sourcePath,
-        error: err instanceof Error ? err.message : String(err),
+        artifactPath: agentDefinitionArtifactPathForStem(stem),
+        error: agentRegistrationIssueMessage(err),
       });
       log.warn(
         {

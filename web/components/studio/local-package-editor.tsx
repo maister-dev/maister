@@ -64,6 +64,7 @@ import {
 import { readApiError } from "@/lib/api-error";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { isMaisterError } from "@/lib/errors-core";
+import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
 import {
   packageFilesToSubmitValue,
   upsertPackageFile,
@@ -287,6 +288,13 @@ export function LocalPackageEditor({
   const [divergenceOpen, setDivergenceOpen] = useState(false);
   const [divergenceElement, setDivergenceElement] = useState<string | null>(
     null,
+  );
+  const hasBlockingArtifactIssues = useMemo(
+    () =>
+      validatePackageArtifactContent(draftFiles).some(
+        (issue) => issue.severity === "block",
+      ),
+    [draftFiles],
   );
   const [runnerSources, setRunnerSources] = useState<AssistantRunnerSource[]>(
     [],
@@ -764,9 +772,14 @@ export function LocalPackageEditor({
               disabled={
                 readOnly ||
                 blockingValidationMessage !== null ||
+                hasBlockingArtifactIssues ||
                 (changedCount ?? 0) === 0
               }
-              title={labels.commitState}
+              title={
+                hasBlockingArtifactIssues
+                  ? labels.changeReview.invalidTitle
+                  : labels.commitState
+              }
               type="button"
               onClick={() => setReviewOpen(true)}
             >
@@ -786,8 +799,16 @@ export function LocalPackageEditor({
             <button
               className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
               data-testid="local-editor-publish"
-              disabled={readOnly || blockingValidationMessage !== null}
-              title={tPublish("openButton")}
+              disabled={
+                readOnly ||
+                blockingValidationMessage !== null ||
+                hasBlockingArtifactIssues
+              }
+              title={
+                hasBlockingArtifactIssues
+                  ? labels.changeReview.invalidTitle
+                  : tPublish("openButton")
+              }
               type="button"
               onClick={() => setPublishOpen(true)}
             >

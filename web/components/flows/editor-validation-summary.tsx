@@ -66,9 +66,10 @@ export type ArtifactContentIssuesLabels = {
 };
 
 // T4.2: inline surface for per-kind artifact CONTENT validation. Renders the
-// SAME `validateArtifactContent` output the server BLOCK-gate consumes (here:
-// BLOCK + WARN, grouped by severity). Provider-free (renders under
-// renderToStaticMarkup). The server hard-gate is authoritative; this is UX only.
+// shared file-level issue shape (BLOCK + WARN, grouped by severity); Studio's
+// lifecycle controls additionally run package-wide schema-reference checks.
+// Provider-free (renders under renderToStaticMarkup). The server hard-gate is
+// authoritative; this is UX only.
 export function ArtifactContentIssues({
   issues,
   labels,

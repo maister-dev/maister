@@ -1,7 +1,7 @@
 import type { LocalPackage } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -247,6 +247,40 @@ describe("local-packages substrate (integration)", () => {
     await deleteLocalPackage(locked.id, db);
   });
 
+  it("refuses archive and delete while a local-package assistant is still recoverable", async () => {
+    const pkg = await createLocalPackage({
+      name: "Assistant Guard Pack",
+      createdBy: userId,
+      db,
+    });
+    const runId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      runKind: "scratch",
+      taskId: null,
+      projectId: null,
+      localPackageId: pkg.id,
+      flowId: null,
+      status: "Crashed",
+      currentStepId: null,
+      flowVersion: "scratch",
+      flowRevision: "manual",
+      flowRevisionId: null,
+      createdByUserId: userId,
+      startedAt: new Date(),
+    });
+
+    await expect(setLocalPackageStatus(pkg.id, "archived", db)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    await expect(deleteLocalPackage(pkg.id, db)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect((await getLocalPackage(pkg.id, db))?.status).toBe("active");
+    expect((await stat(pkg.workingDir)).isDirectory()).toBe(true);
+  });
+
   it("two concurrent default creations keep the winner's repo (no shared-dir delete)", async () => {
     const projectId = randomUUID();
 
@@ -365,6 +399,42 @@ describe("local-packages substrate (integration)", () => {
     await gitCommitWorkingDir(pkg.workingDir, "force invalid baseline");
     await expect(assertPackageCuttable(pkg)).rejects.toMatchObject({
       code: "PRECONDITION",
+    });
+  });
+
+  it("commit gate rejects renaming away a schema still referenced by an unchanged flow", async () => {
+    const pkg = await createLocalPackage({
+      name: "Schema Rename Guard Pack",
+      createdBy: userId,
+      db,
+    });
+    const flowPath = "flows/review/flow.yaml";
+    const schemaPath = "schemas/review.json";
+
+    await writeWorkingDirFile(
+      pkg,
+      flowPath,
+      "schemaVersion: 1\nname: review\nnodes:\n  - id: collect\n    type: form\n    settings:\n      form_schema: schemas/review.json\n",
+    );
+    await writeWorkingDirFile(
+      pkg,
+      schemaPath,
+      '{"schemaVersion":1,"fields":[{"name":"approved","type":"boolean","label":"Approved"}]}\n',
+    );
+    await gitCommitWorkingDir(pkg.workingDir, "add review schema");
+
+    await rename(
+      join(pkg.workingDir, schemaPath),
+      join(pkg.workingDir, "schemas/moved.json"),
+    );
+
+    await expect(commitWorkingDir(pkg, "rename schema")).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        invalidArtifacts: expect.arrayContaining([
+          expect.objectContaining({ path: schemaPath }),
+        ]),
+      },
     });
   });
 });

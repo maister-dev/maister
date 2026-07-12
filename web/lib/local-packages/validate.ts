@@ -6,6 +6,11 @@ import { parseAgentDefinition } from "@/lib/agents/definition";
 import { validateSubagentMarkdown } from "@/lib/agents/subagent-definition";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
+  collectReferencedSchemaPaths,
+  validateFormSchemaReferences,
+  validateSchemaFiles,
+} from "@/lib/flows/artifact-validate";
+import {
   skillFrontmatterSchema,
   splitFrontmatter,
 } from "@/lib/flows/artifact-frontmatter";
@@ -14,13 +19,14 @@ import { buildAuthoredFlowGraph } from "@/lib/queries/authored-flow-graph";
 import { validatePackageManifestYaml } from "@/lib/local-packages/manifest";
 
 // (M39 ADR-105, Phase A3) The commit-time validation gate. Owner decision: we
-// ASSUME every already-committed artifact is valid, so a commit only has to
-// validate the files that THIS commit changes. `validatePackageArtifacts` is fed
-// ALL working-dir files (for cross-file checks like skill ↔ SKILL.md) but only
-// reports issues on the paths in `changedPaths`. An empty result = the commit
-// may proceed; any entry HARD-BLOCKS the commit (the route throws so nothing is
-// written). Server-side: `buildAuthoredFlowGraph`/`compileManifest` are
-// server-only.
+// ASSUME every already-committed artifact is valid, so a commit normally
+// validates only files that THIS commit changes. Cross-file schema references
+// are the deliberate exception: a changed flow, changed schema, or deleted
+// referenced schema validates the exact target document. `validatePackageArtifacts`
+// is fed ALL working-dir files (for cross-file checks like skill ↔ SKILL.md) but
+// reports only this scoped delta. An empty result = the commit may proceed; any
+// entry HARD-BLOCKS the commit (the route throws so nothing is written).
+// Server-side: `buildAuthoredFlowGraph`/`compileManifest` are server-only.
 
 export type PackageArtifactError = { path: string; message: string };
 
@@ -60,11 +66,76 @@ export function validatePackageArtifacts(input: {
     } else if (kind === "subagent") {
       validateSubagent(path, content, errors);
     }
-    // Everything else (readme/setup/script/schema/template/asset) is freeform —
+    // Everything else (readme/setup/script/template/asset) is freeform —
     // no commit-time content contract.
   }
 
+  errors.push(...validateLifecycleSchemaArtifacts(input, changed));
+
   return errors;
+}
+
+function validateLifecycleSchemaArtifacts(
+  input: {
+    readonly files: readonly PackageArtifactFile[];
+    readonly changedPaths: readonly string[];
+  },
+  changed: ReadonlySet<string>,
+): PackageArtifactError[] {
+  const allReferences = new Set<string>();
+  const changedFlowReferences = new Set<string>();
+
+  for (const file of input.files) {
+    if (!isFlowPath(file.path)) continue;
+
+    let manifest: unknown;
+
+    try {
+      manifest = parseYaml(file.content);
+    } catch {
+      continue;
+    }
+
+    if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
+      continue;
+    }
+
+    const references = collectReferencedSchemaPaths(
+      manifest as Record<string, unknown>,
+    );
+
+    for (const reference of references) {
+      allReferences.add(reference);
+      if (changed.has(file.path)) changedFlowReferences.add(reference);
+    }
+  }
+
+  const schemaCandidates = input.files.filter(
+    (file) =>
+      classifyPackageFilePath(file.path) === "schema" &&
+      changed.has(file.path),
+  );
+  const referencesToValidate = new Set<string>([
+    ...changedFlowReferences,
+    ...[...allReferences].filter((reference) => changed.has(reference)),
+  ]);
+  const issues = [
+    ...validateSchemaFiles(schemaCandidates, allReferences),
+    ...validateFormSchemaReferences(input.files, referencesToValidate),
+  ];
+  const seen = new Set<string>();
+
+  return issues
+    .filter((issue) => issue.severity === "block")
+    .filter((issue) => {
+      const key = `${issue.code}:${issue.path}:${issue.message}`;
+
+      if (seen.has(key)) return false;
+      seen.add(key);
+
+      return true;
+    })
+    .map((issue) => ({ path: issue.path, message: issue.message }));
 }
 
 // A flow manifest the canvas compiles. `classifyPackageFilePath` has no "flow"

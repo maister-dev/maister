@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { isMaisterError } from "@/lib/errors";
+import { agentDefinitionArtifactPath } from "@/lib/agents/definition";
 
 const log = pino({
   name: "api-admin-agents",
@@ -94,7 +95,7 @@ export function projectAgentSummary(
     recommended: projectRecommended(row.recommended),
     flowRef: row.flowRef ?? null,
     branchBase: row.branchBase ?? null,
-    sourcePath: row.sourcePath,
+    definitionPath: agentDefinitionArtifactPath(String(row.id)),
     enabled: row.enabled,
     quarantinedAt: row.quarantinedAt ?? null,
     quarantineReason: row.quarantineReason ?? null,

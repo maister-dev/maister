@@ -22,7 +22,7 @@ export type AgentSummaryRow = {
   mode: string;
   triggers: string[];
   riskTier: string;
-  sourcePath: string;
+  definitionPath: string;
   enabled: boolean;
   quarantinedAt: string | null;
   quarantineReason: string | null;

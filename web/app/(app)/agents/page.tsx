@@ -7,6 +7,7 @@ import { AgentsPanel } from "@/components/settings/agents-panel";
 import { getSessionUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { agents, projects } from "@/lib/db/schema";
+import { agentDefinitionArtifactPath } from "@/lib/agents/definition";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("agents");
@@ -68,7 +69,7 @@ async function loadAgentsView() {
       mode: row.mode,
       triggers: row.triggers,
       riskTier: row.riskTier,
-      sourcePath: row.sourcePath,
+      definitionPath: agentDefinitionArtifactPath(row.id),
       enabled: row.enabled,
       quarantinedAt: row.quarantinedAt
         ? new Date(row.quarantinedAt).toISOString()

@@ -38,6 +38,33 @@ description: does a thing
 the skill body
 `;
 
+const FLOW_REFERENCING_REVIEW_SCHEMA = `schemaVersion: 1
+name: review
+nodes:
+  - id: collect
+    type: form
+    settings:
+      form_schema: schemas/review.json
+`;
+
+const FLOW_REFERENCING_MISSING_SCHEMA = `schemaVersion: 1
+name: review
+nodes:
+  - id: collect
+    type: form
+    settings:
+      form_schema: schemas/missing.json
+`;
+
+const FLOW_REFERENCING_ESCAPE_SCHEMA = `schemaVersion: 1
+name: review
+nodes:
+  - id: collect
+    type: form
+    settings:
+      form_schema: ../outside.json
+`;
+
 function changedAll(files: PackageArtifactFile[]) {
   return validatePackageArtifacts({
     files,
@@ -114,6 +141,105 @@ describe("validatePackageArtifacts", () => {
 
     expect(errors.length).toBeGreaterThan(0);
     expect(errors[0]?.path).toBe("skills/foo/SKILL.md");
+  });
+
+  it("rejects malformed JSON in a changed schema artifact", () => {
+    const errors = changedAll([
+      { path: "schemas/broken.json", content: "{ not valid json" },
+    ]);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "schemas/broken.json" }),
+      ]),
+    );
+  });
+
+  it("rejects an unchanged bad schema newly referenced by a changed flow", () => {
+    const errors = validatePackageArtifacts({
+      files: [
+        {
+          path: "schemas/review.json",
+          content: JSON.stringify({ schemaVersion: 1, fields: {} }),
+        },
+        {
+          path: "flows/review/flow.yaml",
+          content: FLOW_REFERENCING_REVIEW_SCHEMA,
+        },
+      ],
+      changedPaths: ["flows/review/flow.yaml"],
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "schemas/review.json" }),
+      ]),
+    );
+  });
+
+  it("rejects a changed flow that references a missing schema", () => {
+    const errors = validatePackageArtifacts({
+      files: [
+        {
+          path: "flows/review/flow.yaml",
+          content: FLOW_REFERENCING_MISSING_SCHEMA,
+        },
+      ],
+      changedPaths: ["flows/review/flow.yaml"],
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "schemas/missing.json" }),
+      ]),
+    );
+  });
+
+  it("rejects an escaping schema reference in a changed flow", () => {
+    const errors = validatePackageArtifacts({
+      files: [
+        {
+          path: "flows/review/flow.yaml",
+          content: FLOW_REFERENCING_ESCAPE_SCHEMA,
+        },
+      ],
+      changedPaths: ["flows/review/flow.yaml"],
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "../outside.json" }),
+      ]),
+    );
+  });
+
+  it("rejects deletion of a schema still referenced by an unchanged flow", () => {
+    const errors = validatePackageArtifacts({
+      files: [
+        {
+          path: "flows/review/flow.yaml",
+          content: FLOW_REFERENCING_REVIEW_SCHEMA,
+        },
+      ],
+      changedPaths: ["schemas/review.json"],
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "schemas/review.json" }),
+      ]),
+    );
+  });
+
+  it("keeps a changed unreferenced malformed form schema advisory", () => {
+    const errors = changedAll([
+      {
+        path: "schemas/orphan.json",
+        content: JSON.stringify({ schemaVersion: 1, fields: {} }),
+      },
+    ]);
+
+    expect(errors).toEqual([]);
   });
 
   it("validates a capability subagent leniently (M39 A4)", () => {

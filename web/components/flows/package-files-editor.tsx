@@ -39,7 +39,7 @@ import {
   type PackageManifestFormLabels,
   PackageManifestForm,
 } from "@/components/studio/package-manifest-form";
-import { validateArtifactContent } from "@/lib/flows/artifact-validate";
+import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
 import {
   buildFileTree,
   classifyPackageFilePath,
@@ -91,7 +91,6 @@ export function PackageFilesEditor({
   kindLabels,
   labels,
   initialSelectedPath = null,
-  manifest = null,
   mcpCatalog = null,
   onFilesChange,
   onDirtyChange,
@@ -127,8 +126,8 @@ export function PackageFilesEditor({
   );
   const tree = useMemo(() => buildFileTree(effectiveFiles), [effectiveFiles]);
   const contentIssues = useMemo(
-    () => validateArtifactContent({ files: effectiveFiles, manifest }),
-    [effectiveFiles, manifest],
+    () => validatePackageArtifactContent(effectiveFiles),
+    [effectiveFiles],
   );
   const selectedFile = useMemo(
     () => effectiveFiles.find((file) => file.path === selectedPath) ?? null,

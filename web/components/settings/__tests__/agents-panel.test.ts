@@ -34,7 +34,7 @@ function agent(over: Partial<AgentSummaryRow> = {}): AgentSummaryRow {
     mode: "session",
     triggers: ["manual", "domain_event"],
     riskTier: "read_only",
-    sourcePath: "/cache/aif@v1.2.0/agents/triager.md",
+    definitionPath: "maister-agents/triager.md",
     enabled: true,
     quarantinedAt: null,
     quarantineReason: null,

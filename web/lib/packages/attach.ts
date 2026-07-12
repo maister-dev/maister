@@ -21,6 +21,7 @@ import { MaisterError } from "@/lib/errors";
 import {
   installFlowPlugin,
   installRevision,
+  repairPackageRootSchemaCache,
   runRevisionSetup,
   type InstallResult,
 } from "@/lib/flows";
@@ -205,6 +206,29 @@ export async function installPackageRevision(opts: {
       existing.packageStatus === "Installed" &&
       (await pathExists(join(existing.installedPath, "maister-package.yaml")))
     ) {
+      const existingManifest = manifestOf(existing);
+      const resolvedSchemaDir = join(resolved.pkgRoot, "schemas");
+
+      // Older installed package revisions predate package-root schema
+      // materialization. Re-enter each immutable member install against the
+      // freshly resolved source, then restore the package cache's shared
+      // schemas before callers reuse the package revision.
+      for (const flow of existingManifest.spec.flows) {
+        await installRevision({
+          source: join(existing.installedPath, flow.path),
+          version: existing.versionLabel.replaceAll("/", "-"),
+          flowId: flow.id,
+          resolvedRevisionOverride: existing.resolvedRevision,
+          sharedSchemaDir: resolvedSchemaDir,
+          db,
+          signal: opts.signal,
+        });
+      }
+      await repairPackageRootSchemaCache({
+        sourceSchemaDir: resolvedSchemaDir,
+        cachedSchemaDir: join(existing.installedPath, "schemas"),
+      });
+
       log.info(
         {
           id: existing.id,
@@ -278,6 +302,7 @@ export async function installPackageRevision(opts: {
         version: resolved.versionLabel,
         flowId: flow.id,
         resolvedRevisionOverride: resolved.resolvedRevision,
+        sharedSchemaDir: join(cachePath, "schemas"),
         db,
         signal: opts.signal,
       });
@@ -584,6 +609,7 @@ async function wireMembers(
         workspaceRoot: opts.workspaceRoot,
         roleRefs: opts.roleRefs,
         resolvedRevisionOverride: opts.install.resolvedRevision,
+        sharedSchemaDir: join(opts.install.installedPath, "schemas"),
         db: tx,
         signal: opts.signal,
       },

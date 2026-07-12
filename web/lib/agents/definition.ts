@@ -87,6 +87,33 @@ export function qualifyAgentId(packageName: string, stem: string): string {
   return `${packageName}:${assertAgentStem(stem)}`;
 }
 
+/** Logical package-relative path safe for browser/API DTOs. */
+export function agentDefinitionArtifactPath(agentId: string): string {
+  const id = assertAgentId(agentId);
+  const stem = assertAgentStem(id.split(":").at(-1) ?? id);
+
+  return agentDefinitionArtifactPathForStem(stem);
+}
+
+/**
+ * Creates a display-only logical path for a directory entry that failed the
+ * agent-id contract. Its filename is escaped as one path segment so invalid
+ * package input can be reported without exposing a host path or throwing.
+ */
+export function agentDefinitionArtifactPathForStem(stem: string): string {
+  // `.` is valid inside a real agent filename (`review.v2.md`), but the two
+  // traversal-shaped standalone segments must remain encoded in this
+  // display-only path for malformed directory entries.
+  const safeSegment =
+    stem === "."
+      ? "%2E"
+      : stem === ".."
+        ? "%2E%2E"
+        : encodeURIComponent(stem);
+
+  return `maister-agents/${safeSegment}.md`;
+}
+
 // Same-package flow id (a manifest `flows[].id`) — capabilityRefId-shaped.
 // Membership in the providing package's manifest is validated at registration
 // (it needs the manifest), not here; this only guards the value's shape since

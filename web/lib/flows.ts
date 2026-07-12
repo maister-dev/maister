@@ -29,11 +29,17 @@ import { fileURLToPath } from "node:url";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
-import { loadFlowManifest, type CapabilityRefIdsInput } from "@/lib/config";
+import {
+  loadFlowManifest,
+  readAndValidateFormSchemaDoc,
+  type CapabilityRefIdsInput,
+} from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
+import { collectReferencedSchemaPaths } from "@/lib/flows/artifact-validate";
+import { isRootSchemaFilePath } from "@/lib/flows/editor/reference-sources";
 import { readAuthoredFlowPackageDirectory } from "@/lib/flows/package-authoring";
 import { resolveTrust } from "@/lib/flows/trust";
 import {
@@ -115,6 +121,10 @@ export type InstallFlowPluginArgs = {
   // cache key and `runs.flow_revision` pinning stays content-addressed.
   // Validated against flowRevisionSchema shape before use.
   resolvedRevisionOverride?: string;
+  // Package installs keep schemas at the package root while each member flow
+  // executes from its own immutable revision directory. When supplied, those
+  // root schemas are copied into the member revision before it becomes usable.
+  sharedSchemaDir?: string;
   // FIXME(any): narrow this injected database seam to the operations used here.
   db?: any;
   signal?: AbortSignal;
@@ -201,6 +211,193 @@ async function pathExists(p: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;
   }
+}
+
+type SchemaDirectoryFiles = ReadonlyMap<string, Buffer>;
+
+async function readSchemaDirectoryFiles(
+  directory: string,
+): Promise<SchemaDirectoryFiles | null> {
+  let directoryMetadata: Awaited<ReturnType<typeof lstat>>;
+
+  try {
+    directoryMetadata = await lstat(directory);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+
+  if (directoryMetadata.isSymbolicLink() || !directoryMetadata.isDirectory()) {
+    throw new MaisterError(
+      "FLOW_INSTALL",
+      `package shared schema path must be a real directory: ${directory}`,
+    );
+  }
+
+  const files = new Map<string, Buffer>();
+
+  const visit = async (
+    currentDirectory: string,
+    relativeDirectory: string,
+  ): Promise<void> => {
+    const entries = await readdir(currentDirectory, { withFileTypes: true });
+
+    for (const entry of entries.sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      const relativePath = relativeDirectory
+        ? `${relativeDirectory}/${entry.name}`
+        : entry.name;
+      const absolutePath = join(currentDirectory, entry.name);
+
+      if (entry.isSymbolicLink()) {
+        throw new MaisterError(
+          "FLOW_INSTALL",
+          `package shared schema path must not contain symlinks: ${absolutePath}`,
+        );
+      }
+      if (entry.isDirectory()) {
+        await visit(absolutePath, relativePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        throw new MaisterError(
+          "FLOW_INSTALL",
+          `package shared schema path has an unsupported entry: ${absolutePath}`,
+        );
+      }
+
+      files.set(relativePath, await readFile(absolutePath));
+    }
+  };
+
+  await visit(directory, "");
+
+  return files;
+}
+
+// The package cache is content-addressed but can be interrupted or damaged on
+// disk. Rebuild only its shared schema directory from a freshly resolved source
+// before a reused package revision is handed back to callers. Source traversal
+// is the same symlink-safe reader used for member-flow materialization.
+export async function repairPackageRootSchemaCache(args: {
+  readonly sourceSchemaDir: string;
+  readonly cachedSchemaDir: string;
+}): Promise<void> {
+  const sourceFiles = await readSchemaDirectoryFiles(args.sourceSchemaDir);
+
+  // `rm` unlinks a symlink rather than following it. Removing the entire
+  // destination also prevents a corrupt cached child symlink from becoming a
+  // copy target during repair.
+  await rm(args.cachedSchemaDir, { recursive: true, force: true });
+
+  if (sourceFiles === null) return;
+
+  await mkdir(args.cachedSchemaDir, { recursive: true });
+
+  for (const [relativePath, content] of sourceFiles) {
+    const targetPath = join(args.cachedSchemaDir, relativePath);
+
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, content);
+  }
+
+  log.debug(
+    {
+      sourceSchemaDir: args.sourceSchemaDir,
+      cachedSchemaDir: args.cachedSchemaDir,
+      schemaCount: sourceFiles.size,
+    },
+    "package-root schema cache repaired",
+  );
+}
+
+async function materializePackageRootSchemas(args: {
+  readonly sharedSchemaDir?: string;
+  readonly installedPath: string;
+  readonly manifest: FlowYamlV1;
+}): Promise<void> {
+  let schemaCount = 0;
+
+  if (args.sharedSchemaDir) {
+    schemaCount = await materializeSharedPackageRootSchemas({
+      sharedSchemaDir: args.sharedSchemaDir,
+      installedPath: args.installedPath,
+    });
+  }
+  const referenceCount = await validatePackageRootSchemaReferences(args);
+
+  log.debug(
+    {
+      installedPath: args.installedPath,
+      sharedSchemaDir: args.sharedSchemaDir,
+      schemaCount,
+      referenceCount,
+    },
+    "package-root schemas materialized into flow revision",
+  );
+}
+
+async function materializeSharedPackageRootSchemas(args: {
+  readonly sharedSchemaDir: string;
+  readonly installedPath: string;
+}): Promise<number> {
+  const targetSchemaDir = join(args.installedPath, "schemas");
+  const [sourceFiles, targetFiles] = await Promise.all([
+    readSchemaDirectoryFiles(args.sharedSchemaDir),
+    readSchemaDirectoryFiles(targetSchemaDir),
+  ]);
+  const source = sourceFiles ?? new Map<string, Buffer>();
+  const target = targetFiles ?? new Map<string, Buffer>();
+
+  for (const targetPath of target.keys()) {
+    if (!source.has(targetPath)) {
+      throw new MaisterError(
+        "FLOW_INSTALL",
+        `member flow schema collides with package-root schemas: ${targetPath}`,
+      );
+    }
+  }
+
+  for (const [relativePath, sourceContent] of source) {
+    const targetContent = target.get(relativePath);
+
+    if (targetContent && !targetContent.equals(sourceContent)) {
+      throw new MaisterError(
+        "FLOW_INSTALL",
+        `member flow schema conflicts with package-root schema: ${relativePath}`,
+      );
+    }
+    if (targetContent) continue;
+
+    const targetPath = join(targetSchemaDir, relativePath);
+
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, sourceContent);
+  }
+
+  return source.size;
+}
+
+async function validatePackageRootSchemaReferences(args: {
+  readonly installedPath: string;
+  readonly manifest: FlowYamlV1;
+}): Promise<number> {
+  const references = collectReferencedSchemaPaths(
+    args.manifest as unknown as Record<string, unknown>,
+  );
+
+  for (const reference of [...references].sort()) {
+    if (reference !== reference.trim() || !isRootSchemaFilePath(reference)) {
+      throw new MaisterError(
+        "FLOW_INSTALL",
+        `package form schema reference must resolve to root schemas/<name>.json: ${reference}`,
+      );
+    }
+    await readAndValidateFormSchemaDoc(args.installedPath, reference);
+  }
+
+  return references.size;
 }
 
 function buildExecSignal(
@@ -652,10 +849,19 @@ export async function installRevision(opts: {
   // Direct installs retain FLOW_INSTALL/502 for transport failures. Upgrade is
   // a validated mutation and opts into CONFIG/422 for an incompatible manifest.
   manifestErrorCode?: "CONFIG" | "FLOW_INSTALL";
+  sharedSchemaDir?: string;
   db?: any;
   signal?: AbortSignal;
 }): Promise<InstalledRevision> {
-  const { source, version, flowId, roleRefs, signal, capabilityRefIds } = opts;
+  const {
+    source,
+    version,
+    flowId,
+    roleRefs,
+    signal,
+    capabilityRefIds,
+    sharedSchemaDir,
+  } = opts;
   const db = opts.db ?? getDb();
   const manifestErrorCode = opts.manifestErrorCode ?? "FLOW_INSTALL";
   const revisionOverride = parseRevisionOverride(
@@ -743,6 +949,11 @@ export async function installRevision(opts: {
         version,
         { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
       );
+      await materializePackageRootSchemas({
+        sharedSchemaDir,
+        installedPath: target,
+        manifest,
+      });
       const setupRow: Array<{ setupStatus: InstalledRevision["setupStatus"] }> =
         await db
           .select({ setupStatus: flowRevisions.setupStatus })
@@ -788,6 +999,11 @@ export async function installRevision(opts: {
       version,
       { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
     );
+    await materializePackageRootSchemas({
+      sharedSchemaDir,
+      installedPath: target,
+      manifest,
+    });
 
     // SECURITY (ADR-021): NEVER execute a package's setup.sh during install —
     // that would run arbitrary code from a possibly-untrusted source on the web
@@ -970,6 +1186,7 @@ async function installFlowPluginImpl(
     signal,
     capabilityRefIds: args.capabilityRefIds,
     resolvedRevisionOverride: args.resolvedRevisionOverride,
+    sharedSchemaDir: args.sharedSchemaDir,
   });
 
   const trustStatus = trustStatusOverride ?? resolveTrust(source);

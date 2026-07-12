@@ -56,13 +56,7 @@ export interface FrontmatterArtifactEditorLabels {
   subagentSchemaWarning: string;
 }
 
-type FieldValue =
-  | string
-  | string[]
-  | boolean
-  | number
-  | Record<string, unknown>
-  | undefined;
+type FieldValue = unknown;
 
 /**
  * Apply a single frontmatter field edit and re-serialize, mutating ONLY the
@@ -203,13 +197,14 @@ interface CapabilityProfileFieldProps {
   label: string;
   invalidLabel: string;
   readOnly: boolean;
-  value: Record<string, unknown> | undefined;
-  onCommit: (value: Record<string, unknown>) => void;
+  value: unknown;
+  onCommit: (value: unknown) => void;
   onClear: () => void;
 }
 
-// `capability_profile` uses the same strict schema as registration. A local
-// draft preserves intermediate text, while invalid content stays uncommitted.
+// `capability_profile` uses the same strict schema as registration. Invalid
+// intermediate input is serialized into the package draft so lifecycle gates
+// see and reject exactly what the editor shows instead of validating stale data.
 function CapabilityProfileField({
   label,
   invalidLabel,
@@ -218,9 +213,12 @@ function CapabilityProfileField({
   onCommit,
   onClear,
 }: CapabilityProfileFieldProps): ReactElement {
-  const [draft, setDraft] = useState(
-    value ? JSON.stringify(value, null, 2) : "",
-  );
+  const [draft, setDraft] = useState(() => {
+    if (value === undefined) return "";
+    if (typeof value === "string") return value;
+
+    return JSON.stringify(value, null, 2);
+  });
   const [error, setError] = useState<string | null>(null);
 
   const handle = (text: string): void => {
@@ -244,6 +242,7 @@ function CapabilityProfileField({
           .join(", ");
 
         setError(`${invalidLabel}: ${issuePaths}`);
+        onCommit(parsed);
 
         return;
       }
@@ -252,6 +251,7 @@ function CapabilityProfileField({
       onCommit(result.data);
     } catch {
       setError(invalidLabel);
+      onCommit(text);
     }
   };
 
@@ -260,6 +260,7 @@ function CapabilityProfileField({
       <span className={labelClass}>{label}</span>
       <textarea
         className={textareaClass}
+        data-testid="agent-capability-profile"
         readOnly={readOnly}
         spellCheck={false}
         value={draft}
@@ -552,7 +553,7 @@ function SkillAgentFields({
             invalidLabel={labels.agentCapabilityProfileInvalid}
             label={labels.agentCapabilityProfile}
             readOnly={readOnly}
-            value={fm.capability_profile as Record<string, unknown> | undefined}
+            value={fm.capability_profile}
             onClear={() => editField("capability_profile", undefined)}
             onCommit={(next) => editField("capability_profile", next)}
           />

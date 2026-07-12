@@ -227,6 +227,7 @@ export async function installPackage(
           workspaceRoot: args.workspaceRoot,
           roleRefs: args.roleRefs,
           resolvedRevisionOverride: resolved.resolvedRevision,
+          sharedSchemaDir: join(resolved.pkgRoot, "schemas"),
           db: args.db,
           signal: args.signal,
         },

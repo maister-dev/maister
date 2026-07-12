@@ -12,6 +12,8 @@
 
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 
+import { parse as parseYaml } from "yaml";
+
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { formSchemaSchema } from "@/lib/config.schema";
 import { isMaisterError } from "@/lib/errors-core";
@@ -21,6 +23,10 @@ import {
   splitFrontmatter,
 } from "@/lib/flows/artifact-frontmatter";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
+import {
+  isRootSchemaFilePath,
+  schemaRefToFilePath,
+} from "@/lib/flows/editor/reference-sources";
 import { shellLintFindings } from "@/lib/flows/shell-lint";
 
 // NEW content-validation codes (spec §6.1), kept disjoint from the existing
@@ -28,6 +34,8 @@ import { shellLintFindings } from "@/lib/flows/shell-lint";
 export type ArtifactContentIssueCode =
   | "schema_json_invalid"
   | "form_schema_invalid"
+  | "form_schema_missing"
+  | "form_schema_reference_invalid"
   | "frontmatter_missing"
   | "frontmatter_field_missing"
   | "rule_guardrail_shape"
@@ -112,10 +120,11 @@ function isSkillDefinitionPath(filePath: string): boolean {
 }
 
 function isAgentDefinitionPath(filePath: string): boolean {
-  return /^agents\/[^/]+\.md$/.test(filePath);
+  return /^(?:maister-agents|agents)\/[^/]+\.md$/.test(filePath);
 }
 
-// ADR-089 rework: `agents/*.md` is a PLATFORM agent definition — validate
+// ADR-089 rework: canonical `maister-agents/*.md` (and the legacy `agents/*`
+// alias accepted by imports) is a PLATFORM agent definition — validate
 // with the real registration contract (parseAgentDefinition) so a Studio
 // draft fails at save time exactly where the package install would.
 function validateAgentDefinitionFile(
@@ -168,7 +177,7 @@ function validateShellFile(
 }
 
 function validateSchemaFile(
-  file: AuthoredFlowPackageFile,
+  file: Pick<AuthoredFlowPackageFile, "path" | "content">,
   referenced: ReadonlySet<string>,
   issues: ArtifactContentIssue[],
 ): void {
@@ -210,6 +219,160 @@ function validateSchemaFile(
         : "Form schema (not referenced by the manifest)"
     } ${file.path} is invalid: ${detail}.`,
   });
+}
+
+/**
+ * Reusable schema-only validation for server lifecycle gates. Callers supply
+ * the reference set for the manifests in their validation scope, keeping
+ * unreferenced form-schema grammar advisory while malformed JSON always blocks.
+ */
+export function validateSchemaFiles(
+  files: readonly Pick<AuthoredFlowPackageFile, "path" | "content">[],
+  referenced: ReadonlySet<string>,
+): ArtifactContentIssue[] {
+  const issues: ArtifactContentIssue[] = [];
+
+  for (const file of files) {
+    if (classifyPackageFilePath(file.path) === "schema") {
+      validateSchemaFile(file, referenced, issues);
+    }
+  }
+
+  return issues;
+}
+
+function isRootSchemaReferencePath(value: string): boolean {
+  return value === value.trim() && isRootSchemaFilePath(value);
+}
+
+function validateReferencedSchemaDocument(
+  file: Pick<AuthoredFlowPackageFile, "path" | "content">,
+  issues: ArtifactContentIssue[],
+): void {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(file.content);
+  } catch {
+    issues.push({
+      severity: "block",
+      code: "schema_json_invalid",
+      path: file.path,
+      message: `Schema file ${file.path} is not valid JSON.`,
+    });
+
+    return;
+  }
+
+  const grammar = formSchemaSchema.safeParse(parsed);
+
+  if (grammar.success) return;
+
+  const detail = grammar.error.issues
+    .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+    .join("; ");
+
+  issues.push({
+    severity: "block",
+    code: "form_schema_invalid",
+    path: file.path,
+    message: `Manifest-referenced form schema ${file.path} is invalid: ${detail}.`,
+  });
+}
+
+/**
+ * Validates exact documents referenced by form/output nodes. This mirrors the
+ * runtime package contract: references resolve from the package-root
+ * `schemas/<name>.json` directory, which is copied into every member flow
+ * revision. They cannot escape, point outside that root, be missing, or hold
+ * invalid form-schema JSON.
+ */
+export function validateFormSchemaReferences(
+  files: readonly Pick<AuthoredFlowPackageFile, "path" | "content">[],
+  references: ReadonlySet<string>,
+): ArtifactContentIssue[] {
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  const issues: ArtifactContentIssue[] = [];
+
+  for (const reference of [...references].sort()) {
+    if (!isRootSchemaReferencePath(reference)) {
+      issues.push({
+        severity: "block",
+        code: "form_schema_reference_invalid",
+        path: reference,
+        message: `Form schema reference must resolve to package-root schemas/<name>.json: ${reference}.`,
+      });
+      continue;
+    }
+
+    const file = filesByPath.get(schemaRefToFilePath(reference));
+
+    if (!file) {
+      issues.push({
+        severity: "block",
+        code: "form_schema_missing",
+        path: reference,
+        message: `Manifest-referenced form schema is missing: ${reference}.`,
+      });
+      continue;
+    }
+
+    validateReferencedSchemaDocument(file, issues);
+  }
+
+  return issues;
+}
+
+function dedupeIssues(
+  issues: readonly ArtifactContentIssue[],
+): ArtifactContentIssue[] {
+  const seen = new Set<string>();
+
+  return issues.filter((issue) => {
+    const key = `${issue.severity}:${issue.code}:${issue.path}:${issue.message}`;
+
+    if (seen.has(key)) return false;
+    seen.add(key);
+
+    return true;
+  });
+}
+
+function isFlowPackageFilePath(filePath: string): boolean {
+  return filePath === "flow.yaml" || /^flows\/.+\/flow\.yaml$/.test(filePath);
+}
+
+/**
+ * Client-side package-wide validation for Studio lifecycle controls. Every
+ * current draft flow contributes its references, so a newly referenced but
+ * unchanged invalid schema blocks Commit/Publish before the server rejects it.
+ */
+export function validatePackageArtifactContent(
+  files: readonly AuthoredFlowPackageFile[],
+): ArtifactContentIssue[] {
+  const references = new Set<string>();
+
+  for (const file of files) {
+    if (!isFlowPackageFilePath(file.path)) continue;
+
+    try {
+      const manifest = parseYaml(file.content);
+
+      if (isRecord(manifest)) {
+        for (const reference of collectReferencedSchemaPaths(manifest)) {
+          references.add(reference);
+        }
+      }
+    } catch {
+      // Flow YAML parse/compile validation is server-authoritative; no inferred
+      // reference is trustworthy when the draft itself cannot be parsed.
+    }
+  }
+
+  return dedupeIssues([
+    ...validateArtifactContent({ files, manifest: null }),
+    ...validateFormSchemaReferences(files, references),
+  ]);
 }
 
 function validateFrontmatterFile(
@@ -304,7 +467,7 @@ function pushUnknownFrontmatterKeys(
 // node's `settings.form_schema` and `output.result.schema`. Paths are normalized
 // (leading `./` stripped) so they
 // match the persisted `files[].path` (e.g. `schemas/review.json`).
-function collectReferencedSchemaPaths(
+export function collectReferencedSchemaPaths(
   manifest: Record<string, unknown>,
 ): Set<string> {
   const refs = new Set<string>();
@@ -340,7 +503,10 @@ function addSchemaRefsFromList(value: unknown, refs: Set<string>): void {
 function addRef(value: unknown, refs: Set<string>): void {
   if (typeof value !== "string") return;
 
-  const normalized = value.replace(/^\.\//, "");
+  // Keep whitespace intact here: the runtime treats it as part of the path,
+  // so the lifecycle validator must reject it rather than silently accepting a
+  // UI-normalized variant.
+  const normalized = value.startsWith("./") ? value.slice(2) : value;
 
   if (normalized.length > 0) refs.add(normalized);
 }

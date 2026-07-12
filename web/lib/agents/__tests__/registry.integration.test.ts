@@ -5,7 +5,7 @@
 // package_installs rows on a real Postgres, and assert the migration 0068
 // FK fan-out (the destructive re-key wipe is safe for run history).
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -368,6 +368,61 @@ describe("registerPackageAgents", () => {
     expect(await agentRow("aif:badcron")).toBeUndefined();
   });
 
+  it("reports an invalid definition filename without aborting package registration", async () => {
+    const installId = await installPackageFixture({
+      name: "aif",
+      versionLabel: "v1.0.0",
+      agents: { "bad name": definitionMd() },
+    });
+
+    await expect(registerPackageAgents(installId, db)).resolves.toMatchObject({
+      registered: [],
+      invalid: [
+        {
+          id: "aif:bad name",
+          artifactPath: "maister-agents/bad%20name.md",
+        },
+      ],
+    });
+    expect(await agentRow("aif:bad name")).toBeUndefined();
+  });
+
+  it("sanitizes an unreadable definition failure in the API-safe invalid summary", async () => {
+    const installId = await installPackageFixture({
+      name: "sealed",
+      versionLabel: "v1.0.0",
+      agents: { unreadable: definitionMd() },
+    });
+    const install = await pool.query(
+      `SELECT "installed_path" FROM "package_installs" WHERE "id" = $1`,
+      [installId],
+    );
+    const installedPath = install.rows[0].installed_path as string;
+    const sourcePath = path.join(
+      installedPath,
+      "maister-agents",
+      "unreadable.md",
+    );
+
+    await chmod(sourcePath, 0o000);
+
+    try {
+      const summary = await registerPackageAgents(installId, db);
+
+      expect(summary.invalid).toEqual([
+        {
+          id: "sealed:unreadable",
+          artifactPath: "maister-agents/unreadable.md",
+          error: "agent definition could not be read or indexed",
+        },
+      ]);
+      expect(summary.invalid[0]?.error).not.toContain(installedPath);
+      expect(await agentRow("sealed:unreadable")).toBeUndefined();
+    } finally {
+      await chmod(sourcePath, 0o644);
+    }
+  });
+
   it("refuses unknown and not-Installed package installs with PRECONDITION", async () => {
     await expect(registerPackageAgents(randomUUID(), db)).rejects.toSatisfy(
       (err: unknown) => isMaisterError(err) && err.code === "PRECONDITION",
@@ -448,10 +503,40 @@ describe("resyncAgents", () => {
     );
 
     expect(summary.invalid).toEqual([
-      expect.objectContaining({ id: "guarded:watcher", sourcePath }),
+      expect.objectContaining({
+        id: "guarded:watcher",
+        artifactPath: "maister-agents/watcher.md",
+      }),
     ]);
     expect(summary.missing).not.toContain("guarded:watcher");
     expect(after.rows[0]).toEqual(before.rows[0]);
+  });
+
+  it("fails loudly without disabling rows when an installed agent directory is unreadable", async () => {
+    const installId = await installPackageFixture({
+      name: "unreadable-root",
+      versionLabel: "v1.0.0",
+      agents: { watcher: definitionMd() },
+    });
+
+    await registerPackageAgents(installId, db);
+    const install = await pool.query(
+      `SELECT "installed_path" FROM "package_installs" WHERE "id" = $1`,
+      [installId],
+    );
+    const installedPath = install.rows[0].installed_path as string;
+    const agentDirectory = path.join(installedPath, "maister-agents");
+
+    await rm(agentDirectory, { recursive: true, force: true });
+    await writeFile(agentDirectory, "not a directory", "utf8");
+
+    await expect(resyncAgents(db)).rejects.toSatisfy(
+      (err: unknown) =>
+        isMaisterError(err) &&
+        err.code === "CONFIG" &&
+        err.message === "package agent definition directory cannot be read",
+    );
+    expect((await agentRow("unreadable-root:watcher"))?.enabled).toBe(true);
   });
 
   it("projects the newest Installed install per package name and disables vanished agents", async () => {

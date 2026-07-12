@@ -11,7 +11,7 @@ import {
   gitSetRemote,
 } from "./git";
 import { acquirePublishLock, releasePublishLock } from "./lock";
-import { getLocalPackage } from "./service";
+import { assertPackageCuttable, getLocalPackage } from "./service";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -197,6 +197,8 @@ export async function publishLocalPackage(
   if (!pkg || pkg.status !== "active") {
     throw new MaisterError("PRECONDITION", "local package not found");
   }
+
+  await assertPackageCuttable(pkg);
 
   // Resolve the target ONLY from the registered allow-list (server-state) — a
   // body-supplied raw URL is never accepted, and (ADR-132) only kind:git

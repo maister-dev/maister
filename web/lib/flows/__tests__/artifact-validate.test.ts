@@ -2,7 +2,10 @@ import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 
 import { describe, expect, it } from "vitest";
 
-import { validateArtifactContent } from "@/lib/flows/artifact-validate";
+import {
+  validateArtifactContent,
+  validatePackageArtifactContent,
+} from "@/lib/flows/artifact-validate";
 
 // Builds the `files[]` shape the editor persists (kind is re-inferred by the
 // validator from path, so the stored `kind` here is irrelevant filler).
@@ -177,6 +180,33 @@ body`,
       code: "frontmatter_field_missing",
       severity: "block",
       path: "agents/reviewer.md",
+    });
+  });
+
+  it("BLOCK invalid canonical maister-agents definitions", () => {
+    const issues = validateArtifactContent({
+      files: [
+        file(
+          "maister-agents/reviewer.md",
+          `---
+name: reviewer
+description: Reviews code.
+workspace: repo_read
+mode: session
+triggers: [manual]
+risk_tier: read_only
+capability_profile: "{broken"
+---
+body`,
+        ),
+      ],
+      manifest: null,
+    });
+
+    expect(codes(issues)).toContainEqual({
+      code: "frontmatter_field_missing",
+      severity: "block",
+      path: "maister-agents/reviewer.md",
     });
   });
 
@@ -415,5 +445,102 @@ body`,
       severity: "warn",
       path: "setup.sh",
     });
+  });
+});
+
+describe("validatePackageArtifactContent", () => {
+  it("blocks a current draft flow that references an unchanged invalid schema", () => {
+    const issues = validatePackageArtifactContent([
+      file(
+        "flows/review/flow.yaml",
+        `schemaVersion: 1
+name: review
+nodes:
+  - id: collect
+    type: form
+    settings:
+      form_schema: schemas/review.json
+`,
+      ),
+      file("schemas/review.json", BAD_GRAMMAR_SCHEMA),
+    ]);
+
+    expect(codes(issues)).toContainEqual({
+      code: "form_schema_invalid",
+      severity: "block",
+      path: "schemas/review.json",
+    });
+  });
+
+  it("blocks missing and escaping current draft schema references", () => {
+    const issues = validatePackageArtifactContent([
+      file(
+        "flows/review/flow.yaml",
+        `schemaVersion: 1
+name: review
+nodes:
+  - id: collect
+    type: form
+    settings:
+      form_schema: ../outside.json
+  - id: publish
+    type: form
+    settings:
+      form_schema: schemas/missing.json
+`,
+      ),
+    ]);
+
+    expect(codes(issues)).toEqual(
+      expect.arrayContaining([
+        {
+          code: "form_schema_reference_invalid",
+          severity: "block",
+          path: "../outside.json",
+        },
+        {
+          code: "form_schema_missing",
+          severity: "block",
+          path: "schemas/missing.json",
+        },
+      ]),
+    );
+  });
+
+  it("blocks confined schema references outside the package-root schemas directory", () => {
+    const issues = validatePackageArtifactContent([
+      file(
+        "flows/review/flow.yaml",
+        `schemaVersion: 1
+name: review
+nodes:
+  - id: readme
+    type: form
+    settings:
+      form_schema: README.json
+  - id: nested
+    type: form
+    settings:
+      form_schema: schemas/nested/review.json
+`,
+      ),
+      file("README.json", VALID_FORM_SCHEMA),
+      file("schemas/nested/review.json", VALID_FORM_SCHEMA),
+    ]);
+
+    expect(codes(issues)).toEqual(
+      expect.arrayContaining([
+        {
+          code: "form_schema_reference_invalid",
+          severity: "block",
+          path: "README.json",
+        },
+        {
+          code: "form_schema_reference_invalid",
+          severity: "block",
+          path: "schemas/nested/review.json",
+        },
+      ]),
+    );
   });
 });

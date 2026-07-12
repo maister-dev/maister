@@ -96,7 +96,7 @@ afterAll(async () => {
   await closeDb();
   await pool?.end();
   await container?.stop();
-  await rm(homeDir, { recursive: true, force: true });
+  if (homeDir) await rm(homeDir, { recursive: true, force: true });
 });
 
 async function makeBareRemote(): Promise<{
@@ -152,6 +152,41 @@ async function lpRow(id: string): Promise<any> {
 }
 
 describe("PR-to-source publish (integration)", () => {
+  it("refuses to publish a committed invalid package baseline", async () => {
+    const { sourceId } = await makeBareRemote();
+    const pkg = await makePackage("pub-invalid");
+
+    await writeWorkingDirFile(
+      pkg,
+      "maister-agents/reviewer.md",
+      `---
+name: reviewer
+description: Reviews code
+workspace: repo_read
+mode: session
+triggers: [manual]
+risk_tier: read_only
+capability_profile: "{broken"
+---
+body
+`,
+    );
+    await gitCommitWorkingDir(pkg.workingDir, "invalid baseline");
+
+    await expect(
+      publishLocalPackage(pkg.id, {
+        targetSourceId: sourceId,
+        branchName: `maister/${pkg.slug}`,
+        db,
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        isMaisterError(err) &&
+        err.code === "PRECONDITION" &&
+        /failed validation/.test(err.message),
+    );
+  });
+
   it("rejects a targetSourceId that is not a registered source with CONFLICT", async () => {
     const pkg = await makePackage("pub-reject");
 

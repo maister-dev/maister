@@ -2,8 +2,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { capabilityProfileSchema } from "@/lib/agents/definition";
-
 import {
   FrontmatterArtifactEditor,
   applyFrontmatterFieldEdit,
@@ -191,12 +189,6 @@ describe("applyFrontmatterFieldEdit", () => {
         events: ["run.done"],
       });
     }
-  });
-
-  it("rejects the legacy singular capability_profile.mcp key", () => {
-    expect(capabilityProfileSchema.safeParse({ mcp: ["linear"] }).success).toBe(
-      false,
-    );
   });
 
   it("round-trips a valid capability_profile object edit", () => {

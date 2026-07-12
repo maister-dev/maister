@@ -226,6 +226,50 @@ describe("installFlowPlugin (integration)", () => {
     }
   });
 
+  it("rejects a non-root form schema reference on the direct install path", async () => {
+    const directFlowDir = join(fixturesDir, "direct-schema-root-only");
+
+    await mkdir(directFlowDir, { recursive: true });
+    await writeFile(
+      join(directFlowDir, "flow.yaml"),
+      `schemaVersion: 1
+name: Direct Schema Root Only
+steps:
+  - id: review
+    type: human
+    form_schema: README.json
+  - id: finish
+    type: cli
+    command: "echo done"
+`,
+      "utf8",
+    );
+    await writeFile(
+      join(directFlowDir, "README.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        fields: [{ name: "approved", type: "boolean" }],
+      }),
+      "utf8",
+    );
+
+    await expect(
+      installFlowPlugin({
+        source: directFlowDir,
+        version: "local-dev",
+        projectId,
+        projectSlug: "demo-app",
+        flowId: "direct-schema-root-only",
+        workspaceRoot,
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "FLOW_INSTALL",
+      message:
+        "package form schema reference must resolve to root schemas/<name>.json: README.json",
+    });
+  });
+
   it("rejects a non-existent tag with FLOW_INSTALL carrying git stderr", async () => {
     try {
       await installFlowPlugin({

@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +20,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { readAndValidateFormSchemaDoc } from "@/lib/config";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
@@ -193,6 +201,150 @@ describe("package attach lifecycle (integration)", () => {
 
     installV2 = second.id;
     expect(installV2).not.toBe(installV1);
+  });
+
+  it("copies package-root schemas into every member revision and heals a reused revision", async () => {
+    const packageRoot = await mkdtemp(join(tmpdir(), "attach-int-schemas-"));
+    const flowIds = ["schema-review", "schema-publish"];
+
+    try {
+      await buildPackage(packageRoot, flowIds);
+      await mkdir(join(packageRoot, "schemas"), { recursive: true });
+      const schemaContent = JSON.stringify({
+        schemaVersion: 1,
+        fields: [{ name: "summary", type: "string", required: true }],
+      });
+      await writeFile(
+        join(packageRoot, "schemas/review.json"),
+        schemaContent,
+      );
+
+      for (const flowId of flowIds) {
+        await writeFile(
+          join(packageRoot, `flows/${flowId}/flow.yaml`),
+          `schemaVersion: 1
+name: ${flowId}
+steps:
+  - id: collect
+    type: human
+    form_schema: ./schemas/review.json
+`,
+        );
+      }
+
+      const installed = await installPackageRevision({
+        source: packageRoot,
+        version: "attpkg/schema-v1.0.0",
+        trustStatus: "trusted_by_policy",
+        db,
+      });
+      const revisions = (await db
+        .select()
+        .from(schema.flowRevisions)
+        .where(eq(schema.flowRevisions.resolvedRevision, installed.resolvedRevision))) as Array<{
+        flowRefId: string;
+        installedPath: string;
+      }>;
+      const memberRevisions = revisions.filter((revision) =>
+        flowIds.includes(revision.flowRefId),
+      );
+      const revisionToHeal = memberRevisions[0];
+
+      expect(memberRevisions).toHaveLength(flowIds.length);
+      if (!revisionToHeal) {
+        throw new Error("schema package did not install a member flow revision");
+      }
+      const [cachedPackage] = (await db
+        .select({ installedPath: schema.packageInstalls.installedPath })
+        .from(schema.packageInstalls)
+        .where(eq(schema.packageInstalls.id, installed.id))) as Array<{
+        installedPath: string;
+      }>;
+
+      if (!cachedPackage) {
+        throw new Error("schema package cache row is missing");
+      }
+      for (const revision of memberRevisions) {
+        await expect(
+          readAndValidateFormSchemaDoc(
+            revision.installedPath,
+            "./schemas/review.json",
+          ),
+        ).resolves.toMatchObject({ schemaVersion: 1 });
+      }
+
+      await rm(
+        join(revisionToHeal.installedPath, "schemas/review.json"),
+        { force: true },
+      );
+      await writeFile(
+        join(cachedPackage.installedPath, "schemas/review.json"),
+        JSON.stringify({ schemaVersion: 1, fields: [] }),
+      );
+
+      await expect(
+        installPackageRevision({
+          source: packageRoot,
+          version: "attpkg/schema-v1.0.0",
+          db,
+        }),
+      ).resolves.toMatchObject({ id: installed.id, reused: true });
+      await expect(
+        stat(join(revisionToHeal.installedPath, "schemas/review.json")),
+      ).resolves.toBeDefined();
+      await expect(
+        readFile(
+          join(cachedPackage.installedPath, "schemas/review.json"),
+          "utf8",
+        ),
+      ).resolves.toBe(schemaContent);
+      await expect(
+        readAndValidateFormSchemaDoc(
+          revisionToHeal.installedPath,
+          "./schemas/review.json",
+        ),
+      ).resolves.toMatchObject({
+        fields: [{ name: "summary", type: "string", required: true }],
+      });
+    } finally {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a package member that bypasses the root schema reference contract", async () => {
+    const packageRoot = await mkdtemp(join(tmpdir(), "attach-int-nonroot-"));
+
+    try {
+      await buildPackage(packageRoot, ["nonroot-schema"]);
+      await writeFile(
+        join(packageRoot, "flows/nonroot-schema/flow.yaml"),
+        `schemaVersion: 1
+name: nonroot-schema
+steps:
+  - id: collect
+    type: human
+    form_schema: README.json
+`,
+      );
+      await writeFile(
+        join(packageRoot, "flows/nonroot-schema/README.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          fields: [{ name: "summary", type: "string", required: true }],
+        }),
+      );
+
+      await expect(
+        installPackageRevision({
+          source: packageRoot,
+          version: "attpkg/nonroot-v1.0.0",
+          trustStatus: "trusted_by_policy",
+          db,
+        }),
+      ).rejects.toMatchObject({ code: "FLOW_INSTALL" });
+    } finally {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
   });
 
   it("attachPackage: ONE tx writes flows + imports + ingestion + attachment (SET)", async () => {

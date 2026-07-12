@@ -66,6 +66,11 @@ function resolveDb(db?: Db): Db {
 }
 
 const lp = schema.localPackages;
+const TERMINAL_LOCAL_ASSISTANT_RUN_STATUSES = new Set([
+  "Done",
+  "Failed",
+  "Abandoned",
+]);
 
 const KIND_DIRS = [
   "flows",
@@ -428,7 +433,13 @@ export async function setLocalPackageStatus(
   status: "active" | "archived",
   db?: Db,
 ): Promise<LocalPackage | null> {
-  const rows = await resolveDb(db)
+  const database = resolveDb(db);
+
+  if (status === "archived") {
+    await assertNoLiveLocalPackageAssistants(id, database);
+  }
+
+  const rows = await database
     .update(lp)
     .set({ status, updatedAt: new Date() })
     .where(eq(lp.id, id))
@@ -477,6 +488,8 @@ export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
     );
   }
 
+  await assertNoLiveLocalPackageAssistants(id, database);
+
   const deleted = await database
     .delete(lp)
     .where(
@@ -509,6 +522,26 @@ export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
     ),
   );
   log.info({ id, slug: row.slug }, "deleted local package + working dir");
+}
+
+async function assertNoLiveLocalPackageAssistants(
+  localPackageId: string,
+  db: Db,
+): Promise<void> {
+  const rows = await db
+    .select({ id: schema.runs.id, status: schema.runs.status })
+    .from(schema.runs)
+    .where(eq(schema.runs.localPackageId, localPackageId));
+  const live = rows.find(
+    (row) => !TERMINAL_LOCAL_ASSISTANT_RUN_STATUSES.has(row.status),
+  );
+
+  if (live) {
+    throw new MaisterError(
+      "CONFLICT",
+      `local package has a recoverable or live assistant run (${live.id}, ${live.status})`,
+    );
+  }
 }
 
 export async function listFiles(
@@ -736,7 +769,13 @@ export async function assertPackageCommittable(
 ): Promise<void> {
   await ensureLocalPackageGitExclude(pkg.workingDir);
   const wt = await diffWorkingTree(pkg.workingDir);
-  const changedPaths = wt.nameStatus.map((entry) => entry.path);
+  const changedPaths = [
+    ...new Set(
+      wt.nameStatus.flatMap((entry) =>
+        entry.oldPath ? [entry.path, entry.oldPath] : [entry.path],
+      ),
+    ),
+  ];
 
   if (changedPaths.length === 0) return;
 
