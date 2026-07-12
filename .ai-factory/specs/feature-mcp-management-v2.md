@@ -148,7 +148,7 @@ unbound ──POST bind──▶ bound(enabled) ──DELETE/disconnect──▶
 
 For a given `(project, refId)`:
 
-1. If an **enabled binding** exists → its `(target_kind, target_id)` is the winner; `provenance='binding'`, `boundTarget` recorded.
+1. If an **enabled binding** exists → the record of `refId` at the bound `target_kind`'s source is the winner — validated at bind time so `target.refId === refId` (the target implements the SAME ref; a cross-ref target is refused, see §7/§10); `provenance='binding'`, `boundTarget` recorded.
 2. Else if a **disabled binding** exists → the ref is **unresolvable** (winner = none); a `required` ref here refuses launch with `CONFIG` naming the disconnect.
 3. Else (absent binding) → apply `SOURCE_PRECEDENCE` (project > platform > flow-package) as today; `provenance='precedence'`.
 
@@ -162,7 +162,7 @@ Then, for the winner: if `source='platform'` and its live `trust_status='untrust
 | --- | --- | --- |
 | `project` (`project_id`) | server-state | derived from URL `slug` → project lookup; **never** a body field |
 | `ref_id` | body-controlled | validated against the derived requirements ledger + registered refs |
-| `target_kind` + `target_id` | body-controlled | validated against **server-state**: row MUST exist, MUST match `target_kind`; a platform target MUST be `enabled` + trusted to be **bindable-as-executable** |
+| `target_kind` + `target_id` | body-controlled | validated against **server-state**: row MUST exist, MUST match `target_kind`, and MUST implement the SAME `ref_id` (`target.refId === ref_id`; the resolver selects by (refId, source), so a cross-ref target → `CONFIG`); a platform target MUST be `enabled` + trusted to be **bindable-as-executable** |
 | `config_overlay` | body-controlled | validated against the **target's declared slots** (unknown slot → `CONFIG` 422) |
 | trust `id` (admin route) | server-state | from URL path param |
 
@@ -188,7 +188,7 @@ Response DTOs are explicit projections (never a raw DB row); no `env:` value eve
 
 1. A binding row MUST be unique on `(project_id, ref_id)`; an enabled binding's `(target_kind,target_id)` MUST win over `SOURCE_PRECEDENCE` for that `ref_id`, and a disabled binding MUST make the ref unresolvable in that project.
 2. An **absent** binding MUST leave resolution exactly as today (grandfather) — no behavior change for any project without bindings.
-3. Every binding route MUST derive `project_id` from the URL slug (server-state) and MUST validate `target_kind`/`target_id` against existing rows of the matching kind; a platform target MUST be `enabled`+trusted to be bound as executable, else `CONFLICT`/`CONFIG`.
+3. Every binding route MUST derive `project_id` from the URL slug (server-state) and MUST validate `target_kind`/`target_id` against existing rows of the matching kind that implement the SAME `ref_id`; a platform target MUST be `enabled`+trusted to be bound as executable, else `CONFLICT`/`CONFIG`.
 4. `config_overlay` MUST validate against the target's declared slots at write AND at materialization; an unknown slot MUST yield `MaisterError("CONFIG")` (422). Overlay application MUST rewrite only NAMES, keeping the ACP `mcpServers` wire shape unchanged.
 5. No secret **value** MUST EVER appear in a `project_mcp_bindings` row, any HTTP response, a `session/update` payload, `materialization_plan`, `runs.withheld_mcps`, or a log — only `env:NAME` names.
 6. A winning `source='platform'` record with live `trust_status='untrusted'` MUST be excluded from the executable set and recorded as withheld `platform-untrusted`, while remaining VISIBLE in the requirements ledger/hub.
@@ -205,13 +205,14 @@ Response DTOs are explicit projections (never a raw DB row); no `env:` value eve
 | --- | --- | --- |
 | Bind unknown ref (not in ledger + not a registered ref) | `CONFIG` | 422 |
 | Bind to a non-existent target, or `target_kind` mismatch | `CONFIG` | 422 |
+| Bind a target that implements a different ref (`target.refId ≠ ref_id`) | `CONFIG` | 422 |
 | Bind a platform target that is disabled or untrusted, as executable | `CONFLICT` | 409 |
 | `config_overlay` names an unknown slot (write or materialization) | `CONFIG` | 422 |
 | Second binding for the same `(project, ref)` | `CONFLICT` | 409 |
-| Required ref with a **disabled** binding at launch | `CONFIG` | 409 (names the disconnect) |
-| Required ref unresolved (no candidate, no binding) at launch | `CONFIG` | 409 |
+| Required ref with a **disabled** binding at launch | `CONFIG` | 422 (names the disconnect) |
+| Required ref unresolved (no candidate, no binding) at launch | `CONFIG` | 422 |
 | Required ref agent-unsupported transport at launch | `EXECUTOR_UNAVAILABLE` | 503 |
-| Probe an untrusted-source stdio MCP | `CONFIG` (typed refusal, no override) | 409 |
+| Probe an untrusted-source stdio MCP | `CONFIG` (typed refusal, no override) | 422 |
 | Probe target missing / not connected | `PRECONDITION` | 409 |
 | Trust route unknown platform id | `PRECONDITION` | 409 |
 | Trust/binding as non-admin / unauthorized project role | `UNAUTHORIZED` | 403 |

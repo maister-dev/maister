@@ -6,7 +6,10 @@ import type { McpConfigOverlay, WithheldMcp } from "@/lib/db/schema";
 import { inArray, sql, type SQL } from "drizzle-orm";
 
 import { platformMcpServers } from "@/lib/db/schema";
-import { assertOverlayAgainstSlots } from "@/lib/mcp/binding-service";
+import {
+  assertOverlayAgainstSlots,
+  loadProjectMcpOverlays,
+} from "@/lib/mcp/binding-service";
 
 // ADR-129 (W-E): the materialization gate makes platform `trust_status`
 // load-bearing and unifies it with the exec-trust stdio gate into ONE structured
@@ -177,4 +180,53 @@ export async function mergeRunWithheldMcps(
   await db.execute(
     sql`UPDATE runs SET withheld_mcps = ${JSON.stringify([...byKey.values()])}::jsonb WHERE id = ${runId}`,
   );
+}
+
+// ADR-129: the ONE gate+overlay composition shared by every launch surface
+// (flow node, agent, scratch) — do not fork it (spec §13). Partitions the
+// materialized MCP servers into the executable set + withheld list (platform
+// trust then exec-trust), persists the withheld to the run-level sink, and
+// applies the per-binding NAME-only overlays to the kept set. `overlaidRefs` and
+// `withheld` are returned so each caller can add its own granularity
+// (`node_attempts.materialization_plan.withheldMcps` for flows) and logging.
+export async function gateAndOverlayMcpServers(args: {
+  db: GateDb;
+  projectId: string;
+  runId: string;
+  supported: ReadonlyArray<{
+    kind: string;
+    capabilityRefId: string;
+    source: string;
+  }>;
+  mcpServers: readonly AgentMcpServer[];
+  execTrust: "untrusted" | "trusted";
+}): Promise<{
+  mcpServers: AgentMcpServer[];
+  withheld: WithheldMcp[];
+  overlaidRefs: string[];
+}> {
+  const mcpEntries = args.supported
+    .filter((e) => e.kind === "mcp")
+    .map((e) => ({ refId: e.capabilityRefId, source: e.source }));
+  const { kept, withheld } = partitionWithheldMcps({
+    mcpServers: args.mcpServers,
+    sourceByRef: new Map(mcpEntries.map((e) => [e.refId, e.source])),
+    platformTrustedByRef: await loadPlatformTrustByRef(mcpEntries, args.db),
+    execTrust: args.execTrust,
+  });
+
+  if (withheld.length > 0) {
+    await mergeRunWithheldMcps(args.db, args.runId, withheld);
+  }
+
+  const overlays = await loadProjectMcpOverlays(
+    args.projectId,
+    args.db as never,
+  );
+
+  return {
+    mcpServers: overlays.size > 0 ? applyMcpOverlays(kept, overlays) : kept,
+    withheld,
+    overlaidRefs: [...overlays.keys()],
+  };
 }

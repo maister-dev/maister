@@ -323,6 +323,17 @@ export async function createBinding(
     );
   }
 
+  // The resolver selects the winning record by (refId, source), so the target
+  // MUST implement the same ref the binding declares — otherwise the binding is
+  // incoherent (the stored target_id would be silently ignored at resolution and
+  // the ref would resolve to a different record or to nothing).
+  if (target.refId !== input.refId) {
+    throw new MaisterError(
+      "CONFIG",
+      `bind target ${input.targetKind}/${input.targetId} implements ref "${target.refId}", not "${input.refId}"`,
+    );
+  }
+
   if (input.targetKind === "platform" && !target.bindableAsExecutable) {
     throw new MaisterError(
       "CONFLICT",
@@ -380,30 +391,43 @@ export async function updateBinding(
   const overlay = patch.configOverlay ?? current.config_overlay ?? {};
   const enabled = patch.enabled ?? current.enabled;
 
-  const target = await resolveBindTarget(
-    database,
-    projectId,
-    targetKind,
-    targetId,
-  );
-
-  if (!target) {
-    throw new MaisterError(
-      "CONFIG",
-      `bind target ${targetKind}/${targetId} not found in this project`,
+  // A disabled binding is a pure opt-out that never materializes, so its target
+  // and overlay validity are irrelevant — a soft-disable/disconnect MUST NOT
+  // require the (possibly deleted or now-misconfigured) dependency it is
+  // disabling. Only an ENABLED binding is validated against server-state + the
+  // target's declared slots.
+  if (enabled) {
+    const target = await resolveBindTarget(
+      database,
+      projectId,
+      targetKind,
+      targetId,
     );
-  }
 
-  // Executability is only required when the binding is (staying) enabled — a
-  // disabled binding is a pure opt-out and never materializes.
-  if (targetKind === "platform" && enabled && !target.bindableAsExecutable) {
-    throw new MaisterError(
-      "CONFLICT",
-      `platform MCP "${targetId}" cannot be bound as executable: ${target.reason}`,
-    );
-  }
+    if (!target) {
+      throw new MaisterError(
+        "CONFIG",
+        `bind target ${targetKind}/${targetId} not found in this project`,
+      );
+    }
 
-  assertOverlayAgainstSlots(overlay, target.slots);
+    // The target MUST implement the ref this binding resolves for (see createBinding).
+    if (target.refId !== refId) {
+      throw new MaisterError(
+        "CONFIG",
+        `bind target ${targetKind}/${targetId} implements ref "${target.refId}", not "${refId}"`,
+      );
+    }
+
+    if (targetKind === "platform" && !target.bindableAsExecutable) {
+      throw new MaisterError(
+        "CONFLICT",
+        `platform MCP "${targetId}" cannot be bound as executable: ${target.reason}`,
+      );
+    }
+
+    assertOverlayAgainstSlots(overlay, target.slots);
+  }
 
   await database.execute(sql`
     UPDATE project_mcp_bindings

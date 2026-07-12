@@ -25,9 +25,11 @@ import {
 // Postgres. Proves bind→load→snapshot provenance, disconnect→exclusion,
 // grandfather zero-change, and the target/overlay validation contract.
 //
-// `platform_mcp_servers` is a GLOBAL (host-wide) catalog, so every test mints a
-// UNIQUE platform server id; resolution matches the projected capability_records
-// by source, so the binding always targets ref "github".
+// `platform_mcp_servers` is a GLOBAL (host-wide) catalog projected into
+// capability_records with `capability_ref_id = <server id>` (projection.ts), so a
+// platform target's ref IS its server id. Each test therefore binds the minted
+// server id AS the ref — the realistic, coherent shape the resolver (select by
+// (refId, source)) and the bind-time `target.refId === ref_id` guard both require.
 
 type Db = NodePgDatabase;
 
@@ -35,14 +37,12 @@ let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: Db;
 
-const catalog = [
-  {
-    capabilityRefId: "github",
-    kind: "mcp",
-    source: "platform",
-    revision: "pf",
-  },
-  { capabilityRefId: "github", kind: "mcp", source: "project", revision: "pj" },
+// The launch-frozen catalog for one ref: a platform candidate (sha "pf") shadows
+// a project candidate (sha "pj") only when a binding forces it; otherwise project
+// wins by precedence.
+const catalogFor = (ref: string) => [
+  { capabilityRefId: ref, kind: "mcp", source: "platform", revision: "pf" },
+  { capabilityRefId: ref, kind: "mcp", source: "project", revision: "pj" },
 ];
 
 beforeAll(async () => {
@@ -108,9 +108,10 @@ async function seedProjectMcp(projectId: string, refId: string): Promise<void> {
 
 function snapshotFor(
   mcpBindings: Awaited<ReturnType<typeof loadProjectMcpBindings>>,
+  ref: string,
 ) {
   return buildResolvedCapabilitySet({
-    records: catalog,
+    records: catalogFor(ref),
     flowRevisionId: "r",
     flowOrigin: "git",
     mcpBindings,
@@ -120,22 +121,23 @@ function snapshotFor(
 describe("binding-service — bind → load → resolve (W-A/W-B)", () => {
   it("an enabled binding to platform WINS over project precedence with provenance", async () => {
     const projectId = await seedProject();
-    const serverId = await seedPlatformServer({
+    const ref = await seedPlatformServer({
       enabled: true,
       trust: "trusted",
       envKeys: ["env:GITHUB_TOKEN"],
     });
 
-    await seedProjectMcp(projectId, "github");
+    await seedProjectMcp(projectId, ref);
 
     // Grandfather (no binding) → project wins by precedence.
     const grandfather = snapshotFor(
       await loadProjectMcpBindings(projectId, injected()),
+      ref,
     );
 
     expect(grandfather.mcps).toEqual([
       {
-        refId: "github",
+        refId: ref,
         sha: "pj",
         scope: "project",
         provenance: "precedence",
@@ -145,44 +147,45 @@ describe("binding-service — bind → load → resolve (W-A/W-B)", () => {
     // Bind to platform → platform wins over precedence.
     await createBinding(
       projectId,
-      { refId: "github", targetKind: "platform", targetId: serverId },
+      { refId: ref, targetKind: "platform", targetId: ref },
       injected(),
     );
     const bound = snapshotFor(
       await loadProjectMcpBindings(projectId, injected()),
+      ref,
     );
 
     expect(bound.mcps).toEqual([
       {
-        refId: "github",
+        refId: ref,
         sha: "pf",
         scope: "platform",
         provenance: "binding",
-        boundTarget: { kind: "platform", id: serverId },
+        boundTarget: { kind: "platform", id: ref },
       },
     ]);
   });
 
   it("disconnect makes the ref unresolvable, delete reverts to grandfather", async () => {
     const projectId = await seedProject();
-    const serverId = await seedPlatformServer({
+    const ref = await seedPlatformServer({
       enabled: true,
       trust: "trusted",
     });
 
-    await seedProjectMcp(projectId, "github");
-    await connectPlatform(projectId, serverId, "github", null, injected());
+    await seedProjectMcp(projectId, ref);
+    await connectPlatform(projectId, ref, ref, null, injected());
 
-    await disconnectRef(projectId, "github", null, injected());
+    await disconnectRef(projectId, ref, null, injected());
     const bindings = await loadProjectMcpBindings(projectId, injected());
 
-    expect(bindings.find((b) => b.refId === "github")?.enabled).toBe(false);
-    expect(snapshotFor(bindings).mcps).toEqual([]);
+    expect(bindings.find((b) => b.refId === ref)?.enabled).toBe(false);
+    expect(snapshotFor(bindings, ref).mcps).toEqual([]);
 
-    await deleteBinding(projectId, "github", injected());
+    await deleteBinding(projectId, ref, injected());
     expect(
-      snapshotFor(await loadProjectMcpBindings(projectId, injected())).mcps[0]
-        ?.provenance,
+      snapshotFor(await loadProjectMcpBindings(projectId, injected()), ref)
+        .mcps[0]?.provenance,
     ).toBe("precedence");
   });
 });
@@ -190,7 +193,7 @@ describe("binding-service — bind → load → resolve (W-A/W-B)", () => {
 describe("binding-service — validation contract", () => {
   it("refuses binding a disabled/untrusted platform target as executable (CONFLICT)", async () => {
     const projectId = await seedProject();
-    const serverId = await seedPlatformServer({
+    const ref = await seedPlatformServer({
       enabled: false,
       trust: "untrusted",
     });
@@ -198,15 +201,31 @@ describe("binding-service — validation contract", () => {
     await expect(
       createBinding(
         projectId,
-        { refId: "serena", targetKind: "platform", targetId: serverId },
+        { refId: ref, targetKind: "platform", targetId: ref },
         injected(),
       ),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
+  it("refuses a cross-ref target that implements a different ref (CONFIG)", async () => {
+    const projectId = await seedProject();
+    const ref = await seedPlatformServer({ enabled: true, trust: "trusted" });
+
+    // ref "github" bound to a platform server whose projected ref is `ref` — the
+    // resolver selects by (refId, source), so this target would be silently
+    // ignored at resolution; the bind-time guard refuses it up front.
+    await expect(
+      createBinding(
+        projectId,
+        { refId: "github", targetKind: "platform", targetId: ref },
+        injected(),
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+  });
+
   it("refuses a missing target (CONFIG) and a duplicate binding (CONFLICT)", async () => {
     const projectId = await seedProject();
-    const serverId = await seedPlatformServer({
+    const ref = await seedPlatformServer({
       enabled: true,
       trust: "trusted",
     });
@@ -221,13 +240,13 @@ describe("binding-service — validation contract", () => {
 
     await createBinding(
       projectId,
-      { refId: "github", targetKind: "platform", targetId: serverId },
+      { refId: ref, targetKind: "platform", targetId: ref },
       injected(),
     );
     await expect(
       createBinding(
         projectId,
-        { refId: "github", targetKind: "platform", targetId: serverId },
+        { refId: ref, targetKind: "platform", targetId: ref },
         injected(),
       ),
     ).rejects.toMatchObject({ code: "CONFLICT" });
@@ -235,7 +254,7 @@ describe("binding-service — validation contract", () => {
 
   it("validates the overlay against the target's declared slots (unknown slot → CONFIG)", async () => {
     const projectId = await seedProject();
-    const serverId = await seedPlatformServer({
+    const ref = await seedPlatformServer({
       enabled: true,
       trust: "trusted",
       envKeys: ["env:GITHUB_TOKEN"],
@@ -245,9 +264,9 @@ describe("binding-service — validation contract", () => {
     await createBinding(
       projectId,
       {
-        refId: "github",
+        refId: ref,
         targetKind: "platform",
-        targetId: serverId,
+        targetId: ref,
         configOverlay: { envRemap: { GITHUB_TOKEN: "env:PROJ_A_GH" } },
       },
       injected(),
@@ -259,7 +278,7 @@ describe("binding-service — validation contract", () => {
     try {
       await updateBinding(
         projectId,
-        "github",
+        ref,
         { configOverlay: { envRemap: { NOT_A_SLOT: "env:X" } } },
         injected(),
       );
@@ -267,5 +286,21 @@ describe("binding-service — validation contract", () => {
       threw = err as MaisterError;
     }
     expect(threw?.code).toBe("CONFIG");
+  });
+
+  it("disconnect (disable) does not require the target to still resolve", async () => {
+    // A soft-disable must not require the (possibly deleted/misconfigured)
+    // dependency it disables: after connecting, delete the platform server, then
+    // disconnect — it must still succeed and leave a disabled binding.
+    const projectId = await seedProject();
+    const ref = await seedPlatformServer({ enabled: true, trust: "trusted" });
+
+    await connectPlatform(projectId, ref, ref, null, injected());
+    await db.execute(sql`DELETE FROM platform_mcp_servers WHERE id = ${ref}`);
+
+    await disconnectRef(projectId, ref, null, injected());
+    const bindings = await loadProjectMcpBindings(projectId, injected());
+
+    expect(bindings.find((b) => b.refId === ref)?.enabled).toBe(false);
   });
 });

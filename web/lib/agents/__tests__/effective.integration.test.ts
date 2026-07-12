@@ -388,6 +388,16 @@ describe("resolveAgentProfileMcpServers (RD7)", () => {
       [randomUUID(), p],
     );
 
+    // ADR-129 (W-E): platform trust is now load-bearing — a `source='platform'`
+    // MCP materializes only when its `platform_mcp_servers` row is trusted (the
+    // trust gate reads it live). Without this row the trust join fails closed and
+    // the server is withheld `platform-untrusted`.
+    await pool.query(
+      `INSERT INTO "platform_mcp_servers"
+         ("id", "transport", "command", "enabled", "trust_status")
+       VALUES ('github', 'stdio', 'github-mcp', true, 'trusted')`,
+    );
+
     const { resolveAgentProfileMcpServers } = await import(
       "@/lib/agents/launch"
     );

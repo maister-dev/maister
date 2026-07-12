@@ -1,13 +1,19 @@
 import "server-only";
 
+import type { FlowYamlV1 } from "@/lib/config.schema";
+
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { flowManifestMcpRequirements } from "@/lib/flows/mcp-requirements";
 import {
   buildRequirementsLedger,
+  deriveDeclaredRefs,
+  type DeclaredRef,
   type RequirementCandidate,
   type RequirementEntry,
+  type RequirementSource,
 } from "@/lib/mcp/requirements-ledger";
 
 // ADR-129 (W-D, T6.1): the project MCP hub read model. Merges all THREE sources
@@ -61,6 +67,7 @@ type CapabilityRow = {
   material: {
     transport?: string;
     requirement?: boolean;
+    packageInstallId?: string;
     envKeys?: string[];
     lastProbe?: { status?: string } | null;
   } | null;
@@ -89,6 +96,11 @@ export function composeProjectMcpHub(args: {
   platformRows: readonly PlatformRow[];
   bindings: readonly BindingRow[];
   usedByByServerId: ReadonlyMap<string, number>;
+  // ADR-129 (DEC-2): refs a project needs, pre-aggregated across all three
+  // sources (package manifest requirement-only entries, enabled flow-revision
+  // node `settings.mcps`, attached agents' `capability_profile.mcps`) via
+  // `deriveDeclaredRefs`. Empty for a project that declares no MCP needs.
+  declaredRefs: readonly DeclaredRef[];
 }): ProjectMcpHub {
   const platformById = new Map(args.platformRows.map((r) => [r.id, r]));
   const bindingByRef = new Map(args.bindings.map((b) => [b.ref_id, b]));
@@ -147,15 +159,19 @@ export function composeProjectMcpHub(args: {
     candidateSourcesByRef.set(row.capability_ref_id, set);
   }
 
+  // The refs a project needs (declared by package/flow/agent sources) UNION any
+  // ref carrying a binding — a bound ref is shown even when no source currently
+  // declares it. `required` + `declaredBy` come from the DeclaredRef; a
+  // binding-only ref (bound, undeclared) is not "required".
+  const declaredByRef = new Map(args.declaredRefs.map((d) => [d.refId, d]));
   const requirementRefs = new Set<string>();
 
-  for (const row of args.capabilityRows) {
-    if (row.material?.requirement) requirementRefs.add(row.capability_ref_id);
-  }
+  for (const d of args.declaredRefs) requirementRefs.add(d.refId);
   for (const b of args.bindings) requirementRefs.add(b.ref_id);
 
   const candidates: RequirementCandidate[] = [...requirementRefs].map(
     (refId) => {
+      const declared = declaredByRef.get(refId);
       const binding = bindingByRef.get(refId);
       const boundPlatformTrust =
         binding?.target_kind === "platform"
@@ -164,8 +180,8 @@ export function composeProjectMcpHub(args: {
 
       return {
         refId,
-        required: true,
-        declaredBy: [],
+        required: declared?.required ?? false,
+        declaredBy: declared?.declaredBy ?? [],
         candidateSources: [...(candidateSourcesByRef.get(refId) ?? [])],
         ...(binding
           ? {
@@ -198,6 +214,94 @@ export function composeProjectMcpHub(args: {
   ).length;
 
   return { servers, requirements, effectiveCount };
+}
+
+// ADR-129 (DEC-2): load the three requirement sources for a project so the pure
+// `deriveDeclaredRefs` aggregates them (SET/CLEAR/re-SET symmetry lives in that
+// function). Package requirement markers come from the already-loaded capability
+// rows; enabled flows contribute their manifest MCP refs (mirrors the launch-time
+// derivation); attached + enabled agents contribute their capability_profile.mcps.
+async function loadRequirementSources(
+  database: HubDb,
+  projectId: string,
+  capabilityRows: readonly CapabilityRow[],
+): Promise<RequirementSource[]> {
+  const sources: RequirementSource[] = [];
+
+  // 1. Package requirement-only manifest entries, grouped per installed package.
+  const pkgRefs = new Map<string, string[]>();
+
+  for (const row of capabilityRows) {
+    if (!row.material?.requirement) continue;
+    const pkg = row.material.packageInstallId ?? "package";
+    const list = pkgRefs.get(pkg) ?? [];
+
+    list.push(row.capability_ref_id);
+    pkgRefs.set(pkg, list);
+  }
+  for (const [packageName, refs] of pkgRefs) {
+    sources.push({ kind: "package", packageName, refs });
+  }
+
+  // 2. Enabled flows → manifest MCP requirements (top-level + node settings.mcps).
+  const flowRows = rowsOf<{ flow_ref_id: string; manifest: unknown }>(
+    await database.execute(sql`
+      SELECT flow_ref_id, manifest FROM flows
+      WHERE project_id = ${projectId} AND enablement_state = 'Enabled'
+    `),
+  );
+
+  for (const flow of flowRows) {
+    try {
+      const { required, additional } = flowManifestMcpRequirements(
+        flow.manifest as FlowYamlV1,
+      );
+
+      if (required.length > 0 || additional.length > 0) {
+        sources.push({
+          kind: "flow",
+          flowRefId: flow.flow_ref_id,
+          required,
+          additional,
+        });
+      }
+    } catch (err) {
+      log.debug(
+        {
+          projectId,
+          flowRefId: flow.flow_ref_id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[mcp.hub] flow manifest MCP extraction skipped (uncompilable)",
+      );
+    }
+  }
+
+  // 3. Attached + enabled agents → capability_profile.mcps.
+  const agentRows = rowsOf<{
+    agent_id: string;
+    capability_profile: { mcps?: unknown } | null;
+  }>(
+    await database.execute(sql`
+      SELECT a.id AS agent_id, a.capability_profile
+      FROM agent_project_links l
+      JOIN agents a ON a.id = l.agent_id
+      WHERE l.project_id = ${projectId} AND l.enabled = true AND a.enabled = true
+    `),
+  );
+
+  for (const agent of agentRows) {
+    const mcps = agent.capability_profile?.mcps;
+    const refs = Array.isArray(mcps)
+      ? mcps.filter((m): m is string => typeof m === "string" && m.length > 0)
+      : [];
+
+    if (refs.length > 0) {
+      sources.push({ kind: "agent", agentId: agent.agent_id, refs });
+    }
+  }
+
+  return sources;
 }
 
 export async function getProjectMcpHub(
@@ -237,11 +341,16 @@ export async function getProjectMcpHub(
   );
   const usedByByServerId = new Map(usageRows.map((r) => [r.id, Number(r.n)]));
 
+  const declaredRefs = deriveDeclaredRefs(
+    await loadRequirementSources(database, projectId, capabilityRows),
+  );
+
   const hub = composeProjectMcpHub({
     capabilityRows,
     platformRows,
     bindings,
     usedByByServerId,
+    declaredRefs,
   });
 
   log.debug(

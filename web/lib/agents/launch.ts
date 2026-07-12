@@ -2530,13 +2530,8 @@ export async function resolveAgentProfileMcpServers(args: {
   const [
     { loadSelectableCapabilities, resolveCapabilityProfile },
     { mapProfileToAgentArtifacts },
-    { loadProjectMcpBindings, loadProjectMcpOverlays },
-    {
-      applyMcpOverlays,
-      loadPlatformTrustByRef,
-      mergeRunWithheldMcps,
-      partitionWithheldMcps,
-    },
+    { loadProjectMcpBindings },
+    { gateAndOverlayMcpServers },
   ] = await Promise.all([
     import("@/lib/capabilities/resolver"),
     import("@/lib/capabilities/agent-map"),
@@ -2565,24 +2560,21 @@ export async function resolveAgentProfileMcpServers(args: {
     profile,
     agent: args.capabilityAgent as never,
   });
-  // ADR-129 (W-E): platform-trust + exec-trust in one structured withheld pass.
-  const mcpEntries = profile.supported
-    .filter((e) => e.kind === "mcp")
-    .map((e) => ({ refId: e.capabilityRefId, source: e.source }));
-  const { kept, withheld } = partitionWithheldMcps({
+
+  // ADR-129 (W-C/W-E): the SAME shared gate+overlay pass as the flow seam
+  // (spec §13). platform-trust + exec-trust withhold is persisted to the
+  // run-level sink (agent runs carry no node_attempts materialization_plan),
+  // then per-binding NAME-only overlays apply to the executable set.
+  const { mcpServers, withheld } = await gateAndOverlayMcpServers({
+    db: args.db as never,
+    projectId: args.projectId,
+    runId: args.runId,
+    supported: profile.supported,
     mcpServers: mapped.mcpServers,
-    sourceByRef: new Map(mcpEntries.map((e) => [e.refId, e.source])),
-    platformTrustedByRef: await loadPlatformTrustByRef(
-      mcpEntries,
-      args.db as never,
-    ),
     execTrust: args.execTrust,
   });
 
   if (withheld.length > 0) {
-    // Agent runs persist no materialization_plan — the run-level sink is the
-    // durable withheld record read by the run-detail panel.
-    await mergeRunWithheldMcps(args.db as never, args.runId, withheld);
     log.warn(
       {
         runId: args.runId,
@@ -2593,13 +2585,7 @@ export async function resolveAgentProfileMcpServers(args: {
     );
   }
 
-  // ADR-129 (W-C): apply the per-binding env-slot overlay (NAMES only).
-  const mcpOverlays = await loadProjectMcpOverlays(
-    args.projectId,
-    args.db as never,
-  );
-
-  return mcpOverlays.size > 0 ? applyMcpOverlays(kept, mcpOverlays) : kept;
+  return mcpServers;
 }
 
 // MCP facade injection (ADR-089 D9): the agent's sanctioned write channel —

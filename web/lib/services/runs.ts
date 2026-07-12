@@ -1093,8 +1093,12 @@ export async function* launchRunStaged(
       // ADR-129 (W-B): project MCP bindings redirect which record is the winner
       // for a ref (enabled binding beats precedence; disabled = unresolvable).
       // Loaded once here; reused by the agent-support gate and the launch
-      // snapshot. Absent = grandfather (unchanged).
-      const mcpBindings = await loadProjectMcpBindings(project.id);
+      // snapshot. Absent = grandfather (unchanged). Thread the caller's `_db`
+      // (never getDb()) so a transaction / injected test connection is honored.
+      const mcpBindings = await loadProjectMcpBindings(
+        project.id,
+        _db as never,
+      );
 
       // M27/T-C8b (mcp-management §6.2, bullet 6): a REQUIRED mcp whose resolved
       // winner record does not support the executor agent cannot materialize →
@@ -1335,8 +1339,12 @@ export async function* launchRunStaged(
         revision: string | null;
       }>;
       // ADR-129 (W-B): thread bindings into the frozen snapshot so mcps[] records
-      // provenance and the bound target wins over precedence.
-      const snapshotMcpBindings = await loadProjectMcpBindings(project.id);
+      // provenance and the bound target wins over precedence. Uses the caller's
+      // `_db` (never getDb()) for transaction / injected-connection correctness.
+      const snapshotMcpBindings = await loadProjectMcpBindings(
+        project.id,
+        _db as never,
+      );
       const resolvedCapabilitySet = buildResolvedCapabilitySet({
         records: snapshotRecords,
         flowRevisionId: revision.id,

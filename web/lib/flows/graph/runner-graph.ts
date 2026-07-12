@@ -100,12 +100,7 @@ import {
 } from "./mutation-check";
 
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
-import {
-  applyMcpOverlays,
-  loadPlatformTrustByRef,
-  mergeRunWithheldMcps,
-  partitionWithheldMcps,
-} from "@/lib/mcp/materialization-gate";
+import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
   mergeRunnerAdapterLaunch,
@@ -128,10 +123,7 @@ import {
 } from "@/lib/capabilities/resolver";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
-import {
-  loadProjectMcpBindings,
-  loadProjectMcpOverlays,
-} from "@/lib/mcp/binding-service";
+import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { agentFacadeMcpServer } from "@/lib/agents/launch";
 import {
   issueOrchestratorRunToken,
@@ -1706,8 +1698,13 @@ async function materializeNodeCapabilities(
     materializationSelection?.selection.selectedAgentDefinitionIds ?? [];
 
   // ADR-129 (W-B): bindings redirect the winning MCP record per ref so the
-  // materialized server matches the launch snapshot's bound target.
-  const mcpBindings = await loadProjectMcpBindings(loaded.run.projectId);
+  // materialized server matches the launch snapshot's bound target. Thread the
+  // caller's `db` (a transaction or the injected test connection) — never fall
+  // back to getDb(), which would query a different connection.
+  const mcpBindings = await loadProjectMcpBindings(
+    loaded.run.projectId,
+    db as never,
+  );
 
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
@@ -1749,31 +1746,27 @@ async function materializeNodeCapabilities(
     },
   });
 
-  // ADR-129 (W-E): make platform trust load-bearing and unify it with the
-  // exec-trust stdio gate into ONE structured withheld pass. An untrusted
-  // platform MCP is withheld (visible-but-not-executable, `platform-untrusted`);
-  // a stdio MCP on an exec-untrusted revision is withheld (`exec-untrusted-stdio`).
-  // Persisted (matplan + run-level) — never silent warn-only. sse/http from a
-  // trusted platform pass (no local exec).
-  const mcpEntries = profile.supported
-    .filter((e) => e.kind === "mcp")
-    .map((e) => ({ refId: e.capabilityRefId, source: e.source }));
-  const { kept, withheld: withheldMcps } = partitionWithheldMcps({
+  // ADR-129 (W-C/W-E): one shared gate+overlay pass (spec §13) — platform-trust
+  // + exec-trust withhold (visible-but-not-executable, persisted to the run-level
+  // sink), then per-binding NAME-only overlays on the executable set (wire shape
+  // unchanged; the supervisor still resolves values from process.env). The
+  // per-node matplan below adds per-node withheld granularity.
+  const {
+    mcpServers,
+    withheld: withheldMcps,
+    overlaidRefs,
+  } = await gateAndOverlayMcpServers({
+    db,
+    projectId: loaded.run.projectId,
+    runId: loaded.run.id,
+    supported: profile.supported,
     mcpServers: m.mcpServers,
-    sourceByRef: new Map(mcpEntries.map((e) => [e.refId, e.source])),
-    platformTrustedByRef: await loadPlatformTrustByRef(mcpEntries, db),
     execTrust: loaded.execTrust,
   });
 
-  // ADR-129 (W-C): apply the per-binding env-slot overlay (NAMES only) to the
-  // executable set. Wire shape unchanged — supervisor still resolves from process.env.
-  const mcpOverlays = await loadProjectMcpOverlays(loaded.run.projectId);
-  const mcpServers =
-    mcpOverlays.size > 0 ? applyMcpOverlays(kept, mcpOverlays) : kept;
-
-  if (mcpOverlays.size > 0) {
+  if (overlaidRefs.length > 0) {
     logger.debug(
-      { nodeId: node.id, overlaidRefs: [...mcpOverlays.keys()] },
+      { nodeId: node.id, overlaidRefs },
       "[runner.graph] MCP config overlays applied (names only)",
     );
   }
@@ -1798,10 +1791,6 @@ async function materializeNodeCapabilities(
     withheldMcps,
     cleanup: { status: "pending" },
   };
-
-  // ADR-129: the durable run-level sink read by the run-detail panel (both flow
-  // and agent). The per-node matplan above adds per-node granularity.
-  await mergeRunWithheldMcps(db, loaded.run.id, withheldMcps);
 
   if (materializationSelection) {
     await persistExperimentMaterializationDelta({

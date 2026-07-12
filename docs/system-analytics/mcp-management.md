@@ -13,7 +13,7 @@
 > dialogs, the shared node/scratch MCP-select unification (W-G), and the seeded
 > hub e2e. Acceptance SSOT
 > [`.ai-factory/specs/feature-mcp-management-v2.md`](../../.ai-factory/specs/feature-mcp-management-v2.md);
-> individual pieces below keep their original tags. Extends the M14
+> pieces below are tagged with their current status. Extends the M14
 > materialization surface in [capabilities.md](capabilities.md) and the M25
 > authored catalog in [capability-catalog.md](capability-catalog.md).
 
@@ -38,16 +38,16 @@ scope: MCP marketplace / reputation / malware scanning / sandboxing / org policy
 
 ## Domain entities
 
-- **`platform_mcp_servers`** (Implemented; trust column now load-bearing —
-  Designed) — admin-managed, host-wide MCP catalog. One row per server:
+- **`platform_mcp_servers`** (Implemented; trust column now load-bearing) —
+  admin-managed, host-wide MCP catalog. One row per server:
   `{ id, transport ∈ {stdio,sse,http}, command, args, env_keys (names),
   url, header_keys (names), supported_agents,
   trust_status ∈ {untrusted,trusted,trusted_by_policy},
   readiness_status, readiness_reasons, last_probe_status, last_probe_at,
   last_probe_reason, enabled, created_at, updated_at }`. The
-  `last_probe_*` columns (Designed) cache the admin global probe. See
+  `last_probe_*` columns (Implemented) cache the admin global probe. See
   [db/projects-domain.md](../db/projects-domain.md).
-- **`project_mcp_bindings`** (Designed, W-A) — the explicit binding of a **ref**
+- **`project_mcp_bindings`** (Implemented, W-A) — the explicit binding of a **ref**
   to a concrete MCP **target** within one project:
   `{ id, project_id (CASCADE), ref_id, target_kind ∈ {platform,project,package},
   target_id, enabled (default true), config_overlay jsonb, recommended_hint,
@@ -59,15 +59,15 @@ scope: MCP marketplace / reputation / malware scanning / sandboxing / org policy
   declared MCP in the project registry, `source ∈ {platform, project,
   flow-package}`. `material` jsonb carries transport shape + `env:NAME`
   references — never secret values; a package **requirement** marker and the
-  `material.lastProbe`/`material.readiness` cache (Designed) also live here.
+  `material.lastProbe`/`material.readiness` cache (Implemented) also live here.
   Enabled = `disabled_at IS NULL`. See
   [db/capabilities-domain.md](../db/capabilities-domain.md).
-- **Requirements ledger** (Designed, W-A) — a **derived** read model (never
+- **Requirements ledger** (Implemented, W-A) — a **derived** read model (never
   stored redundantly) aggregating refs from attached packages' manifest
   `mcps[]` requirement-only entries, `settings.mcps.required/additional` across
   enabled flow revisions, and attached agents' `capability_profile.mcps`; each
   classified `bound | auto | unbound | misconfigured | not_ready`.
-- **Config overlay** (Designed, W-C) — per-binding
+- **Config overlay** (Implemented, W-C) — per-binding
   `{ envRemap?, argsOverride?, urlOverride?, headerRemap? }` validated against
   the target's declared slots; rewrites env/header/arg/url **NAMES** only, wire
   shape unchanged.
@@ -78,14 +78,14 @@ scope: MCP marketplace / reputation / malware scanning / sandboxing / org policy
 - **Required vs additional** — node `settings.mcps: { required?, additional? }`
   (bare `string[]` ⇒ `additional`). An unresolvable `required` ref blocks
   launch; an absent `additional` ref degrades gracefully.
-- **Provenance + withheld** (Designed, W-B/W-E) — `resolved_capability_set.mcps[]`
+- **Provenance + withheld** (Implemented, W-B/W-E) — `resolved_capability_set.mcps[]`
   gains `provenance ∈ {binding,precedence}` (+ `boundTarget`); `withheldMcps[]`
   is persisted into `node_attempts.materialization_plan` (flow) and
   `runs.withheld_mcps` (both flow and agent).
 
 ## State machines
 
-### Binding lifecycle (Designed)
+### Binding lifecycle (Implemented)
 
 ```mermaid
 stateDiagram-v2
@@ -105,7 +105,7 @@ stateDiagram-v2
     end note
 ```
 
-### Trust activation (Designed — makes the inert column load-bearing)
+### Trust activation (Implemented — makes the inert column load-bearing)
 
 ```mermaid
 stateDiagram-v2
@@ -121,7 +121,7 @@ stateDiagram-v2
     end note
 ```
 
-### Probe (Designed — per target, per project)
+### Probe (Implemented — per target, per project)
 
 ```mermaid
 stateDiagram-v2
@@ -135,7 +135,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### Binding-vs-precedence resolution (Designed — the core v2 rule)
+### Binding-vs-precedence resolution (Implemented — the core v2 rule)
 
 For each ref, an enabled binding wins; a disabled binding suppresses; an absent
 binding falls through to `project > platform > flow-package` precedence
@@ -158,7 +158,7 @@ flowchart TD
     H --> K[snapshot withheld into materialization_plan + runs.withheld_mcps]
 ```
 
-### Trust gate + withheld visibility (Designed — kills the silent log-only downgrade)
+### Trust gate + withheld visibility (Implemented — kills the silent log-only downgrade)
 
 ```mermaid
 sequenceDiagram
@@ -179,7 +179,7 @@ sequenceDiagram
     S-->>R: session/update stream
 ```
 
-### Per-project overlay application (Designed — names-only, wire unchanged)
+### Per-project overlay application (Implemented — names-only, wire unchanged)
 
 The overlay rewrites `envKeys`/`args`/`url`/`headerKeys` **NAMES** web-side after
 `mapProfileToAgentArtifacts`; the ACP `mcpServers` wire shape is unchanged and
@@ -187,7 +187,7 @@ the supervisor still resolves values from `process.env`. Project A and project B
 can point the same platform MCP at different `env:NAME` slots — no secret value
 ever crosses a boundary.
 
-### Health probe handshake (Designed — real MCP `initialize`)
+### Health probe handshake (Implemented — real MCP `initialize`)
 
 ```mermaid
 sequenceDiagram
@@ -212,7 +212,7 @@ sequenceDiagram
     end
 ```
 
-### Platform MCP readiness (computed on write — WI-2, Implemented; extended to project/package — Designed)
+### Platform MCP readiness (computed on write — WI-2, Implemented; extended to project/package — Implemented)
 
 `evaluateMcpReadiness(row, diagnostics)` (`web/lib/mcp/readiness.ts`) derives
 `readiness_status`/`readiness_reasons` from transport config × supervisor
@@ -223,18 +223,18 @@ sequenceDiagram
 
 ## Expectations
 
-1. A `project_mcp_bindings` row MUST be unique on `(project_id, ref_id)`; an enabled binding's target MUST win over `SOURCE_PRECEDENCE`, and a disabled binding MUST make the ref unresolvable in that project. (Designed)
-2. An **absent** binding MUST leave resolution exactly as today (grandfather) — zero behavior change for any project without bindings. (Designed)
-3. Every binding route MUST derive `project_id` from the URL slug (server-state) and validate `target_kind`/`target_id` against existing rows of the matching kind; a platform target MUST be `enabled`+trusted to bind as executable, else `CONFLICT`/`CONFIG`. (Designed)
-4. `config_overlay` MUST validate against the target's declared slots at write AND materialization (unknown slot → `MaisterError("CONFIG")` 422); overlay application MUST rewrite only NAMES, keeping the ACP `mcpServers` wire shape unchanged. (Designed)
+1. A `project_mcp_bindings` row MUST be unique on `(project_id, ref_id)`; an enabled binding's target MUST win over `SOURCE_PRECEDENCE`, and a disabled binding MUST make the ref unresolvable in that project. (Implemented)
+2. An **absent** binding MUST leave resolution exactly as today (grandfather) — zero behavior change for any project without bindings. (Implemented)
+3. Every binding route MUST derive `project_id` from the URL slug (server-state) and validate `target_kind`/`target_id` against existing rows of the matching kind; a platform target MUST be `enabled`+trusted to bind as executable, else `CONFLICT`/`CONFIG`. (Implemented)
+4. `config_overlay` MUST validate against the target's declared slots at write AND materialization (unknown slot → `MaisterError("CONFIG")` 422); overlay application MUST rewrite only NAMES, keeping the ACP `mcpServers` wire shape unchanged. (Implemented)
 5. No secret **value** MUST EVER appear in a binding row, HTTP response, `session/update`, `materialization_plan`, `runs.withheld_mcps`, or a log — only `env:NAME` names. (Implemented invariant, extended)
-6. A winning `source='platform'` record with live `trust_status='untrusted'` MUST be excluded from the executable set and recorded withheld `platform-untrusted`, while remaining VISIBLE in the requirements ledger/hub. (Designed)
-7. The grandfather migration MUST set `trust_status='trusted'` for every `enabled=true AND trust_status='untrusted'` platform row and MUST leave `enabled=false` rows (Serena) untouched. (Designed)
-8. Every withhold (trust or exec-trust; flow or agent) MUST be persisted — flow into `node_attempts.materialization_plan.withheldMcps`, both into `runs.withheld_mcps` — with NO silent warn-only path as the sole record. (Designed)
-9. `resolved_capability_set.mcps[]` MUST record `provenance ∈ {binding,precedence}` (+ `boundTarget` when bound) at launch; pre-migration runs MUST read it absent without error. (Designed)
-10. The requirements ledger MUST honor SET/CLEAR/re-SET symmetry: dropping the last declaring flow-revision/package/agent drops the requirement; re-adding restores it. (Designed)
-11. Supervisor `POST /mcp-probe` MUST release the child + timer on every path; the web probe proxy MUST refuse an untrusted-source stdio probe with a typed reason and have NO override path in v1. (Designed)
-12. A package manifest `mcps[]` entry with neither `command` nor `url` MUST be a valid requirement (no `schemaVersion` bump); an entry with an implementation stays a template; `recommendedPlatformServerId` is an optional `capabilityRefId`. (Designed)
+6. A winning `source='platform'` record with live `trust_status='untrusted'` MUST be excluded from the executable set and recorded withheld `platform-untrusted`, while remaining VISIBLE in the requirements ledger/hub. (Implemented)
+7. The grandfather migration MUST set `trust_status='trusted'` for every `enabled=true AND trust_status='untrusted'` platform row and MUST leave `enabled=false` rows (Serena) untouched. (Implemented)
+8. Every withhold (trust or exec-trust; flow or agent) MUST be persisted — flow into `node_attempts.materialization_plan.withheldMcps`, both into `runs.withheld_mcps` — with NO silent warn-only path as the sole record. (Implemented)
+9. `resolved_capability_set.mcps[]` MUST record `provenance ∈ {binding,precedence}` (+ `boundTarget` when bound) at launch; pre-migration runs MUST read it absent without error. (Implemented)
+10. The requirements ledger MUST honor SET/CLEAR/re-SET symmetry: dropping the last declaring flow-revision/package/agent drops the requirement; re-adding restores it. (Implemented)
+11. Supervisor `POST /mcp-probe` MUST release the child + timer on every path; the web probe proxy MUST refuse an untrusted-source stdio probe with a typed reason and have NO override path in v1. (Implemented)
+12. A package manifest `mcps[]` entry with neither `command` nor `url` MUST be a valid requirement (no `schemaVersion` bump); an entry with an implementation stays a template; `recommendedPlatformServerId` is an optional `capabilityRefId`. (Implemented)
 
 ## Edge cases
 
@@ -242,13 +242,14 @@ sequenceDiagram
 |---|---|---|
 | Bind unknown ref (not in ledger + not a registered ref) | `CONFIG` | 422 |
 | Bind to non-existent target, or `target_kind` mismatch | `CONFIG` | 422 |
+| Bind a target implementing a different ref (`target.refId ≠ ref_id`) | `CONFIG` | 422 |
 | Bind a disabled/untrusted platform target as executable | `CONFLICT` | 409 |
 | `config_overlay` names an unknown slot (write or materialization) | `CONFIG` | 422 |
 | Second binding for the same `(project, ref)` | `CONFLICT` | 409 |
-| Required ref with a **disabled** binding at launch | `CONFIG` | 409 (names disconnect) |
-| Required ref unresolved (no candidate, no binding) at launch | `CONFIG` | 409 |
+| Required ref with a **disabled** binding at launch | `CONFIG` | 422 (names disconnect) |
+| Required ref unresolved (no candidate, no binding) at launch | `CONFIG` | 422 |
 | Required ref agent-unsupported transport at launch | `EXECUTOR_UNAVAILABLE` | 503 |
-| Probe an untrusted-source stdio MCP | `CONFIG` (typed refusal, no override) | 409 |
+| Probe an untrusted-source stdio MCP | `CONFIG` (typed refusal, no override) | 422 |
 | Probe target missing / not connected | `PRECONDITION` | 409 |
 | Trust route unknown platform id | `PRECONDITION` | 409 |
 | Raw (non-`env:`) secret in any MCP field | `CONFIG` | 422 |

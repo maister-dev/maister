@@ -35,6 +35,8 @@ function statusForCode(code: string): number {
     case "UNAUTHENTICATED":
       return 401;
     case "UNAUTHORIZED":
+    case "PASSWORD_CHANGE_REQUIRED":
+    case "ACCOUNT_INACTIVE":
       return 403;
     case "CONFIG":
       return 422;

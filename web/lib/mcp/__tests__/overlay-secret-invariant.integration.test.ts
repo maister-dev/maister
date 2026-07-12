@@ -69,15 +69,18 @@ async function seedProject(): Promise<string> {
   return projectId;
 }
 
+// One shared, host-wide `github` platform server. Its id IS its projected ref
+// (projection.ts: capability_ref_id = <server id>), so binding ref "github" to
+// it is the coherent shape (`target.refId === ref_id`). Idempotent: multiple
+// projects overlay the SAME server with different NAMES.
 async function seedGithubServer(): Promise<string> {
-  const id = `srv-${randomUUID().slice(0, 8)}`;
-
   await db.execute(sql`
     INSERT INTO platform_mcp_servers (id, transport, command, env_keys, enabled, trust_status)
-    VALUES (${id}, 'stdio', 'npx', ${JSON.stringify(["env:API_TOKEN"])}::jsonb, true, 'trusted')
+    VALUES ('github', 'stdio', 'npx', ${JSON.stringify(["env:API_TOKEN"])}::jsonb, true, 'trusted')
+    ON CONFLICT (id) DO NOTHING
   `);
 
-  return id;
+  return "github";
 }
 
 const githubServer = (): AgentMcpServer => ({

@@ -1109,8 +1109,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
   // ADR-129 (W-F): real MCP `initialize` handshake against a target server. The
   // body carries NAMES only; the supervisor resolves values from process.env.
-  // The exec-trust gate is enforced WEB-SIDE before this call (this route runs
-  // inside the trust boundary). Deferred-release teardown lives in probeMcpServer.
+  // The web probe proxy is the only caller: it is admin-gated and refuses an
+  // untrusted-source PLATFORM stdio probe before reaching here (D4). A
+  // package/project stdio probe is an explicit admin "test connection" spawn (no
+  // exec-trust axis at probe time — that gates RUN materialization, not this
+  // one-shot handshake). Deferred-release teardown lives in probeMcpServer.
   app.post("/mcp-probe", async (req, reply) => {
     const probe = McpProbeRequestSchema.parse(req.body);
     const result = await probeMcpServer(probe);

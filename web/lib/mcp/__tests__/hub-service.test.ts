@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { composeProjectMcpHub } from "@/lib/mcp/hub-service";
 
 // ADR-129 (W-D): the hub read model merges 3 sources + derives the requirements
-// ledger + the project-effective count. Pure over already-loaded rows.
+// ledger + the project-effective count. Pure over already-loaded rows. The
+// declared refs (package + flow + agent) are aggregated upstream by
+// `deriveDeclaredRefs` (tested in requirements-ledger.test.ts) and passed in.
 
 const cap = (
   refId: string,
@@ -22,6 +24,12 @@ const cap = (
   },
   disabled_at: extra.disabled ? new Date() : null,
 });
+
+const declared = (
+  refId: string,
+  required = true,
+  declaredBy: string[] = ["package:p"],
+) => ({ refId, required, declaredBy });
 
 describe("composeProjectMcpHub (W-D)", () => {
   it("merges platform, project, and package servers, excluding requirement markers", () => {
@@ -44,6 +52,7 @@ describe("composeProjectMcpHub (W-D)", () => {
       ],
       bindings: [],
       usedByByServerId: new Map([["github", 3]]),
+      declaredRefs: [declared("needs-db")],
     });
 
     const bySource = new Map(hub.servers.map((s) => [s.refId, s]));
@@ -75,6 +84,7 @@ describe("composeProjectMcpHub (W-D)", () => {
       ],
       bindings: [],
       usedByByServerId: new Map(),
+      declaredRefs: [declared("github"), declared("ghost")],
     });
 
     const byRef = new Map(hub.requirements.map((r) => [r.refId, r]));
@@ -82,6 +92,37 @@ describe("composeProjectMcpHub (W-D)", () => {
     expect(byRef.get("github")?.classification).toBe("auto");
     expect(byRef.get("ghost")?.classification).toBe("unbound");
     // effective count = the auto-satisfied ref only.
+    expect(hub.effectiveCount).toBe(1);
+  });
+
+  it("surfaces flow- and agent-declared requirements (not only package/binding)", () => {
+    // A ref required by an enabled flow, satisfied by a platform candidate ⇒
+    // auto; a ref required by an attached agent with no candidate ⇒ unbound.
+    const hub = composeProjectMcpHub({
+      capabilityRows: [cap("filesystem", "platform")],
+      platformRows: [
+        {
+          id: "filesystem",
+          transport: "stdio",
+          trust_status: "trusted",
+          readiness_status: "Ready",
+          last_probe_status: null,
+          enabled: true,
+        },
+      ],
+      bindings: [],
+      usedByByServerId: new Map(),
+      declaredRefs: [
+        declared("filesystem", true, ["flow:bugfix"]),
+        declared("search", true, ["agent:core:triager"]),
+      ],
+    });
+
+    const byRef = new Map(hub.requirements.map((r) => [r.refId, r]));
+
+    expect(byRef.get("filesystem")?.classification).toBe("auto");
+    expect(byRef.get("filesystem")?.declaredBy).toEqual(["flow:bugfix"]);
+    expect(byRef.get("search")?.classification).toBe("unbound");
     expect(hub.effectiveCount).toBe(1);
   });
 
@@ -107,6 +148,7 @@ describe("composeProjectMcpHub (W-D)", () => {
         },
       ],
       usedByByServerId: new Map(),
+      declaredRefs: [declared("github")],
     });
 
     expect(hub.requirements[0].classification).toBe("bound");
@@ -123,6 +165,7 @@ describe("composeProjectMcpHub (W-D)", () => {
         },
       ],
       usedByByServerId: new Map(),
+      declaredRefs: [declared("github")],
     });
 
     expect(disconnected.requirements[0].classification).toBe("unbound");
@@ -151,6 +194,7 @@ describe("composeProjectMcpHub (W-D)", () => {
         },
       ],
       usedByByServerId: new Map(),
+      declaredRefs: [declared("github")],
     });
 
     expect(hub.requirements[0].classification).toBe("not_ready");

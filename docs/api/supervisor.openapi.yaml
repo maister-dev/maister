@@ -558,7 +558,7 @@ paths:
       tags: [mcp-probe]
       summary: Probe an MCP server with a real `initialize` handshake
       description: |
-        (ADR-129 — Designed.) Opens the MCP server per its transport
+        (ADR-129 — Implemented.) Opens the MCP server per its transport
         (`stdio` spawns a child; `sse`/`http` connect), performs the MCP
         `initialize` handshake, and returns `{ ok, latencyMs, serverInfo?,
         reason? }`. Bounded by `MAISTER_MCP_PROBE_TIMEOUT_MS` (default 8000);

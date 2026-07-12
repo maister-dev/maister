@@ -14,10 +14,12 @@ import { MaisterError } from "@/lib/errors";
 import { probeMcpViaSupervisor } from "@/lib/supervisor-client";
 
 // ADR-129 (W-F): resolve a probe target's NAMES-only config + enforce the D4
-// web-side trust gate (an untrusted-source stdio probe is refused with a typed
-// reason — NO override in v1), then proxy to the supervisor and cache the result.
-// A secret VALUE never crosses: only env/header NAMES reach the supervisor, and
-// only a status/reason is cached.
+// web-side PLATFORM trust gate (an untrusted-source platform stdio probe is
+// refused with a typed reason — NO override in v1), then proxy to the supervisor
+// and cache the result. A project/package stdio probe has no platform
+// trust_status axis — it is an explicit admin "test connection" spawn (the route
+// is admin-gated). A secret VALUE never crosses: only env/header NAMES reach the
+// supervisor, and only a status/reason is cached.
 
 const log = pino({
   name: "mcp-probe",

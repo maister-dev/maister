@@ -9786,7 +9786,7 @@ paths:
                   type: string
                   enum: [untrusted, trusted, trusted_by_policy]
                   description: |
-                    (ADR-129 — Designed.) Platform-trust state. Load-bearing at
+                    (ADR-129 — Implemented.) Platform-trust state. Load-bearing at
                     materialization: an `untrusted` server is visible in project
                     hubs but withheld from the executable set.
       responses:
@@ -9846,7 +9846,7 @@ paths:
       tags: [mcp-management, admin]
       summary: (ADR-129) Flip a platform MCP server's trust status
       description: |
-        (ADR-129 — Designed.) Admin-only. Sets `platform_mcp_servers.trust_status`.
+        (ADR-129 — Implemented.) Admin-only. Sets `platform_mcp_servers.trust_status`.
         `id` is server-state (URL path). Trust is load-bearing: an `untrusted`
         server materializes for no project (recorded withheld `platform-untrusted`)
         but stays VISIBLE in every project hub. Live-join, so the flip takes
@@ -10187,11 +10187,12 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Bind a ref to a concrete MCP target
       description: |
-        (ADR-129 — Designed.) Requires `editSettings` on the project. Creates a
+        (ADR-129 — Implemented.) Requires `editSettings` on the project. Creates a
         `project_mcp_bindings` row; the enabled binding's target then WINS over
         `project > platform > flow-package` precedence for that `refId`.
         `project_id` is server-state (from `slug`). `targetKind`/`targetId` are
-        validated against existing rows of the matching kind; a `platform` target
+        validated against existing rows of the matching kind that implement the
+        same `refId` (a cross-ref target → `CONFIG` 422); a `platform` target
         MUST be `enabled` + trusted to bind as executable (`CONFLICT`). Unknown
         ref or overlay slot → `CONFIG` (422). A second binding for the same
         `(project, refId)` → `CONFLICT` (409). No secret VALUE is ever stored.
@@ -10234,7 +10235,7 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Rebind, edit overlay, or toggle a binding
       description: |
-        (ADR-129 — Designed.) Requires `editSettings`. Updates the binding for
+        (ADR-129 — Implemented.) Requires `editSettings`. Updates the binding for
         `refId` (server-derived `project_id`). Setting `enabled=false` is an
         explicit disconnect — the ref becomes unresolvable in this project even
         if a platform row matches. Overlay re-validated against the target slots.
@@ -10276,7 +10277,7 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Remove a binding (back to grandfather)
       description: |
-        (ADR-129 — Designed.) Requires `editSettings`. Deletes the binding row;
+        (ADR-129 — Implemented.) Requires `editSettings`. Deletes the binding row;
         resolution for `refId` reverts to precedence (grandfather).
       operationId: deleteProjectMcpBinding
       parameters:
@@ -10299,7 +10300,7 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Connect a platform MCP server to the project
       description: |
-        (ADR-129 — Designed.) Requires `editSettings`. Creates an enabled binding
+        (ADR-129 — Implemented.) Requires `editSettings`. Creates an enabled binding
         with `targetKind=platform` for the server's ref (grandfather pickup made
         explicit). The platform server MUST be `enabled` + trusted (`CONFLICT`).
       operationId: connectProjectMcp
@@ -10337,7 +10338,7 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Disconnect (opt-out) a ref in the project
       description: |
-        (ADR-129 — Designed.) Requires `editSettings`. Writes a disabled binding
+        (ADR-129 — Implemented.) Requires `editSettings`. Writes a disabled binding
         for `refId` (explicit opt-out); the ref becomes unresolvable in this
         project even if a platform row matches.
       operationId: disconnectProjectMcp
@@ -10371,7 +10372,7 @@ paths:
       tags: [mcp-management]
       summary: (ADR-129) Test-connection probe (web→supervisor proxy, trust-gated)
       description: |
-        (ADR-129 — Designed.) Requires `editSettings`. Resolves the target's
+        (ADR-129 — Implemented.) Requires `editSettings`. Resolves the target's
         material NAMES, enforces the WEB-SIDE trust gate — probing an
         untrusted-source stdio MCP is refused with a typed `CONFIG` reason
         (**no override in v1**) — then calls supervisor `POST /mcp-probe` and
@@ -10407,13 +10408,17 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: |
-            Target missing/not connected (`PRECONDITION`) or untrusted-source
-            stdio probe refused (`CONFIG`, no override in v1).
+          description: Target missing or not connected (`PRECONDITION`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "422": { $ref: "#/components/responses/Config" }
+        "422":
+          description: |
+            Invalid request, or an untrusted-source stdio probe refused
+            (`CONFIG`, no override in v1).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
   /api/projects/{slug}/schedules:
     get:
@@ -17000,7 +17005,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (ADR-129 — Designed.) Per-project binding overlay. Rewrites env/header/arg/url
+        (ADR-129 — Implemented.) Per-project binding overlay. Rewrites env/header/arg/url
         NAMES only — the ACP `mcpServers` wire shape is unchanged and the supervisor
         still resolves values from `process.env`. NO secret VALUE is ever stored.
         Every remap value MUST be an `env:NAME` reference. Unknown slot → `CONFIG` (422).
@@ -17027,7 +17032,7 @@ components:
     ProjectMcpBindingDTO:
       type: object
       description: |
-        (ADR-129 — Designed.) One `project_mcp_bindings` row projected for the
+        (ADR-129 — Implemented.) One `project_mcp_bindings` row projected for the
         client. Never includes a secret value.
       required: [refId, targetKind, targetId, enabled]
       properties:
@@ -17039,7 +17044,7 @@ components:
     McpProbeResult:
       type: object
       description: |
-        (ADR-129 — Designed.) Result of a health probe (`initialize` handshake).
+        (ADR-129 — Implemented.) Result of a health probe (`initialize` handshake).
         Never includes a secret value.
       required: [ok]
       properties:
