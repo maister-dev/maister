@@ -360,6 +360,39 @@ function liveRecord(
 }
 
 describe("runReconcileSweep (integration)", () => {
+  it("stops a live supervisor session that belongs to a D2-terminalized run", async () => {
+    const cutoverRunId = await seedRun({
+      status: "Failed",
+      acpSessionId: "acp-cutover",
+    });
+
+    await db.insert(schema.domainEvents).values({
+      kind: "run.failed",
+      projectId,
+      runId: cutoverRunId,
+      actorType: "system",
+      actorId: null,
+      occurredAt: new Date(),
+      payload: {
+        reason: "legacy_steps_engine_3_cutover",
+        source: "upgrade_cutover",
+      },
+    });
+    const stopSession = vi.fn(async () => undefined);
+    const { opts } = makeOpts({
+      liveSessions: [liveRecord(cutoverRunId, "acp-cutover")],
+    });
+
+    const summary = await runReconcileSweep({
+      ...opts,
+      deleteSession: stopSession,
+    });
+
+    expect(stopSession).toHaveBeenCalledWith(`sup-${cutoverRunId}`);
+    expect(summary.cutoverSessionsStopped).toBe(1);
+    expect((await readRun(cutoverRunId)).status).toBe("Failed");
+  }, 60_000);
+
   it("crashes an orphan Running whose worktree is gone and promotes the oldest Pending", async () => {
     const orphan = await seedRun({
       status: "Running",
@@ -788,6 +821,7 @@ describe("runReconcileSweep (integration)", () => {
       redispatched: 0,
       reattached: 0,
       skipped: 0,
+      cutoverSessionsStopped: 0,
       staleClaimsCleared: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");

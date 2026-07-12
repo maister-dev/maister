@@ -35,8 +35,9 @@ const ACTIONABLE = [
 let container: StartedPostgreSqlContainer;
 let adminPool: Pool;
 let migrationRoot: string;
-let migration0093: string;
 let migration0094: string;
+let migration0095: string;
+let migration0096: string;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -46,12 +47,16 @@ beforeAll(async () => {
     .start();
   adminPool = new Pool({ connectionString: container.getConnectionUri() });
   migrationRoot = await buildPreCutoverMigrationRoot();
-  migration0093 = await readFile(
-    resolve(__dirname, "../migrations/0093_postgres_graph_only_cutover.sql"),
+  migration0094 = await readFile(
+    resolve(__dirname, "../migrations/0094_postgres_graph_only_cutover.sql"),
     "utf8",
   );
-  migration0094 = await readFile(
-    resolve(__dirname, "../migrations/0094_close-m43-cutover-task-claims.sql"),
+  migration0095 = await readFile(
+    resolve(__dirname, "../migrations/0095_close_m43_cutover_task_claims.sql"),
+    "utf8",
+  );
+  migration0096 = await readFile(
+    resolve(__dirname, "../migrations/0096_index_m43_cutover_events.sql"),
     "utf8",
   );
 }, 180_000);
@@ -66,15 +71,16 @@ afterAll(async () => {
 
 async function buildPreCutoverMigrationRoot(): Promise<string> {
   const source = resolve(__dirname, "../migrations");
-  const target = await mkdtemp(join(tmpdir(), "maister-migrations-0092-"));
+  const target = await mkdtemp(join(tmpdir(), "maister-migrations-0093-"));
 
   await mkdir(join(target, "meta"), { recursive: true });
 
   for (const name of await readdir(source)) {
     if (
       !/^\d{4}_.+\.sql$/.test(name) ||
-      name.startsWith("0093_") ||
-      name.startsWith("0094_")
+      name.startsWith("0094_") ||
+      name.startsWith("0095_") ||
+      name.startsWith("0096_")
     ) {
       continue;
     }
@@ -93,7 +99,7 @@ async function buildPreCutoverMigrationRoot(): Promise<string> {
     JSON.stringify(
       {
         ...journal,
-        entries: journal.entries.filter((entry) => entry.idx <= 92),
+        entries: journal.entries.filter((entry) => entry.idx <= 93),
       },
       null,
       2,
@@ -120,11 +126,15 @@ async function preparedDatabase(label: string): Promise<Pool> {
 }
 
 async function applyCutover(pool: Pool): Promise<void> {
-  await applyMigrationSql(pool, migration0093);
+  await applyMigrationSql(pool, migration0094);
 }
 
 async function applyM43TaskClaimClosure(pool: Pool): Promise<void> {
-  await applyMigrationSql(pool, migration0094);
+  await applyMigrationSql(pool, migration0095);
+}
+
+async function applyM43EventIndexes(pool: Pool): Promise<void> {
+  await applyMigrationSql(pool, migration0096);
 }
 
 async function applyMigrationSql(pool: Pool, migration: string): Promise<void> {
@@ -270,7 +280,7 @@ async function seedTask(args: {
   );
 }
 
-describe("migrations 0093/0094 — D2 before irreversible D1", () => {
+describe("migrations 0094/0095/0096 — D2 before irreversible D1", () => {
   it("terminalizes exactly the eight legacy actionable statuses and preserves history", async () => {
     const pool = await preparedDatabase("matrix");
     const client = await pool.connect();
@@ -579,6 +589,38 @@ describe("migrations 0093/0094 — D2 before irreversible D1", () => {
         .rows[0]?.table_name,
     ).toBeNull();
 
+    const postD2Client = await pool.connect();
+
+    try {
+      await expect(
+        seedRun({
+          client: postD2Client,
+          runId: "post-d2-legacy-run",
+          projectId,
+          flowId: legacyFlowId,
+          revisionId: legacyRevisionId,
+          status: "Pending",
+        }),
+      ).rejects.toMatchObject({ code: "23514" });
+      await seedRun({
+        client: postD2Client,
+        runId: "post-d2-unpinned-graph-run",
+        projectId,
+        flowId: graphFlowId,
+        revisionId: null,
+        status: "Running",
+      });
+    } finally {
+      postD2Client.release();
+    }
+    expect(
+      (
+        await pool.query(
+          `SELECT status FROM runs WHERE id = 'post-d2-unpinned-graph-run'`,
+        )
+      ).rows[0]?.status,
+    ).toBe("Running");
+
     await applyCutover(pool);
     expect(
       (await pool.query(`SELECT count(*)::int AS n FROM domain_events`)).rows[0]
@@ -592,6 +634,36 @@ describe("migrations 0093/0094 — D2 before irreversible D1", () => {
       (await pool.query(`SELECT count(*)::int AS n FROM assignment_events`))
         .rows[0]?.n,
     ).toBe(1);
+
+    await applyM43EventIndexes(pool);
+    await applyM43EventIndexes(pool);
+    const indexDefinitions = await pool.query<{
+      indexname: string;
+      indexdef: string;
+    }>(
+      `SELECT indexname, indexdef
+       FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND indexname IN (
+           'domain_events_m43_cutover_run_occurred_idx',
+           'domain_events_m43_cutover_task_occurred_idx'
+         )
+       ORDER BY indexname`,
+    );
+
+    expect(indexDefinitions.rows).toHaveLength(2);
+    expect(indexDefinitions.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          indexname: "domain_events_m43_cutover_run_occurred_idx",
+          indexdef: expect.stringContaining("occurred_at"),
+        }),
+        expect.objectContaining({
+          indexname: "domain_events_m43_cutover_task_occurred_idx",
+          indexdef: expect.stringContaining("task_id"),
+        }),
+      ]),
+    );
 
     await pool.end();
   }, 180_000);
@@ -672,8 +744,8 @@ describe("migrations 0093/0094 — D2 before irreversible D1", () => {
       { id: staleTaskId, queue_claimed_at: new Date(staleClaimAt) },
     ]);
 
-    // A newer C2 claim can exist when 0093 was applied before the follow-up
-    // migration. It is not stale and must survive 0094.
+    // A newer C2 claim can exist when 0094 was applied before the follow-up
+    // migration. It is not stale and must survive 0095.
     await pool.query(`UPDATE tasks SET queue_claimed_at = $2 WHERE id = $1`, [
       laterTaskId,
       laterClaimAt,
@@ -681,7 +753,7 @@ describe("migrations 0093/0094 — D2 before irreversible D1", () => {
 
     await applyM43TaskClaimClosure(pool);
 
-    const claimsAfter0094 = await pool.query<{
+    const claimsAfter0095 = await pool.query<{
       id: string;
       queue_claimed_at: Date | null;
     }>(
@@ -692,7 +764,7 @@ describe("migrations 0093/0094 — D2 before irreversible D1", () => {
       [laterTaskId, staleTaskId],
     );
 
-    expect(claimsAfter0094.rows).toEqual([
+    expect(claimsAfter0095.rows).toEqual([
       { id: laterTaskId, queue_claimed_at: new Date(laterClaimAt) },
       { id: staleTaskId, queue_claimed_at: null },
     ]);
@@ -705,6 +777,88 @@ describe("migrations 0093/0094 — D2 before irreversible D1", () => {
         }>(`SELECT queue_claimed_at FROM tasks WHERE id = $1`, [laterTaskId])
       ).rows[0]?.queue_claimed_at,
     ).toEqual(new Date(laterClaimAt));
+
+    await pool.end();
+  }, 180_000);
+
+  it("moves a settled D2-affected multi-variant experiment to comparable", async () => {
+    const pool = await preparedDatabase("experiment-status");
+    const client = await pool.connect();
+    const projectId = "p-experiment-status";
+    const flowId = "legacy-experiment-flow";
+    const revisionId = "legacy-experiment-revision";
+
+    try {
+      await seedProject(client, projectId);
+      await seedFlow({
+        client,
+        projectId,
+        flowId,
+        revisionId,
+        legacy: true,
+      });
+      await seedTask({
+        client,
+        taskId: "experiment-task",
+        projectId,
+        flowId,
+        number: 1,
+        queueClaimedAt: null,
+      });
+      await seedRun({
+        client,
+        runId: "experiment-run-a",
+        taskId: "experiment-task",
+        projectId,
+        flowId,
+        revisionId,
+        status: "Running",
+      });
+      await seedRun({
+        client,
+        runId: "experiment-run-b",
+        taskId: "experiment-task",
+        projectId,
+        flowId,
+        revisionId,
+        status: "NeedsInput",
+      });
+      await client.query(
+        `INSERT INTO experiments (
+           id, project_id, task_id, title, status, base_branch, base_commit,
+           variants, rubric
+         ) VALUES (
+           'experiment-cutover', $1, 'experiment-task', 'Cut-over comparison',
+           'running', 'main', 'abc123',
+           '[{"key":"a","title":"A","prompt":"A","config":{}},
+             {"key":"b","title":"B","prompt":"B","config":{}}]'::jsonb,
+           '{"criteria":[{"id":"correctness","label":"Correctness","weight":1}]}'::jsonb
+         )`,
+        [projectId],
+      );
+      await client.query(
+        `INSERT INTO experiment_runs (
+           id, experiment_id, run_id, variant_key, replicate_ordinal,
+           launch_reason, base_commit
+         ) VALUES
+           ('experiment-member-a', 'experiment-cutover', 'experiment-run-a', 'a', 1,
+            'initial', 'abc123'),
+           ('experiment-member-b', 'experiment-cutover', 'experiment-run-b', 'b', 1,
+            'initial', 'abc123')`,
+      );
+    } finally {
+      client.release();
+    }
+
+    await applyCutover(pool);
+
+    expect(
+      (
+        await pool.query(
+          `SELECT status, comparable_at FROM experiments WHERE id = 'experiment-cutover'`,
+        )
+      ).rows[0],
+    ).toMatchObject({ status: "comparable", comparable_at: expect.any(Date) });
 
     await pool.end();
   }, 180_000);

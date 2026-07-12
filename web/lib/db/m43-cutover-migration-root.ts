@@ -15,9 +15,9 @@ type MigrationJournalEntry = { tag: string };
 type MigrationJournal = { entries: MigrationJournalEntry[] };
 
 // Drizzle applies every journal entry present in a migration root. Building a
-// short-lived root through (but excluding) 0093 lets db:migrate bring an older
+// short-lived root through (but excluding) the cut-over lets db:migrate bring an older
 // deployment up to the D2 boundary, inspect the exact candidate set, then apply
-// 0093 and any later migrations through the canonical root.
+// cut-over and any later migrations through the canonical root.
 export async function createMigrationRootBefore(
   sourceDir: string,
   targetTag: string,

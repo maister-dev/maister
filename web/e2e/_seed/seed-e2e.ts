@@ -4917,9 +4917,9 @@ async function seedM43CutoverFixture(
 
   await pool.query(
     `INSERT INTO flows
-       (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
      VALUES ($1, $2, 'legacy-cutover', 'e2e', 'v2.9.0', '/tmp/legacy-cutover',
-       '{"schemaVersion":1,"name":"Legacy cut-over","steps":[]}'::jsonb, 1)`,
+       '{"schemaVersion":1,"name":"Legacy cut-over","nodes":[]}'::jsonb, 1)`,
     [ids.flow, projectRow.id],
   );
   await pool.query(
@@ -4956,14 +4956,23 @@ async function seedM43CutoverFixture(
      VALUES ($1, $2, $3, 'main', $4, $4, 'main', 'main')`,
     [ids.workspace, ids.run, projectRow.id, projectRow.repo_path],
   );
+  // The post-M43 database trigger prevents creating a new legacy run. Build the
+  // historical row with a graph-shaped cache, then model the old stored cache
+  // after it is terminal. No run row is written against a legacy manifest.
+  await pool.query(
+    `UPDATE flows
+     SET manifest = '{"schemaVersion":1,"name":"Legacy cut-over","steps":[]}'::jsonb
+     WHERE id = $1`,
+    [ids.flow],
+  );
   await pool.query(
     `INSERT INTO domain_events
        (kind, project_id, task_id, run_id, actor_type, payload, occurred_at)
      VALUES ('run.failed', $1, $2, $3, 'system',
        jsonb_build_object(
-         'runId', $3,
-         'taskId', $2,
-         'flowId', $4,
+         'runId', $3::text,
+         'taskId', $2::text,
+         'flowId', $4::text,
          'runKind', 'flow',
          'reason', 'legacy_steps_engine_3_cutover',
          'source', 'upgrade_cutover'

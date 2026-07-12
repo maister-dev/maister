@@ -13,6 +13,25 @@ export type GraphOnlyCutoverFailure = {
   reason: typeof GRAPH_ONLY_CUTOVER_REASON;
 };
 
+export async function listGraphOnlyCutoverRunIds(
+  client: NodePgDatabase<typeof schema>,
+): Promise<Set<string>> {
+  const rows = await client
+    .selectDistinct({ runId: schema.domainEvents.runId })
+    .from(schema.domainEvents)
+    .where(
+      and(
+        eq(schema.domainEvents.kind, "run.failed"),
+        sql`${schema.domainEvents.payload}->>'reason' = ${GRAPH_ONLY_CUTOVER_REASON}`,
+        sql`${schema.domainEvents.payload}->>'source' = ${GRAPH_ONLY_CUTOVER_SOURCE}`,
+      ),
+    );
+
+  return new Set(
+    rows.flatMap((row) => (row.runId === null ? [] : [row.runId])),
+  );
+}
+
 export async function getGraphOnlyCutoverFailure(
   client: NodePgDatabase<typeof schema>,
   runId: string,

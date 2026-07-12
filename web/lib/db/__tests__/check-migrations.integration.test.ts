@@ -11,7 +11,10 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { findPendingMigrations } from "@/lib/db/check-migrations";
+import {
+  findPendingMigrations,
+  mainMigrationLedgerHighWater,
+} from "@/lib/db/check-migrations";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -47,6 +50,7 @@ afterAll(async () => {
 describe("findPendingMigrations", () => {
   it("returns [] when the database is fully migrated", async () => {
     expect(await findPendingMigrations(db)).toEqual([]);
+    expect(await mainMigrationLedgerHighWater(db)).toEqual(expect.any(Number));
   });
 
   it("flags a journal migration whose ledger row is missing (the silent-skip case)", async () => {

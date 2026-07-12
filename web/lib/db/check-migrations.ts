@@ -26,7 +26,7 @@ import { sql, type SQL } from "drizzle-orm";
 const MAIN_MIGRATIONS_DIR = join(process.cwd(), "lib/db/migrations");
 const BRAIN_MIGRATIONS_DIR = join(process.cwd(), "lib/db/brain-migrations");
 
-type JournalEntry = { idx: number; tag: string; when: number };
+export type JournalEntry = { idx: number; tag: string; when: number };
 
 type MigrationCheckDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -38,6 +38,16 @@ function readJournalTags(dir: string): string[] {
   ) as { entries: JournalEntry[] };
 
   return journal.entries.map((e) => e.tag);
+}
+
+export function findMainMigrationJournalEntry(
+  tag: string,
+): JournalEntry | null {
+  const journal = JSON.parse(
+    readFileSync(join(MAIN_MIGRATIONS_DIR, "meta/_journal.json"), "utf8"),
+  ) as { entries: JournalEntry[] };
+
+  return journal.entries.find((entry) => entry.tag === tag) ?? null;
 }
 
 function migrationHash(dir: string, tag: string): string {
@@ -84,6 +94,32 @@ export async function findPendingMigrations(
     MAIN_MIGRATIONS_DIR,
     sql`SELECT hash FROM drizzle.__drizzle_migrations`,
   );
+}
+
+// Drizzle's incremental migrator compares journal `when` against the ledger's
+// high-water `created_at`. A hash-missing migration at or below that watermark
+// is silently skipped, so callers that need an irreversible pre-migration read
+// must reject the drift rather than report a false successful transition.
+export async function mainMigrationLedgerHighWater(
+  db: MigrationCheckDb,
+): Promise<number | null> {
+  try {
+    const result = await db.execute(
+      sql`SELECT MAX(created_at) AS "createdAt" FROM drizzle.__drizzle_migrations`,
+    );
+    const value = result.rows[0]?.createdAt;
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Number(value)
+          : NaN;
+
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch (err) {
+    if ((err as { code?: string }).code === "42P01") return null;
+    throw err;
+  }
 }
 
 // ADR-122: the BRAIN-lineage counterpart, reading the brain journal against the

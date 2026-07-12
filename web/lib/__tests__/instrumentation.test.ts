@@ -63,11 +63,11 @@ describe("instrumentation DB boot boundary", () => {
 
   it("rejects boot on a confirmed pending migration", async () => {
     findPendingMigrations.mockResolvedValue([
-      "0093_postgres_graph_only_cutover",
+      "0094_postgres_graph_only_cutover",
     ]);
 
     await expect(register()).rejects.toThrow(
-      /0093_postgres_graph_only_cutover/,
+      /0094_postgres_graph_only_cutover/,
     );
   });
 });

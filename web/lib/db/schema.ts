@@ -3980,6 +3980,23 @@ export const domainEvents = pgTable(
       "domain_events_actor_type_check",
       sql`${t.actorType} in ('user', 'system', 'agent')`,
     ),
+    // M43 read models resolve cut-over history by run and stale C2 claims by
+    // task. Keep their JSONB predicates bounded without imposing a broad GIN
+    // index on the append-only event log.
+    m43CutoverRunOccurredIdx: index(
+      "domain_events_m43_cutover_run_occurred_idx",
+    )
+      .on(t.runId, t.occurredAt)
+      .where(
+        sql`${t.kind} = 'run.failed' AND ${t.payload}->>'reason' = 'legacy_steps_engine_3_cutover' AND ${t.payload}->>'source' = 'upgrade_cutover'`,
+      ),
+    m43CutoverTaskOccurredIdx: index(
+      "domain_events_m43_cutover_task_occurred_idx",
+    )
+      .on(t.taskId, t.occurredAt)
+      .where(
+        sql`${t.kind} = 'run.failed' AND ${t.payload}->>'reason' = 'legacy_steps_engine_3_cutover' AND ${t.payload}->>'source' = 'upgrade_cutover' AND ${t.taskId} IS NOT NULL`,
+      ),
   }),
 );
 export type DomainEventRow = typeof domainEvents.$inferSelect;

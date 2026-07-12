@@ -24,6 +24,7 @@ import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
+import { listGraphOnlyCutoverRunIds } from "@/lib/queries/run-cutover";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import {
   reconcileGraceSeconds,
@@ -36,7 +37,7 @@ import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { promoteNextPending } from "@/lib/scheduler";
-import { listSessions } from "@/lib/supervisor-client";
+import { deleteSession, listSessions } from "@/lib/supervisor-client";
 import { listWorktrees } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -281,6 +282,7 @@ function mostRecentMs(a: Date | null, b: Date | null): number | null {
 export interface RunReconcileSweepOptions {
   db?: Db;
   listSessions?: () => Promise<SupervisorSessionRecord[]>;
+  deleteSession?: (sessionId: string) => Promise<void>;
   listWorktrees?: (repoPath: string) => Promise<WorktreeInfo[]>;
   runFlow?: (runId: string) => Promise<void> | void;
   scheduleResumedSessionDrive?: (opts: RunResumedSessionOptions) => string;
@@ -293,6 +295,9 @@ export interface ReconcileSweepSummary {
   redispatched: number;
   reattached: number;
   skipped: number;
+  // M43: D2 clears persisted ACP handles, so a surviving old supervisor
+  // process is stopped by run identity before normal Running-only reconcile.
+  cutoverSessionsStopped: number;
   // ADR-121 (T15, F1): stale C2 admission claims (tasks.queue_claimed_at set, no
   // run minted, past the grace window — a crash between claim and launchRun) cleared
   // this tick so the task becomes re-eligible.
@@ -305,6 +310,7 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   redispatched: 0,
   reattached: 0,
   skipped: 0,
+  cutoverSessionsStopped: 0,
   staleClaimsCleared: 0,
 };
 
@@ -382,6 +388,52 @@ async function runWithConcurrency<T>(
     workers.push(worker());
   }
   await Promise.all(workers);
+}
+
+async function stopGraphOnlyCutoverSessions(args: {
+  db: Db;
+  records: readonly SupervisorSessionRecord[];
+  stopSession: (sessionId: string) => Promise<void>;
+}): Promise<number> {
+  let cutoverRunIds: Set<string>;
+
+  try {
+    cutoverRunIds = await listGraphOnlyCutoverRunIds(args.db);
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "[FIX:M43] reconcile could not load D2 cut-over runs — leaving supervisor sessions untouched",
+    );
+
+    return 0;
+  }
+
+  const candidates = args.records.filter(
+    (record) => record.status === "live" && cutoverRunIds.has(record.runId),
+  );
+  let stopped = 0;
+
+  await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (record) => {
+    try {
+      await args.stopSession(record.sessionId);
+      stopped += 1;
+      log.warn(
+        { runId: record.runId, sessionId: record.sessionId },
+        "[FIX:M43] stopped stale supervisor session for D2 cut-over run",
+      );
+    } catch (err) {
+      log.warn(
+        {
+          runId: record.runId,
+          sessionId: record.sessionId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[FIX:M43] failed to stop stale supervisor session for D2 cut-over run",
+      );
+    }
+  });
+
+  return stopped;
 }
 
 // Latest node_attempts.started_at for a run (the grace anchor alongside
@@ -776,6 +828,7 @@ export async function runReconcileSweep(
 ): Promise<ReconcileSweepSummary> {
   const db = opts.db ?? getDb();
   const sessions = opts.listSessions ?? listSessions;
+  const stopSession = opts.deleteSession ?? deleteSession;
   const worktreesFor = opts.listWorktrees ?? listWorktrees;
   const runFlow =
     opts.runFlow ??
@@ -812,9 +865,16 @@ export async function runReconcileSweep(
   // transient supervisor unavailability).
   let liveMap: Map<string, SupervisorSessionRecord>;
   let liveByRunStep: Map<string, SupervisorSessionRecord>;
+  let cutoverSessionsStopped = 0;
 
   try {
     const records = await sessions();
+
+    cutoverSessionsStopped = await stopGraphOnlyCutoverSessions({
+      db,
+      records,
+      stopSession,
+    });
 
     liveMap = new Map();
     liveByRunStep = new Map();
@@ -832,7 +892,7 @@ export async function runReconcileSweep(
       "reconcile sweep: listSessions failed — skipping whole tick",
     );
 
-    return { ...ZERO_SUMMARY, staleClaimsCleared };
+    return { ...ZERO_SUMMARY, staleClaimsCleared, cutoverSessionsStopped };
   }
 
   const candidates = await loadCandidates(db);
@@ -840,7 +900,7 @@ export async function runReconcileSweep(
   log.info({ candidates: candidates.length }, "reconcile sweep start");
 
   if (candidates.length === 0) {
-    return { ...ZERO_SUMMARY, staleClaimsCleared };
+    return { ...ZERO_SUMMARY, staleClaimsCleared, cutoverSessionsStopped };
   }
 
   // One listWorktrees call per distinct repoPath → Set of worktree paths.
@@ -1107,6 +1167,7 @@ export async function runReconcileSweep(
     redispatched,
     reattached,
     skipped,
+    cutoverSessionsStopped,
     staleClaimsCleared,
   };
 

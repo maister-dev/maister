@@ -8,7 +8,11 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import pino from "pino";
 
-import { findPendingMigrations } from "./check-migrations";
+import {
+  findMainMigrationJournalEntry,
+  findPendingMigrations,
+  mainMigrationLedgerHighWater,
+} from "./check-migrations";
 import {
   M43_CUTOVER_MIGRATION,
   readM43CutoverTelemetry,
@@ -69,6 +73,23 @@ async function main(): Promise<void> {
   try {
     const pending = await findPendingMigrations(db);
     const m43Pending = pending.includes(M43_CUTOVER_MIGRATION);
+    const m43Entry = findMainMigrationJournalEntry(M43_CUTOVER_MIGRATION);
+
+    if (!m43Entry) {
+      throw new Error(
+        `migration journal does not contain ${M43_CUTOVER_MIGRATION}`,
+      );
+    }
+
+    if (m43Pending) {
+      const highWater = await mainMigrationLedgerHighWater(db);
+
+      if (highWater !== null && highWater >= m43Entry.when) {
+        throw new Error(
+          `cannot run ${M43_CUTOVER_MIGRATION}: its hash is missing but migration ledger high-water ${highWater} is at or after journal timestamp ${m43Entry.when}; repair the migration ledger before retrying`,
+        );
+      }
+    }
 
     if (m43Pending && !canReadM43Telemetry(pending)) {
       preM43MigrationRoot = await createMigrationRootBefore(

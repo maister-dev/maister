@@ -1,6 +1,6 @@
 {
-  "id": "0bb0c598-71b4-404c-9997-02c0ff7d043d",
-  "prevId": "b6f2c65b-fb5f-4f66-a398-b1dfb0bb17f0",
+  "id": "7c743364-f618-4437-85d6-4b8af79072d2",
+  "prevId": "bb940219-c8c0-479c-9a4f-b950fbbab13c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2601,7 +2601,52 @@
           "default": "pg_current_xact_id()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "domain_events_m43_cutover_run_occurred_idx": {
+          "name": "domain_events_m43_cutover_run_occurred_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"domain_events\".\"kind\" = 'run.failed' AND \"domain_events\".\"payload\"->>'reason' = 'legacy_steps_engine_3_cutover' AND \"domain_events\".\"payload\"->>'source' = 'upgrade_cutover'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "domain_events_m43_cutover_task_occurred_idx": {
+          "name": "domain_events_m43_cutover_task_occurred_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"domain_events\".\"kind\" = 'run.failed' AND \"domain_events\".\"payload\"->>'reason' = 'legacy_steps_engine_3_cutover' AND \"domain_events\".\"payload\"->>'source' = 'upgrade_cutover' AND \"domain_events\".\"task_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "domain_events_project_id_projects_id_fk": {
           "name": "domain_events_project_id_projects_id_fk",

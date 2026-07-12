@@ -62,7 +62,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm exec next dev -p ${PORT}`,
+    command: `pnpm e2e:preflight && pnpm exec next dev -p ${PORT}`,
     url: BASE_URL,
     timeout: 180_000,
     reuseExistingServer: !process.env.CI,

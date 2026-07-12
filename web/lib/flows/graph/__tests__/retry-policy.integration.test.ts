@@ -459,6 +459,28 @@ describe("retry_policy auto-retry (ADR-080)", () => {
     expect(await runStatus(runId)).toBe("Failed");
   }, 120_000);
 
+  it("preserves CRASH precedence by terminalizing the run as Crashed", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const { loaded, runId } = await seedRun(
+      retryManifest({ attempts: 3, on_errors: ["SPAWN"] }),
+    );
+
+    agentScript = [{ ok: false, errorCode: "CRASH" }];
+
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    expect(await attemptsFor(runId)).toHaveLength(1);
+    expect(await runStatus(runId)).toBe("Crashed");
+    expect(
+      (
+        await pool.query(
+          `SELECT kind FROM domain_events WHERE run_id = $1 ORDER BY occurred_at DESC LIMIT 1`,
+          [runId],
+        )
+      ).rows[0]?.kind,
+    ).toBe("run.crashed");
+  }, 120_000);
+
   it("no retry_policy declared → single attempt on retryable failure (opt-in)", async () => {
     const { runGraph } = await import("@/lib/flows/graph/runner-graph");
     const manifest = retryManifest(undefined);

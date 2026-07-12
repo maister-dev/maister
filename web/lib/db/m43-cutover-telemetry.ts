@@ -3,7 +3,7 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 
 export const M43_CUTOVER_MIGRATION =
-  "0093_postgres_graph_only_cutover" as const;
+  "0094_postgres_graph_only_cutover" as const;
 
 type SqlDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;

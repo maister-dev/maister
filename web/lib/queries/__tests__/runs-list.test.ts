@@ -161,6 +161,8 @@ describe("runs list query", () => {
     expect(runsQueryText).toContain("LEFT JOIN LATERAL");
     expect(runsQueryText).toContain("FROM workspaces w");
     expect(runsQueryText).toContain("LIMIT 1");
+    expect(runsQueryText).toContain("de.occurred_at AS failed_at");
+    expect(runsQueryText).not.toContain("de.created_at AS failed_at");
     expect(countQueryText).toContain("LEFT JOIN LATERAL");
     expect(countQueryText).toContain("FROM run_schedules s");
   });

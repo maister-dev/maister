@@ -25,9 +25,10 @@ describe("M43 temporary migration root", () => {
     await mkdir(join(source, "meta"), { recursive: true });
     await writeFile(join(source, "0001_first.sql"), "SELECT 1;");
     await writeFile(join(source, "0092_before.sql"), "SELECT 2;");
+    await writeFile(join(source, "0093_mcp_management_v2.sql"), "SELECT 3;");
     await writeFile(
-      join(source, "0093_postgres_graph_only_cutover.sql"),
-      "SELECT 3;",
+      join(source, "0094_postgres_graph_only_cutover.sql"),
+      "SELECT 4;",
     );
     await writeFile(
       join(source, "meta", "_journal.json"),
@@ -35,14 +36,15 @@ describe("M43 temporary migration root", () => {
         entries: [
           { idx: 1, tag: "0001_first", when: 1 },
           { idx: 92, tag: "0092_before", when: 2 },
-          { idx: 93, tag: "0093_postgres_graph_only_cutover", when: 3 },
+          { idx: 93, tag: "0093_mcp_management_v2", when: 3 },
+          { idx: 94, tag: "0094_postgres_graph_only_cutover", when: 4 },
         ],
       }),
     );
 
     const root = await createMigrationRootBefore(
       source,
-      "0093_postgres_graph_only_cutover",
+      "0094_postgres_graph_only_cutover",
     );
 
     temporaryRoots.push(root);
@@ -54,6 +56,7 @@ describe("M43 temporary migration root", () => {
     expect(journal.entries).toEqual([
       { idx: 1, tag: "0001_first", when: 1 },
       { idx: 92, tag: "0092_before", when: 2 },
+      { idx: 93, tag: "0093_mcp_management_v2", when: 3 },
     ]);
     await expect(readFile(join(root, "0001_first.sql"), "utf8")).resolves.toBe(
       "SELECT 1;",
@@ -62,7 +65,10 @@ describe("M43 temporary migration root", () => {
       "SELECT 2;",
     );
     await expect(
-      readFile(join(root, "0093_postgres_graph_only_cutover.sql"), "utf8"),
+      readFile(join(root, "0093_mcp_management_v2.sql"), "utf8"),
+    ).resolves.toBe("SELECT 3;");
+    await expect(
+      readFile(join(root, "0094_postgres_graph_only_cutover.sql"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

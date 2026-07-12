@@ -1,4 +1,4 @@
--- M43 / ADR-129: terminalize actionable legacy steps[] Flow runs (D2), then
+-- M43 / ADR-130: terminalize actionable legacy steps[] Flow runs (D2), then
 -- irreversibly remove their detailed step ledger (D1). Drizzle runs this file
 -- in one transaction; every mutation below is therefore all-or-nothing.
 
@@ -36,7 +36,7 @@ BEGIN
   ) THEN
     RAISE EXCEPTION USING
       ERRCODE = '23514',
-      MESSAGE = '0093 graph-only cut-over aborted: actionable Flow run has unresolved or ambiguous manifest/project identity';
+      MESSAGE = '0094 graph-only cut-over aborted: actionable Flow run has unresolved or ambiguous manifest/project identity';
   END IF;
 END $$;
 --> statement-breakpoint
@@ -236,6 +236,83 @@ SELECT
   NULL,
   winner.ended_at
 FROM _m93_cutover_winners winner;
+--> statement-breakpoint
+
+-- An old web binary may survive the documented stop window. Reject a legacy
+-- Flow at the database boundary so it cannot create a post-D2 run that this
+-- one-shot migration will never terminalize.
+CREATE OR REPLACE FUNCTION maister_reject_legacy_flow_run()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.run_kind <> 'flow' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.flow_revision_id IS NOT NULL AND EXISTS (
+    SELECT 1
+    FROM flow_revisions fr
+    WHERE fr.id = NEW.flow_revision_id
+      AND fr.manifest ? 'steps'
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = '0094 graph-only cut-over rejected a legacy steps[] Flow run';
+  END IF;
+
+  IF NEW.flow_revision_id IS NULL AND NEW.flow_id IS NOT NULL AND EXISTS (
+    SELECT 1
+    FROM flows f
+    WHERE f.id = NEW.flow_id
+      AND f.manifest ? 'steps'
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = '0094 graph-only cut-over rejected a legacy steps[] Flow run';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
+DROP TRIGGER IF EXISTS runs_reject_legacy_flow_run ON runs;
+--> statement-breakpoint
+
+CREATE TRIGGER runs_reject_legacy_flow_run
+BEFORE INSERT OR UPDATE OF run_kind, flow_id, flow_revision_id ON runs
+FOR EACH ROW
+EXECUTE FUNCTION maister_reject_legacy_flow_run();
+--> statement-breakpoint
+
+-- D2 bypasses the ordinary terminal-transition service. Mirror its only
+-- relevant experiment lifecycle effect: running multi-variant experiments
+-- become comparable when every member is settled after the cut-over. Human
+-- conclusion remains untouched.
+UPDATE experiments e
+SET status = 'comparable',
+    comparable_at = clock_timestamp(),
+    updated_at = clock_timestamp()
+WHERE e.status = 'running'
+  AND EXISTS (
+    SELECT 1
+    FROM experiment_runs er
+    JOIN _m93_cutover_winners winner ON winner.run_id = er.run_id
+    WHERE er.experiment_id = e.id
+  )
+  AND (
+    SELECT COUNT(DISTINCT er.variant_key)
+    FROM experiment_runs er
+    WHERE er.experiment_id = e.id
+  ) >= 2
+  AND NOT EXISTS (
+    SELECT 1
+    FROM experiment_runs er
+    JOIN runs member_run ON member_run.id = er.run_id
+    WHERE er.experiment_id = e.id
+      AND member_run.status NOT IN ('Review', 'Crashed', 'Done', 'Abandoned', 'Failed')
+  );
 --> statement-breakpoint
 
 DROP TABLE IF EXISTS step_runs CASCADE;

@@ -1,11 +1,6 @@
-/* eslint-disable no-console */
-// Playwright global setup for the authenticated/seeded e2e suite. Runs once
-// before any test: provisions the dedicated e2e database, applies the schema
-// migrations (incl. M11a 0010_m11a_graph_ledger), and plants the review→rework
-// fixture. Auth (storageState) is handled separately by e2e/auth.setup.ts so
-// it runs after the webServer is ready.
-import { execSync } from "node:child_process";
-
+// Playwright global setup for the authenticated/seeded e2e suite. Database
+// preflight runs from the webServer command because Playwright starts the server
+// before this hook. Auth (storageState) is handled by e2e/auth.setup.ts.
 import { Pool } from "pg";
 
 import { E2E_DB_URL } from "./_seed/db-url";
@@ -19,99 +14,12 @@ import { startTestSupervisor } from "./_seed/test-supervisor";
 // delegates each child to (must match seed-e2e.ts E2E_WORKER_AGENT).
 const E2E_WORKER_AGENT = "e2e-orc-pkg:e2e-worker";
 
-async function ensureDatabase(url: string): Promise<void> {
-  const dbName = new URL(url).pathname.replace(/^\//, "");
-
-  if (!dbName) throw new Error(`E2E_DB_URL has no database name: ${url}`);
-
-  const adminUrl = new URL(url);
-
-  adminUrl.pathname = "/postgres";
-  const pool = new Pool({ connectionString: adminUrl.toString() });
-
-  try {
-    const existing = await pool.query(
-      "SELECT 1 FROM pg_database WHERE datname = $1",
-      [dbName],
-    );
-
-    if (existing.rowCount === 0) {
-      // dbName originates from our own constant, not user input — safe to inline.
-      await pool.query(`CREATE DATABASE "${dbName}"`);
-      console.log(`global-setup: created database ${dbName}`);
-    }
-  } finally {
-    await pool.end();
-  }
-}
-
-// Reset the dedicated, disposable e2e database to a clean slate so its schema
-// ALWAYS matches the current migration files. A persistent e2e DB silently
-// drifts when migrations are squashed/renumbered: drizzle's incremental
-// migrator records applied migrations in `drizzle.__drizzle_migrations`, so a
-// DB carrying a stale history (e.g. 24 recorded entries against 22 current
-// files) gets NO new migrations applied and keeps serving an out-of-date schema
-// (observed: a `tasks` table missing `executor_override_id` → POST /tasks 500).
-// Dropping both schemas forces `migrate.ts` to re-apply every migration from
-// 0000. Safe: runs before the webServer boots, so no app connection holds the
-// schema, and the e2e DB carries only fixture data.
-async function resetSchema(url: string): Promise<void> {
-  const pool = new Pool({ connectionString: url });
-
-  try {
-    await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
-    await pool.query("CREATE SCHEMA public");
-    await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE");
-    // pgvector lives in `public`; the drop removed it. Re-create so the
-    // brain-lineage migrations (which use `vector` columns) can apply (ADR-122).
-    await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
-  } finally {
-    await pool.end();
-  }
-}
-
 export default async function globalSetup(): Promise<() => Promise<void>> {
-  if (!E2E_DB_URL.startsWith("postgres")) {
-    throw new Error(
-      `e2e requires a Postgres E2E_DB_URL; got "${E2E_DB_URL}". ` +
-        `Start Postgres (docker compose up -d db) or set E2E_DB_URL.`,
-    );
-  }
+  // Playwright starts webServer before global setup. The webServer command runs
+  // e2e/prepare.ts first, so the migration boot guard sees the seeded schema.
 
-  try {
-    await ensureDatabase(E2E_DB_URL);
-  } catch (err) {
-    throw new Error(
-      `e2e: cannot reach or create Postgres for ${E2E_DB_URL} — is the database server up? ` +
-        `(${(err as Error).message})`,
-    );
-  }
-
-  // Reset BEFORE migrating so a stale persistent e2e DB (drifted migration
-  // history) can never silently serve an out-of-date schema.
-  console.log("global-setup: resetting e2e schema…");
-  await resetSchema(E2E_DB_URL);
-
-  // NODE_ENV=test makes migrate.ts's `@/lib/load-env` SKIP `.env.local` (Next.js
-  // parity), so a dev machine's `.env.local` DB_URL can't override E2E_DB_URL and
-  // send these migrations to the dev DB (seed reads DB_URL directly, no load-env).
-  // The webServer's env is configured separately in playwright.config.ts and is
-  // unaffected — the app under test still runs in development.
-  const env = { ...process.env, DB_URL: E2E_DB_URL, NODE_ENV: "test" as const };
-
-  console.log("global-setup: applying migrations…");
-  execSync("pnpm exec tsx lib/db/migrate.ts", { stdio: "inherit", env });
-  console.log("global-setup: applying brain migrations…");
-  execSync("pnpm exec tsx lib/db/migrate-brain.ts", {
-    stdio: "inherit",
-    env,
-  });
-
-  console.log("global-setup: seeding review→rework fixture…");
-  execSync("pnpm exec tsx e2e/_seed/seed-e2e.ts", { stdio: "inherit", env });
-
-  // The test supervisor (a SUPERSET of the stub) must be up BEFORE the webServer
-  // boots: it answers /health ready (the M11c launch-refusal + board Launch
+  // The test supervisor must be up before auth and the test projects start: it
+  // answers /health ready (the M11c launch-refusal + board Launch
   // gate), serves the stub-compat /sessions hold-until-`.release` path for the
   // platform-agents `agent` specs, AND drives the M37 orchestrator
   // delegate→park→resume loop for the orchestrator-loop spec (its coordinator

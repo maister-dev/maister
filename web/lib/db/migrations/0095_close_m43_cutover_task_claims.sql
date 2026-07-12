@@ -1,4 +1,4 @@
--- M43 follow-up: 0093 terminalizes legacy Flow runs while services are stopped.
+-- M43 follow-up: 0094 terminalizes legacy Flow runs while services are stopped.
 -- A C2 claim made immediately before the upgrade is otherwise left on the task,
 -- permanently excluding it from the scheduler after restart. Only clear claims
 -- that predate the recorded D2 transition; a later human re-triage remains intact.

@@ -337,13 +337,13 @@ function runsListQuery(args: {
     ) w ON true
     LEFT JOIN run_cost_rollups c ON c.run_id = r.id
     LEFT JOIN LATERAL (
-      SELECT de.created_at AS failed_at
+      SELECT de.occurred_at AS failed_at
       FROM domain_events de
       WHERE de.run_id = r.id
         AND de.kind = 'run.failed'
         AND de.payload->>'reason' = ${GRAPH_ONLY_CUTOVER_REASON}
         AND de.payload->>'source' = ${GRAPH_ONLY_CUTOVER_SOURCE}
-      ORDER BY de.created_at DESC
+      ORDER BY de.occurred_at DESC
       LIMIT 1
     ) cutover ON true
     LEFT JOIN LATERAL (
