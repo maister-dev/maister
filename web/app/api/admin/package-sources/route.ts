@@ -1,26 +1,20 @@
 import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
 import {
   createPackageSource,
   defaultPackageSourceUrls,
   listPackageSources,
+  packageSourceCreateBodySchema,
 } from "@/lib/packages/catalog";
 import { packageErrorResponse } from "@/lib/packages/http";
 
 // (ADR-088) Platform package-source catalog: list + create. Admin-only;
 // identifiers: none (list) / body url validated by zod (the source URL is
 // platform config, the same trust class as the ACP runner catalog).
-const createBodySchema = z
-  .object({
-    url: z.string().min(1).max(512),
-    note: z.string().max(512).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
+const createBodySchema = packageSourceCreateBodySchema;
 
 function sourceDto(
   row: Record<string, unknown>,
@@ -29,6 +23,8 @@ function sourceDto(
   return {
     id: row.id,
     url: row.url,
+    kind: row.kind ?? "git",
+    baseBranch: row.baseBranch ?? null,
     enabled: row.enabled,
     note: row.note ?? null,
     discovered: row.discovered ?? [],

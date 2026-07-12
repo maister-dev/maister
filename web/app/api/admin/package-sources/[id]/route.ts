@@ -1,23 +1,19 @@
 import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
 import {
   deletePackageSource,
+  packageSourceUpdateBodySchema,
   updatePackageSource,
 } from "@/lib/packages/catalog";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
 
-// (ADR-088) `id` is a url-param resolved to the server row (404 on miss);
-// mutable fields: enabled, note. The url is immutable (delete + re-add).
-const patchBodySchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    note: z.string().max(512).optional(),
-  })
-  .strict();
+// (ADR-088; `baseBranch` ADR-129) `id` is a url-param resolved to the server
+// row (404 on miss); mutable fields: enabled, note, baseBranch. The url and
+// kind are immutable (delete + re-add).
+const patchBodySchema = packageSourceUpdateBodySchema;
 
 export async function PATCH(
   req: NextRequest,

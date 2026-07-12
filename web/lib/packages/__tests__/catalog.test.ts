@@ -3,8 +3,61 @@ import { describe, expect, it } from "vitest";
 import {
   classifyVersionTargets,
   deriveUpdateAvailable,
+  packageSourceCreateBodySchema,
+  packageSourceUpdateBodySchema,
   parsePackageTags,
 } from "@/lib/packages/catalog";
+
+describe("packageSourceCreateBodySchema (ADR-129 kind/baseBranch)", () => {
+  it("defaults kind to git when absent and accepts kind local", () => {
+    expect(
+      packageSourceCreateBodySchema.parse({ url: "https://example.com/repo" }),
+    ).toMatchObject({ kind: "git" });
+    expect(
+      packageSourceCreateBodySchema.parse({
+        url: "/Users/dev/maister-plugins",
+        kind: "local",
+      }),
+    ).toMatchObject({ kind: "local" });
+  });
+
+  it("refuses an unknown kind and an empty baseBranch", () => {
+    expect(
+      packageSourceCreateBodySchema.safeParse({ url: "u", kind: "svn" })
+        .success,
+    ).toBe(false);
+    expect(
+      packageSourceCreateBodySchema.safeParse({ url: "u", baseBranch: "" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("accepts a non-empty baseBranch for git sources", () => {
+    expect(
+      packageSourceCreateBodySchema.parse({
+        url: "https://example.com/repo",
+        baseBranch: "develop",
+      }),
+    ).toMatchObject({ baseBranch: "develop" });
+  });
+});
+
+describe("packageSourceUpdateBodySchema (ADR-129 baseBranch SET/CLEAR)", () => {
+  it("accepts a baseBranch set and an explicit null clear", () => {
+    expect(
+      packageSourceUpdateBodySchema.parse({ baseBranch: "develop" }),
+    ).toMatchObject({ baseBranch: "develop" });
+    expect(
+      packageSourceUpdateBodySchema.parse({ baseBranch: null }),
+    ).toMatchObject({ baseBranch: null });
+  });
+
+  it("refuses an empty-string baseBranch (whitespace is not a branch)", () => {
+    expect(
+      packageSourceUpdateBodySchema.safeParse({ baseBranch: "" }).success,
+    ).toBe(false);
+  });
+});
 
 describe("parsePackageTags", () => {
   it("groups per-package tags newest-first and drops peeled/non-package refs", () => {

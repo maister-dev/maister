@@ -151,6 +151,33 @@ export function classifyVersionTargets(opts: {
 
 // --- sources CRUD ------------------------------------------------------------
 
+// (ADR-088; `kind`/`baseBranch` ADR-129) Wire body schemas for the admin
+// package-source routes — exported so the boundary contract is unit-tested
+// against the REAL parse (not a hand-built object). `url` and `kind` are
+// create-only (immutable — delete + re-add to change identity); `baseBranch`
+// PATCHes with an explicit `null` to clear back to auto-detect.
+export const packageSourceCreateBodySchema = z
+  .object({
+    url: z.string().min(1).max(512),
+    kind: z.enum(["git", "local"]).default("git"),
+    baseBranch: z.string().min(1).max(255).optional(),
+    note: z.string().max(512).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
+export const packageSourceUpdateBodySchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    note: z.string().max(512).optional(),
+    baseBranch: z.string().min(1).max(255).nullable().optional(),
+  })
+  .strict();
+
+export type PackageSourceKind = z.infer<
+  typeof packageSourceCreateBodySchema
+>["kind"];
+
 export async function listPackageSources(opts?: { db?: any }): Promise<any[]> {
   const db = opts?.db ?? getDb();
 
@@ -159,6 +186,8 @@ export async function listPackageSources(opts?: { db?: any }): Promise<any[]> {
 
 export async function createPackageSource(opts: {
   url: string;
+  kind?: PackageSourceKind;
+  baseBranch?: string;
   note?: string;
   enabled?: boolean;
   db?: any;
@@ -171,6 +200,8 @@ export async function createPackageSource(opts: {
     .values({
       id,
       url: opts.url,
+      kind: opts.kind ?? "git",
+      baseBranch: opts.baseBranch ?? null,
       note: opts.note ?? null,
       enabled: opts.enabled ?? true,
     })
@@ -184,7 +215,10 @@ export async function createPackageSource(opts: {
     );
   }
 
-  log.info({ id, url: redactUrl(opts.url) }, "package source created");
+  log.info(
+    { id, url: redactUrl(opts.url), kind: opts.kind ?? "git" },
+    "package source created",
+  );
 
   return { id };
 }
@@ -193,6 +227,9 @@ export async function updatePackageSource(opts: {
   id: string;
   enabled?: boolean;
   note?: string;
+  // ADR-129: string = SET, explicit null = CLEAR back to auto-detect,
+  // undefined = untouched (SET/CLEAR symmetry).
+  baseBranch?: string | null;
   db?: any;
 }): Promise<{ updated: boolean }> {
   const db = opts.db ?? getDb();
@@ -200,6 +237,7 @@ export async function updatePackageSource(opts: {
 
   if (opts.enabled !== undefined) patch.enabled = opts.enabled;
   if (opts.note !== undefined) patch.note = opts.note;
+  if (opts.baseBranch !== undefined) patch.baseBranch = opts.baseBranch;
 
   const rows = await db
     .update(packageSources)

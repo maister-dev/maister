@@ -458,7 +458,18 @@ Commit messages: NO Co-Authored-By trailer (project convention).
 
 ### Phase 1 — Migration
 
-- [ ] **T3: Migration 0093 (single file) + Drizzle schema + zod boundaries**
+- [x] **T3: Migration 0093 (single file) + Drizzle schema + zod boundaries**
+  - RED→GREEN evidence: catalog.test.ts kind/baseBranch cases observed red
+    ("Unrecognized key(s): 'baseBranch'", kind default missing) before the
+    schema fields landed; green after (19/19). Phase 1 gates: typecheck ✓,
+    unit 595 files/6102 ✓, integration (testcontainers migrate()) ✓.
+  - Pre-existing defects repaired to unblock `db:generate`: (a) 0089+0090
+    snapshots both parented on 0088 (parallel-branch merge) → 0090.prevId
+    re-parented onto 0089 (devtool metadata only); (b) 0090's stale snapshot
+    had dropped the four ADR-126 promotion columns from the lineage, so the
+    generator re-emitted them into 0093 — trimmed 0093 SQL to exactly the
+    three ADR-129 ALTERs (0089's SQL already applied the promotion columns);
+    the 0093 snapshot itself now heals the drift (full current baseline).
   - Files: `web/lib/db/schema.ts` (packageSources: `kind` text NOT NULL
     default `'git'` typed `"git" | "local"`, `baseBranch` text NULL;
     localPackages: `syncState` jsonb NULL typed
