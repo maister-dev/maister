@@ -106,8 +106,8 @@ export function CloneErrorBlock({
 
   return (
     <div
-      className="flex flex-col gap-1.5"
       ref={alertRef}
+      className="flex flex-col gap-1.5"
       role="alert"
       tabIndex={-1}
     >

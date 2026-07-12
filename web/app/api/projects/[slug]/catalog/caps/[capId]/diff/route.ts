@@ -58,9 +58,8 @@ export async function GET(
       );
     }
 
-    const draftManifest = detail.draft?.manifest ??
-      detail.published?.manifest ??
-      null;
+    const draftManifest =
+      detail.draft?.manifest ?? detail.published?.manifest ?? null;
 
     if (!draftManifest) {
       return NextResponse.json(

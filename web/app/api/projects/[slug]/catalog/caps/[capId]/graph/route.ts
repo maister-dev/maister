@@ -64,9 +64,8 @@ export async function GET(
       );
     }
 
-    const manifest = detail.draft?.manifest ??
-      detail.published?.manifest ??
-      null;
+    const manifest =
+      detail.draft?.manifest ?? detail.published?.manifest ?? null;
 
     if (!manifest) {
       return NextResponse.json(

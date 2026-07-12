@@ -13,8 +13,9 @@ vi.mock("next-intl", () => ({
 
 import { CloneErrorBlock } from "@/components/projects/new-project-form";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 afterEach(() => {
   document.body.replaceChildren();

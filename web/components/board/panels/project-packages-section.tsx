@@ -188,8 +188,8 @@ export function ProjectPackagesSection({
 
       {notice ? (
         <p
-          className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
           ref={noticeRef}
+          className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
           role="alert"
           tabIndex={-1}
         >
@@ -292,10 +292,10 @@ export function ProjectPackagesSection({
                                   <option
                                     key={tgt.installId}
                                     disabled={!tgt.compatible}
-                                    value={tgt.installId}
                                     title={
                                       tgt.incompatibilityReason ?? undefined
                                     }
+                                    value={tgt.installId}
                                   >
                                     {tgt.versionLabel}
                                   </option>

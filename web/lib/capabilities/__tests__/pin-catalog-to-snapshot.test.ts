@@ -88,7 +88,12 @@ describe("buildResolvedCapabilitySet — capability scope (B5)", () => {
     });
 
     expect(set.mcps).toEqual([
-      { refId: "github", sha: "new", scope: "project", provenance: "precedence" },
+      {
+        refId: "github",
+        sha: "new",
+        scope: "project",
+        provenance: "precedence",
+      },
     ]);
   });
 });
