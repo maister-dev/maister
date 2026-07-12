@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -24,7 +25,9 @@ let pkg: string; // installed bundle dir
 let codexGlobal: string; // fake ~/.codex
 
 beforeEach(async () => {
-  base = await mkdtemp(path.join(tmpdir(), "adapter-home-"));
+  // realpath so the macOS /var -> /private/var tmp symlink does not trip the
+  // in-worktree path-safety checks (production worktrees are not symlinked).
+  base = await realpath(await mkdtemp(path.join(tmpdir(), "adapter-home-")));
   work = path.join(base, "worktree");
   pkg = path.join(base, "pkg");
   codexGlobal = path.join(base, "codex-global");

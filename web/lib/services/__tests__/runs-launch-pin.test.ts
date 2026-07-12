@@ -55,6 +55,7 @@ type FakeDb = {
     set: (values: unknown) => { where: (predicate: unknown) => Promise<void> };
   };
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
+  execute: (query?: unknown) => Promise<{ rows: unknown[] }>;
 };
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -170,6 +171,7 @@ const fakeDb: FakeDb = {
     }),
   }),
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>) => fn(fakeDb),
+  execute: async () => ({ rows: [] }),
 };
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
@@ -237,7 +239,18 @@ function pinRevisionRow(
     engineMin: null,
     engineMax: null,
     defaultRunnerId: null,
-    manifest: { schemaVersion: 1, name: "Bugfix", nodes: [] },
+    manifest: {
+      schemaVersion: 1,
+      name: "Bugfix",
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
     ...overrides,
   };
 }
@@ -254,7 +267,18 @@ function enabledRevisionRow(): Record<string, unknown> {
     engineMin: null,
     engineMax: null,
     defaultRunnerId: null,
-    manifest: { schemaVersion: 1, name: "Bugfix", nodes: [] },
+    manifest: {
+      schemaVersion: 1,
+      name: "Bugfix",
+      nodes: [
+        {
+          id: "run",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
   };
 }
 

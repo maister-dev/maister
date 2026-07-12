@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -21,7 +28,9 @@ import {
 let root: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "materialization-gc-"));
+  // realpath so the macOS /var -> /private/var tmp symlink does not trip the
+  // in-worktree path-safety checks (production worktrees are not symlinked).
+  root = await realpath(await mkdtemp(path.join(tmpdir(), "materialization-gc-")));
 });
 
 afterEach(async () => {

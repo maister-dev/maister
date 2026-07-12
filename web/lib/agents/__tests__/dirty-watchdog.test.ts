@@ -29,7 +29,9 @@ import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-hom
 let root: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "dirty-watchdog-"));
+  // realpath so the macOS /var -> /private/var tmp symlink does not trip the
+  // in-worktree path-safety checks (production worktrees are not symlinked).
+  root = await realpath(await mkdtemp(path.join(tmpdir(), "dirty-watchdog-")));
 });
 
 afterEach(async () => {

@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -30,7 +31,9 @@ import {
 let root: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "settings-ownership-"));
+  // realpath so the macOS /var -> /private/var tmp symlink does not trip the
+  // in-worktree path-safety checks (production worktrees are not symlinked).
+  root = await realpath(await mkdtemp(path.join(tmpdir(), "settings-ownership-")));
 });
 
 afterEach(async () => {

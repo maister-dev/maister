@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -22,7 +23,9 @@ import { isMaisterError } from "@/lib/errors";
 let workDir: string;
 
 beforeEach(async () => {
-  workDir = await mkdtemp(path.join(tmpdir(), "capability-profile-test-"));
+  // realpath so the macOS /var -> /private/var tmp symlink does not trip the
+  // in-worktree path-safety checks (production worktrees are not symlinked).
+  workDir = await realpath(await mkdtemp(path.join(tmpdir(), "capability-profile-test-")));
 });
 
 afterEach(async () => {
@@ -680,6 +683,22 @@ describe("materializeCapabilityProfile", () => {
   });
 
   it("scopes the node-dir root to the node attempt when nodeAttemptId is given (req 5)", async () => {
+    // Materialize the unscoped root first: the scoped (run-1/node-att-1) and
+    // unscoped (run-1) roots share the run-1 subtree, and the strict single-owner
+    // check refuses claiming an already-existing run-1 parent that was only leased
+    // via a descendant. Order is irrelevant to what this asserts (the rootPath
+    // shape); a real run is either scoped OR unscoped, never both.
+    const unscoped = await materializeCapabilityProfile({
+      runId: "run-1",
+      worktreePath: workDir,
+      profile: nativeClaudeProfile(),
+      tools: ["Read", "Edit"],
+    });
+
+    expect(unscoped.rootPath.endsWith(path.join("capabilities", "run-1"))).toBe(
+      true,
+    );
+
     const scoped = await materializeCapabilityProfile({
       runId: "run-1",
       worktreePath: workDir,
@@ -689,17 +708,6 @@ describe("materializeCapabilityProfile", () => {
     });
 
     expect(scoped.rootPath.endsWith(path.join("run-1", "node-att-1"))).toBe(
-      true,
-    );
-
-    const unscoped = await materializeCapabilityProfile({
-      runId: "run-1",
-      worktreePath: workDir,
-      profile: nativeClaudeProfile(),
-      tools: ["Read", "Edit"],
-    });
-
-    expect(unscoped.rootPath.endsWith(path.join("capabilities", "run-1"))).toBe(
       true,
     );
   });
@@ -817,8 +825,11 @@ describe("materializeCapabilityProfile", () => {
     expect(first).toContain("*.maister-bak");
     expect(first).toContain("*.maister-operation");
 
+    // Re-materialize the SAME run: the strict single-owner design (proven by
+    // settings-ownership.test.ts) refuses a second/foreign run in one worktree,
+    // so git-exclude idempotency is a same-run property.
     await materializeCapabilityProfile({
-      runId: "run-2",
+      runId: "run-1",
       worktreePath: root,
       profile: nativeClaudeProfile(),
       tools: ["Read", "Edit"],
