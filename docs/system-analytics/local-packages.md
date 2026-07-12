@@ -174,6 +174,7 @@ sequenceDiagram
     opt attachToProjectId supplied
         C->>C: requireProjectAction(attachToProjectId, manageLocalPackages) + resolve slug/repoPath
     end
+    C->>C: assertPackageCuttable(P): clean git state + full committed artifact/schema baseline
     C->>C: clean export of working_dir to tmp (exclude .git)
     C->>I: installPackageRevision(source=export, version=local)
     I-->>C: package_installs (local-digest, trusted_by_policy)
@@ -250,7 +251,10 @@ project-side attach of a copy is Stream B.
 **List management.** The local-packages list gains Delete (confirm; also `rm`s the
 working dir), Rename, Archive/unarchive (archived hidden behind a toggle), Open,
 and Cut-version — all over routes that already exist; the `LocalPackageListItem`
-DTO is extended to carry the needed state.
+DTO is extended to carry the needed state. Archive and Delete refuse while any
+local-package assistant run is live or recoverable (including `Crashed`), so an
+expired editor lock can never hide an ACP session before a status cascade or
+working-dir removal.
 
 **Commit is the validation gate.** A prominent top-bar **"Commit state"** action +
 dirty indicator; **every** commit entry point (the diff-drawer Commit and
@@ -259,12 +263,27 @@ Commit-state) routes through `validatePackageArtifacts` (NEW
 the commit — already-committed artifacts are assumed valid — covering flow.yaml
 parse+compile, manifest parse, platform-agent strict frontmatter, subagent lenient
 frontmatter, and skill `SKILL.md` presence, and **hard-blocks** the commit on any
-invalid artifact (`PRECONDITION`/`CONFIG`) with an error list. Because a launch
-needs a committed state, an invalid artifact is inherently un-launchable; WIP lives
-in the uncommitted, lock-preserved working dir. A shared `ChangeReviewDialog` (diff
-+ editable, prefilled commit message) is introduced here; Stream B's PR-to-source
-adds a **sibling `PublishDialog`** modeled on its modal pattern (the commit dialog
-itself is not extended — see ADR-113).
+invalid artifact (`PRECONDITION`/`CONFIG`) with an error list. Schema lifecycle
+validation is cross-file: malformed changed schema JSON always blocks; a
+grammar-invalid schema blocks when referenced by any flow or newly referenced by a
+changed flow; an unreferenced grammar-invalid schema remains advisory; missing,
+deleted, escaping, or non-root references block the affected commit. A form or
+output schema reference resolves only to one package-root
+`schemas/<name>.json` file (no nested or arbitrary package-relative path);
+Studio writes canonical `./schemas/<name>.json`, while the legacy bare form is
+normalized to the same path. Cut and Publish call
+`assertPackageCuttable` before export/push, revalidating the entire clean committed
+baseline so a legacy invalid reference cannot escape through lifecycle actions.
+During package install, the validated package-root `schemas/` directory is copied
+into each member flow revision before that revision becomes `Installed`; the
+runtime therefore resolves the same `./schemas/<name>.json` path within its
+flow-revision root. A pre-existing member `schemas/` file must be byte-identical
+to the package-root source or the install fails rather than overwriting it.
+Because a launch needs a committed state, an invalid artifact is inherently
+un-launchable; WIP lives in the uncommitted, lock-preserved working dir. A shared
+`ChangeReviewDialog` (diff + editable, prefilled commit message) is introduced
+here; Stream B's PR-to-source adds a **sibling `PublishDialog`** modeled on its
+modal pattern (the commit dialog itself is not extended — see ADR-113).
 
 ## M39 Stream B — version-adopt launch + PR-to-source (Implemented — ADR-107/110)
 

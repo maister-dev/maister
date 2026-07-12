@@ -25,6 +25,7 @@ Close the remaining correctness and proof gaps after commit `4745887fa` delivere
 5. Freeze an SDD specification with requirement-to-contract-to-test traceability before implementation.
 6. Mature operator/author UX for stale evidence and invalid profile states.
 7. Replace the historical plan's overclaimed completion with executable gap-closure gates and an explicit behavior-preserving refactor phase.
+8. Keep package-root schema lifecycle consistent from Studio validation through immutable member-flow runtime caches.
 
 The historical plan `.ai-factory/plans/agent-runner-parity-package-skills.md` remains unchanged as the delivery record for the merged implementation.
 
@@ -51,9 +52,9 @@ The historical plan `.ai-factory/plans/agent-runner-parity-package-skills.md` re
 - Providing-package skills come wholesale from every skill-bearing root in the pinned attached package manifest. Capability-record selection/disabled flags cannot omit package-owned passive skills.
 - Claude package subagents are copied and ownership-recorded. Other adapters receive skills only unless their descriptor later gains an explicit native persona/subagent tract.
 - Passive package skills rely on the existing attached-and-trusted package gate; `exec_trust` continues to gate executable stdio MCPs only.
-- Ownership is session-scoped by `runId`. A cwd-level ownership index plus per-run records live under `.maister/agent-materialization/`, are updated under a bounded cross-process filesystem lock, and use explicit `preparing | active | releasing` states so crash recovery is deterministic. Cleanup never deletes a user-owned path or a path still leased by another live session.
-- A now-invalid legacy profile is reported with source path and parse details and causes no agent-row write during that resync. The last valid row is preserved unchanged.
-- The supervisor `GET /diagnostics` response changes: nested read-only evidence gains nullable `probeVersion` and diagnostic status `stale`. No new route, SSE event, web API shape, DB schema, migration, domain error code, environment variable, port, sidecar, or host mount is expected.
+- Ownership is session-scoped by `runId`. A cwd-level ownership index plus per-run records live under `.maister/agent-materialization/`, are updated under a bounded per-cwd SQLite transaction mutex that the OS releases on process exit, and use explicit `preparing | active | releasing` states so crash recovery is deterministic. Cleanup never deletes a user-owned path or a path still leased by another live session.
+- A now-invalid legacy profile is reported with a logical package `artifactPath` and parse details over HTTP (the absolute source path remains server-only for reads/logs) and causes no agent-row write during that resync. The last valid row is preserved unchanged. Only `ENOENT` is an empty package-agent directory; every other enumeration failure fails resync before missing-row cleanup.
+- The supervisor `GET /diagnostics` response changes: nested read-only evidence gains nullable `probeVersion`, required discriminated `staleReason`, and diagnostic status `stale`. The existing Web admin-resync response gains additive `invalid[].artifactPath` and `missing[]`; no new route, SSE event, DB schema, migration, domain error code, environment variable, port, sidecar, or host mount is expected.
 
 ## Locked Non-Goals
 
@@ -85,10 +86,11 @@ The historical plan `.ai-factory/plans/agent-runner-parity-package-skills.md` re
 | L1/L2/L3 enforcement | `supervisor/src/acp-client.ts`, `supervisor/src/__tests__/adapter-compatibility.integration.test.ts`, `web/lib/agents/dirty-watchdog.ts` | `docs/system-analytics/acp-runners.md`, `docs/system-analytics/agents.md` | Per-adapter wire proof, descriptor-owned L2, unchanged L1/L3 boundary. |
 | Package capability materialization | `web/lib/agents/effective.ts`, `web/lib/agents/launch.ts`, `web/lib/capabilities/adapter-home.ts` | `docs/system-analytics/agents.md`, `docs/system-analytics/capabilities.md`, `docs/flow-dsl.md` | Pinned-manifest wholesale skills, Claude subagents, all five adapters and all three workspaces through layered coverage. |
 | Ownership and cleanup | `web/lib/agents/materialization-manifest.ts`, `web/lib/agents/dirty-watchdog.ts`, `web/lib/gc/ephemeral-agent-gc.ts`, terminal paths in `web/lib/agents/launch.ts` | `docs/system-analytics/agents.md`, `docs/system-analytics/workspaces.md` | Run-scoped leases, all terminal paths, concurrency-safe deletion. |
+| Package schema lifecycle | `web/lib/flows/artifact-validate.ts`, `web/lib/flows.ts`, `web/lib/packages/{attach,install}.ts` | `docs/system-analytics/local-packages.md`, `docs/screens/studio/editor.md` | Root-only schema refs, lifecycle validation, member-revision materialization, exact runtime validation. |
 | Typed agent profile | `web/lib/agents/definition.ts`, `web/lib/agents/launch.ts`, `web/lib/agents/registry.ts`, Studio artifact editor/validator | `docs/flow-dsl.md`, `docs/system-analytics/agents.md`, `docs/screens/studio/editor.md` | One canonical schema/type through parse, resync, launch, and Studio. |
 | Operator and author UX | `web/components/settings/adapter-support-panel.tsx`, Studio frontmatter editor/validation summary, EN/RU messages | `docs/screens/settings-acp-runners.md`, `docs/screens/projects/project-settings-agents.md`, `docs/screens/studio/editor.md` | Actionable missing/stale/incompatible evidence states and strict profile errors without explanatory clutter. |
 | Supervisor HTTP diagnostics | `supervisor/src/types.ts`, diagnostics route, `web/lib/supervisor-client.ts` | `docs/api/supervisor.openapi.yaml`, `docs/supervisor.md` | Existing route, changed nested response schema; route and client contract tests required. |
-| Web HTTP / SSE | Existing web routes and event schemas | `docs/api/web.openapi.yaml`, `docs/api/async/supervisor-sse.asyncapi.yaml`, `docs/api/async/web-runs.asyncapi.yaml` | Explicitly audited and unchanged. |
+| Web HTTP / SSE | Existing web routes and event schemas | `docs/api/web.openapi.yaml`, `docs/api/async/supervisor-sse.asyncapi.yaml`, `docs/api/async/web-runs.asyncapi.yaml` | Existing admin resync response additively exposes logical invalid/missing detail; AsyncAPI remains unchanged. |
 | DB / deployment | `web/lib/db/schema.ts`, migration lineage, compose, Docker, env example | `docs/database-schema.md`, `docs/db/agents-domain.md`, `docs/db/runs-domain.md`, deployment docs | Explicit migration-free/deployment-neutral proof; stop and re-plan if this changes. |
 
 ## SDD Requirements and Traceability
@@ -110,6 +112,7 @@ The implementation spec created in Task 0.1 is the normative source. It uses the
 | `C1` | `capability_profile` is exactly strict `{ mcps?: string[] }` with one canonical id schema, stable dedup, and bounds. | 1.3, 4.1 | Flow DSL + Studio screen. |
 | `C2` | Invalid new/legacy definitions are reported with source context and never written; genuinely missing definitions retain disable semantics. | 1.3, 4.2 | Agents analytics. |
 | `C3` | Studio surfaces field errors and blocks artifact commit/cut/publish for invalid profiles. | 1.3, 4.3 | Studio screen. |
+| `D1` | Form/output schema refs resolve only to package-root `schemas/<name>.json`; member revisions materialize and validate those bytes before runtime use. | Review hardening addendum | Local-package analytics + Studio screen. |
 | `Q1` | Every behavior change follows RED -> GREEN -> refactor with runnable, non-trivial, minimally overlapping tests. | 0.3, 1.1-1.3, 5.1-5.2 | Spec traceability + verification evidence. |
 | `Q2` | Implementation follows strict typing, SOLID, KISS, DRY, project boundaries, structured logging, and `MaisterError` domain failures. | 2.1-5.2 | Architecture/rules + final review. |
 
@@ -179,7 +182,7 @@ Deliverables:
 - Specify the existing `GET /diagnostics` route's changed nested response: cache v2 compatibility, nullable `probeVersion`, diagnostic-only `stale`, exact seven-day/future-date/version semantics, and examples.
 - Freeze analytics with Purpose, Domain entities, State machine where applicable, Process flows, Expectations, Edge cases, and Linked artifacts; enumerate exact allow-list refusals and cleanup/recovery transitions.
 - Freeze Settings evidence states, project-agent launch refusal UX, Studio inline/blocking validation, and EN/RU concepts in screen artifacts.
-- Record why Web OpenAPI, AsyncAPI, DB schema/ERDs, migrations, deployment, env, and error taxonomy are unchanged.
+- Record the additive existing Web admin-resync response contract; AsyncAPI, DB schema/ERDs, migrations, deployment, env, and error taxonomy remain unchanged.
 - If any audit disproves the migration-free or unchanged-surface assumption, stop and amend the spec/plan before RED tests.
 
 Logging requirements:
@@ -287,7 +290,7 @@ Cases:
 - Descriptor tests cover every adapter; central launch integration covers `none`, `repo_read`, and `worktree` without repeating the full adapter Cartesian product.
 - Manual, cron, domain-event, and webhook tests prove normalized convergence on `launchAgentRun`; one central integration proves materialization.
 - Two concurrent runs sharing a cwd cannot delete each other's owned paths; all workspace modes clean up on success/failure; user-owned collisions survive.
-- Ownership rejects absolute/traversal/empty/out-of-root paths, symlink escapes, duplicate/corrupt records, and stale locks.
+- Ownership rejects absolute/traversal/empty/out-of-root paths, symlink escapes, duplicate/corrupt records, and SQLite mutex contention; a killed holder releases the mutex without stale-path takeover.
 - Crash-window tests cover intent-before-copy, copy-before-active, releasing-before-delete, delete-before-index-update, and idempotent recovery.
 
 Logging requirements:
@@ -508,15 +511,16 @@ Files:
 - `web/lib/agents/materialization-manifest.ts`
 - `web/lib/capabilities/adapter-home.ts`
 - `web/lib/agents/dirty-watchdog.ts`
-- `web/lib/atomic.ts` for atomic writes; add a single-purpose agent-materialization lock helper only because no reusable cross-process filesystem lock exists
+- `web/lib/atomic.ts` for atomic writes; add a single-purpose per-cwd SQLite mutex helper because no reusable cross-process ownership lock exists
 
 Deliverables:
 
 - Replace the singleton manifest with a cwd-level ownership index and per-run records under `.maister/agent-materialization/`.
 - Record both Claude skills and Claude subagents; record only paths actually created/replaced by MAIster.
 - Track shared-path leases so one run cannot delete a path another live run still uses.
-- Use an atomic `mkdir`-claim lock with an owner token, bounded wait, short stale threshold, compare-before-release, and structured stale-takeover evidence. Do not reuse the process-only registration lock or DB-specific local-package lock.
-- Model each run record as `preparing -> active -> releasing`; write intent before copy/delete and make recovery idempotently finish or roll back each reachable partial state.
+- Journal capability settings before backup/write/marker mutation, lease the exact settings artifacts separately from adapter homes, and preserve a restored user settings file while dropping its lease.
+- Use a bounded per-cwd SQLite `BEGIN IMMEDIATE` mutex with a zero busy timeout and retry window. Its OS lock is released on process death; reject symlinked mutex artifacts and never compare/unlink stale owner paths. Do not reuse the process-only registration lock or DB-specific local-package lock.
+- Model each run record as `preparing -> active -> releasing`; active/releasing cleanup requires a committed index lease. Preparing recovery may roll back only a zero-owner, path-prevalidated intent from that same run; foreign leases always win, and committed states finish idempotently.
 - Update the index and run record with `atomicWriteJson`; enumerate and test every crash window between intent, copy/delete, and final index state.
 - Treat manifests as untrusted input: allow only normalized relative paths under descriptor-approved roots, reject empty/absolute/`.`/`..`/duplicate paths, prevent symlink escape, and never recursively delete through an unverified link.
 - Corrupted ownership state fails loudly and preserves files for manual/retry recovery; it never guesses ownership.
@@ -524,7 +528,7 @@ Deliverables:
 
 Logging requirements:
 
-- DEBUG lock/lease/state transitions with `runId`, `cwd`, `ownershipState`, `pathCount`, and `leaseCount`; INFO final cleanup summary; WARN on stale-lock takeover or preserved user collision; ERROR on corrupt ownership or failed atomic update.
+- DEBUG lock/lease/state transitions with `runId`, `cwd`, `ownershipState`, `pathCount`, and `leaseCount`; INFO final cleanup summary; WARN on preserved user collision; ERROR on corrupt ownership, settings-owner conflict, or failed atomic update.
 
 Acceptance:
 
@@ -551,9 +555,10 @@ Deliverables:
 - Snapshot and filter MAIster-owned repo-read paths before L3 porcelain
   attribution; release filesystem materialization only after the terminal DB
   transaction commits.
-- Delete generated homes/run dirs only after the last lease and make success, failure, `Crashed`, resume retry, and GC recovery idempotent.
+- Delete generated homes/run dirs only after the last lease. `Review` retains materialization for rework; `Crashed` worktrees retain it for recovery, while terminal non-worktree runs release post-commit. Derive cleanup cwd from persisted run/workspace/project provenance even when `agent_id` is null or deleted.
+- Retry a retained crashed `none`/`repo_read` ownership record from its durable workspace snapshot; preserve a crashed agent `worktree` in both materialization and capability sweeps until recovery/discard.
 - Prove manual, cron, domain-event, and webhook entry paths normalize into the same `launchAgentRun` contract; run materialization once through the central launcher rather than duplicating it four times.
-- Cover every workspace mode at the central launch/finalize seam and every adapter at the descriptor/materializer seam; do not build a redundant full Cartesian suite.
+- Cover every workspace mode at the central launch/finalize seam and every adapter at the descriptor/materializer seam; the single required capable-adapter read/write/unknown wire matrix is the adapter-contract proof, so do not build a second Cartesian suite across workspace or trigger axes.
 - Keep flow binding and shared-orchestrator workspace behavior unchanged and protected by existing regression tests.
 - Define cleanup failure behavior: structured ERROR, preserved ownership evidence, and retry/GC eligibility; repo-read dirt still quarantines atomically. Never report silent success.
 
@@ -612,7 +617,7 @@ Files:
 
 Deliverables:
 
-- Include `sourcePath`, qualified id, and strict issue details in invalid diagnostics.
+- Include logical `artifactPath`, qualified id, and strict issue details in invalid HTTP diagnostics; retain absolute `sourcePath` only in server-side logs/reads.
 - Distinguish invalid-new, invalid-existing, and truly missing ids before applying the missing-row cleanup.
 - Mark invalid-existing ids as protected-from-missing cleanup for that resync.
 - Do not insert, update, disable, or delete the last valid row for a now-invalid profile; assert unchanged timestamps and payload, not only row presence.
@@ -638,13 +643,15 @@ Files:
 - `web/components/flows/__tests__/frontmatter-artifact-editor.test.ts`
 - `web/lib/flows/artifact-validate.ts`
 - `web/lib/flows/__tests__/artifact-validate.test.ts`
-- Commit/cut/publish gate tests that already own artifact blocking
+- `web/lib/local-packages/validate.ts` plus commit/cut/publish gate tests that own artifact blocking
 
 Deliverables:
 
 - Validate profile JSON against the shared strict schema before committing editor state.
 - Show source-specific field errors for unknown keys, invalid ids, count overflow, and wrong types.
 - Prove artifact validation produces a blocking issue and commit/cut/publish cannot proceed.
+- Validate changed-flow schema references and deleted/changed referenced schema documents against the current package file set; missing, escaping, malformed, or referenced grammar-invalid documents block. Keep unreferenced grammar-invalid schemas advisory, while malformed changed JSON always blocks.
+- Make Studio lifecycle controls derive schema references from every current draft flow, not a stale single initial manifest.
 - Preserve parse/render round trips for valid profiles and EN/RU parity for any new copy.
 - Keep the existing compact structural editor; do not add a new per-agent package-skill selector or redesign the Studio information architecture.
 
@@ -721,13 +728,14 @@ Dependencies: Tasks 3.1-4.3. May run in parallel with Task 5.1.
 
 #### Task 6.1 - Synchronize docs and audit unchanged contracts
 
-- [x] Status: complete
+- [ ] Status: verification blocked — implementation/docs artifacts are synchronized, but this task's `validate:docs` and `validate:contracts` acceptance gates are owned by Task 6.2 and cannot run in the current dependency-broken workspace.
 
 Files:
 
 - `docs/system-analytics/acp-runners.md`
 - `docs/system-analytics/agents.md`
 - `docs/system-analytics/capabilities.md`
+- `docs/system-analytics/local-packages.md`
 - `docs/system-analytics/workspaces.md`
 - `docs/flow-dsl.md`
 - `docs/screens/settings-acp-runners.md`
@@ -745,7 +753,7 @@ Deliverables:
 
 - Convert Designed wording from Phase 0 to Implemented only after matching tests pass.
 - Remove stale Claude-only, singleton-manifest, and arbitrary-profile claims.
-- Update Supervisor OpenAPI/prose examples for cache v2, `probeVersion`, and `stale`; audit Web OpenAPI/AsyncAPI/DB/deployment surfaces and leave them unchanged unless implementation introduced a real contract change.
+- Update Supervisor OpenAPI/prose examples for cache v2, `probeVersion`, discriminated `staleReason`, and `stale`; audit Web OpenAPI/AsyncAPI/DB/deployment surfaces. Document the existing Web admin-resync response's additive logical invalid/missing fields; AsyncAPI and deployment remain unchanged.
 - Close every SDD traceability row with the exact test command/result and as-built artifact.
 - If a new env/config/sidecar/port unexpectedly appears, stop and add the required Docker/compose/`.env.example` deployment task before continuing.
 
@@ -762,9 +770,22 @@ Acceptance:
 
 Dependencies: Tasks 5.1 and 5.2.
 
+#### Review hardening addendum - close ownership and package-schema findings
+
+- [x] Status: complete for implementation and targeted regression artifacts; live GREEN evidence remains blocked in Task 6.2.
+
+Deliverables:
+
+- Release filesystem ownership only post-transaction; roll back only zero-owner `preparing` intent, retain corrupt `releasing` records, retry crashed `none`/`repo_read`, and preserve recoverable crashed worktrees.
+- Journal capability settings through backup/write/restore phases, fence every recursive cleanup path, reject markerless foreign leases, and ensure a home-only run cannot be blocked by foreign shared settings.
+- Reject non-root schema refs on every direct and package install path; copy package-root schemas into every member flow revision and repair an existing package cache from freshly resolved source bytes.
+- Keep L3 ownership filtering, admin DTO path projection, OpenAPI/API contracts, screens, SDD traceability, and no-migration reasoning aligned with those contracts.
+
+Verification owner: Task 6.2 adds the focused ownership/settings/schema tests to the blocked execution list.
+
 #### Task 6.2 - Run focused, full, live-smoke, and adversarial gates
 
-- [x] Status: complete
+- [ ] Status: blocked — the current workspace dependency tree is incomplete after an offline install attempted registry verification; the environment rejected the required networked restore. No current-delta test, typecheck, lint, docs, or contract result may be claimed until dependencies are restored.
 
 Commands:
 
@@ -773,8 +794,8 @@ pnpm --filter maister-web exec vitest list --project unit
 pnpm --filter maister-web exec vitest list --project integration
 pnpm --filter @maister/supervisor exec vitest list --project unit
 pnpm --filter @maister/supervisor exec vitest list --project integration
-pnpm --filter maister-web exec vitest run --project unit lib/acp-runners/__tests__/adapter-support.test.ts lib/acp-runners/__tests__/resolve-agent.test.ts lib/acp-runners/__tests__/readiness.test.ts lib/__tests__/supervisor-client.test.ts lib/agents/__tests__/definition.test.ts lib/agents/__tests__/dirty-watchdog.test.ts lib/flows/__tests__/artifact-validate.test.ts components/settings/__tests__/adapter-support-panel.test.ts components/flows/__tests__/frontmatter-artifact-editor.test.ts
-pnpm --filter maister-web exec vitest run --project integration lib/agents/__tests__/agent-execution-policy.integration.test.ts lib/agents/__tests__/dirty-watchdog.integration.test.ts lib/agents/__tests__/registry.integration.test.ts lib/agents/__tests__/triggers.integration.test.ts
+pnpm --filter maister-web exec vitest run --project unit lib/acp-runners/__tests__/adapter-support.test.ts lib/acp-runners/__tests__/resolve-agent.test.ts lib/acp-runners/__tests__/readiness.test.ts lib/__tests__/supervisor-client.test.ts lib/agents/__tests__/admin-shared.test.ts lib/agents/__tests__/definition.test.ts lib/agents/__tests__/dirty-watchdog.test.ts lib/agents/__tests__/materialization-lock.test.ts lib/capabilities/__tests__/settings-ownership.test.ts lib/flows/__tests__/artifact-validate.test.ts components/settings/__tests__/adapter-support-panel.test.ts components/flows/__tests__/frontmatter-artifact-editor.test.ts
+pnpm --filter maister-web exec vitest run --project integration lib/__tests__/flows.integration.test.ts lib/agents/__tests__/agent-execution-policy.integration.test.ts lib/agents/__tests__/dirty-watchdog.integration.test.ts lib/agents/__tests__/registry.integration.test.ts lib/agents/__tests__/triggers.integration.test.ts lib/capabilities/__tests__/cleanup.integration.test.ts lib/capabilities/__tests__/cleanup-settings-local.integration.test.ts lib/gc/__tests__/agent-materialization-gc.test.ts lib/packages/__tests__/attach.integration.test.ts lib/local-packages/__tests__/service.integration.test.ts
 pnpm --filter @maister/supervisor exec vitest run --project unit src/__tests__/adapter-registry.test.ts src/__tests__/adapter-smoke-cache.test.ts src/__tests__/smoke-acp-adapter-script.test.ts
 pnpm --filter @maister/supervisor exec vitest run --project integration src/__tests__/adapter-compatibility.integration.test.ts
 pnpm --filter maister-web typecheck
@@ -824,35 +845,27 @@ Acceptance:
 
 Verification evidence (2026-07-11):
 
-- Green full gates: web unit 6116/6116 and real-Postgres integration 2224/2224;
-  supervisor unit 329/329 and integration 87/87; MCP 201/201; web, supervisor,
-  and MCP typecheck; check-only ESLint; docs, contracts, Mermaid, and ADR-anchor
-  validation.
-- Green focused review-fix gates: ownership/settings 24/24, including 19
-  materialization crash/concurrency cases; dirty-watchdog real-Postgres 10/10;
-  previously blocked launch/stop/finalize suites 14/14; smoke-cache/registry
-  15/15; layered ACP wire 11/11; adapter-mirror drift guard 5/5 descriptors.
-- RED evidence reproduced six ownership failures before the fix: preparing and
-  releasing recovery, foreign-lease preservation, ownerless stale-lock takeover,
-  repeated-intent accumulation, and L2 settings membership. GREEN and refactor
-  reruns pass all of them, including post-commit terminal finalization when a
-  corrupt symlink makes filesystem release fail loudly.
-- Current local `main` (`5916d4ea8305`) is the branch merge base and remains an
-  ancestor of this work. ADR-129 is indexed without a numbering collision; no
-  migration number, database schema, API shape, deployment variable, port,
-  sidecar, or mount changed.
-- Live smoke produced no cache or fresh eligibility evidence. Claude, MiMo, and
-  OpenCode initialized but did not emit the required permission observations;
-  Gemini reported an unsupported installed client; Codex stalled. ACP smoke
-  operations are now independently bounded to ten seconds, and the focused
-  smoke/cache unit gate passes 10/10. Required-evidence adapters therefore stay
-  fail-closed.
+- Historical baseline only (not evidence for this current review-fix delta):
+  earlier focused ownership/settings and supervisor cache suites, typechecks,
+  docs/contracts, and ADR anchors were reported green before the latest fixes.
+  They must be rerun after the current settings-owner, profile-lease, schema
+  reference, DTO, finalizer, and cache-process changes.
+- Current-delta blocker: `CI=true pnpm install --offline` removed/rebuilt the
+  local links then stopped on unavailable registry verification; an escalated
+  network restore was rejected by the execution environment. `node_modules`
+  cannot currently run Vitest, TypeScript, ESLint, or validation scripts.
+- Environment-bound integration gates additionally require a PostgreSQL
+  Testcontainers runtime and listener permission. They remain unverified even
+  after dependency restoration unless their own runtime constraints are met.
+- Live smoke has no fresh eligibility evidence. Required-evidence adapters stay
+  fail-closed until an independently successful live smoke writes current cache
+  evidence.
 
 Dependencies: Task 6.1.
 
 ## Final Go/No-Go
 
-Decision: **GO** (2026-07-11).
+Decision: **NO-GO pending current-delta verification** (2026-07-11 review-fix pass).
 
 Go only when:
 

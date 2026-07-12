@@ -735,11 +735,12 @@ readiness interaction: [`readiness.md`](readiness.md).
   no `items` slot, so element type is not checked and any array (incl. mixed/empty)
   passes. Phase-2 `items?` is the candidate. Not a `CONFIG` — an accepted
   loose-validation gap.
-- **(M26 — Implemented) Bad `output.result.schema` path not caught at flow load** →
-  `resolveOutputResultSchema` resolves + parses + validates the schema `./path` at
-  the runtime parse seam (Phase 2), NOT at manifest load
-  (`validateGraphManifest`); a missing/non-JSON/malformed schema file surfaces as a
-  run-time `CONFIG` at the post-action seam, not at flow install/load.
+- **(M26 — Implemented) Bad `output.result.schema` path** → fresh package installs
+  require the canonical root `./schemas/<name>.json` form and validate the exact
+  document before the revision becomes usable. `validateGraphManifest` still does
+  not read filesystem documents, so a legacy already-installed revision can surface
+  a missing/non-JSON/malformed schema as a run-time `CONFIG` at the post-action
+  seam.
 - **(M26 — Implemented) `enum` field declared with no `options`** → validation matches
   the value against an empty option list, so **every** value fails and the attempt
   fails `CONFIG` at the seam. A schema-authoring footgun (pre-existing in the

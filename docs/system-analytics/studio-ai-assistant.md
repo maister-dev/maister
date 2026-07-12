@@ -47,6 +47,16 @@ for reload-stable UI cards.
   supervisor session handles.
 - **Read-only supervisor session** - ACP session created with `cwd =
 working_dir`, `confineRoot = working_dir`, and `readOnlySession = true`.
+- **Assistant materialization** - the capability profile and flow-authoring
+  skill are run-scoped under the local package working dir. A pre-insert failure
+  compensates them immediately. The capability root is itself lease-owned, so a
+  failed compensation retains the same filesystem record for missing-run GC
+  retry. Terminal `Abandoned` stop/discard reclaims settings only when its typed
+  marker names that run, then releases the ownership manifest and profile root.
+  A crashed assistant retains its profile and skill materialization for the
+  existing recover route; explicit discard is the only crash-to-abandon cleanup
+  escape. The generic materialization sweep retries `Done`/`Failed`/`Abandoned`
+  or missing-run leases, but preserves `Crashed` records.
 - **Flow assistant context snapshot** - server-built prompt context containing
   current package manifest data, selected flow YAML, compiled graph summary,
   validation issues, capability inventory (`skills`, `agents`, `mcps`, `rules`,
@@ -76,7 +86,11 @@ stateDiagram-v2
     Running --> NeedsInput: permission HITL requested by ACP
     NeedsInput --> Running: member answers permission
     Running --> Crashed: ACP/session failure
-    Running --> Review: stopped with local-package working-tree edits
+    Starting --> Abandoned: explicit discard
+    WaitingForUser --> Abandoned: explicit discard
+    NeedsInput --> Abandoned: explicit discard
+    Running --> Abandoned: stop or explicit discard
+    Crashed --> Abandoned: explicit discard releases retained artifacts
 ```
 
 ## Process flow - launch and follow-up
@@ -94,6 +108,7 @@ sequenceDiagram
     Web->>Web: validate runnerId and editor focus hints from server state
     Web->>FS: read package files + hashes + flow graph context
     Web-->>Editor: scratch.launch_progress (precondition → materializing → spawning)
+    Web->>FS: materialize profile + flow-authoring skill (durable intent first)
     Web->>DB: insert runs + scratch_runs + initial user message
     Web->>Sup: createSession(readOnlySession=true, confineRoot=working_dir)
     Web->>DB: persist run_sessions.acpSessionId + dialogStatus=Running
@@ -112,6 +127,13 @@ sequenceDiagram
     end
     Web-->>Editor: scratch.launch_result { runId, dialogStatus, actionResult }
 ```
+
+If the insert fails after materialization, the service releases manifest-owned
+adapter artifacts, reclaims only marker-owned settings, and removes the
+deterministic capability root before returning the launch error. If a settings
+or terminal release fails, the ownership record remains and the materialization
+GC retries the same lease (including a missing pre-insert run); no local-package
+working directory itself is removed.
 
 Follow-up sends use
 `POST /api/studio/local-packages/{id}/assistant/{runId}/messages`, not the
@@ -233,7 +255,8 @@ Protocol rules:
 - **Assistant crash/recover** - supervisor/session failures use the existing
   scratch crash/recover behavior. Recovery does not replay JSONL actions
   automatically; the user can inspect the working-tree diff and continue the
-  conversation.
+  conversation. Crash cleanup deliberately retains profile/skill materialization
+  until recovery or a later explicit terminal action.
 
 ## AI assistant drawer
 

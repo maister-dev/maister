@@ -11598,7 +11598,9 @@ cannot safely represent concurrent materialization ownership.
   and version mismatch are stale. The diagnostics HTTP schema exposes the
   derived stale state.
 - Invalidate targeted read-only evidence before probing. Only a complete
-  read/write/unknown permission observation set may write `ok`.
+  read/write/unknown permission observation set may write `ok`. Serialize the
+  complete invalidation → probe → final-write cache lifecycle with a
+  crash-released SQLite mutex.
 - Keep L1 supervisor arbitration and L3 dirt detection load-bearing. L2 is a
   descriptor-selected best-effort materializer; non-Claude sessions never
   receive Claude settings by default.
@@ -11607,8 +11609,21 @@ cannot safely represent concurrent materialization ownership.
   executable stdio MCPs keep their exec-trust gate.
 - Replace the singleton package-skills manifest with cwd-level and per-run
   ownership records under `.maister/agent-materialization/`, using atomic
-  writes, bounded cross-process locking, path confinement, explicit lifecycle
-  states, and idempotent crash recovery.
+  writes, a per-cwd SQLite transaction mutex released by the OS on process exit,
+  component-by-component symlink confinement, explicit lifecycle states, and
+  idempotent crash recovery.
+- Put capability profile roots and flow-bound Claude subagents under the same
+  lease. The shared Claude settings marker carries writer kind plus run id;
+  capability writes also journal their backup/write/marker operation and lease
+  the exact settings artifacts. Foreign ownership is refused; recovery may
+  restore only a run's explicit settings lease and preserves a restored user
+  file while releasing that lease.
+  Intent is not active ownership: terminal and releasing cleanup may delete only
+  paths backed by committed leases. A zero-owner `preparing` record may roll back
+  its own path-prevalidated intent; foreign leases always preserve their paths.
+  Terminal cleanup is post-commit and a periodic filesystem-record
+  sweep retries terminal or missing runs, including crashed `none`/`repo_read`
+  sessions, while preserving crash-recoverable `worktree` runs.
 - Keep the slice migration-free: `runs.agent_workspace` is already the durable
   enforcement snapshot and materialization ownership is a filesystem artifact.
 
@@ -11618,8 +11633,12 @@ cannot safely represent concurrent materialization ownership.
   can explain the exact remediation.
 - Concurrent standalone sessions can share package materialization without
   deleting each other's or the user's files.
-- The diagnostics response changes additively; web OpenAPI, AsyncAPI, DB, and
-  deployment contracts stay unchanged.
+- A corrupt ownership record can quarantine a `repo_read` agent without rolling
+  back the terminal run transition; the retained record remains retryable.
+- The diagnostics response changes additively. The existing Web admin-resync
+  response also documents additive logical `invalid[].artifactPath` and
+  `missing[]` results; absolute install paths stay server-only. AsyncAPI, DB,
+  and deployment contracts stay unchanged.
 
 **Alternatives Considered:**
 

@@ -161,7 +161,10 @@ correctness and first-class kinds (behavior SSOT:
   schema) — see [`../../system-analytics/agents.md`](../../system-analytics/agents.md).
   Platform-agent validation surfaces strict `capability_profile` issues inline:
   only `{ mcps?: string[] }` is accepted, legacy `skills`, `mcp_servers`, or
-  `restrictions` keys hard-block commit/cut-version flows.
+  `restrictions` keys are saved as invalid work-in-progress but hard-block the
+  top-bar Commit and Publish actions plus server-side commit/cut-version/publish.
+  The editor writes invalid JSON/schema values into the canonical artifact, so
+  the inline message and lifecycle gates never disagree about draft state.
   Issue copy identifies the exact field path and keeps the compact structural
   editor; this hardening adds no package-skill selector or new authoring IA.
   **Create is a generic Add-File today** — the per-kind create wizards (New Flow /
@@ -237,10 +240,12 @@ uses the same icon, hue, tooltip, handles, and compact node body.
   available with an `as runner` / `as agent` toggle.
 - **Properties / Schema refs (Implemented)** — `settings.form_schema` and
   `output.result.schema` use schema reference pickers over package-local
-  `schemas/*.json` files. The picker can create, paste, or edit schema JSON
-  through the shared package draft; the saved manifest stores
+  root `schemas/*.json` files (not nested or arbitrary package-relative files).
+  The picker can create, paste, or edit schema JSON through the shared package
+  draft; the saved manifest stores
   `./schemas/<name>.json`, while the package file path remains
-  `schemas/<name>.json`.
+  `schemas/<name>.json`. Package install copies this root directory into every
+  member flow revision before runtime schema resolution.
 - **Properties / Outputs** — the default fills must create
   `consensus_plan` (`kind: plan`, current) and `debate_log`
   (`kind: human_note`, current). Validation blocks deletion or kind drift for
@@ -255,9 +260,15 @@ uses the same icon, hue, tooltip, handles, and compact node body.
   renders on the canvas and in `FlowGraphView`.
 - The right properties panel can fill in every required consensus field without
   raw YAML editing.
-- Schema reference fields can select, create, paste, and edit `schemas/*.json`
-  without leaving the existing Save path; no new API/DB/runtime contract is
-  introduced.
+- Schema reference fields can select, create, paste, and edit root
+  `schemas/*.json` files without leaving the existing Save path; there is no
+  new API or DB contract, and package installation materializes the same root
+  schema bytes into each member flow revision for runtime use.
+- Draft schema WIP remains editable, but the lifecycle controls derive
+  references from every current draft flow: missing, escaping, malformed, or
+  referenced grammar-invalid documents disable Commit and Publish before the
+  server gate. A changed unreferenced schema grammar issue stays advisory;
+  Cut/Publish revalidate the full committed baseline.
 - Tooltip and canvas text remain clipped/capped rather than resizing the node or
   overlapping handles on dense graphs.
 - EN and RU labels exist for every consensus control, validation message,

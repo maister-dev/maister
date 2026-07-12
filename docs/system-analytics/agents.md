@@ -66,11 +66,16 @@ not contain the package-root `maister-agents/`).
   mode (session|subagent), triggers jsonb, capability_profile jsonb?, risk_tier
   (read_only|standard|destructive), recommended jsonb? (extended with
   executionPolicy), flow_ref? (NEW — same-package flow id), branch_base? (NEW),
-  source_path, enabled, quarantined_at?, quarantine_reason? }`. Index
+  source_path (server-only), enabled, quarantined_at?, quarantine_reason? }`.
+  Admin DTOs expose only logical `definitionPath = maister-agents/<stem>.md`;
+  invalid-resync DTOs expose `artifactPath`, never an absolute host path. Index
   `agents_package_name_idx` (was `agents_flow_ref_idx`). The package file is the
   source of truth; registration after install finalize (and `resync`) re-syncs
   every column (SET/CLEAR symmetric); rows whose providing package vanished are
-  disabled, never deleted. See [db/agents-domain.md](../db/agents-domain.md).
+  disabled, never deleted. A missing `maister-agents/` directory is a normal
+  empty package, but any other directory-enumeration failure stops the resync
+  with `CONFIG` before the missing-row calculation, preserving the current
+  catalog projection. See [db/agents-domain.md](../db/agents-domain.md).
 - **`agent_project_links`** (Implemented) — attachment +
   per-project INSTANCE overrides: `{ agent_id, project_id, enabled,
   runner_override_id?, branch_base? (NEW), execution_policy_override? jsonb (NEW),
@@ -202,16 +207,48 @@ surface does not support them.
 ADR-129 ownership hardening (Implemented) replaces the singleton package-skills
 manifest with a cwd ownership index plus per-run records under
 `.maister/agent-materialization/`. Records transition
-`preparing -> active -> releasing` under a bounded cross-process lock. Paths are
-normalized and confined to descriptor-approved roots; corrupt, traversal, or
-symlink-escaping records preserve files and fail loudly. An ownerless stale
-lock is recovered from the lock-directory timestamp. Preparing recovery rolls
-back only intent paths with no lease and preserves paths leased by another run;
-releasing recovery finishes an already-committed index update idempotently.
-Terminal DB state commits before filesystem release. A release refusal is
-structured-ERROR logged with run/workspace/cwd context and cannot roll the run
-back; ownership evidence and user content remain available for repair. Cleanup
-never removes a user-owned entry or an entry still leased by another run.
+`preparing -> active -> releasing` under a per-cwd SQLite transaction mutex.
+The mutex is held for the complete ownership mutation and released by the OS if
+its process exits, so there is no stale pathname takeover or late observer that
+can remove a fresh owner. Paths are normalized, confined to descriptor-approved
+roots, and checked component-by-component for symlinks before intent, mutation,
+and deletion; the direct cwd is also rejected when symlinked and the metadata
+root uses the same fail-closed check.
+
+Capability profile roots and flow-bound Claude subagent files use that same
+lease, so profile/subagent cleanup has the same missing-run recovery authority
+as package skills. The shared `.claude/settings.local.json` marker encodes both
+writer kind (`capability` or `agent-l2`) and run id; a foreign or malformed
+marker is a conflict, never an adoption. A capability write also leases its
+settings/marker/backup/operation paths and writes a durable operation record
+**before** backing up or replacing user settings. Recovery uses that record to
+restore an original file, remove an interrupted MAIster-created file, or retain
+an untouched original when the crash preceded its backup. Only that explicit
+settings lease can trigger capability-settings reclaim; an adapter-home-only
+run never waits on or removes another run's Claude settings. After restore, the
+generic lease release drops ownership but preserves a restored user settings
+file.
+
+Only an index lease proves active ownership. An interrupted `preparing` intent
+with zero lease owners is rolled back only through its recorded, path-prevalidated
+paths; a non-empty foreign lease always preserves the path. Committed leases
+recover into `active`. Release prevalidates every candidate before deleting
+anything and keeps an active record on validation failure, so rework can
+re-materialize rather than hitting a poisoned
+`releasing` record. Terminal DB state commits before filesystem release. A
+corrupt ownership record makes L3 indeterminate and quarantines fail-closed
+without rolling back the terminal run. Release failures retain the record and
+are retried by system and GC sweeps for terminal or missing runs; `Review`
+retains materialization for rework. The terminal finalizer releases a
+non-worktree `Crashed` run; the ownership GC retries a remaining crashed `none`
+or `repo_read` record using `runs.agent_workspace`, while preserving a crashed
+`worktree` record for resume. The capability sweep makes the same distinction
+and never reclaims a crash-recoverable agent worktree. An ephemeral `repo_read`
+checkout is retained when its release fails so its GC can retry release before
+removal. Cleanup never removes a user-owned entry or an entry still leased by
+another run. Cleanup cwd comes from persisted
+run/workspace/project provenance, so runner-only consensus drafts and histories
+whose `agent_id` was set to NULL still release post-commit.
 
 ### (c) Optional-flow enrichment — "agent drives a flow" (Implemented — ADR-106)
 
@@ -295,7 +332,7 @@ flowchart TD
     M -- session --> S[substitute profile — agent body = system prompt,<br/>node prompt = task block, settings merged, node wins]
     M -- subagent --> K{runner capability_agent = claude?}
     K -- no --> EU[EXECUTOR_UNAVAILABLE before spawn]
-    K -- yes --> W[materialize .claude/agents/name.md into worktree]
+    K -- yes --> W[lease-owned materialize .claude/agents/name.md into worktree]
 ```
 
 ### (g) Runner policy: auto-apply + budget breach (Implemented — ADR-106)
@@ -480,9 +517,20 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
   keys such as `skills`, `mcp_servers`, or `restrictions` MUST be reported as
   `MaisterError("CONFIG")` during registration/resync and no invalid row may be
   written.
-- A now-invalid existing definition MUST be reported with source path while its
-  last valid row remains byte-for-byte unchanged; a genuinely missing
+- Studio draft save MUST preserve invalid `capability_profile` text/value in the
+  canonical `maister-agents/*.md` artifact so inline feedback and lifecycle
+  validation inspect the same state. Commit, cut-version, and publish MUST refuse
+  blocking artifact issues; publish MUST revalidate the complete clean committed
+  baseline before selecting a target or mutating Git state.
+- A now-invalid existing definition MUST be reported with logical `artifactPath`
+  over HTTP while its last valid row remains byte-for-byte unchanged; the
+  absolute source path stays server-only for reads/logs. A genuinely missing
   definition retains the existing disable behavior.
+- A non-`ENOENT` package-agent directory read failure is not a missing
+  definition: resync returns `CONFIG`/HTTP 422 before it can disable any rows.
+  A per-definition filesystem/DB failure is reported with the stable generic
+  diagnostic `agent definition could not be read or indexed`; raw paths and
+  error details remain structured server logs.
 - **(ADR-130)** The adapter-agnostic `capability_guard` seam enforces strict
   `tools`/`mcps` for **flow `ai_coding`/`judge`/`orchestrator` nodes** (Implemented:
   derived `enforcementProfile` delivered on `StartSessionRequest`, evidence-gated,

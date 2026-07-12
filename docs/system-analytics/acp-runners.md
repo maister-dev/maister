@@ -172,12 +172,17 @@ insertion, or token issuance.
 
 ADR-129 hardens this evidence contract (Implemented). Evidence is keyed by adapter
 id, never `capability_agent`; the web and supervisor descriptor mirrors must
-agree. Cache v1 remains valid for generic readiness but its nested read-only
-evidence is `stale`. Cache v2 adds a probe-contract version. Required evidence
+agree. Cache v1 remains valid for generic readiness; only nested read-only
+`ok` evidence is derived as `stale` (a nested `error` remains `error`). Cache v2 adds a probe-contract version. Required evidence
 is `ok` only when generic smoke is `ok`, the probe version matches, `checkedAt`
 is not future-dated, and age is strictly less than seven days. The supported
 producer invalidates old nested evidence before probing and writes `ok` only
 after read allow, write deny, and unknown deny were all observed through ACP.
+Diagnostics require `staleReason`: it is `probe_contract | freshness` exactly
+when status is `stale`, otherwise `null`; UI copy branches on this
+machine-readable discriminant, never on the English `reason`. The cache's
+invalidation, probe, and final write run under one crash-released SQLite mutex,
+so a generic smoke cannot be overwritten by an older read-only probe.
 
 ## Per-adapter materialization target (Implemented — capability composer, FR-C1/T0.4)
 

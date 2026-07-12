@@ -33,7 +33,13 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   delivery pool, and the reconcile sweep now also scans `project_id IS NULL`
   runs so a dead/idle assistant session is crashed and its slot freed. Manual
   drop is the `project_id`-less branch of `POST /api/scratch-runs/{runId}/
-  discard` (gated by `created_by_user_id`). Flow/package edits are
+  discard` (gated by `created_by_user_id`). Pre-insert materialization failures
+  compensate profile/skill artifacts immediately; its capability root is
+  lease-owned so missing-run GC can retry a failed compensation. `Abandoned`
+  stop/discard reclaims only the matching run-owned materialization while
+  `Crashed` retains it for recovery until explicit discard transitions it to
+  `Abandoned`.
+  Flow/package edits are
   server-applied structured
   actions per
   [ADR-110](../decisions.md#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions);

@@ -628,11 +628,13 @@ paths:
       summary: (M34 — Implemented) Re-project the catalog from installed packages
       description: |
         Admin-only. Re-scans `maister-agents/*.md` in the NEWEST Installed revision
-        of every flow_ref and re-syncs rows with SET/CLEAR symmetry (a
+        of every package name and re-syncs rows with SET/CLEAR symmetry (a
         removed frontmatter field resets its column). Invalid definitions
         are reported and left untouched in the DB; rows whose providing
         package vanished are disabled (`enabled=false`), never silently
-        deleted.
+        deleted. A missing `maister-agents/` directory is normal; any other
+        directory read failure returns 422 before missing-row cleanup, so no
+        catalog row is disabled by an unreadable package cache.
       operationId: postAdminAgentsResync
       responses:
         "200":
@@ -641,7 +643,8 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, synced]
+                required: [ok, synced, invalid, missing]
+                additionalProperties: false
                 properties:
                   ok: { type: boolean }
                   synced: { type: integer }
@@ -649,13 +652,22 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [id, error]
+                      required: [id, artifactPath, error]
+                      additionalProperties: false
                       properties:
                         id: { type: string }
+                        artifactPath:
+                          type: string
+                          description: Package-relative definition path; never a host filesystem path.
                         error: { type: string }
                   missing:
                     type: array
                     items: { type: string }
+        "422":
+          description: The package agent-definition directory could not be read; no catalog rows were changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/admin/agents/{agentId}:
@@ -7541,7 +7553,10 @@ paths:
         sweep collects Abandoned/Done worktrees and unreferenced `Removed` flow
         revisions past `MAISTER_GC_AGE_DAYS`, preserves dirty/divergent
         worktrees to a `maister/archive/<runId>` branch (optionally pushed when
-        `MAISTER_GC_ARCHIVE_PUSH=true`), and only then prunes.
+        `MAISTER_GC_ARCHIVE_PUSH=true`), and only then prunes. The same bundle
+        retries retained agent-materialization ownership records for terminal
+        or missing runs; reopenable/live run statuses remain untouched. These
+        retry counts stay internal so the compatibility response shape is stable.
 
         M24 keeps this route as a compatibility wrapper over the unified
         `system_sweep` service while preserving the response shape and statuses.
@@ -12502,7 +12517,8 @@ components:
         projection of an `agents` row — package provenance + parsed frontmatter +
         enabled/quarantine state. Ids are package-qualified `<packageName>:<stem>`
         (ADR-106; was `<flowRefId>:<stem>`). Never includes token material or
-        filesystem internals beyond `sourcePath`.
+        filesystem internals. `definitionPath` is the logical path within the
+        providing package, never a host filesystem path.
       required:
         [
           id,
@@ -12515,6 +12531,7 @@ components:
           mode,
           triggers,
           riskTier,
+          definitionPath,
           enabled,
         ]
       properties:
@@ -12573,7 +12590,9 @@ components:
             nullable: true,
             description: "(ADR-106) Agent branch base; defaults to the project main branch.",
           }
-        sourcePath: { type: string }
+        definitionPath:
+          type: string
+          description: Logical package-relative path (for example `maister-agents/triager.md`).
         enabled: { type: boolean }
         quarantinedAt: { type: string, format: date-time, nullable: true }
         quarantineReason: { type: string, nullable: true }

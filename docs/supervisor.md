@@ -210,6 +210,7 @@ Adapter diagnostic entries are:
       checkedAt: string | null;
       protocolVersion: number | null;
       probeVersion: number | null;
+      staleReason: "probe_contract" | "freshness" | null; // required; non-null exactly for status="stale"
     }
   }
 }
@@ -240,12 +241,18 @@ prompt probes that must observe read-like permission allow, write-like
 permission deny, and unknown-kind deny decisions before writing nested `ok`
 evidence. If the adapter does not produce those wire observations, the nested
 dimension is written as `error` and read-only standalone launch stays refused.
-The v2 cache also records the read-only probe contract version. Cache-v1
-read-only evidence, a mismatched probe version, a future `checkedAt`, or evidence
-aged seven days or more is reported as diagnostic `stale`; generic v1 smoke
-remains readable for ordinary readiness. Starting a new read-only probe
-invalidates the targeted old evidence before adapter work begins, so a crashed
-or partial probe cannot leave a reusable `ok` behind. Initialize, session
+The v2 cache also records the read-only probe contract version. Cache-v1 nested
+read-only **`ok`** evidence, a mismatched probe version, a future `checkedAt`,
+or evidence aged seven days or more is reported as diagnostic `stale`; a nested
+cache-v1 `error` remains `error`, and generic v1 smoke remains readable for
+ordinary readiness. `staleReason` is `probe_contract` for legacy/mismatched
+probe evidence and `freshness` for future/expired evidence; Settings localizes
+from this typed value rather than matching `reason` prose.
+Starting a new read-only probe invalidates the targeted old evidence before
+adapter work begins, so a crashed or partial probe cannot leave a reusable `ok`
+behind. A per-cache SQLite mutex serializes the entire invalidation → probe →
+write lifecycle across smoke processes; its OS lock is released if a process
+crashes, so an older probe cannot overwrite a newer generic failure. Initialize, session
 creation, and each permission probe are independently bounded to ten seconds;
 a timeout is an error and never produces fresh eligibility evidence.
 

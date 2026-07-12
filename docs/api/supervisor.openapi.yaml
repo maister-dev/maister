@@ -880,12 +880,9 @@ components:
                     nullable: true
                   protocolVersion:
                     type: integer
+                    minimum: 1
                     nullable: true
                   readOnlySession:
-                    type: object
-                    required:
-                      [status, reason, checkedAt, protocolVersion, probeVersion]
-                    additionalProperties: false
                     description: |
                       Cached adapter-specific evidence that `readOnlySession`
                       permission arbitration behaves safely for standalone
@@ -896,29 +893,71 @@ components:
                       adapters whose descriptor marks read-only-session smoke as
                       required; descriptors marked `not_required` skip this
                       evidence gate.
-                    properties:
-                      status:
-                        type: string
-                        enum:
-                          [not_required, pending, ok, skipped, stale, error]
-                      reason:
-                        type: string
-                        nullable: true
-                      checkedAt:
-                        type: string
-                        format: date-time
-                        nullable: true
-                      protocolVersion:
-                        type: integer
-                        nullable: true
-                      probeVersion:
-                        type: integer
-                        nullable: true
-                        description: |
-                          Read-only probe contract version. Null for cache-v1,
-                          not-required, missing, and unprobed evidence. A value
-                          different from the current supervisor probe version
-                          yields diagnostic status `stale`.
+                    oneOf:
+                      - type: object
+                        required:
+                          [status, reason, checkedAt, protocolVersion, probeVersion, staleReason]
+                        additionalProperties: false
+                        properties:
+                          status:
+                            type: string
+                            enum: [stale]
+                          reason:
+                            type: string
+                            nullable: true
+                          checkedAt:
+                            type: string
+                            format: date-time
+                            nullable: true
+                          protocolVersion:
+                            type: integer
+                            minimum: 1
+                            nullable: true
+                          probeVersion:
+                            type: integer
+                            minimum: 1
+                            nullable: true
+                            description: |
+                              Read-only probe contract version. Null for cache-v1,
+                              not-required, missing, and unprobed evidence. A value
+                              different from the current supervisor probe version
+                              yields diagnostic status `stale`.
+                          staleReason:
+                            type: string
+                            enum: [probe_contract, freshness]
+                            description: |
+                              Required machine-readable stale classification for
+                              diagnostic status `stale`. The non-stale branch
+                              still requires this field and fixes it to `null`;
+                              clients localize from it rather than matching prose
+                              `reason`.
+                      - type: object
+                        required:
+                          [status, reason, checkedAt, protocolVersion, probeVersion, staleReason]
+                        additionalProperties: false
+                        properties:
+                          status:
+                            type: string
+                            enum: [not_required, pending, ok, skipped, error]
+                          reason:
+                            type: string
+                            nullable: true
+                          checkedAt:
+                            type: string
+                            format: date-time
+                            nullable: true
+                          protocolVersion:
+                            type: integer
+                            minimum: 1
+                            nullable: true
+                          probeVersion:
+                            type: integer
+                            minimum: 1
+                            nullable: true
+                          staleReason:
+                            type: string
+                            nullable: true
+                            enum: [null]
                   capabilityEnforcement:
                     type: object
                     required: [status, reason, checkedAt, protocolVersion]

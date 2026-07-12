@@ -38,7 +38,9 @@ without turning recovery sweeps into live-path polling.
   clock entry point. It may filter by `jobKind`.
 - **GC compatibility route** (`GET`/`POST /api/cron/gc`, Implemented M19,
   compatibility extension Implemented M24) — keeps current response semantics and
-  runs the GC bundle (workspace + revision GC + capabilities cleanup) only. It
+  runs the GC bundle (workspace + revision GC + capabilities cleanup +
+  ephemeral-agent cleanup + terminal/missing-run agent-materialization retry)
+  only. It
   does NOT run the keepalive or reconcile sweeps, so the GC cron never transitions
   runs to `Crashed`; that live composition belongs to the `system_sweep` job kind.
 - **`webhook_delivery` job kind** (Implemented, ADR-077) — singleton outbound-webhook
@@ -247,7 +249,9 @@ flowchart TD
   state-transition poller.
 - The fallback timer MUST be off unless `MAISTER_SCHEDULER_TIMER_ENABLED=true`.
 - `/api/cron/gc` MUST keep its existing auth and response contract and run the
-  shared GC bundle (workspace + revision GC + capabilities cleanup) only; it MUST
+  shared GC bundle (workspace + revision GC + capabilities cleanup +
+  ephemeral-agent cleanup + terminal/missing-run agent-materialization retry)
+  only; it MUST
   NOT run the keepalive or reconcile sweeps that `system_sweep` performs.
 - `/admin/scheduler` MUST treat `scheduler_jobs` and `run_schedules` as
   separate concepts: Engine jobs are fixed-interval clock work; Task schedules

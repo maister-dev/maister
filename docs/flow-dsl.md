@@ -1308,7 +1308,7 @@ behaves byte-identically to today (no transport provisioning, no parsing).
 ```yaml
 output:
   result:
-    schema: ./schemas/plan-output.json # path, resolved against the flow install dir
+    schema: ./schemas/plan-output.json # canonical package-root schema reference
     required: false # default false
   produces: # M12, unchanged
     - id: plan-summary
@@ -1317,7 +1317,7 @@ output:
 
 | field       | type    | meaning                                                                                                                                                                                                                                                                                                                                     |
 | ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`    | string  | A **path** (not inline) resolved against the flow install dir with the same escape-guard as `form_schema`; the resolved file is validated as a `formSchemaSchema` document. M26 **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
+| `schema`    | string  | A **package-root schema reference** (not inline): canonical `./schemas/<name>.json`, with the legacy bare form normalized. Every install path rejects non-root, escaping, missing, malformed, or grammar-invalid references before the revision is usable; runtime resolves the same file from the installed flow revision's `schemas/` directory. M26 **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
 | `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds.                                                                                                                                                                                                 |
 
 **Per-node-type output transport.** Transport is chosen by the node's execution
