@@ -5,7 +5,7 @@ Created: 2026-07-11
 Base observed: `main` at `5916d4ea`
 Mode: Full · SDD + TDD · hard cut-over
 Engine target: `3.0.0`
-ADR: `ADR-130` (one ADR for both removals; renumbered on rebase)
+ADR: `ADR-131` (one ADR for both removals; renumbered on rebase)
 Migration sequence: `0094_postgres_graph_only_cutover`, then
 `0095_close_m43_cutover_task_claims`, then `0096_index_m43_cutover_events`
 
@@ -129,7 +129,7 @@ Ship one breaking release in which:
   unless the lockfile/typecheck makes them mandatory.
 - One ADR covers both removals because they are one release-level cut-over
   decision. Rebase allocated ADR-129 and migration 0093 to MCP management, so
-  the cut-over uses ADR-130 and migrations 0094–0096.
+  the cut-over uses ADR-131 and migrations 0094–0096.
 - Every migration has a SQL file, `_journal.json` entry, and generated snapshot.
   The rebase regenerated the M43 snapshot chain from main's 0093 snapshot.
 
@@ -445,7 +445,7 @@ graph-only replacement covers the boundary.
 
 - [x] **Task 1 — Reserve the shared numbers and freeze one cut-over ADR/spec.**
   Create `.ai-factory/specs/feature-postgres-graph-only-cutover.md`; reserve the
-  `### ADR-130` header in `docs/decisions.md` after rebase number allocation; add
+  `### ADR-131` header in `docs/decisions.md` after rebase number allocation; add
   exactly one ADR covering Postgres-only and graph-only as one breaking release.
   Freeze all sections required by Normative SDD Contract: D1/D2, engine 3.0.0,
   exact API matrix, manifest/status truth tables, database transaction order,
@@ -719,7 +719,7 @@ checks match the upgrade runbook.
   Update current-state docs and in-code SSOTs listed in Contract Surface Trace;
   remove legacy DSL examples, dialect-switch promises, SQLite Brain no-op text,
   and stale `step_runs` ERD/table references. Keep one concise cut-over/migration
-  note pointing to ADR-130 instead of duplicating rationale. Flip the SDD spec,
+  note pointing to ADR-131 instead of duplicating rationale. Flip the SDD spec,
   analytics and screens from Designed to Implemented only after their acceptance
   rows are green. Update every API Contract Matrix operation by `operationId`,
   external `extLaunchRun`, internal domain-event analytics, EN/RU messages, and
@@ -750,7 +750,7 @@ checks match the upgrade runbook.
 
 - [x] **Task 16 — Rebase, resolve global numbers, and run release verification.**
   Rebase onto current `main`; recompute maximum ADR and migration journal idx;
-  renumber ADR-130/0094/0095/0096 and every prose/anchor/snapshot reference if
+  renumber ADR-131/0094/0095/0096 and every prose/anchor/snapshot reference if
   contested; verify M43 remains next unused milestone. Run a refute-the-cut-over review for
   hidden dialect branches, raw JSONB casts, old manifest entry points, lifecycle
   partial states, template namespace regression, and test files not discovered
@@ -760,7 +760,7 @@ checks match the upgrade runbook.
   action, not part of planning.
 
   Verification note: rebase allocated ADR-129 and migration 0093 to `main`'s MCP
-  management work; M43 was renumbered to ADR-130 and migrations 0094/0095/0096. Source, focused
+  management work; M43 was renumbered to ADR-131 and migrations 0094/0095/0096. Source, focused
   behavior, contracts, docs, i18n, discovery, typecheck, lint, and Drizzle gates
   pass. Full listener/container/browser gates were executed and are recorded in
   the spec's as-built verification section as environment-blocked (`listen

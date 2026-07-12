@@ -1,4 +1,4 @@
--- M43 / ADR-130: terminalize actionable legacy steps[] Flow runs (D2), then
+-- M43 / ADR-131: terminalize actionable legacy steps[] Flow runs (D2), then
 -- irreversibly remove their detailed step ledger (D1). Drizzle runs this file
 -- in one transaction; every mutation below is therefore all-or-nothing.
 

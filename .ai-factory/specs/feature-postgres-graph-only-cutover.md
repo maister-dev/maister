@@ -2,7 +2,7 @@
 
 Status: Implemented
 Owner: platform
-Decision: [ADR-130](../../docs/decisions.md#adr-130-postgres-only-and-graph-only-engine-300-cut-over)
+Decision: [ADR-131](../../docs/decisions.md#adr-131-postgres-only-and-graph-only-engine-300-cut-over)
 Plan: [feature-postgres-graph-only-cutover](../plans/feature-postgres-graph-only-cutover.md)
 Engine: `3.0.0`
 Migration sequence: `0094_postgres_graph_only_cutover`, then
@@ -62,7 +62,7 @@ compile or side effects.
 | UX-04 | An incompatible enabled revision can be hidden behind a disabled launch affordance. | The picker and board both show the exact typed reason; the board derives it from the authoritative enabled revision, while the picker has `launchable=false`, no runner override and no submit path. | Board pure/DOM, picker component, and route tests prove the reason and bypass absence. |
 | UX-05 | A D2 failure can resemble a recoverable runtime failure. | Run detail/list/inspector show a persistent cut-over banner, timestamp and retained evidence/worktree links; Recover/Resume/Respond/Promote/retry are absent. | Component plus seeded E2E coverage agree across the three views. |
 | DOC-01 | Current docs promise SQLite/linear behavior. | Current-state code docs, analytics, ERDs, APIs, screens and EN/RU messages describe Postgres/graph-only behavior. | Contract/docs/Mermaid/i18n/ADR-anchor gates pass; the scoped forbidden-current-doc audit has no unmarked current-state hit (historical/negative records are explicitly labeled). |
-| DOC-02 | Upgrade behavior is distributed. | Deployment has one ordered audit/backup/stop/migrate/start/verify runbook and backup-only rollback. | Runbook order matches migration preconditions and ADR-130. |
+| DOC-02 | Upgrade behavior is distributed. | Deployment has one ordered audit/backup/stop/migrate/start/verify runbook and backup-only rollback. | Runbook order matches migration preconditions and ADR-131. |
 | TEST-01 | Legacy tests overlap layers and some positive fixtures use `steps`. | Every invariant has one primary layer; every new test is discovered; positive fixtures use `nodes`. | Bidirectional traceability has no orphan/duplicate owner and Vitest list includes planned paths. |
 | TEST-02 | A broad green suite could miss removed-space regressions. | Static forbidden-symbol/dependency/doc/fixture gates complement behavioral tests. | Final negative-space audit matches only the explicit historical/negative allow-list. |
 
@@ -335,7 +335,7 @@ the diff:
 | MIG-01..MIG-07 | migration `0094`: precondition, one materialized candidate relation, lifecycle-store closure, eight-status CAS, winner-scoped event, old-binary trigger, then `DROP TABLE step_runs`; migration `0095`: event-bounded stale C2-claim cleanup; migration `0096`: bounded cut-over-event indexes; C2: D2-aware terminal hold with explicit re-triage re-arm | migration/C2 integrations are discovered and SQL/snapshot/journal pass static integrity; execution requires a container-capable real-Postgres environment |
 | MIG-05 | `isGraphOnlyCutoverFailure` shared by Ralph, agents, Brain harvest and source reindex | five-case predicate unit plus deletion-sensitive consumer integration tests |
 | UX-01..UX-05 | typed package/launch incompatibility, blocked Studio controls, `CutoverFailureBanner`, list/board/detail/inspector read models, EN/RU catalogs | focused UI/route tests green; Playwright test discovered under the authenticated project |
-| DOC-01..DOC-02 | ADR-130, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | Mermaid, ADR-link, API-contract and EN/RU parity gates green |
+| DOC-01..DOC-02 | ADR-131, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | Mermaid, ADR-link, API-contract and EN/RU parity gates green |
 
 Six final audits were executed: scope/fullness, bidirectional traceability,
 internal consistency, migration crash-window/logical holes, forbidden

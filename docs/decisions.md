@@ -38,7 +38,7 @@
 | [ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl) | Flow Engine v2: plugin packaging + step DSL | Accepted | 2026-05-25 |
 | [ADR-011](#adr-011-workspace-lifecycle-via-git-worktree) | Workspace lifecycle via git worktree | Accepted | 2026-05-22 |
 | [ADR-012](#adr-012-local-promotion-merge-policy---no-ff-abort-on-conflict) | Local promotion merge policy: `--no-ff`, abort on conflict | Accepted | 2026-05-22 |
-| [ADR-013](#adr-013-postgres-16-primary-sqlite-dev-drizzle-orm) | Postgres 16 primary, SQLite dev, Drizzle ORM | Superseded by ADR-130 | 2026-05-22 |
+| [ADR-013](#adr-013-postgres-16-primary-sqlite-dev-drizzle-orm) | Postgres 16 primary, SQLite dev, Drizzle ORM | Superseded by ADR-131 | 2026-05-22 |
 | [ADR-014](#adr-014-i18n-en--ru-from-day-one) | i18n: EN + RU from day one | Accepted | 2026-05-22 |
 | [ADR-015](#adr-015-pnpm-workspace-node-24) | pnpm workspace, Node 24 | Accepted | 2026-05-22 |
 | [ADR-016](#adr-016-mermaid-as-the-only-diagramming-language-for-docs) | Mermaid as the only diagramming language for docs | Accepted | 2026-05-26 |
@@ -81,7 +81,7 @@
 | [ADR-053](#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads) | Workbench file-tree: git-tracked-only, member-gated reads | Accepted | 2026-06-05 |
 | [ADR-054](#adr-054-hitl-assessment-taxonomy--flow-declared-criticality-vs-responder-human_confidence-annotate-not-re-gate) | HITL assessment taxonomy — flow-declared `criticality` vs responder `human_confidence`, annotate-not-re-gate | Accepted | 2026-06-05 |
 | [ADR-055](#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates) | HITL response service + HITL-over-MCP + token-actor + actor-kind/scope auth gates | Accepted | 2026-06-05 |
-| [ADR-056](#adr-056-flat-runner-on_rejectgoto_step-atomic-execution--single-tx-repark-dedicated-comments-channel-window-sentinel-invalidation) | Flat-runner `on_reject.goto_step` atomic execution — single-tx repark, dedicated comments channel, window-sentinel invalidation | Superseded by ADR-130 | 2026-06-05 |
+| [ADR-056](#adr-056-flat-runner-on_rejectgoto_step-atomic-execution--single-tx-repark-dedicated-comments-channel-window-sentinel-invalidation) | Flat-runner `on_reject.goto_step` atomic execution — single-tx repark, dedicated comments channel, window-sentinel invalidation | Superseded by ADR-131 | 2026-06-05 |
 | [ADR-057](#adr-057-hitl-hybrid-surface-composition--cross-project-inbox-block-inline-response-component-numeric-needs-you-n-badge) | HITL hybrid-surface composition — cross-project Inbox block, inline response component, numeric "Needs you (N)" badge | Accepted | 2026-06-05 |
 | [ADR-058](#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
 | [ADR-059](#adr-059-read-only-observatory-formulas-and-harvest-priority) | Read-only Observatory formulas and harvest priority | Accepted | 2026-06-05 |
@@ -155,7 +155,7 @@
 | [ADR-128](#adr-128-project-brain-self-improvement-proposal-bridge) | Project Brain self-improvement proposal bridge | Accepted | 2026-07-03 |
 | [ADR-129](#adr-129-mcp-management-v2--requirements--bindings-per-project-overlay-trust--health-activation) | MCP management v2: requirements & bindings across package/platform/project, per-project env-slot overlay (names-only), load-bearing trust, supervisor health probe | Accepted | 2026-07-11 |
 | [ADR-130](#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) | Adapter-agnostic capability enforcement at the ACP seam: derived-only `capability_guard` interceptor, evidence-gated per-adapter flip of `tools`/`mcps` to `enforced`, `hooks` label corrected, no migration / no engine bump | Accepted | 2026-07-11 |
-| [ADR-130](#adr-130-postgres-only-and-graph-only-engine-300-cut-over) | Postgres-only and graph-only engine 3.0.0 cut-over | Accepted | 2026-07-11 |
+| [ADR-131](#adr-131-postgres-only-and-graph-only-engine-300-cut-over) | Postgres-only and graph-only engine 3.0.0 cut-over | Accepted | 2026-07-11 |
 
 ---
 
@@ -563,7 +563,7 @@ No auto-resolve.
 ### ADR-013: Postgres 16 primary, SQLite dev, Drizzle ORM
 
 **Date:** 2026-05-22
-**Status:** Superseded by ADR-130
+**Status:** Superseded by ADR-131
 **Context:** The control plane needs a relational store for projects,
 tasks, runs, workspaces, platform ACP runners, flows, HITL requests. JSON for
 arbitrary fields (manifests, form schemas, env). Operators want a
@@ -1090,7 +1090,7 @@ flows MUST declare `compat.engine_min: 1.1.0`. Bump the engine constant
 **Date:** 2026-05-30
 **Status:** Accepted
 
-> **Partially superseded by [ADR-130](#adr-130-postgres-only-and-graph-only-engine-300-cut-over):**
+> **Partially superseded by [ADR-131](#adr-131-postgres-only-and-graph-only-engine-300-cut-over):**
 > `node_attempts` remains the append-only ledger, but migration 0094 drops
 > `step_runs` and retires the linear fallback. The two-table/deprecation and
 > legacy-resume details below are historical only.
@@ -3441,7 +3441,7 @@ rides additive migration `0026_m17_actor_token_uniqueness.sql`.
 ### ADR-056: Flat-runner `on_reject.goto_step` atomic execution — single-tx repark, dedicated comments channel, window-sentinel invalidation
 
 **Date:** 2026-06-05
-**Status:** Superseded by ADR-130
+**Status:** Superseded by ADR-131
 **Context:** The graph runner (`runner-graph.ts`) implements review-driven rework fully — backward jump,
 `commentsVar` injection, bounded `rework.maxLoops`. The **linear `steps[]` runner** (`runner.ts`) does
 not: `runHumanStep` (`runner-human.ts`) persists `on_reject` only into `needs-input.json`, never onto the
@@ -10195,7 +10195,7 @@ the test matrix live in the SDD plan `.ai-factory/plans/dependency-ordered-task-
 ### ADR-122: Project Brain (per-project memory substrate)
 
 **Date:** 2026-07-02
-**Status:** Accepted; D3 superseded by ADR-130
+**Status:** Accepted; D3 superseded by ADR-131
 **Context:** MAIster needs a per-project, self-improving knowledge substrate that
 platform agents use natively — run/gate/rework lessons, current project state,
 direction, a consultant surface over decisions/conventions, and the evidence base
@@ -10218,7 +10218,7 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   one transaction with `domain_events`; table prefixes avoid multiplying the Drizzle
   journal hazards. Boundary enforced in code under `web/lib/brain/*`.
 - **D3 — Postgres-only engine.** This replaces the original SQLite-mode gate:
-  [ADR-130](#adr-130-postgres-only-and-graph-only-engine-300-cut-over) removes
+  [ADR-131](#adr-131-postgres-only-and-graph-only-engine-300-cut-over) removes
   SQLite, so missing, malformed, or non-Postgres DB configuration fails before
   Brain. On Postgres, Brain routes/services and statically listed MCP tools use
   the current schema/provider availability guards.
@@ -11207,7 +11207,7 @@ identity is a per-adapter empirical question (the "tool-identity spike").
 
 ---
 
-### ADR-130: Postgres-only and graph-only engine 3.0.0 cut-over
+### ADR-131: Postgres-only and graph-only engine 3.0.0 cut-over
 
 **Date:** 2026-07-11
 **Status:** Accepted
@@ -11291,6 +11291,15 @@ screen states, observability rules and traceability live in
 - _Add a `runs.failure_reason` column_: rejected; the existing terminal event
   ledger already provides a durable typed explanation without widening every
   run writer.
+
+> **Numbering note (renumbered on rebase).** This branch originally authored the
+> cut-over as **ADR-130** (allocated over the MCP-management-v2 base, where ADR-129
+> was the highest allocated number). While it was in flight, the adapter-agnostic
+> capability-enforcement ADR landed on `main` and took ADR-130, so this ADR was
+> renumbered to **ADR-131** at rebase — the anchor slug and every citation were
+> re-pointed. Migrations `0094`–`0096` were already allocated above the base's
+> `0093` (MCP v2), and the engine `3.0.0` bump is independent, so only the ADR
+> number moved.
 
 ---
 

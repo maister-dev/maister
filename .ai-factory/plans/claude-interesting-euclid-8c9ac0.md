@@ -1,7 +1,7 @@
 # Plan — Project Brain, Sub-project A (Foundation)
 
 > Historical implementation-plan record. Its SQLite/dialect assumptions predate
-> [ADR-130](../../docs/decisions.md#adr-130-postgres-only-and-graph-only-engine-300-cut-over)
+> [ADR-131](../../docs/decisions.md#adr-131-postgres-only-and-graph-only-engine-300-cut-over)
 > and are not current requirements; use the current Postgres-only configuration
 > and Project Brain analytics for live behavior.
 
