@@ -2,8 +2,8 @@
 
 ## M43 ERD transition (Implemented)
 
-Migration 0093 removes STEP_RUNS after terminalizing unfinished legacy runs.
-Follow-on data migration 0094 clears only stale C2 task claims identified from
+Migration 0094 removes STEP_RUNS after terminalizing unfinished legacy runs.
+Follow-on data migration 0095 clears only stale C2 task claims identified from
 the durable D2 event ledger; it changes no ERD shape. NODE_ATTEMPTS is the sole
 execution-attempt ledger; RUNS and all retained evidence/workspace
 relationships remain.

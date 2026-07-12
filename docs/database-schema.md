@@ -4,11 +4,11 @@
 
 ## M43 destructive schema transition (Implemented)
 
-Migration 0093 first atomically terminalizes every actionable legacy linear
+Migration 0094 first atomically terminalizes every actionable legacy linear
 Flow run, closes its open lifecycle stores and emits one run.failed event per
 CAS winner. It then drops step_runs, intentionally losing old step-level
 detail while retaining runs, workspaces, revisions and evidence. node_attempts
-is the sole execution ledger after engine 3.0.0. Follow-on data migration 0094
+is the sole execution ledger after engine 3.0.0. Follow-on data migration 0095
 clears only C2 task claims that predate each task's durable D2 event; it leaves
 later claims intact and changes no table, cascade, or index inventory.
 

@@ -2,11 +2,11 @@
 
 Status: Implemented
 Owner: platform
-Decision: [ADR-129](../../docs/decisions.md#adr-129-postgres-only-and-graph-only-engine-300-cut-over)
+Decision: [ADR-130](../../docs/decisions.md#adr-130-postgres-only-and-graph-only-engine-300-cut-over)
 Plan: [feature-postgres-graph-only-cutover](../plans/feature-postgres-graph-only-cutover.md)
 Engine: `3.0.0`
-Migration sequence: `0093_postgres_graph_only_cutover` then
-`0094_close-m43-cutover-task-claims`
+Migration sequence: `0094_postgres_graph_only_cutover`, then
+`0095_close_m43_cutover_task_claims`, then `0096_index_m43_cutover_events`
 
 ## Scope and terminology
 
@@ -46,12 +46,12 @@ compile or side effects.
 | GRAPH-03 | Engine version is `2.2.0` and the linear runner remains selectable. | Engine is `3.0.0`; no execution path dispatches to a linear runner or linear guard. | Graph regression tests pass and forbidden linear symbols have no production hits. |
 | GRAPH-04 | Authoring helpers expose legacy steps/guards. | Grammar, assistant skill, editor/scaffold and validation expose graph nodes and graph gates only. | Drift guards and authoring tests contain no positive legacy fixture. |
 | GRAPH-05 | Templates can resolve from `step_runs`. | The public `steps.<nodeId>.*` namespace remains, sourced only from latest `node_attempts`. | A template test resolves node stdout through `steps.*` with no `step_runs` row/table. |
-| MIG-01 | `step_runs` stores pre-M11a linear detail. | Migration 0093 intentionally drops the table after D2; run-level history is retained and no export/backfill is created. | Schema/snapshot omit the table; ADR/runbook state irreversible D1 loss. |
+| MIG-01 | `step_runs` stores pre-M11a linear detail. | Migration 0094 intentionally drops the table after D2; run-level history is retained and no export/backfill is created. | Schema/snapshot omit the table; ADR/runbook state irreversible D1 loss. |
 | MIG-02 | Actionable legacy runs may survive an engine upgrade. | In one migration transaction, all eight actionable legacy Flow statuses CAS to `Failed`. | Status matrix passes; graph/non-Flow and terminal rows are byte-stable. |
 | MIG-03 | Lifecycle state spans attempts, HITL, assignments, sessions, events and outbox. | The materialized candidate set closes every reachable open store, clears resume state, and emits one terminal event/outbox record per CAS winner. | Store-closure and idempotency tests pass atomically. |
 | MIG-04 | Stored revision identity may be pinned or legacy-unpinned. | Pinned `flow_revisions.manifest` is authoritative; only unpinned runs fall back to `flows.manifest`; unresolved actionable identity aborts. | Pinned/fallback/null/ambiguous rows match the migration matrix. |
 | MIG-05 | Existing consumers react to `run.failed`. | A shared predicate suppresses Ralph, agent triggers, Brain harvesting and source reindex for the D2 reason/source. | Redelivery does not launch/harvest/reindex; cost may reconcile and a graph parent may observe failure. |
-| MIG-06 | A C2 fresh-task admission claim can predate D2 while no new run row exists. | Follow-on data migration 0094 clears only a non-null `tasks.queue_claimed_at` at or before that task's recorded D2 event; a later claim remains intact. | Real-Postgres coverage proves stale-claim cleanup and post-cut-over claim preservation. |
+| MIG-06 | A C2 fresh-task admission claim can predate D2 while no new run row exists. | Follow-on data migration 0095 clears only a non-null `tasks.queue_claimed_at` at or before that task's recorded D2 event; a later claim remains intact. | Real-Postgres coverage proves stale-claim cleanup and post-cut-over claim preservation. |
 | MIG-07 | Clearing a stale C2 claim could make a D2 `Failed` run look like an ordinary auto-retry candidate. | When the latest Flow run has a D2 event and `launch_armed_at` is absent or no later than its `occurred_at`, both C2 consumers atomically hold the task without calling `launchRun`; only a later human re-triage re-arms it. | Poll and slot-free integration tests prove no launch/claim, one hold/comment, and successful post-D2 re-triage. |
 | API-01 | Intake endpoints have established status families. | Each operation preserves the exact mapping in the API matrix. | Contract and route tests assert status, code, exact message and zero side effects. |
 | API-02 | Launch can discover errors after worktree/run/session mutation. | JSON and staged-stream launch validate graph compatibility before all side effects. | No run/workspace/session/materialization/task mutation is observed on refusal. |
@@ -62,7 +62,7 @@ compile or side effects.
 | UX-04 | An incompatible enabled revision can be hidden behind a disabled launch affordance. | The picker and board both show the exact typed reason; the board derives it from the authoritative enabled revision, while the picker has `launchable=false`, no runner override and no submit path. | Board pure/DOM, picker component, and route tests prove the reason and bypass absence. |
 | UX-05 | A D2 failure can resemble a recoverable runtime failure. | Run detail/list/inspector show a persistent cut-over banner, timestamp and retained evidence/worktree links; Recover/Resume/Respond/Promote/retry are absent. | Component plus seeded E2E coverage agree across the three views. |
 | DOC-01 | Current docs promise SQLite/linear behavior. | Current-state code docs, analytics, ERDs, APIs, screens and EN/RU messages describe Postgres/graph-only behavior. | Contract/docs/Mermaid/i18n/ADR-anchor gates pass; the scoped forbidden-current-doc audit has no unmarked current-state hit (historical/negative records are explicitly labeled). |
-| DOC-02 | Upgrade behavior is distributed. | Deployment has one ordered audit/backup/stop/migrate/start/verify runbook and backup-only rollback. | Runbook order matches migration preconditions and ADR-129. |
+| DOC-02 | Upgrade behavior is distributed. | Deployment has one ordered audit/backup/stop/migrate/start/verify runbook and backup-only rollback. | Runbook order matches migration preconditions and ADR-130. |
 | TEST-01 | Legacy tests overlap layers and some positive fixtures use `steps`. | Every invariant has one primary layer; every new test is discovered; positive fixtures use `nodes`. | Bidirectional traceability has no orphan/duplicate owner and Vitest list includes planned paths. |
 | TEST-02 | A broad green suite could miss removed-space regressions. | Static forbidden-symbol/dependency/doc/fixture gates complement behavioral tests. | Final negative-space audit matches only the explicit historical/negative allow-list. |
 
@@ -102,9 +102,9 @@ Extension fields remain accepted by `.passthrough()`. Only the known legacy
 No route, status, error code, or AsyncAPI webhook field is added. Outbound
 `run.failed` data remains `{errorCode: "CONFIG"}`.
 
-## M43 0093/0094 executable contract
+## M43 0094/0095/0096 executable contract
 
-### 0093 D2/D1 transaction
+### 0094 D2/D1 transaction
 
 ### Preconditions and candidate identity
 
@@ -147,9 +147,9 @@ terminal history. Rerun/redelivery produces no duplicate terminal event or
 event-fan-out action. Scheduler admission after restart sees no D2 row as live;
 the separate one-time C2 hold is defined below.
 
-### 0094 stale C2-claim closure
+### 0095 stale C2-claim closure
 
-Migration 0094 runs immediately after 0093 in the same stopped-service main
+Migration 0095 runs immediately after 0094 in the same stopped-service main
 migration sequence. It groups durable D2 `run.failed` events by `task_id` and
 clears `tasks.queue_claimed_at` only when it is non-null and no later than that
 task's latest D2 `occurred_at`. It changes only that stale claim and the task
@@ -171,7 +171,7 @@ intent and normal C2 admission may resume.
 
 ```mermaid
 flowchart LR
-  M["0093 CAS winner"] --> E["run.failed event\nreason + source"]
+  M["0094 CAS winner"] --> E["run.failed event\nreason + source"]
   E --> C["Cost reconciliation\nallowed"]
   E --> P["Graph parent observation\nallowed"]
   E -. filtered .-> R["Ralph relaunch"]
@@ -217,13 +217,14 @@ sequenceDiagram
 ```mermaid
 flowchart TD
   B["Backup Postgres"] --> S["Stop web + supervisor"]
-  S --> Q["Run 0093 D2/D1 transaction"]
-  Q --> C["Run 0094 stale C2-claim closure"]
-  C --> N["Run Brain migration/check"]
+  S --> Q["Run 0094 D2/D1 transaction"]
+  Q --> C["Run 0095 stale C2-claim closure"]
+  C --> I["Run 0096 cut-over-event indexes"]
+  I --> N["Run Brain migration/check"]
   N --> R["Start supervisor + web"]
   R --> V["Verify no actionable legacy rows/packages"]
-  Q -->|failure| T["Rollback 0093; fix precondition"]
-  C -->|failure| U["Keep services stopped; fix 0094 error"]
+  Q -->|failure| T["Restore backup; fix 0094 precondition"]
+  C -->|failure| U["Keep services stopped; fix 0095 error"]
   Q -->|success but release rollback needed| Z["Stop services and restore backup"]
 ```
 
@@ -308,7 +309,7 @@ dialect, converter, duplicated parser, new status or new error code are allowed.
 | UX-03 | 9 | localized Attach request-error focus DOM test | `pnpm --filter maister-web exec vitest run --project unit components/studio/__tests__/attach-to-project-button-focus.dom.test.ts` | retained attach context, focused typed CONFIG alert, equivalent EN/RU summary |
 | UX-04 | 9 | board pure/DOM, launch picker component, and route tests | `pnpm --filter maister-web exec vitest run --project unit lib/queries/__tests__/board-flow-incompatibility.test.ts components/board/__tests__/task-card-launch-reason.test.ts components/board/__tests__/launch-popover.test.ts app/api/runs/launch-options/__tests__/route.test.ts` | authoritative enabled-revision reason beside disabled board affordance; exact picker reason, no override, no submit bypass |
 | UX-05 | 12 | D2 history component + authenticated Playwright | `pnpm --dir web exec playwright test m43-cutover-history.spec.ts` | persistent banner and absent actions under the `authed` project |
-| MIG-01..MIG-06 | 11 | `migration-0093.integration.test.ts` real PG | `pnpm --filter maister-web exec vitest run --project integration lib/db/__tests__/migration-0093.integration.test.ts` | D2/D1 status/store matrix plus stale-C2-claim and later-claim matrix |
+| MIG-01..MIG-06 | 11 | `migration-0094.integration.test.ts` real PG | `pnpm --filter maister-web exec vitest run --project integration lib/db/__tests__/migration-0094.integration.test.ts` | D2/D1 status/store matrix, stale-C2-claim/later-claim matrix, and cut-over-event indexes |
 | MIG-07 | 11 | C2 poll and slot-free admission integrations | `pnpm --filter maister-web exec vitest run --project integration lib/scheduler/handlers/__tests__/auto-launch-triaged.integration.test.ts lib/__tests__/admission-gate.integration.test.ts` | no D2 auto-launch/claim, one terminal hold, later human re-triage is eligible |
 | MIG-05 | 11 | domain-event consumer unit + emit-site integration | `pnpm --filter maister-web exec vitest run --project unit lib/domain-events/__tests__/cutover.test.ts` | exact suppression predicate; consumer tests exercise fan-out |
 | DOC-01, DOC-02 | 1,14 | contract/docs/ADR/Mermaid/i18n validators | `CI=true pnpm validate:docs:all && CI=true pnpm validate:contracts` plus i18n parity and scoped forbidden-current-doc audit | all current-state surfaces agree |
@@ -331,10 +332,10 @@ the diff:
 | PG-01..PG-05 | `web/lib/db/postgres-url.ts`, `client.ts`, `instrumentation.ts`, Postgres-only schema/imports and dependency manifests | URL/boot/client units, typecheck, lint, Drizzle journal check |
 | GRAPH-01..GRAPH-05 | `manifest-shape.ts`, `manifest-parser.ts`, `config.schema.ts`, engine `3.0.0`, graph-only `runner.ts`, `context.ts` | 128 focused units; positive first-party graph fixtures; forbidden-symbol audit |
 | API-01..API-03 | shared parser at all intake/read boundaries; per-operation legacy status/code/message/side-effect contracts plus typed engine incompatibility | contract validator; route/read-model focused units; operation matrix audit |
-| MIG-01..MIG-07 | migration `0093`: precondition, one materialized candidate relation, lifecycle-store closure, eight-status CAS, winner-scoped event, then `DROP TABLE step_runs`; migration `0094`: event-bounded stale C2-claim cleanup; C2: D2-aware terminal hold with explicit re-triage re-arm | migration/C2 integrations are discovered and SQL/snapshot/journal pass static integrity; execution requires a container-capable real-Postgres environment |
+| MIG-01..MIG-07 | migration `0094`: precondition, one materialized candidate relation, lifecycle-store closure, eight-status CAS, winner-scoped event, old-binary trigger, then `DROP TABLE step_runs`; migration `0095`: event-bounded stale C2-claim cleanup; migration `0096`: bounded cut-over-event indexes; C2: D2-aware terminal hold with explicit re-triage re-arm | migration/C2 integrations are discovered and SQL/snapshot/journal pass static integrity; execution requires a container-capable real-Postgres environment |
 | MIG-05 | `isGraphOnlyCutoverFailure` shared by Ralph, agents, Brain harvest and source reindex | five-case predicate unit plus deletion-sensitive consumer integration tests |
 | UX-01..UX-05 | typed package/launch incompatibility, blocked Studio controls, `CutoverFailureBanner`, list/board/detail/inspector read models, EN/RU catalogs | focused UI/route tests green; Playwright test discovered under the authenticated project |
-| DOC-01..DOC-02 | ADR-129, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | 340 Mermaid blocks, 648 ADR links, all API contracts and EN/RU parity green |
+| DOC-01..DOC-02 | ADR-130, spec, OpenAPI/AsyncAPI, analytics, ERDs, screen refs, configuration/getting-started/architecture and roadmap | Mermaid, ADR-link, API-contract and EN/RU parity gates green |
 
 Six final audits were executed: scope/fullness, bidirectional traceability,
 internal consistency, migration crash-window/logical holes, forbidden

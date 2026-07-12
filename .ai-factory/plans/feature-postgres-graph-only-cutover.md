@@ -5,9 +5,9 @@ Created: 2026-07-11
 Base observed: `main` at `5916d4ea`
 Mode: Full · SDD + TDD · hard cut-over
 Engine target: `3.0.0`
-Reserved ADR: `ADR-129` (one ADR for both removals; recheck after rebase)
-Migration sequence: `0093_postgres_graph_only_cutover` then
-`0094_close-m43-cutover-task-claims`
+ADR: `ADR-130` (one ADR for both removals; renumbered on rebase)
+Migration sequence: `0094_postgres_graph_only_cutover`, then
+`0095_close_m43_cutover_task_claims`, then `0096_index_m43_cutover_events`
 
 ## Settings
 
@@ -60,7 +60,7 @@ Ship one breaking release in which:
 
 3. Engine `3.0.0` removes the linear runner, linear guards, `step_runs`, and all
    SQLite dependencies/typing branches.
-4. D1: migration `0093` intentionally drops `step_runs` without exporting or
+4. D1: migration `0094` intentionally drops `step_runs` without exporting or
    backfilling pre-M11a step detail. `runs` rows remain as run-level history.
 5. D2: before `step_runs` is dropped, every unfinished legacy linear Flow run is
    atomically terminalized to `Failed` with a durable
@@ -76,7 +76,7 @@ Ship one breaking release in which:
   migrations backfill or abort; the ADR and upgrade runbook must say so plainly.
 - D2 applies to every legacy Flow run not finally settled as `Done`, `Failed`, or
   `Abandoned`, including recoverable `Crashed` and unpromoted `Review` rows.
-- D2 is implemented in migration `0093` before `DROP TABLE step_runs`, while the
+- D2 is implemented in migration `0094` before `DROP TABLE step_runs`, while the
   upgrade runbook requires both web and supervisor to be stopped. This keeps the
   durable transition and data deletion in one Postgres transaction and prevents
   the new process from ever observing an actionable legacy run.
@@ -92,7 +92,7 @@ Ship one breaking release in which:
   matching webhook outbox record using the existing `errorCode: "CONFIG"` wire
   shape per CAS-winning run. Re-running the migration/test helper cannot emit a
   duplicate; the webhook contract is not widened with a new field.
-- Follow-on migration `0094_close-m43-cutover-task-claims` runs after 0093 in
+- Follow-on migration `0095_close_m43_cutover_task_claims` runs after 0094 in
   the same stopped-service main-lineage sequence. It clears only a non-null C2
   `tasks.queue_claimed_at` at or before that task's latest durable D2 event;
   later claims (including a later re-triage) stay intact. It creates no run or
@@ -128,13 +128,10 @@ Ship one breaking release in which:
   caused by that union. Broader Drizzle-peer/type refactors are out of scope
   unless the lockfile/typecheck makes them mandatory.
 - One ADR covers both removals because they are one release-level cut-over
-  decision. At observed `main`, ADR-128 is the maximum and ADR-123 is a reserved
-  gap, so this plan claims ADR-129. The optional ADR-129 mention in
-  `agent-runner-parity-package-skills.md` is not a reservation; that stream must
-  reallocate if it later needs an ADR.
-- Migrations `0093` and `0094` each have a SQL file, `_journal.json` entry, and
-  generated snapshot. Both ADR and migration numbers are rechecked after
-  rebasing; any collision is resolved in the final renumber pass.
+  decision. Rebase allocated ADR-129 and migration 0093 to MCP management, so
+  the cut-over uses ADR-130 and migrations 0094–0096.
+- Every migration has a SQL file, `_journal.json` entry, and generated snapshot.
+  The rebase regenerated the M43 snapshot chain from main's 0093 snapshot.
 
 ## Normative SDD Contract
 
@@ -198,8 +195,8 @@ schema. `pnpm validate:contracts` is a required phase gate.
 
 ## DB Migration Contract
 
-Migration 0093 must be reviewed as executable D2/D1 data-state logic, not
-merely a schema drop; migration 0094 is its ordered data-only C2-claim closure:
+Migration 0094 must be reviewed as executable D2/D1 data-state logic, not
+merely a schema drop; migration 0095 is its ordered data-only C2-claim closure:
 
 - Candidate identity is “`run_kind='flow'` and the authoritative manifest has
   a `steps` key”, regardless of whether the array is empty. Pinned
@@ -222,7 +219,7 @@ merely a schema drop; migration 0094 is its ordered data-only C2-claim closure:
   `reason="legacy_steps_engine_3_cutover"` and
   `source="upgrade_cutover"`; webhook data remains exactly
   `{errorCode:"CONFIG"}`.
-- After 0093 commits, 0094 groups the durable D2 events by `task_id` and clears
+- After 0094 commits, 0095 groups the durable D2 events by `task_id` and clears
   only a non-null `tasks.queue_claimed_at <= max(D2.occurred_at)` for that task.
   A later claim remains unchanged. The migration creates no run/event and is
   idempotent after clearing its bounded stale set.
@@ -267,7 +264,7 @@ existing domain boundary cannot express the contract:
   Brain provisioning semantics.
 - `docs/database-schema.md`, `docs/db/erd.md`, and `docs/db/runs-domain.md`:
   remove `step_runs`, update `node_attempts` wording, cascade/index inventory,
-  and migration 0093/0094 notes. All three must agree with `schema.ts` and the
+  and migration 0094/0095/0096 notes. All three must agree with `schema.ts` and the
   generated snapshot.
 - `docs/screens/projects/add-project.md`, `chrome/launch-dialog.md`,
   `projects/project-board.md`, `studio/package-viewer.md`, `studio/editor.md`,
@@ -393,8 +390,8 @@ graph-only replacement covers the boundary.
 | Engine compatibility | `engine-version.ts`, stored-revision compatibility classifier | `docs/configuration.md`, `docs/system-analytics/flows.md`, `docs/system-analytics/flow-graph.md` |
 | Package/Studio intake | installer/package/bootstrap/Studio/authored/import callers | `docs/flow-installer.md`, Studio screen docs where refusal is visible |
 | Runtime launch/read | launch service, lifecycle, graph runner-core/current-node, run-manifest query | `docs/system-analytics/runs.md`, `docs/system-analytics/flows.md`, run/Studio screen docs |
-| D1 schema removal | `schema.ts`, migration 0093, step store/readers | `docs/database-schema.md`, `docs/db/erd.md`, `docs/db/runs-domain.md` |
-| D2 upgrade transition + C2 claim closure/hold | migrations 0093/0094 + C2 latest-run decision | `docs/system-analytics/runs.md`, `docs/system-analytics/task-queue.md`, `docs/system-analytics/triage.md`, `docs/system-analytics/reconciliation-gc.md`, upgrade section in `docs/deployment.md` |
+| D1 schema removal | `schema.ts`, migration 0094, step store/readers | `docs/database-schema.md`, `docs/db/erd.md`, `docs/db/runs-domain.md` |
+| D2 upgrade transition + C2 claim closure/hold | migrations 0094/0095/0096 + C2 latest-run decision | `docs/system-analytics/runs.md`, `docs/system-analytics/task-queue.md`, `docs/system-analytics/triage.md`, `docs/system-analytics/reconciliation-gc.md`, upgrade section in `docs/deployment.md` |
 | Terminal events | existing `run.failed` domain/webhook outboxes, no new event kind | audit `docs/api/async/outbound-webhooks.asyncapi.yaml`, `docs/system-analytics/outbound-webhooks.md`; update only the documented emit-site/reason semantics if exposed |
 | Typed refusal | one graph-only classifier consumed through the operation-specific `FLOW_INSTALL` / `CONFIG` / cut-gate `PRECONDITION` mappings in API Contract Matrix | `docs/error-taxonomy.md`, both OpenAPI specs, route tests, and unchanged AsyncAPI wire audit |
 | i18n/UI | incompatible revision badge, launch refusal, D2 reason display | `web/messages/en.json`, `web/messages/ru.json`, parity test, relevant screen refs |
@@ -413,7 +410,7 @@ graph-only replacement covers the boundary.
   2. finish or explicitly accept failure of open linear runs;
   3. back up Postgres;
   4. stop web and supervisor;
-  5. run main migrations 0093 then 0094, then Brain migrations/checks;
+  5. run main migrations 0094, 0095, and 0096, then Brain migrations/checks;
   6. start supervisor/web and verify no legacy actionable runs/packages or
      event-bounded stale C2 claims;
   7. retain the DB backup as the only rollback path because D1 is irreversible.
@@ -448,7 +445,7 @@ graph-only replacement covers the boundary.
 
 - [x] **Task 1 — Reserve the shared numbers and freeze one cut-over ADR/spec.**
   Create `.ai-factory/specs/feature-postgres-graph-only-cutover.md`; reserve the
-  `### ADR-129` header in `docs/decisions.md` before any other doc cites it; add
+  `### ADR-130` header in `docs/decisions.md` after rebase number allocation; add
   exactly one ADR covering Postgres-only and graph-only as one breaking release.
   Freeze all sections required by Normative SDD Contract: D1/D2, engine 3.0.0,
   exact API matrix, manifest/status truth tables, database transaction order,
@@ -636,8 +633,8 @@ in-code grammar drift guard, i18n parity, typecheck,
 
 ### Phase 3 — D1/D2 destructive migration, C2 claim closure, and graph-only read models
 
-- [x] **Task 11 — Implement the 0093/0094 M43 forward migration sequence.**
-  Generate both migration triples, then hand-audit SQL order. In 0093's one
+- [x] **Task 11 — Implement the 0094/0095/0096 M43 forward migration sequence.**
+  Generate all migration triples, then hand-audit SQL order. In 0094's one
   transaction:
   abort on ambiguous actionable rows; materialize the exact legacy candidate
   relation from key-presence in pinned revision manifest with unpinned-flow
@@ -647,12 +644,12 @@ in-code grammar drift guard, i18n parity, typecheck,
   `{reason:"legacy_steps_engine_3_cutover",source:"upgrade_cutover"}` plus the
   existing-shape webhook outbox event (`errorCode: "CONFIG"`) for each winner;
   finally `DROP TABLE step_runs`. Preserve
-  terminal `runs`, workspaces, revisions, artifacts, and graph runs. Then 0094
+  terminal `runs`, workspaces, revisions, artifacts, and graph runs. Then 0095
   uses the durable D2 event ledger to clear only stale pre-D2 C2 task claims,
   preserves later claims, and emits no run/event. The shared C2 decision then
   holds a latest D2 failure without a claim/run and permits only a post-D2 human
   re-triage arm. Files: `web/lib/db/schema.ts`,
-  `web/lib/db/migrations/{0093,0094}_*.sql`, journal/snapshots, migration
+  `web/lib/db/migrations/{0094,0095,0096}_*.sql`, journal/snapshots, migration
   integration tests, shared C2 eligibility/consumer tests, shared cut-over event
   predicate and affected domain-event consumers. Logging: migration runner logs
   aggregate counts; consumers log structured skip/hold reason/event/run IDs,
@@ -662,15 +659,15 @@ in-code grammar drift guard, i18n parity, typecheck,
   lifecycle stores close; repeated helper/redelivery emits or acts zero extra
   times; Ralph/agent/Brain/reindex do not run, cost reconcile may run, parent
   wake/dependency behavior is correct; graph/non-flow rows are unchanged; a
-  pre-D2 C2 claim clears, a later claim stays, and rerunning 0094 is a no-op;
+  pre-D2 C2 claim clears, a later claim stays, and rerunning 0095 is a no-op;
   a D2 task has no automatic claim/run and is held once, while a later human
   re-triage launches normally; slot admission for eligible graph work resumes
   after restart; both journal entries have snapshots.
   TDD: real-PG migration integration is the primary owner—RED per invariant
   cluster, GREEN SQL, REFACTOR only after the full transaction/idempotency
   matrix is green. Completion evidence: the renamed
-  `migration-0093.integration.test.ts` applies 0093 and 0094 separately,
-  asserts stale-claim clear, later-claim preservation, and a second-0094
+  `migration-0094.integration.test.ts` applies 0094 and 0095 separately,
+  asserts stale-claim clear, later-claim preservation, and a second-0095
   no-op. C2 poll and slot-free integration tests assert the no-launch terminal
   hold and later-retriage re-arm. These remain Testcontainers gates and must
   execute in a container-capable CI runner.
@@ -710,7 +707,7 @@ in-code grammar drift guard, i18n parity, typecheck,
   matrix are consolidated; all promised tests are listed by Vitest/Playwright
   and full suites are GREEN.
 
-Phase 3 exit gate: 0093/0094 migration tests run against real Postgres; journal
+Phase 3 exit gate: 0094/0095/0096 migration tests run against real Postgres; journal
 integrity, snapshots, event-consumer fan-out, stale-claim predicate, full
 unit/integration suites, D2 UI and targeted E2E are GREEN;
 `pnpm validate:contracts`, docs/screens validation, and D1/D2/C2 manual SQL
@@ -722,7 +719,7 @@ checks match the upgrade runbook.
   Update current-state docs and in-code SSOTs listed in Contract Surface Trace;
   remove legacy DSL examples, dialect-switch promises, SQLite Brain no-op text,
   and stale `step_runs` ERD/table references. Keep one concise cut-over/migration
-  note pointing to ADR-129 instead of duplicating rationale. Flip the SDD spec,
+  note pointing to ADR-130 instead of duplicating rationale. Flip the SDD spec,
   analytics and screens from Designed to Implemented only after their acceptance
   rows are green. Update every API Contract Matrix operation by `operationId`,
   external `extLaunchRun`, internal domain-event analytics, EN/RU messages, and
@@ -753,7 +750,7 @@ checks match the upgrade runbook.
 
 - [x] **Task 16 — Rebase, resolve global numbers, and run release verification.**
   Rebase onto current `main`; recompute maximum ADR and migration journal idx;
-  renumber ADR-129/0093/0094 and every prose/anchor/snapshot reference if
+  renumber ADR-130/0094/0095/0096 and every prose/anchor/snapshot reference if
   contested; verify M43 remains next unused milestone. Run a refute-the-cut-over review for
   hidden dialect branches, raw JSONB casts, old manifest entry points, lifecycle
   partial states, template namespace regression, and test files not discovered
@@ -762,8 +759,8 @@ checks match the upgrade runbook.
   trailer; integration into main is a separate owner-approved implementation
   action, not part of planning.
 
-  Verification note: `main` remains the branch base, so the requested rebase is
-  a no-op; ADR-129, migrations 0093/0094, and M43 are uncontested. Source, focused
+  Verification note: rebase allocated ADR-129 and migration 0093 to `main`'s MCP
+  management work; M43 was renumbered to ADR-130 and migrations 0094/0095/0096. Source, focused
   behavior, contracts, docs, i18n, discovery, typecheck, lint, and Drizzle gates
   pass. Full listener/container/browser gates were executed and are recorded in
   the spec's as-built verification section as environment-blocked (`listen
@@ -779,7 +776,7 @@ checks match the upgrade runbook.
   transcript and upgrade-preview API contracts with exact refusal semantics.
 - [x] Disable incompatible package controls, preserve package-wide Studio
   blocking, focus typed alerts, and render cut-over timing in run history.
-- [x] Make the 0093/0094 migration sequence idempotent, discriminate pinned vs
+- [x] Make the 0094/0095/0096 migration sequence idempotent, discriminate pinned vs
   cache manifests, exclude non-flow runs, close only event-bounded stale C2
   claims, and add deletion-sensitive consumer tests.
 - [x] Reconcile current docs, ADR supersession/indexing, HITL analytics,
@@ -804,7 +801,7 @@ checks match the upgrade runbook.
 - `pnpm --filter maister-web ls better-sqlite3` returns no package
 - the frozen forbidden-symbol audit for
   `better-sqlite3|drizzleSqlite|dbIsSqlite|dbIsPostgres|file:./dev.db|step_runs|stepRuns|pre_guards|post_guards`
-  matches only its explicit allow-list: migration 0093/0094 metadata/test, locked
+  matches only its explicit allow-list: migration 0094/0095/0096 metadata/test, locked
   negative refusal/boot tests, ADR/spec/plan history; no production/current-doc
   hit is allowed
 - `rg -n 'FIXME\(any\): getDb\(\) returns a pg\|sqlite drizzle union' web`

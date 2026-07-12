@@ -134,7 +134,8 @@ install-authored-flow-package # install an exported authored package as
 
 > **Engine 3 upgrade:** do **not** run `backfill-flow-revisions`. It is retired
 > after the graph-only cut-over and exits with `PRECONDITION`; the ordered
-> 0093 D2/D1 and 0094 stale-C2-claim main-lineage sequence is the only supported
+> 0094 D2/D1, 0095 stale-C2-claim, and 0096 cut-over-event-index main-lineage
+> sequence is the only supported
 > upgrade path. Follow the ordered
 > [deployment preflight](deployment.md#13-engine-300-postgresgraph-only-upgrade)
 > instead.
@@ -483,7 +484,7 @@ Behavior:
 
 - The Route Handler creates the workspace + run rows, runs `git
   worktree add`, claims a global concurrency slot
-  (`MAISTER_MAX_CONCURRENT_RUNS`, default 3), then kicks off the runner
+  (`MAISTER_MAX_CONCURRENT_RUNS`, default 6), then kicks off the runner
   in the background.
 - The runner traverses the validated `flow.manifest.nodes[]` graph, persists
   append-only attempts to `node_attempts`, and drives `runs.status` through

@@ -2,19 +2,21 @@
 
 ## M43 upgrade terminalization (Implemented)
 
-Migration 0093 changes legacy Flow runs in Pending, Running, NeedsInput,
+Migration 0094 changes legacy Flow runs in Pending, Running, NeedsInput,
 NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, or Crashed to Failed
 in one transaction. The terminal event has reason
 legacy_steps_engine_3_cutover and source upgrade_cutover. Done, Failed and
 Abandoned history, graph runs, workspaces, evidence and run rows are retained.
 The transition releases scheduler capacity and removes user-visible recovery,
-resume, response, promotion and retry actions. Follow-on migration 0094 clears
+resume, response, promotion and retry actions. Follow-on migration 0095 clears
 only a task C2 claim that predates its durable D2 event, so an interrupted
 pre-upgrade claim cannot block other scheduler admission after restart; it
 leaves later claims intact and does not create a run or event. The shared C2
 poll/gate then treats that latest D2 run as a one-time terminal hold: it flags
 the task and clears auto-launch without a claim or new run. Only human
-re-triage after the event creates a later arm eligible for C2.
+re-triage after the event creates a later arm eligible for C2. Migration 0096
+adds partial `domain_events` indexes for the exact D2 reason/source predicate,
+so list/detail/reconcile reads remain bounded as the immutable event log grows.
 
 > **M42 — Unified runner & session model (Implemented).** Run runner state
 > (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`,
@@ -530,7 +532,7 @@ of node-status text and a single aggregate token count.
   tool outputs are member-only). → [`scratch-runs.md`](scratch-runs.md) shares
   the substrate.
 - **Node-status iconography.** Per-node status (`Pending | Running | Succeeded |
-  Failed | NeedsInput | Reworked | Stale | Skipped`) renders as a localized icon
+  Failed | NeedsInput | Reworked | Stale`) renders as a localized icon
   + accessible tooltip across the three run-detail surfaces (the "Ноды" list,
   the canvas chip, and the selected-node status field) instead of raw English
   text. The mapping is the pure `nodeStatusVisual` SSOT.

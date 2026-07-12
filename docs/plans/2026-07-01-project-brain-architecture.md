@@ -11,7 +11,7 @@
 > Relates to `docs/pv/improvement-roadmap.md` **E3 — Knowledge lifecycle / moat**
 > ("Project memory") and PRODUCT_VIEW §Phase 2.2 (Curated project knowledge).
 > The original SQLite-mode assumption has been superseded by
-> [ADR-129](../decisions.md#adr-129-postgres-only-and-graph-only-engine-300-cut-over):
+> [ADR-130](../decisions.md#adr-130-postgres-only-and-graph-only-engine-300-cut-over):
 > the current engine is Postgres-only.
 
 ## 1. Purpose & scope

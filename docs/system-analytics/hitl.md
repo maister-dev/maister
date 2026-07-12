@@ -103,7 +103,7 @@ enum | array`.
 
 ## Graph-only upgrade cancellation
 
-Migration `0093` terminally closes unanswered HITL for each unfinished legacy
+Migration `0094` terminally closes unanswered HITL for each unfinished legacy
 `steps[]` Flow run before that run becomes `Failed`. The request receives
 `response = { cancelled: true, reason: "legacy_steps_engine_3_cutover", source:
 "upgrade_cutover" }` and `responded_at`; any linked open or claimed assignment

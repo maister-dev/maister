@@ -17,9 +17,11 @@ does not run `setup.sh`, scripts, agents, or hooks.
 
 A Flow is a directed graph declared through `nodes[]`. Every node has a unique
 `id`, a typed lifecycle, and explicit transitions. The executable node types are
-`ai_coding`, `cli`, `check`, `judge`, `guard`, `human`, `form`,
-`human_edit`, `merge`, and `consensus`; unsupported `steps[]` manifests are
-rejected at every persisted ingest boundary.
+`ai_coding`, `orchestrator`, `consensus`, `judge`, `cli`, `check`, `human`,
+and `form`; unsupported `steps[]` manifests are rejected at every persisted
+ingest boundary. An id is a 1–128-character safe path segment: it starts with
+an ASCII letter or digit and may then use letters, digits, `.`, `_`, or `-`.
+The reserved ids `__proto__`, `constructor`, and `prototype` are invalid.
 
 ## Flow graph node lifecycle (Implemented)
 
@@ -30,9 +32,7 @@ rejected at every persisted ingest boundary.
 > milestones are tagged
 > inline: the node `settings` block → **Implemented (M11c subset)** (typed
 > shape + launch-time enforcement boundary; capability-reference resolution and
-> per-session materialization are **M14 (Implemented)**); manual takeover /
-> `human_edit` /
-> `merge` nodes → **M11b (Designed)**; typed artifact instances
+> per-session materialization are **M14 (Implemented)**); typed artifact instances
 > (`input.requires` / `output.produces`) → **M12**. Decisions:
 > [ADR-026](decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
 > [ADR-027](decisions.md#adr-027-append-only-node_attempts-run-ledger),
@@ -143,9 +143,7 @@ nodes:
       takeover:
         checks # M11b (Implemented): takeover returns to a real
         # validation node (`checks`) so the gates rerun over
-        # the human's commits — NOT `implement` (would clobber
-        # the human edits), NOT the `human_edit` node TYPE
-        # below (that type is M18-Designed).
+        # the human's commits — NOT `implement`, which could clobber them.
     rework:
       allowedTargets: [implement]
       # (M30 — Implemented, ADR-076) all three execute against the node's
@@ -155,31 +153,11 @@ nodes:
       maxLoops: 3
       commentsVar: review_comments
 
-  # human_edit node TYPE: M18 (Designed) — not executed in M11a/M11b. M11b models
-  # manual takeover as a run-state transition (`HumanWorking`) off the existing
-  # `human_review` node, NOT as this node type. See ADR-030 and manual-takeover.md.
-  - id: human-edit
-    type: human_edit
-    settings:
-      roles: [maintainer, project-owner]
-      allowFurtherTracks: true
-      returnRequires:
-        - pushed-commit
-        - summary
-      staleFrom: implement
-    output:
-      produces:
-        - id: returned-commits
-          kind: commit_set
-          requiredFor: [review]
-        - id: returned-diff
-          kind: diff
-          requiredFor: [review]
 ```
 
 > The `transitions` above reference upstream node ids (`review`, `checks`) that
 > are **gate-bearing validation nodes elided from this snippet for brevity** —
-> the snippet shows only the review and `human_edit` nodes. A complete graph
+> the snippet shows the review node. A complete graph
 > wires `… → checks → … → review`; `transitions.takeover: checks` therefore
 > re-enters that validation node so its gates rerun over the human's commits.
 
@@ -189,7 +167,7 @@ Lifecycle sections:
 | ------------- | ---------------------------------------------------------------------------------------------- |
 | `input`       | Declares required artifacts, prior outputs, human answers, and environment.                    |
 | `settings`    | Holds type-specific capability, role, policy, timeout, cost, and restriction controls.         |
-| `action`      | Performs the node work: AI coding, CLI, check, judge, human review, human edit, or merge.      |
+| `action`      | Performs the node work: AI coding, orchestration, consensus, CLI, check, judge, human, or form. |
 | `output`      | Declares typed artifacts the node produces for later inputs, gates, review, and merge.         |
 | `pre_finish`  | Runs Flow-declared gates before the node can finish.                                           |
 | `finish`      | Captures final gates such as human review, branch return, or merge acceptance.                 |
@@ -197,7 +175,7 @@ Lifecycle sections:
 | `rework`      | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
 
 **Node `retry_safe?` (boolean, default `false`).** A per-node opt-in that gates operator crash-recovery
-re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`guard`/`human`/`form`).
+re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`human`/`form`).
 A `Crashed` run whose recover target is session-less is redispatch-recoverable
 only when its config declares `retry_safe: true` — re-running a session-less
 node repeats its side effects (accepted-risk). `ai_coding` nodes ignore
@@ -389,9 +367,9 @@ Two halves remain deferred:
 - **Typed `commit_set` / `diff` artifact instances — M12 (Designed).** M11b
   records raw `git log`/`git diff` TEXT in the ledger only; the typed artifact
   instances + evidence-graph explorer land with the M12 artifact graph (below).
-- **`human_edit` / `merge` node TYPES — M18 (Designed).** The first-class
-  `human_edit` node type (shown in the example above) and the `merge` node type +
-  conflict-handoff promotion are M18; M11b implements neither.
+- **Additional node types.** Engine 3.0.0 does not reserve `human_edit` or
+  `merge` node types. Add a type to the schema, compiler, runner, contracts,
+  and this reference together before documenting it as available.
 
 ## Sessions and the unified runner config (M42 — Implemented)
 

@@ -289,34 +289,33 @@ docker compose exec -T postgres pg_dump -U maister maister | gzip > maister-$(da
 Also back up `/etc/maister/maister.env` and `supervisor/.env` (secrets) and the
 project repos / `.maister/` run artifacts as needed.
 
-## Operational caveats
-
 ## 13. Engine 3.0.0 Postgres/graph-only upgrade
 
 This upgrade is intentionally non-rolling and irreversible after migration
-0093 drops step_runs. The main-lineage sequence is 0093 followed by the
-data-only 0094 stale-C2-claim closure. Complete these steps in order:
+0094 drops `step_runs`. The main-lineage sequence is 0094 followed by the
+data-only 0095 stale-C2-claim closure and 0096 cut-over-event indexes. Complete
+these steps in order:
 
 1. Inventory every cached, stored and first-party Flow manifest. Republish any
    attached/enabled steps[] Flow as nodes[]; do not convert it in place.
 2. Run the actionable-run identity preflight below. It **must return zero
-   rows** before the maintenance window; migration 0093 aborts on the same
+   rows** before the maintenance window; migration 0094 aborts on the same
    predicate rather than guessing an authoritative manifest.
 3. List unfinished legacy runs and finish them or explicitly accept that the
    upgrade will mark them Failed.
 4. Back up Postgres and verify the dump can be read.
 5. Stop both web and supervisor. Do not migrate while either process can write.
-6. Run the main migration through 0094 (0093 D2/D1, then 0094 stale-C2-claim
-   closure), then run/check the separate Brain migration lineage.
+6. Run the main migration through 0096 (0094 D2/D1, then 0095 stale-C2-claim
+   closure and 0096 indexes), then run/check the separate Brain migration lineage.
 7. Start supervisor and web. Verify there is no actionable legacy run, every
-   active package is graph-compatible, the 0094 stale-claim query below returns
+   active package is graph-compatible, the 0095 stale-claim query below returns
    zero rows, D2 tasks are held rather than C2-auto-launched, and the scheduler
    admits other eligible graph work.
 8. Retain the pre-upgrade backup. Restore it with both processes stopped if the
    release must be rolled back; there is no down-migration or reconstructed
    step history.
 
-The following read-only SQL is the migration-0093 identity preflight. It mirrors
+The following read-only SQL is the migration-0094 identity preflight. It mirrors
 the migration's abort guard for every actionable Flow run. Resolve every row by
 restoring its authoritative pinned revision/Flow relationship or by making the
 run terminal before migration; do not proceed while this query returns rows.
@@ -398,7 +397,7 @@ WHERE manifest ? 'steps'
 ORDER BY status, id;
 ~~~
 
-After the main migration completes, the following read-only SQL verifies 0094.
+After the main migration completes, the following read-only SQL verifies 0095.
 It is the exact stale-C2-claim predicate: a claim that predates or equals its
 task's durable D2 event must have been cleared; a later claim is intentionally
 outside this query and remains untouched.
@@ -426,6 +425,39 @@ WHERE t.queue_claimed_at IS NOT NULL
 ORDER BY c.cutover_occurred_at, t.id;
 ~~~
 
+Before admitting traffic after 0094, verify that no actionable legacy Flow run
+survived the D2 transaction. The result **must be empty**:
+
+~~~sql
+WITH authoritative AS (
+  SELECT
+    r.id,
+    r.status,
+    CASE
+      WHEN r.flow_revision_id IS NOT NULL THEN fr.manifest
+      ELSE f.manifest
+    END AS manifest
+  FROM runs r
+  LEFT JOIN flow_revisions fr ON fr.id = r.flow_revision_id
+  LEFT JOIN flows f ON f.id = r.flow_id
+  WHERE r.run_kind = 'flow'
+)
+SELECT id, status
+FROM authoritative
+WHERE manifest ? 'steps'
+  AND status IN (
+    'Pending', 'Running', 'NeedsInput', 'NeedsInputIdle',
+    'HumanWorking', 'WaitingOnChildren', 'Review', 'Crashed'
+  )
+ORDER BY status, id;
+~~~
+
+Restart **supervisor before web**. D2 clears persisted ACP handles, so an old
+supervisor process cannot be recovered from the database after the migration.
+The first web reconciliation sweep stops any still-live supervisor session whose
+`runId` has the durable D2 event; confirm the supervisor session list contains
+none of the D2 run ids before treating the upgrade as complete.
+
 After restart, C2 reads a task's latest Flow run and exact D2 event. If the
 task has no `launch_armed_at` after that event, it is atomically flagged with a
 system explanation; C2 neither acquires another claim nor calls `launchRun`.
@@ -433,9 +465,9 @@ This one-time hold is expected and is not an automatic retry. Republish or
 repair the Flow, then explicitly re-triage the task to create a later arm before
 allowing a new automatic attempt.
 
-Run this read-only D1 impact query **before** migration 0093. It intentionally
+Run this read-only D1 impact query **before** migration 0094. It intentionally
 references `step_runs` to report the terminal legacy detail that will be lost;
-it must not be run after 0093 drops that table:
+it must not be run after 0094 drops that table:
 
 ~~~sql
 WITH authoritative AS (
