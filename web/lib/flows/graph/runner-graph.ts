@@ -1819,10 +1819,13 @@ async function materializeNodeCapabilities(
       .map((e) => e.capabilityRefId),
     refusedClasses: profile.refused.map((e) => e.capabilityRefId),
     withheldMcps,
-    // ADR-129: durable launch-time AUDIT snapshot of the delivered profile. Not
-    // read on resume — a fresh attempt re-derives it (deterministic on stable
-    // inputs); the graph forces new-session so no cross-attempt consistency guard
-    // reads it back.
+    // ADR-129: durable launch-time AUDIT snapshot of the DERIVED profile (author
+    // intent). The orchestrator `maister` facade, when present, is admitted into the
+    // DELIVERED copy AFTER this write (see admitFacadeServer below), so the snapshot
+    // records the author's allow-lists, not the platform's injected delegation
+    // channel. Not read on resume — a fresh attempt re-derives it (deterministic on
+    // stable inputs); the graph forces new-session so no cross-attempt consistency
+    // guard reads it back.
     enforcementProfile: enforcementProfile ?? null,
     cleanup: { status: "pending" },
   };

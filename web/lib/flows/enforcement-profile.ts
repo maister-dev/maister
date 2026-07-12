@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 
 import {
   ENFORCEABILITY_BY_AGENT,
+  evaluateNodeEnforcement,
   type EnforceabilityTable,
 } from "./enforcement";
 
@@ -41,7 +42,6 @@ export function resolveEscalationThreshold(
 
 type EnforcementBearing = {
   tools?: Partial<Record<string, string[]>>;
-  enforcement?: Partial<Record<string, "strict" | "instruct" | "off">>;
 };
 
 // Derive the SessionEnforcementProfile from a node/agent's capability settings,
@@ -58,21 +58,28 @@ export function deriveSessionEnforcementProfile(args: {
   table?: EnforceabilityTable;
   escalationThreshold?: number;
 }): SessionEnforcementProfile | undefined {
-  const settings = args.settings as EnforcementBearing | undefined;
+  const { settings, agent } = args;
 
   if (!settings) return undefined;
 
-  const { agent } = args;
   const table = args.table ?? ENFORCEABILITY_BY_AGENT;
+
+  // SSOT: the "which classes are strict-enforced" decision comes from
+  // evaluateNodeEnforcement — the SAME verdict the launch evidence gate
+  // (assertEnforcementEvidence) consults — never a re-implemented strict+enforceable
+  // predicate that could silently drift from it.
+  const enforced = new Set(
+    evaluateNodeEnforcement(settings, agent, table)
+      .filter((e) => e.verdict === "enforced")
+      .map((e) => e.class),
+  );
+
   const enforcedClasses: Array<"tools" | "mcps"> = [];
   let tools: { allow: string[] } | undefined;
   let mcps: { allowServers: string[] } | undefined;
 
-  if (
-    settings.enforcement?.tools === "strict" &&
-    table[agent].tools === "enforced"
-  ) {
-    const allow = settings.tools?.[agent] ?? [];
+  if (enforced.has("tools")) {
+    const allow = (settings as EnforcementBearing).tools?.[agent] ?? [];
 
     if (allow.length === 0) {
       throw new MaisterError(
@@ -85,10 +92,7 @@ export function deriveSessionEnforcementProfile(args: {
     enforcedClasses.push("tools");
   }
 
-  if (
-    settings.enforcement?.mcps === "strict" &&
-    table[agent].mcps === "enforced"
-  ) {
+  if (enforced.has("mcps")) {
     // ASYMMETRY WITH tools (intentional): an empty resolved server set is NOT a
     // CONFIG refusal here. Empty `tools.allow` means "no tools" — a useless agent,
     // so it refuses (above). Empty `allowServers` means "no MCP server is allowed"

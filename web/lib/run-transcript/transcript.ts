@@ -434,7 +434,8 @@ export function parseScratchMessageContent(
       obj.kind === "hook_trip" &&
       (obj.rule === "path_guard" ||
         obj.rule === "repetition" ||
-        obj.rule === "no_progress") &&
+        obj.rule === "no_progress" ||
+        obj.rule === "capability_guard") &&
       (obj.disposition === "deny" || obj.disposition === "halt")
     ) {
       return {

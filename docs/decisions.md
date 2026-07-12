@@ -11093,9 +11093,12 @@ identity is a per-adapter empirical question (the "tool-identity spike").
   `permissionPolicy = "dangerously_skip_permissions"` + a strict-armed profile
   **refuses launch** (`EXECUTOR_UNAVAILABLE`) — under skip-permissions the seam is
   structurally inert, so enforcing would be a silent lie. A fail-closed **always-ask
-  sentinel** latches `hookHalted` if a WRITE_KINDS `session/update` tool_call is
-  observed whose `toolCallId` was never arbitrated (the adapter stopped honoring
-  always-ask mid-session).
+  sentinel** latches `hookHalted` when a WRITE_KINDS call's **execution**
+  `tool_call_update` (status `completed`/`failed`) is observed while its `toolCallId`
+  is still un-arbitrated — the write ran without ever reaching the seam (the adapter
+  stopped honoring always-ask mid-session). It keys off the execution event, not the
+  pre-permission `tool_call` notification, so a legitimately arbitrated write never
+  false-halts.
 - **`ENFORCEABILITY_BY_AGENT` flip (honest scope).** Only classes with a real,
   adapter-agnostic seam mechanism flip to `enforced`, for **all** adapters (the
   interceptor is adapter-agnostic; the launch evidence gate — not the table —
@@ -11152,8 +11155,13 @@ identity is a per-adapter empirical question (the "tool-identity spike").
   at the seam); out-of-profile calls deny-and-continue, and a run stuck in a deny
   loop escalates to a human via the existing `hook_trip` HITL after N=3.
 - This ADR **amends/executes ADR-042** (generalizes claude-first-per-cell → an
-  adapter-agnostic evidence-gated seam), **unblocks the ADR-041 gating notes**, and
-  **corrects the `hooks` cell label**. ADR-041/042/044 history is not renumbered.
+  adapter-agnostic evidence-gated seam), **unblocks the ADR-041 gating notes for the
+  flow path**, and **corrects the `hooks` cell label**. The agent path is a deliberate
+  follow-up: the destructive-agent launch gate (`web/lib/agents/launch.ts`, "gated
+  until capability enforcement lands (ADR-041)") stays, and standalone/`settings.agent`
+  agent runs do not derive/deliver an `enforcementProfile` — platform agents declare
+  no strict `tools`/`mcps` intent today (`capability_profile` carries only `mcps` refs),
+  so nothing silently degrades (see `agents.md`). ADR-041/042/044 history is not renumbered.
 - A future generic ALLOW/DENY/ASK policy language (a separate plan) is not
   precluded — `SessionEnforcementProfile` is a data input, not a policy grammar.
 

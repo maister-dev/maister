@@ -378,7 +378,12 @@ these fields; the narrowed guard type is widened to read them. **No first-class 
 field guarantees a tool name** — so identity is per-adapter empirical, which is why
 the flip is evidence-gated (below), and a call **governed by a strict class** whose
 identity is **missing/malformed** is a **conservative deny** (fail-closed), never a
-silent allow.
+silent allow. The `capabilityEnforcement` smoke proves the seam SEES an identity
+(non-null) on every write-class probe and resolves a `mcp__<server>__<tool>` server;
+that a plain tool name is *stable* (an identifier, not a per-call human `title` that
+would never match an allow-list) is **operator-verified** from the probe's
+observed-names summary — `claude` surfaces the stable `_meta.claudeCode.toolName`, so
+a `title`-only adapter's operator MUST confirm the observed names before caching `ok`.
 
 **Governed-class evaluation.** A call is *governed* when a strict-enforced class
 applies to it: `tools` governs every call reaching the seam (matched by name);
@@ -389,7 +394,10 @@ The decision is an **allow-list membership test**, never a deny-list complement:
 - **Two-strict-class precedence** — a call governed by BOTH `tools` and `mcps` (an
   MCP call, both enforced) is allowed **iff both allow-lists admit it** (AND-of-allows,
   most-restrictive wins). This tightens, never loosens — ADR-032-safe. The denying
-  class is named in the deny reason + log (`governedClass`).
+  class is named in the deny reason + log (`governedClass`). Author note: because
+  `tools` matches by full name, when BOTH classes are strict an MCP call must ALSO
+  appear in `tools.allow` by its full `mcp__<server>__<tool>` name — listing the
+  server in `mcps.allowServers` alone does not admit it while `tools` is also strict.
 - **`execute` (bash)** is name-matchable under `capability_guard` (unlike
   `path_guard`, which is kind-based): a bash call arrives with a resolvable tool
   name (e.g. `Bash`), so `tools.allow` governs it by name.
@@ -408,9 +416,14 @@ supervisor becomes the permission authority (auto-allow in-profile). A runner wh
 `permissionPolicy = "dangerously_skip_permissions"` + a strict-armed profile
 **refuses launch** (`EXECUTOR_UNAVAILABLE`) — under skip-permissions the seam is
 structurally inert. A fail-closed **sentinel** in the `session/update` handler
-tracks arbitrated `toolCallId`s: a WRITE_KINDS `tool_call` update whose id was never
-arbitrated latches `hookHalted` + emits a `capability_guard` halt (the adapter
-stopped honoring always-ask mid-session).
+registers the `toolCallId` of each streamed WRITE_KINDS `tool_call` (status
+`pending`) and removes it once the call reaches `requestPermission` (arbitration);
+it latches `hookHalted` + emits a `capability_guard` halt only when the call's
+**execution** `tool_call_update` (status `completed`/`failed`) arrives while its id
+is still un-arbitrated — the adapter ran a write without ever asking (stopped
+honoring always-ask mid-session). Keying off the execution event, not the pending
+`tool_call` notification, is what stops a legitimately arbitrated write from
+false-halting on its own streamed announcement.
 
 **Evidence-gated per-adapter flip.**
 
@@ -529,9 +542,12 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   through to a logged deny + release (never an unresolved RPC).
 - `capability_guard` MUST run **after `path_guard` and before B1** auto-approve;
   an **ungoverned** call MUST fall through unchanged to B1/HITL.
-- The always-ask sentinel MUST latch a `capability_guard` halt if a WRITE_KINDS
-  `session/update` `tool_call` is observed whose `toolCallId` was never arbitrated
-  by `capability_guard` (adapter stopped honoring always-ask).
+- The always-ask sentinel MUST latch a `capability_guard` halt when a WRITE_KINDS
+  call's **execution** `tool_call_update` (status `completed`/`failed`) is observed
+  while its `toolCallId` is still un-arbitrated by `capability_guard` — the write
+  executed without ever reaching the seam (adapter stopped honoring always-ask). It
+  MUST key off the execution event, NOT the pre-permission streamed `tool_call`
+  notification, so a legitimately arbitrated write never false-halts.
 - A strict-`tools`/`mcps` launch MUST refuse (`EXECUTOR_UNAVAILABLE`) unless the
   resolved adapter's `capabilityEnforcement` smoke `=== "ok"`, with a diagnostic
   naming the missing evidence.
@@ -608,7 +624,17 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   decides only the enforced subset.
 - **Read tools the adapter auto-runs without asking** never reach
   `requestPermission`, so `capability_guard` cannot deny them; the D5 always-ask
-  sentinel is the WRITE_KINDS backstop for a tool that *executed* without arbitration.
+  sentinel is the backstop for a **WRITE_KINDS** tool that *executed* without
+  arbitration. `capability_guard` therefore governs the permission-gated subset the
+  adapter routes through `requestPermission` (under `permissionPolicy=default` that
+  is writes/bash/MCP/dangerous calls), NOT a complete allow-list over every call —
+  auto-allowed reads are out of its reach by construction.
+- **D5 backstop scope is WRITE_KINDS-only.** `execute`/bash is deliberately *not* in
+  `WRITE_KINDS` (it can be read-only — see `path_guard`), so a mid-session bash
+  bypass is not caught by the D5 sentinel. The guarantee for bash is the **primary
+  path**: the `capabilityEnforcement` smoke probe proves every WRITE_KINDS call *and*
+  a Bash/`execute` call reach `requestPermission` under `permissionPolicy=default`
+  before an adapter is admitted; D5 backstops only WRITE_KINDS drift after that.
 - **Enforced × auto-approve** — on an unattended (`permissions=auto_approve`)
   session, `capability_guard`'s after-path_guard/before-B1 placement means an
   out-of-profile call is still denied (it wins over B1); in-profile calls are

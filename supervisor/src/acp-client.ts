@@ -467,7 +467,12 @@ export async function createAcpConnection(
           id
         ) {
           // Streaming announcement of a write — track until it reaches the seam
-          // (requestPermission removes it) or executes (below).
+          // (requestPermission removes it) or executes (below). WRITE_KINDS-only by
+          // design: `execute`/bash is NOT tracked here (it can be read-only, like
+          // path_guard) — a mid-session bash bypass is not caught by this sentinel.
+          // Bash is covered by the primary path instead: the capabilityEnforcement
+          // smoke proves it reaches requestPermission before an adapter is admitted
+          // (ADR-129, M3).
           record.capabilityPendingWriteIds?.add(id);
         } else if (
           u?.sessionUpdate === "tool_call_update" &&

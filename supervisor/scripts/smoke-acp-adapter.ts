@@ -222,12 +222,18 @@ function createCapabilityEnforcementProbeClient(
   };
 }
 
-function summarizeCapabilityEnforcementProbe(
+export function summarizeCapabilityEnforcementProbe(
   protocolVersion: number,
   observations: readonly CapabilityProbeObservation[],
 ): CapabilityEnforcementSmokeResult {
   const firedForEveryProbe =
     observations.length >= CAPABILITY_ENFORCEMENT_PROBES.length;
+  // `identitySurfaced` proves the seam SEES a non-null identity per probe — NOT that a
+  // plain tool name is a STABLE identifier (vs a per-call human `title` that would never
+  // match an allow-list). Stability is operator-verified from the observed names in the
+  // failure reason below: claude surfaces the stable `_meta.claudeCode.toolName`; a
+  // `title`-only adapter must be inspected before its `ok` is cached (ADR-129, M2). The
+  // MCP probe is stronger — `mcpResolved` requires the `mcp__<server>__<tool>` structure.
   const identitySurfaced =
     observations.length > 0 && observations.every((o) => o.name !== null);
   const mcpResolved = observations.some((o) => o.mcpServer !== null);

@@ -5,7 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { smokeAdapter } from "../../scripts/smoke-acp-adapter";
+import {
+  smokeAdapter,
+  summarizeCapabilityEnforcementProbe,
+} from "../../scripts/smoke-acp-adapter";
 
 const fixturePath = fileURLToPath(
   new URL("../../test/fixtures/mock-acp-compatibility.mjs", import.meta.url),
@@ -79,5 +82,18 @@ describe("smoke ACP adapter CLI helpers", () => {
         protocolVersion: expect.any(Number),
       },
     });
+  });
+
+  it("capability-enforcement summary is 'error' when no stable identity is surfaced (ADR-129 REQ-16 negative)", () => {
+    // requestPermission fired for every probe, but neither call carried a resolvable
+    // tool name (a title-only adapter that never surfaces identity). The summary MUST
+    // be `error` — never cache `ok` for an adapter whose calls the seam cannot govern.
+    const result = summarizeCapabilityEnforcementProbe(1, [
+      { kind: "edit", name: null, mcpServer: null, latencyMs: 1 },
+      { kind: "other", name: null, mcpServer: null, latencyMs: 1 },
+    ]);
+
+    expect(result.status).toBe("error");
+    expect(result.reason).toContain("stable tool identity");
   });
 });

@@ -1092,7 +1092,7 @@
     "copied": "copied",
     "toolCount": "{name} ×{count}",
     "clearedHistory": "Cleared history · {count, plural, one {# item} other {# items}}",
-    "hookTripNotice": "Guardrail · {rule, select, path_guard {path guard} repetition {repetition} no_progress {no progress} capability_guard {capability guard} other {trip}} — {disposition, select, deny {write denied, continuing} halt {run halted} other {tripped}}",
+    "hookTripNotice": "Guardrail · {rule, select, path_guard {path guard} repetition {repetition} no_progress {no progress} capability_guard {capability guard} other {trip}} — {disposition, select, deny {call denied, continuing} halt {run halted} other {tripped}}",
     "tokens": "Context tokens",
     "status": {
       "Starting": "Starting",

@@ -540,6 +540,39 @@ describe("capability_guard interceptor (ADR-129)", () => {
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 
+  it("anti-evasion: an ungoverned pass_through between denies does NOT reset the breaker (REQ-8)", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "capability_passthrough_no_reset",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      // mcps-strict: a non-MCP call (WebFetch) is ungoverned → pass_through, which
+      // must NOT reset capabilityDenyCount. autoApprove ON so the pass_through
+      // resolves via B1 without a hanging deferred.
+      autoApprovePermissions: true,
+      enforcementProfile: {
+        mcps: { allowServers: ["github"] },
+        enforcedClasses: ["mcps"],
+        escalationThreshold: 3,
+      },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+    const halts = trips.filter((t) => t.disposition === "halt");
+    const denies = trips.filter((t) => t.disposition === "deny");
+
+    // deny, deny, [pass_through — no reset], deny → the 3rd deny reaches threshold 3
+    // and halts. If the pass_through wrongly reset the counter, the 3rd would be
+    // count 1 (no halt) → 3 denies / 0 halts. Exactly one halt proves anti-evasion.
+    expect(halts).toHaveLength(1);
+    expect(halts[0]).toMatchObject({ rule: "capability_guard" });
+    expect(denies).toHaveLength(2);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
   it("no enforcementProfile: capability_guard is inert (auto-approves via B1)", async () => {
     const { url, registry, runtimeRoot } = await boot([
       "--scenario",

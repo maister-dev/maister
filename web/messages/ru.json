@@ -1092,7 +1092,7 @@
     "copied": "скопировано",
     "toolCount": "{name} ×{count}",
     "clearedHistory": "Очищенная история · {count, plural, one {# элемент} few {# элемента} many {# элементов} other {# элемента}}",
-    "hookTripNotice": "Гардрейл · {rule, select, path_guard {защита путей} repetition {повтор} no_progress {нет прогресса} capability_guard {контроль возможностей} other {срабатывание}} — {disposition, select, deny {запись отклонена, продолжаем} halt {запуск остановлен} other {сработал}}",
+    "hookTripNotice": "Гардрейл · {rule, select, path_guard {защита путей} repetition {повтор} no_progress {нет прогресса} capability_guard {контроль возможностей} other {срабатывание}} — {disposition, select, deny {вызов отклонён, продолжаем} halt {запуск остановлен} other {сработал}}",
     "tokens": "Токены контекста",
     "status": {
       "Starting": "Запускается",

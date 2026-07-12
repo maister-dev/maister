@@ -277,6 +277,17 @@ class GuardrailAgent {
       // execution tool_call_update. The write reaches the seam, so the sentinel
       // must NOT halt (regression guard for the pending-notification false-halt).
       await this.arbitratedWrite(sessionId, "Edit", "tc-cap-arbitrated");
+    } else if (scenario === "capability_passthrough_no_reset") {
+      // ADR-129 anti-evasion (REQ-8): under mcps-strict a NON-MCP call is ungoverned
+      // (pass_through) and MUST NOT reset the consecutive-deny counter — else an
+      // agent could dodge the breaker by interleaving one ungoverned call between
+      // forbidden ones. Two out-of-profile MCP denies, one pass_through (non-MCP),
+      // then a third MCP deny: with threshold 3 the third deny still halts (count 3),
+      // proving the interleaved pass_through did not reset the counter.
+      await this.requestTool(sessionId, "mcp__gitlab__a", "tc-ev-1", "other");
+      await this.requestTool(sessionId, "mcp__gitlab__b", "tc-ev-2", "other");
+      await this.requestTool(sessionId, "WebFetch", "tc-ev-pt", "other");
+      await this.requestTool(sessionId, "mcp__gitlab__c", "tc-ev-3", "other");
     } else if (scenario === "deferred_cancel") {
       // Open a REAL HITL deferred (autoApprove OFF, only no_progress armed → the
       // write falls through to the deferred), THEN trip no_progress with M idle
