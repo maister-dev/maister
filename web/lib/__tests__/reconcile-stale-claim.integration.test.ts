@@ -5,42 +5,37 @@
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { runReconcileSweep } from "@/lib/reconcile";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 const { tasks } = schema;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let seq = 0;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_stale_claim_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_stale_claim_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri(), max: 4 });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 afterEach(async () => {

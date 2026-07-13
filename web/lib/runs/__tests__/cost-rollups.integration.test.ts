@@ -5,7 +5,7 @@
 // "<adapter>/<model>" ("unknown" when no run_sessions row matches).
 //
 // Harness mirrors budget-aggregation.integration.test.ts (testcontainers
-// postgres:16-alpine, drizzle migrate), plus an on-disk cost.jsonl fixture
+// shared main-schema test database, plus an on-disk cost.jsonl fixture
 // under a temp runtimeRoot — reconcile reads the file, not a seeded rollup.
 
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -13,25 +13,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { reconcileRunCostRollups } from "@/lib/runs/cost-rollups";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
 const PROJECT_SLUG = "cost-app";
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let projectId: string;
 let runtimeRoot: string;
@@ -39,15 +36,11 @@ let runtimeRoot: string;
 const client = (): NodePgDatabase<any> => db as NodePgDatabase<any>;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("cost_rollups_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "cost_rollups_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   projectId = randomUUID();
   await db.insert(schema.projects).values({
@@ -63,8 +56,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

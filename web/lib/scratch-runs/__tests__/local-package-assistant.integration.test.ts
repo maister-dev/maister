@@ -21,14 +21,8 @@ import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { and, eq, isNull } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   beforeAll,
@@ -47,6 +41,10 @@ import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariant
 import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
 import { FLOW_ASSISTANT_ACTION_SCHEMA_VERSION } from "@/lib/studio/flow-assistant/protocol";
 import { packageFileHash } from "@/lib/studio/flow-assistant/actions";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // markScratchCrashed lives in scratch-runs/service, which transitively imports
 // @/lib/authz → next-auth. Mock authz + the db client (same pattern as
@@ -101,8 +99,8 @@ const {
   webhookEvents,
 } = schema;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 let originalHome: string | undefined;
@@ -114,14 +112,11 @@ let localPackageId: string;
 const RECON_GRACE_SECONDS = 90;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("lp_assistant_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "lp_assistant_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   ({
     markScratchCrashed,
@@ -180,8 +175,7 @@ afterAll(async () => {
   else process.env.DB_URL = originalDbUrl;
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(homeDir, { recursive: true, force: true }).catch(() => undefined);
 });
 
@@ -669,8 +663,12 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       runStatus: "Abandoned",
       dialogStatus: "Abandoned",
     });
-    await expect(stat(capabilityRoot)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(authoringSkill)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(capabilityRoot)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(stat(authoringSkill)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("compensates materialization when the pre-session run transaction fails", async () => {
@@ -679,7 +677,10 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       createdBy: userId,
       db: db as never,
     });
-    const sessionId = await lockLocalPackage(pkg.id, "assistant-insert-failure");
+    const sessionId = await lockLocalPackage(
+      pkg.id,
+      "assistant-insert-failure",
+    );
     const transaction = vi
       .spyOn(db, "transaction")
       .mockRejectedValueOnce(new Error("run insert failed"));

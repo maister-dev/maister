@@ -3,45 +3,35 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { reconcileRunCostRollups } from "@/lib/runs/cost-rollups";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
 type Db = NodePgDatabase<typeof fullSchema>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: Db;
 let runtimeRoot: string;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_cost_attribution_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: fullSchema }) as unknown as Db;
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_cost_attribution_test",
+  });
+  db = testDatabase.db as unknown as Db;
   runtimeRoot = await mkdtemp(join(tmpdir(), "cost-attribution-"));
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true });
 });
 

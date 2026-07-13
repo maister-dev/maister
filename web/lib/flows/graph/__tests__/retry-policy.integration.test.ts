@@ -20,12 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -42,6 +37,10 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -111,7 +110,7 @@ vi.mock("@/lib/flows/runner-agent", () => ({
   ),
 }));
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 
@@ -128,19 +127,15 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test_retry")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test_retry",
+  });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   for (const p of createdPaths.splice(0)) {
     await rm(p, { recursive: true, force: true });
   }

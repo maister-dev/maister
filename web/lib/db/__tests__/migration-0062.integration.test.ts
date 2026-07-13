@@ -2,18 +2,19 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import {
+  startBarePostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const MIGRATION_PATH = path.resolve(
   "lib/db/migrations/0062_package_attachment_skills.sql",
 );
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 
 async function createLegacyPackageTables(): Promise<void> {
@@ -104,18 +105,14 @@ async function applyMigration0062(): Promise<void> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  testDatabase = await startBarePostgresTestDb({
+    databaseName: "maister_test",
+  });
+  pool = testDatabase.pool;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 describe("migration 0062 — package attachment skill catalog backfill", () => {

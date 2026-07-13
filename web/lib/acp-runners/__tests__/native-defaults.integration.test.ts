@@ -1,44 +1,35 @@
 import type { SupervisorDiagnostics } from "@/lib/supervisor-client";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { reconcilePlatformRunners } from "../native-defaults";
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import * as fullSchema from "@/lib/db/schema";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 const { platformAcpRunners, platformRouterSidecars, platformRuntimeSettings } =
   schema;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("native_defaults_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "native_defaults_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

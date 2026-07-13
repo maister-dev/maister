@@ -1,13 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq, sql } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   beforeAll,
@@ -21,6 +15,10 @@ import {
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors-core";
 import { flowManifestIncompatibilityDetails } from "@/lib/flows/manifest-parser";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const mocks = vi.hoisted(() => ({
   launchRun: vi.fn(),
@@ -29,8 +27,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/services/runs", () => ({ launchRun: mocks.launchRun }));
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schema>;
 let tick: typeof import("@/lib/scheduler/tick-service");
 let dispatch: typeof import("@/lib/run-schedules/dispatch");
@@ -47,15 +44,10 @@ beforeAll(async () => {
   originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
   process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("run_schedule_tick_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri(), max: 10 });
-  db = drizzle(pool, { schema });
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "run_schedule_tick_test",
+  });
+  db = testDatabase.db;
 
   tick = await import("@/lib/scheduler/tick-service");
   dispatch = await import("@/lib/run-schedules/dispatch");
@@ -68,8 +60,7 @@ afterAll(async () => {
   } else {
     process.env.MAISTER_MAX_CONCURRENT_RUNS = originalCap;
   }
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

@@ -6,13 +6,8 @@
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -26,10 +21,14 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 
@@ -38,22 +37,18 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 let runPass2: typeof import("@/lib/runs/keepalive-sweeper").runPass2;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("keepalive_persistent_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "keepalive_persistent_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ runPass2 } = await import("@/lib/runs/keepalive-sweeper"));
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 let projectId: string;

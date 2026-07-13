@@ -1,12 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { ensureEmbeddingIndex } from "@/lib/brain/embedding-index";
 import {
@@ -16,54 +10,46 @@ import {
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, the cast
 // silences the type-only clash (matches the domain-events integration tests).
 import * as fullSchema from "@/lib/db/schema";
+import {
+  startMainAndBrainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
-// Brain integration tests need pgvector (CREATE EXTENSION vector + HNSW), so
-// they run on `pgvector/pgvector:pg16`, NOT `postgres:16-alpine`. Both lineages
-// are migrated (main → brain) and the test-default embedding generation index
-// is created up front.
-export const PGVECTOR_IMAGE = "pgvector/pgvector:pg16";
+// Brain integration tests need pgvector (CREATE EXTENSION vector + HNSW). The
+// shared helper migrates both lineages (main → brain) before this module creates
+// the test-default embedding generation index.
+export { PGVECTOR_IMAGE } from "@/test-support/pg-container";
 export const TEST_EMBEDDING_MODEL = "text-embedding-3-small";
 export const TEST_EMBEDDING_DIMENSIONS = 1536;
 
 export const schema = fullSchema as unknown as Record<string, any>;
 
-export type BrainTestDb = {
-  container: StartedPostgreSqlContainer;
-  pool: Pool;
-  db: NodePgDatabase;
+export type BrainTestDb = StartedPostgresTestDb & {
   prevDbUrl: string | undefined;
 };
 
 export async function startBrainTestDb(): Promise<BrainTestDb> {
-  const container = await new PostgreSqlContainer(PGVECTOR_IMAGE)
-    .withDatabase("maister_brain_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-
-  // Point DB_URL at the container so application code and migrations use the
-  // same database. Restored in stopBrainTestDb.
   const prevDbUrl = process.env.DB_URL;
-
-  process.env.DB_URL = container.getConnectionUri();
-
-  const pool = new Pool({ connectionString: container.getConnectionUri() });
-  const db = drizzle(pool);
-
-  // main → brain: brain FKs reference projects/runs/node_attempts/domain_events.
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
-  await migrate(db, {
-    migrationsFolder: "./lib/db/brain-migrations",
-    migrationsTable: "__drizzle_brain_migrations",
+  const database = await startMainAndBrainPostgresTestDb({
+    databaseName: "maister_brain_test",
   });
 
-  await ensureEmbeddingIndex(
-    db,
-    TEST_EMBEDDING_MODEL,
-    TEST_EMBEDDING_DIMENSIONS,
-  );
+  process.env.DB_URL = database.databaseUrl;
 
-  return { container, pool, db, prevDbUrl };
+  try {
+    await ensureEmbeddingIndex(
+      database.db,
+      TEST_EMBEDDING_MODEL,
+      TEST_EMBEDDING_DIMENSIONS,
+    );
+
+    return { ...database, prevDbUrl };
+  } catch (error) {
+    if (prevDbUrl === undefined) delete process.env.DB_URL;
+    else process.env.DB_URL = prevDbUrl;
+    await database.stop();
+    throw error;
+  }
 }
 
 export async function stopBrainTestDb(
@@ -74,8 +60,7 @@ export async function stopBrainTestDb(
     else process.env.DB_URL = ctx.prevDbUrl;
   }
 
-  await ctx?.pool?.end();
-  await ctx?.container?.stop();
+  await ctx?.stop();
 }
 
 // Insert a projects row (Brain enabled by default) and return its id. Only the

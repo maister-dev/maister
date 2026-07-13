@@ -13,13 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
@@ -30,28 +24,29 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { loadFlowManifest } from "@/lib/config";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
 const FLOW_FIXTURE = resolve(__dirname, "_fixtures/persona-flow");
 const PERSONA_MARKER = "DRIVER-PERSONA-MARKER";
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 let packageRoot: string;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  container = testDatabase.container;
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   // runner-agent calls getDb() when db is not threaded into the agent ctx.
   originalDbUrl = process.env.DB_URL;
@@ -88,8 +83,7 @@ afterAll(async () => {
   // container; close it before stopping the container, else its idle
   // connections die with pg 57P01 unhandled errors (see lib/db/client.ts).
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 type Seeded = { runId: string; runtimeRoot: string };

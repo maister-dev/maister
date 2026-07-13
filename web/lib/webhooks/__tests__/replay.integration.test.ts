@@ -2,14 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { sql } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   afterEach,
@@ -27,6 +21,10 @@ import { isMaisterError } from "@/lib/errors";
 // the type-only clash (matches delivery.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // =============================================================================
 // T10 — replay service + the attempt_no decoupling in the T9 drain (TDD red).
@@ -50,8 +48,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 
 const SECRET = "whsec_test_0123456789abcdef";
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 
 // ---------------------------------------------------------------------------
@@ -394,21 +391,15 @@ let stub: HttpStub;
 let savedTimeout: string | undefined;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

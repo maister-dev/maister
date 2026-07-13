@@ -22,6 +22,7 @@ import {
   deleteChatCheckpoint,
   deleteRunCheckpointRefs,
 } from "@/lib/flows/graph/workspace-checkpoint";
+import { startMainPostgresTestDb } from "@/test-support/pg-container";
 
 const execFileAsync = promisify(execFile);
 
@@ -456,10 +457,6 @@ describe("containmentAssert (DD10)", () => {
 
 describe("ledger — checkpoint_ref on the attempt row", () => {
   it("setCheckpointRef records the namespaced ref on node_attempts", async () => {
-    const { PostgreSqlContainer } = await import("@testcontainers/postgresql");
-    const { drizzle } = await import("drizzle-orm/node-postgres");
-    const { migrate } = await import("drizzle-orm/node-postgres/migrator");
-    const { Pool } = await import("pg");
     const { randomUUID } = await import("node:crypto");
     const fullSchema = await import("@/lib/db/schema");
     const { appendNodeAttempt, setCheckpointRef } = await import(
@@ -473,17 +470,12 @@ describe("ledger — checkpoint_ref on the attempt row", () => {
     // schema.integration.test.ts — runtime is fine.
     const schema = fullSchema as unknown as Record<string, any>;
 
-    const container = await new PostgreSqlContainer("postgres:16-alpine")
-      .withDatabase("maister_test")
-      .withUsername("test")
-      .withPassword("test")
-      .start();
-    const pool = new Pool({ connectionString: container.getConnectionUri() });
-    const db = drizzle(pool);
+    const testDatabase = await startMainPostgresTestDb({
+      databaseName: "maister_test",
+    });
+    const { db, pool } = testDatabase;
 
     try {
-      await migrate(db, { migrationsFolder: "./lib/db/migrations" });
-
       const projectId = randomUUID();
       const executorId = randomUUID();
       const flowId = randomUUID();
@@ -559,8 +551,7 @@ describe("ledger — checkpoint_ref on the attempt row", () => {
 
       expect(rows.rows[0].checkpoint_ref).toBe(ref);
     } finally {
-      await pool.end();
-      await container.stop();
+      await testDatabase.stop();
     }
   }, 180_000);
 });

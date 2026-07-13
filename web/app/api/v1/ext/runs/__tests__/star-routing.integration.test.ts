@@ -10,12 +10,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import {
@@ -31,10 +26,14 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let agentsRoot: string;
@@ -82,15 +81,12 @@ let delegatePost: typeof import("@/app/api/v1/ext/runs/delegate/route").POST;
 beforeAll(async () => {
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-star-"));
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("ext_star_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "ext_star_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ issueAgentRunToken, issueOrchestratorRunToken } = await import(
     "@/lib/agents/tokens"
@@ -102,8 +98,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 let projectId: string;

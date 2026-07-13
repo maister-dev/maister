@@ -4,8 +4,9 @@ import { Pool } from "pg";
 import { test, expect } from "@playwright/test";
 
 import { e2eClaudeRunnerSnapshot, seedDefaultRunSession } from "./_seed/db";
-import { E2E_DB_URL } from "./_seed/db-url";
 import { loadFixtures } from "./_seed/fixtures";
+
+import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
 const PROJECT_SLUG = "e2e-m13-assignments";
 const BRANCH = "maister/e2e-assignments";
@@ -43,7 +44,7 @@ type SeededAssignmentFixture = {
 };
 
 async function withDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const pool = new Pool({ connectionString: E2E_DB_URL });
+  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
 
   try {
     return await fn(pool);

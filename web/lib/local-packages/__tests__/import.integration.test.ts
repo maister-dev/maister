@@ -10,14 +10,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import AdmZip from "adm-zip";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as tar from "tar";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -38,12 +32,15 @@ import {
   listFiles,
   type LocalPackageFileMeta,
 } from "@/lib/local-packages/service";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // FIXME(any): dual drizzle peer-dep variants (matches service.integration.test.ts).
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let originalHome: string | undefined;
@@ -53,14 +50,10 @@ let userId: string;
 const BINARY = new Uint8Array([0x00, 0x01, 0xff, 0x10, 0x7f, 0x80]);
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("lpimport_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: schemaModule });
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "lpimport_test",
+  });
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "lp-import-home-"));
   originalHome = process.env.HOME;
@@ -75,8 +68,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(homeDir, { recursive: true, force: true });
 });
 

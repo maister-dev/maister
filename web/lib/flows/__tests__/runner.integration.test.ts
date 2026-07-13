@@ -3,14 +3,7 @@ import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -24,6 +17,10 @@ import {
 } from "@/lib/flows";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
@@ -36,8 +33,7 @@ const {
   workspaces,
 } = schema;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: any;
 let homeDir = "";
 let workspaceRoot = "";
@@ -88,14 +84,10 @@ async function setupCliFlowPlugin(): Promise<void> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("runner_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "runner_test",
+  });
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "runner-int-home-"));
   workspaceRoot = await mkdtemp(join(tmpdir(), "runner-int-ws-"));
@@ -163,8 +155,7 @@ afterAll(async () => {
   } else {
     delete process.env.HOME;
   }
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   if (homeDir) {
     await rm(homeDir, { recursive: true, force: true });
   }

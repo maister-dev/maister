@@ -21,15 +21,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import { Pool } from "pg";
 import {
   afterAll,
   beforeAll,
@@ -46,6 +40,10 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { getActiveTakeover } from "@/lib/flows/graph/ledger";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
@@ -115,8 +113,8 @@ const fixtureManifest = {
   ],
 };
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 let runtimeRoot: string;
@@ -434,14 +432,11 @@ async function readRun(runId: string): Promise<any> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("takeover_fixes_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "takeover_fixes_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
   runtimeRoot = await mkdtemp(path.join(tmpdir(), "m11b-fix-rt-"));
   process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
   originalDbUrl = process.env.DB_URL;
@@ -465,8 +460,7 @@ afterAll(async () => {
     process.env.DB_URL = originalDbUrl;
   }
   await rm(runtimeRoot, { recursive: true, force: true });
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(() => {

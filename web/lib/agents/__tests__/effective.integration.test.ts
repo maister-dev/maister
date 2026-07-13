@@ -5,20 +5,19 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { isMaisterError } from "@/lib/errors";
 import { upgradePreview } from "@/lib/flows/lifecycle";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let cacheRoot: string;
@@ -26,20 +25,16 @@ let cacheRoot: string;
 beforeAll(async () => {
   cacheRoot = await mkdtemp(path.join(os.tmpdir(), "maister-effective-"));
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(cacheRoot, { recursive: true, force: true });
 });
 

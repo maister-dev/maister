@@ -7,13 +7,8 @@
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -24,25 +19,28 @@ import {
 } from "@/lib/domain-events/cutover";
 import { MaisterError } from "@/lib/errors";
 import { promoteNextPending } from "@/lib/scheduler";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 const { domainEvents, runs, tasks } = schema;
 
-let container: StartedPostgreSqlContainer;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let seq = 0;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_admission_gate_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_admission_gate_test",
+  });
+  container = testDatabase.container;
 
-  pool = new Pool({ connectionString: container.getConnectionUri(), max: 8 });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
   // The scheduler advisory lock (pg_advisory_xact_lock) only engages when DB_URL
   // is a postgres URL — point it at the container so the gate's count-then-claim is
   // serialized exactly as in prod (the INV-1 burst test depends on it).
@@ -51,8 +49,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   delete process.env.DB_URL;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 afterEach(async () => {

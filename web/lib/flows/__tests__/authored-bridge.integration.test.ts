@@ -16,14 +16,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { and, eq, sql } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -32,12 +26,15 @@ import {
 } from "@/lib/catalog/authored-service";
 import * as schemaModule from "@/lib/db/schema";
 import { bridgePublishedAuthoredFlow } from "@/lib/flows/authored-bridge";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flows, flowRevisions } = schema;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let projectId: string;
@@ -58,14 +55,10 @@ nodes:
 `;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("authored_bridge_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "authored_bridge_test",
+  });
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "authored-bridge-int-home-"));
   const originalHome = process.env.HOME;
@@ -96,8 +89,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   if (homeDir) {
     await rm(homeDir, { recursive: true, force: true });
   }

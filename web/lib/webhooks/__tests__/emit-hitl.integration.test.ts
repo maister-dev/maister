@@ -3,20 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq, sql } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches emit-run-status.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // =============================================================================
 // T7 (HITL) — hitl.responded + (run.needs_input ∧ hitl.requested) emits (TDD red).
@@ -49,8 +47,7 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let runtimeRoot: string;
 
@@ -92,16 +89,11 @@ let respondToHitl: typeof import("@/lib/services/hitl").respondToHitl;
 let sendScratchPromptAndProjectEvents: typeof import("@/lib/scratch-runs/events").sendScratchPromptAndProjectEvents;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   runtimeRoot = await mkdtemp(join(tmpdir(), "maister-emit-hitl-"));
   process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
@@ -115,8 +107,7 @@ beforeAll(async () => {
 afterAll(async () => {
   delete process.env.MAISTER_RUNTIME_ROOT;
   await rm(runtimeRoot, { recursive: true, force: true });
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 interface EventRow {

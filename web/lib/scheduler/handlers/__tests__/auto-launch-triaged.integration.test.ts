@@ -13,12 +13,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -37,10 +32,14 @@ import {
   GRAPH_ONLY_CUTOVER_SOURCE,
 } from "@/lib/domain-events/cutover";
 import { MaisterError } from "@/lib/errors";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let agentsRoot: string;
@@ -52,15 +51,12 @@ let runAutoLaunchTriagedJob: typeof import("@/lib/scheduler/handlers/auto-launch
 beforeAll(async () => {
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-autotriage-"));
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("autotriage_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "autotriage_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ runAutoLaunchTriagedJob } = await import(
     "@/lib/scheduler/handlers/auto-launch-triaged"
@@ -68,8 +64,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 let projectId: string;

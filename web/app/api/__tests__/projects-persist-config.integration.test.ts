@@ -5,15 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import { Pool } from "pg";
 import {
   afterAll,
   beforeAll,
@@ -28,12 +22,15 @@ import * as schemaModule from "@/lib/db/schema";
 import { requireActiveSession } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { serializeProjectConfig } from "@/lib/packages/yaml-writeback";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let tmpRoot: string;
 let gitConfigStub: string;
@@ -149,16 +146,11 @@ function expectedYaml(name = "My App"): string {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("persist_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "persist_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   tmpRoot = await mkdtemp(join(tmpdir(), "persist-config-"));
 
@@ -174,8 +166,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   if (tmpRoot) await rm(tmpRoot, { recursive: true, force: true });
 });
 

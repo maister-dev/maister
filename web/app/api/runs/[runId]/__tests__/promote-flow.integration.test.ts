@@ -5,14 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -20,6 +14,10 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // M18 Phase 2 — RED until `web/lib/runs/promote.ts` (`promoteRun`) lands with
 // the durable promotion claim (§3.2, Codex F1/F5). This is the INTEGRATION
@@ -44,8 +42,8 @@ import {
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 let originalClaimTimeout: string | undefined;
@@ -213,14 +211,11 @@ async function activeMergeConflictCount(runId: string): Promise<number> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("promote_flow_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "promote_flow_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
@@ -249,8 +244,7 @@ afterAll(async () => {
   else
     process.env.MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS = originalClaimTimeout;
 
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   if (gitRoot) await rm(gitRoot, { recursive: true, force: true });
 });
 

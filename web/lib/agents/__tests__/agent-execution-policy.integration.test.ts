@@ -16,12 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -32,6 +27,11 @@ import {
   it,
   vi,
 } from "vitest";
+
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // Stub the scheduler so launchAgentRun never spawns a supervisor session — the
 // run stays Pending and the execution_policy snapshot (set at the INSERT) is
@@ -48,7 +48,8 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
 
 const exec = promisify(execFile);
 
-let container: StartedPostgreSqlContainer;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let agentsRoot: string;
@@ -68,14 +69,12 @@ beforeAll(async () => {
   originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
   process.env.MAISTER_WORKTREES_ROOT = worktreesTmp;
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  container = testDatabase.container;
+  pool = testDatabase.pool;
+  db = testDatabase.db;
   process.env.DB_URL = container.getConnectionUri();
 
   ({ launchAgentRun, startAgentSession } = await import("@/lib/agents/launch"));
@@ -85,8 +84,7 @@ afterAll(async () => {
   if (originalWorktreesRoot === undefined)
     delete process.env.MAISTER_WORKTREES_ROOT;
   else process.env.MAISTER_WORKTREES_ROOT = originalWorktreesRoot;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

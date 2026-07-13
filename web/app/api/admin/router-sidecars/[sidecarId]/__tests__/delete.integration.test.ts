@@ -17,13 +17,7 @@
 
 import type { NextRequest } from "next/server";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   beforeAll,
@@ -35,6 +29,10 @@ import {
 } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 const { platformAcpRunners, platformRouterSidecars } = schema;
@@ -44,8 +42,8 @@ const mocks = vi.hoisted(() => ({
   stopSidecar: vi.fn(),
 }));
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 
@@ -112,14 +110,11 @@ async function sidecarIds(): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("sidecar_delete_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "sidecar_delete_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
@@ -130,8 +125,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

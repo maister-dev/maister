@@ -25,13 +25,8 @@ import type { DomainEventRow } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -45,6 +40,10 @@ import {
 } from "vitest";
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // The merge primitives are stubbed (no real repo) so the DB tree-resolve +
 // settled-gate + claim/finalize CAS is what's exercised.
@@ -78,7 +77,7 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
   };
 });
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 
 let buildAutoLaunchRunPlanConsumer: typeof import("@/lib/domain-events/auto-launch").buildAutoLaunchRunPlanConsumer;
@@ -88,15 +87,12 @@ let promoteRun: typeof import("@/lib/runs/promote").promoteRun;
 let markReworkFromReview: typeof import("@/lib/runs/state-transitions").markReworkFromReview;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("shared_tree_autolaunch_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "shared_tree_autolaunch_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ buildAutoLaunchRunPlanConsumer } = await import(
     "@/lib/domain-events/auto-launch"
@@ -109,8 +105,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 let projectId: string;

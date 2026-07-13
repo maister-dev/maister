@@ -12,12 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -29,6 +24,11 @@ import {
   it,
   vi,
 } from "vitest";
+
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const exec = promisify(execFile);
 
@@ -63,7 +63,8 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-let container: StartedPostgreSqlContainer;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let agentsRoot: string;
@@ -98,22 +99,19 @@ You are the driving persona.
     "utf8",
   );
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  container = testDatabase.container;
+  pool = testDatabase.pool;
+  db = testDatabase.db;
   process.env.DB_URL = container.getConnectionUri();
 
   ({ launchAgentRun } = await import("@/lib/agents/launch"));
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

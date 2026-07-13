@@ -13,12 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -42,28 +37,28 @@ import {
 } from "@/lib/agents/materialization-manifest";
 import { isMaisterError } from "@/lib/errors";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const exec = promisify(execFile);
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let repoPath: string;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {
@@ -191,11 +186,7 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
 
   it("reports a change to a user-owned settings file as repo_read dirt", async () => {
     const { runId } = await seedWorld();
-    const settingsPath = path.join(
-      repoPath,
-      ".claude",
-      "settings.local.json",
-    );
+    const settingsPath = path.join(repoPath, ".claude", "settings.local.json");
 
     await mkdir(path.dirname(settingsPath), { recursive: true });
     await writeFile(settingsPath, '{"owner":"user"}\n');
@@ -728,7 +719,9 @@ describe("workspace_ref ephemeral checkout (ADR-090 rework, RD6)", () => {
 
       expect(sweep.removed).toBe(1);
       expect(sweep.failed).toBe(0);
-      await expect(stat(ephemeralPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(ephemeralPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       await rm(outside, { recursive: true, force: true });
     }

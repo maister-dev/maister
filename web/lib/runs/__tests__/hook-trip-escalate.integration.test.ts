@@ -1,6 +1,6 @@
 // Phase 3 (ADR-108 / M40) — escalateHookTrip, the web-side halt escalation for
 // a guardrail trip. Mirrors the budget-watchdog harness: testcontainers
-// postgres:16-alpine, drizzle migrate against ./lib/db/migrations, rows seeded
+// shared main-schema test database with rows seeded directly.
 // directly. checkpointSession is INJECTED into escalateHookTrip (not imported),
 // so no supervisor-client mock is needed for it; a spy is passed per call.
 
@@ -10,14 +10,8 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   beforeAll,
@@ -46,11 +40,14 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let projectId: string;
 let executorId: string;
@@ -62,15 +59,11 @@ beforeAll(async () => {
     `hook-trip-${randomUUID().slice(0, 8)}`,
   );
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("hook_trip_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "hook_trip_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -94,8 +87,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

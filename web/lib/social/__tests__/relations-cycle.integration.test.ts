@@ -4,22 +4,22 @@
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { addTaskRelation, type TaskRelationKind } from "@/lib/social/relations";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
@@ -27,11 +27,10 @@ let originalDbUrl: string | undefined;
 const ACTOR = { type: "user" as const, id: "tester" };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_relations_cycle_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_relations_cycle_test",
+  });
+  container = testDatabase.container;
 
   // relations.ts gates its pg_advisory_xact_lock on DB_URL looking like
   // Postgres; vitest workers don't inherit .env.local, so without this the
@@ -39,18 +38,15 @@ beforeAll(async () => {
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 
-  pool = new Pool({ connectionString: container.getConnectionUri(), max: 4 });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
 
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 let seq = 0;

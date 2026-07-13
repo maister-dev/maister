@@ -189,6 +189,13 @@ pnpm install-authored-flow-package # bridge export as untrusted installed packag
 
 `pnpm typecheck` runs `tsc --noEmit` (`noEmit: true` in tsconfig).
 
+### Test database contract
+
+Database-backed integration and E2E tests use `test-support/pg-container.ts`.
+It is the only web Testcontainers constructor, owns pgvector image selection,
+main/Brain migration order, and pool-before-container teardown. Build/unit work
+must not require Docker; integration/E2E require it explicitly.
+
 ## Current code structure
 
 ```

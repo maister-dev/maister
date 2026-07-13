@@ -1,50 +1,43 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { sql } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   findPendingMigrations,
   mainMigrationLedgerHighWater,
 } from "@/lib/db/check-migrations";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let prevDbUrl: string | undefined;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_drift_check_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_drift_check_test",
+  });
+  container = testDatabase.container;
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
+  db = testDatabase.db;
 
   // findPendingMigrations requires a postgres DB_URL; point it at the
   // container so the check runs.
   prevDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 }, 180_000);
 
 afterAll(async () => {
   if (prevDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = prevDbUrl;
 
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 describe("findPendingMigrations", () => {

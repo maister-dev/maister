@@ -31,14 +31,8 @@ import type { CreateSessionResult } from "@/lib/supervisor-client";
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   beforeAll,
@@ -57,13 +51,17 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { driveResume, resumeCrashedRun } from "@/lib/runs/recover";
 import { promoteNextPending } from "@/lib/scheduler";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flowRevisions, flows, projects, runs, tasks, users, workspaces } =
   schema;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 let projectId: string;
@@ -105,14 +103,11 @@ const MANIFEST = {
 };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("recover_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "recover_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   // The scheduler advisory lock only engages on a postgres DB_URL.
   originalDbUrl = process.env.DB_URL;
@@ -184,8 +179,7 @@ afterAll(async () => {
   } else {
     process.env.DB_URL = originalDbUrl;
   }
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

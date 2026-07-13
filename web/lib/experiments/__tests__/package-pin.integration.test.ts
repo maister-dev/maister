@@ -5,14 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // ADR-132 Phase-3 capstone (acceptance 1/2/3 + the T9 join): a REAL
@@ -76,11 +70,15 @@ import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
 import { attachPackage, installPackageRevision } from "@/lib/packages/attach";
 import { runAutoPromoteJob } from "@/lib/scheduler/handlers/auto-promote";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let originalHome: string | undefined;
@@ -115,14 +113,11 @@ async function git(cwd: string, args: string[]): Promise<void> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("exp_pin_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: schemaModule });
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "exp_pin_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "exp-pin-int-home-"));
   originalHome = process.env.HOME;
@@ -149,8 +144,7 @@ afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 describe("fork-vs-upstream experiment (integration, real Postgres + git)", () => {
@@ -185,7 +179,10 @@ describe("fork-vs-upstream experiment (integration, real Postgres + git)", () =>
     const pkgDir = await mkdtemp(join(tmpdir(), "exp-pin-pkg-"));
 
     await mkdir(join(pkgDir, `flows/${FLOW_ID}`), { recursive: true });
-    await writeFile(join(pkgDir, `flows/${FLOW_ID}/flow.yaml`), FLOW_YAML("v1"));
+    await writeFile(
+      join(pkgDir, `flows/${FLOW_ID}/flow.yaml`),
+      FLOW_YAML("v1"),
+    );
     await writeFile(join(pkgDir, "maister-package.yaml"), MANIFEST);
     const upstream = await installPackageRevision({
       source: pkgDir,
@@ -299,9 +296,9 @@ describe("fork-vs-upstream experiment (integration, real Postgres + git)", () =>
 
     expect(runRows).toHaveLength(2);
     // Same pinned base commit on both variants' workspaces.
-    expect(
-      new Set(workspaceRows.map((row) => String(row.baseCommit))),
-    ).toEqual(new Set([experiment.baseCommit]));
+    expect(new Set(workspaceRows.map((row) => String(row.baseCommit)))).toEqual(
+      new Set([experiment.baseCommit]),
+    );
     // Different snapshotted flow revisions (the whole point of the axis).
     const revisionIds = new Set(
       runRows.map((row) => String(row.flowRevisionId)),

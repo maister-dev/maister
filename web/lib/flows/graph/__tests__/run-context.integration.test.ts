@@ -15,14 +15,8 @@ import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -33,27 +27,28 @@ import {
 import { closeDb } from "@/lib/db/client";
 import { isRunContextWriteSafe } from "@/lib/flows/graph/run-context";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const execFileAsync = promisify(execFile);
 const schema = fullSchema as unknown as Record<string, any>;
 const FIXTURE_PATH = resolve(__dirname, "_fixtures/m26-output-flow");
 const SCHEMA = "./schemas/result.json";
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  container = testDatabase.container;
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
@@ -62,8 +57,7 @@ afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 type Seeded = {

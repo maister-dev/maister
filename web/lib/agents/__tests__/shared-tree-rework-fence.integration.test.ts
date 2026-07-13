@@ -18,12 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -38,6 +33,10 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { isMaisterError } from "@/lib/errors";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const exec = promisify(execFile);
 
@@ -76,7 +75,7 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let cacheRoot: string;
@@ -89,22 +88,18 @@ let reworkChildRun: typeof import("@/lib/agents/launch").reworkChildRun;
 beforeAll(async () => {
   cacheRoot = await mkdtemp(path.join(os.tmpdir(), "maister-rework-cache-"));
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("shared_tree_rework_fence_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "shared_tree_rework_fence_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ launchAgentRun, reworkChildRun } = await import("@/lib/agents/launch"));
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(cacheRoot, { recursive: true, force: true });
 });
 

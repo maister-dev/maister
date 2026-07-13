@@ -38,14 +38,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -60,28 +54,26 @@ import {
   runCapabilitiesCleanupSweep,
 } from "@/lib/capabilities/cleanup";
 import { updateMaterializationCleanup } from "@/lib/flows/graph/ledger";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("cleanup_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "cleanup_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 // A minimal but VALID MaterializationPlan body. Mirrors the ledger
@@ -315,9 +307,7 @@ describe("capability-dir cleanup (M14 T4.3 / C1)", () => {
       });
 
       expect(result).toEqual({ removed: false });
-      await expect(readFile(protectedFile, "utf8")).resolves.toBe(
-        "user-owned",
-      );
+      await expect(readFile(protectedFile, "utf8")).resolves.toBe("user-owned");
 
       const plan = await reloadPlan(nodeAttemptId);
 
@@ -328,82 +318,77 @@ describe("capability-dir cleanup (M14 T4.3 / C1)", () => {
     }
   });
 
-  it(
-    "runCapabilitiesCleanupSweep preserves recoverable crashed worktrees and skips a Running run (Test 3)",
-    async () => {
-      const terminal = await seed({ runStatus: "Crashed", removedAt: null });
-      const terminalDir = await provisionNodeDir(
-        terminal.worktreePath,
-        terminal.runId,
-        terminal.nodeAttemptId,
-      );
+  it("runCapabilitiesCleanupSweep preserves recoverable crashed worktrees and skips a Running run (Test 3)", async () => {
+    const terminal = await seed({ runStatus: "Crashed", removedAt: null });
+    const terminalDir = await provisionNodeDir(
+      terminal.worktreePath,
+      terminal.runId,
+      terminal.nodeAttemptId,
+    );
 
-      const running = await seed({ runStatus: "Running", removedAt: null });
-      const runningDir = await provisionNodeDir(
-        running.worktreePath,
-        running.runId,
-        running.nodeAttemptId,
-      );
-      const crashedAgent = await seed({
-        runStatus: "Crashed",
-        runKind: "agent",
-        agentWorkspace: "worktree",
-        removedAt: null,
-      });
-      const crashedAgentDir = await provisionNodeDir(
-        crashedAgent.worktreePath,
-        crashedAgent.runId,
-        crashedAgent.nodeAttemptId,
-      );
-      const crashedScratch = await seed({
-        runStatus: "Crashed",
-        runKind: "scratch",
-        removedAt: null,
-      });
-      const crashedScratchDir = await provisionNodeDir(
-        crashedScratch.worktreePath,
-        crashedScratch.runId,
-        crashedScratch.nodeAttemptId,
-      );
+    const running = await seed({ runStatus: "Running", removedAt: null });
+    const runningDir = await provisionNodeDir(
+      running.worktreePath,
+      running.runId,
+      running.nodeAttemptId,
+    );
+    const crashedAgent = await seed({
+      runStatus: "Crashed",
+      runKind: "agent",
+      agentWorkspace: "worktree",
+      removedAt: null,
+    });
+    const crashedAgentDir = await provisionNodeDir(
+      crashedAgent.worktreePath,
+      crashedAgent.runId,
+      crashedAgent.nodeAttemptId,
+    );
+    const crashedScratch = await seed({
+      runStatus: "Crashed",
+      runKind: "scratch",
+      removedAt: null,
+    });
+    const crashedScratchDir = await provisionNodeDir(
+      crashedScratch.worktreePath,
+      crashedScratch.runId,
+      crashedScratch.nodeAttemptId,
+    );
 
-      expect(await exists(terminalDir)).toBe(true);
-      expect(await exists(runningDir)).toBe(true);
-      expect(await exists(crashedAgentDir)).toBe(true);
-      expect(await exists(crashedScratchDir)).toBe(true);
+    expect(await exists(terminalDir)).toBe(true);
+    expect(await exists(runningDir)).toBe(true);
+    expect(await exists(crashedAgentDir)).toBe(true);
+    expect(await exists(crashedScratchDir)).toBe(true);
 
-      const summary = await runCapabilitiesCleanupSweep({ db });
+    const summary = await runCapabilitiesCleanupSweep({ db });
 
-      expect(summary.scanned).toBeGreaterThanOrEqual(1);
+    expect(summary.scanned).toBeGreaterThanOrEqual(1);
 
-      // The terminal run's node dir is removed + recorded done.
-      expect(await exists(terminalDir)).toBe(false);
-      const terminalPlan = await reloadPlan(terminal.nodeAttemptId);
+    // The terminal run's node dir is removed + recorded done.
+    expect(await exists(terminalDir)).toBe(false);
+    const terminalPlan = await reloadPlan(terminal.nodeAttemptId);
 
-      expect(terminalPlan!.cleanup.status).toBe("done");
+    expect(terminalPlan!.cleanup.status).toBe("done");
 
-      // The non-terminal (Running) run's dir is left untouched.
-      expect(await exists(runningDir)).toBe(true);
-      const runningPlan = await reloadPlan(running.nodeAttemptId);
+    // The non-terminal (Running) run's dir is left untouched.
+    expect(await exists(runningDir)).toBe(true);
+    const runningPlan = await reloadPlan(running.nodeAttemptId);
 
-      expect(runningPlan!.cleanup.status).toBe("pending");
+    expect(runningPlan!.cleanup.status).toBe("pending");
 
-      // A crashed worktree-backed agent remains recoverable; its node-scoped
-      // materialization must stay available until recovery/discard resolves it.
-      expect(await exists(crashedAgentDir)).toBe(true);
-      const crashedAgentPlan = await reloadPlan(crashedAgent.nodeAttemptId);
+    // A crashed worktree-backed agent remains recoverable; its node-scoped
+    // materialization must stay available until recovery/discard resolves it.
+    expect(await exists(crashedAgentDir)).toBe(true);
+    const crashedAgentPlan = await reloadPlan(crashedAgent.nodeAttemptId);
 
-      expect(crashedAgentPlan!.cleanup.status).toBe("pending");
+    expect(crashedAgentPlan!.cleanup.status).toBe("pending");
 
-      // Scratch recovery resumes with scratchCapabilityProfiles.materializedPath,
-      // so its crashed worktree must remain intact too.
-      expect(await exists(crashedScratchDir)).toBe(true);
-      const crashedScratchPlan = await reloadPlan(
-        crashedScratch.nodeAttemptId,
-      );
+    // Scratch recovery resumes with scratchCapabilityProfiles.materializedPath,
+    // so its crashed worktree must remain intact too.
+    expect(await exists(crashedScratchDir)).toBe(true);
+    const crashedScratchPlan = await reloadPlan(crashedScratch.nodeAttemptId);
 
-      expect(crashedScratchPlan!.cleanup.status).toBe("pending");
-    },
-  );
+    expect(crashedScratchPlan!.cleanup.status).toBe("pending");
+  });
 
   it("updateMaterializationCleanup partially updates only .cleanup, preserving the body (Test 4)", async () => {
     const { nodeAttemptId } = await seed({});

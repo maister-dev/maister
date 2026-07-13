@@ -29,14 +29,8 @@ import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   beforeAll,
@@ -54,6 +48,10 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import { runReconcileSweep } from "@/lib/reconcile";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
@@ -67,8 +65,8 @@ const {
   workspaces,
 } = schema;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let projectId: string;
 let projectRepoPath: string;
@@ -108,14 +106,11 @@ const MANIFEST = {
 };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("reconcile_cleanup_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "reconcile_cleanup_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   process.env.DB_URL = container.getConnectionUri();
 
@@ -187,8 +182,7 @@ afterAll(async () => {
   } else {
     process.env.MAISTER_RECONCILE_GRACE_SECONDS = originalGrace;
   }
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

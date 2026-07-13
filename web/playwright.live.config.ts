@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
-import { E2E_DB_URL } from "./e2e/_seed/db-url";
+import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 
 const WEB_PORT = Number(process.env.E2E_LIVE_WEB_PORT ?? 3101);
 const SUPERVISOR_PORT = Number(process.env.MAISTER_SUPERVISOR_PORT ?? 7777);
@@ -11,6 +11,7 @@ const BASE_URL =
 const SUPERVISOR_URL = `http://127.0.0.1:${SUPERVISOR_PORT}`;
 const AUTH_SECRET =
   process.env.AUTH_SECRET ?? "e2e-insecure-test-secret-change-me";
+const databaseUrl = resolvePostgresDbUrl();
 const ccrEnv = {
   ...(process.env.MAISTER_CCR_CONFIG_PATH
     ? { MAISTER_CCR_CONFIG_PATH: process.env.MAISTER_CCR_CONFIG_PATH }
@@ -22,6 +23,7 @@ const ccrEnv = {
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: ["**/__tests__/**"],
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
@@ -48,7 +50,7 @@ export default defineConfig({
       command: `pnpm --dir .. --filter @maister/supervisor dev`,
       url: `${SUPERVISOR_URL}/health`,
       timeout: 180_000,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       env: {
         MAISTER_SUPERVISOR_PORT: String(SUPERVISOR_PORT),
         MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-supervisor"),
@@ -59,9 +61,9 @@ export default defineConfig({
       command: `pnpm exec next dev -p ${WEB_PORT}`,
       url: BASE_URL,
       timeout: 180_000,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       env: {
-        DB_URL: E2E_DB_URL,
+        DB_URL: databaseUrl,
         AUTH_SECRET,
         MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-web"),
         MAISTER_SUPERVISOR_URL: SUPERVISOR_URL,

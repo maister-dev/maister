@@ -30,7 +30,7 @@ import path from "node:path";
 import { Pool } from "pg";
 import { test, expect } from "@playwright/test";
 
-import { E2E_DB_URL } from "./_seed/db-url";
+import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
 type M12Fixture = {
   runId: string;
@@ -53,7 +53,7 @@ function loadM12Fixture(): M12Fixture {
 // A short-lived pool to flip evidence state in-DB (simulating rework → stale,
 // then re-produce). The route reads the live row, so a plain UPDATE is enough.
 async function withDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const pool = new Pool({ connectionString: E2E_DB_URL });
+  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
 
   try {
     return await fn(pool);

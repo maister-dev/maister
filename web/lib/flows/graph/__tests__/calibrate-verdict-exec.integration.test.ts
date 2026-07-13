@@ -21,14 +21,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -38,24 +32,25 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("calibrate_verdict_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "calibrate_verdict_test",
+  });
+  container = testDatabase.container;
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   // Set DB_URL for runner-agent to call getDb() when db context is unavailable.
   // Gates-exec calls runAgentStep without passing db in context, so the agent
@@ -71,8 +66,7 @@ afterAll(async () => {
     process.env.DB_URL = originalDbUrl;
   }
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 async function seedGraphRun(

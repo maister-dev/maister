@@ -11,8 +11,12 @@ on:
 
 jobs:
   lint-typecheck-unit:
-    name: lint + typecheck + unit (web + supervisor)
+    name: Docker-free lint + typecheck + unit (web + supervisor)
     runs-on: ubuntu-latest
+    env:
+      # This lane must prove build/unit safety without a Docker daemon. Database
+      # suites are intentionally confined to the labelled integration job.
+      DOCKER_HOST: tcp://127.0.0.1:1
     steps:
       - name: Checkout
         uses: actions/checkout@v4

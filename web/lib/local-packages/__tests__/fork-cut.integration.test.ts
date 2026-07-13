@@ -3,14 +3,8 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq, inArray } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
@@ -37,12 +31,16 @@ import {
 } from "@/lib/local-packages/service";
 import { installPackageRevision } from "@/lib/packages/attach";
 import { getAccessibleProjects } from "@/lib/queries/platform-flows";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // FIXME(any): dual drizzle peer-dep variants (matches service.integration.test.ts).
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let originalHome: string | undefined;
@@ -85,14 +83,11 @@ capabilities: []
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("forkcut_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: schemaModule });
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "forkcut_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   // Working dirs + the package cache resolve under ~/.maister — point HOME at a
   // temp dir. getAccessibleProjects uses the global getDb() → point DB_URL at
@@ -126,8 +121,7 @@ afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(homeDir, { recursive: true, force: true });
   await rm(sourcePkgDir, { recursive: true, force: true });
 });

@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
-import { E2E_DB_URL } from "./e2e/_seed/db-url";
+import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 import { STUB_SUPERVISOR_URL } from "./e2e/_seed/stub-supervisor";
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
@@ -22,11 +22,13 @@ const MAISTER_CRON_TOKEN =
 // verify each captured signature. Re-read by the spec via process.env.
 const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
 const AUTH_FILE = "e2e/.auth/admin.json";
+const databaseUrl = resolvePostgresDbUrl();
 const AUTHED_SPEC =
-  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|experiment-comparison|orchestrator-loop|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|budget-breach-fork|mcp-hub|mcps|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop)\.spec\.ts$/;
+  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|experiment-comparison|orchestrator-loop|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: ["**/__tests__/**"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   // Local retries absorb residual cross-test interference on the ONE shared
@@ -49,7 +51,12 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: [/.*\.setup\.ts$/, AUTHED_SPEC, /live-.*\.spec\.ts$/],
+      testIgnore: [
+        /.*\/__tests__\/.*/,
+        /.*\.setup\.ts$/,
+        AUTHED_SPEC,
+        /live-.*\.spec\.ts$/,
+      ],
     },
     // M11a/M11b/M11c + portfolio/launch/registration/admin/scratch/platform specs run as
     // the seeded admin against the dedicated e2e DB, each against its OWN
@@ -62,12 +69,12 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm e2e:preflight && pnpm exec next dev -p ${PORT}`,
+    command: `pnpm exec next dev -p ${PORT}`,
     url: BASE_URL,
     timeout: 180_000,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     env: {
-      DB_URL: E2E_DB_URL,
+      DB_URL: databaseUrl,
       AUTH_SECRET,
       MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime"),
       MAISTER_WORKTREES_ROOT: path.resolve("e2e/.runtime/worktrees"),

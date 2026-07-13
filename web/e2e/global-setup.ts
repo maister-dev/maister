@@ -3,12 +3,13 @@
 // before this hook. Auth (storageState) is handled by e2e/auth.setup.ts.
 import { Pool } from "pg";
 
-import { E2E_DB_URL } from "./_seed/db-url";
 import {
   STUB_SESSIONS_DIR,
   STUB_SUPERVISOR_PORT,
 } from "./_seed/stub-supervisor";
 import { startTestSupervisor } from "./_seed/test-supervisor";
+
+import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
 // The delegate-target worker agent the orchestrator-loop spec's coordinator
 // delegates each child to (must match seed-e2e.ts E2E_WORKER_AGENT).
@@ -16,7 +17,7 @@ const E2E_WORKER_AGENT = "e2e-orc-pkg:e2e-worker";
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
   // Playwright starts webServer before global setup. The webServer command runs
-  // e2e/prepare.ts first, so the migration boot guard sees the seeded schema.
+  // e2e/run.ts prepares the isolated database before Playwright starts this hook.
 
   // The test supervisor must be up before auth and the test projects start: it
   // answers /health ready (the M11c launch-refusal + board Launch
@@ -27,7 +28,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   // STUB_SUPERVISOR_PORT so playwright.config.ts's MAISTER_SUPERVISOR_URL
   // (=STUB_SUPERVISOR_URL) reaches it unchanged. Returned as the global teardown.
   process.env.MAISTER_TEST_CHILD_AGENT_ID = E2E_WORKER_AGENT;
-  const supervisorPool = new Pool({ connectionString: E2E_DB_URL });
+  const supervisorPool = new Pool({ connectionString: resolvePostgresDbUrl() });
   const supervisor = await startTestSupervisor({
     pool: supervisorPool,
     portHint: STUB_SUPERVISOR_PORT,

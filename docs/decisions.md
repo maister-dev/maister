@@ -159,6 +159,7 @@
 | [ADR-132](#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync) | Forked-package loop — ephemeral pins, package experiment axis, local sources, upstream sync | Accepted | 2026-07-11 |
 | [ADR-133](#adr-133-versioned-read-only-evidence-and-run-owned-package-materialization) | Versioned read-only evidence and run-owned package materialization | Accepted | 2026-07-11 |
 | [ADR-134](#adr-134-observatory-agentization-and-commit-provenance) | Observatory agentization and commit provenance | Implemented | 2026-07-12 |
+| [ADR-135](#adr-135-testcontainers-only-ephemeral-postgres-for-database-backed-tests) | Testcontainers-only ephemeral Postgres for database-backed tests | Accepted | 2026-07-12 |
 
 ---
 
@@ -11715,6 +11716,38 @@ or Flow identity or treating missing flow-ledger rows as zero quality.
   code is shipped AI delivery and must remain visible by kind.
 - _Denormalize `run_kind` onto cost rollups_: rejected; existing mandatory run
   keys allow an accurate read-time join without migration or backfill.
+
+---
+
+### ADR-135: Testcontainers-only ephemeral Postgres for database-backed tests
+
+**Date:** 2026-07-12
+**Status:** Accepted
+
+**Context:** Web integration fixtures, Brain fixtures, and E2E preparation
+owned different PostgreSQL lifecycles. E2E reset a fixed external database,
+which could drift from the test image and made the Docker boundary unclear.
+
+**Decision:** A shared typed helper is the sole Testcontainers constructor. It
+provides bare, main, and main-plus-Brain migration lineages using the pgvector
+Postgres image. E2E owns one helper-created database for the complete Playwright
+invocation. Unit/build CI explicitly has no reachable Docker runtime; labelled
+integration remains Docker-backed.
+
+**Consequences:**
+
+- Migration and teardown ordering are uniform and independently testable.
+- Historical migration replay keeps a deliberately empty starting database.
+- E2E no longer creates/drops developer databases or schemas.
+- Docker becomes an explicit requirement for integration/E2E, not build/unit.
+
+**Alternatives Considered:**
+
+- _Keep direct per-fixture containers_: rejected because image and lifecycle
+  policy drift across hundreds of fixtures.
+- _Use a fixed E2E database_: rejected because it is mutable shared state.
+- _Run Docker-backed integration in every CI job_: rejected because it hides
+  accidental Docker coupling in the build/unit contract.
 
 ---
 

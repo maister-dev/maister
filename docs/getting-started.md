@@ -140,18 +140,18 @@ install-authored-flow-package # install an exported authored package as
 > [deployment preflight](deployment.md#13-engine-300-postgresgraph-only-upgrade)
 > instead.
 
-> **`test:e2e` prerequisites (no manual setup):** `pnpm --filter maister-web
-test:e2e` (or `cd web && pnpm test:e2e`) is self-provisioning. Its
-> `globalSetup` creates and migrates a **disposable** `maister_e2e` Postgres DB
-> (`E2E_DB_URL`, defaults to the local dev Postgres — never the dev DB), seeds
-> one per-spec fixture each, and Playwright's `webServer` boots `next dev` on
-> `E2E_PORT` (3100) against it. It needs **only a reachable Postgres** (`docker
-compose up -d db`); no supervisor and no `git` config beyond a `git` binary.
+> **`test:e2e` prerequisites (no manual database setup):** `pnpm --filter
+maister-web test:e2e` (or `cd web && pnpm test:e2e`) creates one disposable
+> pgvector Postgres Testcontainer, applies main then Brain migrations, seeds
+> fixtures, and tears the database down after Playwright exits. It requires a
+> reachable **Docker runtime**; unit/build commands do not. Playwright's
+> `webServer` boots `next dev` on `E2E_PORT` (3100) against the wrapper-provided
+> `DB_URL`; no fixed `E2E_DB_URL` or manual schema reset exists.
 > The seed `git init`s a real parent repo + `git worktree add`s each authed
 > spec's run branch under `<repo>/.worktrees/`, so the M11b manual-takeover spec
 > exercises real `git log`/`git diff`/`merge-base` on return. If a prior run
-> left the `maister_e2e` DB half-migrated, drop it (`DROP DATABASE maister_e2e`)
-> and re-run — `globalSetup` recreates it clean.
+> left a prior E2E process running, stop that process and re-run; the wrapper
+> owns a new database for every invocation.
 
 **Supervisor (`pnpm --filter @maister/supervisor …`):**
 

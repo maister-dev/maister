@@ -5,14 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // The real selectPrAdapter throws PRECONDITION for the "generic" provider (a bare
@@ -52,12 +46,16 @@ import {
 import { gitCommitWorkingDir, gitHeadSha } from "@/lib/local-packages/git";
 import { publishLocalPackage } from "@/lib/local-packages/publish";
 import { writeWorkingDirFile } from "@/lib/local-packages/service";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let originalHome: string | undefined;
@@ -65,14 +63,11 @@ let originalDbUrl: string | undefined;
 let userId: string;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("publish_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: schemaModule });
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "publish_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "publish-int-home-"));
   originalHome = process.env.HOME;
@@ -94,8 +89,7 @@ afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   if (homeDir) await rm(homeDir, { recursive: true, force: true });
 });
 

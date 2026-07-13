@@ -11,25 +11,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildFlowFixture } from "@/lib/__tests__/_fixtures/build-flow-plugin";
 import * as schemaModule from "@/lib/db/schema";
 import { installFlowPlugin } from "@/lib/flows";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let homeDir: string;
 let workspaceRoot: string;
@@ -69,15 +66,11 @@ function params(slug: string, fId: string) {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("trust_exec_route_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "trust_exec_route_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "te-route-home-"));
   workspaceRoot = await mkdtemp(join(tmpdir(), "te-route-ws-"));
@@ -178,8 +171,7 @@ afterAll(async () => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
 
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(homeDir, { recursive: true, force: true });
   await rm(workspaceRoot, { recursive: true, force: true });
   await rm(fixturesDir, { recursive: true, force: true });

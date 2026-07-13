@@ -19,13 +19,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -42,6 +37,10 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { registerPackageAgents, resyncAgents } from "@/lib/agents/registry";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -54,7 +53,7 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
   };
 });
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let cacheRoot: string;
@@ -79,15 +78,12 @@ const AGENT_ID = "core:triager";
 beforeAll(async () => {
   cacheRoot = await mkdtemp(path.join(os.tmpdir(), "maister-core-pkg-"));
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ launchAgentRun, buildAgentPrompt } = await import("@/lib/agents/launch"));
   ({ resolveEffectiveAgentDefinition } = await import(
@@ -96,8 +92,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(cacheRoot, { recursive: true, force: true });
 });
 

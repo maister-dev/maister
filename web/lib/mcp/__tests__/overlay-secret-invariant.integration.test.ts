@@ -2,14 +2,8 @@ import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { sql } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -17,6 +11,10 @@ import {
   loadProjectMcpOverlays,
 } from "@/lib/mcp/binding-service";
 import { applyMcpOverlays } from "@/lib/mcp/materialization-gate";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // ADR-129 (W-C, T4.3): the untouchable-invariant guard. Project A and project B
 // remap the same MCP's env slot to DIFFERENT names; each session gets its own
@@ -27,19 +25,14 @@ type Db = NodePgDatabase;
 // The literal token VALUE that must NEVER cross into any web-tier structure.
 const SECRET_SENTINEL = "ghp_THIS_VALUE_MUST_NEVER_APPEAR_1234567890";
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: Db;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_overlay_secret_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_overlay_secret_test",
+  });
+  db = testDatabase.db;
   // The host env holds the real value under the REMAPPED name — supervisor-side
   // resolution territory. The web tier must never read it.
   process.env.PROJ_A_TOKEN = SECRET_SENTINEL;
@@ -49,8 +42,7 @@ beforeAll(async () => {
 afterAll(async () => {
   delete process.env.PROJ_A_TOKEN;
   delete process.env.PROJ_B_TOKEN;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 const injected = () => ({

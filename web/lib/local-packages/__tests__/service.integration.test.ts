@@ -5,14 +5,8 @@ import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -38,12 +32,15 @@ import {
   setLocalPackageStatus,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // FIXME(any): dual drizzle peer-dep variants (matches attach.integration.test.ts).
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string | undefined;
 let originalHome: string | undefined;
@@ -51,14 +48,10 @@ let userId: string;
 let otherUserId: string;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("localpkg_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: schemaModule });
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "localpkg_test",
+  });
+  db = testDatabase.db;
 
   // Working dirs resolve under ~/.maister/local — point HOME at a temp dir.
   homeDir = await mkdtemp(join(tmpdir(), "lp-int-home-"));
@@ -80,8 +73,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   if (homeDir !== undefined) {
     await rm(homeDir, { recursive: true, force: true });
   }
@@ -271,7 +263,9 @@ describe("local-packages substrate (integration)", () => {
       startedAt: new Date(),
     });
 
-    await expect(setLocalPackageStatus(pkg.id, "archived", db)).rejects.toMatchObject({
+    await expect(
+      setLocalPackageStatus(pkg.id, "archived", db),
+    ).rejects.toMatchObject({
       code: "CONFLICT",
     });
     await expect(deleteLocalPackage(pkg.id, db)).rejects.toMatchObject({

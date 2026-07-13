@@ -18,12 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -38,6 +33,10 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // Git side-effects: a local_merge promote resolves the target tip then merges.
 // Both are stubbed (no real repo); the DB claim/finalize CAS stays real.
@@ -87,7 +86,7 @@ vi.mock("@/lib/worktree-provenance", () => ({
   }),
 }));
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 
@@ -95,15 +94,12 @@ let promoteChildRunForToken: typeof import("@/lib/runs/promote").promoteChildRun
 let promoteRun: typeof import("@/lib/runs/promote").promoteRun;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("promote_shared_tree_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "promote_shared_tree_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ promoteChildRunForToken, promoteRun } = await import(
     "@/lib/runs/promote"
@@ -111,8 +107,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 let projectId: string;

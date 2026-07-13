@@ -3,15 +3,17 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 // ADR-132 §a integration proof on real Postgres: an ephemeral pin (direct
 // `packagePin` and the `try_once` launch choice) resolves the run's flow
@@ -70,11 +72,15 @@ import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
 import { attachPackage, installPackageRevision } from "@/lib/packages/attach";
 import { launchRun } from "@/lib/services/runs";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let originalHome: string | undefined;
@@ -135,14 +141,11 @@ async function installSource(name: string, flowId: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("launchpin_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: schemaModule });
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "launchpin_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "launchpin-int-home-"));
   originalHome = process.env.HOME;
@@ -169,8 +172,7 @@ afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(() => {
@@ -267,7 +269,9 @@ async function seedTask(taskId: string, projectId: string, flowRowId: string) {
   });
 }
 
-async function attachmentRow(attachmentId: string): Promise<Record<string, unknown>> {
+async function attachmentRow(
+  attachmentId: string,
+): Promise<Record<string, unknown>> {
   const rows = await db
     .select()
     .from(schema.projectPackageAttachments)

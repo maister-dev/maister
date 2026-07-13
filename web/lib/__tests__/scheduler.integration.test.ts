@@ -10,13 +10,8 @@
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -40,6 +35,10 @@ import {
   releaseSlotOnIdle,
   tryStartRun,
 } from "@/lib/scheduler";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // M19 Phase 3: promoteNextPending now lazily dispatches the promoted run
 // (runFlow for a fresh queue, driveResume for a checkpointed resume). Stub
@@ -52,7 +51,8 @@ vi.mock("@/lib/runs/recover", () => ({ driveResume: vi.fn(async () => {}) }));
 const schema = schemaModule as unknown as Record<string, any>;
 const { flows, projects, runs, tasks } = schema;
 
-let container: StartedPostgreSqlContainer;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
@@ -62,14 +62,12 @@ let flowId: string;
 let originalCap: string | undefined;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("scheduler_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "scheduler_test",
+  });
+  container = testDatabase.container;
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   // Force the postgres path in the scheduler (advisory lock).
   originalDbUrl = process.env.DB_URL;
@@ -130,8 +128,7 @@ afterAll(async () => {
   } else {
     process.env.DB_URL = originalDbUrl;
   }
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

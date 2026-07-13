@@ -38,13 +38,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -62,11 +57,15 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 const execFileAsync = promisify(execFile);
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 
@@ -142,14 +141,11 @@ beforeAll(async () => {
   agentsRoot = await mkdtemp(join(tmpdir(), "maister-orc-loop-agents-"));
   createdPaths.push(agentsRoot);
 
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test_orc_loop")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test_orc_loop",
+  });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   ({ startTestSupervisor } = await import("@/e2e/_seed/test-supervisor"));
   ({ launchAgentRun } = await import("@/lib/agents/launch"));
@@ -172,8 +168,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await supervisor?.stop();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   delete process.env.MAISTER_SUPERVISOR_URL;
   delete process.env.MAISTER_TEST_CHILD_AGENT_ID;
   for (const p of createdPaths.splice(0)) {

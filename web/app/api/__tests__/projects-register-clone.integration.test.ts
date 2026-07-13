@@ -3,23 +3,20 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { NextRequest } from "next/server";
-import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let reposRoot: string;
 
@@ -151,16 +148,11 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("projects_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "projects_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   reposRoot = await mkdtemp(join(tmpdir(), "maister-repos-"));
   process.env.MAISTER_REPOS_ROOT = reposRoot;
@@ -171,8 +163,7 @@ beforeAll(async () => {
 afterAll(async () => {
   delete process.env.MAISTER_REPOS_ROOT;
   await rm(reposRoot, { recursive: true, force: true }).catch(() => {});
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 describe("POST /api/projects — real source resolution (integration)", () => {

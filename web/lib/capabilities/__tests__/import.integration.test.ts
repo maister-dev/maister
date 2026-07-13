@@ -5,14 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -22,6 +15,10 @@ import {
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { systemCapabilityCachePath } from "@/lib/flow-paths";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -78,8 +75,7 @@ async function buildCapabilityFixture(
 
 // ─── shared state ───────────────────────────────────────────────────────────
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: any;
 let homeDir: string;
 let fixturesDir: string;
@@ -91,14 +87,10 @@ let repoWithSetupFail: string;
 let repoNoSetup: string;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("cap_import_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "cap_import_test",
+  });
+  db = testDatabase.db;
 
   homeDir = join(tmpdir(), `cap-import-test-home-${randomUUID()}`);
   fixturesDir = join(tmpdir(), `cap-import-test-fixtures-${randomUUID()}`);
@@ -141,8 +133,7 @@ afterAll(async () => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
 
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   await rm(homeDir, { recursive: true, force: true });
   await rm(fixturesDir, { recursive: true, force: true });
 });

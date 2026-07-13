@@ -10,14 +10,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readAndValidateFormSchemaDoc } from "@/lib/config";
@@ -31,11 +25,14 @@ import {
   trustPackageRevision,
   upgradeAttachment,
 } from "@/lib/packages/attach";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let homeDir: string;
 let workspaceRoot: string;
@@ -85,14 +82,10 @@ restrictions:
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("attach_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "attach_test",
+  });
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "attach-int-home-"));
   workspaceRoot = await mkdtemp(join(tmpdir(), "attach-int-ws-"));
@@ -118,8 +111,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   for (const dir of [homeDir, workspaceRoot, pkgV1, pkgV2]) {
     if (dir) await rm(dir, { recursive: true, force: true });
   }
@@ -214,10 +206,8 @@ describe("package attach lifecycle (integration)", () => {
         schemaVersion: 1,
         fields: [{ name: "summary", type: "string", required: true }],
       });
-      await writeFile(
-        join(packageRoot, "schemas/review.json"),
-        schemaContent,
-      );
+
+      await writeFile(join(packageRoot, "schemas/review.json"), schemaContent);
 
       for (const flowId of flowIds) {
         await writeFile(
@@ -241,7 +231,9 @@ steps:
       const revisions = (await db
         .select()
         .from(schema.flowRevisions)
-        .where(eq(schema.flowRevisions.resolvedRevision, installed.resolvedRevision))) as Array<{
+        .where(
+          eq(schema.flowRevisions.resolvedRevision, installed.resolvedRevision),
+        )) as Array<{
         flowRefId: string;
         installedPath: string;
       }>;
@@ -252,7 +244,9 @@ steps:
 
       expect(memberRevisions).toHaveLength(flowIds.length);
       if (!revisionToHeal) {
-        throw new Error("schema package did not install a member flow revision");
+        throw new Error(
+          "schema package did not install a member flow revision",
+        );
       }
       const [cachedPackage] = (await db
         .select({ installedPath: schema.packageInstalls.installedPath })
@@ -273,10 +267,9 @@ steps:
         ).resolves.toMatchObject({ schemaVersion: 1 });
       }
 
-      await rm(
-        join(revisionToHeal.installedPath, "schemas/review.json"),
-        { force: true },
-      );
+      await rm(join(revisionToHeal.installedPath, "schemas/review.json"), {
+        force: true,
+      });
       await writeFile(
         join(cachedPackage.installedPath, "schemas/review.json"),
         JSON.stringify({ schemaVersion: 1, fields: [] }),

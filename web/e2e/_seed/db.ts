@@ -1,9 +1,9 @@
 import { Pool } from "pg";
 
-import { E2E_DB_URL } from "./db-url";
+import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
 export async function withE2EDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const pool = new Pool({ connectionString: E2E_DB_URL });
+  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
 
   try {
     return await fn(pool);

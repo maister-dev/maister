@@ -7,14 +7,8 @@ import {
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { sql } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   afterEach,
@@ -30,6 +24,10 @@ import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery
 // the type-only clash (matches webhooks-schema.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // =============================================================================
 // T9 — outbound-webhooks fanout + signed delivery executor (TDD red).
@@ -68,8 +66,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 const RETRY_FIRST_BUCKET_MS = 60_000; // backoff.ts RETRY_SCHEDULE_MS[0]
 const JITTER_RATIO = 0.2; // backoff.ts JITTER_RATIO
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 
 // ---------------------------------------------------------------------------
@@ -528,21 +525,15 @@ let savedEnv: Record<string, string | undefined> = {};
 let stub: HttpStub;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

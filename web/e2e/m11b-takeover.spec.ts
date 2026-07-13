@@ -5,11 +5,11 @@
 //
 // PREREQUISITES (wired by the AS-BUILT harness, no manual setup needed):
 //   • A running web tier — Playwright's `webServer` block boots `next dev` on
-//     E2E_PORT against the DEDICATED e2e Postgres (E2E_DB_URL). `pnpm
+//     E2E_PORT against the wrapper-provided e2e Postgres DB_URL. `pnpm
 //     --filter maister-web test:e2e` (or `cd web && pnpm test:e2e`) launches it.
-//   • A migrated + seeded e2e DB — `e2e/global-setup.ts` provisions the
-//     disposable `maister_e2e` DB, applies ALL migrations (incl. 0011), and
-//     runs `e2e/_seed/seed-e2e.ts`.
+//   • A migrated + seeded e2e DB — `e2e/run.ts` owns the disposable
+//     `maister_e2e` Testcontainer, applies main and Brain migrations, and runs
+//     `e2e/_seed/seed-e2e.ts` before Playwright starts.
 //   • A REAL on-disk git worktree for THIS spec — the m11b fixture `git init`s a
 //     parent repo with a base commit and `git worktree add`s the run branch at
 //     `<repo>/.worktrees/e2e-takeover`, so the return route's

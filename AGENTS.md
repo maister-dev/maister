@@ -150,7 +150,7 @@ on a different host than the web tier.
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
-| System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL |
+| System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL, and test database infrastructure |
 | Screens Reference | `docs/screens/README.md` | User-facing screens and shared chrome |
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |
 | README (web) | `web/README.md` | HeroUI template README — replace when something to say |

@@ -3,13 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
@@ -19,11 +13,14 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let runtimeRootDir: string;
 let originalRuntimeRoot: string | undefined;
@@ -53,16 +50,11 @@ const TWO_NODE_MANIFEST = {
 };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("inbox_context_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "inbox_context_test",
+  });
 
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  db = testDatabase.db;
 
   // loadLastAgentMessage reads run.events.jsonl under runtimeRoot(); point it at
   // a throwaway dir so the events-tail path is exercised against real files.
@@ -79,8 +71,7 @@ afterAll(async () => {
   else process.env.MAISTER_RUNTIME_ROOT = originalRuntimeRoot;
   if (runtimeRootDir)
     await rm(runtimeRootDir, { recursive: true, force: true });
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 interface SeedOpts {

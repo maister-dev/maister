@@ -1,13 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq, isNotNull } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
   afterEach,
@@ -29,27 +23,25 @@ import {
   type ClaimDueJobsInput,
 } from "@/lib/scheduler/jobs";
 import { runSchedulerTick } from "@/lib/scheduler/tick-service";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 type SchedulerTestDb = NonNullable<ClaimDueJobsInput["db"]>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schema>;
 let schedulerDb: SchedulerTestDb;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("scheduler_jobs_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "scheduler_jobs_test",
+  });
+  db = testDatabase.db;
   schedulerDb = db as unknown as SchedulerTestDb;
-
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 }, 180_000);
 
 afterEach(async () => {
@@ -60,8 +52,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 describe("scheduler job SQL integration", () => {

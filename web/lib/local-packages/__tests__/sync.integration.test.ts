@@ -3,14 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
@@ -19,10 +13,7 @@ import { isMaisterError } from "@/lib/errors";
 import { computeUpstreamDivergence } from "@/lib/local-packages/divergence";
 import { forkPackageToLocal } from "@/lib/local-packages/fork";
 import { gitCommitWorkingDir, gitHeadSha } from "@/lib/local-packages/git";
-import {
-  acquireLock,
-  acquireWorkingDirLock,
-} from "@/lib/local-packages/lock";
+import { acquireLock, acquireWorkingDirLock } from "@/lib/local-packages/lock";
 import {
   getLocalPackage,
   writeWorkingDirFile,
@@ -33,6 +24,10 @@ import {
   syncFromUpstream,
 } from "@/lib/local-packages/sync";
 import { installPackageRevision } from "@/lib/packages/attach";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 // ADR-132 §d (T20): the sync operation over REAL PG + git working dirs.
 // The upstream is a local directory source (digest-as-version): two installs
@@ -41,8 +36,8 @@ import { installPackageRevision } from "@/lib/packages/attach";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
-let pool: Pool;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let hostDir: string;
@@ -97,14 +92,11 @@ async function reload(id: string) {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("sync_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool, { schema: schemaModule });
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "sync_test",
+  });
+  container = testDatabase.container;
+  db = testDatabase.db;
 
   homeDir = await mkdtemp(join(tmpdir(), "sync-home-"));
   process.env.HOME = homeDir;
@@ -164,8 +156,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await closeDb();
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
   for (const dir of [homeDir, hostDir]) {
     await rm(dir, { recursive: true, force: true });
   }

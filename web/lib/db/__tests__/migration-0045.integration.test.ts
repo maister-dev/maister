@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import {
+  startBarePostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const MIGRATION_PATH = path.resolve(
   "lib/db/migrations/0045_mcp_supported_agents_mimo.sql",
@@ -20,7 +21,7 @@ const LEGACY_SUPPORTED_AGENTS = [
 const MIMO_SUPPORTED_AGENTS = [...LEGACY_SUPPORTED_AGENTS, "mimo"] as const;
 const CUSTOM_SUPPORTED_AGENTS = ["claude", "codex"] as const;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 
 type PlatformMcpServerRow = {
@@ -73,18 +74,14 @@ async function rowsById(): Promise<Map<string, PlatformMcpServerRow>> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  testDatabase = await startBarePostgresTestDb({
+    databaseName: "maister_test",
+  });
+  pool = testDatabase.pool;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 describe("migration 0045 — MiMo platform MCP defaults", () => {

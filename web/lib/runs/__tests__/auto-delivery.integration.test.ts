@@ -2,13 +2,8 @@ import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -27,10 +22,14 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import { promoteRun } from "@/lib/runs/promote";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let projectId: string;
@@ -47,19 +46,15 @@ const manualDelivery = {
 const autoDelivery = { ...manualDelivery, trigger: "auto_on_ready" };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {
@@ -239,6 +234,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
       executionPolicy: { preset: "unattended" },
       deliveryPolicySnapshot: autoDelivery,
     });
+
     await seedExperimentMembership(runId);
     const promote = mockPromote();
 
@@ -263,6 +259,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
       executionPolicy: { preset: "unattended" },
       deliveryPolicySnapshot: autoDelivery,
     });
+
     await seedExperimentMembership(runId);
 
     await expect(
@@ -283,6 +280,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
       executionPolicy: { preset: "supervised" },
       deliveryPolicySnapshot: manualDelivery,
     });
+
     await seedExperimentMembership(runId);
 
     let caught: any;

@@ -12,12 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -41,6 +36,10 @@ import {
   resolveDirtyWorktree,
 } from "@/lib/runs/dirty-resolution";
 import { discardWorktree } from "@/lib/worktree";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -322,24 +321,20 @@ describe("runReviewHuman stamps review_tip_sha (ADR-082)", () => {
 });
 
 describe("resolveDirtyWorktree (service, X-2PC/X-ATOMIC)", () => {
-  let container: StartedPostgreSqlContainer;
+  let testDatabase: StartedPostgresTestDb;
   let pool: Pool;
   let db: NodePgDatabase;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:16-alpine")
-      .withDatabase("maister_test")
-      .withUsername("test")
-      .withPassword("test")
-      .start();
-    pool = new Pool({ connectionString: container.getConnectionUri() });
-    db = drizzle(pool);
-    await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+    testDatabase = await startMainPostgresTestDb({
+      databaseName: "maister_test",
+    });
+    pool = testDatabase.pool;
+    db = testDatabase.db;
   }, 180_000);
 
   afterAll(async () => {
-    await pool?.end();
-    await container?.stop();
+    await testDatabase?.stop();
   });
 
   async function seedReviewPause(args: {

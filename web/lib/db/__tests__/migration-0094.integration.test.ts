@@ -10,16 +10,16 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getGraphOnlyCutoverFailure } from "@/lib/queries/run-cutover";
+import {
+  startBarePostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const ACTIONABLE = [
   "Pending",
@@ -32,7 +32,7 @@ const ACTIONABLE = [
   "Crashed",
 ] as const;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let adminPool: Pool;
 let migrationRoot: string;
 let migration0094: string;
@@ -40,12 +40,10 @@ let migration0095: string;
 let migration0096: string;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_cutover_admin")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  adminPool = new Pool({ connectionString: container.getConnectionUri() });
+  testDatabase = await startBarePostgresTestDb({
+    databaseName: "maister_cutover_admin",
+  });
+  adminPool = testDatabase.pool;
   migrationRoot = await buildPreCutoverMigrationRoot();
   migration0094 = await readFile(
     resolve(__dirname, "../migrations/0094_postgres_graph_only_cutover.sql"),
@@ -65,8 +63,7 @@ afterAll(async () => {
   if (migrationRoot) {
     await rm(migrationRoot, { recursive: true, force: true });
   }
-  await adminPool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 async function buildPreCutoverMigrationRoot(): Promise<string> {
@@ -114,7 +111,7 @@ async function preparedDatabase(label: string): Promise<Pool> {
 
   await adminPool.query(`CREATE DATABASE "${database}"`);
 
-  const url = new URL(container.getConnectionUri());
+  const url = new URL(testDatabase.databaseUrl);
 
   url.pathname = `/${database}`;
 

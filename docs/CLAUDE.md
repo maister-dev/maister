@@ -106,6 +106,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/sessions.md`](system-analytics/sessions.md) | Flow runner & session model (ADR-114, Implemented — M42): unified `flowRunnerConfigSchema`, `default`/solo/named sessions, `run_sessions` as the sole run-runner source of truth, per-project connect-time slot bindings, checkpoint→`session/resume` session switch, supervisor `sessionName` attribution. |
 | [`system-analytics/project-brain.md`](system-analytics/project-brain.md) | Project Brain A/B/C (ADR-122/127/128, Implemented): owned-tier memory, Consultant indexed sources/chunks, cross-tier recall and snapshots, source reindex consumer, clusters/proposals, autonomy counters, docs-as-code projection, `memory_recall`/`memory_retain`/`memory_clusters`/`memory_propose` MCP tools, P7 ambient, and 4-layer enablement. |
 | [`system-analytics/experiments.md`](system-analytics/experiments.md) | Experiment Comparison Studio (ADR-124, Implemented): task-bound pinned-base variant runs, membership, overlays, comparison evidence, human verdicts, advisory judge, and retention holds; package-pin variant axis + per-run provenance (ADR-132). |
+| [`system-analytics/test-infrastructure.md`](system-analytics/test-infrastructure.md) | Test database infrastructure (ADR-135, Implemented): Testcontainers ownership, bare/main/Brain lineages, and E2E lifecycle. |
 
 ### Screen reference (`screens/`)
 

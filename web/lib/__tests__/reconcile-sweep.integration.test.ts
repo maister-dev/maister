@@ -28,13 +28,8 @@ import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -52,6 +47,10 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { runReconcileSweep } from "@/lib/reconcile";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
@@ -65,7 +64,8 @@ const {
   workspaces,
 } = schema;
 
-let container: StartedPostgreSqlContainer;
+let container: StartedPostgresTestDb["container"];
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
@@ -106,14 +106,12 @@ const MANIFEST = {
 };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("reconcile_sweep_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "reconcile_sweep_test",
+  });
+  container = testDatabase.container;
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
@@ -191,8 +189,7 @@ afterAll(async () => {
   } else {
     process.env.DB_URL = originalDbUrl;
   }
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 beforeEach(async () => {

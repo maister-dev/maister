@@ -1,11 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import { Pool } from "pg";
 import {
@@ -27,6 +22,10 @@ import {
 import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
 import { MaisterError } from "@/lib/errors";
 import { addTaskComment } from "@/lib/social/comments";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const mocks = vi.hoisted(() => ({
   promoteRun: vi.fn(),
@@ -62,7 +61,7 @@ const { runSchedulerTick } = await import("@/lib/scheduler/tick-service");
 const schema = fullSchema as unknown as Record<string, any>;
 const { runs, workspaces, tasks, taskComments } = schema;
 
-let container: StartedPostgreSqlContainer;
+let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let projectId: string;
 let userId: string;
@@ -78,19 +77,15 @@ const docsFile = {
 };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  db = drizzle(pool);
-  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
 }, 180_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
+  await testDatabase?.stop();
 });
 
 afterEach(() => {
