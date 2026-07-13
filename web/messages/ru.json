@@ -3132,6 +3132,7 @@
     "scopeReadinessRead": "Чтение готовности",
     "scopeGatesReport": "Отчёты по гейтам",
     "scopeHitlRead": "Чтение HITL",
+    "scopeHitlRequest": "Запросить уточнение агента",
     "scopeHitlRespond": "Ответы HITL",
     "scopeHitlInboxRead": "Чтение личного HITL-инбокса",
     "scopeHitlRespondHuman": "Ответы на human HITL",

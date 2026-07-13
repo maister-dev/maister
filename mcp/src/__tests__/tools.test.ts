@@ -51,9 +51,10 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 32 external tools (incl. personal HITL inbox + discovery + memory + experiments)", () => {
+  it("registers all 33 external tools (incl. task-bound human ask + personal HITL inbox + discovery + memory + experiments)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
+        "ask_human",
         "comment_create",
         "comment_list",
         "experiment_advise",
@@ -467,6 +468,45 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toEqual({
       title: "New title",
       prompt: "New prompt",
+    });
+  });
+
+  it("ask_human → POST task-bound endpoint and omits an unspecified re-trigger mode", async () => {
+    mockOnce({ hitlRequestId: "h1", activationState: "active" }, 201);
+    const schema = {
+      schemaVersion: 1,
+      fields: [
+        {
+          name: "target",
+          type: "enum",
+          required: true,
+          options: ["staging", "production"],
+        },
+      ],
+    };
+
+    await dispatchTool({
+      name: "ask_human",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        question: "Which deployment target should be used?",
+        schema,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/human-asks`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({
+      question: "Which deployment target should be used?",
+      schema,
     });
   });
 

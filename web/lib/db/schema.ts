@@ -2818,6 +2818,7 @@ export const assignments = pgTable(
       enum: [
         "permission",
         "form",
+        "agent_question",
         "human_review",
         "manual_takeover",
         "merge_conflict",

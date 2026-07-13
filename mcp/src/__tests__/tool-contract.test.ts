@@ -143,6 +143,10 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond",
   },
+  ask_human: {
+    method: "post",
+    path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/human-asks",
+  },
   comment_list: {
     method: "get",
     path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/comments",

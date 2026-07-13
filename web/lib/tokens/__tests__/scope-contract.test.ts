@@ -6,7 +6,7 @@ import { PROJECT_ACTION_MIN } from "@/lib/authz";
 import { PROJECT_ACTION_BY_SCOPE } from "@/lib/tokens/ext-handler";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 
-describe("experiment token scope contract", () => {
+describe("external token scope contract", () => {
   it("registers session actions with the intended project-role minimums", () => {
     expect(PROJECT_ACTION_MIN.readExperiments).toBe("viewer");
     expect(PROJECT_ACTION_MIN.manageExperiments).toBe("member");
@@ -25,5 +25,11 @@ describe("experiment token scope contract", () => {
     expect(PROJECT_ACTION_BY_SCOPE["experiments:advise"]).toBe(
       "manageExperiments",
     );
+  });
+
+  it("grants only attached agent tokens the task-bound human-ask capability", () => {
+    expect(TOKEN_SCOPES).toContain("hitl:request");
+    expect(AGENT_TOKEN_SCOPES).toContain("hitl:request");
+    expect(PROJECT_ACTION_BY_SCOPE["hitl:request"]).toBe("answerHitl");
   });
 });

@@ -10,6 +10,7 @@ export const TOKEN_SCOPES = [
   "readiness:read",
   "gates:report",
   "hitl:read",
+  "hitl:request",
   "hitl:respond",
   "hitl:inbox:read",
   "hitl:respond:human",
@@ -47,6 +48,7 @@ export const AGENT_TOKEN_SCOPES = [
   // `task_update` before recording the verdict.
   "tasks:update",
   "tasks:triage",
+  "hitl:request",
   "comments:read",
   "comments:create",
   "relations:read",

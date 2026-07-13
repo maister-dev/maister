@@ -98,6 +98,7 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "readiness:read": "readBoard",
   "gates:report": "launchRun",
   "hitl:read": "readBoard",
+  "hitl:request": "answerHitl",
   "hitl:respond": "answerHitl",
   "hitl:respond:human": "answerHitl",
   "memory:read": "readBrain",

@@ -264,6 +264,8 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeGatesReport;
     case "hitl:read":
       return labels.scopeHitlRead;
+    case "hitl:request":
+      return labels.scopeHitlRequest;
     case "hitl:respond":
       return labels.scopeHitlRespond;
     case "hitl:inbox:read":

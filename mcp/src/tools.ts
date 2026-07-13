@@ -424,6 +424,21 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId", "hitlRequestId"],
     },
   },
+  ask_human: {
+    description:
+      "Create a task-bound Human-ask clarification for this running standalone agent. The server derives the requesting agent and source run from the ephemeral token; use reTriggerMode='triage' only from core:triager.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        question: { type: "string", minLength: 1, maxLength: 10000 },
+        schema: { type: "object" },
+        reTriggerMode: { type: "string", enum: ["agent", "triage"] },
+      },
+      required: ["slug", "taskId", "question", "schema"],
+    },
+  },
   comment_list: {
     description:
       "List comments on a task (markdown bodies with KEY-N mentions already expanded)",
@@ -939,6 +954,24 @@ function resolveRouting(
       return {
         method: "POST",
         path: `/api/v1/ext/runs/${runId}/hitl/${hitlRequestId}/respond`,
+        body,
+      };
+    }
+    case "ask_human": {
+      const { slug, taskId, question, schema, reTriggerMode } = args as {
+        slug: string;
+        taskId: string;
+        question: string;
+        schema: Record<string, unknown>;
+        reTriggerMode?: "agent" | "triage";
+      };
+      const body: Record<string, unknown> = { question, schema };
+
+      if (reTriggerMode !== undefined) body.reTriggerMode = reTriggerMode;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/human-asks`,
         body,
       };
     }

@@ -219,6 +219,127 @@ async function runAgentConfig(
 }
 
 describe("ADR-111 launch-time config snapshot", () => {
+  it("supersedes every open agent question only after the new task-bound standalone run is durable", async () => {
+    const agentId = await seedTriager(null);
+    const schema = await import("@/lib/db/schema");
+    const taskId = randomUUID();
+    const sourceRunId = randomUUID();
+    const hitlRequestId = randomUUID();
+
+    await db.insert(schema.tasks).values({
+      id: taskId,
+      projectId,
+      number: 1,
+      title: "Clarify deployment target",
+      prompt: "Deploy the service",
+    });
+    await db.insert(schema.runs).values({
+      id: sourceRunId,
+      runKind: "agent",
+      projectId,
+      taskId,
+      agentId,
+      status: "Done",
+      flowVersion: "agent",
+      flowRevision: "manual",
+      agentWorkspace: "none",
+    });
+    await db.insert(schema.hitlRequests).values({
+      id: hitlRequestId,
+      runId: sourceRunId,
+      stepId: "agent",
+      kind: "agent_question",
+      taskId,
+      activationState: "active",
+      reTriggerMode: "agent",
+      prompt: "Which deployment target should be used?",
+      schema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "target",
+            type: "enum",
+            required: true,
+            options: ["staging", "production"],
+          },
+        ],
+      },
+    });
+    await db.insert(schema.taskClarifications).values({
+      id: randomUUID(),
+      taskId,
+      seq: 1,
+      sourceHitlRequestId: hitlRequestId,
+      originRunId: sourceRunId,
+      originAgentId: agentId,
+      question: "Which deployment target should be used?",
+      questionSchema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "target",
+            type: "enum",
+            required: true,
+            options: ["staging", "production"],
+          },
+        ],
+      },
+      reTriggerMode: "agent",
+    });
+    await db.insert(schema.assignments).values({
+      id: randomUUID(),
+      projectId,
+      runId: sourceRunId,
+      taskId,
+      hitlRequestId,
+      actionKind: "agent_question",
+      title: "Agent clarification required",
+    });
+
+    const result = await launchAgentRun({
+      agentId,
+      projectId,
+      taskId,
+      trigger: { source: "manual" },
+      db,
+    });
+
+    if ("deduped" in result) throw new Error("unexpected dedup");
+
+    const [question] = await db
+      .select({
+        supersededAt: schema.hitlRequests.supersededAt,
+        supersededByRunId: schema.hitlRequests.supersededByRunId,
+      })
+      .from(schema.hitlRequests)
+      .where(
+        (await import("drizzle-orm")).eq(
+          schema.hitlRequests.id,
+          hitlRequestId,
+        ),
+      );
+    const [assignment] = await db
+      .select({ status: schema.assignments.status })
+      .from(schema.assignments)
+      .where(
+        (await import("drizzle-orm")).eq(
+          schema.assignments.hitlRequestId,
+          hitlRequestId,
+        ),
+      );
+    const [successor] = await db
+      .select({ id: schema.runs.id, taskId: schema.runs.taskId })
+      .from(schema.runs)
+      .where(
+        (await import("drizzle-orm")).eq(schema.runs.id, result.runId),
+      );
+
+    expect(successor).toEqual({ id: result.runId, taskId });
+    expect(question?.supersededAt).toBeInstanceOf(Date);
+    expect(question?.supersededByRunId).toBe(result.runId);
+    expect(assignment?.status).toBe("cancelled");
+  });
+
   it("persists runs.agent_config = resolved (instance over declared default)", async () => {
     const agentId = await seedTriager({ intake_mode: "triage_only" });
 

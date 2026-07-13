@@ -316,7 +316,7 @@ failure is insufficient evidence.
 
 ### Phase 1: secure ask creation and source-run lifecycle
 
-- [ ] **Task 4: Add the least-privilege agent scope, ext route, and MCP facade tool.**
+- [x] **Task 4: Add the least-privilege agent scope, ext route, and MCP facade tool.**
 
   Add `hitl:request` to `web/types/token-scopes.ts` and the ephemeral
   `AGENT_TOKEN_SCOPES` in `web/lib/agents/tokens.ts`; map its project action
@@ -352,7 +352,7 @@ failure is insufficient evidence.
   version/field count; WARN for authorization/refusal category; never token,
   question, schema, or answer values.
 
-- [ ] **Task 5: Implement two-phase ask activation and terminalize the source agent safely.**
+- [x] **Task 5: Implement two-phase ask activation and terminalize the source agent safely.**
 
   Add an `agent-question` service beneath `web/lib/services/`; extract the
   minimum composable finalization seam from `web/lib/agents/launch.ts` so
@@ -384,7 +384,7 @@ failure is insufficient evidence.
   retry stage; ERROR with ids/status/classification for failed supervisor calls
   only—never request payloads.
 
-- [ ] **Task 6: Make all task-bound standalone launches cancel stale questions.**
+- [x] **Task 6: Make all task-bound standalone launches cancel stale questions.**
 
   Implement `cancelOpenAgentQuestionsForTask` in the service layer and call
   it from the successful task-bound `launchAgentRun` persistence path only

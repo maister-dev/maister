@@ -357,6 +357,76 @@ function liveRecord(
 }
 
 describe("runReconcileSweep (integration)", () => {
+  it("activates a naturally exited pending agent question and preserves its terminal-origin assignment on later sweeps", async () => {
+    const runId = await seedRun({
+      runKind: "agent",
+      status: "Done",
+      acpSessionId: null,
+      currentStepId: "agent",
+    });
+    const source = await readRun(runId);
+    const hitlRequestId = randomUUID();
+
+    await db.insert(schema.hitlRequests).values({
+      id: hitlRequestId,
+      runId,
+      stepId: "agent",
+      kind: "agent_question",
+      taskId: source.taskId,
+      activationState: "pending_termination",
+      reTriggerMode: "agent",
+      prompt: "Which deployment target should be used?",
+      schema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "target",
+            type: "enum",
+            required: true,
+            options: ["staging", "production"],
+          },
+        ],
+      },
+    });
+    await db.insert(schema.taskClarifications).values({
+      id: randomUUID(),
+      taskId: source.taskId,
+      seq: 1,
+      sourceHitlRequestId: hitlRequestId,
+      originRunId: runId,
+      originAgentId: "test:clarifier",
+      question: "Which deployment target should be used?",
+      questionSchema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "target",
+            type: "enum",
+            required: true,
+            options: ["staging", "production"],
+          },
+        ],
+      },
+      reTriggerMode: "agent",
+    });
+
+    const { opts } = makeOpts({ liveSessions: [] });
+    await runReconcileSweep(opts);
+    await runReconcileSweep(opts);
+
+    const [request] = await db
+      .select({ activationState: schema.hitlRequests.activationState })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+    const [assignment] = await db
+      .select({ status: schema.assignments.status, actionKind: schema.assignments.actionKind })
+      .from(schema.assignments)
+      .where(eq(schema.assignments.hitlRequestId, hitlRequestId));
+
+    expect(request?.activationState).toBe("active");
+    expect(assignment).toEqual({ status: "open", actionKind: "agent_question" });
+  }, 60_000);
+
   it("stops a live supervisor session that belongs to a D2-terminalized run", async () => {
     const cutoverRunId = await seedRun({
       status: "Failed",

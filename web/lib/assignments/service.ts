@@ -73,6 +73,7 @@ export type CreateHitlAssignmentArgs = CreateAssignmentArgs & {
     // assignment like the other human-gate kinds (producer in T3.3/T3.4).
     | "permission"
     | "form"
+    | "agent_question"
     | "human_review"
     | "infra_recovery"
     | "budget_breach"
@@ -130,6 +131,13 @@ export type CompleteHitlAssignmentFromCurrentActorArgs = {
 export type SystemCloseActiveAssignmentsForRunArgs = {
   db?: Db;
   runId: string;
+  reason: string;
+};
+
+export type SystemCloseActiveAssignmentsForHitlRequestArgs = {
+  db?: Db;
+  hitlRequestId: string;
+  projectId: string;
   reason: string;
 };
 
@@ -1020,6 +1028,48 @@ export async function systemCloseActiveAssignmentsForRun(
       },
       "[FIX:M13] active assignments system-closed for terminal run",
     );
+
+    return closed;
+  });
+}
+
+export async function systemCloseActiveAssignmentsForHitlRequest(
+  args: SystemCloseActiveAssignmentsForHitlRequestArgs,
+): Promise<Assignment[]> {
+  const db = args.db ?? getDb();
+
+  return await runAssignmentTransaction(db, async (tx: Db) => {
+    const active = (await tx
+      .select()
+      .from(assignments)
+      .where(
+        and(
+          eq(assignments.hitlRequestId, args.hitlRequestId),
+          inArray(assignments.status, ["open", "claimed"]),
+        ),
+      )) as Assignment[];
+
+    if (active.length === 0) return [];
+
+    const actor = await ensureSystemActor({
+      db: tx,
+      projectId: args.projectId,
+      systemKey: "assignment-lifecycle",
+      label: "MAIster lifecycle",
+    });
+    const closed: Assignment[] = [];
+
+    for (const assignment of active) {
+      closed.push(
+        await cancelAssignment({
+          db: tx,
+          assignmentId: assignment.id,
+          actorId: actor.id,
+          eventKind: "superseded",
+          reason: args.reason,
+        }),
+      );
+    }
 
     return closed;
   });

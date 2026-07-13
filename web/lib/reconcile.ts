@@ -16,7 +16,9 @@ import {
   isNotNull,
   isNull,
   lt,
+  ne,
   notInArray,
+  or,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -41,7 +43,15 @@ import { deleteSession, listSessions } from "@/lib/supervisor-client";
 import { listWorktrees } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { assignments, nodeAttempts, projects, runs, tasks, workspaces } =
+const {
+  assignments,
+  hitlRequests,
+  nodeAttempts,
+  projects,
+  runs,
+  tasks,
+  workspaces,
+} =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -653,10 +663,20 @@ async function closeTerminalRunAssignments(db: Db): Promise<number> {
     .select({ runId: assignments.runId })
     .from(assignments)
     .innerJoin(runs, eq(runs.id, assignments.runId))
+    .leftJoin(hitlRequests, eq(hitlRequests.id, assignments.hitlRequestId))
     .where(
       and(
         inArray(assignments.status, ["open", "claimed"]),
         inArray(runs.status, [...TERMINAL_ASSIGNMENT_CLEANUP_STATUSES]),
+        // ADR-136: agent questions deliberately outlive their terminal source
+        // run. Every other terminal-run assignment remains cleanup-eligible.
+        or(
+          ne(assignments.actionKind, "agent_question"),
+          isNull(hitlRequests.id),
+          ne(hitlRequests.activationState, "active"),
+          isNotNull(hitlRequests.respondedAt),
+          isNotNull(hitlRequests.supersededAt),
+        ),
       ),
     )
     .limit(PER_TICK_LIMIT);
@@ -869,6 +889,16 @@ export async function runReconcileSweep(
 
   try {
     const records = await sessions();
+
+    const { recoverPendingAgentQuestions } = await import(
+      "@/lib/services/agent-question"
+    );
+
+    await recoverPendingAgentQuestions({
+      db,
+      sessions: records,
+      deleteSession: stopSession,
+    });
 
     cutoverSessionsStopped = await stopGraphOnlyCutoverSessions({
       db,

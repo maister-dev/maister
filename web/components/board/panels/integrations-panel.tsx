@@ -71,6 +71,7 @@ export interface TokenLabels {
   scopeReadinessRead: string;
   scopeGatesReport: string;
   scopeHitlRead: string;
+  scopeHitlRequest: string;
   scopeHitlRespond: string;
   scopeHitlInboxRead: string;
   scopeHitlRespondHuman: string;
@@ -137,6 +138,8 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeGatesReport;
     case "hitl:read":
       return labels.scopeHitlRead;
+    case "hitl:request":
+      return labels.scopeHitlRequest;
     case "hitl:respond":
       return labels.scopeHitlRespond;
     case "hitl:inbox:read":
@@ -385,6 +388,7 @@ export async function IntegrationsPanel({
     scopeReadinessRead: t("scopeReadinessRead"),
     scopeGatesReport: t("scopeGatesReport"),
     scopeHitlRead: t("scopeHitlRead"),
+    scopeHitlRequest: t("scopeHitlRequest"),
     scopeHitlRespond: t("scopeHitlRespond"),
     scopeHitlInboxRead: t("scopeHitlInboxRead"),
     scopeHitlRespondHuman: t("scopeHitlRespondHuman"),

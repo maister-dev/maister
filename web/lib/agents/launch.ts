@@ -62,6 +62,7 @@ import {
 } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { cancelOpenAgentQuestionsForTask } from "@/lib/services/agent-question";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
@@ -1356,6 +1357,14 @@ export async function launchAgentRun(
   if (workspace === "none") {
     await mkdir(agentWorkdirPath(ctx.project.slug, runId), {
       recursive: true,
+    });
+  }
+
+  if (input.taskId) {
+    await cancelOpenAgentQuestionsForTask({
+      db: _db,
+      taskId: input.taskId,
+      supersedingRunId: runId,
     });
   }
 
