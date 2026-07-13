@@ -329,3 +329,93 @@ export async function getRunNodeTranscript(
 
   return { messages, usage };
 }
+
+// Read model: the WHOLE-RUN transcript for a standalone agent (or any run with
+// no flow-node ledger). Agent runs carry no `nodeAttemptId`, so — unlike
+// `getRunNodeTranscript` / `projectRunTranscript`, which are node-attempt scoped
+// and hard-drop attempt-less lines — this coalesces EVERY `session.update` line
+// from the durable events log in order, in memory (no DB rows, no migration).
+// Path-confined to the run dir; returns an empty transcript when the run, its
+// owner slug, or the events log is absent.
+export async function getAgentRunTranscript(
+  runId: string,
+  opts: { client?: DbClient; runtimeRoot?: string } = {},
+): Promise<RunNodeTranscript> {
+  const client = opts.client ?? db();
+  const [run] = await client
+    .select({
+      id: runs.id,
+      projectSlug: projects.slug,
+      localPackageSlug: localPackages.slug,
+    })
+    .from(runs)
+    .leftJoin(projects, eq(projects.id, runs.projectId))
+    .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
+    .where(eq(runs.id, runId));
+
+  const slug = run?.projectSlug ?? run?.localPackageSlug;
+
+  if (!slug) return { messages: [], usage: null };
+
+  const logPath = eventsLogPathForRun(
+    opts.runtimeRoot ?? configuredRuntimeRoot(),
+    slug,
+    runId,
+  );
+  let raw: string;
+
+  try {
+    raw = await readFile(logPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { messages: [], usage: null };
+    }
+
+    throw err;
+  }
+
+  const entries: CoalesceEntry[] = [];
+
+  for (const line of parseEventLines(raw)) {
+    if (line.type === "session.update") {
+      entries.push({
+        kind: "update",
+        update: line.update,
+        supervisorEventId: String(line.monotonicId ?? 0),
+      });
+    } else if (line.type && RESET_EVENT_TYPES.has(line.type)) {
+      entries.push({ kind: "reset" });
+    }
+  }
+
+  const coalesced = coalesceSessionUpdates(entries);
+  // The events log carries no per-message wall-clock; `createdAt` is left empty
+  // and the renderer guards it (no timestamp shown) — deliberate, not a gap.
+  const messages: TranscriptMessage[] = coalesced.map((m) => ({
+    id: `${runId}:${m.sequence}`,
+    role: m.role,
+    content: m.content,
+    createdAt: "",
+  }));
+
+  let usage: { used: number; size: number } | null = null;
+
+  for (const m of coalesced) {
+    if (m.role !== "system") continue;
+    try {
+      const parsed = JSON.parse(m.content) as {
+        kind?: string;
+        used?: number;
+        size?: number;
+      };
+
+      if (parsed.kind === "usage") {
+        usage = { used: parsed.used ?? 0, size: parsed.size ?? 0 };
+      }
+    } catch {
+      /* not a JSON usage payload — ignore */
+    }
+  }
+
+  return { messages, usage };
+}

@@ -33,6 +33,8 @@ import {
   type AgentRunCenterLabels,
   shouldRenderAgentRunCenter,
 } from "@/components/runs/agent-run-center";
+import { AgentRunTranscript } from "@/components/runs/agent-run-transcript";
+import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import {
   FlowRunCenter,
   type FlowRunCenterLabels,
@@ -1436,10 +1438,18 @@ export default async function RunDetailLayout({
                   result={flowResultDto}
                 />
               ) : (
-                <AgentRunCenter
-                  labels={agentRunCenterLabels}
-                  result={flowResultDto}
-                />
+                <>
+                  <AgentRunCenter
+                    labels={agentRunCenterLabels}
+                    result={flowResultDto}
+                  />
+                  <AgentRunTranscript
+                    defaultOpen={isLiveRunStatus(detail.status)}
+                    labels={flowRunCenterLabels.transcript}
+                    live={isLiveRunStatus(detail.status)}
+                    runId={detail.runId}
+                  />
+                </>
               )}
               {isOrchestratorRun ? (
                 <OrchestratorRunSubtree

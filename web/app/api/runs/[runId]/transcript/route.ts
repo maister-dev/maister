@@ -9,6 +9,7 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { getRunDetail } from "@/lib/queries/run";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
+  getAgentRunTranscript,
   getRunNodeTranscript,
   projectRunTranscript,
 } from "@/lib/runs/run-transcript-projector";
@@ -55,10 +56,11 @@ function errorResponse(err: unknown, runId: string): NextResponse {
   );
 }
 
-// GET /api/runs/{runId}/transcript?node={nodeId}
-// Per-node-attempt agent transcript for a flow run. Authz is `readRepoFiles`
-// (MEMBER) — a transcript exposes tool outputs / file contents a viewer must
-// not see (mirrors the workbench file-content gate, NOT readBoard/viewer).
+// GET /api/runs/{runId}/transcript[?node={nodeId}]
+// With ?node: per-node-attempt transcript for a flow run. Without ?node: the
+// whole-run transcript for a standalone agent (no flow-node ledger). Authz is
+// `readRepoFiles` (MEMBER) — a transcript exposes tool outputs / file contents a
+// viewer must not see (mirrors the workbench file-content gate, NOT readBoard).
 export async function GET(
   req: NextRequest,
   { params }: RouteParams,
@@ -78,8 +80,15 @@ export async function GET(
 
     const nodeId = new URL(req.url).searchParams.get("node");
 
+    // No ?node → whole-run transcript for a standalone agent / no-graph run:
+    // coalesce the durable events log in memory (no flow-node ledger exists).
     if (!nodeId) {
-      throw new MaisterError("CONFIG", "missing node query parameter");
+      const transcript = await getAgentRunTranscript(runId);
+
+      return NextResponse.json({
+        messages: transcript.messages,
+        usage: transcript.usage,
+      });
     }
 
     // Server-state validation: the node must belong to this run's compiled

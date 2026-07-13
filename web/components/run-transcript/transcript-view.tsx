@@ -552,9 +552,11 @@ export function TranscriptView({
           </span>
           <div className="flex flex-none items-center gap-2">
             {!isUser ? <CopyButton labels={labels} text={parsed.text} /> : null}
-            <span suppressHydrationWarning>
-              {new Date(message.createdAt).toLocaleString()}
-            </span>
+            {message.createdAt ? (
+              <span suppressHydrationWarning>
+                {new Date(message.createdAt).toLocaleString()}
+              </span>
+            ) : null}
           </div>
         </div>
         {parsed.markdown ? (
