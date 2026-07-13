@@ -22,6 +22,7 @@ import {
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import { hitlRequests, nodeAttempts, runs } from "@/lib/db/schema";
+import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   cancelPermission,
@@ -333,7 +334,16 @@ async function handlePermissionRequest(
 
       const flipped = await tx
         .update(runs)
-        .set({ status: "NeedsInput", currentStepId: pctx.stepId })
+        // Arm the keep-alive idle window on the Running→NeedsInput flip (the
+        // status guard means this fires only on a genuine block, not a re-emit
+        // while already NeedsInput). Without it keepalive_until stays null, the
+        // sweeper never idles the run, and the agent runs forever re-emitting.
+        // Mirrors the agent-run path (lib/agents/launch.ts).
+        .set({
+          status: "NeedsInput",
+          currentStepId: pctx.stepId,
+          keepaliveUntil: nextKeepaliveAt(),
+        })
         .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")))
         .returning({ projectId: runs.projectId });
       const projectRows =

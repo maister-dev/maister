@@ -336,6 +336,16 @@ describe("runner-agent — session.permission_request handling", () => {
 
     expect(statusUpdates).toContain("NeedsInput");
     expect(statusUpdates).toContain("Running");
+
+    // Entering NeedsInput must ARM the keep-alive window (mirrors the agent
+    // path + spec). Without it, keepalive_until stays null, the sweeper — which
+    // filters on `keepalive_until IS NOT NULL AND < now` — never idles the run,
+    // and the agent runs forever re-emitting permissions.
+    const needsInputUpdate = db.updates.find(
+      (u) => u.set.status === "NeedsInput",
+    );
+
+    expect(needsInputUpdate?.set.keepaliveUntil).toBeInstanceOf(Date);
   });
 
   it("re-emitted permission_request for the same step reuses the open row (no duplicate)", async () => {
