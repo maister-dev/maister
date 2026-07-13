@@ -606,6 +606,14 @@ only for explicit HITL or permission waits.
   edges, assignments, external operation events — are still future work and not
   drawn until their migrations exist.
 
+### Agent-question terminal origin (Designed — ADR-136)
+
+An `agent_question` keeps an immutable source `origin_run_id` snapshot in
+`task_clarifications`, while `hitl_requests.run_id` remains the terminal
+standalone origin for audit and authorization. The source run is marked `Done`
+only after confirmed termination. A later task-bound standalone launch may set
+`superseded_by_run_id`; this snapshot does not cascade away with the source.
+
 > **(M14 — Implemented, migration `0019`, additive.)** `NODE_ATTEMPTS` gains
 > `materialization_plan` (jsonb, nullable) — the resolved capability profile
 > snapshot written once at the time the node transitions to `Running`. The

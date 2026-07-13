@@ -1064,6 +1064,16 @@ promotion policy.
   The only exception is the recognized, localized diagnostic-code field of a
   route error boundary.
 
+## Standalone agent clarification handoff (Designed — ADR-136)
+
+An `agent_question` is a terminal handoff, not a paused agent run. Activation
+sets the source standalone run to `Done` only after the supervisor confirms its
+server-held session is absent; a retryable stop error leaves the durable intent
+recoverable and invisible to the Inbox. A new task-bound standalone launch
+supersedes outstanding active questions inside its launch transaction and
+records that successor run as provenance. V1 does not checkpoint or resume the
+asking ACP session.
+
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),

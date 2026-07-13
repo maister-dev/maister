@@ -334,6 +334,15 @@ flag/enqueue are body booleans, not locators (safe).
 | `POST …/tasks/{taskId}/triage` | `taskId`          | url-param, re-validated vs token project           | 404 (existence-hide, cross-project) |
 | `POST …/tasks/{taskId}/triage` | `flag`, `enqueue` | body-controlled booleans (not locators)            | —                                   |
 
+## Human-ask triage branch (Designed — ADR-136)
+
+The core triager may call `ask_human(..., { reTriggerMode: "triage" })` instead
+of posting a task comment and self-triggering. Only the server-recognized
+`core:triager` identity may select this mode. A human answer uses the existing
+`sendTaskToTriage` transaction and emits `task.triage_requeued`; it MUST NOT
+also create `task.clarification_answered`, launch the requester, or duplicate a
+triage activity. Other agents retain the target-only clarification event.
+
 ## Linked artifacts
 
 - **Decisions:** ADR-111 (generic agent-config framework — declare → project →

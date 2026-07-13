@@ -11,6 +11,10 @@ The current contract includes spawn, prompt delivery, structured ACP event
 parsing, permission HITL, checkpoint, resume, heartbeat promotion, and cost
 accounting.
 
+**ADR-136 non-expansion:** task-bound `agent_question` clarification is a web
+and Postgres handoff. V1 adds no ACP method, notification, input delivery, or
+resume behavior to this supervisor contract.
+
 ```
                      ┌─────────────────────┐                ┌──────────────────────────┐
   web/                │  web/lib/           │   HTTP+SSE     │  supervisor/ (Fastify)   │

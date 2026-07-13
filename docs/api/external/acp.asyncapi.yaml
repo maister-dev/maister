@@ -8,6 +8,10 @@ info:
     (`claude-agent-acp`, `codex-acp`). Full spec lives upstream — this file
     documents only the messages MAIster currently reads or writes.
 
+    **ADR-136 non-expansion:** task-bound `agent_question` clarification is not
+    an ACP interaction. V1 adds no channel, message, request, notification, or
+    resume behavior to this excerpt.
+
     Wire: JSON-RPC 2.0 over the child's stdin/stdout, one message per
     newline-terminated line.
 

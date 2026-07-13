@@ -103,6 +103,14 @@ future Mγ stage).
 | `tasks` | `flow_id` → NULLABLE; new `triage_status` (`'triaged'` \| NULL), `runner_id` (FK SET NULL), `target_branch` (text NULL), `promotion_mode` (`local_merge\|pull_request`, NULL). |
 | `project_tokens` | `token_kind` gains `'agent'`; new `agent_id` (FK `agents` CASCADE, NULL; CHECK `token_kind='agent'` ⇔ `agent_id IS NOT NULL`). |
 
+### Human-ask provenance (Designed — ADR-136)
+
+`task_clarifications.origin_agent_id` is an immutable source snapshot rather
+than a cascading FK. It identifies the requesting platform agent even if the
+agent, source run, or original HITL row is later removed. Re-trigger dispatch
+uses the stored agent identity and the target-only domain-event payload; it does
+not trust a request body for an agent identifier.
+
 ## Keys and constraints
 
 | Table | Constraint | Columns | Purpose |

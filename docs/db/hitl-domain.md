@@ -168,6 +168,39 @@ Free-form `additionalProperties` are tolerated (forward-compat).
   `(run_id, status)`, `review_comments_hitl_request_idx`
   `(hitl_request_id)`, `review_comments_parent_idx` `(parent_id)`.
 
+### Human-ask extension (Designed — ADR-136)
+
+```mermaid
+erDiagram
+    TASKS ||--o{ HITL_REQUESTS : "agent_question task_id"
+    TASKS ||--o{ TASK_CLARIFICATIONS : "owns history"
+    HITL_REQUESTS ||--o| TASK_CLARIFICATIONS : "source snapshot no cascade FK"
+    RUNS ||--o{ TASK_CLARIFICATIONS : "origin successor snapshots"
+
+    HITL_REQUESTS {
+        text kind "agent_question"
+        text task_id "required only for agent_question"
+        text activation_state "pending_termination active failed"
+        timestamp superseded_at
+        text superseded_by_hitl_request_id "answer winner"
+        text superseded_by_run_id "successor run"
+    }
+    TASK_CLARIFICATIONS {
+        text id PK
+        text task_id FK "task-owned cascade"
+        integer seq "unique per task"
+        text source_hitl_request_id UK "snapshot no cascade FK"
+        text origin_run_id "snapshot"
+        text origin_agent_id "snapshot"
+        jsonb question_schema
+        jsonb answer
+        timestamp answered_at
+    }
+```
+
+Exactly one supersession provenance is allowed. A history row persists after its
+source request or run is removed; question and answer bodies are never logged.
+
 ## Lifecycle
 
 ```

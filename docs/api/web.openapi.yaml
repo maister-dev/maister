@@ -5327,6 +5327,13 @@ paths:
           `input-<stepId>.json` atomically. `respondedAt` is marked
           after the artifact write succeeds. A losing concurrent
           submission gets 409 BEFORE it can corrupt the artifact.
+        - **agent_question** (ADR-136, Designed): human-only task
+          clarification. The route locks the task and active request, records
+          one answer and supersedes competing questions, then inserts either a
+          target-only `task.clarification_answered` event or the triager's
+          existing `task.triage_requeued` event. It never writes an artifact,
+          invokes `runFlow`, or resumes ACP. `responded_at` is set only for the
+          winning human answer; stale/conflicting answers return 409.
         - **hook_trip** (ADR-108): a guardrail-trip resume-or-abort, like
           `infra_recovery` / `budget_breach`. Human-actor-only (a machine/agent
           token is rejected 403 at the shared chokepoint — it can never dismiss
@@ -5427,6 +5434,11 @@ paths:
                   response:
                     approved: true
                     comments: "lgtm"
+              agent-question-answer:
+                summary: (ADR-136) Human answer to a task-bound agent question
+                value:
+                  response:
+                    target: staging
               review-rework:
                 summary: (M11a) Graph review — rework with comments
                 value:
@@ -5493,7 +5505,8 @@ paths:
             chosen fork reached its durable result: raise scheduled resume,
             restart terminalized the old run and launched or queued a new one,
             park preserved work and abandoned the run, or discard failed the run
-            (and optionally dropped the workspace).
+            (and optionally dropped the workspace). For `agent_question`, the
+            answer and outbox event were committed; no session is resumed.
           content:
             application/json:
               schema:
@@ -5509,6 +5522,7 @@ paths:
                         NeedsInputIdle,
                         Pending,
                         Running,
+                        Done,
                         Failed,
                         Abandoned,
                       ]
@@ -5534,7 +5548,7 @@ paths:
           description: |
             Malformed body (`CONFIG`) — JSON parse failure or missing
             required field for the kind (e.g. permission without
-            `optionId`, form/human without `response`).
+            `optionId`, form/human/agent_question without `response`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5543,7 +5557,8 @@ paths:
             One of: HITL row already delivered with a different payload
             (`CONFLICT`), run is in a terminal status (`CONFLICT`), or
             an `optionId` claim conflicts with a prior claim
-            (`CONFLICT`). For budget composites, also used when a different
+            (`CONFLICT`). `agent_question` also returns 409 for an answered,
+            superseded, inactive, or different-payload request. For budget composites, also used when a different
             option arrives after a non-failed staged claim. Identifies a retry
             contract violation, not a server bug.
           content:
@@ -15926,7 +15941,7 @@ components:
         Discriminated union keyed on the row's `kind`. `optionId` is present for
         `permission` and the resume-or-abort decision kinds (`hook_trip`,
         `infra_recovery`, `budget_breach`); `response` is present for
-        `form` | `human` and may carry option-specific payload for
+        `form` | `human` | `agent_question` and may carry option-specific payload for
         `budget_breach`. Exactly ONE shape MUST match the row's `kind`.
       properties:
         optionId:
@@ -15958,7 +15973,11 @@ components:
             `response.dropWorkspace` on `optionId:"abandon"`.
         response:
           description: |
-            Required iff the HITL row has `kind == "form" | "human"`.
+            Required iff the HITL row has `kind == "form" | "human" |
+            "agent_question"`. An `agent_question` answer is accepted only
+            from a human session responder or an exact-human external token;
+            it is committed as task clarification history and never resumes the
+            terminal origin ACP session.
             Validated against the row's `schema` field (MAIster form
             schema — see `docs/configuration.md`). Returns 422 on
             failure. For `kind="budget_breach"`, carries the

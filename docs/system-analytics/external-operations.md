@@ -460,6 +460,17 @@ occurs.
 - **Global personal HITL inbox** → `GET /api/v1/ext/hitl` writes audit with
   `project_id IS NULL`; project and agent tokens get 403.
 
+## Agent clarification request (Designed — ADR-136)
+
+`POST /api/v1/ext/projects/{slug}/tasks/{taskId}/human-asks` requires the exact
+agent `hitl:request` scope. The project comes from `slug`, the task is checked
+against that project, and the source run/agent come only from the authenticated
+agent-token server state; none can appear in the body. The strict body is
+`{ question, schema: FormSchemaV1, reTriggerMode?: "agent" | "triage" }`.
+`schema` uses the existing form-schema version validator, not arbitrary JSON
+Schema. A human-only answer of `agent_question` requires a session responder or
+a global personal token with exact `hitl:respond:human`; `*` is insufficient.
+
 ## Linked artifacts
 
 - ADRs: [ADR-045](../decisions.md#adr-045) (external_check enforcement via review

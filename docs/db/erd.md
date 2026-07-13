@@ -1366,6 +1366,29 @@ Implemented by `0076_user_access_tokens.sql`. Remaining roadmap-additive persist
 external-operation events) is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
+### Human-ask extension (Designed — ADR-136)
+
+```mermaid
+erDiagram
+    TASKS ||--o{ HITL_REQUESTS : "task-bound agent_question"
+    TASKS ||--o{ TASK_CLARIFICATIONS : "owns"
+    HITL_REQUESTS ||--o| TASK_CLARIFICATIONS : "source snapshot only"
+    RUNS ||--o{ TASK_CLARIFICATIONS : "origin successor snapshots"
+
+    TASK_CLARIFICATIONS {
+        text id PK
+        text task_id FK
+        integer seq "UNIQUE task_id seq"
+        text source_hitl_request_id "UNIQUE no cascading FK"
+        text origin_run_id "immutable snapshot"
+        text origin_agent_id "immutable snapshot"
+        timestamp answered_at
+    }
+```
+
+The no-cascade source relationship is intentional: task-owned clarification
+history survives source-run and HITL cleanup.
+
 ## Indexes
 
 | Table | Index | Columns | Purpose |

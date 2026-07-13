@@ -157,6 +157,14 @@ stateDiagram-v2
 
 ## Data & APIs
 
+### Clarification visibility (Designed — ADR-136)
+
+Task detail shows ordered answered clarification history and an
+`awaitingClarification` indicator without changing the authored prompt. A fresh
+standalone launch clears active pending clarification cards atomically; a
+successful answer targets the requester or requeues the core triager according
+to server-stored mode. The board never renders a stale question as answerable.
+
 - Board read model: `web/lib/queries/board.ts`.
 - Inline/full task edit: `PATCH` and `PUT`
   `/api/projects/{slug}/tasks/{number}`.

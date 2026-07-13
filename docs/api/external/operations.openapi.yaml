@@ -66,7 +66,10 @@ tags:
       Run-scoped list enforces `hitl:read`; cross-project personal inbox
       enforces `hitl:inbox:read`; permission/form responses enforce
       `hitl:respond`; human responses require a global personal user token with
-      exact `hitl:respond:human`. `infra_recovery` and `budget_breach`
+      exact `hitl:respond:human`. (ADR-136 Designed) an attached agent with
+      exact `hitl:request` may create a task-bound `agent_question`; only a
+      session responder or a global personal user token with exact
+      `hitl:respond:human` may answer it. `infra_recovery` and `budget_breach`
       responses remain session-auth-only in ADR-125 and are not opened to
       external token actors.
   - name: comments
@@ -2042,6 +2045,84 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/human-asks:
+    post:
+      tags: [hitl]
+      summary: Ask a human a task-bound clarification
+      description: |
+        **ADR-136 (Designed).** Requires an authenticated attached agent token
+        with exact `hitl:request`. `slug` derives the project; `taskId` is
+        verified to belong to it. The source agent and source standalone run are
+        derived from token/server state only and are never accepted in the body.
+
+        The body is a strict object with a bounded question, the existing
+        MAIster `FormSchemaV1` grammar, and optional re-trigger mode. The server
+        persists a durable `pending_termination` intent before deleting the
+        source supervisor session. It returns 201 only after activation has
+        terminalized the source run; a same-payload active replay is 200; a
+        durable still-pending or retryable activation is 202. No response,
+        schema, question, or answer body is logged.
+      operationId: extCreateTaskHumanAsk
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtHumanAskBody" }
+            examples:
+              request-agent-retrigger:
+                value:
+                  question: "Which deployment target should this task use?"
+                  schema:
+                    schemaVersion: 1
+                    fields:
+                      - name: target
+                        type: enum
+                        required: true
+                        options: [staging, production]
+                  reTriggerMode: agent
+      responses:
+        "201":
+          description: Fully active question; source standalone run is terminally Done.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtHumanAskResponse" }
+        "200":
+          description: Idempotent replay of the same active request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtHumanAskResponse" }
+        "202":
+          description: Durable request awaits or retries source-session termination; not Inbox-visible.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtHumanAskResponse" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          description: Retryable supervisor termination failure; intent remains durable and unactivated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
 components:
   securitySchemes:
     projectToken:
@@ -3206,7 +3287,7 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [permission, form, human, infra_recovery, budget_breach, hook_trip]
+          enum: [permission, form, human, agent_question, infra_recovery, budget_breach, hook_trip]
           description: |
             Any pending HITL kind is surfaced, mirroring the web inbox —
             `permission`/`form` items are answerable via the run-scoped
@@ -3241,9 +3322,10 @@ components:
           type: string
           description: |
             Request kind. Project/agent/project-scoped user token actors may
-            answer only `permission` and `form`; human-only kinds require a
+            answer only `permission` and `form`; human-only kinds, including
+            `agent_question`, require a
             global personal user token with exact `hitl:respond:human`.
-          enum: [permission, form, human, infra_recovery, budget_breach]
+          enum: [permission, form, human, agent_question, infra_recovery, budget_breach]
         prompt:
           type: string
           description: Prompt text shown to the responder.
@@ -3292,7 +3374,7 @@ components:
         `infra_recovery` and `budget_breach` rows may be listed but are not
         externally respondable in ADR-125. Project/agent/project-scoped user
         tokens cannot answer human-only kinds; global personal tokens need exact
-        `hitl:respond:human` for `human`.
+        `hitl:respond:human` for `human` and `agent_question`.
       properties:
         optionId:
           type: string
@@ -3303,8 +3385,8 @@ components:
         response:
           type: object
           description: |
-            Required iff the HITL row has `kind == "form"` or a schema-backed
-            `human` request. Validated against the row's `schema`
+            Required iff the HITL row has `kind == "form"`, a schema-backed
+            `human`, or `agent_question` request. Validated against the row's `schema`
             (server-state, never body-trusted); 422 on failure.
           additionalProperties: true
         confidence:
@@ -3323,18 +3405,71 @@ components:
       description: |
         (M17) Result of an ext HITL response. Mirrors the session route — the
         runner (not this route) owns the `NeedsInput → Running` transition.
+        (ADR-136 Designed) a human answer to `agent_question` returns the
+        terminal source `runStatus: Done`; it writes no artifact and never
+        resumes ACP.
       properties:
         ok:
           type: boolean
           enum: [true]
         runStatus:
           type: string
-          enum: [NeedsInput]
+          enum: [NeedsInput, Done]
           description: Row state at response time.
         state:
           type: string
           enum: [resume-in-progress]
           description: Present only on the 202 idle-resume branch.
+
+    FormSchemaV1:
+      type: object
+      description: Existing MAIster `formSchemaSchema` grammar; validated again by `validateFormSchemaVersion`.
+      required: [schemaVersion, fields]
+      additionalProperties: true
+      properties:
+        schemaVersion: { type: integer, minimum: 1 }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/FormFieldV1" }
+    FormFieldV1:
+      type: object
+      required: [name, type]
+      additionalProperties: true
+      properties:
+        name: { type: string, minLength: 1 }
+        label: { type: string, minLength: 1 }
+        type: { type: string, enum: [string, number, boolean, enum, array, object] }
+        required: { type: boolean }
+        default: {}
+        options:
+          type: array
+          items: { type: string }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/FormFieldV1" }
+    ExtHumanAskBody:
+      type: object
+      required: [question, schema]
+      additionalProperties: false
+      properties:
+        question: { type: string, minLength: 1, maxLength: 10000 }
+        schema: { $ref: "#/components/schemas/FormSchemaV1" }
+        reTriggerMode:
+          type: string
+          enum: [agent, triage]
+          default: agent
+          description: "triage is accepted only for the server-recognized core:triager agent."
+    ExtHumanAskResponse:
+      type: object
+      required: [hitlRequestId, taskId, sourceRunId, activationState]
+      additionalProperties: false
+      properties:
+        hitlRequestId: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        sourceRunId: { type: string, format: uuid }
+        activationState:
+          type: string
+          enum: [pending_termination, active, failed]
 
     ExtDelegationTarget:
       type: object

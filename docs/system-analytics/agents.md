@@ -590,6 +590,35 @@ with final target delivery evidence joins the project `agent` bucket;
 `none`/`repo_read` sessions do not. This reuses the agent promotion substrate
 and does not change its launch, policy, or enforcement behavior.
 
+## Human-ask activation and re-trigger (Designed — ADR-136)
+
+An attached, enabled, non-quarantined platform agent with `hitl:request` may
+create a clarification only through the server-derived task/project/agent
+identity. The request body contains no run, agent, or project identifiers.
+`reTriggerMode='agent'` is the default; `triage` is accepted only for
+`core:triager` and maps to its existing `task.triage_requeued` helper.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent token
+    participant W as Web service
+    participant S as Supervisor
+    participant D as DB
+    A->>W: ask_human(question, FormSchemaV1, mode)
+    W->>D: persist pending_termination intent
+    W->>S: deleteSession(server-held source session)
+    S-->>W: confirmed absent
+    W->>D: activate ask + snapshot clarification + source Done
+```
+
+The reconciliation sweep retries durable pending termination through the
+existing reconciliation path; it does not add a scheduler, environment switch,
+poller, or ACP interactivity. Fresh standalone-agent launches atomically
+supersede active asks for their task before launch. An answer emits one
+target-only `task.clarification_answered` event whose consumer bypasses ordinary
+event schedule matching but still applies attachment, enabled, quarantine, and
+single-active-run guards.
+
 ## Linked artifacts
 
 - **Decisions:** [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),

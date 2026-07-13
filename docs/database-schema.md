@@ -2261,6 +2261,25 @@ carry `schema.supervisorSessionId` so the web tier can route the
 deferred resolution to the right supervisor session without an extra
 round-trip.
 
+### Agent-question extension (Designed — ADR-136, migration `0099`)
+
+`agent_question` extends `hitl_requests` without changing legacy Flow HITL.
+It alone may have nullable `task_id`, an `activation_state` of
+`pending_termination | active | failed`, and supersession metadata. A CHECK
+requires `task_id` and activation state for this kind, preserves null additions
+for every legacy kind, and permits at most one of
+`superseded_by_hitl_request_id` and `superseded_by_run_id`. `responded_at` is
+set only by a winning human answer.
+
+`task_clarifications` is task-owned immutable history: `task_id`, per-task
+`seq`, question/form snapshot, answer snapshot, immutable source
+`hitl_request_id`/`origin_run_id`/`origin_agent_id`, answerer snapshot, and
+answer/supersession provenance. It has unique `(task_id, seq)` and unique source
+request IDs, plus partial indexes for active Inbox rows and answered context
+reads. Its source IDs deliberately have no cascading foreign keys to the source
+run/HITL rows, so clarification history survives source cleanup; task deletion
+remains the owning lifecycle.
+
 ## `gate_chat_messages`
 
 **(M30 — Implemented, [ADR-078](decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality), migration `0041`.)**

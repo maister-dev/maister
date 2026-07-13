@@ -318,6 +318,16 @@ flowchart TD
 - **Project/task/run hard delete** → FK cascade removes the events; the
   durable audit trail is `task_activity` / run ledgers, not this log.
 
+## Targeted clarification re-trigger (Designed — ADR-136)
+
+`task.clarification_answered` is a Postgres outbox kind with the requesting
+agent as its sole target. It is an internal DB/analytics contract, not an
+AsyncAPI channel and not an ACP message. The consumer treats a delivered event
+as handled after the target-only launch decision, including a refusal caused by
+attachment, disablement, quarantine, or an existing active run; it never fans
+out through ordinary event-trigger schedules. The triager mode emits the
+pre-existing `task.triage_requeued` event instead.
+
 ## Linked artifacts
 
 - **Decision:** [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus).

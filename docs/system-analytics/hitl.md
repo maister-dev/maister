@@ -1051,6 +1051,57 @@ transitions to `Crashed` and the stored intent is closed with
 The helper exists in `web/lib/runs/state-transitions.ts`; the
 runner-agent enforcement is queued for a follow-up patch.
 
+## Agent question — task-bound clarification (Designed — ADR-136)
+
+`agent_question` is a standalone-agent request for a human clarification on a
+task. It is not a Flow `form`/`human` pause and it never resumes an ACP session
+in v1. Creation first persists a durable `pending_termination` intent, then
+terminates the source session, and only then atomically activates the question,
+records its immutable `task_clarifications` snapshot, revokes the source-agent
+token, and marks the source run `Done`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending_termination: validated ask_human
+    pending_termination --> active: source session confirmed absent
+    pending_termination --> failed: source termination terminally fails
+    active --> answered: one human response wins
+    active --> superseded: successor standalone launch wins
+    failed --> pending_termination: reconciliation retries a retryable stop
+```
+
+The active Inbox read model includes a terminal-origin `agent_question` only
+when its activation state is `active`, `responded_at IS NULL`, and
+`superseded_at IS NULL`; ordinary terminal-run HITL remains excluded. Response
+and schema bodies are never written to structured logs. Creation, activation
+retry/failure, answer, supersession count, and targeted re-trigger decision log
+only IDs, kind, state, and row counts.
+
+### Human answer and supersession transaction
+
+```mermaid
+sequenceDiagram
+    participant H as Human responder
+    participant DB as Postgres
+    participant O as Domain outbox
+    H->>DB: lock active agent_question + task
+    alt first valid answer
+        DB->>DB: Answer clarification and supersede competing asks by winning request id
+        DB->>O: insert task.clarification_answered targeted to requesting agent
+        DB-->>H: 200 answered
+    else same answer replay
+        DB-->>H: 200 idempotent
+    else conflicting or stale answer
+        DB-->>H: 409 conflict
+    end
+```
+
+The answer winner records `superseded_by_hitl_request_id`; a manual/domain
+successor run instead records `superseded_by_run_id`. Exactly one provenance
+column may be non-null. `responded_at` means a real human answer only, never a
+supersession. The response endpoint rejects every non-`agent_question` branch
+here and does not write an artifact, call `runFlow`, or call the supervisor.
+
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
