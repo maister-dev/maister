@@ -290,6 +290,31 @@ describe("(a) task.created -> agent_triggers consumer enqueues a triager run", (
     expect(rows.rows[0].task_id).toBe(taskId);
   });
 
+  it("a human triage requeue runs the triager once and redelivery deduplicates", async () => {
+    await attachAndBindTriager();
+    const taskId = await seedTask();
+    const event = fakeEvent({
+      id: 5002 as unknown as DomainEventRow["id"],
+      kind: "task.triage_requeued",
+      taskId,
+      actorType: "user",
+      actorId: randomUUID(),
+    });
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+
+    await consumer.handle([event]);
+    await consumer.handle([event]);
+
+    const rows = await pool.query(
+      `SELECT "trigger_event_id", "task_id" FROM "runs" WHERE "agent_id" = $1`,
+      [AGENT_ID],
+    );
+
+    expect(rows.rows).toEqual([
+      { trigger_event_id: "5002", task_id: taskId },
+    ]);
+  });
+
   it("a self-actored event (the triager's own comment) never re-triggers it", async () => {
     await attachAndBindTriager();
     const taskId = await seedTask();

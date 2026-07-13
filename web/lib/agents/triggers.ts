@@ -164,6 +164,42 @@ type EventMatchRow = {
   eventMatch: { kinds?: string[] } | null;
 };
 
+type ClarificationAnswerTarget = {
+  clarificationId: string;
+  hitlRequestId: string;
+  requestingAgentId: string;
+};
+
+type EligibleTargetAgentRow = {
+  agentId: string;
+  projectId: string;
+};
+
+function clarificationAnswerTarget(
+  event: DomainEventRow,
+): ClarificationAnswerTarget | null {
+  if (event.kind !== "task.clarification_answered") return null;
+  if (typeof event.taskId !== "string" || event.taskId.length === 0) return null;
+
+  const payload = event.payload as Record<string, unknown>;
+  const clarificationId = payload.clarificationId;
+  const hitlRequestId = payload.hitlRequestId;
+  const requestingAgentId = payload.requestingAgentId;
+
+  if (
+    typeof clarificationId !== "string" ||
+    clarificationId.length === 0 ||
+    typeof hitlRequestId !== "string" ||
+    hitlRequestId.length === 0 ||
+    typeof requestingAgentId !== "string" ||
+    requestingAgentId.length === 0
+  ) {
+    return null;
+  }
+
+  return { clarificationId, hitlRequestId, requestingAgentId };
+}
+
 // The agent_triggers outbox consumer (ADR-086/087): at-least-once delivery;
 // the claim is the Pending run INSERT under the partial unique
 // (agent_id, trigger_event_id) — redelivery converges to exactly one run.
@@ -184,6 +220,104 @@ export function buildAgentTriggersConsumer(
             { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
             "agent trigger skipped terminal upgrade cut-over",
           );
+          continue;
+        }
+
+        // A Human-ask answer is a directed handoff, not a public event
+        // subscription. It bypasses schedules and checks only the original
+        // requester is still attached, enabled, and not quarantined. `continue`
+        // deliberately prevents any other event subscriber from observing the
+        // answer payload.
+        if (event.kind === "task.clarification_answered") {
+          const target = clarificationAnswerTarget(event);
+
+          if (!target) {
+            log.warn(
+              { eventId: event.id, reason: "invalid-clarification-target" },
+              "clarification answer trigger refused",
+            );
+            continue;
+          }
+
+          const targetRows: EligibleTargetAgentRow[] = await _db
+            .select({
+              agentId: agents.id,
+              projectId: agentProjectLinks.projectId,
+            })
+            .from(agents)
+            .innerJoin(
+              agentProjectLinks,
+              and(
+                eq(agentProjectLinks.agentId, agents.id),
+                eq(agentProjectLinks.projectId, event.projectId),
+              ),
+            )
+            .where(
+              and(
+                eq(agents.id, target.requestingAgentId),
+                eq(agents.enabled, true),
+                sql`${agents.quarantinedAt} IS NULL`,
+                eq(agentProjectLinks.enabled, true),
+              ),
+            );
+          const targetAgent = targetRows[0];
+
+          if (!targetAgent) {
+            log.warn(
+              {
+                eventId: event.id,
+                agentId: target.requestingAgentId,
+                reason: "requester-not-eligible",
+              },
+              "clarification answer trigger refused",
+            );
+            continue;
+          }
+
+          try {
+            const result = await launch({
+              agentId: targetAgent.agentId,
+              projectId: targetAgent.projectId,
+              taskId: event.taskId,
+              trigger: {
+                source: "domain_event",
+                eventId: Number(event.id),
+                payload: {
+                  kind: event.kind,
+                  payload: event.payload as Record<string, unknown>,
+                },
+              },
+              db: _db,
+            });
+
+            if ("deduped" in result) {
+              log.debug(
+                { eventId: event.id, agentId: targetAgent.agentId },
+                "clarification answer trigger already claimed — dedup",
+              );
+            } else {
+              log.info(
+                {
+                  eventId: event.id,
+                  agentId: targetAgent.agentId,
+                  runId: result.runId,
+                  status: result.status,
+                },
+                "clarification-answer agent run",
+              );
+            }
+          } catch (err) {
+            log.warn(
+              {
+                eventId: event.id,
+                agentId: targetAgent.agentId,
+                code: isMaisterError(err) ? err.code : "UNKNOWN",
+                err: err instanceof Error ? err.message : String(err),
+              },
+              "clarification-answer agent launch refused",
+            );
+          }
+
           continue;
         }
 

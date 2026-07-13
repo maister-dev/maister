@@ -196,6 +196,18 @@ function fakeEvent(overrides: Partial<DomainEventRow>): DomainEventRow {
   } as DomainEventRow;
 }
 
+async function seedTask(): Promise<string> {
+  const taskId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt")
+     VALUES ($1, $2, $3, 'Clarify deployment', 'Deploy the service')`,
+    [taskId, projectId, Math.trunc(Math.random() * 1e9) + 1],
+  );
+
+  return taskId;
+}
+
 describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
   it("claims a due row exactly once across concurrent ticks and never backfills", async () => {
     const cronAgent = await seedAgent({ id: "cron-agent", triggers: ["cron"] });
@@ -270,6 +282,95 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
 
     expect(runs.rows).toHaveLength(1);
     expect(Number(runs.rows[0].trigger_event_id)).toBe(777);
+  });
+
+  it("routes a clarification answer only to its requesting attached agent without a schedule", async () => {
+    const requestingAgent = await seedAgent({
+      id: "requesting-agent",
+      triggers: ["domain_event"],
+    });
+    const unrelatedSubscriber = await seedAgent({
+      id: "unrelated-subscriber",
+      triggers: ["domain_event"],
+    });
+    const taskId = await seedTask();
+
+    // This schedule is deliberately eligible for the same event. A directed
+    // clarification answer must never fall through to public subscriptions.
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
+       VALUES ($1, $2, $3, 'event', '{"kinds":["task.clarification_answered"]}'::jsonb)`,
+      [randomUUID(), unrelatedSubscriber, projectId],
+    );
+
+    const event = fakeEvent({
+      id: 4001 as unknown as DomainEventRow["id"],
+      kind: "task.clarification_answered",
+      taskId,
+      payload: {
+        clarificationId: randomUUID(),
+        hitlRequestId: randomUUID(),
+        requestingAgentId: requestingAgent,
+      },
+    });
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+
+    await consumer.handle([event]);
+    await consumer.handle([event]);
+
+    const runs = await pool.query(
+      `SELECT "agent_id", "trigger_event_id", "task_id" FROM "runs" WHERE "trigger_event_id" = 4001`,
+    );
+
+    expect(runs.rows).toEqual([
+      {
+        agent_id: requestingAgent,
+        trigger_event_id: "4001",
+        task_id: taskId,
+      },
+    ]);
+  });
+
+  it.each([
+    {
+      name: "the requester is disabled",
+      sql: `UPDATE "agents" SET "enabled" = false WHERE "id" = $1`,
+    },
+    {
+      name: "the project attachment is disabled",
+      sql: `UPDATE "agent_project_links" SET "enabled" = false WHERE "agent_id" = $1`,
+    },
+    {
+      name: "the requester is quarantined",
+      sql: `UPDATE "agents" SET "quarantined_at" = now() WHERE "id" = $1`,
+    },
+  ])("fails closed when $name", async ({ sql: updateSql }) => {
+    const requestingAgent = await seedAgent({
+      id: "ineligible-requester",
+      triggers: ["domain_event"],
+    });
+    const taskId = await seedTask();
+
+    await pool.query(updateSql, [requestingAgent]);
+
+    await triggers.buildAgentTriggersConsumer({ db }).handle([
+      fakeEvent({
+        id: 4002 as unknown as DomainEventRow["id"],
+        kind: "task.clarification_answered",
+        taskId,
+        payload: {
+          clarificationId: randomUUID(),
+          hitlRequestId: randomUUID(),
+          requestingAgentId: requestingAgent,
+        },
+      }),
+    ]);
+
+    const runs = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "trigger_event_id" = 4002`,
+    );
+
+    expect(runs.rows[0].n).toBe(0);
   });
 
   it("self-actored events never re-trigger the agent; foreign actors do", async () => {
