@@ -182,6 +182,7 @@ export function HitlCard({
   const StageIcon = item.stage.type ? STAGE_ICON[item.stage.type] : null;
   const stale = staleCount(item.assignmentStaleEvidenceSummary);
   const isPermission = item.kind === "permission";
+  const isAgentQuestion = item.kind === "agent_question";
 
   return (
     <article
@@ -190,6 +191,7 @@ export function HitlCard({
         CRITICALITY_ACCENT[crit],
       )}
       data-criticality={item.criticality ?? "none"}
+      data-kind={item.kind}
       data-testid="hitl-card"
     >
       <button
@@ -238,6 +240,11 @@ export function HitlCard({
             <Chip className="border-line bg-paper text-ink-2">
               {item.branch}
             </Chip>
+            {isAgentQuestion ? (
+              <Chip className="border-amber-line bg-amber-soft text-amber">
+                {t("agentQuestion")}
+              </Chip>
+            ) : null}
             <span className="font-mono text-[10.5px] font-bold text-amber">
               {item.time}
             </span>
@@ -282,7 +289,7 @@ export function HitlCard({
               if (!expanded) toggle();
             }}
           >
-            {t("respond")}
+            {isAgentQuestion ? t("answerClarification") : t("respond")}
           </button>
         ) : null}
 

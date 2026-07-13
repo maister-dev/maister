@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
@@ -584,6 +585,87 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
     expect(item).toHaveProperty("criticality");
     expect(item.schema).toEqual(schema);
     expect(item.criticality).toBe("medium");
+  });
+
+  it("surfaces an active agent question after its source agent run is terminal", async () => {
+    const admin = await createAdminUser("admin-agent-question@test.com");
+    const proj = await createProject("Agent Question Project");
+    const flow = await createFlow(proj);
+    const exec = await createExecutor();
+    const task = await createTask(proj, flow, "Clarify deployment");
+    const run = await createRun(proj, task, flow, exec, "NeedsInput");
+    const agentId = `test:requesting-${randomUUID().slice(0, 8)}`;
+
+    await db.insert(schema.agents).values({
+      id: agentId,
+      packageName: "test",
+      versionLabel: "v1",
+      origin: "authored",
+      name: "Requesting agent",
+      description: "Requests a clarification",
+      workspace: "none",
+      mode: "session",
+      triggers: [],
+      riskTier: "standard",
+      sourcePath: "/tmp/requesting-agent.md",
+    });
+
+    await db
+      .update(schema.runs)
+      .set({
+        runKind: "agent",
+        agentId,
+        status: "Done",
+        endedAt: new Date(),
+      })
+      .where(eq(schema.runs.id, run));
+    await db.insert(schema.hitlRequests).values({
+      id: "hitl-agent-question",
+      runId: run,
+      stepId: "agent",
+      kind: "agent_question",
+      taskId: task,
+      activationState: "active",
+      reTriggerMode: "agent",
+      prompt: "Which target should receive this deployment?",
+      schema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "target",
+            type: "enum",
+            required: true,
+            options: ["staging", "production"],
+          },
+        ],
+      },
+    });
+
+    const projectInbox = await getHitlInbox(proj);
+    const crossProjectInbox = await getCrossProjectHitlInbox(admin, "admin");
+
+    expect(projectInbox.items).toHaveLength(1);
+    expect(projectInbox.items[0]).toMatchObject({
+      hitlRequestId: "hitl-agent-question",
+      kind: "agent_question",
+      taskTitle: "Clarify deployment",
+    });
+    expect(crossProjectInbox.items).toHaveLength(1);
+    expect(crossProjectInbox.items[0]).toMatchObject({
+      hitlRequestId: "hitl-agent-question",
+      kind: "agent_question",
+      projectId: proj,
+    });
+
+    await db
+      .update(schema.hitlRequests)
+      .set({ activationState: "pending_termination" })
+      .where(eq(schema.hitlRequests.id, "hitl-agent-question"));
+
+    await expect(getHitlInbox(proj)).resolves.toMatchObject({ count: 0 });
+    await expect(
+      getCrossProjectHitlInbox(admin, "admin"),
+    ).resolves.toMatchObject({ count: 0 });
   });
 
   it("surfaces project scratch-run HITL without a flow row", async () => {

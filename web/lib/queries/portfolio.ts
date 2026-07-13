@@ -1178,7 +1178,9 @@ export async function getCrossProjectHitlInbox(
 
   const projectIds = visibleProjects.map((p) => p.id);
 
-  // One batched query: all pending hitl_requests across all visible run ids.
+  // One batched query: ordinary HITL rows follow their awaiting run; an active
+  // task-bound agent question follows its own lifecycle because its source run
+  // has already been terminalized before the Inbox assignment is activated.
   const rows = await client
     .select({
       hitlRequestId: hitlRequests.id,
@@ -1218,8 +1220,15 @@ export async function getCrossProjectHitlInbox(
     .where(
       and(
         inArray(runs.projectId, projectIds),
-        inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
         isNull(hitlRequests.respondedAt),
+        or(
+          inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          and(
+            eq(hitlRequests.kind, "agent_question"),
+            eq(hitlRequests.activationState, "active"),
+            isNull(hitlRequests.supersededAt),
+          ),
+        ),
       ),
     )
     .orderBy(asc(hitlRequests.createdAt));

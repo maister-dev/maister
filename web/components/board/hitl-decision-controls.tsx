@@ -167,9 +167,9 @@ export interface HitlFormFieldView {
   options?: string[];
 }
 
-// A `form` HITL renders option buttons + free-text per field ONLY when the
-// stored schema is a form-schema doc with a non-empty `fields[]`. Any other
-// schema (or a non-form kind) falls back to the raw-JSON response textarea.
+// A `form` or task-bound `agent_question` HITL renders option buttons +
+// free-text per field ONLY when the stored schema is a form-schema doc with a
+// non-empty `fields[]`. Any other schema falls back to the raw-JSON editor.
 export function formFieldsFromSchema(
   schema: unknown,
 ): HitlFormFieldView[] | null {
@@ -918,7 +918,10 @@ export function HitlDecisionControls({
   onSubmitJson,
   onSubmitForm,
 }: HitlDecisionControlsProps): ReactElement {
-  const formFields = kind === "form" ? formFieldsFromSchema(schema) : null;
+  const formFields =
+    kind === "form" || kind === "agent_question"
+      ? formFieldsFromSchema(schema)
+      : null;
   const budgetBreach =
     kind === "budget_breach" ? budgetBreachFromSchema(schema) : null;
   const hookTrip = kind === "hook_trip" ? hookTripFromSchema(schema) : null;
@@ -1405,7 +1408,12 @@ export function HitlDecisionControls({
           </div>
         </div>
       ) : formFields ? (
-        <div className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}>
+        <div
+          className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}
+          {...(kind === "agent_question"
+            ? { "data-testid": "agent-question-response" }
+            : {})}
+        >
           <p className="text-[12px] text-mute">{labels.formInstructions}</p>
           {formFields.map((field) => (
             <FormFieldControl

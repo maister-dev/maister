@@ -4,7 +4,7 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Assignment, HitlRequest, RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -51,30 +51,48 @@ export async function getHitlRequestsForRun(
 ): Promise<HitlRequest[]> {
   const client = deps?.db ?? db();
 
-  // Verify the run belongs to the declared projectId AND is genuinely awaiting
-  // input. A HITL is pending ONLY while the run is NeedsInput/NeedsInputIdle —
-  // matching getHitlInbox/getCrossProjectHitlInbox. Otherwise (Running,
-  // HumanWorking, Failed, Abandoned, Done) an unanswered row is stale and MUST
-  // NOT be surfaced to external clients even when respondedAt stayed null.
+  // A normal HITL is visible only while its run awaits input. A task-bound
+  // agent_question is intentionally different: its source agent is terminal
+  // before activation, so its own active/unanswered state is the visibility
+  // authority. This mirrors both Inbox queries below.
   const runRows = await client
-    .select({ id: runs.id })
+    .select({ id: runs.id, status: runs.status })
     .from(runs)
     .where(
       and(
         eq(runs.id, runId),
         eq(runs.projectId, projectId),
-        inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
       ),
     );
 
-  if (runRows.length === 0) {
+  const run = runRows[0];
+
+  if (!run) {
     return [];
+  }
+
+  if (run.status === "NeedsInput" || run.status === "NeedsInputIdle") {
+    return client
+      .select()
+      .from(hitlRequests)
+      .where(
+        and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
+      )
+      .orderBy(asc(hitlRequests.createdAt));
   }
 
   return client
     .select()
     .from(hitlRequests)
-    .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
+    .where(
+      and(
+        eq(hitlRequests.runId, runId),
+        isNull(hitlRequests.respondedAt),
+        eq(hitlRequests.kind, "agent_question"),
+        eq(hitlRequests.activationState, "active"),
+        isNull(hitlRequests.supersededAt),
+      ),
+    )
     .orderBy(asc(hitlRequests.createdAt));
 }
 
@@ -319,22 +337,6 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
   const now = new Date();
   const client = db();
 
-  const projectRunIds = await client
-    .select({ id: runs.id })
-    .from(runs)
-    .where(
-      and(
-        eq(runs.projectId, projectId),
-        inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
-      ),
-    );
-
-  if (projectRunIds.length === 0) {
-    return { items: [], count: 0, oldest: null };
-  }
-
-  const runIds = projectRunIds.map((r) => r.id);
-
   const rows = await client
     .select({
       hitlRequestId: hitlRequests.id,
@@ -372,8 +374,16 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(
       and(
-        inArray(hitlRequests.runId, runIds),
         isNull(hitlRequests.respondedAt),
+        eq(runs.projectId, projectId),
+        or(
+          inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          and(
+            eq(hitlRequests.kind, "agent_question"),
+            eq(hitlRequests.activationState, "active"),
+            isNull(hitlRequests.supersededAt),
+          ),
+        ),
       ),
     )
     .orderBy(asc(hitlRequests.createdAt));

@@ -106,6 +106,22 @@ describe("HitlCard — collapsed tier", () => {
     );
   });
 
+  it("gives an agent clarification its own Inbox label and answer affordance", () => {
+    const html = render({
+      kind: "agent_question",
+      options: [],
+      schema: {
+        schemaVersion: 1,
+        fields: [{ name: "target", type: "string", required: true }],
+      },
+    });
+
+    expect(html).toContain('data-kind="agent_question"');
+    expect(html).toContain("inbox.agentQuestion");
+    expect(html).toContain("inbox.answerClarification");
+    expect(html).not.toContain("inbox.respond");
+  });
+
   it("links to the run", () => {
     const html = render();
 

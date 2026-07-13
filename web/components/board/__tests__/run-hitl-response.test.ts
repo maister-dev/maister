@@ -195,3 +195,20 @@ describe("RunHitlResponse — consensus resolution wiring (M41)", () => {
     expect(html).not.toContain("run.confidenceLabel");
   });
 });
+
+describe("RunHitlResponse — agent clarification wiring", () => {
+  it("uses the schema form without confidence or a run-resume affordance", () => {
+    const html = render({
+      kind: "agent_question",
+      schema: {
+        schemaVersion: 1,
+        fields: [{ name: "target", type: "string", required: true }],
+      },
+    });
+
+    expect(html).toContain('data-testid="agent-question-response"');
+    expect(html).toContain("run.agentQuestionInstructions");
+    expect(html).toContain("run.answerClarification");
+    expect(html).not.toContain("run.confidenceLabel");
+  });
+});

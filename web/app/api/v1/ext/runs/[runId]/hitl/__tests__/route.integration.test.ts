@@ -521,6 +521,42 @@ describe("GET /api/v1/ext/runs/[runId]/hitl", () => {
     });
   });
 
+  it("lists an active agent question after its source run has completed", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-agent-question-get-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId, taskId } = await seedRun(projectId, flowId, "Done");
+    const hitlId = await seedAgentQuestion({
+      projectId,
+      taskId,
+      runId,
+      sourceAgentId: "test:agent-question",
+    });
+    const token = await issueToken(
+      { projectId, name: "agent-question-reader", createdByUserId: null },
+      db,
+    );
+
+    const res = await GET(makeGetRequest(runId, token.secret), {
+      params: Promise.resolve({ runId }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      hitl: [
+        {
+          hitlRequestId: hitlId,
+          kind: "agent_question",
+          prompt: "Which target should receive this deployment?",
+          schema: {
+            schemaVersion: 1,
+            fields: [expect.objectContaining({ name: "target" })],
+          },
+        },
+      ],
+    });
+  });
+
   it("does NOT list an unresponded HITL for a run that is not awaiting input (status filter)", async () => {
     // Regression for the stale-HITL leak: a Running (non-pending) run with an
     // unanswered HITL row must return an EMPTY list — only NeedsInput/

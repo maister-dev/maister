@@ -316,10 +316,12 @@ export function RunHitlResponse({
     });
   }
 
-  // Confidence applies to form/human/review; NOT permission, infra_recovery,
-  // budget_breach, or hook_trip (a resume/abandon choice carries no confidence).
+  // Confidence applies to form/human/review; NOT a task clarification,
+  // permission, infra_recovery, budget_breach, or hook_trip. An agent question
+  // records the human's schema answer only and never resumes its terminal source.
   const showConfidence =
     kind !== "permission" &&
+    kind !== "agent_question" &&
     kind !== "infra_recovery" &&
     kind !== "budget_breach" &&
     kind !== "hook_trip" &&
@@ -339,9 +341,19 @@ export function RunHitlResponse({
     responseLabel: t("responseLabel"),
     responseHint: t("responseHint"),
     schemaLabel: t("schemaLabel"),
-    submit: busy ? t("submitting") : t("submit"),
+    submit:
+      kind === "agent_question"
+        ? busy
+          ? t("answeringClarification")
+          : t("answerClarification")
+        : busy
+          ? t("submitting")
+          : t("submit"),
     reviewCommentsPlaceholder: t("reviewCommentsPlaceholder"),
-    formInstructions: t("formInstructions"),
+    formInstructions:
+      kind === "agent_question"
+        ? t("agentQuestionInstructions")
+        : t("formInstructions"),
     formCustomPlaceholder: t("formCustomPlaceholder"),
     reviewOpenCount: t("reviewOpenCount"),
     reviewOutdatedCount: t("reviewOutdatedCount"),
