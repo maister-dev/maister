@@ -1444,7 +1444,7 @@ export default async function RunDetailLayout({
                     result={flowResultDto}
                   />
                   <AgentRunTranscript
-                    defaultOpen={isLiveRunStatus(detail.status)}
+                    defaultOpen
                     labels={flowRunCenterLabels.transcript}
                     live={isLiveRunStatus(detail.status)}
                     runId={detail.runId}
