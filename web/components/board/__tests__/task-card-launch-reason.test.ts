@@ -36,6 +36,7 @@ const card: BacklogCard = {
   taskPriority: "normal",
   queuePaused: false,
   triageConfidence: null,
+  awaitingClarification: false,
   runCount: 0,
   blockedBy: [],
   flowId: "flow-1",
@@ -76,6 +77,7 @@ describe("TaskCard launch incompatibility", () => {
           title: () => "Children",
         },
         flaggedLabel: "Flagged",
+        awaitingClarificationLabel: "Awaiting clarification",
         launchDisabledLabel: "Launch unavailable",
         launchDisabledReason: reason,
         launchLabel: "Launch",
@@ -99,5 +101,57 @@ describe("TaskCard launch incompatibility", () => {
 
     expect(html).toContain('data-testid="task-card-launch-unavailable-reason"');
     expect(html).toContain(reason);
+  });
+
+  it("renders the task-bound clarification indicator", () => {
+    const awaitingCard = {
+      ...card,
+      awaitingClarification: true,
+    } as BacklogCard;
+    const html = renderToStaticMarkup(
+      createElement(TaskCard, {
+        blockedByLabel: "Blocked by",
+        canAct: false,
+        card: awaitingCard,
+        decompositionLabels: {
+          noRun: "No run",
+          status: {
+            Abandoned: "Abandoned",
+            Crashed: "Crashed",
+            Done: "Done",
+            Failed: "Failed",
+            HumanWorking: "Human working",
+            NeedsInput: "Needs input",
+            NeedsInputIdle: "Needs input idle",
+            Pending: "Pending",
+            Review: "Review",
+            Running: "Running",
+            WaitingOnChildren: "Waiting on children",
+          },
+          title: () => "Children",
+        },
+        flaggedLabel: "Flagged",
+        awaitingClarificationLabel: "Awaiting clarification",
+        launchDisabledLabel: "Launch unavailable",
+        launchLabel: "Launch",
+        queueControlsLabels: {
+          error: "Error",
+          pause: "Pause",
+          paused: "Paused",
+          priorityHigh: "High",
+          priorityLow: "Low",
+          priorityNormal: "Normal",
+          priorityUrgent: "Urgent",
+          resume: "Resume",
+        },
+        relationCandidates: [],
+        runsCountLabel: (count) => `${count} runs`,
+        slug: "maister",
+        triagedLabel: "Triaged",
+        unconfiguredLabel: "Unconfigured",
+      }),
+    );
+
+    expect(html).toContain('data-testid="task-card-awaiting-clarification"');
   });
 });

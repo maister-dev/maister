@@ -19,6 +19,7 @@ import {
   TaskInlineEditableField,
 } from "@/components/board/task-card-editing";
 import { TaskQueueControls } from "@/components/board/task-queue-controls";
+import { TaskClarificationHistory } from "@/components/board/task-clarification-history";
 import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import { CommentComposer } from "@/components/social/comment-composer";
@@ -541,6 +542,16 @@ export default async function TaskDetailPage({
             taskNumber={detail.task.number}
           />
         </div>
+        <TaskClarificationHistory
+          awaitingClarification={detail.task.awaitingClarification}
+          history={detail.task.clarifications}
+          labels={{
+            answer: t("clarificationAnswer"),
+            awaiting: t("awaitingClarification"),
+            question: t("clarificationQuestion"),
+            title: t("clarificationsTitle"),
+          }}
+        />
         <RelationsEditor
           canEdit={canAct}
           labels={{

@@ -42,6 +42,7 @@ const labels: FlightCardLabels = {
   launchUnavailable: "Unavailable",
   unconfigured: "no flow",
   needsAttention: "Needs you",
+  awaitingClarification: "Awaiting clarification",
   flagged: "Needs review",
   waitingOnChildren: "Waiting on children",
   openRun: "Open run",
@@ -80,6 +81,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     flowIncompatibility: null,
     taskPriority: "normal",
     queuePaused: false,
+    awaitingClarification: false,
     runCount: 1,
     runStatus: "Running",
     triageStatus: null,
@@ -165,6 +167,17 @@ describe("FlightCard — humanworking takeover surface (M11b)", () => {
     expect(html).not.toContain("Return");
     // The current node label still renders on row 2.
     expect(html).toContain("implement");
+  });
+});
+
+describe("FlightCard — task-bound clarification", () => {
+  it("renders the task-bound clarification indicator without an inline HITL form", () => {
+    const html = render(
+      baseCard({ awaitingClarification: true } as FlightCardData),
+    );
+
+    expect(html).toContain('data-testid="flight-card-awaiting-clarification"');
+    expect(html).not.toContain("agent-question-response");
   });
 });
 

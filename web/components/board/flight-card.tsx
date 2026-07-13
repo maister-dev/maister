@@ -40,6 +40,7 @@ export interface FlightCardLabels {
   // accessible name for the whole-card stretched link to the run.
   unconfigured: string;
   needsAttention: string;
+  awaitingClarification: string;
   // M37 (ADR-098): badge for a parked orchestrator (WaitingOnChildren) — it sits
   // in the InProduction column but is blocked on its run-tree children, not
   // actively working.
@@ -231,6 +232,14 @@ export function FlightCard({
             data-testid="flight-card-needs"
           >
             {labels.needsAttention}
+          </span>
+        ) : null}
+        {card.awaitingClarification ? (
+          <span
+            className={clsx(BADGE, "border-amber-line bg-amber-soft text-amber")}
+            data-testid="flight-card-awaiting-clarification"
+          >
+            {labels.awaitingClarification}
           </span>
         ) : null}
         {isWaiting ? (

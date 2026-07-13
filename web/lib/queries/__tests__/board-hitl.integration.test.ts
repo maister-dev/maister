@@ -168,6 +168,29 @@ async function seedHitlRequest(
   ]);
 }
 
+async function seedActiveAgentQuestion(
+  id: string,
+  runId: string,
+  taskId: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO hitl_requests (
+       id, run_id, step_id, kind, task_id, activation_state, retrigger_mode,
+       schema, prompt
+     ) VALUES ($1, $2, 'agent', 'agent_question', $3, 'active', 'agent', $4, $5)`,
+    [
+      id,
+      runId,
+      taskId,
+      JSON.stringify({
+        schemaVersion: 1,
+        fields: [{ name: "target", type: "string", required: true }],
+      }),
+      "Which target should this task use?",
+    ],
+  );
+}
+
 // The inline HITL form on the board flight card was removed: a NeedsInput card
 // now flags attention via its `status` alone, and the HITL response happens on
 // the run page (diff visible) or the HITL Inbox. The card DTO carries no
@@ -219,6 +242,39 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
     // SECURITY: supervisor-internal handles never cross to the browser DTO.
     expect(JSON.stringify(card)).not.toContain("sup-sess-secret-42");
     expect(JSON.stringify(card)).not.toContain("req-secret-xyz");
+  });
+
+  it("projects only the active task-bound clarification condition onto the board", async () => {
+    await seedProject("proj-agent-question");
+    await seedExecutor("ex-agent-question", "proj-agent-question");
+    await seedFlow("fl-agent-question", "proj-agent-question", "bugfix");
+    await seedTask(
+      "task-agent-question",
+      "proj-agent-question",
+      "fl-agent-question",
+    );
+    await db.insert(schema.runs).values({
+      id: "run-agent-question",
+      taskId: "task-agent-question",
+      projectId: "proj-agent-question",
+      runKind: "agent",
+      status: "Done",
+      flowVersion: "agent",
+      startedAt: new Date(),
+      endedAt: new Date(),
+    });
+    await seedActiveAgentQuestion(
+      "hitl-agent-question",
+      "run-agent-question",
+      "task-agent-question",
+    );
+
+    const data = await getBoardData("proj-agent-question");
+    const card = data.columns.Backlog.backlog.find(
+      (item) => item.taskId === "task-agent-question",
+    );
+
+    expect(card?.awaitingClarification).toBe(true);
   });
 
   // C2 regression: the run-detail loader is a reader of the permission schema

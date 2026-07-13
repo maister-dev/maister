@@ -27,6 +27,7 @@ export interface TaskCardProps {
   unconfiguredLabel: string;
   triagedLabel: string;
   flaggedLabel: string;
+  awaitingClarificationLabel: string;
   runsCountLabel: (count: number) => string;
   decompositionLabels: TaskDecompositionLabels;
   queueControlsLabels: TaskQueueControlsLabels;
@@ -60,6 +61,7 @@ export function TaskCard({
   unconfiguredLabel,
   triagedLabel,
   flaggedLabel,
+  awaitingClarificationLabel,
   runsCountLabel,
   decompositionLabels,
   queueControlsLabels,
@@ -190,6 +192,14 @@ export function TaskCard({
           {card.triageStatus === "flagged" ? (
             <span className="rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold text-amber">
               {flaggedLabel}
+            </span>
+          ) : null}
+          {card.awaitingClarification ? (
+            <span
+              className="ml-1 rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold text-amber"
+              data-testid="task-card-awaiting-clarification"
+            >
+              {awaitingClarificationLabel}
             </span>
           ) : null}
           {launchDisabledReason ? (

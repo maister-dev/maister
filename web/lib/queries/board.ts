@@ -40,6 +40,7 @@ import {
 const {
   flowRevisions,
   flows,
+  hitlRequests,
   nodeAttempts,
   projects,
   runs,
@@ -107,6 +108,9 @@ export interface BacklogCard {
   taskPriority: TaskPriority;
   queuePaused: boolean;
   triageConfidence: number | null;
+  // Derived from an active terminal-origin agent question; it does not change
+  // the task or run lifecycle state.
+  awaitingClarification: boolean;
   runCount: number;
   // ADR-078 D5: open relation blockers — non-empty disables Launch and
   // renders the reason chip with the blocker KEY-Ns.
@@ -136,6 +140,7 @@ export interface FlightCard {
   // ADR-121: the task's first-class criticality priority + queue-pause flag.
   taskPriority: TaskPriority;
   queuePaused: boolean;
+  awaitingClarification: boolean;
   runCount: number;
   runStatus: RunStatus;
   // ADR-112: held state — a `flagged` flight card (e.g. a Review/Crashed run on a
@@ -360,6 +365,21 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   }
 
   const taskIds = taskRows.map((t) => t.taskId);
+  const activeClarificationRows = await client
+    .select({ taskId: hitlRequests.taskId })
+    .from(hitlRequests)
+    .where(
+      and(
+        inArray(hitlRequests.taskId, taskIds),
+        eq(hitlRequests.kind, "agent_question"),
+        eq(hitlRequests.activationState, "active"),
+        isNull(hitlRequests.respondedAt),
+        isNull(hitlRequests.supersededAt),
+      ),
+    );
+  const awaitingClarificationTaskIds = new Set(
+    activeClarificationRows.flatMap((row) => (row.taskId ? [row.taskId] : [])),
+  );
 
   const [projectKeyRow] = await client
     .select({ taskKey: projects.taskKey })
@@ -619,6 +639,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         taskPriority: (task.priority ?? "normal") as TaskPriority,
         queuePaused: task.queuePaused ?? false,
         triageConfidence: parseConfidence(task.triageConfidence),
+        awaitingClarification: awaitingClarificationTaskIds.has(task.taskId),
         runCount: runCountByTask.get(task.taskId) ?? 0,
         blockedBy: openBlockers.get(task.taskId) ?? [],
         flowId: task.flowId ?? null,
@@ -667,6 +688,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       ),
       taskPriority: (task.priority ?? "normal") as TaskPriority,
       queuePaused: task.queuePaused ?? false,
+      awaitingClarification: awaitingClarificationTaskIds.has(task.taskId),
       runCount: runCountByTask.get(task.taskId) ?? 0,
       runStatus: run.status,
       triageStatus: (task.triageStatus ?? null) as "triaged" | "flagged" | null,

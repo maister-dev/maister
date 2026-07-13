@@ -118,6 +118,7 @@ export async function Board({
     launchUnavailable: t("launchUnavailable"),
     unconfigured: t("unconfigured"),
     needsAttention: t("needsAttention"),
+    awaitingClarification: t("awaitingClarification"),
     flagged: t("flagged"),
     waitingOnChildren: t("waitingOnChildren"),
     openRun: t("openRun"),
@@ -269,6 +270,7 @@ export async function Board({
                     runsCountLabel={(count) => t("runsCount", { count })}
                     slug={slug}
                     triagedLabel={t("triaged")}
+                    awaitingClarificationLabel={t("awaitingClarification")}
                     unconfiguredLabel={t("unconfigured")}
                   />
                 </div>
