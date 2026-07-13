@@ -3449,6 +3449,40 @@
     },
     "toggleMinimap": "Миникарта",
     "toggleProperties": "Панель свойств",
+    "sidebarTabs": {
+      "flow": "Flow",
+      "node": "Узел",
+      "nodeHint": "Выберите узел для редактирования"
+    },
+    "flowMeta": {
+      "heading": "Свойства Flow",
+      "hint": "Метаданные заголовка — редактируются, когда узел не выбран.",
+      "title": "Отображаемое название",
+      "summary": "Краткое описание",
+      "routeWhen": "Когда выбирать (route_when)",
+      "routeWhenHint": "Подсказка на естественном языке: когда выбирать этот flow.",
+      "labels": "Метки",
+      "labelsList": {
+        "add": "Добавить метку",
+        "remove": "Удалить",
+        "placeholder": "метка"
+      },
+      "links": {
+        "field": "Ссылки",
+        "add": "Добавить ссылку",
+        "remove": "Удалить",
+        "title": "Название",
+        "url": "URL",
+        "kind": "Тип (необязательно)"
+      },
+      "sources": {
+        "field": "Источники",
+        "add": "Добавить источник",
+        "remove": "Удалить",
+        "component": "Компонент",
+        "origin": "Источник"
+      }
+    },
     "artifacts": {
       "frontmatterHeading": "Фронтматтер",
       "bodyHeading": "Тело",

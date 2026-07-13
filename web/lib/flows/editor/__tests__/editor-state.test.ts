@@ -1,4 +1,4 @@
-import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { FlowMetadata, FlowYamlV1 } from "@/lib/config.schema";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import { describe, expect, it } from "vitest";
@@ -11,8 +11,10 @@ import {
   addNode,
   moveNode,
   removeGate,
+  pruneManifestMetadata,
   removeNode,
   replaceNode,
+  setMetadata,
   setNodeAction,
   setNodeSettings,
   setTransition,
@@ -647,5 +649,97 @@ describe("presentation round-trip (save -> reload -> read-only view parity)", ()
     expect((codeNode.data as Record<string, unknown>).presentationColor).toBe(
       "#22c55e",
     );
+  });
+});
+
+describe("setMetadata", () => {
+  it("stores the metadata block raw, keeping blank rows for mid-edit", () => {
+    const next = {
+      summary: "keep me",
+      labels: ["", "wip"],
+      links: [{ title: "", url: "" }],
+    } as FlowMetadata;
+
+    const out = setMetadata(BASE_MANIFEST, next);
+
+    // raw — blank rows survive so the side-form add-row affordance works
+    expect(out.metadata).toEqual(next);
+  });
+
+  it("does not mutate the input manifest", () => {
+    const before = JSON.stringify(BASE_MANIFEST);
+
+    setMetadata(BASE_MANIFEST, { summary: "x" } as FlowMetadata);
+
+    expect(JSON.stringify(BASE_MANIFEST)).toBe(before);
+  });
+});
+
+describe("pruneManifestMetadata (serialize boundary)", () => {
+  it("keeps a full, valid block and the result re-validates against the strict schema", () => {
+    const next: FlowMetadata = {
+      title: "Bugfix",
+      summary: "Fix and verify a reported bug",
+      labels: ["bug", "backend"],
+      route_when: "the task is a defect report",
+      links: [{ title: "Runbook", url: "https://example.com/runbook" }],
+      sources: [{ component: "api", origin: "github.com/acme/api" }],
+    };
+
+    const out = pruneManifestMetadata(setMetadata(BASE_MANIFEST, next));
+
+    expect(out.metadata).toEqual(next);
+    expect(() => flowYamlV1Schema.parse(out)).not.toThrow();
+  });
+
+  it("prunes empty strings, blank label rows, and empty arrays", () => {
+    const out = pruneManifestMetadata(
+      setMetadata(BASE_MANIFEST, {
+        title: "",
+        summary: "keep me",
+        labels: ["", "keep", ""],
+        route_when: "",
+        links: [],
+        sources: [],
+      } as FlowMetadata),
+    );
+
+    expect(out.metadata).toEqual({ summary: "keep me", labels: ["keep"] });
+  });
+
+  it("drops the metadata key entirely when everything is empty", () => {
+    const out = pruneManifestMetadata(
+      setMetadata(BASE_MANIFEST, {
+        title: "",
+        labels: [""],
+      } as FlowMetadata),
+    );
+
+    expect("metadata" in out).toBe(false);
+  });
+
+  it("filters out link/source rows missing required fields", () => {
+    const out = pruneManifestMetadata(
+      setMetadata(BASE_MANIFEST, {
+        links: [
+          { title: "ok", url: "https://example.com" },
+          { title: "no url", url: "" },
+          { title: "", url: "https://example.com" },
+        ],
+        sources: [
+          { component: "api", origin: "repo" },
+          { component: "", origin: "repo" },
+        ],
+      } as FlowMetadata),
+    );
+
+    expect(out.metadata).toEqual({
+      links: [{ title: "ok", url: "https://example.com" }],
+      sources: [{ component: "api", origin: "repo" }],
+    });
+  });
+
+  it("is a no-op when metadata is absent", () => {
+    expect(pruneManifestMetadata(BASE_MANIFEST).metadata).toBeUndefined();
   });
 });

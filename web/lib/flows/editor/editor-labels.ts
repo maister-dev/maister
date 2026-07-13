@@ -1,6 +1,7 @@
 import type { ArtifactContentIssuesLabels } from "@/components/flows/editor-validation-summary";
 import type { FlowEditorTabsLabels } from "@/components/flows/flow-editor-tabs";
 import type { FlowGraphEditorLabels } from "@/components/flows/flow-graph-editor";
+import type { FlowMetadataFormLabels } from "@/components/flows/node-form/flow-metadata-form";
 import type { FormSchemaBuilderLabels } from "@/components/flows/artifact-editors/form-schema-builder";
 import type { FrontmatterArtifactEditorLabels } from "@/components/flows/artifact-editors/frontmatter-artifact-editor";
 import type { McpTemplateEditorLabels } from "@/components/flows/artifact-editors/mcp-template-editor";
@@ -275,6 +276,38 @@ export function manifestFormLabels(t: T): PackageManifestFormLabels {
   };
 }
 
+export function buildFlowMetadataFormLabels(te: T): FlowMetadataFormLabels {
+  return {
+    heading: te("flowMeta.heading"),
+    hint: te("flowMeta.hint"),
+    title: te("flowMeta.title"),
+    summary: te("flowMeta.summary"),
+    routeWhen: te("flowMeta.routeWhen"),
+    routeWhenHint: te("flowMeta.routeWhenHint"),
+    labels: te("flowMeta.labels"),
+    labelsList: {
+      add: te("flowMeta.labelsList.add"),
+      remove: te("flowMeta.labelsList.remove"),
+      placeholder: te("flowMeta.labelsList.placeholder"),
+    },
+    links: {
+      field: te("flowMeta.links.field"),
+      add: te("flowMeta.links.add"),
+      remove: te("flowMeta.links.remove"),
+      title: te("flowMeta.links.title"),
+      url: te("flowMeta.links.url"),
+      kind: te("flowMeta.links.kind"),
+    },
+    sources: {
+      field: te("flowMeta.sources.field"),
+      add: te("flowMeta.sources.add"),
+      remove: te("flowMeta.sources.remove"),
+      component: te("flowMeta.sources.component"),
+      origin: te("flowMeta.sources.origin"),
+    },
+  };
+}
+
 export function buildFlowEditorTabsLabels(te: T): FlowEditorTabsLabels {
   const gateKind = {
     command_check: te("toolbar.gateKind.command_check"),
@@ -313,6 +346,12 @@ export function buildFlowEditorTabsLabels(te: T): FlowEditorTabsLabels {
     gateKind,
     graph: { title: te("page.graphTab"), empty: "", currentNode: "", node: {} },
     nodeForm: buildNodeSideFormLabels(te),
+    flowMeta: buildFlowMetadataFormLabels(te),
+    sidebarTabs: {
+      flow: te("sidebarTabs.flow"),
+      node: te("sidebarTabs.node"),
+      nodeHint: te("sidebarTabs.nodeHint"),
+    },
     validation: {
       valid: te("validation.valid"),
       title: te("validation.title"),

@@ -2,6 +2,7 @@
 
 import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import type { EditorValidationSummaryLabels } from "@/components/flows/editor-validation-summary";
+import type { FlowMetadataFormLabels } from "@/components/flows/node-form/flow-metadata-form";
 import type {
   NodePresentationStyle,
   NodeSideFormLabels,
@@ -9,7 +10,7 @@ import type {
 import type { FlowNodeData } from "@/lib/board/flow-graph-view-layout";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
-import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { FlowMetadata, FlowYamlV1 } from "@/lib/config.schema";
 import type { GateKind, NodeType } from "@/lib/flows/editor/editor-state";
 import type {
   CapabilityOption,
@@ -48,6 +49,7 @@ import {
   EdgeConnectModal,
   type EdgeConnectModalLabels,
 } from "@/components/flows/edge-connect-modal";
+import { FlowMetadataForm } from "@/components/flows/node-form/flow-metadata-form";
 import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
 import { edgeOutcomeStyle, isBackEdgeOutcome } from "@/lib/flows/edge-style";
@@ -59,6 +61,7 @@ import {
   outcomeExistsForSource,
   removeNode,
   replaceNode,
+  setMetadata,
   setTransition,
 } from "@/lib/flows/editor/editor-state";
 import { readPresentation } from "@/lib/flows/editor/manifest-io";
@@ -82,6 +85,8 @@ export type FlowEditorToolbarLabels = {
 export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
   graph: FlowGraphViewLabels;
   nodeForm: NodeSideFormLabels;
+  flowMeta: FlowMetadataFormLabels;
+  sidebarTabs: { flow: string; node: string; nodeHint: string };
   validation: EditorValidationSummaryLabels;
   edgeModal: EdgeConnectModalLabels;
   toggleProperties: string;
@@ -575,6 +580,16 @@ export default function FlowGraphEditor({
     [applyManifest, selectedNodeId],
   );
 
+  // Flow-level metadata edits (no node selected). Flows through the SAME
+  // applyManifest→onChange path as node edits; the serialize boundary prunes
+  // blank rows (pruneManifestMetadata in flow-editor-tabs).
+  const handleMetadataChange = useCallback(
+    (next: FlowMetadata): void => {
+      applyManifest((m) => setMetadata(m, next), "edit-metadata");
+    },
+    [applyManifest],
+  );
+
   // Side-form width/height/color edits merge into the node's presentation entry
   // through the SAME moveNode merge as drag, so x/y are carried from the live
   // canvas position. The canvas node's data + dims are patched in lockstep so the
@@ -747,10 +762,43 @@ export default function FlowGraphEditor({
             className="flex w-[clamp(420px,34vw,560px)] shrink-0 flex-col gap-3 overflow-y-auto border-l border-line bg-paper p-3"
             data-testid="flow-graph-editor-sidebar"
           >
-            <div className="flex items-center justify-end">
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-md border border-line bg-paper p-0.5">
+                <button
+                  aria-pressed={selectedNodeId === null}
+                  className={`rounded-[5px] px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] ${
+                    selectedNodeId === null
+                      ? "bg-ivory text-ink"
+                      : "text-mute hover:text-ink"
+                  }`}
+                  data-testid="sidebar-tab-flow"
+                  type="button"
+                  onClick={() => select(null)}
+                >
+                  {labels.sidebarTabs.flow}
+                </button>
+                <button
+                  aria-pressed={selectedNodeId !== null}
+                  className={`max-w-[160px] truncate rounded-[5px] px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] ${
+                    selectedNodeId !== null
+                      ? "bg-ivory text-ink"
+                      : "cursor-default text-mute opacity-60"
+                  }`}
+                  data-testid="sidebar-tab-node"
+                  disabled={selectedNodeId === null}
+                  title={
+                    selectedNodeId === null
+                      ? labels.sidebarTabs.nodeHint
+                      : undefined
+                  }
+                  type="button"
+                >
+                  {selectedNodeId ?? labels.sidebarTabs.node}
+                </button>
+              </div>
               <button
                 aria-label={labels.toggleProperties}
-                className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+                className="ml-auto rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
                 data-testid="flow-properties-toggle"
                 title={labels.toggleProperties}
                 type="button"
@@ -764,31 +812,39 @@ export default function FlowGraphEditor({
               result={validation}
               onSelectNode={select}
             />
-            <NodeSideForm
-              labels={labels.nodeForm}
-              mcpOptions={mcpOptions}
-              node={selectedNode}
-              participantSources={participantSources}
-              presentation={
-                selectedPresentation
-                  ? {
-                      width: selectedPresentation.width,
-                      height: selectedPresentation.height,
-                      color: selectedPresentation.color,
-                    }
-                  : undefined
-              }
-              promptAdapter={promptAdapter}
-              promptCatalog={promptCatalog}
-              promptVariableCatalog={promptAssists.variableCatalog}
-              promptVariableWarnings={promptAssists.variableWarnings}
-              schemaFiles={schemaFiles}
-              sessionNames={sessionNames}
-              skillOptions={skillOptions}
-              onChange={handleNodeFormChange}
-              onPresentationChange={handlePresentationChange}
-              onWriteSchemaFile={onWriteSchemaFile}
-            />
+            {selectedNodeId === null ? (
+              <FlowMetadataForm
+                labels={labels.flowMeta}
+                metadata={manifest.metadata}
+                onChange={handleMetadataChange}
+              />
+            ) : (
+              <NodeSideForm
+                labels={labels.nodeForm}
+                mcpOptions={mcpOptions}
+                node={selectedNode}
+                participantSources={participantSources}
+                presentation={
+                  selectedPresentation
+                    ? {
+                        width: selectedPresentation.width,
+                        height: selectedPresentation.height,
+                        color: selectedPresentation.color,
+                      }
+                    : undefined
+                }
+                promptAdapter={promptAdapter}
+                promptCatalog={promptCatalog}
+                promptVariableCatalog={promptAssists.variableCatalog}
+                promptVariableWarnings={promptAssists.variableWarnings}
+                schemaFiles={schemaFiles}
+                sessionNames={sessionNames}
+                skillOptions={skillOptions}
+                onChange={handleNodeFormChange}
+                onPresentationChange={handlePresentationChange}
+                onWriteSchemaFile={onWriteSchemaFile}
+              />
+            )}
           </aside>
         ) : (
           <button

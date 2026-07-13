@@ -3449,6 +3449,40 @@
     },
     "toggleMinimap": "Toggle minimap",
     "toggleProperties": "Toggle properties",
+    "sidebarTabs": {
+      "flow": "Flow",
+      "node": "Node",
+      "nodeHint": "Select a node to edit it"
+    },
+    "flowMeta": {
+      "heading": "Flow properties",
+      "hint": "Header metadata — edited when no node is selected.",
+      "title": "Display title",
+      "summary": "Summary",
+      "routeWhen": "Route when",
+      "routeWhenHint": "Natural-language hint for when to pick this flow.",
+      "labels": "Labels",
+      "labelsList": {
+        "add": "Add label",
+        "remove": "Remove",
+        "placeholder": "label"
+      },
+      "links": {
+        "field": "Links",
+        "add": "Add link",
+        "remove": "Remove",
+        "title": "Title",
+        "url": "URL",
+        "kind": "Kind (optional)"
+      },
+      "sources": {
+        "field": "Sources",
+        "add": "Add source",
+        "remove": "Remove",
+        "component": "Component",
+        "origin": "Origin"
+      }
+    },
     "artifacts": {
       "frontmatterHeading": "Frontmatter",
       "bodyHeading": "Body",

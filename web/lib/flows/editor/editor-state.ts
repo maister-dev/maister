@@ -1,4 +1,4 @@
-import type { FlowYamlV1, NodeDef } from "@/lib/config.schema";
+import type { FlowMetadata, FlowYamlV1, NodeDef } from "@/lib/config.schema";
 
 import { MaisterError } from "@/lib/errors-core";
 import {
@@ -209,6 +209,86 @@ export function replaceNode(
   );
 
   return { ...manifest, nodes: updatedNodes };
+}
+
+// Prune a metadata draft to a schema-valid shape: trim strings, drop empties,
+// filter blank label rows and incomplete link/source rows. Returns null when
+// nothing survives (so the caller can drop the key rather than emit `{}`, which
+// the strict flowMetadataSchema rejects).
+function pruneMetadata(m: FlowMetadata): FlowMetadata | null {
+  const out: FlowMetadata = {};
+  const title = m.title?.trim();
+  const summary = m.summary?.trim();
+  const routeWhen = m.route_when?.trim();
+
+  if (title) out.title = title;
+  if (summary) out.summary = summary;
+  if (routeWhen) out.route_when = routeWhen;
+
+  const labels = (m.labels ?? [])
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+
+  if (labels.length > 0) out.labels = labels;
+
+  const links = (m.links ?? [])
+    .filter((link) => link.title.trim() && link.url.trim())
+    .map((link) => {
+      const kind = link.kind?.trim();
+
+      return {
+        ...(kind ? { kind } : {}),
+        title: link.title.trim(),
+        url: link.url.trim(),
+      };
+    });
+
+  if (links.length > 0) out.links = links;
+
+  const sources = (m.sources ?? [])
+    .filter((source) => source.component.trim() && source.origin.trim())
+    .map((source) => ({
+      component: source.component.trim(),
+      origin: source.origin.trim(),
+    }));
+
+  if (sources.length > 0) out.sources = sources;
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * Replace the flow-level `metadata` block (title/summary/labels/route_when/
+ * links/sources). Raw + immutable, mirroring replaceNode: blank rows are KEPT so
+ * the side-form's add-row affordance works mid-edit. The canvas→YAML serialize
+ * boundary prunes them via pruneManifestMetadata, exactly as node list fields are
+ * pruned there (pruneEmptyListEntries) — never per-keystroke.
+ */
+export function setMetadata(
+  manifest: FlowYamlV1,
+  next: FlowMetadata,
+): FlowYamlV1 {
+  return { ...manifest, metadata: next };
+}
+
+/**
+ * Serialize-time cleanup of the metadata block: trims strings, drops empties and
+ * blank label rows, filters incomplete link/source rows, and removes the
+ * `metadata` key entirely when nothing survives — so the strict flowMetadataSchema
+ * never sees `metadata: {}` or a blank row. Pure; no-op when metadata is absent.
+ */
+export function pruneManifestMetadata(manifest: FlowYamlV1): FlowYamlV1 {
+  if (manifest.metadata === undefined) return manifest;
+
+  const cleaned = pruneMetadata(manifest.metadata);
+
+  if (cleaned) return { ...manifest, metadata: cleaned };
+
+  const rest = { ...manifest };
+
+  delete rest.metadata;
+
+  return rest;
 }
 
 /**
