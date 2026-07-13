@@ -182,7 +182,7 @@ async function installCorePackage(opts?: {
        ("id", "source_url", "name", "version_label", "resolved_revision",
         "manifest", "manifest_digest", "installed_path", "package_status",
         "trust_status")
-     VALUES ($1, 'github.com/maisterhq/maister-plugins', 'core', 'v1.0.0',
+     VALUES ($1, 'github.com/maisterhq/maister-plugins', 'core', 'v1.0.1',
              'rev-core-1', $2::jsonb, 'digest', $3, $4, $5)`,
     [
       installId,
