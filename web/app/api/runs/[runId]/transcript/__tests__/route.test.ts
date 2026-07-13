@@ -5,7 +5,7 @@
 //   requireActiveSession()
 //   detail = getRunDetail(runId); !detail → bare 404 {message}
 //   requireProjectAction(detail.projectId, "readRepoFiles")   (MEMBER, not viewer)
-//   node missing → 400 {code:"CONFIG"}
+//   node missing → 200 whole-run agent transcript (getAgentRunTranscript)
 //   node not in compiled graph → 409 {code:"PRECONDITION"}
 //   else projectRunTranscript(runId) + getRunNodeTranscript(runId, node)
 //        → 200 {messages, usage}, no internal handles leaked.
@@ -19,6 +19,7 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { getRunDetail } from "@/lib/queries/run";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
+  getAgentRunTranscript,
   getRunNodeTranscript,
   projectRunTranscript,
 } from "@/lib/runs/run-transcript-projector";
@@ -37,6 +38,7 @@ vi.mock("@/lib/flows/graph/compile", () => ({ compileManifest: vi.fn() }));
 vi.mock("@/lib/runs/run-transcript-projector", () => ({
   projectRunTranscript: vi.fn(),
   getRunNodeTranscript: vi.fn(),
+  getAgentRunTranscript: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -77,6 +79,12 @@ beforeEach(() => {
       },
     ],
     usage: { used: 100, size: 200000 },
+  });
+  vi.mocked(getAgentRunTranscript).mockResolvedValue({
+    messages: [
+      { id: "a1", role: "assistant", content: "agent said hi", createdAt: "" },
+    ],
+    usage: null,
   });
 });
 
@@ -138,12 +146,16 @@ describe("GET /api/runs/[runId]/transcript", () => {
     expect(projectRunTranscript).not.toHaveBeenCalled();
   });
 
-  it("returns 400 CONFIG when ?node is missing", async () => {
+  it("without ?node returns 200 with the whole-run agent transcript", async () => {
     const res = await invoke(RUN_ID);
-    const body = (await res.json()) as { code?: string };
+    const body = (await res.json()) as {
+      messages: { role: string; content: string }[];
+    };
 
-    expect(res.status).toBe(400);
-    expect(body.code).toBe("CONFIG");
+    expect(res.status).toBe(200);
+    expect(getAgentRunTranscript).toHaveBeenCalledWith(RUN_ID);
+    expect(getRunNodeTranscript).not.toHaveBeenCalled();
+    expect(body.messages).toHaveLength(1);
   });
 
   it("returns 409 PRECONDITION for a node not in the compiled graph", async () => {
