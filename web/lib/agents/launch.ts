@@ -1634,6 +1634,33 @@ function configContextBlock(
   ].join("\n");
 }
 
+// The MAIster MCP facade tools are project-scoped: every one takes a required
+// `slug` argument that must match the token's project. The trigger payload only
+// carries the task KEY (e.g. "MAI-4"), which agents were mis-passing as the
+// project ("project not found") — so surface the real project slug explicitly.
+async function projectScopeBlock(
+  _db: Db,
+  run: Record<string, any>,
+): Promise<string | null> {
+  if (!run.projectId) return null;
+
+  const rows = await _db
+    .select({ slug: projects.slug })
+    .from(projects)
+    .where(eq(projects.id, run.projectId as string));
+  const slug = rows[0]?.slug;
+
+  if (!slug) return null;
+
+  return [
+    "## Project scope",
+    `This run is bound to project slug \`${slug}\`. Every MAIster MCP tool ` +
+      "(`task_get`, `task_list`, `triage_set`, `runner_list`, `flow_list`, " +
+      "`comment_list`, …) takes a required `slug` argument — always pass " +
+      `\`slug: "${slug}"\`. Do NOT pass the task key (e.g. "MAI-4") as the slug.`,
+  ].join("\n");
+}
+
 // The prompt body comes from the EFFECTIVE definition (the project-pinned
 // package revision, resolved by the caller at spawn time) — never from the
 // catalog index row.
@@ -1643,10 +1670,14 @@ export async function buildAgentPrompt(
   run: Record<string, any>,
 ): Promise<string> {
   const sections = [parsed.prompt.trim()];
+  const scopeBlock = await projectScopeBlock(_db, run);
   const configBlock = configContextBlock(parsed, run);
   const taskBlock = await taskContextBlock(_db, run);
   const commentTriggerBlock = await taskCommentTriggerContextBlock(_db, run);
 
+  // The project-scope block (the slug the MAIster MCP tools require) lands right
+  // after the persona body so the agent reads its scope before anything else.
+  if (scopeBlock) sections.push(scopeBlock);
   // ADR-111 (D5): the config block lands right after the persona body and
   // BEFORE the task block — the agent reads its effective config first.
   if (configBlock) sections.push(configBlock);
