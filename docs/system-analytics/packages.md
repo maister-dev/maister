@@ -272,6 +272,19 @@ sequenceDiagram
   offered by `getPublishOptions`; a forged `targetSourceId` fails the
   allow-list with `MaisterError("CONFLICT")`.
 
+## Trust-confirmation presentation contract (Implemented)
+
+Before a global administrator confirms the existing trust operation, the UI
+may show an advisory snapshot count of affected projects. The count is
+`COUNT(DISTINCT project_package_attachments.project_id)` for the exact selected
+`package_install_id`; attachments for another install and multiple member
+revisions of the same install are not double-counted.
+
+The count is read-model copy, not an authorization or concurrency decision.
+The existing global-admin route remains authoritative and keeps its request
+payload and trust fan-out semantics unchanged if attachments change between
+the read and confirmation. Cancel sends no trust request.
+
 ## Linked artifacts
 
 - Decision: [`../decisions.md` ADR-088](../decisions.md#adr-088-multi-flow-package-management)

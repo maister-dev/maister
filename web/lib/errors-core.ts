@@ -25,6 +25,34 @@ export type MaisterErrorCode =
   | "PASSWORD_CHANGE_REQUIRED"
   | "ACCOUNT_INACTIVE";
 
+export const MAISTER_ERROR_CODES = [
+  "PRECONDITION",
+  "SPAWN",
+  "NEEDS_INPUT",
+  "HITL_TIMEOUT",
+  "CRASH",
+  "CONFLICT",
+  "CONFIG",
+  "EXECUTOR_UNAVAILABLE",
+  "FLOW_INSTALL",
+  "ACP_PROTOCOL",
+  "CHECKPOINT",
+  "BUDGET_EXCEEDED",
+  "EMBEDDING_UNAVAILABLE",
+  "STEP_CHECKPOINTED",
+  "UNAUTHENTICATED",
+  "UNAUTHORIZED",
+  "PASSWORD_CHANGE_REQUIRED",
+  "ACCOUNT_INACTIVE",
+] as const satisfies readonly MaisterErrorCode[];
+
+export function isMaisterErrorCode(value: unknown): value is MaisterErrorCode {
+  return (
+    typeof value === "string" &&
+    (MAISTER_ERROR_CODES as readonly string[]).includes(value)
+  );
+}
+
 export class MaisterError extends Error {
   readonly code: MaisterErrorCode;
   // ADR-093: additive, optional structured context (e.g. the advisory clone

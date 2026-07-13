@@ -4,6 +4,7 @@
 - **Status:** Implemented (WI-3 runners readiness). The Inbox badge count is
   unified by WI-1 — see [`../inbox.md`](../inbox.md). The section nav is
   route-aware and uses packaged Heroicons for destination and flyout icons.
+  UI completion mobile navigation and Observatory placement are Implemented.
 - **Source:** `web/components/chrome/left-rail.tsx`,
   `web/components/chrome/left-rail-nav.tsx`,
   `web/components/chrome/left-rail-route.ts`, fed by
@@ -19,7 +20,7 @@ launch — so I can navigate and start work without leaving the current screen.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Global viewer / member | Projects, Inbox, Flow Studio nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Settings` are hidden (admin-only) |
+| Global viewer / member | Projects, Inbox, Flow Studio, Observatory nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Settings` are hidden (admin-only) |
 | Global admin | All of the above plus `Agents`, `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; `Agents`/`MCPs`/`Users`/`Scheduler` re-check `requireGlobalRole("admin")`, while `/settings` renders a forbidden panel and loads no admin data for non-admins |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
@@ -29,7 +30,7 @@ The hidden admin nav is never the authorization boundary — the route enforces 
 The rail is the primary navigation spine. Entry points / exits:
 
 - **Section nav** → `/` (portfolio), `/inbox` ([`../inbox.md`](../inbox.md)),
-  `/studio` ([`../studio/README.md`](../studio/README.md)), `/agents` (admin),
+  `/studio` ([`../studio/README.md`](../studio/README.md)), `/observatory`, `/agents` (admin),
   `/mcps` ([`../mcps.md`](../mcps.md), admin), `/admin/users`,
   `/admin/scheduler`, `/settings`. The active section is resolved from the
   current pathname, so
@@ -46,7 +47,7 @@ See [`../README.md`](../README.md) for the global IA map.
 
 Expanded mode, top to bottom:
 
-1. **Section nav** — Projects, Inbox (badge), Flow Studio, then the admin block
+1. **Section nav** — Projects, Inbox (badge), Flow Studio, Observatory, then the admin block
    (Agents, MCPs, Users, Scheduler, Settings). The Inbox badge shows the
    canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)). Section
    icons come from `@heroicons/react`; Settings uses the gear icon and the
@@ -97,6 +98,16 @@ Collapsed mode order:
    as expanded mode.
 4. **Compact launch** — the `+` control opens the existing
    [`launch-dialog.md`](launch-dialog.md).
+
+### Mobile drawer (Implemented — UI completion batch)
+
+Below `md`, the top-nav hamburger opens one HeroUI drawer that receives the
+same server-projected sections as this rail. It is not a second navigation
+definition and mounts the interactive rail content only while open, preventing
+duplicate scratch popovers/hotkeys. It traps focus, locks background scrolling,
+closes on Escape and route change, and restores focus to the hamburger. The
+existing route authorization remains the authority; Observatory follows the
+same visibility model as its route.
 
 ## States
 

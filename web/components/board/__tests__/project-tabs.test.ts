@@ -27,4 +27,12 @@ describe("ProjectTabs", () => {
     expect(html).toContain('aria-selected="true"');
     expect(html).not.toContain("?tab=experiments");
   });
+
+  it("does not render the retired pull-request tab", async () => {
+    const html = renderToStaticMarkup(
+      await ProjectTabs({ slug: "proj", active: "board", boardCount: 7 }),
+    );
+
+    expect(html).not.toContain("nav.prs");
+  });
 });

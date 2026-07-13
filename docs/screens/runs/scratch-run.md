@@ -107,6 +107,15 @@ The scratch screen uses the conversation as the primary center:
 On mobile, the inspector collapses behind a button in the run header, and the
 composer remains reachable after the transcript.
 
+### UI completion contract (Implemented)
+
+The conversation shows the existing stream's liveness as accessible
+`connecting`, `live`, `reconnecting`, or `disconnected` presentation. It keeps
+the retained `lastEventId` for the existing replay path and offers a manual
+reconnect action. The conversation is the single scratch-stream owner; terminal
+state, unmount, and run replacement cancel retry work. This does not change
+`runs.status`, `scratch_runs.dialog_status`, or message/prompt behavior.
+
 ## States
 
 ```mermaid

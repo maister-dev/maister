@@ -3,12 +3,14 @@
 import { useRunStream } from "@/lib/use-run-stream";
 
 export function RunStreamFixture({ runId }: { runId: string }) {
-  const { events, status, lastEventId, error, reconnect } = useRunStream(runId);
+  const { events, status, liveness, lastEventId, error, reconnect } =
+    useRunStream(runId);
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3 text-sm font-mono">
         <span>status: {status}</span>
+        <span>liveness: {liveness}</span>
         <span>lastEventId: {lastEventId ?? "—"}</span>
         <span>events: {events.length}</span>
         {error ? <span className="text-red-500">error: {error}</span> : null}

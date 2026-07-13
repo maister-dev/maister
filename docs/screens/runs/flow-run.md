@@ -133,6 +133,19 @@ The Flow result should not render as a card inside another card. It owns the
 page center; individual node summaries, artifact rows, and modal details may use
 cards.
 
+### UI completion contract (Implemented)
+
+The run shell adds a shared liveness pill for the existing SSE subscription.
+It announces `connecting`, `live`, `reconnecting`, and `disconnected` states
+with text and a manual reconnect action; this is presentation only and never
+changes execution state. The shell is the one subscription owner for child
+refresh, inspector, transcript, and graph consumers.
+
+For `Review`, the header reuses the inspector's Review/Promote operation. A
+non-immediately-promotable run opens the existing review surface; an
+immediately-promotable run still passes the inspector's mode, reviewed commit,
+readiness, target-drift, and diff-completeness guards before submitting.
+
 ## States
 
 ```mermaid

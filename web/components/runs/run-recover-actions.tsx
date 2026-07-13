@@ -1,13 +1,15 @@
 "use client";
 
 import type { RecoverUiState } from "@/lib/runs/recover-ui";
-import type { ReactElement, ReactNode } from "react";
+import type { ReactElement } from "react";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useFeedback } from "@/components/feedback/feedback-provider";
 import { recoverHttpToUiState } from "@/lib/runs/recover-ui";
 
 export interface RunRecoverActionsProps {
@@ -31,131 +33,13 @@ const RECOVER_ERROR_KEY: Record<RecoverErrorState, string> = {
   error: "recoverError",
 };
 
-function ConfirmDialog({
-  testId,
-  titleId,
-  title,
-  body,
-  cancelLabel,
-  onClose,
-  children,
-}: {
-  testId: string;
-  titleId: string;
-  title: string;
-  body: string;
-  cancelLabel: string;
-  onClose: () => void;
-  children: ReactNode;
-}): ReactElement {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useRef(onClose);
-
-  onCloseRef.current = onClose;
-
-  useEffect(() => {
-    restoreFocusRef.current = document.activeElement as HTMLElement | null;
-
-    const focusable = (): HTMLElement[] =>
-      dialogRef.current
-        ? Array.from(
-            dialogRef.current.querySelectorAll<HTMLElement>(
-              'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
-            ),
-          )
-        : [];
-
-    focusable()[0]?.focus();
-
-    const previousOverflow = document.body.style.overflow;
-
-    document.body.style.overflow = "hidden";
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-
-        return;
-      }
-
-      if (event.key !== "Tab") return;
-
-      const items = focusable();
-
-      if (items.length === 0) return;
-
-      const first = items[0];
-      const last = items[items.length - 1];
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      restoreFocusRef.current?.focus();
-    };
-  }, []);
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-      <button
-        aria-label={cancelLabel}
-        className="absolute inset-0 cursor-default bg-[rgba(22,20,15,0.45)] backdrop-blur-sm"
-        tabIndex={-1}
-        type="button"
-        onClick={onClose}
-      />
-      <div
-        ref={dialogRef}
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="relative flex max-h-[88vh] w-full max-w-[460px] flex-col overflow-hidden rounded-[14px] border border-line bg-paper shadow-[var(--shadow-lg)]"
-        data-testid={testId}
-        role="dialog"
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
-          <h2
-            className="m-0 font-sans text-base font-bold tracking-[-0.01em] text-ink"
-            id={titleId}
-          >
-            {title}
-          </h2>
-          <button
-            aria-label={cancelLabel}
-            className="font-mono text-[14px] text-mute hover:text-ink"
-            type="button"
-            onClick={onClose}
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-4 overflow-y-auto overscroll-contain px-5 py-5">
-          <p className="m-0 text-[13px] leading-[1.5] text-body">{body}</p>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function RunRecoverActions({
   runId,
   canRecover,
 }: RunRecoverActionsProps): ReactElement {
   const t = useTranslations("run");
   const router = useRouter();
+  const feedback = useFeedback();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<RecoverErrorState | null>(null);
@@ -181,6 +65,10 @@ export function RunRecoverActions({
       const state = recoverHttpToUiState(res.status);
 
       if (state === "resumed") {
+        feedback.success({
+          message: t("recoverSucceeded"),
+          mutationId: `recover:${runId}`,
+        });
         router.refresh();
         setDialog(null);
 
@@ -188,6 +76,10 @@ export function RunRecoverActions({
       }
 
       if (state === "queued") {
+        feedback.success({
+          message: t("recoverQueued"),
+          mutationId: `recover:${runId}`,
+        });
         setQueued(true);
         setDialog(null);
 
@@ -214,6 +106,10 @@ export function RunRecoverActions({
       });
 
       if (res.status === 200) {
+        feedback.success({
+          message: t("discardSucceeded"),
+          mutationId: `discard:${runId}`,
+        });
         router.refresh();
         setDialog(null);
 
@@ -282,6 +178,7 @@ export function RunRecoverActions({
       {dialog === "recover" ? (
         <ConfirmDialog
           body={t("recoverConfirmBody")}
+          busy={busy}
           cancelLabel={t("cancel")}
           testId="recover-confirm"
           title={t("recoverConfirmTitle")}
@@ -325,6 +222,7 @@ export function RunRecoverActions({
       {dialog === "discard" ? (
         <ConfirmDialog
           body={t("discardConfirmBody")}
+          busy={busy}
           cancelLabel={t("cancel")}
           testId="discard-confirm"
           title={t("discardConfirmTitle")}

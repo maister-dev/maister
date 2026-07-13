@@ -17,6 +17,29 @@ The app theme tokens (`--ink`, `--ink-2`, `--mute`, `--line`, `--paper`,
 `web/styles/globals.css` and are light/dark-tuned. Every primitive below is
 expressed in those tokens — never raw hex.
 
+## Feedback primitives (Implemented — UI completion batch)
+
+The shared feedback layer is the only app-wide owner for transient mutation
+outcomes and destructive confirmation. It lives under
+`web/components/feedback/` and uses HeroUI v3 without a second component
+library.
+
+- **Feedback provider / toast:** one provider sits below the theme provider.
+  Success uses the existing green-check convention; failure copy is localized,
+  non-sensitive, and never shows a raw error code/message. A completed request
+  emits at most one toast.
+- **Confirm dialog:** a `ConfirmDialogFrame` owns deterministic frame markup;
+  `ConfirmDialog` portals it to `document.body`. It supplies an accessible
+  label, focus trap/restore, and busy lock. Escape, backdrop, cancel, and a
+  repeat confirm do nothing while the unchanged destructive request is pending.
+- **Error fallback / skeleton / liveness pill:** error fallback exposes only
+  localized recovery plus a recognized diagnostic code label; skeletons mark
+  their region `aria-busy`; liveness combines text, color, `aria-live`, and a
+  reconnect action. These are presentation state and do not write run state.
+
+The SDD evidence in the UI-completion specification records the implementation
+and validation of this contract.
+
 ## Tabs — the segmented control
 
 `Tabs` (`web/components/navigation/tabs.tsx`) is the **one** tab/segmented-control

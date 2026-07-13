@@ -17,6 +17,15 @@
     "openInbox": "Open inbox",
     "history": "history"
   },
+  "errorBoundary": {
+    "eyebrow": "Recovery",
+    "title": "Something went wrong",
+    "generic": "The page could not be displayed. Try again or return to your portfolio.",
+    "known": "This request could not be completed. Try again or return to your portfolio.",
+    "diagnosticCode": "Diagnostic code: {code}",
+    "reset": "Try again",
+    "portfolio": "Go to Portfolio"
+  },
   "projectSchedules": {
     "title": "Schedules",
     "sub": "Cron-driven run launches for this project's tasks",
@@ -136,6 +145,11 @@
     "webhooks": "Webhooks",
     "crumbProjects": "~/projects",
     "comingSoon": "Coming soon",
+    "primaryLabel": "Primary navigation",
+    "railLabel": "Sections and active workspaces",
+    "sectionsLabel": "Sections",
+    "openNavigation": "Open navigation",
+    "closeNavigation": "Close navigation",
     "collapseRail": "Collapse sidebar",
     "expandRail": "Expand sidebar"
   },
@@ -454,7 +468,9 @@
         "commit": "Commit",
         "commitMessagePlaceholder": "Commit message (optional)",
         "discard": "Discard",
+        "discardConfirmTitle": "Discard local changes?",
         "discardConfirm": "Discard all uncommitted changes? This cannot be undone.",
+        "cancel": "Cancel",
         "committing": "Committing…",
         "discarding": "Discarding…",
         "committed": "Committed",
@@ -505,6 +521,9 @@
       "resolveMessagePlaceholder": "Resolve commit message (optional)",
       "resolve": "Resolve & complete",
       "abort": "Abort sync",
+      "abortDone": "Sync aborted.",
+      "resolveDone": "Sync completed.",
+      "abortConfirmTitle": "Abort this sync?",
       "abortConfirm": "Abort the sync? The working tree resets to the last commit — upstream merge content is discarded."
     }
   },
@@ -711,6 +730,8 @@
     "l3": "Merged"
   },
   "status": {
+    "instanceStatus": "Instance status",
+    "hostUnavailable": "Host unavailable",
     "supervisor": "supervisor",
     "supervisorReady": "Supervisor ready",
     "supervisorUnavailable": "Supervisor unavailable",
@@ -763,6 +784,11 @@
     "subheading": "{projects} repos under management. {workspaces} workspaces in flight. {needs} things waiting on you.",
     "needsStripTitle": "{count} things need your review",
     "ticker": "<b>{projects}</b> projects · <b>{workspaces}</b> workspaces in flight · <b>{needs}</b> waiting on you",
+    "onboardingTitle": "First run checklist",
+    "onboardingConnected": "Connect a visible project",
+    "onboardingFlowReady": "Enable a launchable Flow",
+    "onboardingTaskLaunched": "Launch a Flow from a task",
+    "askAdmin": "Ask an administrator to connect a project.",
     "pausedAgo": "paused {time} ago",
     "activeWorkspaces": "Active workspaces",
     "seeAll": "See all",
@@ -1124,6 +1150,7 @@
     "launch": "Launch scratch run",
     "launching": "Launching…",
     "cancel": "Cancel",
+    "errorGeneric": "Something went wrong. Try again.",
     "launchInterrupted": "Launch interrupted before the session was ready.",
     "launchStage": {
       "precondition": "Checking preconditions…",
@@ -1432,6 +1459,7 @@
     }
   },
   "settings": {
+    "requestFailed": "Could not save the settings. Try again.",
     "title": "Settings",
     "addRunner": "Add runner",
     "createRunnerTitle": "Create runner",
@@ -1815,7 +1843,9 @@
     "promptPlaceholder": "What should the agent do?",
     "flowLabel": "Flow",
     "create": "Create task",
-    "flowNone": "— no flow (triage later)"
+    "flowNone": "— no flow (triage later)",
+    "noEnabledFlow": "No launchable Flow is available for this task yet.",
+    "managePackages": "Manage packages"
   },
   "launch": {
     "advanced": "Advanced launch options",
@@ -2046,6 +2076,7 @@
     "targetBranch": "Target branch",
     "reviewTitle": "Review & promote",
     "promoteTo": "Promote to",
+    "promotionStarted": "Promotion started.",
     "promotionMode": "Promotion mode",
     "promotionMerge": "Merge",
     "promotionRebaseMerge": "Rebase + merge",
@@ -2155,11 +2186,17 @@
     "recoverConfirmTitle": "Recover this run?",
     "recoverConfirmBody": "Recovery re-runs the current node from its last checkpoint. Work already saved to the worktree is kept, but the node executes again from the start.",
     "recoverQueued": "The host is at capacity — recovery is queued and will resume when a slot frees.",
+    "recoverSucceeded": "Recovery started.",
+    "streamLive": "Live",
+    "streamReconnecting": "Reconnecting",
+    "streamDisconnected": "Disconnected",
+    "streamReconnect": "Reconnect",
     "recoverConflict": "This run can no longer be recovered. Refresh and discard its workspace instead.",
     "recoverGone": "The checkpoint is gone — this run can only be discarded now.",
     "recoverRetry": "The supervisor is temporarily unavailable. Try again in a moment.",
     "recoverError": "Recovery failed. Try again, or discard the workspace.",
     "discard": "Discard",
+    "discardSucceeded": "Run discarded.",
     "discarding": "Discarding…",
     "discardConfirmTitle": "Discard this run?",
     "discardConfirmBody": "Discarding abandons the run and schedules its worktree for removal. This cannot be undone.",
@@ -2188,6 +2225,7 @@
     "budgetAbandon": "Discard",
     "budgetDropWorkspace": "Drop workspace now",
     "budgetDropConfirm": "Drop this workspace and branch now? This cannot be undone.",
+    "budgetDropConfirmTitle": "Drop workspace and branch?",
     "budgetParkModeSnapshot": "Snapshot",
     "budgetParkModeExport": "Export branch",
     "budgetParkBranchName": "Branch name",
@@ -2247,15 +2285,23 @@
     "consensusResolutionRequired": "Write a resolution before submitting.",
     "error": {
       "generic": "Something went wrong. Try again.",
+      "SPAWN": "Could not start the run. Try again.",
       "CRASH": "Something went wrong. Try again.",
       "EXECUTOR_UNAVAILABLE": "The supervisor is unreachable. Retry in a moment.",
       "ACP_PROTOCOL": "The agent rejected the response. Reload and try again.",
       "HITL_TIMEOUT": "This request expired before your response was delivered.",
       "CONFLICT": "This request was already answered.",
       "CONFIG": "The response was not valid for this request.",
+      "FLOW_INSTALL": "The Flow is not ready to run. Check its installation and try again.",
+      "CHECKPOINT": "The saved run checkpoint could not be used. Reload and try again.",
+      "BUDGET_EXCEEDED": "This run has reached its budget limit.",
+      "EMBEDDING_UNAVAILABLE": "The required embedding service is unavailable. Try again later.",
+      "STEP_CHECKPOINTED": "This run is paused at a checkpoint. Review the next action.",
       "NEEDS_INPUT": "The response was incomplete. Check the fields and try again.",
       "PRECONDITION": "This request is no longer available. Reload the page.",
+      "UNAUTHENTICATED": "Your session has expired. Sign in and try again.",
       "UNAUTHORIZED": "You do not have permission to answer this request.",
+      "PASSWORD_CHANGE_REQUIRED": "Change your password before continuing.",
       "ACCOUNT_INACTIVE": "Your account is inactive."
     },
     "resolvedSet": {
@@ -2931,6 +2977,9 @@
       }
     },
     "attachmentsTitle": "Attached packages",
+    "trustConfirmTitle": "Trust this package?",
+    "trustConfirmBody": "This package is attached to {count, plural, one {# project} other {# projects}}. This count is advisory; authorization is checked when you continue.",
+    "trustCancel": "Cancel",
     "attachmentsEmpty": "No packages attached. Install a revision from a platform source on Settings, then attach it here.",
     "attachPackage": "Attach",
     "attachPick": "Pick a package install…",
@@ -3155,6 +3204,7 @@
     },
     "defaultCommitMessage": "maister: export {runId}",
     "busy": "{action}…",
+    "error": "Action failed. Try again.",
     "errorWithCode": "Action failed: {code}",
     "dialog": {
       "cancel": "Cancel",
@@ -3588,7 +3638,7 @@
     "EXECUTOR_UNAVAILABLE": "Executor unavailable",
     "CRASH": "Internal error",
     "NOT_FOUND": "Not found",
-    "requestFailed": "Request failed: {status}"
+    "requestFailed": "Request failed. Try again."
   },
   "webhooks": {
     "empty": "No webhook subscriptions configured.",
@@ -3782,6 +3832,7 @@
     "runAgent": "Run agent",
     "sendToTriage": "Send to triage",
     "agentActionBusy": "Working…",
+    "agentActionFailed": "Action failed. Try again.",
     "agentPickerLabel": "Agent to run"
   },
   "projectLog": {

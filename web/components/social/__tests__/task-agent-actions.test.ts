@@ -17,6 +17,7 @@ const LABELS = {
   runAgent: "Run agent",
   sendToTriage: "Send to triage",
   busy: "Working…",
+  errorGeneric: "Action failed. Try again.",
   agentPickerLabel: "Agent to run",
 };
 

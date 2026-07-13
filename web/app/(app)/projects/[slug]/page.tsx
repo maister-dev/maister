@@ -14,7 +14,6 @@ import { HitlInboxGrid } from "@/components/inbox/hitl-inbox-list";
 import { NewTaskModal } from "@/components/board/new-task-modal";
 import { ProjectTabs } from "@/components/board/project-tabs";
 import { ActivityPanel } from "@/components/board/panels/activity-panel";
-import { DeferredPanel } from "@/components/board/panels/deferred-panel";
 import { ProjectPackageContents } from "@/components/board/panels/project-package-contents";
 import { ProjectLocalPackages } from "@/components/board/panels/project-local-packages";
 import { ProjectPackagesSection } from "@/components/board/panels/project-packages-section";
@@ -80,7 +79,6 @@ const VALID_TABS: readonly ProjectTab[] = [
   "board",
   "activity",
   "brain",
-  "prs",
   "repo",
   "packages",
   "integrations",
@@ -371,9 +369,12 @@ export default async function ProjectBoardPage({
                   promptPlaceholder: tNewTask("promptPlaceholder"),
                   flowLabel: tNewTask("flowLabel"),
                   flowNone: tNewTask("flowNone"),
+                  noEnabledFlow: tNewTask("noEnabledFlow"),
+                  managePackages: tNewTask("managePackages"),
                   create: tNewTask("create"),
                   cancel: tCommon("cancel"),
                 }}
+                packagesHref={`/projects/${slug}?tab=packages`}
                 slug={slug}
               />
             </div>
@@ -514,7 +515,6 @@ export default async function ProjectBoardPage({
         </>
       ) : null}
 
-      {tab === "prs" ? <DeferredPanel kind="prs" /> : null}
       {tab === "brain" ? (
         <ProjectBrainPanel
           canManageSources={isAdmin}
@@ -623,7 +623,9 @@ export default async function ProjectBoardPage({
       {tab === "packages" ? (
         <>
           <ProjectPackagesSection
-            attachments={await getProjectPackageAttachments(project.id)}
+            attachments={await getProjectPackageAttachments(project.id, {
+              includeAffectedProjectCount: canTrustPackages,
+            })}
             availableInstalls={await getAvailablePackageInstalls()}
             canTrust={canTrustPackages}
             isAdmin={isAdmin}

@@ -22,9 +22,10 @@ compatibility.
 When I want to start a scratch session, I want to open a focused launcher from
 anywhere with one keystroke and pick the project, runner, and mode — so starting
 exploratory work never requires hunting for a button. When I am on a task card
-or task detail page, I want a task-scoped launch dialog that shows the resolved
-Flow, runner/model, branches, delivery policy, execution controls, and optional
-budget limits before a run is created.
+or task detail page, I want a task-scoped launch dialog that initially shows
+the resolved Flow, runner/model, and execution preset, with less-frequent
+branch, delivery, budget, and advanced controls available by disclosure before
+a run is created.
 
 ## Roles & capabilities
 
@@ -61,16 +62,18 @@ rail. It preloads launch options from the selected task and shows:
 
 - a human-readable launchability banner for states such as active run,
   relation blocker, missing Flow revision, or installed-but-not-enabled Flow;
-- Flow, runner/model, base branch, and target branch selects;
+- Flow, runner/model, and execution preset controls are initially visible;
+- base/target branch, delivery policy, budget, and advanced execution controls
+  are behind explicit disclosures that preserve their selected values;
 - non-blocking runner-resolution warnings when a Flow slot launches on a
   same-capability runner whose model and/or provider kind differs from the
   package intent;
 - delivery-policy controls for strategy, push, and trigger;
-- execution preset controls plus advanced checks, human-gate, and promotion
-  selectors;
+- advanced checks, human-gate, and promotion selectors remain unchanged after
+  their disclosure opens;
 - budget inputs for run/task/tree token, failure, warning-percent, and
-  wall-clock ceilings. Empty budget fields mean unlimited, and the budget fields
-  are visible by default rather than hidden behind a generic advanced toggle;
+  wall-clock ceilings. Empty budget fields mean unlimited; these controls are
+  collapsed by default with the rest of the non-primary controls;
 - a **package version choice** per backing package when launch detection
   reports newer state: `keep | adopt | cut_and_adopt | try_once` (ADR-132).
   `try_once` is offered exactly when `adopt` is offered (a newer cut exists)
@@ -78,6 +81,11 @@ rail. It preloads launch options from the selected task and shows:
   project's pin". Picking an option the server did not offer refuses with a
   409 rendered through the existing localized error surface; the next launch
   re-detects and re-offers.
+
+The package-version disclosure starts open exactly when `hasNewerCut ||
+hasUncutEdits`; otherwise it follows existing availability behavior. Opening or
+collapsing a disclosure is visual-only and cannot mutate a version pin or alter
+the existing launch request body.
 
 ## States
 

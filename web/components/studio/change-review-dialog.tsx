@@ -107,10 +107,10 @@ export function ChangeReviewDialog({
       }
 
       setState({ kind: "ready", diff: (await res.json()) as WorkingDirDiff });
-    } catch (err) {
+    } catch {
       setState({
         kind: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: tApiErrors("requestFailed"),
       });
     }
   }, [packageId, tApiErrors]);
@@ -156,8 +156,8 @@ export function ChangeReviewDialog({
 
       onCommitted?.();
       onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
     } finally {
       setCommitting(false);
     }

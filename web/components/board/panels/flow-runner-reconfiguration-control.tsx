@@ -33,11 +33,7 @@ async function patchJson(url: string, body: unknown): Promise<void> {
   });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-
-    throw new Error(payload?.message ?? `request failed: ${response.status}`);
+    throw new Error("request failed");
   }
 }
 
@@ -122,8 +118,8 @@ export function FlowRunnerReconfigurationControl({
             : item,
         ),
       );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("requestFailed"));
     } finally {
       setPendingId(null);
     }

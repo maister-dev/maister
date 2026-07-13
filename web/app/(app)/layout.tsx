@@ -1,8 +1,10 @@
 import type { ReactElement, ReactNode } from "react";
 
+import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 
 import { LeftRail } from "@/components/chrome/left-rail";
+import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 import { StatusBar } from "@/components/chrome/status-bar";
 import { TopNav } from "@/components/chrome/top-nav";
 import { summarizeAdapterReadiness } from "@/lib/acp-runners/readiness-summary";
@@ -71,10 +73,20 @@ export default async function AppLayout({
         ),
       }
     : undefined;
+  const tNav = await getTranslations("nav");
+  const railSections = buildLeftRailSections(
+    (key) => tNav(key),
+    sessionUser?.role,
+  );
 
   return (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
-      <TopNav crumb={<NavCrumb />} user={navUser} />
+      <TopNav
+        crumb={<NavCrumb />}
+        inboxCount={needsYou}
+        sections={railSections}
+        user={navUser}
+      />
 
       <div
         data-shell
@@ -85,6 +97,7 @@ export default async function AppLayout({
           inboxCount={needsYou}
           platformStatus={platformStatus}
           runnersReadiness={runnersReadiness}
+          sections={railSections}
           userRole={sessionUser?.role}
           workspaceGroups={railWorkspaceGroups}
         />

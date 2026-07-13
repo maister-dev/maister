@@ -550,6 +550,21 @@ Abandoned`. Failure to terminate the session does NOT block the task
   permanent gap in `KEY-N`; `next_task_number` never decrements. Not an
   error.
 
+## First-run and zero-flow presentation contract (Implemented)
+
+The portfolio first-run checklist is a server-derived, actor-scoped projection
+only. Its stages are (1) at least one visible project, (2) at least one
+enabled and launchable Flow under the same enablement, trust, compatibility,
+and runner checks used by launch UI, and (3) at least one Flow run with a
+non-null `task_id`. A package attachment alone does not satisfy stage 2; a
+scratch or agent run does not satisfy stage 3. The projection never reveals
+projects outside the current actor's visibility.
+
+When a project has no enabled launchable Flow, the board gives an explicit
+packages-tab remediation link rather than an empty Flow picker. This does not
+block simple-intent task creation: a task may remain flowless/unconfigured
+until an operator configures and launches it through the existing path.
+
 ## Linked artifacts
 
 - ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),

@@ -50,7 +50,7 @@ export function ScratchInspectorActions({
       });
 
       if (!response.ok) {
-        setError(errorText(await response.json().catch(() => null)));
+        setError(t(errorText(await response.json().catch(() => null))));
 
         return;
       }
@@ -59,8 +59,8 @@ export function ScratchInspectorActions({
       // promoted state (status fact, lifecycle actions) and confirm to the user.
       setDone(true);
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("errorGeneric"));
     } finally {
       setPending(false);
     }

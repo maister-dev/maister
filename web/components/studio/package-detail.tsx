@@ -276,8 +276,8 @@ function TrustButton({ installId }: { installId: string }): ReactElement {
       }
 
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }
@@ -337,8 +337,8 @@ function CustomizeButton({ refName }: { refName: string }): ReactElement {
       const result = (await res.json()) as { localPackageId: string };
 
       router.push(`/studio/edit/${result.localPackageId}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }

@@ -209,10 +209,10 @@ export function ImportDialog({
         files: plan.files,
         totalBytes: plan.totalBytes,
       });
-    } catch (err) {
+    } catch {
       setStep({
         kind: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: tApiErrors("requestFailed"),
       });
     }
   }
@@ -272,10 +272,10 @@ export function ImportDialog({
       setStep({ kind: "done", count: plan.files.length });
       onImported?.();
       router.refresh();
-    } catch (err) {
+    } catch {
       setStep({
         kind: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: tApiErrors("requestFailed"),
       });
     }
   }

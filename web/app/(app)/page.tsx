@@ -8,6 +8,7 @@ import { DensityToggle } from "@/components/portfolio/density-toggle";
 import { EmptyState } from "@/components/portfolio/empty-state";
 import { NeedsYouSummary } from "@/components/portfolio/needs-you-summary";
 import { NewProjectTile } from "@/components/portfolio/new-project-tile";
+import { OnboardingChecklist } from "@/components/portfolio/onboarding-checklist";
 import { ProjectCard } from "@/components/portfolio/project-card";
 import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
 import { requireSession } from "@/lib/authz";
@@ -66,7 +67,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
       </header>
 
       {isEmpty ? (
-        <EmptyState />
+        <EmptyState canCreate={user.role === "admin"} />
       ) : (
         <>
           <LiveTicker>
@@ -79,6 +80,16 @@ export default async function PortfolioPage(): Promise<ReactElement> {
               ),
             })}
           </LiveTicker>
+
+          <OnboardingChecklist
+            labels={{
+              connected: t("onboardingConnected"),
+              flowReady: t("onboardingFlowReady"),
+              taskLaunched: t("onboardingTaskLaunched"),
+              title: t("onboardingTitle"),
+            }}
+            progress={portfolio.onboarding}
+          />
 
           {needsYou > 0 ? (
             <NeedsYouSummary
@@ -114,7 +125,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             {portfolio.projects.map((project) => (
               <ProjectCard key={project.id} project={project} />
             ))}
-            <NewProjectTile />
+            <NewProjectTile canCreate={user.role === "admin"} />
           </section>
         </>
       )}

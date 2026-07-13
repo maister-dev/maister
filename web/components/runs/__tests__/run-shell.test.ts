@@ -17,6 +17,7 @@ const LABELS: RunHeaderLabels = {
   changedFiles: "files",
   openInspector: "Open inspector",
   closeInspector: "Close inspector",
+  review: "Review changes",
 };
 
 describe("RunHeader", () => {

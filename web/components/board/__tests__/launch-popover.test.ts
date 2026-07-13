@@ -28,6 +28,7 @@ vi.mock("next/navigation", () => ({
 import {
   BudgetScopeFields,
   LaunchPopover,
+  deriveInitialDisclosureState,
   budgetTextHasInvalid,
   buildLaunchBody,
   effectiveLaunchVerdict,
@@ -113,6 +114,23 @@ describe("LaunchPopover — launchability reason copy", () => {
     ).toBe(
       "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
     );
+  });
+});
+
+describe("LaunchPopover — initial disclosures", () => {
+  it("opens package-version choices only for a newer cut or uncut edits", () => {
+    expect(
+      deriveInitialDisclosureState({
+        hasNewerCut: false,
+        hasUncutEdits: false,
+      }),
+    ).toBe(false);
+    expect(
+      deriveInitialDisclosureState({ hasNewerCut: true, hasUncutEdits: false }),
+    ).toBe(true);
+    expect(
+      deriveInitialDisclosureState({ hasNewerCut: false, hasUncutEdits: true }),
+    ).toBe(true);
   });
 });
 

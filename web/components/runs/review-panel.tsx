@@ -14,6 +14,14 @@ import {
   type PreparedFile,
   type RunDiffFile,
 } from "@/components/workbench/diff-view";
+import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
+import {
+  buildPromotionRequestBody,
+  isTargetDriftResponse,
+  promotionBlockReason,
+  type PromotionDeliveryPolicy,
+  type PromotionMode,
+} from "@/lib/runs/promotion-operation";
 
 // The prepared diff DTO the page builds server-side (`prepareDiff`): a per-file
 // summary (path/status + `+`/`−` counts) and the syntax bundles the client diff
@@ -25,19 +33,6 @@ export type ReviewPanelDiff = {
   // prefix. Promotion is blocked behind an explicit acknowledgement so a run is
   // never promoted on a diff the reviewer could not see in full.
   truncated: boolean;
-};
-
-type PromotionMode =
-  | "merge"
-  | "rebase_merge"
-  | "pull_request"
-  | "ai_rebase_merge";
-
-type ReviewPanelDeliveryPolicy = {
-  strategy: PromotionMode;
-  push: "never" | "on_success";
-  trigger: "manual" | "auto_on_ready";
-  targetBranch: string;
 };
 
 export type ReviewPanelConflict = {
@@ -65,13 +60,14 @@ export type ReviewPanelLabels = {
 };
 
 export interface ReviewPanelProps {
+  id?: string;
   runId: string;
   baseBranch: string | null;
   baseCommit: string | null;
   runBranch: string;
   targetBranch: string | null;
   promotionMode: PromotionMode;
-  deliveryPolicy: ReviewPanelDeliveryPolicy;
+  deliveryPolicy: PromotionDeliveryPolicy;
   reviewedTargetCommit: string | null;
   readiness: ReadinessDTO | null;
   diff: ReviewPanelDiff;
@@ -107,6 +103,7 @@ function selectionKey(key: Key | null, fallback: PromotionMode): PromotionMode {
 }
 
 export function ReviewPanel({
+  id,
   runId,
   baseBranch,
   baseCommit,
@@ -146,9 +143,24 @@ export function ReviewPanel({
         : null,
     );
   const modeLabelId = useId();
+  const readinessReady = readiness?.readiness === "ready";
+  const promotionInput = {
+    targetBranch,
+    deliveryPolicy,
+    mode,
+    reviewedTargetCommit,
+    canPromote,
+    reviewReady: readinessReady,
+    diffTruncated: diff.truncated,
+    legacyNeedsRelaunch,
+    truncationAcknowledged: truncationAck,
+  };
+  const blockedPromotion = promotionBlockReason(promotionInput);
 
   async function promote(allowTargetDrift: boolean): Promise<void> {
-    if (!targetBranch) return;
+    const body = buildPromotionRequestBody(promotionInput, allowTargetDrift);
+
+    if (!body) return;
 
     setBusy(true);
     setError(null);
@@ -157,20 +169,7 @@ export function ReviewPanel({
       const res = await fetch(`/api/runs/${runId}/promote`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          targetBranch,
-          deliveryPolicyOverride: {
-            ...deliveryPolicy,
-            strategy: mode,
-            trigger: "manual",
-            targetBranch,
-          },
-          // Omit when null (the render-time resolveBaseCommit threw): the route
-          // rejects a null with CONFIG 400, but a MISSING field hits the
-          // server's `!reviewedTargetCommit → PRECONDITION` path cleanly.
-          ...(reviewedTargetCommit ? { reviewedTargetCommit } : {}),
-          ...(allowTargetDrift ? { allowTargetDrift: true } : {}),
-        }),
+        body: JSON.stringify(body),
       });
 
       if (res.ok) {
@@ -184,10 +183,7 @@ export function ReviewPanel({
         message?: string;
       } | null;
 
-      if (
-        data?.code === "PRECONDITION" &&
-        /target advanced/i.test(data.message ?? "")
-      ) {
+      if (isTargetDriftResponse(data)) {
         setDrift(true);
         router.refresh();
 
@@ -198,7 +194,7 @@ export function ReviewPanel({
         setConflictState({
           displayParentRepoPath,
           parentRepoPath: parentRepoPath ?? "",
-          targetBranch,
+          targetBranch: body.targetBranch,
           runBranch,
           command: `git merge --no-ff ${runBranch}`,
         });
@@ -206,18 +202,20 @@ export function ReviewPanel({
         return;
       }
 
-      setError(data?.code ?? "CRASH");
+      setError(t(resolveUiErrorMessageKey(data?.code)));
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(t("error.generic"));
     } finally {
       setBusy(false);
     }
   }
 
-  const readinessReady = readiness?.readiness === "ready";
-
   return (
-    <section className={clsx(shell, "mt-6 p-5")} data-testid="review-panel">
+    <section
+      className={clsx(shell, "mt-6 p-5")}
+      data-testid="review-panel"
+      id={id}
+    >
       <h2 className="mb-4 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
         {t("reviewTitle")}
       </h2>
@@ -385,7 +383,7 @@ export function ReviewPanel({
             {labels.promoteTruncated}
           </Button>
         </div>
-      ) : (
+      ) : blockedPromotion ? null : (
         <div className="flex flex-col gap-3">
           <label className="flex flex-col gap-1">
             <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">

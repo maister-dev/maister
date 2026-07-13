@@ -392,7 +392,7 @@ function errorStateFromBody(
   body: LifecycleErrorBody | null,
 ): LifecycleErrorState {
   return {
-    code: body?.code ?? "CRASH",
+    code: body?.code ?? "UNKNOWN",
     message: body?.message ?? null,
     retryHint: body?.retryHint ?? null,
     pushRejected: body?.pushRejected ?? null,
@@ -416,9 +416,7 @@ function compactErrorText(
 ): string | null {
   if (!error) return null;
 
-  const base = t("errorWithCode", { code: error.code });
-
-  return error.message ? `${base}: ${error.message}` : base;
+  return t("error");
 }
 
 export function WorkbenchLifecycleActions({
@@ -1119,7 +1117,6 @@ export function WorkbenchLifecycleActions({
             {error ? (
               <div className="flex flex-col gap-1 font-mono text-[10px] font-semibold text-amber">
                 <p>{error}</p>
-                {errorState?.retryHint ? <p>{errorState.retryHint}</p> : null}
               </div>
             ) : null}
           </div>

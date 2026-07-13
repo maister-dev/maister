@@ -5,7 +5,9 @@ import type { ReactElement, ReactNode } from "react";
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 
+import { readApiError } from "@/lib/api-error";
 import { TOKEN_SCOPE_VALUES, type TokenScope } from "@/types/token-scopes";
 
 const BTN_NEUTRAL =
@@ -25,6 +27,7 @@ function useAction(): {
   ) => Promise<{ ok: boolean; data: unknown }>;
 } {
   const router = useRouter();
+  const tApiErrors = useTranslations("apiErrors");
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,11 +46,7 @@ function useAction(): {
       });
 
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          code?: string;
-        } | null;
-
-        setError(body?.code ?? "CRASH");
+        setError(await readApiError(res, tApiErrors));
 
         return { ok: false, data: null };
       }
@@ -62,7 +61,7 @@ function useAction(): {
 
       return { ok: true, data };
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(tApiErrors("requestFailed"));
 
       return { ok: false, data: null };
     } finally {

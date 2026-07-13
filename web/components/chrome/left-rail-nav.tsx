@@ -4,6 +4,7 @@ import type { RailSectionId } from "@/components/chrome/left-rail-route";
 import type { ComponentType, ReactElement, SVGProps } from "react";
 
 import {
+  ChartBarIcon,
   ClockIcon,
   Cog6ToothIcon,
   CpuChipIcon,
@@ -28,6 +29,7 @@ export interface LeftRailNavSection {
 
 export interface LeftRailNavProps {
   activeSection?: RailSectionId | null;
+  ariaLabel: string;
   comingSoon: string;
   inboxCount: number;
   sections: readonly LeftRailNavSection[];
@@ -43,6 +45,7 @@ const sectionIcons: Record<RailSectionId, HeroIcon> = {
   projects: Squares2X2Icon,
   inbox: InboxIcon,
   studio: WrenchScrewdriverIcon,
+  observatory: ChartBarIcon,
   agents: CpuChipIcon,
   mcps: PuzzlePieceIcon,
   users: UsersIcon,
@@ -170,7 +173,7 @@ function LeftRailNavBody({
 export function LeftRailNavView(props: LeftRailNavProps): ReactElement {
   return (
     <nav
-      aria-label="Sections"
+      aria-label={props.ariaLabel}
       className={
         props.variant === "collapsed"
           ? "flex shrink-0 flex-col items-center gap-1 border-b border-line pb-2"
@@ -184,6 +187,7 @@ export function LeftRailNavView(props: LeftRailNavProps): ReactElement {
 
 export function LeftRailNav({
   activeSection = null,
+  ariaLabel,
   comingSoon,
   inboxCount,
   sections,
@@ -195,6 +199,7 @@ export function LeftRailNav({
   return (
     <LeftRailNavView
       activeSection={pathnameSection ?? activeSection}
+      ariaLabel={ariaLabel}
       comingSoon={comingSoon}
       inboxCount={inboxCount}
       sections={sections}

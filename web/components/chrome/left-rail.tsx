@@ -19,6 +19,7 @@ import { ActiveWorkspaceRow } from "@/components/chrome/active-workspace-row";
 import { AutoCloseDetails } from "@/components/chrome/auto-close-details";
 import { LaunchHotkeyHint } from "@/components/chrome/launch-hotkey-hint";
 import { LeftRailNav } from "@/components/chrome/left-rail-nav";
+import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 import { RailCollapse } from "@/components/chrome/rail-collapse";
 import { RunnersReadinessRailView } from "@/components/chrome/runners-readiness-rail";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
@@ -64,6 +65,7 @@ export interface LeftRailProps {
   inboxCount?: number;
   platformStatus: PlatformStatus;
   runnersReadiness?: readonly AdapterReadinessSummary[];
+  sections?: LeftRailNavSection[];
   userRole?: GlobalRole;
 }
 
@@ -155,6 +157,7 @@ export async function LeftRail({
   inboxCount = 0,
   platformStatus,
   runnersReadiness = [],
+  sections: providedSections,
   userRole,
 }: LeftRailProps): Promise<ReactElement> {
   const tNav = await getTranslations("nav");
@@ -231,55 +234,14 @@ export async function LeftRail({
     };
   }
 
-  // `ready: false` sections are documented M9 deferrals (no route yet). They
-  // render as non-navigating "coming soon" items so they never 404 — matching
-  // the cursor/aider "coming soon" agent-chip precedent below.
-  const sections: LeftRailNavSection[] = [
-    { id: "projects", label: tNav("projects"), href: "/", ready: true },
-    { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: true },
-    { id: "studio", label: tNav("studio"), href: "/studio", ready: true },
-  ];
-
-  // Platform agents, MCP, users, scheduler, and settings are admin-only and
-  // access-controlled at the route too; the hidden nav item is convenience,
-  // never the authorization boundary.
-  if (userRole === "admin") {
-    sections.push({
-      id: "agents",
-      label: tNav("agents"),
-      href: "/agents",
-      ready: true,
-    });
-    sections.push({
-      id: "mcps",
-      label: tNav("mcps"),
-      href: "/mcps",
-      ready: true,
-    });
-    sections.push({
-      id: "users",
-      label: tNav("users"),
-      href: "/admin/users",
-      ready: true,
-    });
-    sections.push({
-      id: "scheduler",
-      label: tNav("scheduler"),
-      href: "/admin/scheduler",
-      ready: true,
-    });
-    sections.push({
-      id: "settings",
-      label: tNav("settings"),
-      href: "/settings",
-      ready: true,
-    });
-  }
+  const sections =
+    providedSections ?? buildLeftRailSections((key) => tNav(key), userRole);
 
   const collapsedContent = (
     <>
       <LeftRailNav
         activeSection={activeSection}
+        ariaLabel={tNav("sectionsLabel")}
         comingSoon={tNav("comingSoon")}
         inboxCount={inboxCount}
         sections={sections}
@@ -443,12 +405,14 @@ export async function LeftRail({
 
   return (
     <RailCollapse
+      ariaLabel={tNav("railLabel")}
       collapseLabel={tNav("collapseRail")}
       collapsedChildren={collapsedContent}
       expandLabel={tNav("expandRail")}
     >
       <LeftRailNav
         activeSection={activeSection}
+        ariaLabel={tNav("sectionsLabel")}
         comingSoon={tNav("comingSoon")}
         inboxCount={inboxCount}
         sections={sections}

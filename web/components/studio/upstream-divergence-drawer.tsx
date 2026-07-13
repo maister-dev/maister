@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { DiffView } from "@/components/workbench/diff-view";
+import { readApiError } from "@/lib/api-error";
 
 // ADR-132 (T18): read-only fork-vs-upstream divergence drawer — the
 // LocalPackageDiffDrawer pattern minus the commit/discard bar. Ours = the
@@ -52,6 +53,7 @@ export function UpstreamDivergenceDrawer({
   onClose: () => void;
 }): ReactElement {
   const t = useTranslations("studio");
+  const tApiErrors = useTranslations("apiErrors");
   const [source, setSource] = useState<string>("working_dir");
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const onCloseRef = useRef(onClose);
@@ -81,6 +83,7 @@ export function UpstreamDivergenceDrawer({
       const res = await fetch(
         `/api/studio/local-packages/${packageId}/divergence${query}`,
       );
+      const errorResponse = res.clone();
       const body = (await res.json().catch(() => null)) as {
         code?: string;
         message?: string;
@@ -88,34 +91,36 @@ export function UpstreamDivergenceDrawer({
 
       if (!res.ok) {
         // The typed "source install unavailable" degradation (CONFIG); the
-        // render supplies the localized headline, this keeps the raw detail.
+        // render supplies the localized headline, so server detail stays out
+        // of the operator-facing surface.
         if (body?.code === "CONFIG") {
-          setState({ kind: "degraded", message: body.message ?? "" });
+          setState({ kind: "degraded", message: "" });
         } else {
           setState({
             kind: "error",
-            message: body?.message ?? `HTTP ${res.status}`,
+            message: await readApiError(errorResponse, tApiErrors),
           });
         }
 
         return;
       }
       if (body === null) {
-        setState({ kind: "error", message: "malformed divergence response" });
+        setState({
+          kind: "error",
+          message: tApiErrors("requestFailed"),
+        });
 
         return;
       }
 
       setState({ kind: "ready", divergence: body as unknown as DivergenceDto });
-    } catch (err) {
-      // eslint-disable-next-line no-console -- client boundary per editor idiom
-      console.warn("[divergence] load failed", { packageId, err });
+    } catch {
       setState({
         kind: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: tApiErrors("requestFailed"),
       });
     }
-  }, [packageId, source, element]);
+  }, [packageId, source, element, tApiErrors]);
 
   useEffect(() => {
     void load();

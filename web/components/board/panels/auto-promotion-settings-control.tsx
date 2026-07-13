@@ -66,11 +66,7 @@ async function patchAutoPromotion(
   );
 
   if (!res.ok) {
-    const payload = (await res.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-
-    throw new Error(payload?.message ?? `request failed: ${res.status}`);
+    throw new Error("request failed");
   }
 }
 
@@ -127,8 +123,8 @@ export function AutoPromotionSettingsControl({
       });
       setSavedKey(currentKey);
       setShowSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tSettings("requestFailed"));
     } finally {
       setPending(false);
     }
@@ -147,8 +143,8 @@ export function AutoPromotionSettingsControl({
       setLanes(fresh);
       setSavedKey(JSON.stringify({ enabled: false, lanes: fresh }));
       setShowSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tSettings("requestFailed"));
     } finally {
       setPending(false);
     }

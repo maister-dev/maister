@@ -11,6 +11,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+
 type Props = {
   slug: string;
   isAdmin: boolean;
@@ -25,24 +27,18 @@ async function call(
   url: string,
   method: "POST" | "DELETE",
   body?: unknown,
-): Promise<{ ok: boolean; message?: string; writeBack?: string }> {
+): Promise<{ ok: boolean; writeBack?: string }> {
   const res = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const payload = (await res.json().catch(() => null)) as {
-    message?: string;
-    code?: string;
     writeBack?: string;
   } | null;
 
   if (!res.ok) {
-    return {
-      ok: false,
-      message:
-        payload?.message ?? payload?.code ?? `Request failed: ${res.status}`,
-    };
+    return { ok: false };
   }
 
   return { ok: true, writeBack: payload?.writeBack };
@@ -64,6 +60,8 @@ export function ProjectPackagesSection({
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedInstall, setSelectedInstall] = useState("");
+  const [trustingAttachment, setTrustingAttachment] =
+    useState<ProjectPackageAttachmentView | null>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
@@ -87,36 +85,42 @@ export function ProjectPackagesSection({
     if (notice) noticeRef.current?.focus();
   }, [notice]);
 
-  function surface(result: {
-    ok: boolean;
-    message?: string;
-    writeBack?: string;
-  }): void {
-    if (!result.ok) setNotice(result.message ?? t("errorGeneric"));
+  function surface(result: { ok: boolean; writeBack?: string }): void {
+    if (!result.ok) setNotice(t("errorGeneric"));
     else if (result.writeBack === "failed")
       setNotice(t("attachWriteBackFailed"));
     else setNotice(null);
-    refresh();
+    if (result.ok) refresh();
   }
 
   async function attach(): Promise<void> {
     if (!selectedInstall || nameCollision) return;
     setBusy("attach");
-    surface(
-      await call(`/api/projects/${slug}/packages`, "POST", {
+    try {
+      const result = await call(`/api/projects/${slug}/packages`, "POST", {
         packageInstallId: selectedInstall,
-      }),
-    );
-    setSelectedInstall("");
-    setBusy(null);
+      });
+
+      surface(result);
+      if (result.ok) setSelectedInstall("");
+    } catch {
+      surface({ ok: false });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function detach(attachmentId: string): Promise<void> {
     setBusy(`detach:${attachmentId}`);
-    surface(
-      await call(`/api/projects/${slug}/packages/${attachmentId}`, "DELETE"),
-    );
-    setBusy(null);
+    try {
+      surface(
+        await call(`/api/projects/${slug}/packages/${attachmentId}`, "DELETE"),
+      );
+    } catch {
+      surface({ ok: false });
+    } finally {
+      setBusy(null);
+    }
   }
 
   // Both upgrade and downgrade flip the attachment pointer through the same
@@ -128,20 +132,38 @@ export function ProjectPackagesSection({
   ): Promise<void> {
     if (!targetInstallId) return;
     setBusy(`switch:${att.id}`);
-    surface(
-      await call(`/api/projects/${slug}/packages/${att.id}/upgrade`, "POST", {
-        packageInstallId: targetInstallId,
-      }),
-    );
-    setBusy(null);
+    try {
+      surface(
+        await call(`/api/projects/${slug}/packages/${att.id}/upgrade`, "POST", {
+          packageInstallId: targetInstallId,
+        }),
+      );
+    } catch {
+      surface({ ok: false });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function trust(att: ProjectPackageAttachmentView): Promise<void> {
     setBusy(`trust:${att.id}`);
-    surface(
-      await call(`/api/projects/${slug}/packages/${att.id}/trust`, "POST"),
-    );
-    setBusy(null);
+    try {
+      const result = await call(
+        `/api/projects/${slug}/packages/${att.id}/trust`,
+        "POST",
+      );
+
+      surface(result);
+      if (result.ok) setTrustingAttachment(null);
+    } catch {
+      surface({ ok: false });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function confirmTrust(): void {
+    if (trustingAttachment) void trust(trustingAttachment);
   }
 
   return (
@@ -286,7 +308,7 @@ export function ProjectPackagesSection({
                                 className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
                                 disabled={busy === `trust:${att.id}`}
                                 type="button"
-                                onClick={() => trust(att)}
+                                onClick={() => setTrustingAttachment(att)}
                               >
                                 {t("trust")}
                               </button>
@@ -354,6 +376,39 @@ export function ProjectPackagesSection({
           </table>
         </div>
       )}
+      {trustingAttachment ? (
+        <ConfirmDialog
+          body={t("trustConfirmBody", {
+            count: trustingAttachment.affectedProjectCount ?? 0,
+          })}
+          busy={busy === `trust:${trustingAttachment.id}`}
+          cancelLabel={t("trustCancel")}
+          testId="package-trust-confirm"
+          title={t("trustConfirmTitle")}
+          titleId="package-trust-confirm-title"
+          onClose={() => setTrustingAttachment(null)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className="h-8 rounded-[8px] border border-line px-3 text-[12px] text-mute hover:bg-ivory disabled:opacity-50"
+              disabled={busy === `trust:${trustingAttachment.id}`}
+              type="button"
+              onClick={() => setTrustingAttachment(null)}
+            >
+              {t("trustCancel")}
+            </button>
+            <button
+              className="h-8 rounded-[8px] border border-amber bg-amber px-3 text-[12px] font-semibold text-white disabled:opacity-50"
+              data-testid="package-trust-confirm-submit"
+              disabled={busy === `trust:${trustingAttachment.id}`}
+              type="button"
+              onClick={confirmTrust}
+            >
+              {t("trust")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
     </section>
   );
 }

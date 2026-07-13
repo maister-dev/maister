@@ -50,11 +50,9 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await expect(page).toHaveURL(/tab=activity/);
   await expect(page.getByText("Activity").first()).toBeVisible();
 
-  await page.getByRole("tab", { name: /PRs/i }).click();
-  await expect(page).toHaveURL(/tab=prs/);
-  await expect(
-    page.getByText("Pull-request sync isn't wired up on this POC yet."),
-  ).toBeVisible();
+  await expect(page.getByRole("tab", { name: /PRs/i })).toHaveCount(0);
+  await page.goto(`/projects/${fx.projectSlug}?tab=prs`);
+  await expect(page.locator("[data-board]")).toBeVisible();
 
   await page.getByRole("tab", { name: /MCPs/i }).click();
   await expect(page).toHaveURL(/tab=mcps/);
@@ -67,4 +65,29 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await page.getByRole("tab", { name: /Packages/i }).click();
   await expect(page).toHaveURL(/tab=packages/);
   await expect(page.getByText("acceptance").first()).toBeVisible();
+
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.goto("/");
+
+  const mobileNavTrigger = page.getByTestId("mobile-rail-toggle");
+
+  await mobileNavTrigger.click();
+  await expect(page.getByTestId("mobile-rail-drawer")).toBeVisible();
+  await expect(
+    page.getByTestId("mobile-rail-drawer").getByRole("link", {
+      name: "Observatory",
+    }),
+  ).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("mobile-rail-drawer")).toHaveCount(0);
+  await expect(mobileNavTrigger).toBeFocused();
+
+  await mobileNavTrigger.click();
+  await page
+    .getByTestId("mobile-rail-drawer")
+    .getByRole("link", { name: "Observatory" })
+    .click();
+  await expect(page).toHaveURL(/\/observatory$/);
+  await expect(page.getByTestId("mobile-rail-drawer")).toHaveCount(0);
 });

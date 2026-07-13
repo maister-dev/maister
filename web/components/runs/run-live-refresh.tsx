@@ -5,9 +5,13 @@ import type { ReactElement } from "react";
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  RunStreamLiveness,
+  type RunStreamLivenessLabels,
+} from "@/components/feedback/run-stream-liveness";
+import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { runViewKey, shouldRefreshRunView } from "@/lib/runs/live-refresh";
-import { useRunStream } from "@/lib/use-run-stream";
 
 // Debounced so a burst of streamed chunks collapses into one status check.
 const REFRESH_DEBOUNCE_MS = 800;
@@ -23,14 +27,16 @@ export function RunLiveRefresh({
   runId,
   runStatus,
   currentStepId,
+  livenessLabels,
 }: {
   runId: string;
   runStatus: string;
   currentStepId: string | null;
+  livenessLabels: RunStreamLivenessLabels;
 }): ReactElement | null {
   const router = useRouter();
   const live = isLiveRunStatus(runStatus);
-  const { eventCount } = useRunStream(live ? runId : null, { retain: false });
+  const { eventCount, liveness, reconnect } = useRunPageStream(runId, live);
   const seenRef = useRef(runViewKey({ runStatus, currentStepId }));
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -71,5 +77,15 @@ export function RunLiveRefresh({
     };
   }, [eventCount, live, runId, router]);
 
-  return null;
+  if (!live) return null;
+
+  return (
+    <div className="mx-auto w-full max-w-[1440px] px-4 pt-3 sm:px-6">
+      <RunStreamLiveness
+        labels={livenessLabels}
+        liveness={liveness}
+        onReconnect={reconnect}
+      />
+    </div>
+  );
 }

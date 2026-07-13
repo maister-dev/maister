@@ -1041,6 +1041,29 @@ final target delivery before it counts. Scratch and promotable worktree agents
 reach distinct promotion entry points but one shared final-evidence helper. The
 evidence has no effect on promotion eligibility.
 
+## UI completion presentation contract (Implemented)
+
+The UI completion batch adds presentation-only feedback around existing run
+contracts. It does not add an event, route, status, scheduler input, or
+promotion policy.
+
+- The browser stream client may show `connecting`, `live`, `reconnecting`, or
+  `disconnected`. An unexpected close retries with a bounded delay and the
+  existing `lastEventId`; terminal runs and unmounted/replaced screens cancel
+  timers and close their EventSource. The run shell owns the shared Flow-run
+  subscription used by refresh, inspector, transcript, and graph. Scratch and
+  Studio own their independent subscriptions.
+- Liveness is operator-facing only: it uses an accessible status pill and a
+  manual reconnect action, but never writes or infers `runs.status`.
+- The run header may expose Review or Promote only through the existing
+  inspector action/guard. It must use the same mode, reviewed target commit,
+  diff truncation, target drift, and readiness checks as the inspector. When
+  not immediately promotable, the header opens the existing Review surface
+  instead of creating a weaker promotion route.
+- Localized action feedback never renders raw error codes or server messages.
+  The only exception is the recognized, localized diagnostic-code field of a
+  route error boundary.
+
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),

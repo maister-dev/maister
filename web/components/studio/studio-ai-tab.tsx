@@ -21,6 +21,7 @@ import {
 import { readApiError } from "@/lib/api-error";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { type LaunchStage, readLaunchStream } from "@/lib/runs/launch-progress";
+import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import { useRunStream } from "@/lib/use-run-stream";
 
 export type StudioAiTabLabels = {
@@ -184,9 +185,8 @@ export function StudioAiTab({
             ? body.defaultRunnerId
             : (body.runners[0]?.id ?? ""),
         );
-      } catch (err) {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : String(err));
+      } catch {
+        if (!cancelled) setError(t("requestFailed"));
       } finally {
         if (!cancelled) setLoadingRunners(false);
       }
@@ -303,7 +303,7 @@ export function StudioAiTab({
       );
 
       if (streamed.error) {
-        setError(streamed.error.message ?? streamed.error.code ?? "error");
+        setError(t(resolveUiErrorMessageKey(streamed.error.code)));
 
         return;
       }
@@ -311,8 +311,8 @@ export function StudioAiTab({
         setRunId(streamed.result.runId);
         onActivity();
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("requestFailed"));
     } finally {
       setLaunching(false);
       setLaunchStage(null);
@@ -355,8 +355,8 @@ export function StudioAiTab({
       setRunId(null);
       onBusyChange(false);
       onActivity();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("requestFailed"));
     } finally {
       setDropping(false);
     }

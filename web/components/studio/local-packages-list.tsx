@@ -105,8 +105,8 @@ export function LocalPackagesList({
       }
 
       return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
 
       return false;
     } finally {

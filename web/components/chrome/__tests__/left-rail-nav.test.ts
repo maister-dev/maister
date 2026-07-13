@@ -29,6 +29,7 @@ function renderActive(activeSection: RailSectionId | null): string {
   return renderToStaticMarkup(
     createElement(LeftRailNavView, {
       activeSection,
+      ariaLabel: "Sections",
       comingSoon: "Coming soon",
       inboxCount: 0,
       sections,

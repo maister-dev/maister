@@ -296,8 +296,11 @@ describe("WorkbenchLifecycleActions dialogs", () => {
     await click(findButton(document.body, "workbenchLifecycle.dialog.push"));
     await flushPromises();
 
-    expect(textOf(document.body)).toContain("remote branch has newer commits");
-    expect(textOf(document.body)).toContain("Review the remote branch");
+    expect(textOf(document.body)).toContain("workbenchLifecycle.error");
+    expect(textOf(document.body)).not.toContain(
+      "remote branch has newer commits",
+    );
+    expect(textOf(document.body)).not.toContain("Review the remote branch");
 
     await click(
       findButton(document.body, "workbenchLifecycle.dialog.forcePush"),
@@ -383,8 +386,8 @@ describe("WorkbenchLifecycleActions dialogs", () => {
     await click(findButton(document.body, "workbenchLifecycle.dialog.handoff"));
     await flushPromises();
 
-    expect(textOf(document.body)).toContain("workbenchLifecycle.errorWithCode");
-    expect(textOf(document.body)).toContain("CONFLICT");
+    expect(textOf(document.body)).toContain("workbenchLifecycle.error");
+    expect(textOf(document.body)).not.toContain("CONFLICT");
 
     await click(findButton(document.body, "workbenchLifecycle.dialog.handoff"));
     await flushPromises();

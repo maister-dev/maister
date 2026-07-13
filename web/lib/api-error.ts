@@ -31,10 +31,8 @@ export async function readApiError(
   const code = body?.code;
 
   if (code && (API_ERROR_CODES as readonly string[]).includes(code)) {
-    // Keep the server detail (cron validation text, conflicting state, …)
-    // behind the translated label — the detail is technical, the label is UX.
-    return body?.message ? `${t(code)} — ${body.message}` : t(code);
+    return t(code);
   }
 
-  return body?.message ?? code ?? t("requestFailed", { status: res.status });
+  return t("requestFailed");
 }

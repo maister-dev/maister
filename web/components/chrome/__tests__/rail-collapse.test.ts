@@ -15,6 +15,7 @@ function render(collapsed: boolean): string {
       RailCollapseView,
       {
         collapsed,
+        ariaLabel: "Sections and active workspaces",
         collapsedChildren: createElement(
           "span",
           { "data-testid": "rail-compact-child" },

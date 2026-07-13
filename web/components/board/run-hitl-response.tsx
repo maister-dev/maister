@@ -23,21 +23,8 @@ import {
   consensusHitlFromSchema,
   formFieldsFromSchema,
 } from "@/components/board/hitl-decision-controls";
-
-// Typed MaisterError codes the respond route can return; each has a message in
-// messages/*.json under `run.error.<CODE>`. Anything else → `run.error.generic`.
-const KNOWN_ERROR_CODES = new Set([
-  "CRASH",
-  "EXECUTOR_UNAVAILABLE",
-  "ACP_PROTOCOL",
-  "HITL_TIMEOUT",
-  "CONFLICT",
-  "CONFIG",
-  "NEEDS_INPUT",
-  "PRECONDITION",
-  "UNAUTHORIZED",
-  "ACCOUNT_INACTIVE",
-]);
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 
 export interface RunHitlResponseProps {
   runId: string;
@@ -92,6 +79,7 @@ export function RunHitlResponse({
     useState<BudgetBreachParkMode>("snapshot");
   const [budgetBranchName, setBudgetBranchName] = useState("");
   const [budgetDropWorkspace, setBudgetDropWorkspace] = useState(false);
+  const [confirmingBudgetAbandon, setConfirmingBudgetAbandon] = useState(false);
   // Pre-fill the raise input with the suggested ceiling = breached current × 2
   // (spec §6.2). `current` ≥ the breached limit at escalate, so current × 2 is
   // always a valid suggestion (> limit). Empty for non-budget kinds.
@@ -103,10 +91,8 @@ export function RunHitlResponse({
 
   // Map a typed MaisterError `code` to a localized message. Unknown codes fall
   // back to the generic message so the user never sees a raw code like CONFLICT.
-  function errorMessage(code: string): string {
-    return KNOWN_ERROR_CODES.has(code)
-      ? t(`error.${code}`)
-      : t("error.generic");
+  function errorMessage(code: unknown): string {
+    return t(resolveUiErrorMessageKey(code));
   }
 
   async function post(payload: Record<string, unknown>): Promise<void> {
@@ -128,7 +114,7 @@ export function RunHitlResponse({
           code?: string;
         } | null;
 
-        setError(errorMessage(data?.code ?? "CRASH"));
+        setError(errorMessage(data?.code));
 
         return;
       }
@@ -311,11 +297,18 @@ export function RunHitlResponse({
 
   function handleBudgetAbandon(): void {
     if (budgetDropWorkspace) {
-      const confirmed = window.confirm(t("budgetDropConfirm"));
+      setConfirmingBudgetAbandon(true);
 
-      if (!confirmed) return;
+      return;
     }
 
+    void post({
+      optionId: "abandon",
+      response: { dropWorkspace: budgetDropWorkspace },
+    });
+  }
+
+  function confirmBudgetAbandon(): void {
     void post({
       optionId: "abandon",
       response: { dropWorkspace: budgetDropWorkspace },
@@ -414,46 +407,79 @@ export function RunHitlResponse({
   };
 
   return (
-    <HitlDecisionControls
-      availableOptions={availableOptions}
-      budgetBranchName={budgetBranchName}
-      budgetCeiling={budgetCeiling}
-      budgetDropWorkspace={budgetDropWorkspace}
-      budgetParkMode={budgetParkMode}
-      budgetProgress={budgetProgress}
-      claimStage={claimStage}
-      comments={comments}
-      compact={compact}
-      confidence={confidence}
-      criticality={criticality}
-      disabled={disabled}
-      error={error}
-      formValues={formValues}
-      jsonValue={json}
-      kind={kind}
-      labels={labels}
-      options={options}
-      reviewCounts={reviewCounts}
-      reviewSchema={reviewSchema}
-      schema={schema}
-      showConfidence={showConfidence}
-      onBudgetAbandon={handleBudgetAbandon}
-      onBudgetBranchNameChange={setBudgetBranchName}
-      onBudgetCeilingChange={setBudgetCeiling}
-      onBudgetDropWorkspaceChange={setBudgetDropWorkspace}
-      onBudgetPark={handleBudgetPark}
-      onBudgetParkModeChange={setBudgetParkMode}
-      onBudgetRaise={handleBudgetRaise}
-      onBudgetRestart={handleBudgetRestart}
-      onCommentsChange={setComments}
-      onConfidenceChange={setConfidence}
-      onDecision={handleDecision}
-      onFormFieldChange={handleFormFieldChange}
-      onJsonChange={setJson}
-      onOption={(optionId) => void post({ optionId })}
-      onSendBack={handleSendBack}
-      onSubmitForm={submitForm}
-      onSubmitJson={submitJson}
-    />
+    <>
+      <HitlDecisionControls
+        availableOptions={availableOptions}
+        budgetBranchName={budgetBranchName}
+        budgetCeiling={budgetCeiling}
+        budgetDropWorkspace={budgetDropWorkspace}
+        budgetParkMode={budgetParkMode}
+        budgetProgress={budgetProgress}
+        claimStage={claimStage}
+        comments={comments}
+        compact={compact}
+        confidence={confidence}
+        criticality={criticality}
+        disabled={disabled}
+        error={error}
+        formValues={formValues}
+        jsonValue={json}
+        kind={kind}
+        labels={labels}
+        options={options}
+        reviewCounts={reviewCounts}
+        reviewSchema={reviewSchema}
+        schema={schema}
+        showConfidence={showConfidence}
+        onBudgetAbandon={handleBudgetAbandon}
+        onBudgetBranchNameChange={setBudgetBranchName}
+        onBudgetCeilingChange={setBudgetCeiling}
+        onBudgetDropWorkspaceChange={setBudgetDropWorkspace}
+        onBudgetPark={handleBudgetPark}
+        onBudgetParkModeChange={setBudgetParkMode}
+        onBudgetRaise={handleBudgetRaise}
+        onBudgetRestart={handleBudgetRestart}
+        onCommentsChange={setComments}
+        onConfidenceChange={setConfidence}
+        onDecision={handleDecision}
+        onFormFieldChange={handleFormFieldChange}
+        onJsonChange={setJson}
+        onOption={(optionId) => void post({ optionId })}
+        onSendBack={handleSendBack}
+        onSubmitForm={submitForm}
+        onSubmitJson={submitJson}
+      />
+      {confirmingBudgetAbandon ? (
+        <ConfirmDialog
+          body={t("budgetDropConfirm")}
+          busy={busy}
+          cancelLabel={t("cancel")}
+          testId="budget-drop-confirm"
+          title={t("budgetDropConfirmTitle")}
+          titleId="budget-drop-confirm-title"
+          onClose={() => setConfirmingBudgetAbandon(false)}
+        >
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold text-mute hover:border-mute hover:text-ink-2 disabled:opacity-50"
+              disabled={busy}
+              type="button"
+              onClick={() => setConfirmingBudgetAbandon(false)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className="rounded-lg border border-danger-line bg-danger-soft px-3.5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-danger hover:bg-paper disabled:opacity-50"
+              data-testid="budget-drop-confirm-submit"
+              disabled={busy}
+              type="button"
+              onClick={confirmBudgetAbandon}
+            >
+              {t("budgetAbandon")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
+    </>
   );
 }

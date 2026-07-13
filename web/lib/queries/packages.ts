@@ -10,7 +10,7 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import { join } from "node:path";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -72,6 +72,7 @@ export type ProjectPackageAttachmentView = {
   versionLabel: string;
   resolvedRevision: string;
   trustStatus: string;
+  affectedProjectCount?: number;
   attachedAt: string;
   updateAvailable: boolean;
   // The single newest strictly-newer installed version (default one-click
@@ -226,7 +227,10 @@ export function createPackageCompatibilityResolver(): PackageCompatibilityResolv
 // never leaves the server.
 export async function getProjectPackageAttachments(
   projectId: string,
-  args: { compatibilityResolver?: PackageCompatibilityResolver } = {},
+  args: {
+    compatibilityResolver?: PackageCompatibilityResolver;
+    includeAffectedProjectCount?: boolean;
+  } = {},
 ): Promise<ProjectPackageAttachmentView[]> {
   const db = getDb() as any;
   const resolveCompatibility =
@@ -247,6 +251,31 @@ export async function getProjectPackageAttachments(
         attachments.map((a: any) => a.packageInstallId),
       ),
     );
+  const attachedInstallIds = attachments.map(
+    (attachment: any) => attachment.packageInstallId as string,
+  );
+  const affectedProjectCountByInstallId = args.includeAffectedProjectCount
+    ? new Map<string, number>(
+        (
+          await db
+            .select({
+              packageInstallId: projectPackageAttachments.packageInstallId,
+              value: sql<number>`count(distinct ${projectPackageAttachments.projectId})`,
+            })
+            .from(projectPackageAttachments)
+            .where(
+              inArray(
+                projectPackageAttachments.packageInstallId,
+                attachedInstallIds,
+              ),
+            )
+            .groupBy(projectPackageAttachments.packageInstallId)
+        ).map((row: any) => [
+          row.packageInstallId as string,
+          Number(row.value),
+        ]),
+      )
+    : null;
   const installById = new Map<string, any>(installs.map((i: any) => [i.id, i]));
   const sources = await db.select().from(packageSources);
   const discoveredByUrl = new Map<string, DiscoveredPackageEntry[]>(
@@ -315,6 +344,12 @@ export async function getProjectPackageAttachments(
       versionLabel: install?.versionLabel ?? "",
       resolvedRevision: install?.resolvedRevision ?? "",
       trustStatus: install?.trustStatus ?? "untrusted",
+      ...(affectedProjectCountByInstallId
+        ? {
+            affectedProjectCount:
+              affectedProjectCountByInstallId.get(att.packageInstallId) ?? 0,
+          }
+        : {}),
       attachedAt:
         att.attachedAt instanceof Date
           ? att.attachedAt.toISOString()

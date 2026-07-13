@@ -10,6 +10,8 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useFeedback } from "@/components/feedback/feedback-provider";
 import { DiffView } from "@/components/workbench/diff-view";
 import { readApiError } from "@/lib/api-error";
 
@@ -21,7 +23,9 @@ export type LocalPackageDiffLabels = {
   commit: string;
   commitMessagePlaceholder: string;
   discard: string;
+  discardConfirmTitle: string;
   discardConfirm: string;
+  cancel: string;
   committing: string;
   discarding: string;
   committed: string;
@@ -83,8 +87,10 @@ export function LocalPackageDiffDrawer({
   onChanged?: (changedCount: number) => void;
 }): ReactElement {
   const tApiErrors = useTranslations("apiErrors");
+  const feedback = useFeedback();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [action, setAction] = useState<ActionState>({ kind: "idle" });
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [message, setMessage] = useState("");
 
   const load = useCallback(async (): Promise<void> => {
@@ -106,10 +112,10 @@ export function LocalPackageDiffDrawer({
 
       setState({ kind: "ready", diff });
       onChanged?.(diff.changedCount);
-    } catch (err) {
+    } catch {
       setState({
         kind: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: tApiErrors("requestFailed"),
       });
     }
   }, [packageId, tApiErrors, onChanged]);
@@ -135,9 +141,15 @@ export function LocalPackageDiffDrawer({
         );
 
         if (!res.ok) {
+          const message = await readApiError(res, tApiErrors);
+
           setAction({
             kind: "error",
-            message: await readApiError(res, tApiErrors),
+            message,
+          });
+          feedback.error({
+            message,
+            mutationId: `local-package:${packageId}:${sessionId}:${op}`,
           });
 
           return;
@@ -152,14 +164,25 @@ export function LocalPackageDiffDrawer({
           kind: "done",
           message: op === "commit" ? labels.committed : labels.discarded,
         });
-      } catch (err) {
+        feedback.success({
+          message: op === "commit" ? labels.committed : labels.discarded,
+          mutationId: `local-package:${packageId}:${sessionId}:${op}`,
+        });
+        if (op === "discard") setConfirmingDiscard(false);
+      } catch {
+        const errorMessage = tApiErrors("requestFailed");
+
         setAction({
           kind: "error",
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage,
+        });
+        feedback.error({
+          message: errorMessage,
+          mutationId: `local-package:${packageId}:${sessionId}:${op}`,
         });
       }
     },
-    [packageId, sessionId, tApiErrors, onChanged, labels],
+    [packageId, sessionId, tApiErrors, onChanged, labels, feedback],
   );
 
   const changedCount = state.kind === "ready" ? state.diff.changedCount : 0;
@@ -204,9 +227,7 @@ export function LocalPackageDiffDrawer({
               disabled={!canAct}
               type="button"
               onClick={() => {
-                if (window.confirm(labels.discardConfirm)) {
-                  void mutate("discard", {});
-                }
+                setConfirmingDiscard(true);
               }}
             >
               {action.kind === "discarding"
@@ -234,6 +255,38 @@ export function LocalPackageDiffDrawer({
         >
           {labels.actionFailed} — {action.message}
         </p>
+      ) : null}
+
+      {confirmingDiscard ? (
+        <ConfirmDialog
+          body={labels.discardConfirm}
+          busy={busy}
+          cancelLabel={labels.cancel}
+          testId="lp-diff-discard-confirm"
+          title={labels.discardConfirmTitle}
+          titleId="lp-diff-discard-confirm-title"
+          onClose={() => setConfirmingDiscard(false)}
+        >
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute hover:text-ink disabled:opacity-50"
+              disabled={busy}
+              type="button"
+              onClick={() => setConfirmingDiscard(false)}
+            >
+              {labels.cancel}
+            </button>
+            <button
+              className="rounded-md border border-danger-line bg-danger-soft px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-danger hover:bg-paper disabled:opacity-50"
+              data-testid="lp-diff-discard-confirm-submit"
+              disabled={busy}
+              type="button"
+              onClick={() => void mutate("discard", {})}
+            >
+              {labels.discard}
+            </button>
+          </div>
+        </ConfirmDialog>
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-auto">

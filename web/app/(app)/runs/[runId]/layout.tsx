@@ -39,6 +39,7 @@ import {
 } from "@/components/runs/flow-run-center";
 import { LiveRunInspector } from "@/components/runs/live-run-inspector";
 import { RunLiveRefresh } from "@/components/runs/run-live-refresh";
+import { RunStreamProvider } from "@/components/runs/run-stream-provider";
 import {
   OrchestratorRunSubtree,
   type OrchestratorRunSubtreeLabels,
@@ -933,6 +934,10 @@ export default async function RunDetailLayout({
     closeInspector: t("headerCloseInspector"),
     task: t("headerTask"),
     budgetWarn: t("headerBudgetWarn"),
+    review: t("flowCenterReviewChanges"),
+    promote: t("inspectorActionPromote"),
+    promotionStarted: t("promotionStarted"),
+    targetDrift: t("targetDrift"),
   };
   const inspectorLabels: RunInspectorLabels = {
     overview: t("inspectorOverview"),
@@ -1114,6 +1119,23 @@ export default async function RunDetailLayout({
       : !action.disabled ||
         (detail.status === "Crashed" && action.id === "recover"),
   );
+  const headerPromotionPolicy = policyActions.find(
+    (action) => action.id === "promote" || action.id === "promotePullRequest",
+  );
+  const headerPromotionOperation =
+    showReview && reviewData && headerPromotionPolicy?.disabled === false
+      ? {
+          runId: detail.runId,
+          targetBranch: reviewData.targetBranch,
+          deliveryPolicy: reviewData.deliveryPolicy,
+          mode: reviewData.promotionMode,
+          reviewedTargetCommit: reviewData.reviewedTargetCommit,
+          canPromote: canAct,
+          reviewReady: reviewReadiness?.readiness === "ready",
+          diffTruncated: reviewData.diff.truncated,
+          legacyNeedsRelaunch: reviewData.legacyNeedsRelaunch,
+        }
+      : null;
   const pendingInputActions: RunInspectorAction[] =
     detail.pendingHitl && !isCutoverHistory
       ? [
@@ -1225,9 +1247,15 @@ export default async function RunDetailLayout({
     ) : null;
 
   return (
-    <>
+    <RunStreamProvider runId={detail.runId} runStatus={detail.status}>
       <RunLiveRefresh
         currentStepId={detail.currentStepId}
+        livenessLabels={{
+          disconnected: t("streamDisconnected"),
+          live: t("streamLive"),
+          reconnect: t("streamReconnect"),
+          reconnecting: t("streamReconnecting"),
+        }}
         runId={detail.runId}
         runStatus={detail.status}
       />
@@ -1261,6 +1289,8 @@ export default async function RunDetailLayout({
         labels={shellLabels}
         projectHref={`/projects/${detail.projectSlug}`}
         projectLabel={t("backToBoard")}
+        promotionOperation={headerPromotionOperation}
+        reviewHref={showReview && reviewData ? "#review-panel" : null}
         status={detail.status}
         subtitle={shellSubtitle}
         targetBranch={detail.targetBranch}
@@ -1683,6 +1713,7 @@ export default async function RunDetailLayout({
               diff={reviewData.diff}
               displayParentRepoPath={displayParentRepoPath}
               driftDetected={reviewData.driftDetected}
+              id="review-panel"
               labels={reviewLabels}
               legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
               parentRepoPath={detail.parentRepoPath}
@@ -1707,6 +1738,6 @@ export default async function RunDetailLayout({
           />
         </div>
       </RunShell>
-    </>
+    </RunStreamProvider>
   );
 }

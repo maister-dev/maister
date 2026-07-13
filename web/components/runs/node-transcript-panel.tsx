@@ -9,8 +9,8 @@ import {
   type TranscriptLabels,
   type TranscriptMessage,
 } from "@/components/run-transcript/transcript-view";
+import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS } from "@/lib/runs/live-inspector";
-import { useRunStream } from "@/lib/use-run-stream";
 
 // The active (current) node of a live run auto-expands so streamed output is
 // visible without a click; everything else starts collapsed.
@@ -71,7 +71,7 @@ export function NodeTranscriptPanel({
   const [messages, setMessages] = useState<TranscriptMessage[] | null>(
     initialMessages ?? null,
   );
-  const { eventCount } = useRunStream(live ? runId : null, { retain: false });
+  const { eventCount } = useRunPageStream(runId, live);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reqIdRef = useRef(0);
 

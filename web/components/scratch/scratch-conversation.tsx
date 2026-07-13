@@ -133,15 +133,15 @@ export function ScratchConversation({
       const response = await fetch(`/api/scratch-runs/${runId}`);
 
       if (!response.ok) {
-        setError(errorText(await response.json().catch(() => null)));
+        setError(t(errorText(await response.json().catch(() => null))));
 
         return;
       }
 
       setDetail((await response.json()) as ScratchDetail);
       setDetailRevision((current) => current + 1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("errorGeneric"));
     } finally {
       setLoading(false);
     }
@@ -205,10 +205,10 @@ export function ScratchConversation({
       );
     }
 
-    void loadCommandCatalog().catch((err) => {
+    void loadCommandCatalog().catch(() => {
       if (controller.signal.aborted) return;
       setCommandCatalog([]);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(t("errorGeneric"));
     });
 
     return () => controller.abort();
@@ -352,7 +352,7 @@ export function ScratchConversation({
         const response = await fetch(resolvedMessageEndpoint, requestInit);
 
         if (!response.ok) {
-          setError(errorText(await response.json().catch(() => null)));
+          setError(t(errorText(await response.json().catch(() => null))));
 
           return false;
         }
@@ -361,8 +361,8 @@ export function ScratchConversation({
         onMessageSettled?.();
 
         return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+      } catch {
+        setError(t("errorGeneric"));
 
         return false;
       } finally {
@@ -393,7 +393,7 @@ export function ScratchConversation({
         });
 
         if (!response.ok) {
-          setError(errorText(await response.json().catch(() => null)));
+          setError(t(errorText(await response.json().catch(() => null))));
 
           return false;
         }
@@ -402,8 +402,8 @@ export function ScratchConversation({
         onMessageSettled?.();
 
         return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+      } catch {
+        setError(t("errorGeneric"));
 
         return false;
       } finally {
@@ -427,7 +427,7 @@ export function ScratchConversation({
       });
 
       if (!response.ok) {
-        setError(errorText(await response.json().catch(() => null)));
+        setError(t(errorText(await response.json().catch(() => null))));
 
         return false;
       }
@@ -435,8 +435,8 @@ export function ScratchConversation({
       // The in-flight turn settles to WaitingForUser on its own; the SSE tick
       // refreshes the detail. No loadDetail here to avoid racing that turn.
       return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("errorGeneric"));
 
       return false;
     }
@@ -459,14 +459,14 @@ export function ScratchConversation({
         );
 
         if (!response.ok) {
-          setError(errorText(await response.json().catch(() => null)));
+          setError(t(errorText(await response.json().catch(() => null))));
 
           return;
         }
 
         await loadDetail();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+      } catch {
+        setError(t("errorGeneric"));
       } finally {
         setPendingAction(null);
       }

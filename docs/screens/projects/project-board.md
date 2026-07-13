@@ -126,6 +126,19 @@ The board is a horizontally scrollable set of columns:
   attachment-level aliasing — the per-project name unique stays
   authoritative.
 
+### UI completion contract (Implemented)
+
+- The board has no PR tab or deferred placeholder. An old `?tab=prs` deep link
+  follows the established invalid-tab fallback; the board does not gain a new
+  query or API path.
+- When no enabled, launchable Flow is available, **New Task** provides an
+  explicit link to the Packages tab rather than a silent empty Flow selector.
+  The existing simple-intent flowless task creation path remains available.
+- Before global-admin package trust, the Packages tab uses the shared
+  confirmation dialog and shows an advisory count of distinct projects attached
+  to the selected package install. The count does not replace the existing
+  server authorization or trust request.
+
 ## States
 
 ```mermaid

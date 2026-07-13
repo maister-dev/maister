@@ -1,7 +1,8 @@
 # Top nav
 
 - **Type:** chrome (persistent header, every `(app)` screen).
-- **Status:** Implemented (WI-3 removed the duplicate supervisor dot).
+- **Status:** Implemented (WI-3 removed the duplicate supervisor dot); mobile
+  rail trigger is implemented in the UI completion batch.
 - **Source:** `web/components/chrome/top-nav.tsx`.
 
 ## JTBD
@@ -22,10 +23,14 @@ account actions (change password, sign out); admin destinations live in the
 - **Breadcrumb** → `~/projects` plus the per-screen crumb.
 - **User menu** → change password, sign out.
 - **Locale / theme** toggles act in place (cookie / class), no navigation.
+- **Mobile rail trigger (Implemented):** below `md`, an icon button opens the
+  one on-demand mobile left-rail drawer; it has an accessible name and receives
+  restored focus when that drawer closes.
 
 ## Layout & regions
 
-Left: logo + a breadcrumb (`~/projects` and the active crumb). Right: language
+Left: logo + a breadcrumb (`~/projects` and the active crumb). Below `md`, the
+logo group also contains the mobile rail trigger. Right: language
 switch, theme switch, and the user menu. The theme switch uses packaged
 Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
 breadcrumb no longer carries a supervisor status dot — supervisor status is

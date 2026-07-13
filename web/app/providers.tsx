@@ -4,6 +4,7 @@ import type { ThemeProviderProps } from "@/lib/theme";
 
 import * as React from "react";
 
+import { FeedbackProvider } from "@/components/feedback/feedback-provider";
 import { ThemeProvider } from "@/lib/theme";
 
 export interface ProvidersProps {
@@ -12,5 +13,9 @@ export interface ProvidersProps {
 }
 
 export function Providers({ children, themeProps }: ProvidersProps) {
-  return <ThemeProvider {...themeProps}>{children}</ThemeProvider>;
+  return (
+    <ThemeProvider {...themeProps}>
+      <FeedbackProvider>{children}</FeedbackProvider>
+    </ThemeProvider>
+  );
 }

@@ -33,6 +33,7 @@ import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { readLaunchStream } from "@/lib/runs/launch-progress";
+import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   blindShipLockedOptions,
   expandExecutionPolicy,
@@ -78,6 +79,16 @@ type AvailablePackageVersion = {
   hasUncutEdits: boolean;
   offeredOptions: VersionChoice[];
 };
+
+export function deriveInitialDisclosureState({
+  hasNewerCut,
+  hasUncutEdits,
+}: {
+  hasNewerCut: boolean;
+  hasUncutEdits: boolean;
+}): boolean {
+  return hasNewerCut || hasUncutEdits;
+}
 
 type LaunchRunnerOption = {
   id: string;
@@ -509,11 +520,12 @@ export function LaunchPopover({
   // a half-typed / invalid value is rejected inline before it folds into the
   // policy; the prune step coerces to positive ints (NaN / ≤0 dropped).
   const [execBudget, setExecBudget] = useState<BudgetTextAxis>({});
-  const [execBudgetOpen, setExecBudgetOpen] = useState(true);
+  const [execBudgetOpen, setExecBudgetOpen] = useState(false);
   // M39 Stream B (ADR-107): per-package version-adopt choice (default keep).
   const [packageVersions, setPackageVersions] = useState<
     Record<string, VersionChoice>
   >({});
+  const [packageVersionsOpen, setPackageVersionsOpen] = useState(false);
   const dialogId = useId();
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -562,6 +574,14 @@ export function LaunchPopover({
               v.packageInstallId,
               "keep" as VersionChoice,
             ]),
+          ),
+        );
+        setPackageVersionsOpen(
+          payload.availablePackageVersions.some((version) =>
+            deriveInitialDisclosureState({
+              hasNewerCut: version.newerVersionLabel !== null,
+              hasUncutEdits: version.hasUncutEdits,
+            }),
           ),
         );
       })
@@ -679,7 +699,7 @@ export function LaunchPopover({
             message?: string;
           } | null;
 
-          setError(data?.code ?? data?.message ?? "CRASH");
+          setError(tRun(resolveUiErrorMessageKey(data?.code)));
 
           return;
         }
@@ -717,7 +737,7 @@ export function LaunchPopover({
           message?: string;
         } | null;
 
-        setError(data?.code ?? data?.message ?? "CRASH");
+        setError(tRun(resolveUiErrorMessageKey(data?.code)));
 
         return;
       }
@@ -728,12 +748,12 @@ export function LaunchPopover({
       }>(res, setLaunchStage);
 
       if (streamed.error) {
-        setError(streamed.error.code ?? streamed.error.message ?? "CRASH");
+        setError(tRun(resolveUiErrorMessageKey(streamed.error.code)));
 
         return;
       }
       if (!streamed.result) {
-        setError("CRASH");
+        setError(tRun("error.generic"));
 
         return;
       }
@@ -741,7 +761,7 @@ export function LaunchPopover({
       setOpen(false);
       startTransition(() => router.refresh());
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(tRun("error.generic"));
     } finally {
       setLaunchStage(null);
       setBusy(false);
@@ -1023,178 +1043,191 @@ export function LaunchPopover({
                           </span>
                         </label>
                       ) : null}
-
-                      <label className="flex flex-col gap-1">
-                        <span className={fieldLabelClass}>
-                          {tRun("baseBranch")}
-                          {baseBranch !==
-                          (options.defaultBaseBranch ??
-                            branchFallback(options)) ? (
-                            <b className="ml-2 text-amber">{t("override")}</b>
-                          ) : null}
-                        </span>
-                        <LaunchSelect
-                          label={tRun("baseBranch")}
-                          options={branchOptions}
-                          value={baseBranch}
-                          onChange={setBaseBranch}
-                        />
-                      </label>
-
-                      <label className="flex flex-col gap-1">
-                        <span className={fieldLabelClass}>
-                          {tRun("targetBranch")}
-                          {targetBranch !==
-                          (options.defaultTargetBranch ??
-                            branchFallback(options)) ? (
-                            <b className="ml-2 text-amber">{t("override")}</b>
-                          ) : null}
-                        </span>
-                        <LaunchSelect
-                          label={tRun("targetBranch")}
-                          options={branchOptions}
-                          value={targetBranch}
-                          onChange={setTargetBranch}
-                        />
-                      </label>
                     </div>
 
-                    {runnerResolutionWarnings.length > 0 ? (
-                      <div
-                        className="flex gap-2 rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-amber"
-                        role="status"
-                      >
-                        <ExclamationTriangleIcon
-                          aria-hidden="true"
-                          className="mt-[1px] size-4 shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <p className="font-semibold">
-                            {t("runnerResolutionWarningTitle")}
-                          </p>
-                          <ul className="mt-1 flex list-disc flex-col gap-1 pl-4 font-mono text-[10px] leading-snug">
-                            {runnerResolutionWarnings.map((warning) => (
-                              <li key={warning.slotKey}>{warning.message}</li>
-                            ))}
-                          </ul>
-                        </div>
+                    <details
+                      className="rounded-[10px] border border-line-soft bg-ivory/50 p-3"
+                      data-testid="launch-advanced-options"
+                    >
+                      <summary className="cursor-pointer font-mono text-[11px] font-semibold text-mute hover:text-ink">
+                        {t("advanced")}
+                      </summary>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {tRun("baseBranch")}
+                            {baseBranch !==
+                            (options.defaultBaseBranch ??
+                              branchFallback(options)) ? (
+                              <b className="ml-2 text-amber">{t("override")}</b>
+                            ) : null}
+                          </span>
+                          <LaunchSelect
+                            label={tRun("baseBranch")}
+                            options={branchOptions}
+                            value={baseBranch}
+                            onChange={setBaseBranch}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {tRun("targetBranch")}
+                            {targetBranch !==
+                            (options.defaultTargetBranch ??
+                              branchFallback(options)) ? (
+                              <b className="ml-2 text-amber">{t("override")}</b>
+                            ) : null}
+                          </span>
+                          <LaunchSelect
+                            label={tRun("targetBranch")}
+                            options={branchOptions}
+                            value={targetBranch}
+                            onChange={setTargetBranch}
+                          />
+                        </label>
                       </div>
-                    ) : null}
 
-                    {options.availablePackageVersions.length > 0 ? (
-                      <div
-                        className="rounded-[10px] border border-amber-line bg-amber-soft/40 p-3"
-                        data-testid="launch-package-versions"
-                      >
-                        <div className="mb-1 flex items-center justify-between gap-3">
+                      {runnerResolutionWarnings.length > 0 ? (
+                        <div
+                          className="flex gap-2 rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-amber"
+                          role="status"
+                        >
+                          <ExclamationTriangleIcon
+                            aria-hidden="true"
+                            className="mt-[1px] size-4 shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <p className="font-semibold">
+                              {t("runnerResolutionWarningTitle")}
+                            </p>
+                            <ul className="mt-1 flex list-disc flex-col gap-1 pl-4 font-mono text-[10px] leading-snug">
+                              {runnerResolutionWarnings.map((warning) => (
+                                <li key={warning.slotKey}>{warning.message}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {options.availablePackageVersions.length > 0 ? (
+                        <details
+                          className="rounded-[10px] border border-amber-line bg-amber-soft/40 p-3"
+                          data-testid="launch-package-versions"
+                          open={packageVersionsOpen}
+                          onToggle={(event) =>
+                            setPackageVersionsOpen(event.currentTarget.open)
+                          }
+                        >
+                          <summary className="mb-1 flex cursor-pointer items-center justify-between gap-3">
+                            <h3 className="text-[13px] font-semibold text-ink">
+                              {t("packageVersions")}
+                            </h3>
+                            {Object.values(packageVersions).some(
+                              (v) => v !== "keep",
+                            ) ? (
+                              <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
+                                {t("override")}
+                              </span>
+                            ) : null}
+                          </summary>
+                          <p className="mb-2 font-mono text-[10px] text-mute">
+                            {t("packageVersionsHint")}
+                          </p>
+                          <div className="flex flex-col gap-3">
+                            {options.availablePackageVersions.map((pkg) => (
+                              <label
+                                key={pkg.packageInstallId}
+                                className="flex flex-col gap-1"
+                              >
+                                <span className={fieldLabelClass}>
+                                  {pkg.localPackageName}
+                                  <span className="ml-2 font-normal normal-case text-mute">
+                                    {pkg.newerVersionLabel
+                                      ? t("packageVersionNewer", {
+                                          current: pkg.currentVersionLabel,
+                                          next: pkg.newerVersionLabel,
+                                        })
+                                      : t("packageVersionUncut", {
+                                          current: pkg.currentVersionLabel,
+                                        })}
+                                  </span>
+                                </span>
+                                <LaunchSelect
+                                  label={pkg.localPackageName}
+                                  options={pkg.offeredOptions.map((opt) => ({
+                                    id: opt,
+                                    label: t(`packageVersionOption.${opt}`),
+                                  }))}
+                                  value={
+                                    packageVersions[pkg.packageInstallId] ??
+                                    "keep"
+                                  }
+                                  onChange={(value: VersionChoice) =>
+                                    setPackageVersions((prev) => ({
+                                      ...prev,
+                                      [pkg.packageInstallId]: value,
+                                    }))
+                                  }
+                                />
+                                {packageVersions[pkg.packageInstallId] ===
+                                "try_once" ? (
+                                  <span className="font-mono text-[10px] text-mute">
+                                    {t("packageVersionTryOnceHint")}
+                                  </span>
+                                ) : null}
+                              </label>
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
+
+                      <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
                           <h3 className="text-[13px] font-semibold text-ink">
-                            {t("packageVersions")}
+                            {t("deliveryPolicy")}
                           </h3>
-                          {Object.values(packageVersions).some(
-                            (v) => v !== "keep",
-                          ) ? (
+                          {defaultPolicy &&
+                          policyChanged(currentPolicy, defaultPolicy) ? (
                             <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
                               {t("override")}
                             </span>
                           ) : null}
                         </div>
-                        <p className="mb-2 font-mono text-[10px] text-mute">
-                          {t("packageVersionsHint")}
-                        </p>
-                        <div className="flex flex-col gap-3">
-                          {options.availablePackageVersions.map((pkg) => (
-                            <label
-                              key={pkg.packageInstallId}
-                              className="flex flex-col gap-1"
-                            >
-                              <span className={fieldLabelClass}>
-                                {pkg.localPackageName}
-                                <span className="ml-2 font-normal normal-case text-mute">
-                                  {pkg.newerVersionLabel
-                                    ? t("packageVersionNewer", {
-                                        current: pkg.currentVersionLabel,
-                                        next: pkg.newerVersionLabel,
-                                      })
-                                    : t("packageVersionUncut", {
-                                        current: pkg.currentVersionLabel,
-                                      })}
-                                </span>
-                              </span>
-                              <LaunchSelect
-                                label={pkg.localPackageName}
-                                options={pkg.offeredOptions.map((opt) => ({
-                                  id: opt,
-                                  label: t(`packageVersionOption.${opt}`),
-                                }))}
-                                value={
-                                  packageVersions[pkg.packageInstallId] ??
-                                  "keep"
-                                }
-                                onChange={(value: VersionChoice) =>
-                                  setPackageVersions((prev) => ({
-                                    ...prev,
-                                    [pkg.packageInstallId]: value,
-                                  }))
-                                }
-                              />
-                              {packageVersions[pkg.packageInstallId] ===
-                              "try_once" ? (
-                                <span className="font-mono text-[10px] text-mute">
-                                  {t("packageVersionTryOnceHint")}
-                                </span>
-                              ) : null}
-                            </label>
-                          ))}
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <label className="flex flex-col gap-1">
+                            <span className={fieldLabelClass}>
+                              {t("strategy")}
+                            </span>
+                            <LaunchSelect
+                              label={t("strategy")}
+                              options={strategyOptions}
+                              value={policyStrategy}
+                              onChange={setPolicyStrategy}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className={fieldLabelClass}>{t("push")}</span>
+                            <LaunchSelect
+                              label={t("push")}
+                              options={pushOptions}
+                              value={policyPush}
+                              onChange={setPolicyPush}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className={fieldLabelClass}>
+                              {t("trigger")}
+                            </span>
+                            <LaunchSelect
+                              label={t("trigger")}
+                              options={triggerOptions}
+                              value={policyTrigger}
+                              onChange={setPolicyTrigger}
+                            />
+                          </label>
                         </div>
                       </div>
-                    ) : null}
-
-                    <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <h3 className="text-[13px] font-semibold text-ink">
-                          {t("deliveryPolicy")}
-                        </h3>
-                        {defaultPolicy &&
-                        policyChanged(currentPolicy, defaultPolicy) ? (
-                          <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
-                            {t("override")}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <label className="flex flex-col gap-1">
-                          <span className={fieldLabelClass}>
-                            {t("strategy")}
-                          </span>
-                          <LaunchSelect
-                            label={t("strategy")}
-                            options={strategyOptions}
-                            value={policyStrategy}
-                            onChange={setPolicyStrategy}
-                          />
-                        </label>
-                        <label className="flex flex-col gap-1">
-                          <span className={fieldLabelClass}>{t("push")}</span>
-                          <LaunchSelect
-                            label={t("push")}
-                            options={pushOptions}
-                            value={policyPush}
-                            onChange={setPolicyPush}
-                          />
-                        </label>
-                        <label className="flex flex-col gap-1">
-                          <span className={fieldLabelClass}>
-                            {t("trigger")}
-                          </span>
-                          <LaunchSelect
-                            label={t("trigger")}
-                            options={triggerOptions}
-                            value={policyTrigger}
-                            onChange={setPolicyTrigger}
-                          />
-                        </label>
-                      </div>
-                    </div>
+                    </details>
 
                     <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
                       <div className="mb-2 flex items-center justify-between gap-3">

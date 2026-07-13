@@ -13,6 +13,7 @@ import clsx from "clsx";
 import { CapabilityComposer } from "@/components/capabilities/capability-composer";
 import { McpSelect } from "@/components/mcp/mcp-select";
 import { readLaunchStream } from "@/lib/runs/launch-progress";
+import { errorText } from "@/lib/scratch-runs/dialog";
 
 type AttachmentKind = "issue_url" | "file_path" | "text_note";
 type WorkMode = "auto" | "plan_first" | "manual_approval";
@@ -88,11 +89,6 @@ type AttachmentInput = {
   value: string;
 };
 
-type ApiError = {
-  code?: string;
-  message?: string;
-};
-
 type ScratchLaunchResponse = {
   runId: string;
   dialogUrl?: string;
@@ -127,14 +123,6 @@ function selectedDefaults(options: readonly CapabilityOption[]): string[] {
 
 function toggleId(list: readonly string[], id: string): string[] {
   return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
-}
-
-function errorText(payload: ApiError | null): string {
-  if (!payload) return "Request failed.";
-  if (payload.message) return payload.message;
-  if (payload.code) return payload.code;
-
-  return "Request failed.";
 }
 
 function selectedCount(...lists: readonly string[][]): number {
@@ -381,7 +369,9 @@ export function ScratchLauncher({
     })
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(errorText(await response.json().catch(() => null)));
+          throw new Error(
+            t(errorText(await response.json().catch(() => null))),
+          );
         }
 
         return (await response.json()) as LaunchOptions;
@@ -411,9 +401,9 @@ export function ScratchLauncher({
         );
         setRestrictionIds(selectedDefaults(payload.capabilities.restrictions));
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(t("errorGeneric"));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -594,7 +584,7 @@ export function ScratchLauncher({
           "text/event-stream",
         )
       ) {
-        setError(errorText(await response.json().catch(() => null)));
+        setError(t(errorText(await response.json().catch(() => null))));
 
         return;
       }
@@ -625,7 +615,7 @@ export function ScratchLauncher({
       );
 
       if (streamed.error) {
-        setError(errorText(streamed.error));
+        setError(t(errorText(streamed.error)));
 
         return;
       }
@@ -636,10 +626,10 @@ export function ScratchLauncher({
       }
 
       openRun(streamed.result);
-    } catch (err) {
+    } catch {
       // A user cancel (abort) GCs server-side; surface nothing.
       if (!launchAbortRef.current?.signal.aborted) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(t("errorGeneric"));
       }
     } finally {
       launchAbortRef.current = null;

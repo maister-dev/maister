@@ -166,8 +166,8 @@ export function OverviewCards({
 
       setWorkNotice(t("continueWorkCutDone", { label: cut.versionLabel }));
       router.refresh();
-    } catch (err) {
-      setWorkError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setWorkError(tApiErrors("requestFailed"));
     } finally {
       setCuttingId(null);
     }

@@ -4,8 +4,11 @@ import type { Assignment } from "@/lib/db/schema";
 import type { ReactElement } from "react";
 
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 import clsx from "clsx";
+
+import { readApiError } from "@/lib/api-error";
 
 export interface AssignmentActionLabels {
   claim: string;
@@ -54,6 +57,7 @@ export function AssignmentActions({
   labels,
 }: AssignmentActionsProps): ReactElement | null {
   const router = useRouter();
+  const tApiErrors = useTranslations("apiErrors");
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,18 +78,14 @@ export function AssignmentActions({
       });
 
       if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as {
-          code?: string;
-        } | null;
-
-        setError(data?.code ?? "CRASH");
+        setError(await readApiError(res, tApiErrors));
 
         return;
       }
 
       startTransition(() => router.refresh());
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }

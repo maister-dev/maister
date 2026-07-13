@@ -52,8 +52,8 @@ export function useNewLocalPackage(): {
       const created = (await res.json()) as { id: string };
 
       router.push(`/studio/edit/${created.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }

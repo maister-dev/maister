@@ -82,8 +82,8 @@ export function PublishDialog({
       setOptions(data);
       setSourceId(data.preselectedSourceId ?? data.sources[0]?.id ?? "");
       setBranch(data.defaultBranch);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setLoadError(tApiErrors("requestFailed"));
     }
   }, [packageId, tApiErrors]);
 
@@ -132,8 +132,8 @@ export function PublishDialog({
       }
 
       setResult((await res.json()) as PublishResult);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
     } finally {
       setPublishing(false);
     }

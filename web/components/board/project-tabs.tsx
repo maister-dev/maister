@@ -10,7 +10,6 @@ export type ProjectTab =
   | "observatory"
   | "brain"
   | "experiments"
-  | "prs"
   | "repo"
   | "packages"
   | "integrations"
@@ -33,7 +32,6 @@ const TABS: readonly ProjectTab[] = [
   "observatory",
   "brain",
   "experiments",
-  "prs",
   "repo",
   "packages",
   "integrations",
@@ -58,7 +56,6 @@ export async function ProjectTabs({
     observatory: t("observatory"),
     brain: t("brain"),
     experiments: t("experiments"),
-    prs: t("prs"),
     repo: t("repo"),
     packages: t("packages"),
     integrations: t("integrations"),

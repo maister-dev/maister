@@ -67,10 +67,9 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
   await expect(diffView).toBeVisible();
   await expect(diffView).toContainText("clean merge change");
 
-  // The promote action NAMES the exact target branch.
-  const promote = page.getByRole("button", {
-    name: new RegExp(fx.targetBranch),
-  });
+  // An immediately promotable review exposes the shared operation in the
+  // header, not a weaker route or a duplicate request shape.
+  const promote = page.getByTestId("run-header-promote");
 
   await expect(promote).toBeVisible();
 
@@ -87,6 +86,13 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
   const res = await promoteResponse;
 
   expect(res.status()).toBe(200);
+  expect(res.request().postDataJSON()).toMatchObject({
+    targetBranch: fx.targetBranch,
+    deliveryPolicyOverride: {
+      targetBranch: fx.targetBranch,
+      trigger: "manual",
+    },
+  });
 
   // The run reaches `Done` — reload the run-detail page and assert the terminal
   // status badge.

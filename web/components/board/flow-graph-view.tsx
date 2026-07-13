@@ -34,9 +34,9 @@ import {
   type FlowLayoutOverride,
 } from "@/lib/board/flow-graph-view-layout";
 import { NodeStatusIcon } from "@/components/runs/node-status-icon";
+import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { nodeVisual } from "@/lib/flows/node-visuals";
 import { buildFlowNodeTooltipsFromTopology } from "@/lib/flows/graph/node-tooltips";
-import { useRunStream } from "@/lib/use-run-stream";
 
 import "@xyflow/react/dist/style.css";
 
@@ -871,7 +871,7 @@ function RunStatusLayer({
   // on an SSE event tick (debounced), never on a timer. A terminal run has no
   // live session, so useRunStream(null) yields no events and nothing refetches.
   const live = !isTerminalRunStatus(liveRunStatus);
-  const { eventCount } = useRunStream(live ? runId : null, { retain: false });
+  const { eventCount } = useRunPageStream(runId, live);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {

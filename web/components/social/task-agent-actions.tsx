@@ -5,10 +5,13 @@ import type { ReactElement } from "react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { readApiError } from "@/lib/api-error";
+
 export interface TaskAgentActionsLabels {
   runAgent: string;
   sendToTriage: string;
   busy: string;
+  errorGeneric: string;
   agentPickerLabel: string;
 }
 
@@ -47,18 +50,14 @@ export function TaskAgentActions({
       });
 
       if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as {
-          code?: string;
-        } | null;
-
-        setError(data?.code ?? "CRASH");
+        setError(await readApiError(res, () => labels.errorGeneric));
 
         return;
       }
 
       startTransition(() => router.refresh());
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(labels.errorGeneric);
     } finally {
       setBusy(false);
     }

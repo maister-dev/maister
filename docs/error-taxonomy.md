@@ -22,6 +22,16 @@ throw new MaisterError("CONFIG", "DB_URL env is required");
   failure mode emerges, extend the union — do not invent a new ad-hoc
   `Error` class.
 
+### UI completion rendering contract (Implemented)
+
+The **UI action** column describes the operator recovery intent, not literal
+error text. Action surfaces resolve known codes through their EN/RU message
+namespace and use a generic localized fallback for malformed or unknown code
+values. They never render a raw API message, HTTP status, or code as a button
+label or toast. A route error boundary may show a recognized code only in an
+explicitly labeled localized diagnostic field; it still must not show server
+detail.
+
 ## Codes
 
 Eighteen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,

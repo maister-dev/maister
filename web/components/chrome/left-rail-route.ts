@@ -2,6 +2,7 @@ export const RAIL_SECTION_IDS = [
   "projects",
   "inbox",
   "studio",
+  "observatory",
   "agents",
   "mcps",
   "users",
@@ -41,6 +42,7 @@ export function railSectionForPathname(
   if (isPathPrefix(path, "/studio") || isPathPrefix(path, "/flows")) {
     return "studio";
   }
+  if (isPathPrefix(path, "/observatory")) return "observatory";
   if (isPathPrefix(path, "/agents")) return "agents";
   if (isPathPrefix(path, "/mcps")) return "mcps";
   if (isPathPrefix(path, "/admin/users")) return "users";

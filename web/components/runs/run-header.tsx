@@ -1,10 +1,12 @@
 import type { ReactElement } from "react";
+import type { PromotionOperationInput } from "@/lib/runs/promotion-operation";
 
 import Link from "next/link";
 import clsx from "clsx";
 import { CurrencyDollarIcon } from "@heroicons/react/24/outline";
 
 import { MarkdownBody } from "@/components/social/markdown-body";
+import { RunHeaderPromotionAction } from "@/components/runs/run-header-promotion-action";
 
 const keyRefChipClass =
   "rounded border border-line bg-ivory px-1.5 py-px font-mono text-[11px] font-bold tracking-[0.04em] text-ink-2";
@@ -29,6 +31,10 @@ export interface RunHeaderLabels {
   // Cost-budget governance warn badge — `$pct`-token template (house pattern).
   // Optional so non-run-detail consumers (no budget signal) keep compiling.
   budgetWarn?: string;
+  review?: string;
+  promote?: string;
+  promotionStarted?: string;
+  targetDrift?: string;
 }
 
 export interface RunHeaderProps {
@@ -50,6 +56,8 @@ export interface RunHeaderProps {
   // Derived run-scope budget warn signal (null = no badge).
   budgetStatus?: { warn: boolean; pct: number } | null;
   inspectorOpen: boolean;
+  reviewHref?: string | null;
+  promotionOperation?: (PromotionOperationInput & { runId: string }) | null;
   labels: RunHeaderLabels;
   onToggleInspector?: () => void;
 }
@@ -92,6 +100,8 @@ export function RunHeader({
   changeSummary,
   budgetStatus,
   inspectorOpen,
+  reviewHref,
+  promotionOperation,
   labels,
   onToggleInspector,
 }: RunHeaderProps): ReactElement {
@@ -199,6 +209,29 @@ export function RunHeader({
         >
           {labels.changes}: {changes}
         </span>
+        {reviewHref &&
+        promotionOperation &&
+        labels.promote &&
+        labels.promotionStarted &&
+        labels.targetDrift ? (
+          <RunHeaderPromotionAction
+            labels={{
+              promote: labels.promote,
+              started: labels.promotionStarted,
+              targetDrift: labels.targetDrift,
+            }}
+            operation={promotionOperation}
+            reviewHref={reviewHref}
+          />
+        ) : reviewHref && labels.review ? (
+          <Link
+            className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"
+            data-testid="run-header-review"
+            href={reviewHref}
+          >
+            {labels.review}
+          </Link>
+        ) : null}
         <button
           aria-expanded={inspectorOpen}
           className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"

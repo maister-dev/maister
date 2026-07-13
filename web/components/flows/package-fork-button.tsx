@@ -67,7 +67,7 @@ export function PackageForkButton({
           code?: string;
         } | null;
 
-        setError(forkErrorMessage(data?.code ?? "CRASH", labels));
+        setError(forkErrorMessage(data?.code ?? "", labels));
         setBusy(false);
 
         return;

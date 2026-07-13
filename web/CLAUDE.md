@@ -543,6 +543,18 @@ A visual affordance is read faster than a word — favour glyphs.
   genuinely ambiguous, and even then keep it short. This applies to inline
   result indicators, toasts, and status cells (the readiness dot + the
   Enabled `✓`/`—` cell already follow this).
+- **Feedback and confirmation (UI completion batch).** Use the single shared
+  feedback provider for completed mutations; user-facing action errors resolve
+  to EN/RU copy and never show a raw code, HTTP status, or server message. Use
+  the shared portaled confirmation for destructive actions. While it is busy,
+  Escape, backdrop, cancel, and repeat confirmation are disabled; focus returns
+  to its trigger after closure. Inline validation and durable remediation stay
+  in their local surfaces.
+- **Liveness and route resilience (UI completion batch).** Async route segments
+  use the shared token skeleton with `aria-busy`; EventSource consumers show a
+  text-plus-color accessible liveness state and reconnect action without
+  changing persisted run state. A route boundary may expose a known error code
+  only as a localized, explicitly labeled diagnostic field.
 - HeroUI buttons and the app-wide `cursor: pointer` base rule (above) still
   apply to every affordance, icon or not.
 

@@ -74,13 +74,13 @@ describe("scratch dialog status helpers", () => {
 });
 
 describe("errorText", () => {
-  it("falls back to a generic message when payload is null", () => {
-    expect(errorText(null)).toBe("Request failed.");
+  it("returns a localized fallback key when payload is null", () => {
+    expect(errorText(null)).toBe("errorGeneric");
   });
 
-  it("prefers message, then code", () => {
-    expect(errorText({ message: "boom" })).toBe("boom");
-    expect(errorText({ code: "PRECONDITION" })).toBe("PRECONDITION");
+  it("does not surface server messages or codes", () => {
+    expect(errorText({ message: "boom" })).toBe("errorGeneric");
+    expect(errorText({ code: "PRECONDITION" })).toBe("errorGeneric");
   });
 });
 

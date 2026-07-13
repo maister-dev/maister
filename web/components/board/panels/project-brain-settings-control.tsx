@@ -230,8 +230,8 @@ export function ProjectBrainSettingsControl({
       setSavedProjection(projection);
       setSavedPolicyKey(currentPolicyKey);
       setShowSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("requestFailed"));
     } finally {
       setPending(false);
     }

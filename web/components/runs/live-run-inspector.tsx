@@ -12,6 +12,7 @@ import type { ReactElement } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { RunInspector } from "@/components/runs/run-inspector";
+import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
   CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
@@ -20,7 +21,6 @@ import {
   formatRunDuration,
   isLiveRunStatus,
 } from "@/lib/runs/live-inspector";
-import { useRunStream } from "@/lib/use-run-stream";
 
 // Live token-cost poll config: the cost facts (token totals) carried in `facts`
 // are replaced by label as cost.jsonl grows during the run.
@@ -70,9 +70,7 @@ export function LiveRunInspector({
     liveCost?.initial ?? null,
   );
   const [nowMs, setNowMs] = useState<number | null>(null);
-  const { eventCount } = useRunStream(live ? rest.runId : null, {
-    retain: false,
-  });
+  const { eventCount } = useRunPageStream(rest.runId, live);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {

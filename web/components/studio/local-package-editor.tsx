@@ -63,7 +63,6 @@ import {
 } from "@/components/studio/import-dialog";
 import { readApiError } from "@/lib/api-error";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
-import { isMaisterError } from "@/lib/errors-core";
 import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
 import {
   packageFilesToSubmitValue,
@@ -146,9 +145,7 @@ function releaseEditorLock(packageId: string, sessionId: string): void {
     headers: { "content-type": "application/json" },
     body,
     keepalive: true,
-  }).catch((err: unknown) => {
-    console.warn("local-package lock release failed", { packageId, err });
-  });
+  }).catch(() => undefined);
 }
 
 function formatUsageCount(locale: string, value: number): string {
@@ -584,13 +581,10 @@ export function LocalPackageEditor({
         router.refresh();
 
         return true;
-      } catch (err) {
+      } catch {
         setStatus({
           kind: "error",
-          message:
-            isMaisterError(err) || err instanceof Error
-              ? err.message
-              : String(err),
+          message: tApiErrors("requestFailed"),
         });
 
         return false;

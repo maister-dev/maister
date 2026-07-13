@@ -1,6 +1,7 @@
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement } from "react";
 
+import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 
@@ -16,10 +17,12 @@ export async function StatusBar({
   summary,
 }: StatusBarProps): Promise<ReactElement> {
   const t = await getTranslations("status");
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("host") ?? t("hostUnavailable");
 
   return (
     <footer
-      aria-label="Instance status"
+      aria-label={t("instanceStatus")}
       className="fixed inset-x-0 bottom-0 z-30 flex h-9 items-center justify-between border-t border-line bg-paper px-6 font-mono text-[10.5px] tracking-[0.04em] text-mute backdrop-blur-[8px]"
     >
       <div className="flex items-center gap-3.5">
@@ -31,7 +34,7 @@ export async function StatusBar({
           status={platformStatus}
         />
         <span className="text-line">·</span>
-        <span>localhost:3000</span>
+        <span>{host}</span>
         <span className="hidden text-line sm:inline">·</span>
         <span className="hidden sm:inline">
           {platformStatus.kind === "ready"

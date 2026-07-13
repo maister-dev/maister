@@ -493,6 +493,21 @@ This is a read-model extension only: scratch promotion policy, workspace
 retention, chat, and runner provisioning remain unchanged. A no-worktree or
 non-promotable scratch session has no delivery evidence.
 
+## UI completion presentation contract (Implemented)
+
+Scratch keeps its existing SSE and lifecycle contract. The UI completion batch
+may show connection liveness as `connecting`, `live`, `reconnecting`, or
+`disconnected`, reconnect with the retained `lastEventId`, and provide an
+accessible manual reconnect action. This is browser presentation state only:
+it does not poll, create a second stream wire contract, change
+`runs.status`/`scratch_runs.dialog_status`, or alter prompt/recovery semantics.
+
+The scratch conversation owns its single subscription. It cancels retry timers
+and closes the EventSource on unmount, run replacement, or terminal state, so
+an inactive conversation cannot retain a live reconnect loop. Connection
+errors are localized feedback, not browser console diagnostics or raw server
+messages.
+
 ## Linked artifacts
 
 - Product model: [`../PRODUCT_VIEW.md`](../PRODUCT_VIEW.md).

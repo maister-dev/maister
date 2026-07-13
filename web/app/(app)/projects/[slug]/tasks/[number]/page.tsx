@@ -482,6 +482,7 @@ export default async function TaskDetailPage({
                   sendToTriage: t("sendToTriage"),
                   busy: t("agentActionBusy"),
                   agentPickerLabel: t("agentPickerLabel"),
+                  errorGeneric: t("agentActionFailed"),
                 }}
                 slug={slug}
                 taskId={detail.task.id}

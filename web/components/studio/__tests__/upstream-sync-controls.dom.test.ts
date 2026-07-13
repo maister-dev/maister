@@ -18,6 +18,9 @@ vi.mock("next-intl", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
+vi.mock("@/components/feedback/feedback-provider", () => ({
+  useFeedback: () => ({ error: vi.fn(), success: vi.fn() }),
+}));
 
 import {
   UpstreamSyncBanner,
@@ -121,9 +124,7 @@ describe("UpstreamSyncButton", () => {
       sessionId: "s1",
       targetInstallId: "inst-2",
     });
-    expect(
-      host.querySelector('[data-testid="sync-notice"]')?.textContent,
-    ).toContain("studio.sync.cleanDone");
+    expect(host.querySelector('[data-testid="sync-target-select"]')).toBeNull();
   });
 
   it("discovered tag → install THEN sync with the fresh install id", async () => {
@@ -226,12 +227,8 @@ describe("UpstreamSyncBanner", () => {
     });
   });
 
-  it("Abort posts /sync/abort only after confirm", async () => {
+  it("Abort sends no request until the shared confirmation is accepted", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
-    const confirmSpy = vi
-      .spyOn(window, "confirm")
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
     const host = mount(
       createElement(UpstreamSyncBanner, {
         packageId: "lp1",
@@ -244,13 +241,27 @@ describe("UpstreamSyncBanner", () => {
     await click(host.querySelector('[data-testid="sync-abort"]')!);
 
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      document.body.querySelector('[data-testid="sync-abort-confirm"]'),
+    ).not.toBeNull();
+
+    await click(
+      document.body.querySelector('[data-testid="sync-abort-confirm-cancel"]')!,
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
 
     await click(host.querySelector('[data-testid="sync-abort"]')!);
+    await click(
+      document.body.querySelector('[data-testid="sync-abort-confirm-submit"]')!,
+    );
 
     expect(fetchMock.mock.calls[0]![0]).toBe(
       "/api/studio/local-packages/lp1/sync/abort",
     );
     expect(bodyOf(fetchMock.mock.calls[0]!)).toEqual({ sessionId: "s1" });
-    confirmSpy.mockRestore();
+    expect(
+      document.body.querySelector('[data-testid="sync-abort-confirm"]'),
+    ).toBeNull();
   });
 });

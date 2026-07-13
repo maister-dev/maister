@@ -3,7 +3,11 @@ import type { ReactElement } from "react";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 
-export async function EmptyState(): Promise<ReactElement> {
+export async function EmptyState({
+  canCreate,
+}: {
+  canCreate: boolean;
+}): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
 
   const tips = [t("esTip1"), t("esTip2"), t("esTip3")];
@@ -37,25 +41,19 @@ export async function EmptyState(): Promise<ReactElement> {
         {t("emptyBody")}
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2.5">
-        <Link
-          className="inline-flex items-center gap-2.5 rounded-full bg-amber px-[22px] py-3 text-[13.5px] font-semibold text-white shadow-[0_8px_24px_-8px_var(--amber)] transition-transform hover:-translate-y-px hover:bg-amber-2"
-          href="/projects/new"
-        >
-          + {t("connectRepo")}{" "}
-          <span className="font-mono opacity-[0.85]">→</span>
-        </Link>
-        <button
-          className="rounded-full border border-line bg-paper px-[18px] py-3 text-[13.5px] font-medium text-ink-2 transition-colors hover:border-mute hover:text-ink"
-          type="button"
-        >
-          {t("scaffold")}
-        </button>
-        <button
-          className="rounded-full border border-line bg-paper px-[18px] py-3 text-[13.5px] font-medium text-ink-2 transition-colors hover:border-mute hover:text-ink"
-          type="button"
-        >
-          {t("importLocal")}
-        </button>
+        {canCreate ? (
+          <Link
+            className="inline-flex items-center gap-2.5 rounded-full bg-amber px-[22px] py-3 text-[13.5px] font-semibold text-white shadow-[0_8px_24px_-8px_var(--amber)] transition-transform hover:-translate-y-px hover:bg-amber-2"
+            href="/projects/new"
+          >
+            + {t("connectRepo")}{" "}
+            <span className="font-mono opacity-[0.85]">→</span>
+          </Link>
+        ) : (
+          <p className="m-0 rounded-full border border-line bg-paper px-[18px] py-3 text-[13.5px] text-mute">
+            {t("askAdmin")}
+          </p>
+        )}
       </div>
       <div className="mt-8 grid w-full max-w-[640px] grid-cols-1 gap-3 sm:grid-cols-3">
         {tips.map((tip) => (

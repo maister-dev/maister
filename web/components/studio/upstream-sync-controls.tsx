@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useFeedback } from "@/components/feedback/feedback-provider";
 import { readApiError } from "@/lib/api-error";
 
 // ADR-132 §d (T20): the sync UI pair.
@@ -99,6 +101,7 @@ export function UpstreamSyncButton({
         t("sync.conflictsFound", { count: result.conflictedFiles.length }),
       );
     }
+    setOpen(false);
     router.refresh();
   }
 
@@ -129,8 +132,8 @@ export function UpstreamSyncButton({
       } else {
         await runSync(picked);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }
@@ -255,8 +258,10 @@ export function UpstreamSyncBanner({
 }): ReactElement {
   const t = useTranslations("studio");
   const tApiErrors = useTranslations("apiErrors");
+  const feedback = useFeedback();
   const router = useRouter();
   const [busy, setBusy] = useState<"resolve" | "abort" | null>(null);
+  const [confirmingAbort, setConfirmingAbort] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -277,78 +282,129 @@ export function UpstreamSyncBanner({
       );
 
       if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
+        const message = await readApiError(res, tApiErrors);
+
+        setError(message);
+        feedback.error({
+          message,
+          mutationId: `sync:${packageId}:${sessionId}:${op}`,
+        });
 
         return;
       }
+      feedback.success({
+        message: t(op === "abort" ? "sync.abortDone" : "sync.resolveDone"),
+        mutationId: `sync:${packageId}:${sessionId}:${op}`,
+      });
+      if (op === "abort") setConfirmingAbort(false);
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      const message = tApiErrors("requestFailed");
+
+      setError(message);
+      feedback.error({
+        message,
+        mutationId: `sync:${packageId}:${sessionId}:${op}`,
+      });
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <div
-      className="mb-3 flex flex-col gap-2 rounded-[12px] border border-amber/50 bg-amber/10 px-4 py-3"
-      data-testid="sync-banner"
-      role="alert"
-    >
-      <p className="m-0 text-[13px] font-semibold text-ink">
-        {t("sync.bannerTitle", { label: pending.targetRef })}
-      </p>
-      {pending.conflictedFiles.length > 0 ? (
-        <ul className="m-0 flex list-none flex-col gap-0.5 p-0 font-mono text-[11.5px] text-ink-2">
-          {pending.conflictedFiles.map((file) => (
-            <li key={file} data-testid="sync-conflicted-file">
-              {file}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="m-0 text-[12px] text-mute">{t("sync.bannerNoList")}</p>
-      )}
-      {error ? (
-        <p
-          className="m-0 rounded-[8px] border border-danger-line bg-danger-soft px-3 py-2 text-[12px] text-danger"
-          role="alert"
-        >
-          {error}
+    <>
+      <div
+        className="mb-3 flex flex-col gap-2 rounded-[12px] border border-amber/50 bg-amber/10 px-4 py-3"
+        data-testid="sync-banner"
+        role="alert"
+      >
+        <p className="m-0 text-[13px] font-semibold text-ink">
+          {t("sync.bannerTitle", { label: pending.targetRef })}
         </p>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          aria-label={t("sync.resolveMessagePlaceholder")}
-          className="h-8 min-w-[220px] flex-1 rounded-[8px] border border-line bg-paper px-2 font-mono text-[11.5px] text-ink placeholder:text-mute"
-          data-testid="sync-resolve-message"
-          disabled={disabled || busy !== null}
-          placeholder={t("sync.resolveMessagePlaceholder")}
-          type="text"
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-        />
-        <button
-          className="h-8 rounded-[8px] border border-amber bg-amber px-3 text-[12px] font-semibold text-white hover:bg-amber-2 disabled:opacity-50"
-          data-testid="sync-resolve"
-          disabled={disabled || busy !== null}
-          type="button"
-          onClick={() => void act("resolve")}
-        >
-          {t("sync.resolve")}
-        </button>
-        <button
-          className="h-8 rounded-[8px] border border-danger-line bg-danger-soft px-3 text-[12px] font-semibold text-danger hover:bg-paper disabled:opacity-50"
-          data-testid="sync-abort"
-          disabled={disabled || busy !== null}
-          type="button"
-          onClick={() => {
-            if (window.confirm(t("sync.abortConfirm"))) void act("abort");
-          }}
-        >
-          {t("sync.abort")}
-        </button>
+        {pending.conflictedFiles.length > 0 ? (
+          <ul className="m-0 flex list-none flex-col gap-0.5 p-0 font-mono text-[11.5px] text-ink-2">
+            {pending.conflictedFiles.map((file) => (
+              <li key={file} data-testid="sync-conflicted-file">
+                {file}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="m-0 text-[12px] text-mute">{t("sync.bannerNoList")}</p>
+        )}
+        {error ? (
+          <p
+            className="m-0 rounded-[8px] border border-danger-line bg-danger-soft px-3 py-2 text-[12px] text-danger"
+            role="alert"
+          >
+            {error}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            aria-label={t("sync.resolveMessagePlaceholder")}
+            className="h-8 min-w-[220px] flex-1 rounded-[8px] border border-line bg-paper px-2 font-mono text-[11.5px] text-ink placeholder:text-mute"
+            data-testid="sync-resolve-message"
+            disabled={disabled || busy !== null}
+            placeholder={t("sync.resolveMessagePlaceholder")}
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+          />
+          <button
+            className="h-8 rounded-[8px] border border-amber bg-amber px-3 text-[12px] font-semibold text-white hover:bg-amber-2 disabled:opacity-50"
+            data-testid="sync-resolve"
+            disabled={disabled || busy !== null}
+            type="button"
+            onClick={() => void act("resolve")}
+          >
+            {t("sync.resolve")}
+          </button>
+          <button
+            className="h-8 rounded-[8px] border border-danger-line bg-danger-soft px-3 text-[12px] font-semibold text-danger hover:bg-paper disabled:opacity-50"
+            data-testid="sync-abort"
+            disabled={disabled || busy !== null}
+            type="button"
+            onClick={() => {
+              setConfirmingAbort(true);
+            }}
+          >
+            {t("sync.abort")}
+          </button>
+        </div>
       </div>
-    </div>
+      {confirmingAbort ? (
+        <ConfirmDialog
+          body={t("sync.abortConfirm")}
+          busy={busy !== null}
+          cancelLabel={t("sync.close")}
+          testId="sync-abort-confirm"
+          title={t("sync.abortConfirmTitle")}
+          titleId="sync-abort-confirm-title"
+          onClose={() => setConfirmingAbort(false)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className="rounded-[10px] border border-line bg-paper px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2 disabled:opacity-50"
+              data-testid="sync-abort-confirm-cancel"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => setConfirmingAbort(false)}
+            >
+              {t("sync.close")}
+            </button>
+            <button
+              className="rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-danger hover:bg-paper disabled:opacity-50"
+              data-testid="sync-abort-confirm-submit"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => void act("abort")}
+            >
+              {t("sync.abort")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
+    </>
   );
 }

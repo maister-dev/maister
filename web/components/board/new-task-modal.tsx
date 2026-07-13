@@ -4,8 +4,12 @@ import type { ProjectFlow } from "@/lib/queries/project";
 import type { ReactElement } from "react";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 import clsx from "clsx";
+
+import { readApiError } from "@/lib/api-error";
 
 export interface NewTaskModalLabels {
   trigger: string;
@@ -16,6 +20,8 @@ export interface NewTaskModalLabels {
   promptPlaceholder: string;
   flowLabel: string;
   flowNone: string;
+  noEnabledFlow: string;
+  managePackages: string;
   create: string;
   cancel: string;
 }
@@ -24,14 +30,17 @@ export interface NewTaskModalProps {
   slug: string;
   flows: ProjectFlow[];
   labels: NewTaskModalLabels;
+  packagesHref: string;
 }
 
 export function NewTaskModal({
   slug,
   flows,
   labels,
+  packagesHref,
 }: NewTaskModalProps): ReactElement {
   const router = useRouter();
+  const tApiErrors = useTranslations("apiErrors");
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
@@ -42,6 +51,7 @@ export function NewTaskModal({
   // M34: flow is optional — "" creates a simple-intent task that the triager
   // (or a human via the card popover) configures later.
   const [flowId, setFlowId] = useState("");
+  const launchableFlows = flows.filter((flow) => flow.launchable === true);
 
   function reset(): void {
     setTitle("");
@@ -66,11 +76,7 @@ export function NewTaskModal({
       });
 
       if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as {
-          code?: string;
-        } | null;
-
-        setError(data?.code ?? "CRASH");
+        setError(await readApiError(res, tApiErrors));
 
         return;
       }
@@ -79,7 +85,7 @@ export function NewTaskModal({
       reset();
       startTransition(() => router.refresh());
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }
@@ -173,13 +179,24 @@ export function NewTaskModal({
                     onChange={(e) => setFlowId(e.target.value)}
                   >
                     <option value="">{labels.flowNone}</option>
-                    {flows.map((f) => (
+                    {launchableFlows.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.ref}
                       </option>
                     ))}
                   </select>
                 </label>
+                {launchableFlows.length === 0 ? (
+                  <p className="m-0 rounded-lg border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-amber">
+                    {labels.noEnabledFlow}{" "}
+                    <Link
+                      className="font-semibold underline underline-offset-2"
+                      href={packagesHref}
+                    >
+                      {labels.managePackages}
+                    </Link>
+                  </p>
+                ) : null}
               </div>
 
               {error ? (

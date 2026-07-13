@@ -110,11 +110,9 @@ export type ApiError = {
 };
 
 export function errorText(payload: ApiError | null): string {
-  if (!payload) return "Request failed.";
-  if (payload.message) return payload.message;
-  if (payload.code) return payload.code;
+  void payload;
 
-  return "Request failed.";
+  return "errorGeneric";
 }
 
 export function canSend(status: ScratchDialogStatus): boolean {

@@ -11,6 +11,7 @@ const STORAGE_KEY = "maister:rail-collapsed";
 export function RailCollapseView({
   collapsed,
   onToggle,
+  ariaLabel,
   collapseLabel,
   expandLabel,
   collapsedChildren,
@@ -18,6 +19,7 @@ export function RailCollapseView({
 }: {
   collapsed: boolean;
   onToggle: () => void;
+  ariaLabel: string;
   collapseLabel: string;
   expandLabel: string;
   collapsedChildren?: ReactNode;
@@ -27,7 +29,7 @@ export function RailCollapseView({
 
   return (
     <aside
-      aria-label="Sections & active workspaces"
+      aria-label={ariaLabel}
       className={clsx(
         "sticky top-[64px] z-10 hidden h-[calc(100vh-64px-36px)] flex-col self-start border-r border-line bg-paper pb-0 pt-2.5 md:flex",
         collapsed ? "overflow-visible" : "overflow-x-hidden",
@@ -81,11 +83,13 @@ export function RailCollapseView({
 // localStorage (default expanded; a brief expanded flash on a collapsed reload is
 // accepted — no inline script, matching the script-free theme convention).
 export function RailCollapse({
+  ariaLabel,
   collapseLabel,
   collapsedChildren,
   expandLabel,
   children,
 }: {
+  ariaLabel: string;
   collapseLabel: string;
   collapsedChildren?: ReactNode;
   expandLabel: string;
@@ -112,12 +116,11 @@ export function RailCollapse({
     } catch {
       /* ignore persist failure */
     }
-    // eslint-disable-next-line no-console
-    console.debug("[leftRail] toggle", { collapsed: next });
   };
 
   return (
     <RailCollapseView
+      ariaLabel={ariaLabel}
       collapseLabel={collapseLabel}
       collapsed={collapsed}
       collapsedChildren={collapsedChildren}

@@ -133,6 +133,27 @@ describe("kind:local source → install → attach chain (integration)", () => {
 
       expect(attached?.attachmentId).toBeDefined();
 
+      // The trust confirmation count is an admin-only read-model enrichment.
+      // A second project using this exact install proves the count is distinct
+      // by project rather than a revision/package-wide number.
+      const secondProjectId = randomUUID();
+      const secondSlug = `la-${secondProjectId.slice(0, 8)}`;
+
+      await db.insert(schema.projects).values({
+        taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
+        id: secondProjectId,
+        slug: secondSlug,
+        name: `LA ${secondSlug}`,
+        repoPath: join(homeDir, `repo-${secondSlug}`),
+      });
+      await attachPackage({
+        projectId: secondProjectId,
+        projectSlug: secondSlug,
+        packageInstallId: install.id,
+        workspaceRoot: join(homeDir, `repo-${secondSlug}`),
+        db,
+      });
+
       // Pinned digest == discovered digest ⇒ no update.
       const before = await getProjectPackageAttachments(projectId);
 
@@ -142,6 +163,13 @@ describe("kind:local source → install → attach chain (integration)", () => {
         versionLabel: entry!.digestVersionLabel,
         updateAvailable: false,
       });
+      expect(before[0]).not.toHaveProperty("affectedProjectCount");
+
+      const trustView = await getProjectPackageAttachments(projectId, {
+        includeAffectedProjectCount: true,
+      });
+
+      expect(trustView[0]?.affectedProjectCount).toBe(2);
 
       // Mutate the host dir → re-check → the by-kind carve flips the flag
       // and offers the fresh digest as the upgrade label.
@@ -170,7 +198,7 @@ describe("kind:local source → install → attach chain (integration)", () => {
 
       const withTarget = await getProjectPackageAttachments(projectId);
 
-      expect(withTarget[0]?.upgradeTarget).toEqual({
+      expect(withTarget[0]?.upgradeTarget).toMatchObject({
         installId: freshInstall.id,
         versionLabel: freshLabel,
       });

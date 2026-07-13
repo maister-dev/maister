@@ -119,10 +119,10 @@ export function CutVersionDialog({
         versionLabel: result.versionLabel,
         adoptions: result.adoptions ?? [],
       });
-    } catch (err) {
+    } catch {
       setStep({
         kind: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: tApiErrors("requestFailed"),
       });
     }
   }

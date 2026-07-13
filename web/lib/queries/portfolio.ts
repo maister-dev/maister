@@ -26,7 +26,12 @@ import {
 
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
+import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
+import {
+  derivePortfolioOnboarding,
+  type PortfolioOnboarding,
+} from "@/lib/portfolio-onboarding";
 import {
   activeSessionAcpSessionId,
   activeSessionCapabilityAgent,
@@ -48,6 +53,7 @@ import {
 const {
   actorIdentities,
   assignments,
+  flowRevisions,
   flows,
   hitlRequests,
   platformAcpRunners,
@@ -169,6 +175,7 @@ export interface PortfolioProject {
 }
 
 export interface Portfolio {
+  onboarding: PortfolioOnboarding;
   projects: PortfolioProject[];
   totalActiveWorkspaces: number;
 }
@@ -302,7 +309,15 @@ export async function getPortfolio(
           .orderBy(projects.createdAt);
 
   if (visibleProjects.length === 0) {
-    return { projects: [], totalActiveWorkspaces: 0 };
+    return {
+      onboarding: derivePortfolioOnboarding({
+        enabledFlowCount: 0,
+        taskFlowRunCount: 0,
+        visibleProjectCount: 0,
+      }),
+      projects: [],
+      totalActiveWorkspaces: 0,
+    };
   }
 
   const projectIds = visibleProjects.map((p) => p.id);
@@ -310,6 +325,7 @@ export async function getPortfolio(
   const [
     memberRows,
     flowCountRows,
+    taskFlowRunRows,
     backlogRows,
     activeRunRows,
     recentMergeRows,
@@ -332,6 +348,17 @@ export async function getPortfolio(
       .from(flows)
       .where(inArray(flows.projectId, projectIds))
       .groupBy(flows.projectId),
+
+    client
+      .select({ value: count() })
+      .from(runs)
+      .where(
+        and(
+          inArray(runs.projectId, projectIds),
+          eq(runs.runKind, "flow"),
+          isNotNull(runs.taskId),
+        ),
+      ),
 
     client
       .select({ projectId: tasks.projectId, value: count() })
@@ -458,6 +485,51 @@ export async function getPortfolio(
       id: platformAcpRunners.id,
     })
     .from(platformAcpRunners);
+  const [onboardingFlowRows, readyRunnerRows] = await Promise.all([
+    client
+      .select({
+        enabledRevisionId: flows.enabledRevisionId,
+        enablementState: flows.enablementState,
+        trustStatus: flows.trustStatus,
+        engineMax: flowRevisions.engineMax,
+        engineMin: flowRevisions.engineMin,
+        manifest: flowRevisions.manifest,
+        packageStatus: flowRevisions.packageStatus,
+        schemaVersion: flowRevisions.schemaVersion,
+        setupStatus: flowRevisions.setupStatus,
+      })
+      .from(flows)
+      .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
+      .where(inArray(flows.projectId, projectIds)),
+    client
+      .select({ id: platformAcpRunners.id })
+      .from(platformAcpRunners)
+      .where(
+        and(
+          eq(platformAcpRunners.enabled, true),
+          eq(platformAcpRunners.readinessStatus, "Ready"),
+        ),
+      ),
+  ]);
+  const hasReadyRunner = readyRunnerRows.length > 0;
+  const launchableFlowCount = onboardingFlowRows.filter((flow) =>
+    isProjectFlowLaunchable({
+      enabledRevisionId: flow.enabledRevisionId,
+      enablementState: flow.enablementState,
+      hasReadyRunner,
+      revision: flow.enabledRevisionId
+        ? {
+            engineMax: flow.engineMax,
+            engineMin: flow.engineMin,
+            manifest: flow.manifest,
+            packageStatus: flow.packageStatus ?? "",
+            schemaVersion: flow.schemaVersion ?? 0,
+            setupStatus: flow.setupStatus ?? "",
+          }
+        : null,
+      trustStatus: flow.trustStatus,
+    }),
+  ).length;
 
   const defaultRunnerByProject = new Map<string, string | null>();
 
@@ -664,6 +736,11 @@ export async function getPortfolio(
   });
 
   return {
+    onboarding: derivePortfolioOnboarding({
+      enabledFlowCount: launchableFlowCount,
+      taskFlowRunCount: Number(taskFlowRunRows[0]?.value ?? 0),
+      visibleProjectCount: visibleProjects.length,
+    }),
     projects: enriched,
     totalActiveWorkspaces,
   };

@@ -52,8 +52,8 @@ export function ElementForkButton({
       const result = (await res.json()) as { localPackageId: string };
 
       router.push(`/studio/edit/${result.localPackageId}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }

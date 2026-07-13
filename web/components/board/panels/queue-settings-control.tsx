@@ -144,8 +144,8 @@ export function QueueSettingsControl({
       );
       setSavedKey(settingsKey(current));
       setShowSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setError(t("requestFailed"));
     } finally {
       setPending(false);
     }

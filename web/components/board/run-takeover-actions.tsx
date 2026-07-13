@@ -7,6 +7,8 @@ import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { readApiError } from "@/lib/api-error";
+
 export interface RunTakeoverActionsProps {
   runId: string;
   // "claimable" → NeedsInput review node offering the takeover decision.
@@ -30,6 +32,7 @@ export function RunTakeoverActions({
   canAct,
 }: RunTakeoverActionsProps): ReactElement {
   const t = useTranslations("run");
+  const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
@@ -48,18 +51,14 @@ export function RunTakeoverActions({
       });
 
       if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as {
-          code?: string;
-        } | null;
-
-        setError(data?.code ?? "CRASH");
+        setError(await readApiError(res, tApiErrors));
 
         return;
       }
 
       startTransition(() => router.refresh());
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }

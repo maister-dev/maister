@@ -15,6 +15,7 @@ const labels: RunHeaderLabels = {
   closeInspector: "Close inspector",
   task: "Task",
   budgetWarn: "budget $pct%",
+  review: "Review changes",
 };
 
 function render(over: Partial<RunHeaderProps> = {}): string {
@@ -108,6 +109,13 @@ describe("RunHeader — task-first header", () => {
     expect(html).toContain('data-testid="run-header-branch"');
     expect(html).toContain("maister/task-1/attempt-2");
     expect(html).toContain('data-testid="run-header-change-summary"');
+  });
+
+  it("links the header review affordance to the existing review surface", () => {
+    const html = render({ reviewHref: "#review-panel" });
+
+    expect(html).toContain('data-testid="run-header-review"');
+    expect(html).toContain('href="#review-panel"');
   });
 });
 

@@ -95,6 +95,10 @@ notes where it *deviates*.
   `z-[130]`). A dialog rendered inside a card/row must `createPortal` to
   `document.body`: a hover `transform` on an ancestor otherwise becomes the
   containing block for `position: fixed` and collapses the dialog into the card.
+- **Busy confirmation exception (Implemented).** A shared destructive confirmation
+  disables Esc, backdrop, cancel, and repeat submit while its request is
+  pending. It otherwise follows the common close convention above and restores
+  focus to the trigger after closure.
 - **Minimum necessary information.** Show the least that identifies a choice. A
   flow option is its name (`aif-dev`), not `name · version · default`; a default
   need not be spelled out when it is already the pre-selected value. Across all
@@ -106,7 +110,9 @@ The persistent chrome (top nav, left rail, status bar, launch dialog) frames
 every `(app)` screen. The left rail is the primary navigation spine; admin-only
 destinations appear only for global admins. When collapsed, it remains an icon
 rail: destination icons stay visible, while active workspaces and runner
-readiness open from flyouts.
+readiness open from flyouts. The UI completion batch adds an implemented mobile
+drawer: it reuses the rail's server-owned section data, mounts interactive rail
+content only while open, and restores focus to its top-nav trigger on close.
 
 ```mermaid
 flowchart TD
@@ -120,6 +126,7 @@ flowchart TD
     Rail --> Portfolio["Portfolio /"]
     Rail --> Inbox["Inbox /inbox — needs-you HITL plus mentions"]
     Rail --> FlowStudio["Flow Studio /studio"]
+    Rail --> Observatory["Observatory /observatory"]
     Rail --> Agents["Agents /agents — admin"]
     Rail --> Mcps["MCPs /mcps — admin"]
 

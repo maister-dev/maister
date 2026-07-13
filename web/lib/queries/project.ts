@@ -19,6 +19,7 @@ import {
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import {
   activeSessionAcpSessionId,
   activeSessionCapabilityAgent,
@@ -37,6 +38,7 @@ import {
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
+  flowRevisions,
   flowRunnerRemaps,
   flows,
   platformAcpRunners,
@@ -54,14 +56,6 @@ function db(): NodePgDatabase<typeof schema> {
 }
 
 export type ProjectAgent = AdapterId;
-
-// ADR-112 (D9 read side): the discovery routes return ONLY flows a triage
-// verdict may actually assign — same allow-list the launch path enforces
-// (`LAUNCHABLE_ENABLEMENT_STATES` in lib/services/runs.ts) plus a trust gate.
-const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
-  "Enabled",
-  "UpdateAvailable",
-]);
 
 // ADR-112: one launchable flow projected for the `flow_list` discovery route.
 // Explicit DTO — never the raw `flows` row. Mirrors `ExtFlowSummary`.
@@ -88,6 +82,8 @@ export interface ExtRunnerSummary {
 
 export interface ProjectFlow {
   id: string;
+  enabled?: boolean;
+  launchable?: boolean;
   ref: string;
   source: string;
   version: string;
@@ -195,31 +191,64 @@ function flowMetadataProjection(
 
 /**
  * ADR-112 (D9): launchable flows of a project, projected for the `flow_list`
- * discovery route. Only `enablementState ∈ {Enabled, UpdateAvailable}` ∧
- * `trustStatus ≠ untrusted` flows are returned, so a verdict built from this
- * list can never stall an `enqueue` on an unlaunchable flow.
+ * discovery route. The projection applies the same complete UI launchability
+ * predicate as first-run guidance, so a verdict built from this list cannot
+ * select a disabled, untrusted, incompatible, or runner-unready flow.
  */
 export async function listLaunchableFlowSummaries(
   projectId: string,
   client: NodePgDatabase<typeof schema> = db(),
 ): Promise<ExtFlowSummary[]> {
-  const rows = await client
-    .select({
-      id: flows.id,
-      ref: flows.flowRefId,
-      manifest: flows.manifest,
-      enablementState: flows.enablementState,
-      trustStatus: flows.trustStatus,
-    })
-    .from(flows)
-    .where(eq(flows.projectId, projectId))
-    .orderBy(asc(flows.createdAt));
+  const [rows, readyRunnerRows] = await Promise.all([
+    client
+      .select({
+        id: flows.id,
+        ref: flows.flowRefId,
+        manifest: flows.manifest,
+        enabledRevisionId: flows.enabledRevisionId,
+        enablementState: flows.enablementState,
+        trustStatus: flows.trustStatus,
+        engineMax: flowRevisions.engineMax,
+        engineMin: flowRevisions.engineMin,
+        revisionManifest: flowRevisions.manifest,
+        packageStatus: flowRevisions.packageStatus,
+        schemaVersion: flowRevisions.schemaVersion,
+        setupStatus: flowRevisions.setupStatus,
+      })
+      .from(flows)
+      .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
+      .where(eq(flows.projectId, projectId))
+      .orderBy(asc(flows.createdAt)),
+    client
+      .select({ id: platformAcpRunners.id })
+      .from(platformAcpRunners)
+      .where(
+        and(
+          eq(platformAcpRunners.enabled, true),
+          eq(platformAcpRunners.readinessStatus, "Ready"),
+        ),
+      ),
+  ]);
+  const hasReadyRunner = readyRunnerRows.length > 0;
 
   return rows
-    .filter(
-      (row) =>
-        LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(row.enablementState) &&
-        row.trustStatus !== "untrusted",
+    .filter((row) =>
+      isProjectFlowLaunchable({
+        enabledRevisionId: row.enabledRevisionId,
+        enablementState: row.enablementState,
+        hasReadyRunner,
+        revision: row.enabledRevisionId
+          ? {
+              engineMax: row.engineMax,
+              engineMin: row.engineMin,
+              manifest: row.revisionManifest,
+              packageStatus: row.packageStatus ?? "",
+              schemaVersion: row.schemaVersion ?? 0,
+              setupStatus: row.setupStatus ?? "",
+            }
+          : null,
+        trustStatus: row.trustStatus,
+      }),
     )
     .map((row) => {
       const metadata = flowMetadataProjection(row.manifest);
@@ -277,6 +306,8 @@ export async function getProjectPageData(
           version: flows.version,
           manifest: flows.manifest,
           enabledRevisionId: flows.enabledRevisionId,
+          enablementState: flows.enablementState,
+          trustStatus: flows.trustStatus,
         })
         .from(flows)
         .where(eq(flows.projectId, project.id))
@@ -344,6 +375,30 @@ export async function getProjectPageData(
         .orderBy(desc(runs.startedAt)),
     ]);
 
+  const enabledRevisionIds = flowRows.flatMap((flow) =>
+    flow.enabledRevisionId ? [flow.enabledRevisionId] : [],
+  );
+  const revisionRows =
+    enabledRevisionIds.length > 0
+      ? await client
+          .select({
+            id: flowRevisions.id,
+            engineMax: flowRevisions.engineMax,
+            engineMin: flowRevisions.engineMin,
+            manifest: flowRevisions.manifest,
+            packageStatus: flowRevisions.packageStatus,
+            schemaVersion: flowRevisions.schemaVersion,
+            setupStatus: flowRevisions.setupStatus,
+          })
+          .from(flowRevisions)
+          .where(inArray(flowRevisions.id, enabledRevisionIds))
+      : [];
+  const revisionById = new Map(
+    revisionRows.map((revision) => [revision.id, revision]),
+  );
+  const hasReadyRunner = runnerRows.some(
+    (runner) => runner.enabled && runner.readinessStatus === "Ready",
+  );
   const flowByRevisionId = new Map(
     flowRows
       .filter((flow) => flow.enabledRevisionId)
@@ -355,6 +410,16 @@ export async function getProjectPageData(
 
   const projectFlows: ProjectFlow[] = flowRows.map((f) => ({
     id: f.id,
+    enabled: f.enabledRevisionId !== null,
+    launchable: isProjectFlowLaunchable({
+      enabledRevisionId: f.enabledRevisionId,
+      enablementState: f.enablementState,
+      hasReadyRunner,
+      revision: f.enabledRevisionId
+        ? (revisionById.get(f.enabledRevisionId) ?? null)
+        : null,
+      trustStatus: f.trustStatus,
+    }),
     ref: f.ref,
     source: f.source,
     version: f.version,
