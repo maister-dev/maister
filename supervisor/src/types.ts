@@ -257,6 +257,12 @@ export const StartSessionRequestSchema = z
     // (L3, below the read-only layers — read-only always wins). Resolved from
     // the run's execution_policy snapshot at launch.
     autoApprovePermissions: z.boolean().optional(),
+    // M34 lifecycle fix: a one-shot standalone agent session (non-persistent)
+    // has no external driver that acts on a bare `end_turn` — unlike a flow
+    // session driven by the flow runner. When set, the supervisor reaps the idle
+    // adapter on `end_turn` so the heartbeat emits `session.exited` and the web
+    // consumer finalizes/parks the run instead of leaking a live slot.
+    reapOnEndTurn: z.boolean().optional(),
     // ADR-108 (M40): the web tier's resolved guardrail rule set. Mirrors
     // `StartSessionRequest.hooksConfig` in supervisor.openapi.yaml + the web
     // `HooksConfig` type. The acceptor must land WITH the emitter so an armed
@@ -531,6 +537,9 @@ export type SessionRecord = {
   // option for every permission request in this session, BELOW the read-only
   // layers. Resolved from the run's execution_policy snapshot in spawn.ts.
   autoApprovePermissions?: boolean;
+  // M34 lifecycle: reap the idle adapter on a clean `end_turn` — set only for
+  // one-shot (non-persistent) standalone agent sessions. See StartSessionRequest.
+  reapOnEndTurn?: boolean;
   // ADR-108 (M40): the resolved guardrail rule set for this session. Arms the
   // universal supervisor interceptor; absent → the interceptor is a no-op
   // (byte-identical to a pre-hook run). Mirrors StartSessionRequest.hooksConfig.

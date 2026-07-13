@@ -1309,6 +1309,18 @@ components:
             platform-agent runs; incompatible with
             `permission_policy=dangerously_skip_permissions` (the web tier
             refuses that combination before calling this endpoint).
+        reapOnEndTurn:
+          type: boolean
+          default: false
+          description: |
+            (M34 lifecycle.) One-shot standalone agent session flag. A
+            non-persistent standalone agent has no external driver that acts on
+            a clean `end_turn` (a flow session is driven by the flow runner; a
+            persistent agent parks + re-messages). When set, the supervisor
+            reaps the now-idle adapter on `end_turn` so the heartbeat emits a
+            bare `session.exited` (exitCode 0, no reason) and the web consumer
+            finalizes the run — otherwise it lingers `live`/`Running` and leaks
+            a concurrency slot.
         hooksConfig:
           type: object
           additionalProperties: false

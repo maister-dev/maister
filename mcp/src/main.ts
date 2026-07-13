@@ -11,8 +11,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import pino from "pino";
 import { z } from "zod";
 
-import { httpAuthContext, type AuthContext } from "@/auth";
-import { dispatchTool, TOOL_SPECS } from "@/tools";
+import { httpAuthContext, type AuthContext } from "./auth";
+import { dispatchTool, TOOL_SPECS } from "./tools";
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",

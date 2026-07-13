@@ -2846,22 +2846,28 @@ export async function runGraph(
               db,
             });
 
-            const facade = agentFacadeMcpServer(issued.secret);
+            const facadeServer = agentFacadeMcpServer(issued.secret);
 
             materialized = {
               ...materialized,
-              mcpServers: [...materialized.mcpServers, facade],
+              mcpServers: [
+                ...materialized.mcpServers,
+                ...(facadeServer ? [facadeServer] : []),
+              ],
               // ADR-130: the maister delegation facade is system-injected AFTER
               // capability derivation. An `enforcement.mcps: strict` orchestrator
               // would otherwise deny its own `mcp__maister__*` delegation calls and
               // halt with no author remedy — admit the facade into the mcps
               // allow-list (governs author intent, not the platform's own channel).
-              enforcementProfile: materialized.enforcementProfile
-                ? admitFacadeServer(
-                    materialized.enforcementProfile,
-                    facade.name,
-                  )
-                : materialized.enforcementProfile,
+              // Null when the facade is not runnable in this deployment — then
+              // there is nothing to inject or admit.
+              enforcementProfile:
+                materialized.enforcementProfile && facadeServer
+                  ? admitFacadeServer(
+                      materialized.enforcementProfile,
+                      facadeServer.name,
+                    )
+                  : materialized.enforcementProfile,
             };
             orchestratorTokenIssued = true;
           }

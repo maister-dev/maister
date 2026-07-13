@@ -476,6 +476,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         ccrManager: opts.spawnOverrides?.ccrManager,
       });
 
+    // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so the
+    // prompt handler can reap a one-shot agent session when its turn ends.
+    record.reapOnEndTurn = parsed.reapOnEndTurn === true;
     registry.register(record, child, emitter, { eventsLog });
     attachHeartbeat({ sessionId, child, registry, logger });
     await attachCost({
@@ -707,6 +710,19 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "http POST /sessions/:id/prompt",
     );
     reply.status(200).send({ stopReason: resp.stopReason, meta: resp._meta });
+
+    // M34 lifecycle: a one-shot standalone agent session (reapOnEndTurn) has no
+    // external driver that acts on a clean `end_turn` (a flow session is driven
+    // by the flow runner; a persistent agent parks + re-messages). Reap the now-
+    // idle adapter so the heartbeat emits a bare `session.exited{exitCode:0}` and
+    // the web consumer finalizes the run — otherwise it lingers `Running` and
+    // leaks a concurrency slot. `intentionalShutdown` with NO reason selects the
+    // natural-completion path (a "checkpoint"/"intentional" reason would detach
+    // or operator-cancel instead).
+    if (entry.record.reapOnEndTurn && resp.stopReason === "end_turn") {
+      entry.intentionalShutdown = true;
+      entry.child.kill("SIGTERM");
+    }
   });
 
   // Interrupt the in-flight prompt turn WITHOUT tearing the session down: a

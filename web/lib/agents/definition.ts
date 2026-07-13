@@ -257,6 +257,12 @@ export const agentDefinitionFrontmatterSchema = z
     mode: z.enum(["session", "subagent"]),
     triggers: z.array(z.enum(AGENT_TRIGGER_KINDS)).min(1),
     capability_profile: capabilityProfileSchema.optional(),
+    // Whether the platform MCP facade (triage/comments/runs/... over the ext
+    // API) is injected into this agent's session. Default true; an agent that
+    // uses no MAIster domain tools opts out with `platform_mcp: false`, and a
+    // missing facade is then NOT a launch error (fail-loud applies only when
+    // the agent actually requires it).
+    platform_mcp: z.boolean().optional(),
     risk_tier: z.enum(["read_only", "standard", "destructive"]),
     // (ADR-106) Optional same-package flow this agent drives. Membership in the
     // package manifest's flows[] is enforced at registration.
@@ -326,6 +332,7 @@ export type ParsedAgentDefinition = {
   mode: AgentMode;
   triggers: AgentTriggerKind[];
   capabilityProfile: AgentCapabilityProfile | null;
+  platformMcp: boolean;
   riskTier: AgentRiskTier;
   flow: string | null;
   recommended: AgentRecommended | null;
@@ -387,6 +394,7 @@ export function parseAgentDefinition(
     mode: fm.mode,
     triggers: fm.triggers,
     capabilityProfile: fm.capability_profile ?? null,
+    platformMcp: fm.platform_mcp ?? true,
     riskTier: fm.risk_tier,
     flow: fm.flow ?? null,
     recommended: fm.recommended ?? null,
@@ -406,6 +414,7 @@ export type AgentDefinitionInput = {
   mode: AgentMode;
   triggers: AgentTriggerKind[];
   capabilityProfile?: AgentCapabilityProfile | null;
+  platformMcp?: boolean;
   riskTier: AgentRiskTier;
   flow?: string | null;
   recommended?: AgentRecommended | null;
@@ -428,6 +437,7 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
     ...(input.capabilityProfile
       ? { capability_profile: input.capabilityProfile }
       : {}),
+    ...(input.platformMcp === false ? { platform_mcp: false } : {}),
     risk_tier: input.riskTier,
     ...(input.flow ? { flow: input.flow } : {}),
     ...(input.recommended ? { recommended: input.recommended } : {}),

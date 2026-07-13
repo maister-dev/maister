@@ -40,6 +40,7 @@ import {
   resolveEffectiveAgentDefinition,
   type EffectiveAgentDefinition,
 } from "@/lib/agents/effective";
+import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import {
@@ -2730,25 +2731,22 @@ export async function resolveAgentProfileMcpServers(args: {
 }
 
 // MCP facade injection (ADR-089 D9): the agent's sanctioned write channel —
-// triage/comments/relations over the ext API, authenticated by the
-// per-launch ephemeral token. The token rides the literal `env` channel
-// (never logged, never streamed, never in session/update). Command
-// resolution is env-overridable for split-host topologies; the default
-// targets the monorepo facade via its workspace-local tsx.
-export function agentFacadeMcpServer(tokenSecret: string): AgentMcpServer {
-  const mcpDir = path.resolve(process.cwd(), "../mcp");
-  const command =
-    process.env.MAISTER_MCP_FACADE_COMMAND ??
-    path.join(mcpDir, "node_modules", ".bin", "tsx");
-  const args = process.env.MAISTER_MCP_FACADE_ARGS
-    ? process.env.MAISTER_MCP_FACADE_ARGS.split(" ").filter(Boolean)
-    : [path.join(mcpDir, "src", "main.ts"), "--stdio"];
+// triage/comments/relations over the ext API, authenticated by the per-launch
+// ephemeral token. The token rides the literal `env` channel (never logged,
+// never streamed, never in session/update). Returns null when the facade is
+// not runnable in this deployment — the caller decides whether that is fatal.
+export function agentFacadeMcpServer(
+  tokenSecret: string,
+): AgentMcpServer | null {
+  const launch = resolveFacadeLaunch();
+
+  if (!launch) return null;
 
   return {
     name: "maister",
     transport: "stdio",
-    command,
-    args,
+    command: launch.command,
+    args: launch.args,
     env: {
       MAISTER_API_BASE_URL:
         process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000",
@@ -3054,6 +3052,22 @@ export async function startAgentSession(
           })
         : null;
 
+    // ADR-089 D9 + platform_mcp gate: the MAIster facade is the agent's
+    // sanctioned domain-write channel. Inject it only when the agent declares
+    // `platform_mcp` (default true). If it is required but not runnable in this
+    // deployment, fail loud rather than silently launch a tool-less agent that
+    // burns tokens and a concurrency slot only to give up (the stand bug).
+    const facadeServer = effective.parsed.platformMcp
+      ? agentFacadeMcpServer(issuedToken.secret)
+      : null;
+
+    if (effective.parsed.platformMcp && !facadeServer) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `agent run ${runId} requires the MAIster MCP facade, but it is not runnable in this deployment. Build it (\`pnpm --filter @maister/mcp build\`) or set MAISTER_MCP_FACADE_COMMAND. Agents that use no MAIster tools can opt out with \`platform_mcp: false\`.`,
+      );
+    }
+
     const session = await api.createSession({
       runId,
       projectSlug: project.slug,
@@ -3065,13 +3079,18 @@ export async function startAgentSession(
         snapshot,
         packageSkillHome ?? undefined,
       ),
-      // ADR-089 D9: the facade carries the ephemeral token to the agent.
+      // ADR-089 D9: the facade (gated by platform_mcp above) carries the
+      // ephemeral token to the agent.
       mcpServers: [
         ...profileMcpServers,
-        agentFacadeMcpServer(issuedToken.secret),
+        ...(facadeServer ? [facadeServer] : []),
       ],
       // ADR-090 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
+      // M34 lifecycle: a one-shot (non-persistent) agent has no driver that acts
+      // on a bare end_turn — let the supervisor reap the session so the run
+      // finalizes instead of leaking a slot. Persistent agents park + re-message.
+      reapOnEndTurn: baseRun.persistent !== true,
       hooksConfig,
       // M39 Phase 5 (ADR-106): autoApply='permissions'/'full' maps to B1
       // permissions=auto_approve — the supervisor's requestPermission handler

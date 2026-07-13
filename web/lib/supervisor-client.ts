@@ -118,6 +118,10 @@ export type CreateSessionInput = {
   // the allow option for every permission request in this session (below the
   // read-only layers). Derived from the run's execution_policy snapshot.
   autoApprovePermissions?: boolean;
+  // M34 lifecycle: reap the idle adapter on a clean `end_turn` for a one-shot
+  // (non-persistent) standalone agent session, so the run finalizes/parks
+  // instead of lingering `Running` and leaking an agent slot.
+  reapOnEndTurn?: boolean;
   // ADR-108 (M40): resolved guardrail rule set. The supervisor arms the hook
   // interceptor (path_guard / repetition / no_progress) for this session; each
   // rule key is optional and an absent key means that rule is not armed.

@@ -1,5 +1,5 @@
-import { type AuthContext, resolveAuthHeader } from "@/auth";
-import { callExt, restResponseToToolError } from "@/rest";
+import { type AuthContext, resolveAuthHeader } from "./auth";
+import { callExt, restResponseToToolError } from "./rest";
 
 export type ToolSpec = {
   description: string;
