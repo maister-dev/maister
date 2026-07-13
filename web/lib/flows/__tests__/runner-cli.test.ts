@@ -22,7 +22,14 @@ afterEach(async () => {
 });
 
 const ctxBase = (overrides: Partial<FlowContext> = {}): FlowContext => ({
-  task: { id: "t1", title: "T", prompt: "hi", attemptNumber: 1 },
+  task: {
+    id: "t1",
+    title: "T",
+    prompt: "hi",
+    effectivePrompt: "hi",
+    clarifications: [],
+    attemptNumber: 1,
+  },
   run: { id: "r1", attemptNumber: 1, projectSlug: "demo" },
   executor: { id: "e1", agent: "claude", model: "claude-sonnet-4-6" },
   steps: {},
@@ -100,7 +107,14 @@ describe("runCliStep", () => {
         stepId: "echo",
         worktreePath,
         context: ctxBase({
-          task: { id: "t", title: "T", prompt: "tmpl-out", attemptNumber: 1 },
+          task: {
+            id: "t",
+            title: "T",
+            prompt: "tmpl-out",
+            effectivePrompt: "tmpl-out",
+            clarifications: [],
+            attemptNumber: 1,
+          },
         }),
         timeoutMs: 5_000,
       },

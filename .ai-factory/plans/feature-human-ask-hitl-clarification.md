@@ -261,7 +261,7 @@ failure is insufficient evidence.
   retry/failure, answer, supersession count, and targeted re-trigger decision;
   prohibit response bodies and schema answers from logs.
 
-- [ ] **Task 2: Reserve migration/ADR numbers and build typed persistence for task-bound questions.**
+- [x] **Task 2: Reserve migration/ADR numbers and build typed persistence for task-bound questions.**
 
   Update `web/lib/db/schema.ts` and generate migration
   `web/lib/db/migrations/0099_agent_human_ask.sql` with its
@@ -291,7 +291,7 @@ failure is insufficient evidence.
   **Logging:** migration code logs no user content; query/service logs use ids,
   kind, activation state, and row counts only.
 
-- [ ] **Task 3: Add pure clarification projections and prompt composition before any mutation route.**
+- [x] **Task 3: Add pure clarification projections and prompt composition before any mutation route.**
 
   Create focused server-only query/context helpers near
   `web/lib/queries/task-detail.ts`, `web/lib/flows/context.ts`, and

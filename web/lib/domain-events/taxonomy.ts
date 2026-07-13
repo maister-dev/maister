@@ -6,6 +6,7 @@ export const DOMAIN_EVENT_KINDS = [
   "task.created",
   "task.comment_added",
   "task.triage_requeued",
+  "task.clarification_answered",
   "run.done",
   "run.failed",
   "run.crashed",

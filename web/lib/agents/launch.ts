@@ -55,6 +55,7 @@ import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
 import {
   type AgentExecutionPolicyRecommendation,
   type DelegationSnapshot,
@@ -1583,6 +1584,12 @@ async function taskContextBlock(
 
   if (!task) return "";
 
+  const clarificationContext = await getTaskClarificationProjection(
+    _db,
+    run.taskId,
+    task.prompt,
+  );
+
   return [
     "## Task context",
     `${task.taskKey}-${task.number} (taskId: ${run.taskId}): ${task.title}`,
@@ -1593,7 +1600,7 @@ async function taskContextBlock(
     `Pass \`taskId: "${run.taskId}"\` to task_get / comment_list / triage_set / ` +
       `task_update — not "${task.taskKey}-${task.number}".`,
     "",
-    task.prompt,
+    clarificationContext.effectivePrompt,
   ].join("\n");
 }
 

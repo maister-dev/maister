@@ -29,6 +29,15 @@ describe("buildRunContext (P7, ADR-103)", () => {
   it("projects {intent, nodes(summary+vars), gates(status+verdict?), promoted}", () => {
     const ctx = buildRunContext({
       taskPrompt: "fix the bug",
+      effectivePrompt: "fix the bug\n\n## Human clarifications\n\nAnswer: production",
+      clarifications: [
+        {
+          id: "clarification-1",
+          seq: 1,
+          question: "Which environment?",
+          answer: { environment: "production" },
+        },
+      ],
       nodeAttempts: [
         na("plan", 1, "planned it", { approach: "tdd" }),
         na("impl", 1, "implemented", { files: 3 }),
@@ -40,6 +49,18 @@ describe("buildRunContext (P7, ADR-103)", () => {
     });
 
     expect(ctx.intent).toBe("fix the bug");
+    expect(ctx.task).toEqual({
+      prompt: "fix the bug",
+      effectivePrompt: "fix the bug\n\n## Human clarifications\n\nAnswer: production",
+      clarifications: [
+        {
+          id: "clarification-1",
+          seq: 1,
+          question: "Which environment?",
+          answer: { environment: "production" },
+        },
+      ],
+    });
     expect(ctx.nodes).toEqual({
       plan: { summary: "planned it", vars: { approach: "tdd" } },
       impl: { summary: "implemented", vars: { files: 3 } },
@@ -114,7 +135,7 @@ describe("buildRunContext (P7, ADR-103)", () => {
   it("projects ONLY ledger + gate + prompt data — no side channel adds a key (secret-safety)", () => {
     // buildRunContext reads taskPrompt + node vars + gate verdicts and nothing
     // else (never context.env), so the output is closed over its inputs: exactly
-    // these four top-level sections carrying only the vars the caller passed. A
+    // these five top-level sections carrying only the vars the caller passed. A
     // regression that pulled in another source would add a key or a value here.
     const ctx = buildRunContext({
       taskPrompt: "x",
@@ -127,6 +148,7 @@ describe("buildRunContext (P7, ADR-103)", () => {
       "intent",
       "nodes",
       "promoted",
+      "task",
     ]);
     expect(ctx.nodes.a.vars).toEqual({ safe: "ok" });
     expect(ctx.promoted).toEqual({ safe: "ok" });

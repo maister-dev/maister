@@ -21,6 +21,10 @@ import {
   type TaskRelationView,
 } from "@/lib/social/relations";
 import { resolveProjectTaskByNumber } from "@/lib/social/task-lookup";
+import {
+  getTaskClarificationProjection,
+  type TaskClarificationHistory,
+} from "@/lib/queries/task-clarifications";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const {
@@ -134,6 +138,8 @@ export type TaskDetailData = {
     priority: TaskPriority;
     queuePaused: boolean;
     triageConfidence: number | null;
+    clarifications: TaskClarificationHistory[];
+    awaitingClarification: boolean;
   };
   keyRef: string;
   relations: TaskRelationView[];
@@ -227,6 +233,12 @@ export async function getTaskDetail(
   if (!resolved) return null;
 
   const taskId = resolved.task.id;
+  const taskExtras = await taskExtrasOf(db, taskId);
+  const clarificationContext = await getTaskClarificationProjection(
+    db,
+    taskId,
+    taskExtras.prompt,
+  );
 
   const [projectRow] = (await db
     .select({ name: schemaModule.projects.name })
@@ -405,7 +417,9 @@ export async function getTaskDetail(
       id: taskId,
       number: resolved.task.number,
       title: resolved.task.title,
-      ...(await taskExtrasOf(db, taskId)),
+      ...taskExtras,
+      clarifications: clarificationContext.history,
+      awaitingClarification: clarificationContext.awaitingClarification,
       status: resolved.task.status,
     },
     keyRef: `${resolved.project.taskKey}-${resolved.task.number}`,

@@ -31,7 +31,14 @@ import { MaisterError } from "@/lib/errors";
 import { runAgentStep, type RunAgentStepCtx } from "@/lib/flows/runner-agent";
 
 const baseFlowCtx: FlowContext = {
-  task: { id: "t1", title: "T", prompt: "go", attemptNumber: 1 },
+  task: {
+    id: "t1",
+    title: "T",
+    prompt: "go",
+    effectivePrompt: "go",
+    clarifications: [],
+    attemptNumber: 1,
+  },
   run: { id: "run-1", attemptNumber: 1, projectSlug: "demo" },
   executor: { id: "e1", agent: "claude", model: "claude-sonnet-4-6" },
   steps: {},

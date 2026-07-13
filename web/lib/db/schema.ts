@@ -2945,6 +2945,7 @@ export const hitlRequests = pgTable(
         "permission",
         "form",
         "human",
+        "agent_question",
         "infra_recovery",
         "budget_breach",
         "hook_trip",
@@ -2952,6 +2953,21 @@ export const hitlRequests = pgTable(
     }).notNull(),
     schema: jsonb("schema"),
     prompt: text("prompt").notNull(),
+    taskId: text("task_id").references(() => tasks.id, {
+      onDelete: "cascade",
+    }),
+    activationState: text("activation_state", {
+      enum: ["pending_termination", "active", "failed"],
+    }),
+    reTriggerMode: text("retrigger_mode", {
+      enum: ["agent", "triage"],
+    }),
+    supersededAt: timestamp("superseded_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    supersededByHitlRequestId: text("superseded_by_hitl_request_id"),
+    supersededByRunId: text("superseded_by_run_id"),
     response: jsonb("response"),
     // M11a (ADR-028): review-decision fields claimed from response.decision for
     // a graph human_review HITL, validated against schema's allow-list.
@@ -2984,6 +3000,140 @@ export const hitlRequests = pgTable(
   },
   (t) => ({
     idxRun: index("hitl_requests_run_idx").on(t.runId),
+    idxAgentQuestionActive: index("hitl_requests_agent_question_active_idx")
+      .on(t.taskId, t.createdAt)
+      .where(
+        sql`${t.kind} = 'agent_question' AND ${t.activationState} = 'active' AND ${t.respondedAt} IS NULL AND ${t.supersededAt} IS NULL`,
+      ),
+    agentQuestionShapeCheck: check(
+      "hitl_requests_agent_question_shape_check",
+      sql`(
+        ${t.kind} = 'agent_question'
+        AND ${t.taskId} IS NOT NULL
+        AND ${t.activationState} IS NOT NULL
+        AND ${t.reTriggerMode} IS NOT NULL
+        AND ${t.schema} IS NOT NULL
+      ) OR (
+        ${t.kind} <> 'agent_question'
+        AND ${t.taskId} IS NULL
+        AND ${t.activationState} IS NULL
+        AND ${t.reTriggerMode} IS NULL
+      )`,
+    ),
+    agentQuestionSupersessionCheck: check(
+      "hitl_requests_agent_question_supersession_check",
+      sql`(
+        ${t.kind} <> 'agent_question'
+        AND ${t.supersededAt} IS NULL
+        AND ${t.supersededByHitlRequestId} IS NULL
+        AND ${t.supersededByRunId} IS NULL
+      ) OR (
+        ${t.kind} = 'agent_question'
+        AND (
+          (
+            ${t.supersededAt} IS NULL
+            AND ${t.supersededByHitlRequestId} IS NULL
+            AND ${t.supersededByRunId} IS NULL
+          ) OR (
+            ${t.supersededAt} IS NOT NULL
+            AND (
+              (${t.supersededByHitlRequestId} IS NOT NULL AND ${t.supersededByRunId} IS NULL)
+              OR (${t.supersededByHitlRequestId} IS NULL AND ${t.supersededByRunId} IS NOT NULL)
+            )
+          )
+        )
+      )`,
+    ),
+    agentQuestionActivationStateCheck: check(
+      "hitl_requests_agent_question_activation_state_check",
+      sql`${t.activationState} IS NULL OR ${t.activationState} IN ('pending_termination', 'active', 'failed')`,
+    ),
+    agentQuestionRetriggerModeCheck: check(
+      "hitl_requests_agent_question_retrigger_mode_check",
+      sql`${t.reTriggerMode} IS NULL OR ${t.reTriggerMode} IN ('agent', 'triage')`,
+    ),
+  }),
+);
+
+export const taskClarifications = pgTable(
+  "task_clarifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    sourceHitlRequestId: text("source_hitl_request_id").notNull(),
+    originRunId: text("origin_run_id").notNull(),
+    originAgentId: text("origin_agent_id").notNull(),
+    question: text("question").notNull(),
+    questionSchema: jsonb("question_schema").notNull(),
+    reTriggerMode: text("retrigger_mode", {
+      enum: ["agent", "triage"],
+    }).notNull(),
+    answer: jsonb("answer"),
+    answeredByUserId: text("answered_by_user_id"),
+    answeredAt: timestamp("answered_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    supersededAt: timestamp("superseded_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    supersededByHitlRequestId: text("superseded_by_hitl_request_id"),
+    supersededByRunId: text("superseded_by_run_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqTaskSequence: unique("task_clarifications_task_seq_uq").on(
+      t.taskId,
+      t.seq,
+    ),
+    uniqSourceHitlRequest: unique(
+      "task_clarifications_source_hitl_request_uq",
+    ).on(t.sourceHitlRequestId),
+    idxAnsweredContext: index("task_clarifications_answered_context_idx")
+      .on(t.taskId, t.seq, t.id)
+      .where(sql`${t.answeredAt} IS NOT NULL AND ${t.supersededAt} IS NULL`),
+    sequenceCheck: check(
+      "task_clarifications_seq_positive_check",
+      sql`${t.seq} > 0`,
+    ),
+    answerShapeCheck: check(
+      "task_clarifications_answer_shape_check",
+      sql`(
+        ${t.answeredAt} IS NULL
+        AND ${t.answer} IS NULL
+        AND ${t.answeredByUserId} IS NULL
+      ) OR (
+        ${t.answeredAt} IS NOT NULL
+        AND ${t.answer} IS NOT NULL
+        AND ${t.answeredByUserId} IS NOT NULL
+      )`,
+    ),
+    supersessionCheck: check(
+      "task_clarifications_supersession_check",
+      sql`(
+        ${t.supersededAt} IS NULL
+        AND ${t.supersededByHitlRequestId} IS NULL
+        AND ${t.supersededByRunId} IS NULL
+      ) OR (
+        ${t.supersededAt} IS NOT NULL
+        AND (
+          (${t.supersededByHitlRequestId} IS NOT NULL AND ${t.supersededByRunId} IS NULL)
+          OR (${t.supersededByHitlRequestId} IS NULL AND ${t.supersededByRunId} IS NOT NULL)
+        )
+      )`,
+    ),
+    reTriggerModeCheck: check(
+      "task_clarifications_retrigger_mode_check",
+      sql`${t.reTriggerMode} IN ('agent', 'triage')`,
+    ),
   }),
 );
 
@@ -4044,6 +4194,8 @@ export type TaskSubscriberRow = typeof taskSubscribers.$inferSelect;
 export type TaskSubscriberInsert = typeof taskSubscribers.$inferInsert;
 export type InboxItemRow = typeof inboxItems.$inferSelect;
 export type InboxItemInsert = typeof inboxItems.$inferInsert;
+export type TaskClarificationRow = typeof taskClarifications.$inferSelect;
+export type TaskClarificationInsert = typeof taskClarifications.$inferInsert;
 
 // Domain-event outbox (ADR-086): append-only fact log + per-consumer cursor
 // rows — the shared trigger bus. Emission rides the domain write's transaction
@@ -4088,7 +4240,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'gate.failed')`,
+      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_answered', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'gate.failed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",

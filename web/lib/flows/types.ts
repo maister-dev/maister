@@ -2,6 +2,7 @@ import "server-only";
 
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { MaisterErrorCode } from "@/lib/errors";
+import type { TaskClarificationContext } from "@/lib/tasks/clarifications";
 
 export type TemplateValue =
   | string
@@ -17,6 +18,8 @@ export type FlowContext = {
     id: string;
     title: string;
     prompt: string;
+    effectivePrompt: string;
+    clarifications: TaskClarificationContext[];
     attemptNumber: number;
   };
   run: {

@@ -7,6 +7,7 @@ import type {
   Task as TaskRow,
 } from "@/lib/db/schema";
 import type { CapabilityAgent } from "@/lib/config.schema";
+import type { TaskClarificationContext } from "@/lib/tasks/clarifications";
 import type { FlowContext } from "./types";
 
 import pino from "pino";
@@ -112,6 +113,8 @@ export function reduceLedger(
 
 export type BuildContextArgs = {
   task: Pick<TaskRow, "id" | "title" | "prompt" | "attemptNumber">;
+  effectivePrompt?: string;
+  clarifications?: TaskClarificationContext[];
   run: Pick<RunRow, "id">;
   executor: {
     id: string;
@@ -203,6 +206,8 @@ export function buildContext(args: BuildContextArgs): FlowContext {
       id: args.task.id,
       title: args.task.title,
       prompt: args.task.prompt,
+      effectivePrompt: args.effectivePrompt ?? args.task.prompt,
+      clarifications: args.clarifications ?? [],
       attemptNumber: args.task.attemptNumber,
     },
     run: {

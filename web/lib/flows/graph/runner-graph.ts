@@ -104,6 +104,7 @@ import {
   setWorktreeProvenanceNode,
 } from "@/lib/worktree-provenance";
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
+import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
 import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
@@ -2346,6 +2347,12 @@ export async function runGraph(
     return false;
   });
 
+  const clarificationContext = await getTaskClarificationProjection(
+    db,
+    loaded.task.id,
+    loaded.task.prompt,
+  );
+
   // ADR-122: the last non-empty ambient projection, threaded into the terminal
   // post-loop rewrite so run.json does not silently drop `brain` at run end
   // (manual takeover / paused-run readers see what the agent saw).
@@ -2378,6 +2385,8 @@ export async function runGraph(
           runId,
           worktreePath,
           taskPrompt: loaded.task.prompt,
+          effectivePrompt: clarificationContext.effectivePrompt,
+          clarifications: clarificationContext.clarifications,
           db,
           brain: brain ?? lastBrain,
         }).catch((err) =>
@@ -2746,6 +2755,8 @@ export async function runGraph(
 
       const context = buildContext({
         task: loaded.task,
+        effectivePrompt: clarificationContext.effectivePrompt,
+        clarifications: clarificationContext.clarifications,
         run: loaded.run,
         // M42 (ADR-114): `{{ executor.* }}` reflects the node's session runner.
         executor: nodeExecutor,
@@ -4274,6 +4285,8 @@ export async function runGraph(
         runId,
         worktreePath,
         taskPrompt: loaded.task.prompt,
+        effectivePrompt: clarificationContext.effectivePrompt,
+        clarifications: clarificationContext.clarifications,
         db,
         // ADR-122: keep the last ambient projection in the terminal rewrite —
         // a takeover/paused-run reader must see the context the agent saw.

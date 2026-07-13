@@ -15,6 +15,21 @@ type PromptTaskRow = {
   taskKey: string;
 };
 
+type PromptClarificationRow = {
+  id: string;
+  seq: number;
+  question: string;
+  answer: unknown;
+  answeredAt: Date | null;
+  supersededAt: Date | null;
+};
+
+type PromptClarificationRequestRow = {
+  activationState: "pending_termination" | "active" | "failed" | null;
+  respondedAt: Date | null;
+  supersededAt: Date | null;
+};
+
 type PromptCommentRow = {
   id: string;
   body: string;
@@ -27,6 +42,8 @@ function promptDb(input: {
   taskRows: PromptTaskRow[];
   triggerCommentRows: PromptCommentRow[];
   recentCommentRows: PromptCommentRow[];
+  clarificationRows?: PromptClarificationRow[];
+  clarificationRequestRows?: PromptClarificationRequestRow[];
 }) {
   let commentSelectCount = 0;
 
@@ -38,6 +55,24 @@ function promptDb(input: {
             innerJoin: () => ({
               where: async () => input.taskRows,
             }),
+          }),
+        };
+      }
+
+      if ("seq" in fields) {
+        return {
+          from: () => ({
+            where: () => ({
+              orderBy: async () => input.clarificationRows ?? [],
+            }),
+          }),
+        };
+      }
+
+      if ("activationState" in fields) {
+        return {
+          from: () => ({
+            where: async () => input.clarificationRequestRows ?? [],
           }),
         };
       }
@@ -198,6 +233,45 @@ describe("buildAgentPrompt", () => {
     });
 
     expect(emptyConfig).not.toContain("Effective configuration");
+  });
+
+  it("passes the derived effective prompt to a fresh task-bound agent", async () => {
+    const prompt = await buildAgentPrompt(
+      promptDb({
+        taskRows: [
+          {
+            number: 7,
+            title: "Routing question",
+            prompt: "Pick the right Flow.",
+            taskKey: "APP",
+          },
+        ],
+        clarificationRows: [
+          {
+            id: "clarification-1",
+            seq: 1,
+            question: "Which runner?",
+            answer: { runner: "codex" },
+            answeredAt: new Date("2026-07-13T10:00:00.000Z"),
+            supersededAt: null,
+          },
+        ],
+        clarificationRequestRows: [],
+        triggerCommentRows: [],
+        recentCommentRows: [],
+      }),
+      parsed,
+      {
+        id: "run-1",
+        taskId: "task-1",
+        triggerSource: "manual",
+      },
+    );
+
+    expect(prompt).toContain("Pick the right Flow.");
+    expect(prompt).toContain("## Human clarifications");
+    expect(prompt).toContain("Question: Which runner?");
+    expect(prompt).toContain('Answer: {"runner":"codex"}');
   });
 
   it("adds the triggering comment body and recent thread tail for task.comment_added", async () => {

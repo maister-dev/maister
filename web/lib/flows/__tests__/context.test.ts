@@ -51,6 +51,15 @@ describe("buildContext — FlowContext builder", () => {
       executor,
       nodeAttempts: [],
       projectSlug: "demo",
+      effectivePrompt: "Do the thing\n\n## Human clarifications\n\nAnswer: production",
+      clarifications: [
+        {
+          id: "clarification-1",
+          seq: 1,
+          question: "Which environment?",
+          answer: { environment: "production" },
+        },
+      ],
       envSource: { PATH: "/usr/bin" },
     });
 
@@ -58,6 +67,15 @@ describe("buildContext — FlowContext builder", () => {
       id: "task-1",
       title: "Demo",
       prompt: "Do the thing",
+      effectivePrompt: "Do the thing\n\n## Human clarifications\n\nAnswer: production",
+      clarifications: [
+        {
+          id: "clarification-1",
+          seq: 1,
+          question: "Which environment?",
+          answer: { environment: "production" },
+        },
+      ],
       attemptNumber: 2,
     });
     expect(ctx.run).toEqual({

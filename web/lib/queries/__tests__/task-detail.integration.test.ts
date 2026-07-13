@@ -92,6 +92,32 @@ beforeAll(async () => {
     });
   }
 
+  await db.insert(schema.hitlRequests).values({
+    id: "hitl-cap-1",
+    runId: "run-11",
+    stepId: "agent",
+    kind: "agent_question",
+    taskId: "task-cap",
+    activationState: "active",
+    reTriggerMode: "agent",
+    schema: { schemaVersion: 1, fields: [] },
+    prompt: "Which environment?",
+  });
+  await db.insert(schema.taskClarifications).values({
+    id: "clarification-cap-1",
+    taskId: "task-cap",
+    seq: 1,
+    sourceHitlRequestId: "hitl-cap-1",
+    originRunId: "run-11",
+    originAgentId: "core:triager",
+    question: "Which environment?",
+    questionSchema: { schemaVersion: 1, fields: [] },
+    reTriggerMode: "agent",
+    answer: { environment: "production" },
+    answeredByUserId: "u-1",
+    answeredAt: new Date("2026-07-13T10:00:00.000Z"),
+  });
+
   ({ getTaskDetail } = await import("@/lib/queries/task-detail"));
 }, 180_000);
 
@@ -130,5 +156,14 @@ describe("getTaskDetail — runs-history cap + true totals (ADR-119, integration
         PER_RUN.cacheCreation) *
         RUN_COUNT,
     );
+    expect(detail.task.awaitingClarification).toBe(true);
+    expect(detail.task.clarifications).toEqual([
+      expect.objectContaining({
+        id: "clarification-cap-1",
+        seq: 1,
+        question: "Which environment?",
+        answer: { environment: "production" },
+      }),
+    ]);
   });
 });

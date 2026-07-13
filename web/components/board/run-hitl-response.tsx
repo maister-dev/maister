@@ -33,6 +33,7 @@ export interface RunHitlResponseProps {
     | "permission"
     | "form"
     | "human"
+    | "agent_question"
     | "infra_recovery"
     | "budget_breach"
     | "hook_trip";
