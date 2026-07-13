@@ -56,6 +56,9 @@ const SCRATCH_SLUG = "e2e-acceptance-scratch";
 const REGISTRATION_SLUG = "e2e-registerable";
 const REGISTRATION_DUP_SLUG = "e2e-registerable-dup";
 const LIVE_CCR_SLUG = "e2e-live-ccr";
+const HUMAN_ASK_SLUG = "e2e-human-ask";
+const HUMAN_ASK_QUESTION =
+  "Which deployment environment should receive this release?";
 
 const RUNTIME_ROOT = "/tmp/maister-e2e";
 const PLATFORM_DEFAULT_RUNNER_ID = "claude-code";
@@ -453,6 +456,13 @@ type ProjectFixture = {
   hitlRequestId?: string;
   worktreePath?: string;
   branch?: string;
+};
+
+type HumanAskFixture = {
+  projectSlug: string;
+  taskId: string;
+  hitlRequestId: string;
+  question: string;
 };
 
 type RegistrationFixture = {
@@ -2516,6 +2526,115 @@ async function seedLaunchableProjectFixture(
   fixture.worktreePath = worktreePath;
 
   return fixture;
+}
+
+// ADR-136 acceptance fixture: the source agent has already reached Done, while
+// its active clarification remains actionable through the task-bound HITL row.
+// Keeping this project separate prevents a visibility test from changing the
+// ordering or count assumptions of existing Inbox fixtures.
+async function seedHumanAskFixture(
+  pool: Pool,
+  userId: string,
+): Promise<HumanAskFixture> {
+  const ids = {
+    project: randomUUID(),
+    task: randomUUID(),
+    agent: "e2e-human-ask:release-agent",
+    run: randomUUID(),
+    hitl: randomUUID(),
+    clarification: randomUUID(),
+    membership: randomUUID(),
+  };
+  const schema = {
+    schemaVersion: 1,
+    fields: [
+      {
+        name: "environment",
+        type: "enum",
+        required: true,
+        options: ["staging", "production"],
+      },
+    ],
+  };
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [HUMAN_ASK_SLUG]);
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, task_key)
+     VALUES ($1, $2, 'E2E Human Ask', $3, 'ASK')`,
+    [
+      ids.project,
+      HUMAN_ASK_SLUG,
+      path.join(RUNTIME_ROOT, "repos", HUMAN_ASK_SLUG),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.membership, ids.project, userId],
+  );
+  await pool.query(
+    `INSERT INTO agents
+       (id, package_name, version_label, origin, name, description, workspace,
+        mode, triggers, risk_tier, source_path)
+     VALUES ($1, 'e2e-human-ask', 'v1.0.0', 'authored', 'Release agent',
+        'Requests a deployment target from a human.', 'none', 'session',
+        '[]'::jsonb, 'standard', '/tmp/maister-e2e/human-ask/release-agent.md')
+     ON CONFLICT (id) DO UPDATE SET version_label = EXCLUDED.version_label`,
+    [ids.agent],
+  );
+  await pool.query(
+    `INSERT INTO agent_project_links (id, agent_id, project_id, enabled)
+     VALUES ($1, $2, $3, true)`,
+    [randomUUID(), ids.agent, ids.project],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, status, stage)
+     VALUES ($1, $2, 1, 'Choose release environment',
+        'Ship the accepted release to the selected environment.', 'InFlight', 'Backlog')`,
+    [ids.task, ids.project],
+  );
+  await pool.query(
+    `INSERT INTO runs
+       (id, run_kind, agent_id, project_id, task_id, status, current_step_id,
+        flow_version, flow_revision, agent_workspace, ended_at)
+     VALUES ($1, 'agent', $2, $3, $4, 'Done', 'agent', 'agent', 'human-ask',
+        'none', now())`,
+    [ids.run, ids.agent, ids.project, ids.task],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: PLATFORM_DEFAULT_RUNNER_ID,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(PLATFORM_DEFAULT_RUNNER_ID),
+  });
+  await pool.query(
+    `INSERT INTO hitl_requests
+       (id, run_id, step_id, kind, schema, prompt, task_id, activation_state, retrigger_mode)
+     VALUES ($1, $2, 'agent', 'agent_question', $3, $4, $5, 'active', 'agent')`,
+    [ids.hitl, ids.run, JSON.stringify(schema), HUMAN_ASK_QUESTION, ids.task],
+  );
+  await pool.query(
+    `INSERT INTO task_clarifications
+       (id, task_id, seq, source_hitl_request_id, origin_run_id, origin_agent_id,
+        question, question_schema, retrigger_mode)
+     VALUES ($1, $2, 1, $3, $4, $5, $6, $7, 'agent')`,
+    [
+      ids.clarification,
+      ids.task,
+      ids.hitl,
+      ids.run,
+      ids.agent,
+      HUMAN_ASK_QUESTION,
+      JSON.stringify(schema),
+    ],
+  );
+
+  return {
+    projectSlug: HUMAN_ASK_SLUG,
+    taskId: ids.task,
+    hitlRequestId: ids.hitl,
+    question: HUMAN_ASK_QUESTION,
+  };
 }
 
 async function createRegistrationFixture(): Promise<RegistrationFixture> {
@@ -6568,6 +6687,7 @@ async function main(): Promise<void> {
       },
       hitl: true,
     });
+    const humanAsk = await seedHumanAskFixture(pool, admin.id);
 
     // ADR-083 social-board e2e fixture: a deterministic task key on the board
     // project (random elsewhere) plus a SECOND task to mention as EAB-2 from
@@ -6676,6 +6796,7 @@ async function main(): Promise<void> {
         m11b,
         m12,
         board,
+        humanAsk,
         scratch,
         liveCcr,
         registration,

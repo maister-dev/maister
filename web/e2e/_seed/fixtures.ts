@@ -139,6 +139,16 @@ export type E2EBudgetForkFixture = {
   taskTitle: string;
 };
 
+// ADR-136: a terminal agent run whose active question remains actionable in
+// Inbox. The source run must stay terminal to cover the rule that makes this
+// HITL different from ordinary NeedsInput flow gates.
+export type E2EHumanAskFixture = {
+  projectSlug: string;
+  taskId: string;
+  hitlRequestId: string;
+  question: string;
+};
+
 // ADR-130 capability-enforcement fixture: one NeedsInput flow run whose
 // `implement` node declares `enforcement.tools: "strict"` (→ "Enforced" verdict
 // on the settings panel), parked on a seeded `capability_guard` hook_trip.
@@ -222,6 +232,7 @@ export type E2EFixtures = {
     m38: E2EM38Fixture;
     m40: E2EM40Fixture;
     budgetFork: E2EBudgetForkFixture;
+    humanAsk: E2EHumanAskFixture;
     capabilityEnforcement: E2ECapabilityEnforcementFixture;
   };
 };

@@ -9,11 +9,12 @@ import {
 } from "@/lib/domain-events/taxonomy";
 
 describe("domain-event taxonomy", () => {
-  it("contains exactly the 10 taxonomy kinds (ADR-086 + run.review + B3 run.escalated)", () => {
+  it("contains exactly the 11 taxonomy kinds (ADR-086, ADR-136, run.review, and B3 run.escalated)", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "task.created",
       "task.comment_added",
       "task.triage_requeued",
+      "task.clarification_answered",
       "run.done",
       "run.failed",
       "run.crashed",

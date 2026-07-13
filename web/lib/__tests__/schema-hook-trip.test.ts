@@ -12,6 +12,7 @@ describe("hook_trip enum (ADR-108, migration 0066)", () => {
       "permission",
       "form",
       "human",
+      "agent_question",
       "infra_recovery",
       "budget_breach",
       "hook_trip",

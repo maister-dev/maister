@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+import { loadFixtures } from "./_seed/fixtures";
+
 // Inbox card redesign: the full-bleed, project-grouped /inbox surface rendering
 // the unified 3-tier HitlCard, plus the canonical "Needs you" badge fan-out.
 // Relies on the shared seed having at least one pending cross-project HITL
@@ -26,6 +28,30 @@ const MOCK_INBOX_CONTEXT = {
 };
 
 test.describe("Inbox card redesign", () => {
+  test("shows an active agent clarification after its source agent has ended", async ({
+    page,
+  }) => {
+    const humanAsk = loadFixtures().byKey.humanAsk;
+
+    await page.goto("/inbox");
+
+    const card = page
+      .getByTestId("hitl-card")
+      .filter({ has: page.getByText(humanAsk.question, { exact: true }) });
+
+    await expect(card).toHaveCount(1);
+    await expect(card).toHaveAttribute("data-kind", "agent_question");
+    await expect(card.getByText("Agent question", { exact: true })).toBeVisible();
+
+    await card.locator("button[aria-expanded]").first().click();
+    const response = card.getByTestId("agent-question-response");
+
+    await expect(response).toBeVisible();
+    await expect(
+      response.getByRole("button", { name: "Answer clarification" }),
+    ).toBeVisible();
+  });
+
   test("the Inbox nav reaches /inbox and renders unified HITL cards", async ({
     page,
   }) => {
