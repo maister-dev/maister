@@ -240,21 +240,59 @@ describe("FrontmatterArtifactEditor — agent_definition", () => {
     );
 
     expect(html).toContain('value="reviewer"');
+    // workspace / mode / risk_tier render as <select>. A NON-selected option
+    // value only appears when the full option set is emitted — i.e. a select,
+    // not the old free-text input (whose value would be repo_read/session/…).
     expect(html).toContain("Workspace");
-    expect(html).toContain('value="repo_read"');
-    expect(html).toContain('value="trigger"');
+    expect(html).toContain('value="worktree"'); // workspace select (value=repo_read)
+    expect(html).toContain('value="subagent"'); // mode select (value=session)
     expect(html).toContain("Risk tier");
-    expect(html).toContain('value="read_only"');
-    // triggers render as a one-per-line LIST field.
-    expect(html).toContain("manual\ndomain_event");
+    expect(html).toContain('value="destructive"'); // risk_tier select (value=read_only)
+    // workspace_ref is a select (trigger|branch), shown because workspace=repo_read.
+    expect(html).toContain('value="branch"');
+    // triggers render as a checkbox group over the closed set (not a textarea):
+    // an UNSET option still renders, and set values are checked.
+    expect(html).toContain("webhook");
+    expect(html).toContain("checked");
     // recommended sub-fields pre-populate.
     expect(html).toContain("Recommended bindings");
     expect(html).toContain('value="*/30 * * * *"');
     expect(html).toContain('value="UTC"');
-    expect(html).toContain("run.failed");
+    // recommended events render as a checkbox group over DOMAIN_EVENT_KINDS.
+    expect(html).toContain("run.failed"); // set (checked)
+    expect(html).toContain("run.done"); // an UNSET event option still renders
     // capability_profile renders as a JSON object field (label + serialized value).
     expect(html).toContain("Capability profile");
     expect(html).toContain("github");
+  });
+
+  it("preserves a stored enum value outside the known set as an extra option", () => {
+    const html = renderToStaticMarkup(
+      createElement(FrontmatterArtifactEditor, {
+        content: `---\nname: x\ndescription: y\nworkspace: bogus\nmode: session\ntriggers:\n  - manual\nrisk_tier: read_only\n---\nbody\n`,
+        kind: "agent_definition",
+        labels,
+        onChange: () => {},
+      }),
+    );
+
+    // Lenient contract: the out-of-enum value is still shown, and the schema ⚠
+    // flags it — the editor never silently drops what the document holds.
+    expect(html).toContain('value="bogus"');
+    expect(html).toContain('data-testid="agent-schema-warning"');
+  });
+
+  it("hides workspace_ref unless workspace is repo_read", () => {
+    const html = renderToStaticMarkup(
+      createElement(FrontmatterArtifactEditor, {
+        content: `---\nname: x\ndescription: y\nworkspace: none\nworkspace_ref: trigger\nmode: session\ntriggers:\n  - manual\nrisk_tier: read_only\n---\nbody\n`,
+        kind: "agent_definition",
+        labels,
+        onChange: () => {},
+      }),
+    );
+
+    expect(html).not.toContain("Workspace ref");
   });
 });
 

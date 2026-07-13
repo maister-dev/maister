@@ -43,6 +43,19 @@ export const AGENT_TRIGGER_KINDS = [
   "flow",
 ] as const;
 
+// Closed value sets the Studio editor renders as Select controls — single
+// source of truth (the schema below consumes them too).
+export const AGENT_WORKSPACE_KINDS = ["none", "repo_read", "worktree"] as const;
+export const AGENT_MODE_KINDS = ["session", "subagent"] as const;
+export const AGENT_RISK_TIER_KINDS = [
+  "read_only",
+  "standard",
+  "destructive",
+] as const;
+// workspace_ref is a free branch name in the schema; `trigger` is the special
+// resolve-from-event sentinel. Offered as Select options; other values kept.
+export const AGENT_WORKSPACE_REF_KINDS = ["trigger", "branch"] as const;
+
 const agentIdSchema = z
   .string()
   .min(1)
@@ -250,11 +263,11 @@ export const agentDefinitionFrontmatterSchema = z
     name: z.string().min(1),
     description: z.string().min(1),
     runner: z.string().min(1).max(128).optional(),
-    workspace: z.enum(["none", "repo_read", "worktree"]),
+    workspace: z.enum(AGENT_WORKSPACE_KINDS),
     // `trigger` resolves the ref from the triggering event (ADR-090 rework);
     // anything else is a literal branch name.
     workspace_ref: z.string().min(1).max(255).optional(),
-    mode: z.enum(["session", "subagent"]),
+    mode: z.enum(AGENT_MODE_KINDS),
     triggers: z.array(z.enum(AGENT_TRIGGER_KINDS)).min(1),
     capability_profile: capabilityProfileSchema.optional(),
     // Whether the platform MCP facade (triage/comments/runs/... over the ext
@@ -263,7 +276,7 @@ export const agentDefinitionFrontmatterSchema = z
     // missing facade is then NOT a launch error (fail-loud applies only when
     // the agent actually requires it).
     platform_mcp: z.boolean().optional(),
-    risk_tier: z.enum(["read_only", "standard", "destructive"]),
+    risk_tier: z.enum(AGENT_RISK_TIER_KINDS),
     // (ADR-106) Optional same-package flow this agent drives. Membership in the
     // package manifest's flows[] is enforced at registration.
     flow: flowRefValueSchema.optional(),

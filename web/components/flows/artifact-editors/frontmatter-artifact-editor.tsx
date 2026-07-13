@@ -6,10 +6,16 @@ import { useState } from "react";
 
 import { CodeEditor } from "@/components/flows/code-editor";
 import {
+  AGENT_MODE_KINDS,
+  AGENT_RISK_TIER_KINDS,
+  AGENT_TRIGGER_KINDS,
+  AGENT_WORKSPACE_KINDS,
+  AGENT_WORKSPACE_REF_KINDS,
   agentDefinitionFrontmatterSchema,
   capabilityProfileSchema,
 } from "@/lib/agents/definition";
 import { subagentFrontmatterSchema } from "@/lib/agents/subagent-definition";
+import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import {
   serializeFrontmatter,
   splitFrontmatter,
@@ -125,6 +131,13 @@ function listToLines(value: unknown): string {
   return value.map((item) => asText(item)).join("\n");
 }
 
+// A yaml sequence as a string[] — for the enum multi-selects (triggers, events).
+function asList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((item) => asText(item)).filter((item) => item.length > 0);
+}
+
 const labelClass =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute";
 const inputClass =
@@ -190,6 +203,96 @@ function ListField({
         onChange={(event) => onValue(event.target.value)}
       />
     </label>
+  );
+}
+
+interface SelectFieldProps {
+  label: string;
+  value: string;
+  options: readonly string[];
+  readOnly: boolean;
+  onValue: (next: string) => void;
+}
+
+// A closed-enum control. A stored value outside the known set is preserved as an
+// extra option (lenient contract: show exactly what the document holds and let
+// the ⚠ schema badge flag it) instead of being silently dropped by the select.
+function SelectField({
+  label,
+  value,
+  options,
+  readOnly,
+  onValue,
+}: SelectFieldProps): ReactElement {
+  const opts =
+    value !== "" && !options.includes(value) ? [...options, value] : options;
+
+  return (
+    <label className={fieldClass}>
+      <span className={labelClass}>{label}</span>
+      <select
+        className={inputClass}
+        disabled={readOnly}
+        value={value}
+        onChange={(event) => onValue(event.target.value)}
+      >
+        <option value="">—</option>
+        {opts.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+interface MultiSelectFieldProps {
+  label: string;
+  values: string[];
+  options: readonly string[];
+  readOnly: boolean;
+  onValues: (next: string[]) => void;
+}
+
+// A closed multi-enum control (checkbox group). Stored values outside the known
+// set are kept as extra checked boxes (same lenient contract as SelectField).
+function MultiSelectField({
+  label,
+  values,
+  options,
+  readOnly,
+  onValues,
+}: MultiSelectFieldProps): ReactElement {
+  const extras = values.filter((value) => !options.includes(value));
+  const toggle = (option: string, checked: boolean): void => {
+    onValues(
+      checked
+        ? [...values, option]
+        : values.filter((value) => value !== option),
+    );
+  };
+
+  return (
+    <div className={fieldClass}>
+      <span className={labelClass}>{label}</span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+        {[...options, ...extras].map((option) => (
+          <label
+            key={option}
+            className="flex items-center gap-1.5 font-mono text-[12px] text-ink"
+          >
+            <input
+              checked={values.includes(option)}
+              disabled={readOnly}
+              type="checkbox"
+              onChange={(event) => toggle(option, event.target.checked)}
+            />
+            {option}
+          </label>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -392,7 +495,6 @@ export function FrontmatterArtifactEditor({
         ) : (
           <SkillAgentFields
             editField={editField}
-            editListKey={editListKey}
             editTextKey={editTextKey}
             fm={fm}
             kind={kind}
@@ -425,7 +527,6 @@ interface SkillAgentFieldsProps {
   labels: FrontmatterArtifactEditorLabels;
   editField: (key: string, value: FieldValue) => void;
   editTextKey: (key: string) => (next: string) => void;
-  editListKey: (key: string) => (next: string) => void;
 }
 
 function SkillAgentFields({
@@ -435,7 +536,6 @@ function SkillAgentFields({
   labels,
   editField,
   editTextKey,
-  editListKey,
 }: SkillAgentFieldsProps): ReactElement {
   // `recommended` is a nested mapping — edits rewrite the whole object and
   // drop it entirely when every sub-field clears (CLEAR-able round-trip).
@@ -484,33 +584,41 @@ function SkillAgentFields({
       />
       {kind === "agent_definition" ? (
         <>
-          <TextField
+          <SelectField
             label={labels.agentWorkspace}
+            options={AGENT_WORKSPACE_KINDS}
             readOnly={readOnly}
             value={asText(fm.workspace)}
             onValue={editTextKey("workspace")}
           />
-          <TextField
-            label={labels.agentWorkspaceRef}
-            readOnly={readOnly}
-            value={asText(fm.workspace_ref)}
-            onValue={editTextKey("workspace_ref")}
-          />
-          <TextField
+          {asText(fm.workspace) === "repo_read" ? (
+            <SelectField
+              label={labels.agentWorkspaceRef}
+              options={AGENT_WORKSPACE_REF_KINDS}
+              readOnly={readOnly}
+              value={asText(fm.workspace_ref)}
+              onValue={editTextKey("workspace_ref")}
+            />
+          ) : null}
+          <SelectField
             label={labels.agentMode}
+            options={AGENT_MODE_KINDS}
             readOnly={readOnly}
             value={asText(fm.mode)}
             onValue={editTextKey("mode")}
           />
-          <ListField
-            hint={labels.listHint}
+          <MultiSelectField
             label={labels.agentTriggers}
+            options={AGENT_TRIGGER_KINDS}
             readOnly={readOnly}
-            value={listToLines(fm.triggers)}
-            onValue={editListKey("triggers")}
+            values={asList(fm.triggers)}
+            onValues={(next) =>
+              editField("triggers", next.length === 0 ? undefined : next)
+            }
           />
-          <TextField
+          <SelectField
             label={labels.agentRiskTier}
+            options={AGENT_RISK_TIER_KINDS}
             readOnly={readOnly}
             value={asText(fm.risk_tier)}
             onValue={editTextKey("risk_tier")}
@@ -542,12 +650,12 @@ function SkillAgentFields({
             value={asText(recommended.cron?.timezone)}
             onValue={(next) => editRecommended({ cronTz: next })}
           />
-          <ListField
-            hint={labels.listHint}
+          <MultiSelectField
             label={labels.agentRecommendedEvents}
+            options={DOMAIN_EVENT_KINDS}
             readOnly={readOnly}
-            value={listToLines(recommended.events)}
-            onValue={(next) => editRecommended({ events: linesToList(next) })}
+            values={asList(recommended.events)}
+            onValues={(next) => editRecommended({ events: next })}
           />
           <CapabilityProfileField
             invalidLabel={labels.agentCapabilityProfileInvalid}
