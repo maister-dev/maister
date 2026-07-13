@@ -226,7 +226,6 @@ async function linkAndBindFromRecommended(
   const recommendedEvents = [
     "task.created",
     "task.triage_requeued",
-    "task.comment_added",
   ];
 
   await pool.query(
@@ -272,6 +271,20 @@ const DECLARED_CONFIG = [
     values: ["triage_only", "clarify"],
     default: "clarify",
     label: "Intake mode",
+    description: expect.any(String),
+  },
+  {
+    key: "max_clarification_rounds",
+    type: "number",
+    default: 3,
+    label: "Maximum clarification rounds",
+    description: expect.any(String),
+  },
+  {
+    key: "auto_enqueue_confidence",
+    type: "number",
+    default: 0.8,
+    label: "Auto-enqueue confidence",
     description: expect.any(String),
   },
 ];
@@ -321,7 +334,7 @@ describe("core package register -> attach -> launch (T5.2)", () => {
 
     await registerPackageAgents(installId, db);
     await attachCorePackage(installId);
-    // The instance overrides intake_mode; the other two keep their defaults.
+    // The instance overrides intake_mode; the other four keep their defaults.
     await linkAndBindFromRecommended({ intake_mode: "triage_only" });
 
     const result = await launchAgentRun({
@@ -343,8 +356,10 @@ describe("core package register -> attach -> launch (T5.2)", () => {
 
     expect(runConfig).toEqual({
       auto_enqueue: "off",
+      auto_enqueue_confidence: 0.8,
       detect_duplicates: true,
       intake_mode: "triage_only",
+      max_clarification_rounds: 3,
     });
 
     // The prompt injects the "Effective configuration" block from the snapshot.

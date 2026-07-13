@@ -1,7 +1,7 @@
 // Phase 5 / T5.1 (ADR-112): the core-package Triager agent definition is
 // CONTENT (a maister-agents/triager.md shipped in maister-plugins). Its
 // acceptance is that the real parser accepts it and yields the declared shape:
-// the 3 config params, risk_tier=read_only, workspace=none, no flow, and the
+// the 5 config params, risk_tier=read_only, workspace=none, no flow, and the
 // domain_event + manual triggers. The maister-repo fixture under
 // fixtures/core-package/ is byte-identical to the maister-plugins deliverable,
 // so this test does not depend on the sibling repo being present.
@@ -41,7 +41,7 @@ describe("core:triager definition (T5.1)", () => {
     expect(parsed.prompt.trim().length).toBeGreaterThan(0);
   });
 
-  it("declares the three triager config params with defaults", () => {
+  it("declares the clarification and auto-enqueue config params with defaults", () => {
     const parsed = parseAgentDefinition("core:triager", TRIAGER_MD);
 
     expect(parsed.config).not.toBeNull();
@@ -49,8 +49,10 @@ describe("core:triager definition (T5.1)", () => {
 
     expect([...byKey.keys()].sort()).toEqual([
       "auto_enqueue",
+      "auto_enqueue_confidence",
       "detect_duplicates",
       "intake_mode",
+      "max_clarification_rounds",
     ]);
 
     // auto_enqueue: enum off|when_confident|always, default off (quoted so YAML
@@ -69,16 +71,30 @@ describe("core:triager definition (T5.1)", () => {
       values: ["triage_only", "clarify"],
       default: "clarify",
     });
+    expect(byKey.get("max_clarification_rounds")).toMatchObject({
+      type: "number",
+      default: 3,
+    });
+    expect(byKey.get("auto_enqueue_confidence")).toMatchObject({
+      type: "number",
+      default: 0.8,
+    });
   });
 
-  it("recommends the three triage event bindings", () => {
+  it("recommends creation and Human-ask triage requeue bindings only", () => {
     const parsed = parseAgentDefinition("core:triager", TRIAGER_MD);
 
     expect(parsed.recommended?.events).toEqual([
       "task.created",
       "task.triage_requeued",
-      "task.comment_added",
     ]);
+    expect(parsed.recommended).toMatchObject({
+      runner: "claude-code",
+      executionPolicy: { autoApply: "off", onBudgetBreach: "terminate" },
+    });
+    expect(parsed.hooks).toMatchObject({ repetition: { max: 5 } });
+    expect(parsed.prompt).toContain("ask_human");
+    expect(parsed.prompt).toContain("reTriggerMode: 'triage'");
   });
 
   // The flagged-hold invariant lives in the PROMPT — the agent's reasoning is

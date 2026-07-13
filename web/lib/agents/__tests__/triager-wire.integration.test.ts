@@ -218,7 +218,7 @@ async function attachAndBindTriager(): Promise<void> {
   );
   await pool.query(
     `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match", "enabled")
-     VALUES ($1, $2, $3, 'event', '{"kinds":["task.created","task.triage_requeued","task.comment_added"]}'::jsonb, true)`,
+     VALUES ($1, $2, $3, 'event', '{"kinds":["task.created","task.triage_requeued"]}'::jsonb, true)`,
     [randomUUID(), AGENT_ID, projectId],
   );
 }
@@ -315,13 +315,14 @@ describe("(a) task.created -> agent_triggers consumer enqueues a triager run", (
     ]);
   });
 
-  it("a self-actored event (the triager's own comment) never re-triggers it", async () => {
+  it("comments do not re-trigger the triager", async () => {
     await attachAndBindTriager();
     const taskId = await seedTask();
 
     const consumer = triggers.buildAgentTriggersConsumer({ db });
 
-    // The triager's OWN comment (the clarifying question it just asked).
+    // Comments remain available to other comment-processing agents, but the
+    // triager's Human-ask loop must only advance through task.triage_requeued.
     await consumer.handle([
       fakeEvent({
         id: 5002 as unknown as DomainEventRow["id"],
@@ -332,9 +333,6 @@ describe("(a) task.created -> agent_triggers consumer enqueues a triager run", (
       }),
     ]);
 
-    expect(await agentRunCount()).toBe(0);
-
-    // The human's reply DOES re-trigger it.
     await consumer.handle([
       fakeEvent({
         id: 5003 as unknown as DomainEventRow["id"],
@@ -345,7 +343,7 @@ describe("(a) task.created -> agent_triggers consumer enqueues a triager run", (
       }),
     ]);
 
-    expect(await agentRunCount()).toBe(1);
+    expect(await agentRunCount()).toBe(0);
   });
 });
 
