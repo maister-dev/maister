@@ -44,12 +44,18 @@ The project page shows the existing filter bar plus the following designed
 read-only additions:
 
 - `all | flow | scratch | agent` segment;
-- agentization panel: lines headline, merge/PR secondary rate, daily trend,
-  flow/scratch/agent buckets, volatility and `as of` freshness;
+- agentization panel: lines headline, merge/PR secondary rate, a daily
+  target-branch-share bar chart (with gaps rather than fabricated zeroes for
+  insufficient daily evidence), flow/scratch/agent buckets, volatility and
+  `as of` freshness;
 - all-run autonomy/human-touch/promotion funnel;
 - cost and budget kind attribution;
 - visible `flow runs` scope labels on correction, autonomy, signals, harness,
-  artifact, coverage, and node panels.
+  artifact, coverage, and node panels. The Harness coverage card is a
+  node-by-control matrix: guide count, blocking/advisory gate counts, and
+  observed executions; amber rows mark guides without sensors. Sensor firing
+  stays compact when it has no gate executions and does not stretch to match a
+  taller adjacent card.
 
 For scratch or agent selection, flow-ledger panels show an explicit
 not-applicable state instead of relabeling flow-only values. The portfolio route

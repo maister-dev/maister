@@ -1039,7 +1039,11 @@
       "flow": "Flow",
       "scratch": "Scratch",
       "agent": "Agent",
-      "trend": "Daily trend"
+      "trend": "Daily trend",
+      "trendNoData": "No daily delivery evidence in this window.",
+      "trendValue": "MAIster share",
+      "trendAiLines": "MAIster-attributed lines",
+      "trendAllLines": "All changed lines"
     },
     "funnel": {
       "title": "Run autonomy funnel",

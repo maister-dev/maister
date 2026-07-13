@@ -1039,7 +1039,11 @@
       "flow": "Flow",
       "scratch": "Scratch",
       "agent": "Агент",
-      "trend": "Дневной тренд"
+      "trend": "Дневной тренд",
+      "trendNoData": "В этом окне нет достаточных дневных delivery-данных.",
+      "trendValue": "Доля MAIster",
+      "trendAiLines": "Строки, атрибутированные MAIster",
+      "trendAllLines": "Все изменённые строки"
     },
     "funnel": {
       "title": "Воронка автономности run-ов",

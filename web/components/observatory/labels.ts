@@ -119,6 +119,10 @@ export function labelsFromTranslations(
       scratch: t("agentization.scratch"),
       agent: t("agentization.agent"),
       trend: t("agentization.trend"),
+      trendNoData: t("agentization.trendNoData"),
+      trendValue: t("agentization.trendValue"),
+      trendAiLines: t("agentization.trendAiLines"),
+      trendAllLines: t("agentization.trendAllLines"),
     },
     funnel: {
       title: t("funnel.title"),

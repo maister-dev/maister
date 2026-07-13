@@ -1,6 +1,8 @@
 import type { ReactElement } from "react";
 import type { AgentizationPanelProps } from "@/components/observatory/types";
 
+import { AgentizationTrendChart } from "@/components/observatory/agentization-trend-chart";
+
 function formatNumber(locale: string, value: number): string {
   return new Intl.NumberFormat(locale).format(value);
 }
@@ -71,21 +73,11 @@ export function AgentizationPanel({
       </div>
       <div className="mt-4">
         <h3 className="m-0 text-sm font-semibold text-ink">{text.trend}</h3>
-        <ol className="m-0 mt-2 grid list-none grid-cols-1 gap-1 p-0 text-xs text-mute sm:grid-cols-2 lg:grid-cols-4">
-          {data.trend.map((point) => (
-            <li
-              key={point.bucketStart.toISOString()}
-              className="rounded-md bg-ivory px-2 py-1.5"
-            >
-              <span className="font-mono text-[10px]">
-                {point.bucketStart.toLocaleDateString(locale)}
-              </span>
-              <strong className="ml-2 text-ink">
-                {formatRate(point.value)}
-              </strong>
-            </li>
-          ))}
-        </ol>
+        <AgentizationTrendChart
+          labels={text}
+          locale={locale}
+          trend={data.trend}
+        />
       </div>
     </section>
   );

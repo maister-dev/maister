@@ -97,6 +97,10 @@ export interface ObservatoryAgentizationLabels {
   scratch: string;
   agent: string;
   trend: string;
+  trendNoData: string;
+  trendValue: string;
+  trendAiLines: string;
+  trendAllLines: string;
 }
 
 export interface ObservatoryFunnelLabels {

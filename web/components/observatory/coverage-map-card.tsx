@@ -45,28 +45,76 @@ export function CoverageMapCard({
                 {flow.revisionCount} {harness.revisions}
               </span>
             </header>
-            <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">
-              {flow.nodes.map((node) => (
-                <li
-                  key={node.nodeId}
-                  className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                >
-                  <span className="font-mono font-semibold text-ink">
-                    {node.nodeId}
-                    {node.guidesWithoutSensors ? (
-                      <span className="ml-2 rounded-full border border-amber-line bg-amber-soft px-1.5 py-0.5 font-mono text-[9px] uppercase text-amber">
-                        {harness.guidesWithoutSensors}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="font-mono text-[10px] text-mute">
-                    {node.blockingGateCount} {harness.blocking} ·{" "}
-                    {node.advisoryGateCount} {harness.advisory} ·{" "}
-                    {node.guideCount} {harness.guides} · n={node.executions}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-[480px] border-collapse text-left text-xs">
+                <thead className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                  <tr>
+                    <th className="border-b border-line px-2 py-2" scope="col">
+                      {labels.node}
+                    </th>
+                    <th
+                      className="border-b border-line px-2 py-2 text-right"
+                      scope="col"
+                    >
+                      {harness.guides}
+                    </th>
+                    <th
+                      className="border-b border-line px-2 py-2 text-right"
+                      scope="col"
+                    >
+                      {harness.blocking}
+                    </th>
+                    <th
+                      className="border-b border-line px-2 py-2 text-right"
+                      scope="col"
+                    >
+                      {harness.advisory}
+                    </th>
+                    <th
+                      className="border-b border-line px-2 py-2 text-right"
+                      scope="col"
+                    >
+                      {harness.executions}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {flow.nodes.map((node) => (
+                    <tr
+                      key={node.nodeId}
+                      className={
+                        node.guidesWithoutSensors
+                          ? "border-b border-amber-line bg-amber-soft"
+                          : "border-b border-line-soft"
+                      }
+                    >
+                      <td className="px-2 py-2">
+                        <span className="font-mono font-semibold text-ink">
+                          {node.nodeId}
+                        </span>
+                        {node.guidesWithoutSensors ? (
+                          <span className="ml-2 rounded-full border border-amber-line bg-paper px-1.5 py-0.5 font-mono text-[9px] uppercase text-amber">
+                            {harness.guidesWithoutSensors}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono text-mute">
+                        {node.guideCount}
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono text-ink">
+                        {node.blockingGateCount}
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono text-ink">
+                        {node.advisoryGateCount}
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono text-mute">
+                        {node.executions}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </article>
         ))}
       </div>

@@ -490,7 +490,32 @@ describe("Observatory components", () => {
                 lines: 0,
               },
             ],
-            trend: [],
+            trend: [
+              {
+                bucketStart: new Date("2026-06-29T00:00:00.000Z"),
+                additions: 10,
+                deletions: 2,
+                aiAdditions: 6,
+                aiDeletions: 0,
+                value: 0.5,
+              },
+              {
+                bucketStart: new Date("2026-06-30T00:00:00.000Z"),
+                additions: 4,
+                deletions: 2,
+                aiAdditions: 0,
+                aiDeletions: 0,
+                value: 0,
+              },
+              {
+                bucketStart: new Date("2026-07-01T00:00:00.000Z"),
+                additions: 0,
+                deletions: 0,
+                aiAdditions: 0,
+                aiDeletions: 0,
+                value: null,
+              },
+            ],
             fetchedAt: new Date("2026-07-01T00:00:00.000Z"),
             volatile: false,
             availability: "ready",
@@ -536,8 +561,46 @@ describe("Observatory components", () => {
 
     expect(html).toContain("Agentization");
     expect(html).toContain("30%");
+    expect(html).toContain('role="img"');
+    expect(html).toContain("MAIster share");
+    expect(html).toContain("MAIster-attributed lines 6");
     expect(html).toContain("Run autonomy funnel");
     expect(html).toContain("Pure autonomous");
+  });
+
+  it("renders a compact daily-trend state when no day has sufficient evidence", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentizationPanel, {
+        data: {
+          lines: { numerator: 0, denominator: 0, sampleSize: 0, value: null },
+          deliveryUnits: {
+            numerator: 0,
+            denominator: 0,
+            sampleSize: 0,
+            value: null,
+          },
+          buckets: [],
+          trend: [
+            {
+              bucketStart: new Date("2026-07-01T00:00:00.000Z"),
+              additions: 0,
+              deletions: 0,
+              aiAdditions: 0,
+              aiDeletions: 0,
+              value: null,
+            },
+          ],
+          fetchedAt: null,
+          volatile: false,
+          availability: "insufficient",
+        },
+        labels,
+        locale: "en-US",
+      }),
+    );
+
+    expect(html).toContain("No daily delivery evidence in this window.");
+    expect(html).not.toContain('role="img"');
   });
 
   it("renders signal drill-down links for project scope", () => {
