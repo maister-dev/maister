@@ -271,31 +271,66 @@ async function handlePermissionRequest(
   }
 
   const hitlRequestId = randomUUID();
+  const permissionSchema = {
+    requestId: ev.requestId,
+    options: ev.options,
+    toolCall: ev.toolCall,
+    supervisorSessionId: pctx.supervisorSessionId,
+  };
+  const prompt = synthesizePermissionPrompt(ev.toolCall);
+  let persistedHitlId = hitlRequestId;
+  let reused = false;
 
   try {
     await pctx.db.transaction(async (tx: DbClientLike) => {
-      await tx.insert(hitlRequests).values({
-        id: hitlRequestId,
-        runId: pctx.runId,
-        stepId: pctx.stepId,
-        kind: "permission",
-        schema: {
-          requestId: ev.requestId,
-          options: ev.options,
-          toolCall: ev.toolCall,
-          supervisorSessionId: pctx.supervisorSessionId,
-        },
-        prompt: synthesizePermissionPrompt(ev.toolCall),
-      });
-      await createHitlAssignmentForRun({
-        db: tx,
-        runId: pctx.runId,
-        hitlRequestId,
-        stepId: pctx.stepId,
-        actionKind: "permission",
-        roleRefs: [],
-        title: synthesizePermissionPrompt(ev.toolCall),
-      });
+      // Dedup on re-emit (resume/reconnect): if an UNDECIDED (response IS NULL)
+      // open permission row already exists for this (run, step), refresh it in
+      // place instead of inserting a duplicate. Without this, every keep-alive
+      // checkpoint→resume cycle stacks another inbox card onto the same blocked
+      // step. The decided-but-undelivered case is handled by
+      // tryAutoDeliverStoredIntent above; here we own the still-open case.
+      const priorOpen = await tx
+        .select({ id: hitlRequests.id })
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, pctx.runId),
+            eq(hitlRequests.stepId, pctx.stepId),
+            eq(hitlRequests.kind, "permission"),
+            isNull(hitlRequests.respondedAt),
+            isNull(hitlRequests.response),
+          ),
+        )
+        .limit(1);
+
+      reused = priorOpen[0] !== undefined;
+      persistedHitlId = priorOpen[0]?.id ?? hitlRequestId;
+
+      if (reused) {
+        await tx
+          .update(hitlRequests)
+          .set({ schema: permissionSchema, prompt })
+          .where(eq(hitlRequests.id, persistedHitlId));
+      } else {
+        await tx.insert(hitlRequests).values({
+          id: hitlRequestId,
+          runId: pctx.runId,
+          stepId: pctx.stepId,
+          kind: "permission",
+          schema: permissionSchema,
+          prompt,
+        });
+        await createHitlAssignmentForRun({
+          db: tx,
+          runId: pctx.runId,
+          hitlRequestId,
+          stepId: pctx.stepId,
+          actionKind: "permission",
+          roleRefs: [],
+          title: prompt,
+        });
+      }
+
       const flipped = await tx
         .update(runs)
         .set({ status: "NeedsInput", currentStepId: pctx.stepId })
@@ -309,13 +344,17 @@ async function handlePermissionRequest(
               .from(runs)
               .where(eq(runs.id, pctx.runId));
 
-      await emitWebhookEvent({
-        db: tx,
-        type: "hitl.requested",
-        projectId: projectRows[0].projectId,
-        runId: pctx.runId,
-        data: { hitlRequestId, kind: "permission", nodeId: null },
-      });
+      // A brand-new request announces itself; a reused row is the same request
+      // re-blocking, so only the run.needs_input transition (below) fires.
+      if (!reused) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "hitl.requested",
+          projectId: projectRows[0].projectId,
+          runId: pctx.runId,
+          data: { hitlRequestId, kind: "permission", nodeId: null },
+        });
+      }
 
       if (flipped.length > 0) {
         await emitWebhookEvent({
@@ -331,11 +370,14 @@ async function handlePermissionRequest(
       {
         runId: pctx.runId,
         stepId: pctx.stepId,
-        hitlRequestId,
+        hitlRequestId: persistedHitlId,
+        reused,
         requestId: ev.requestId,
         supervisorSessionId: pctx.supervisorSessionId,
       },
-      "permission_request persisted; run transitioned to NeedsInput",
+      reused
+        ? "permission_request re-emit reused open row; run kept at NeedsInput"
+        : "permission_request persisted; run transitioned to NeedsInput",
     );
 
     return { ok: true } as const;

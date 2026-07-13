@@ -157,15 +157,19 @@ function makeFakeDb(
     },
   });
   // M8 T11: tryAutoDeliverStoredIntent reads hitl_requests for a prior
-  // stored intent. Tests without `priorIntent` get an empty result so
-  // the legacy "INSERT new row" path still fires.
+  // stored intent. When `priorIntent` is set it wins; otherwise hitl_requests
+  // reads reflect prior INSERTs (they carry no response/respondedAt, so they
+  // read as OPEN + UNDECIDED) — this is what the resume re-emit dedup path
+  // queries to find an existing open permission row instead of inserting again.
   const selectChain = () => ({
     from: (table: unknown) => ({
       where: () => {
         const name = tableOf(table);
         const rows =
-          name === "hitl_requests" && opts.priorIntent
-            ? [opts.priorIntent]
+          name === "hitl_requests"
+            ? opts.priorIntent
+              ? [opts.priorIntent]
+              : [...state.insertCalls]
             : name === "runs"
               ? [{ projectId: "proj-1", taskId: null }]
               : [];
@@ -334,7 +338,11 @@ describe("runner-agent — session.permission_request handling", () => {
     expect(statusUpdates).toContain("Running");
   });
 
-  it("two permission_requests for the same step produce two hitl_requests rows", async () => {
+  it("re-emitted permission_request for the same step reuses the open row (no duplicate)", async () => {
+    // Regression: a keep-alive checkpoint→resume cycle re-emits the pending
+    // permission with a fresh requestId. The prior open (undecided) row must be
+    // REUSED, not duplicated — otherwise every 30-min cycle piles another card
+    // into the inbox, all pointing at the same blocked step.
     const db = makeFakeDb();
     const api = makeApi({
       events: [
@@ -352,13 +360,20 @@ describe("runner-agent — session.permission_request handling", () => {
       api,
     );
 
-    expect(db.insertCalls).toHaveLength(2);
+    // Only the FIRST emit persists a row; the re-emit reuses it.
+    expect(db.insertCalls).toHaveLength(1);
     expect((db.insertCalls[0].schema as { requestId: string }).requestId).toBe(
       "req-1",
     );
-    expect((db.insertCalls[1].schema as { requestId: string }).requestId).toBe(
-      "req-2",
+    // The re-emit refreshes the open row's requestId in place (so a later
+    // response delivers to the live supervisor deferred, not the dead one).
+    const reuseUpdate = db.updates.find(
+      (u) =>
+        (u.set.schema as { requestId?: string } | undefined)?.requestId ===
+        "req-2",
     );
+
+    expect(reuseUpdate).toBeDefined();
   });
 
   it("cancels supervisor deferred + transitions run to Crashed AND returns ok=false errorCode=CRASH when INSERT fails", async () => {
