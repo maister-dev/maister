@@ -1585,7 +1585,13 @@ async function taskContextBlock(
 
   return [
     "## Task context",
-    `${task.taskKey}-${task.number}: ${task.title}`,
+    `${task.taskKey}-${task.number} (taskId: ${run.taskId}): ${task.title}`,
+    "",
+    // The facade tools resolve a task by its internal UUID, NOT the "KEY-N"
+    // display id — pass this taskId to task_get / comment_list / triage_set /
+    // task_update. Passing "KEY-N" returns "task not found".
+    `Pass \`taskId: "${run.taskId}"\` to task_get / comment_list / triage_set / ` +
+      `task_update — not "${task.taskKey}-${task.number}".`,
     "",
     task.prompt,
   ].join("\n");
