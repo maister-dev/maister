@@ -104,10 +104,10 @@ stateDiagram-v2
     HasWork --> Empty: last item cleared
 ```
 
-### Agent clarification cards (Designed — ADR-136)
+### Agent clarification cards (Implemented — ADR-136)
 
 An active `agent_question` card remains visible after its source standalone run
-is `Done`; it identifies the task and requesting agent, renders the stored
+is `Done`; it identifies the task as an agent clarification, renders the stored
 strict form schema, and has the same localized busy/error feedback as existing
 HITL controls. Pending termination, failed activation, answered, and superseded
 questions are never actionable cards. A response is human-only and never offers

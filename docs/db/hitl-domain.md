@@ -168,7 +168,7 @@ Free-form `additionalProperties` are tolerated (forward-compat).
   `(run_id, status)`, `review_comments_hitl_request_idx`
   `(hitl_request_id)`, `review_comments_parent_idx` `(parent_id)`.
 
-### Human-ask extension (Designed — ADR-136)
+### Human-ask extension (Implemented — ADR-136)
 
 ```mermaid
 erDiagram

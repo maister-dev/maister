@@ -103,7 +103,7 @@ future Mγ stage).
 | `tasks` | `flow_id` → NULLABLE; new `triage_status` (`'triaged'` \| NULL), `runner_id` (FK SET NULL), `target_branch` (text NULL), `promotion_mode` (`local_merge\|pull_request`, NULL). |
 | `project_tokens` | `token_kind` gains `'agent'`; new `agent_id` (FK `agents` CASCADE, NULL; CHECK `token_kind='agent'` ⇔ `agent_id IS NOT NULL`). |
 
-### Human-ask provenance (Designed — ADR-136)
+### Human-ask provenance (Implemented — ADR-136)
 
 `task_clarifications.origin_agent_id` is an immutable source snapshot rather
 than a cascading FK. It identifies the requesting platform agent even if the

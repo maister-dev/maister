@@ -5327,7 +5327,7 @@ paths:
           `input-<stepId>.json` atomically. `respondedAt` is marked
           after the artifact write succeeds. A losing concurrent
           submission gets 409 BEFORE it can corrupt the artifact.
-        - **agent_question** (ADR-136, Designed): human-only task
+        - **agent_question** (ADR-136, Implemented): human-only task
           clarification. The route locks the task and active request, records
           one answer and supersedes competing questions, then inserts either a
           target-only `task.clarification_answered` event or the triager's

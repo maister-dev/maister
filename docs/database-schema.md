@@ -2261,7 +2261,7 @@ carry `schema.supervisorSessionId` so the web tier can route the
 deferred resolution to the right supervisor session without an extra
 round-trip.
 
-### Agent-question extension (Designed — ADR-136, migration `0099`)
+### Agent-question extension (Implemented — ADR-136, migration `0099`)
 
 `agent_question` extends `hitl_requests` without changing legacy Flow HITL.
 It alone may have nullable `task_id`, an `activation_state` of

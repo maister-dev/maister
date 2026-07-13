@@ -460,7 +460,7 @@ occurs.
 - **Global personal HITL inbox** → `GET /api/v1/ext/hitl` writes audit with
   `project_id IS NULL`; project and agent tokens get 403.
 
-## Agent clarification request (Designed — ADR-136)
+## Agent clarification request (Implemented — ADR-136)
 
 `POST /api/v1/ext/projects/{slug}/tasks/{taskId}/human-asks` requires the exact
 agent `hitl:request` scope. The project comes from `slug`, the task is checked

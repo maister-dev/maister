@@ -606,7 +606,7 @@ only for explicit HITL or permission waits.
   edges, assignments, external operation events — are still future work and not
   drawn until their migrations exist.
 
-### Agent-question terminal origin (Designed — ADR-136)
+### Agent-question terminal origin (Implemented — ADR-136)
 
 An `agent_question` keeps an immutable source `origin_run_id` snapshot in
 `task_clarifications`, while `hitl_requests.run_id` remains the terminal

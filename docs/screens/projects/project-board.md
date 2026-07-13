@@ -157,7 +157,7 @@ stateDiagram-v2
 
 ## Data & APIs
 
-### Clarification visibility (Designed — ADR-136)
+### Clarification visibility (Implemented — ADR-136)
 
 Task detail shows ordered answered clarification history and an
 `awaitingClarification` indicator without changing the authored prompt. A fresh

@@ -590,7 +590,7 @@ with final target delivery evidence joins the project `agent` bucket;
 `none`/`repo_read` sessions do not. This reuses the agent promotion substrate
 and does not change its launch, policy, or enforcement behavior.
 
-## Human-ask activation and re-trigger (Designed — ADR-136)
+## Human-ask activation and re-trigger (Implemented — ADR-136)
 
 An attached, enabled, non-quarantined platform agent with `hitl:request` may
 create a clarification only through the server-derived task/project/agent

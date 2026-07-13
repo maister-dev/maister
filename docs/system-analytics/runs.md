@@ -1064,7 +1064,7 @@ promotion policy.
   The only exception is the recognized, localized diagnostic-code field of a
   route error boundary.
 
-## Standalone agent clarification handoff (Designed — ADR-136)
+## Standalone agent clarification handoff (Implemented — ADR-136)
 
 An `agent_question` is a terminal handoff, not a paused agent run. Activation
 sets the source standalone run to `Done` only after the supervisor confirms its

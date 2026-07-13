@@ -1366,7 +1366,7 @@ Implemented by `0076_user_access_tokens.sql`. Remaining roadmap-additive persist
 external-operation events) is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
-### Human-ask extension (Designed — ADR-136)
+### Human-ask extension (Implemented — ADR-136)
 
 ```mermaid
 erDiagram

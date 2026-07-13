@@ -334,7 +334,7 @@ flag/enqueue are body booleans, not locators (safe).
 | `POST …/tasks/{taskId}/triage` | `taskId`          | url-param, re-validated vs token project           | 404 (existence-hide, cross-project) |
 | `POST …/tasks/{taskId}/triage` | `flag`, `enqueue` | body-controlled booleans (not locators)            | —                                   |
 
-## Human-ask triage branch (Designed — ADR-136)
+## Human-ask triage branch (Implemented — ADR-136)
 
 The core triager may call `ask_human(..., { reTriggerMode: "triage" })` instead
 of posting a task comment and self-triggering. Only the server-recognized

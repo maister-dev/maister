@@ -565,7 +565,7 @@ packages-tab remediation link rather than an empty Flow picker. This does not
 block simple-intent task creation: a task may remain flowless/unconfigured
 until an operator configures and launches it through the existing path.
 
-## Clarification context on a task (Designed — ADR-136)
+## Clarification context on a task (Implemented — ADR-136)
 
 `tasks.prompt` is immutable for this feature. The task projection exposes
 ordered answered `task_clarifications` and `awaitingClarification`; unanswered

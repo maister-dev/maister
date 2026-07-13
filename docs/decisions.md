@@ -160,7 +160,7 @@
 | [ADR-133](#adr-133-versioned-read-only-evidence-and-run-owned-package-materialization) | Versioned read-only evidence and run-owned package materialization | Accepted | 2026-07-11 |
 | [ADR-134](#adr-134-observatory-agentization-and-commit-provenance) | Observatory agentization and commit provenance | Implemented | 2026-07-12 |
 | [ADR-135](#adr-135-testcontainers-only-ephemeral-postgres-for-database-backed-tests) | Testcontainers-only ephemeral Postgres for database-backed tests | Accepted | 2026-07-12 |
-| [ADR-136](#adr-136-task-bound-human-ask-clarification-handoff) | Task-bound Human-ask clarification handoff | Accepted — Designed | 2026-07-13 |
+| [ADR-136](#adr-136-task-bound-human-ask-clarification-handoff) | Task-bound Human-ask clarification handoff | Implemented | 2026-07-13 |
 
 ---
 
@@ -11755,7 +11755,7 @@ integration remains Docker-backed.
 ### ADR-136: Task-bound Human-ask clarification handoff
 
 **Date:** 2026-07-13
-**Status:** Accepted — Designed
+**Status:** Implemented
 
 **Context:** A standalone platform agent needs to request a human clarification
 without remaining an expensive live ACP session, mutating the task's authored

@@ -318,7 +318,7 @@ flowchart TD
 - **Project/task/run hard delete** → FK cascade removes the events; the
   durable audit trail is `task_activity` / run ledgers, not this log.
 
-## Targeted clarification re-trigger (Designed — ADR-136)
+## Targeted clarification re-trigger (Implemented — ADR-136)
 
 `task.clarification_answered` is a Postgres outbox kind with the requesting
 agent as its sole target. It is an internal DB/analytics contract, not an

@@ -1051,7 +1051,7 @@ transitions to `Crashed` and the stored intent is closed with
 The helper exists in `web/lib/runs/state-transitions.ts`; the
 runner-agent enforcement is queued for a follow-up patch.
 
-## Agent question — task-bound clarification (Designed — ADR-136)
+## Agent question — task-bound clarification (Implemented — ADR-136)
 
 `agent_question` is a standalone-agent request for a human clarification on a
 task. It is not a Flow `form`/`human` pause and it never resumes an ACP session
@@ -1064,10 +1064,9 @@ token, and marks the source run `Done`.
 stateDiagram-v2
     [*] --> pending_termination: validated ask_human
     pending_termination --> active: source session confirmed absent
-    pending_termination --> failed: source termination terminally fails
+    pending_termination --> failed: non-retryable source termination refusal
     active --> answered: one human response wins
     active --> superseded: successor standalone launch wins
-    failed --> pending_termination: reconciliation retries a retryable stop
 ```
 
 The active Inbox read model includes a terminal-origin `agent_question` only

@@ -66,7 +66,7 @@ tags:
       Run-scoped list enforces `hitl:read`; cross-project personal inbox
       enforces `hitl:inbox:read`; permission/form responses enforce
       `hitl:respond`; human responses require a global personal user token with
-      exact `hitl:respond:human`. (ADR-136 Designed) an attached agent with
+      exact `hitl:respond:human`. (ADR-136 Implemented) an attached agent with
       exact `hitl:request` may create a task-bound `agent_question`; only a
       session responder or a global personal user token with exact
       `hitl:respond:human` may answer it. `infra_recovery` and `budget_breach`
@@ -1914,7 +1914,7 @@ paths:
       summary: Respond to a pending HITL request
       description: |
         Scope `hitl:respond` or exact `hitl:respond:human` (M17, 0063
-        Designed). Answers the pending HITL request identified by
+        Implemented). Answers the pending HITL request identified by
         `hitlRequestId` on the run identified by `runId`. Routes through the
         SAME `respondToHitl` service (and the same two-phase commit + audit) as
         the session-auth `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond`.
@@ -2050,7 +2050,7 @@ paths:
       tags: [hitl]
       summary: Ask a human a task-bound clarification
       description: |
-        **ADR-136 (Designed).** Requires an authenticated attached agent token
+        **ADR-136 (Implemented).** Requires an authenticated attached agent token
         with exact `hitl:request`. `slug` derives the project; `taskId` is
         verified to belong to it. The source agent and source standalone run are
         derived from token/server state only and are never accepted in the body.
@@ -3405,7 +3405,7 @@ components:
       description: |
         (M17) Result of an ext HITL response. Mirrors the session route — the
         runner (not this route) owns the `NeedsInput → Running` transition.
-        (ADR-136 Designed) a human answer to `agent_question` returns the
+        (ADR-136 Implemented) a human answer to `agent_question` returns the
         terminal source `runStatus: Done`; it writes no artifact and never
         resumes ACP.
       properties:

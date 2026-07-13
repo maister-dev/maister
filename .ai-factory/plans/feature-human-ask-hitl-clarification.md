@@ -1,6 +1,6 @@
 # Implementation Plan: Human-ask — task-bound HITL clarifications for standalone agents
 
-Branch: `feature/human-ask-hitl-clarification` (planned; this planning-only worktree is detached and no branch was created)
+Branch: `feature/human-ask-hitl-clarification` (implementation branch)
 Created: 2026-07-13
 
 ## Settings
@@ -201,16 +201,16 @@ only with the full focused suite still green (**REFACTOR**). Tests below are
 the primary owner of a requirement: do not repeat the same happy path across
 unit, integration, and E2E suites merely for coverage.
 
-| Contract | Authoritative specification | RED primary proof | GREEN owner |
+| Contract | Authoritative specification | RED primary proof | GREEN owner and final proof |
 | --- | --- | --- | --- |
-| S1 persistence and retention | ADR-136; DB HITL/agents docs and ERD | migrated Postgres accepts only legal shapes and preserves clarification history after origin cleanup | Task 2 |
-| S2 context compatibility | HITL/tasks analytics and Flow context contract | pure composer proves original prompt compatibility, ordering, and exclusion of open/stale rows | Task 3 |
-| S3 agent request boundary | external OpenAPI + MCP operation mirror | route integration drives auth/binding/schema/status matrix; MCP contract test catches wire drift | Task 4 |
-| S4 terminal activation | HITL/runs analytics state diagram | integration fixture covers supervisor and transaction stage/race matrix, including sweep recovery without caller retry | Task 5 |
-| S5 single winning answer | HITL analytics transaction contract | Postgres concurrency integration covers same/different payload and answer-versus-launch locks | Tasks 6–7 |
-| S6 re-trigger isolation | domain-events/agents/triage analytics | consumer integration proves one target-only launch or triager requeue, including redelivery/refusal | Task 8 |
-| S7 human-visible state | Inbox/board screen contracts | component/query tests cover active versus pending/stale and i18n; one E2E runs the non-duplicated operator journey | Task 9 |
-| S8 package adoption | triager package contract | package-definition/wire integration proves Human-ask and no comment self-loop | Task 10 |
+| S1 persistence and retention | ADR-136; DB HITL/agents docs and ERD | migrated Postgres accepts only legal shapes and preserves clarification history after origin cleanup | Task 2 — `migration-0099-agent-human-ask.integration.test.ts` |
+| S2 context compatibility | HITL/tasks analytics and Flow context contract | pure composer proves original prompt compatibility, ordering, and exclusion of open/stale rows | Task 3 — `clarifications.test.ts`; `context.test.ts` |
+| S3 agent request boundary | external OpenAPI + MCP operation mirror | route integration drives auth/binding/schema/status matrix; MCP contract test catches wire drift | Task 4 — `human-asks/.../route.integration.test.ts`; `mcp/src/__tests__/tool-contract.test.ts` |
+| S4 terminal activation | HITL/runs analytics state diagram | integration fixture covers supervisor and transaction stage/race matrix, including sweep recovery without caller retry | Task 5 — `agent-question.integration.test.ts`; `reconcile-sweep.integration.test.ts` |
+| S5 single winning answer | HITL analytics transaction contract | Postgres concurrency integration covers same/different payload and answer-versus-launch locks | Tasks 6–7 — `agent-question.integration.test.ts`; `ext/runs/.../hitl/route.integration.test.ts` |
+| S6 re-trigger isolation | domain-events/agents/triage analytics | consumer integration proves one target-only launch or triager requeue, including redelivery/refusal | Task 8 — `triggers.integration.test.ts`; `triager-wire.integration.test.ts` |
+| S7 human-visible state | Inbox/board screen contracts | component/query tests cover active versus pending/stale and i18n; one E2E composition proof keeps an active agent question visible after its terminal source run | Task 9 — `portfolio-inbox.integration.test.ts`; `board-hitl.integration.test.ts`; `task-clarification-history.test.ts`; `e2e/inbox.spec.ts` |
+| S8 package adoption | triager package contract | package-definition/wire integration proves Human-ask and no comment self-loop | Task 10 — `triager-definition.test.ts`; `triager-package.integration.test.ts`; `triager-wire.integration.test.ts`; `maister-plugins` `core/v1.0.1` |
 
 Use unit tests only for pure context/schema decisions. Use integration tests
 against the real Postgres test database for constraints, locking, routes,
@@ -409,7 +409,7 @@ failure is insufficient evidence.
 
 ### Phase 2: human response, re-trigger, and actionable read models
 
-- [ ] **Task 7: Add a dedicated human-only response handler with atomic answer and supersession.**
+- [x] **Task 7: Add a dedicated human-only response handler with atomic answer and supersession.**
 
   Extend `web/lib/services/hitl.ts::respondToHitl` with an
   `agent_question` branch rather than routing it through
@@ -437,7 +437,7 @@ failure is insufficient evidence.
   DEBUG idempotent replay; WARN typed validation/auth failures; redact every
   structured value.
 
-- [ ] **Task 8: Register and dispatch the targeted generic clarification event.**
+- [x] **Task 8: Register and dispatch the targeted generic clarification event.**
 
   Add `task.clarification_answered` to
   `web/lib/domain-events/taxonomy.ts`, use the Task-2
@@ -464,7 +464,7 @@ failure is insufficient evidence.
   **Logging:** INFO target/event/run ids on dispatch; WARN refusal code; DEBUG
   dedup/self-exclusion decisions; no prompt or clarification body.
 
-- [ ] **Task 9: Make Human-ask visible and answerable in the existing Inbox and task views.**
+- [x] **Task 9: Make Human-ask visible and answerable in the existing Inbox and task views.**
 
   Extend `web/lib/queries/hitl.ts` and
   `web/lib/queries/portfolio.ts` with a narrow union for active
@@ -495,7 +495,7 @@ failure is insufficient evidence.
 
 ### Phase 3: triager adoption, contracts-as-built, and release
 
-- [ ] **Task 10: Rewire the core triager and behavioral fixture to Human-ask.**
+- [x] **Task 10: Rewire the core triager and behavioral fixture to Human-ask.**
 
   In the separate `maister-plugins` checkout, update
   `packages/core/maister-agents/triager.md` without losing its current
@@ -519,7 +519,7 @@ failure is insufficient evidence.
   **Logging:** retain concise agent instructions; runtime logs identify
   Human-ask request ids and re-trigger mode, never human content.
 
-- [ ] **Task 11: Perform as-built contract closure and the merge-time sequence check.**
+- [x] **Task 11: Perform as-built contract closure and the merge-time sequence check.**
 
   Reconcile every Phase-0 contract with the implementation in the same change:
   generated/OpenAPI examples and MCP tool mirror, database narrative plus both
