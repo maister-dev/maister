@@ -343,17 +343,59 @@ export async function setTaskQueueFields(
   );
 }
 
+export type SendTaskToTriageInput = {
+  taskId: string;
+  projectId: string;
+  taskRef: string;
+  title: string;
+  actor: SocialActor;
+};
+
+// Shared transaction-level primitive: callers that have already locked and
+// mutated a task (for example, an answered Human-ask) retain one atomic event
+// boundary instead of nesting an unrelated public service transaction.
+export async function sendTaskToTriageInTransaction(
+  tx: Db,
+  input: SendTaskToTriageInput,
+): Promise<void> {
+  // Clearing the verdict also drops any stale enqueue intent (ADR-112): a
+  // re-triaged task must not carry a `launch_mode='auto'` from a prior pass
+  // and auto-launch the moment it is re-stamped `triaged`.
+  await tx
+    .update(tasks)
+    .set({
+      triageStatus: null,
+      launchMode: null,
+      launchArmedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+    );
+
+  await emitDomainEvent({
+    db: tx,
+    kind: "task.triage_requeued",
+    projectId: input.projectId,
+    taskId: input.taskId,
+    actor: input.actor,
+    payload: { taskKey: input.taskRef, title: input.title },
+  });
+
+  await recordTaskActivity(tx, {
+    taskId: input.taskId,
+    projectId: input.projectId,
+    actor: input.actor,
+    eventKind: "triage_requeued",
+    payload: {},
+  });
+}
+
 // "Send to triage" (ADR-089 D13): the task.triage_requeued emitter that
 // ADR-086 registered emitter-less. ONE transaction: clear the stamp, emit
 // the domain event, record the activity entry.
 export async function sendTaskToTriage(
-  input: {
-    taskId: string;
-    projectId: string;
-    taskRef: string;
-    title: string;
-    actor: SocialActor;
-  },
+  input: SendTaskToTriageInput,
   db?: Db,
 ): Promise<void> {
   const _db = (db ?? getDb()) as unknown as {
@@ -361,37 +403,7 @@ export async function sendTaskToTriage(
   };
 
   await _db.transaction(async (tx) => {
-    // Clearing the verdict also drops any stale enqueue intent (ADR-112): a
-    // re-triaged task must not carry a `launch_mode='auto'` from a prior pass
-    // and auto-launch the moment it is re-stamped `triaged`.
-    await tx
-      .update(tasks)
-      .set({
-        triageStatus: null,
-        launchMode: null,
-        launchArmedAt: null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
-      );
-
-    await emitDomainEvent({
-      db: tx,
-      kind: "task.triage_requeued",
-      projectId: input.projectId,
-      taskId: input.taskId,
-      actor: input.actor,
-      payload: { taskKey: input.taskRef, title: input.title },
-    });
-
-    await recordTaskActivity(tx, {
-      taskId: input.taskId,
-      projectId: input.projectId,
-      actor: input.actor,
-      eventKind: "triage_requeued",
-      payload: {},
-    });
+    await sendTaskToTriageInTransaction(tx, input);
   });
 
   log.info(

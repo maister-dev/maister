@@ -24,6 +24,10 @@ const ENDPOINT = "POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond";
 const SCOPE = "hitl:respond";
 const HUMAN_SCOPE = "hitl:respond:human";
 
+function isHumanOnlyHitlKind(kind: string | undefined): boolean {
+  return kind === "human" || kind === "agent_question";
+}
+
 type RouteParams = {
   params: Promise<{ runId: string; hitlRequestId: string }>;
 };
@@ -62,7 +66,7 @@ export async function POST(
             ),
           );
 
-        return hitlRows[0]?.kind === "human" ? HUMAN_SCOPE : SCOPE;
+        return isHumanOnlyHitlKind(hitlRows[0]?.kind) ? HUMAN_SCOPE : SCOPE;
       },
       db,
     },
@@ -110,9 +114,10 @@ export async function POST(
       }
 
       const hitlKind = hitlRows[0].kind as string;
-      const scopeUsed = hitlKind === "human" ? HUMAN_SCOPE : SCOPE;
+      const humanOnly = isHumanOnlyHitlKind(hitlKind);
+      const scopeUsed = humanOnly ? HUMAN_SCOPE : SCOPE;
       const actor =
-        hitlKind === "human" &&
+        humanOnly &&
         ctx.actor.tokenKind === "user" &&
         ctx.actor.ownerUserId !== null &&
         ctx.actor.projectId === null &&

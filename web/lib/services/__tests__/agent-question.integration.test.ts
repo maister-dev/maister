@@ -11,6 +11,7 @@ import {
   createOrActivateAgentQuestion,
   recoverPendingAgentQuestions,
 } from "@/lib/services/agent-question";
+import { respondToHitl } from "@/lib/services/hitl";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -42,11 +43,11 @@ beforeEach(async () => {
   await testDatabase.pool.query('TRUNCATE TABLE "projects" CASCADE');
 });
 
-async function seed(): Promise<Seed> {
+async function seed(options: { agentId?: string } = {}): Promise<Seed> {
   const projectId = randomUUID();
   const taskId = randomUUID();
   const runId = randomUUID();
-  const agentId = `test:${randomUUID().slice(0, 8)}`;
+  const agentId = options.agentId ?? `test:${randomUUID().slice(0, 8)}`;
   const acpSessionId = randomUUID();
 
   await db.insert(schema.projects).values({
@@ -118,6 +119,48 @@ function input(seed: Seed) {
     },
     reTriggerMode: "agent" as const,
   };
+}
+
+async function activateQuestion(seed: Seed, question = input(seed).question) {
+  return await createOrActivateAgentQuestion(
+    { ...input(seed), question },
+    { db, listSessions: async () => [] },
+  );
+}
+
+async function createSiblingQuestion(seed: Seed, question: string) {
+  const runId = randomUUID();
+  const acpSessionId = randomUUID();
+
+  await db.insert(schema.runs).values({
+    id: runId,
+    runKind: "agent",
+    projectId: seed.projectId,
+    taskId: seed.taskId,
+    agentId: seed.agentId,
+    status: "Running",
+    currentStepId: "agent",
+    flowVersion: "agent",
+    flowRevision: "manual",
+    agentWorkspace: "none",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    acpSessionId,
+  });
+
+  return await activateQuestion({ ...seed, runId, acpSessionId }, question);
+}
+
+async function seedHumanUser(userId: string): Promise<void> {
+  await db.insert(schema.users).values({
+    id: userId,
+    name: "Human responder",
+    email: `${userId}@example.test`,
+    accountStatus: "active",
+  });
 }
 
 describe("agent-question lifecycle (ADR-136, integration)", () => {
@@ -420,5 +463,206 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
         { db, listSessions: async () => [] },
       ),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("answers atomically, supersedes siblings, emits one directed event, and replays safely", async () => {
+    const seeded = await seed();
+    const winner = await activateQuestion(seeded);
+    const sibling = await createSiblingQuestion(
+      seeded,
+      "Which region should receive the deployment?",
+    );
+    const response = { target: "staging" };
+    let auditCount = 0;
+    const actor = {
+      kind: "user" as const,
+      userId: "human-ask-responder",
+      label: "Human responder",
+      preauthorizedProjectId: seeded.projectId,
+    };
+    await seedHumanUser(actor.userId);
+
+    const first = await respondToHitl(
+      {
+        runId: seeded.runId,
+        hitlRequestId: winner.hitlRequestId,
+        body: { response },
+      },
+      actor,
+      {
+        db,
+        recordSuccessAudit: async () => {
+          auditCount += 1;
+        },
+      },
+    );
+
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ ok: true, runStatus: "Done" });
+
+    const [answered] = await db
+      .select({ response: schema.hitlRequests.response, respondedAt: schema.hitlRequests.respondedAt })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, winner.hitlRequestId));
+    const [answeredClarification] = await db
+      .select({ answer: schema.taskClarifications.answer, answeredByUserId: schema.taskClarifications.answeredByUserId })
+      .from(schema.taskClarifications)
+      .where(eq(schema.taskClarifications.sourceHitlRequestId, winner.hitlRequestId));
+    const [superseded] = await db
+      .select({ supersededByHitlRequestId: schema.hitlRequests.supersededByHitlRequestId })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, sibling.hitlRequestId));
+    const assignmentRows = await db
+      .select({ hitlRequestId: schema.assignments.hitlRequestId, status: schema.assignments.status })
+      .from(schema.assignments)
+      .where(
+        and(
+          eq(schema.assignments.projectId, seeded.projectId),
+          eq(schema.assignments.actionKind, "agent_question"),
+        ),
+      );
+    const events = await db
+      .select({ kind: schema.domainEvents.kind, payload: schema.domainEvents.payload })
+      .from(schema.domainEvents)
+      .where(eq(schema.domainEvents.taskId, seeded.taskId));
+
+    expect(answered).toMatchObject({ response, respondedAt: expect.any(Date) });
+    expect(answeredClarification).toEqual({
+      answer: response,
+      answeredByUserId: actor.userId,
+    });
+    expect(superseded?.supersededByHitlRequestId).toBe(winner.hitlRequestId);
+    expect(assignmentRows).toEqual(
+      expect.arrayContaining([
+        { hitlRequestId: winner.hitlRequestId, status: "completed" },
+        { hitlRequestId: sibling.hitlRequestId, status: "cancelled" },
+      ]),
+    );
+    expect(events).toEqual([
+      {
+        kind: "task.clarification_answered",
+        payload: {
+          clarificationId: expect.any(String),
+          hitlRequestId: winner.hitlRequestId,
+          requestingAgentId: seeded.agentId,
+        },
+      },
+    ]);
+    expect(auditCount).toBe(1);
+
+    const replay = await respondToHitl(
+      {
+        runId: seeded.runId,
+        hitlRequestId: winner.hitlRequestId,
+        body: { response },
+      },
+      actor,
+      {
+        db,
+        recordSuccessAudit: async () => {
+          auditCount += 1;
+        },
+      },
+    );
+
+    expect(await replay.json()).toEqual({
+      ok: true,
+      runStatus: "Done",
+      idempotent: true,
+    });
+    expect(auditCount).toBe(2);
+    await expect(
+      respondToHitl(
+        {
+          runId: seeded.runId,
+          hitlRequestId: winner.hitlRequestId,
+          body: { response: { target: "production" } },
+        },
+        actor,
+        { db },
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("rolls back the answer, assignment, and event when its audit write fails", async () => {
+    const seeded = await seed();
+    const question = await activateQuestion(seeded);
+    const actor = {
+      kind: "user" as const,
+      userId: "audit-failure-responder",
+      label: "Human responder",
+      preauthorizedProjectId: seeded.projectId,
+    };
+    await seedHumanUser(actor.userId);
+
+    await expect(
+      respondToHitl(
+        {
+          runId: seeded.runId,
+          hitlRequestId: question.hitlRequestId,
+          body: { response: { target: "staging" } },
+        },
+        actor,
+        {
+          db,
+          recordSuccessAudit: async () => {
+            throw new Error("forced answer audit rollback");
+          },
+        },
+      ),
+    ).rejects.toThrow("forced answer audit rollback");
+
+    const [request] = await db
+      .select({ response: schema.hitlRequests.response, respondedAt: schema.hitlRequests.respondedAt })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, question.hitlRequestId));
+    const [clarification] = await db
+      .select({ answer: schema.taskClarifications.answer, answeredAt: schema.taskClarifications.answeredAt })
+      .from(schema.taskClarifications)
+      .where(eq(schema.taskClarifications.sourceHitlRequestId, question.hitlRequestId));
+    const [assignment] = await db
+      .select({ status: schema.assignments.status })
+      .from(schema.assignments)
+      .where(eq(schema.assignments.hitlRequestId, question.hitlRequestId));
+    const events = await db
+      .select({ id: schema.domainEvents.id })
+      .from(schema.domainEvents)
+      .where(eq(schema.domainEvents.taskId, seeded.taskId));
+
+    expect(request).toEqual({ response: null, respondedAt: null });
+    expect(clarification).toEqual({ answer: null, answeredAt: null });
+    expect(assignment?.status).toBe("open");
+    expect(events).toEqual([]);
+  });
+
+  it("requeues a triager clarification through the triage event only", async () => {
+    const seeded = await seed({ agentId: "core:triager" });
+    const question = await createOrActivateAgentQuestion(
+      { ...input(seeded), reTriggerMode: "triage" },
+      { db, listSessions: async () => [] },
+    );
+    await seedHumanUser("triage-responder");
+
+    await respondToHitl(
+      {
+        runId: seeded.runId,
+        hitlRequestId: question.hitlRequestId,
+        body: { response: { target: "production" } },
+      },
+      {
+        kind: "user",
+        userId: "triage-responder",
+        label: "Human responder",
+        preauthorizedProjectId: seeded.projectId,
+      },
+      { db },
+    );
+
+    const events = await db
+      .select({ kind: schema.domainEvents.kind })
+      .from(schema.domainEvents)
+      .where(eq(schema.domainEvents.taskId, seeded.taskId));
+
+    expect(events).toEqual([{ kind: "task.triage_requeued" }]);
   });
 });

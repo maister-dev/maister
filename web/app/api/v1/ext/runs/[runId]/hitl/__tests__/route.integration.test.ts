@@ -339,7 +339,7 @@ async function seedHitlAssignment(args: {
   projectId: string;
   runId: string;
   hitlRequestId: string;
-  actionKind: "permission" | "form";
+  actionKind: "permission" | "form" | "agent_question";
 }): Promise<string> {
   const assignmentId = randomUUID();
 
@@ -355,6 +355,57 @@ async function seedHitlAssignment(args: {
   });
 
   return assignmentId;
+}
+
+async function seedAgentQuestion(args: {
+  projectId: string;
+  taskId: string;
+  runId: string;
+  sourceAgentId: string;
+}): Promise<string> {
+  const hitlRequestId = randomUUID();
+  const questionSchema = {
+    schemaVersion: 1,
+    fields: [
+      {
+        name: "target",
+        type: "enum",
+        required: true,
+        options: ["staging", "production"],
+      },
+    ],
+  };
+
+  await (db as any).insert(schema.hitlRequests).values({
+    id: hitlRequestId,
+    runId: args.runId,
+    stepId: "agent",
+    kind: "agent_question",
+    taskId: args.taskId,
+    activationState: "active",
+    reTriggerMode: "agent",
+    prompt: "Which target should receive this deployment?",
+    schema: questionSchema,
+  });
+  await (db as any).insert(schema.taskClarifications).values({
+    id: randomUUID(),
+    taskId: args.taskId,
+    seq: 1,
+    sourceHitlRequestId: hitlRequestId,
+    originRunId: args.runId,
+    originAgentId: args.sourceAgentId,
+    question: "Which target should receive this deployment?",
+    questionSchema,
+    reTriggerMode: "agent",
+  });
+  await seedHitlAssignment({
+    projectId: args.projectId,
+    runId: args.runId,
+    hitlRequestId,
+    actionKind: "agent_question",
+  });
+
+  return hitlRequestId;
 }
 
 async function readAssignmentStatus(assignmentId: string): Promise<string> {
@@ -1055,6 +1106,58 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
       .from(schema.tokenAuditLog as any)
       .execute();
 
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      token_id: token.tokenId,
+      project_id: projectId,
+      result: "ok",
+      status_code: 200,
+      scope_used: "hitl:respond:human",
+    });
+  });
+
+  it("global user token with exact hitl:respond:human answers an agent-question HITL", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-agent-question-global-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = await seedUser("hitl-agent-question-owner");
+
+    await seedProjectMember(projectId, ownerUserId);
+
+    const { runId, taskId } = await seedRun(projectId, flowId, "Done");
+    const hitlId = await seedAgentQuestion({
+      projectId,
+      taskId,
+      runId,
+      sourceAgentId: "test:agent-question",
+    });
+    const token = await issueGlobalUserToken(ownerUserId, [
+      "hitl:respond:human",
+    ]);
+
+    const req = makePostRequest(runId, hitlId, token.secret, {
+      response: { target: "staging" },
+    });
+    const res = await POST(req, {
+      params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, runStatus: "Done" });
+
+    const hitlRows = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlId));
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(hitlRows[0]).toMatchObject({
+      response: { target: "staging" },
+      respondedAt: expect.any(Date),
+    });
     expect(auditRows).toHaveLength(1);
     expect(auditRows[0]).toMatchObject({
       token_id: token.tokenId,

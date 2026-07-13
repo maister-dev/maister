@@ -19,6 +19,7 @@ import {
   ensureApiTokenActor,
   ensureUserActor,
   systemCloseActiveAssignmentsForRun,
+  systemCloseActiveAssignmentsForHitlRequest,
 } from "@/lib/assignments/service";
 import { atomicWriteJson } from "@/lib/atomic";
 import * as schemaModule from "@/lib/db/schema";
@@ -58,6 +59,7 @@ import {
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
+import { sendTaskToTriageInTransaction } from "@/lib/services/triage";
 import { actorForUserId } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
@@ -84,6 +86,7 @@ const {
   projects,
   runs,
   scratchRuns,
+  taskClarifications,
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
@@ -3329,6 +3332,324 @@ async function handleHookTripResponse(args: {
   );
 }
 
+type AgentQuestionResponseOutcome =
+  | { kind: "replayed"; reTriggerMode: "agent" | "triage" }
+  | {
+      kind: "answered";
+      reTriggerMode: "agent" | "triage";
+      supersededCount: number;
+    };
+
+async function handleAgentQuestionResponse(
+  args: HandlerArgs,
+): Promise<NextResponse> {
+  const { db, hitlRow, runRow, body, runId, hitlRequestId, startedAt } = args;
+
+  const humanActor = args.actor;
+
+  if (humanActor.kind !== "user") {
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "an agent_question HITL request requires a human actor",
+    );
+  }
+  if (body.response === undefined) {
+    throw new MaisterError(
+      "CONFIG",
+      "response is required for kind=agent_question",
+    );
+  }
+  if (typeof hitlRow.taskId !== "string" || hitlRow.taskId.length === 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "agent_question is missing its task binding",
+    );
+  }
+
+  // Validate before locking/mutating. An agent question is schema-driven like a
+  // form, but it has no input artifact or run-resume step after the answer.
+  assertHitlResponse(body.response, hitlRow.schema);
+  const response = body.response;
+  const taskId = hitlRow.taskId;
+
+  const outcome: AgentQuestionResponseOutcome = await db.transaction(
+    async (tx: any) => {
+      // Lock order is task → request. New task-bound agent launches use the
+      // same order while superseding questions, so answer-vs-successor resolves
+      // deterministically without a dangling active Inbox assignment.
+      const taskRows = await tx
+        .select({
+          id: tasks.id,
+          projectId: tasks.projectId,
+          number: tasks.number,
+          title: tasks.title,
+        })
+        .from(tasks)
+        .where(and(eq(tasks.id, taskId), eq(tasks.projectId, runRow.projectId)))
+        .for("update");
+      const task = taskRows[0];
+
+      if (!task) {
+        throw new MaisterError("PRECONDITION", "agent_question task not found");
+      }
+
+      const lockedHitl = await lockHitlRow(tx, hitlRequestId);
+
+      if (
+        !lockedHitl ||
+        lockedHitl.kind !== "agent_question" ||
+        lockedHitl.runId !== runId ||
+        lockedHitl.taskId !== task.id
+      ) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "agent_question no longer matches the requested source run and task",
+        );
+      }
+
+      const reTriggerMode = lockedHitl.reTriggerMode;
+
+      if (reTriggerMode !== "agent" && reTriggerMode !== "triage") {
+        throw new MaisterError(
+          "PRECONDITION",
+          "agent_question has an invalid re-trigger mode",
+        );
+      }
+
+      const clarificationRows = await tx
+        .select()
+        .from(taskClarifications)
+        .where(
+          and(
+            eq(taskClarifications.sourceHitlRequestId, hitlRequestId),
+            eq(taskClarifications.taskId, task.id),
+          ),
+        )
+        .for("update");
+      const clarification = clarificationRows[0];
+
+      if (!clarification) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "agent_question clarification provenance is missing",
+        );
+      }
+
+      if (lockedHitl.respondedAt !== null) {
+        if (!payloadsEqual(lockedHitl.response, response)) {
+          throw new MaisterError(
+            "CONFLICT",
+            "agent_question already has a different answer",
+          );
+        }
+
+        await args.recordSuccessAudit?.(tx, 200);
+
+        return { kind: "replayed", reTriggerMode } as const;
+      }
+
+      if (
+        lockedHitl.activationState !== "active" ||
+        lockedHitl.supersededAt !== null ||
+        lockedHitl.response !== null
+      ) {
+        throw new MaisterError(
+          "CONFLICT",
+          "agent_question is not an active unanswered request",
+        );
+      }
+
+      const assignmentRows = await tx
+        .select()
+        .from(assignments)
+        .where(eq(assignments.hitlRequestId, hitlRequestId))
+        .for("update");
+      const assignment = assignmentRows[0];
+      const assignmentActor = assignment
+        ? await ensureUserActor({
+            db: tx,
+            projectId: task.projectId,
+            userId: humanActor.userId,
+            label: humanActor.label,
+          })
+        : null;
+
+      if (
+        assignment &&
+        assignment.status === "claimed" &&
+        assignment.assigneeActorId !== assignmentActor?.id
+      ) {
+        throw new MaisterError(
+          "CONFLICT",
+          "agent_question assignment is claimed by another actor",
+        );
+      }
+      if (assignment?.status === "cancelled") {
+        throw new MaisterError(
+          "CONFLICT",
+          "agent_question assignment is already cancelled",
+        );
+      }
+
+      const now = new Date();
+      await tx
+        .update(hitlRequests)
+        .set({ response, respondedAt: now })
+        .where(
+          and(
+            eq(hitlRequests.id, hitlRequestId),
+            isNull(hitlRequests.respondedAt),
+            eq(hitlRequests.activationState, "active"),
+            isNull(hitlRequests.supersededAt),
+          ),
+        );
+      await tx
+        .update(taskClarifications)
+        .set({
+          answer: response,
+          answeredByUserId: humanActor.userId,
+          answeredAt: now,
+        })
+        .where(
+          and(
+            eq(taskClarifications.id, clarification.id),
+            isNull(taskClarifications.answeredAt),
+            isNull(taskClarifications.supersededAt),
+          ),
+        );
+
+      const siblings = await tx
+        .select({ id: hitlRequests.id })
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.taskId, task.id),
+            eq(hitlRequests.kind, "agent_question"),
+            ne(hitlRequests.id, hitlRequestId),
+            isNull(hitlRequests.respondedAt),
+            isNull(hitlRequests.supersededAt),
+            inArray(hitlRequests.activationState, [
+              "pending_termination",
+              "active",
+            ]),
+          ),
+        )
+        .for("update");
+      const siblingIds = siblings.map((sibling: { id: string }) => sibling.id);
+
+      if (siblingIds.length > 0) {
+        await tx
+          .update(hitlRequests)
+          .set({
+            supersededAt: now,
+            supersededByHitlRequestId: hitlRequestId,
+          })
+          .where(inArray(hitlRequests.id, siblingIds));
+        await tx
+          .update(taskClarifications)
+          .set({
+            supersededAt: now,
+            supersededByHitlRequestId: hitlRequestId,
+          })
+          .where(inArray(taskClarifications.sourceHitlRequestId, siblingIds));
+
+        for (const siblingId of siblingIds) {
+          await systemCloseActiveAssignmentsForHitlRequest({
+            db: tx,
+            hitlRequestId: siblingId,
+            projectId: task.projectId,
+            reason: "superseded by an answered agent clarification",
+          });
+        }
+      }
+
+      if (assignment && assignmentActor) {
+        await completeAssignment({
+          db: tx,
+          assignmentId: assignment.id,
+          actorId: assignmentActor.id,
+          eventKind: "responded",
+        });
+      }
+
+      const eventActor = actorForUserId(humanActor.userId);
+
+      if (reTriggerMode === "triage") {
+        const projectRows = await tx
+          .select({ taskKey: projects.taskKey })
+          .from(projects)
+          .where(eq(projects.id, task.projectId));
+        const project = projectRows[0];
+
+        if (!project) {
+          throw new MaisterError(
+            "PRECONDITION",
+            "agent_question project is missing",
+          );
+        }
+
+        await sendTaskToTriageInTransaction(tx, {
+          taskId: task.id,
+          projectId: task.projectId,
+          taskRef: `${project.taskKey}-${task.number}`,
+          title: task.title,
+          actor: eventActor,
+        });
+      } else {
+        await emitDomainEvent({
+          db: tx,
+          kind: "task.clarification_answered",
+          projectId: task.projectId,
+          taskId: task.id,
+          runId,
+          actor: eventActor,
+          payload: {
+            clarificationId: clarification.id,
+            hitlRequestId,
+            requestingAgentId: clarification.originAgentId,
+          },
+        });
+      }
+
+      await args.recordSuccessAudit?.(tx, 200);
+
+      return {
+        kind: "answered",
+        reTriggerMode,
+        supersededCount: siblingIds.length,
+      } as const;
+    },
+  );
+
+  if (outcome.kind === "replayed") {
+    log.debug(
+      { runId, hitlRequestId, reTriggerMode: outcome.reTriggerMode },
+      "agent_question answer replayed idempotently",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: runRow.status, idempotent: true },
+      { status: 200 },
+    );
+  }
+
+  log.info(
+    {
+      runId,
+      hitlRequestId,
+      reTriggerMode: outcome.reTriggerMode,
+      supersededCount: outcome.supersededCount,
+      latencyMs: Date.now() - startedAt,
+    },
+    "agent_question answered and re-trigger fact committed",
+  );
+
+  return NextResponse.json(
+    { ok: true, runStatus: runRow.status },
+    { status: 200 },
+  );
+}
+
 export async function respondToHitl(
   input: RespondInput,
   actor: HitlActor,
@@ -3389,6 +3710,7 @@ export async function respondToHitl(
     // bypass it.
     if (
       hitlRow.kind === "human" ||
+      hitlRow.kind === "agent_question" ||
       hitlRow.kind === "infra_recovery" ||
       hitlRow.kind === "budget_breach" ||
       // ADR-108 (M40): a guardrail trip is a safety escalation only a human may
@@ -3413,6 +3735,22 @@ export async function respondToHitl(
     log.debug({ runId, hitlRequestId, branch: "permission" }, "dispatch");
 
     return await handlePermissionResponse({
+      db,
+      hitlRow,
+      runRow,
+      body,
+      runId,
+      hitlRequestId,
+      startedAt,
+      actor,
+      recordSuccessAudit,
+    });
+  }
+
+  if (hitlRow.kind === "agent_question") {
+    log.debug({ runId, hitlRequestId, branch: "agent_question" }, "dispatch");
+
+    return await handleAgentQuestionResponse({
       db,
       hitlRow,
       runRow,
