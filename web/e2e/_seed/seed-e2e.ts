@@ -10,8 +10,8 @@
 //
 //   • `e2e-m11a` — a run parked in `NeedsInput` with a graph `human` review
 //     HITL whose schema declares the approve/rework allow-list. The M11a
-//     review→rework spec drives this; it never resumes the runner, so it needs
-//     no real worktree.
+//     review→rework spec drives this; it has a real worktree so review-source
+//     and feedback-preview contracts use the same Git boundary as production.
 //   • `e2e-m11b` — a GRAPH run paused at the `aif` `review` (human_review) node
 //     offering the `takeover` decision: a REAL on-disk git worktree (parent
 //     repo `git init` + base commit + `git worktree add` the run branch), real
@@ -113,7 +113,7 @@ async function seedDefaultRunSession(
   );
 }
 
-// --- M11a fixture: parked review→rework (no worktree, never resumes) --------
+// --- M11a fixture: parked review→rework (real worktree, never resumes) ------
 
 const M11A_SLUG = "e2e-m11a";
 const M11A_BRANCH = "maister/e2e-review-rework";
@@ -124,6 +124,7 @@ const M11A_REVIEW_SCHEMA = {
   transitions: { approve: "done", rework: "implement" },
   reworkTargets: ["implement"],
   workspacePolicies: ["keep"],
+  commentsVar: "review_comments",
 };
 
 const M11A_MANIFEST = {
@@ -134,7 +135,9 @@ const M11A_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      prompt: "implement {{ task.prompt }}",
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
     },
     {
       id: "review",
@@ -186,6 +189,7 @@ const RC_REVIEW_SCHEMA = {
   transitions: { approve: "done", rework: "implement" },
   reworkTargets: ["implement"],
   workspacePolicies: ["keep"],
+  commentsVar: "review_comments",
   maxLoops: RC_MAX_LOOPS,
   gateAttempt: RC_GATE_ATTEMPT,
 };
@@ -198,7 +202,9 @@ const RC_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      prompt: "implement {{ task.prompt }}",
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
     },
     {
       id: "review",
@@ -265,7 +271,7 @@ const M12_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      action: { prompt: "/aif-implement" },
+      action: { prompt: "/aif-implement\n\n{{ review_comments }}" },
       input: { requires: [{ artifact: "plan-summary", kind: "human_note" }] },
       output: {
         produces: [
@@ -346,7 +352,7 @@ const M11B_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      action: { prompt: "/impl" },
+      action: { prompt: "/impl\n\n{{ review_comments }}" },
       transitions: { success: M11B_REENTRY_NODE },
     },
     {
@@ -574,7 +580,9 @@ const M11C_VISIBLE_MANIFEST = {
     {
       id: M11C_VISIBLE_NODE,
       type: "ai_coding",
-      action: { prompt: "implement {{ task.prompt }}" },
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
       transitions: { success: "review" },
       settings: {
         mcps: ["github"],
@@ -661,7 +669,9 @@ const FLOW_VIEWER_MANIFEST = {
     {
       id: FLOW_VIEWER_IMPLEMENT_NODE,
       type: "ai_coding",
-      action: { prompt: "/aif-implement {{ task.prompt }}" },
+      action: {
+        prompt: "/aif-implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
       transitions: { success: FLOW_VIEWER_REVIEW_NODE },
     },
     {
@@ -698,7 +708,10 @@ nodes:
   - id: ${FLOW_VIEWER_IMPLEMENT_NODE}
     type: ai_coding
     action:
-      prompt: "/aif-implement {{ task.prompt }}"
+      prompt: |-
+        /aif-implement {{ task.prompt }}
+
+        {{ review_comments }}
     transitions:
       success: ${FLOW_VIEWER_REVIEW_NODE}
   - id: ${FLOW_VIEWER_REVIEW_NODE}
@@ -872,7 +885,9 @@ const M15_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      action: { prompt: "implement {{ task.prompt }}" },
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
       transitions: { success: "review" },
     },
     {
@@ -935,7 +950,9 @@ const M16_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      action: { prompt: "implement {{ task.prompt }}" },
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
       transitions: { success: "review" },
     },
     {
@@ -995,8 +1012,8 @@ const M16_REVIEW_SCHEMA = {
 // --- M17 fixture: cross-project HITL inbox with graph human_review ---------
 // Two projects each with runs in NeedsInput + pending HITL requests:
 // - Project 1: permission kind (binary) + human_review kind with criticality badge
-// - Project 2: human_review kind with on_reject send-back schema
-// Inbox appears on portfolio home with count badge.
+// - Project 2: human review with an on_reject rework schema.
+// Inbox hands each review to the code Review Workspace.
 
 const M17_PROJECT1_SLUG = "e2e-m17-project1";
 const M17_PROJECT2_SLUG = "e2e-m17-project2";
@@ -1011,6 +1028,7 @@ const M17_REVIEW_SCHEMA = {
   transitions: { approve: "done", rework: "implement" },
   reworkTargets: ["implement"],
   workspacePolicies: ["keep"],
+  commentsVar: "review_comments",
 };
 
 const M17_MANIFEST = {
@@ -1021,7 +1039,9 @@ const M17_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      prompt: "implement {{ task.prompt }}",
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
     },
     {
       id: "review",
@@ -1611,6 +1631,7 @@ async function seedM11aFixture(
   const worktreePath = `${repoPath}/.worktrees/e2e-review`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11A_SLUG]);
+  await provisionWorktree(repoPath, worktreePath, M11A_BRANCH);
 
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
@@ -3647,7 +3668,7 @@ async function seedM17Fixture(
   // Human review with criticality "high"
   await pool.query(
     `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, criticality)
-     VALUES ($1, $2, 'review', 'human_review', $3, $4, 'high')`,
+     VALUES ($1, $2, 'review', 'human', $3, $4, 'high')`,
     [
       ids.hitl1,
       ids.run1,
@@ -3656,7 +3677,7 @@ async function seedM17Fixture(
     ],
   );
 
-  // --- Project 2: human_review with on_reject send-back schema ---
+  // --- Project 2: human review with an on_reject rework schema ---
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
      VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
@@ -3734,7 +3755,7 @@ async function seedM17Fixture(
 
   await pool.query(
     `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, criticality)
-     VALUES ($1, $2, 'review', 'human_review', $3, $4, 'medium')`,
+     VALUES ($1, $2, 'review', 'human', $3, $4, 'medium')`,
     [
       ids.hitl2,
       ids.run2,
@@ -4034,7 +4055,9 @@ const M40_MANIFEST = {
     {
       id: "implement",
       type: "ai_coding",
-      prompt: "implement {{ task.prompt }}",
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
       settings: {
         hooks: { repetition: { max: 5 }, noProgress: { maxTurns: 15 } },
       },
@@ -4222,7 +4245,9 @@ const CAP_ENFORCE_MANIFEST = {
     {
       id: CAP_ENFORCE_NODE,
       type: "ai_coding",
-      action: { prompt: "implement {{ task.prompt }}" },
+      action: {
+        prompt: "implement {{ task.prompt }}\n\n{{ review_comments }}",
+      },
       transitions: { success: "review" },
       settings: {
         tools: { claude: ["Edit"] },

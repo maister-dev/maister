@@ -955,7 +955,9 @@ export function DiffView({
                 diffViewHighlight={diffViewHighlight}
                 diffViewMode={diffViewMode}
                 diffViewTheme={diffTheme}
-                diffViewWrap={false}
+                // The library hides extend rows until it measures a non-zero
+                // width when wrapping is off. Review threads are extend rows.
+                diffViewWrap={review !== undefined}
                 {...reviewDiffProps}
               />
             ) : renderUnavailable && files.length > 0 ? (

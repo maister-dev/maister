@@ -60,7 +60,7 @@ type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ReviewGateRow = typeof hitlRequests.$inferSelect;
 
-// Open-review-gate guard (allow-list, ADR-137): run exists, runs.status ∈
+// Open-review-gate guard (allow-list, ADR-138): run exists, runs.status ∈
 // PENDING_HITL_RUN_STATUS, and an unclaimed kind=human hitl row whose stored
 // schema declares review === true. The gate row is locked for the lifetime of
 // the short comment transaction, sharing the response-claim serialization

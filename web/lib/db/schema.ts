@@ -2611,12 +2611,13 @@ export type ArtifactLocator =
   | {
       kind: "inline";
       text: string;
-      // ADR-072 (additive, OpenAPI ArtifactLocatorInline): set on the
+      // ADR-138 (additive, OpenAPI ArtifactLocatorInline): set on the
       // composed-rework-payload evidence row (kind human_note, producer
-      // runner) — the authoring review-gate hitl_requests id and the open
-      // root comment ids serialized into `text` at compose time.
+      // runner) — the authoring review-gate id, thread ids, and an immutable
+      // fingerprint of the packet serialized into `text` at compose time.
       hitlRequestId?: string;
       threadIds?: string[];
+      feedbackFingerprint?: string;
     };
 
 // M12 (ADR-037): queryable evidence index. Payloads live on disk/git.
@@ -3300,7 +3301,7 @@ export const gateChatMessages = pgTable(
   }),
 );
 
-// ADR-137: a durable coordinator for one ACP-backed gate-chat turn. The
+// ADR-138: a durable coordinator for one ACP-backed gate-chat turn. The
 // transcript remains in gate_chat_messages; this table records only ownership
 // and terminal outcome so an interrupted prompt can be fenced before a review
 // decision freezes its feedback packet.

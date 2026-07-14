@@ -747,7 +747,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   `formSchemaSchema` grammar, now reachable via `output.result`); declare
   `options` for every `enum` field.
 
-## Verified human-review feedback consumer (Designed — ADR-137)
+## Verified human-review feedback consumer (Implemented — ADR-138)
 
 ### Purpose
 
@@ -792,7 +792,7 @@ flowchart TD
 
 ### Linked artifacts
 
-- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+- [ADR-138](../decisions.md#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
   [`hitl.md`](hitl.md), [`review-comments.md`](review-comments.md), and
   [`../flow-dsl.md`](../flow-dsl.md).
 

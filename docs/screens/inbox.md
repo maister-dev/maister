@@ -173,7 +173,7 @@ resolution. EN + RU parity is required.
 - Active staged claims are not counted in needs-you and render disabled
   controls; `stage:"failed"` rows are answerable again.
 
-## Flow Review Workspace triage (Designed — ADR-137)
+## Flow Review Workspace triage (Implemented — ADR-138)
 
 For `schema.review === true`, a card remains scannable but is not answerable
 inline. It replaces generic decision controls with **Review code**, linking to

@@ -919,7 +919,11 @@ export default async function RunDetailLayout({
     reposRoot(),
   );
   const reviewDiffHref = `/runs/${detail.runId}?wb=review&scope=review`;
-  const inspectorChangeScope = dirtySummary ? "uncommitted" : "run";
+  const inspectorChangeScope = hasReviewGate
+    ? "review"
+    : dirtySummary
+      ? "uncommitted"
+      : "run";
   let changeSummary: RunInspectorChangeSummary | null = null;
 
   try {
@@ -1171,15 +1175,25 @@ export default async function RunDetailLayout({
         {
           id: "viewUncommittedDiff",
           label: t("inspectorActionViewUncommittedDiff"),
-          href: dirtyDiffHref,
+          href: reviewDiffHref,
+        },
+      ]
+    : [];
+  const reviewGateActions: RunInspectorAction[] = hasReviewGate
+    ? [
+        {
+          id: "reviewChanges",
+          label: t("flowCenterReviewChanges"),
+          href: reviewDiffHref,
         },
       ]
     : [];
   const inspectorActions: RunInspectorAction[] = [
     ...dirtyGateActions,
+    ...reviewGateActions,
     ...pendingInputActions,
     ...gateChatActions,
-    ...(showReview
+    ...(showReview && !hasReviewGate
       ? [
           {
             id: "reviewChanges",

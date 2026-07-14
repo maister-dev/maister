@@ -1107,7 +1107,7 @@ column may be non-null. `responded_at` means a real human answer only, never a
 supersession. The response endpoint rejects every non-`agent_question` branch
 here and does not write an artifact, call `runFlow`, or call the supervisor.
 
-## Flow Review Workspace feedback delivery (Designed — ADR-137)
+## Flow Review Workspace feedback delivery (Implemented — ADR-138)
 
 ### Purpose
 
@@ -1141,7 +1141,7 @@ sequenceDiagram
     H->>DB: derive current source + packet
     H-->>W: target, counts, payload, opaque digests
     W->>H: POST respond with response + digests
-    H->>DB: lock HITL; reject pending chat; recompute and compare
+    H->>DB: lock HITL, reject pending chat, recompute and compare
     H->>DB: store canonical response only
     H-->>R: schedule rework
     R->>R: load same packet service
@@ -1172,7 +1172,7 @@ sequenceDiagram
 
 ### Linked artifacts
 
-- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+- [ADR-138](../decisions.md#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
   [`review-comments.md`](review-comments.md), [`flow-graph.md`](flow-graph.md),
   [`../api/web.openapi.yaml`](../api/web.openapi.yaml), and
   [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml).

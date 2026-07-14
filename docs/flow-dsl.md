@@ -1586,7 +1586,7 @@ manifest schema checks, graph checks, and engine compatibility checks. Project
 reference checks run on project-context install, load, and launch paths that
 provide role/capability registries.
 
-## Human-review feedback consumer (Designed — ADR-137)
+## Human-review feedback consumer (Implemented — ADR-138)
 
 For a `human` node whose allowed decision can rework, compilation must prove the
 feedback reaches every allowed target before the Flow can be published,

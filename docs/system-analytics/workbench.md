@@ -271,7 +271,7 @@ flowchart LR
   `truncated: true` on `…/diff`; the review panel blocks promotion until the
   reviewer acknowledges (ADR-066). NOT a `409`/throw, NOT a silent partial render.
 
-## Review Workspace (Designed — ADR-137)
+## Review Workspace (Implemented — ADR-138)
 
 ### Purpose
 
@@ -281,8 +281,8 @@ workbench and the final-delivery ReviewPanel.
 
 ### Entities
 
-- **Review tab** — `wb=review`, valid only for a Flow run with an open review
-  gate; it selects `scope=review`.
+- **Review workspace URL state** — `wb=review`, valid only for a Flow run with
+  an open review gate; it selects `scope=review`.
 - **Review source** — base-to-working-tree content plus a visible freshness
   statement and opaque fingerprint.
 - **Decision rail** — one approve/request-changes control, summary, completed
@@ -322,7 +322,7 @@ flowchart LR
 
 ### Linked artifacts
 
-- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+- [ADR-138](../decisions.md#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
   [`review-comments.md`](review-comments.md), [`hitl.md`](hitl.md), and
   [`../screens/runs/workbench.md`](../screens/runs/workbench.md).
 

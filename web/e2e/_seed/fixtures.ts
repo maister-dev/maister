@@ -74,7 +74,7 @@ export type E2EM16Fixture = E2EProjectFixture & {
 // M17 Phase 7: HITL hybrid-surface e2e fixture. Two projects carrying:
 //   • Project 1: a NeedsInput run with a human_review HITL (criticality: high)
 //   • Project 2: a NeedsInput run with a human_review HITL (criticality: medium, on_reject schema)
-// Exercises cross-project inbox, inline response controls, confidence input, criticality badges.
+// Exercises cross-project inbox, code-review handoff, and criticality badges.
 export type E2EM17Fixture = {
   project1Slug: string;
   project1Id: string;

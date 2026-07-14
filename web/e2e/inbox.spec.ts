@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
@@ -27,6 +30,14 @@ const MOCK_INBOX_CONTEXT = {
   progress: { done: 1, total: 4 },
 };
 
+function loadReviewFixture(): { runId: string } {
+  return (
+    JSON.parse(
+      readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
+    ) as { byKey: { reviewComments: { runId: string } } }
+  ).byKey.reviewComments;
+}
+
 test.describe("Inbox card redesign", () => {
   test("shows an active agent clarification after its source agent has ended", async ({
     page,
@@ -41,7 +52,9 @@ test.describe("Inbox card redesign", () => {
 
     await expect(card).toHaveCount(1);
     await expect(card).toHaveAttribute("data-kind", "agent_question");
-    await expect(card.getByText("Agent question", { exact: true })).toBeVisible();
+    await expect(
+      card.getByText("Agent question", { exact: true }),
+    ).toBeVisible();
 
     await card.locator("button[aria-expanded]").first().click();
     const response = card.getByTestId("agent-question-response");
@@ -62,6 +75,31 @@ test.describe("Inbox card redesign", () => {
     await expect(page).toHaveURL(/\/inbox$/);
     await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
     await expect(page.getByTestId("hitl-card").first()).toBeVisible();
+  });
+
+  test("a Flow review card routes to the code Review Workspace without an inline decision", async ({
+    page,
+  }) => {
+    const review = loadReviewFixture();
+
+    await page.goto("/inbox");
+
+    const card = page.getByTestId("hitl-card").filter({
+      has: page.locator(
+        `a[href="/runs/${review.runId}?wb=review&scope=review"]`,
+      ),
+    });
+
+    await expect(card).toHaveCount(1);
+    await expect(card.getByRole("link", { name: "Review code" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Respond" })).toHaveCount(0);
+
+    await card.getByRole("link", { name: "Review code" }).click();
+
+    await expect(page).toHaveURL(
+      new RegExp(`/runs/${review.runId}\\?wb=review&scope=review`),
+    );
+    await expect(page.getByTestId("review-workspace")).toBeVisible();
   });
 
   test("expanding a card lazily fetches and renders its decision context", async ({

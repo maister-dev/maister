@@ -332,7 +332,7 @@ function rendererTemplate(node: NodeDef): { field: string; value: string } | nul
   }
 }
 
-// ADR-137: every human-review rework must be able to deliver the exact packet
+// ADR-138: every human-review rework must be able to deliver the exact packet
 // to each declared destination. Runtime re-checks open legacy gates, while new
 // manifests fail at compile/load before an agent session can start.
 function verifyHumanReviewFeedbackConsumers(

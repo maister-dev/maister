@@ -348,7 +348,7 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   is the threads section alone (no leading blank line); zero threads + no
   summary → nothing is injected (pre-feature behavior).
 
-## Flow Review Workspace source and claim (Designed — ADR-137)
+## Flow Review Workspace source and claim (Implemented — ADR-138)
 
 ### Purpose
 
@@ -378,7 +378,7 @@ sequenceDiagram
     participant DB as Postgres
     Reviewer->>UI: create/resolve comment
     UI->>API: mutation scoped to review source
-    API->>DB: lock pending HITL; require response/respondedAt null
+    API->>DB: lock pending HITL, require response and respondedAt null
     API-->>UI: thread with inline or outdated placement
     Reviewer->>UI: request changes
     UI->>API: feedback preview
@@ -410,7 +410,7 @@ sequenceDiagram
 
 ### Linked artifacts
 
-- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+- [ADR-138](../decisions.md#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
   [`hitl.md`](hitl.md), and [`workbench.md`](workbench.md).
 
 ## Linked artifacts

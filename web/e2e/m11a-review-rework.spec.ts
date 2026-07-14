@@ -4,10 +4,10 @@
 // approve/rework allow-list.
 //
 // Asserted, deterministic, supervisor-independent outcomes:
-//   1. the review UI renders exactly the declared decisions + a comments box;
+//   1. the Review Workspace renders exactly the declared decisions + a comments box;
 //   2. an off-list decision is refused 422 by the server allow-list;
-//   3. clicking "Request rework" posts {decision, comments, workspacePolicy}
-//      and the server validates + persists it (HTTP 200 ok:true).
+//   3. clicking "Request rework" obtains a review-feedback preview, and its
+//      confirmation posts the verified rework claim (HTTP 200 ok:true).
 //
 // Note: rework is a LOOP, not a terminus — the runner resumes and re-enters the
 // graph after a valid decision, so this spec asserts the decision is accepted
@@ -48,7 +48,9 @@ test("review HITL: off-list decision is rejected, then a UI rework request is ac
 
   // (2) The run detail page renders the review branch: a comments box plus the
   // two declared decision buttons (and nothing outside the allow-list).
-  await page.goto(`/runs/${fx.runId}`);
+  await page.goto(`/runs/${fx.runId}?wb=review&scope=review`);
+
+  await expect(page.locator('[data-testid="review-workspace"]')).toBeVisible();
 
   const comments = page.locator("#hitl-review-comments");
 
@@ -64,19 +66,30 @@ test("review HITL: off-list decision is rejected, then a UI rework request is ac
 
   await expect(rework).toBeVisible();
 
-  // The workbench diff is the single canonical diff surface; the request panel
-  // owns the decision controls only.
-  await page.getByRole("tab", { name: "Diff" }).click();
-  await page.waitForURL(/[?&]wb=diff/);
+  // The Review Workspace owns the current-review diff and its single decision
+  // rail; no generic workbench tab is needed to inspect code first.
   await expect(
-    page.locator('[data-testid="run-workbench"] [data-testid="run-diff"]'),
+    page.locator('[data-testid="review-workspace"] [data-testid="run-diff"]'),
   ).toBeVisible();
 
-  // (3) Clicking "Request rework" posts the decision + comments to the respond
-  // route. Intercept that POST and assert the server validated + accepted it
-  // (200 ok:true) — this is the synchronous, supervisor-independent contract
-  // that persists decision/workspacePolicy/reworkTarget + responded_at.
+  // (3) The first request is a side-effect-free packet preview.
   await comments.fill("Tighten the error handling and add a regression test.");
+
+  const previewPromise = page.waitForResponse(
+    (r) =>
+      r.url().includes(`/api/runs/${fx.runId}/hitl/`) &&
+      r.url().endsWith("/review-feedback-preview") &&
+      r.request().method() === "POST",
+  );
+
+  await rework.click();
+
+  const preview = await previewPromise;
+
+  expect(preview.status()).toBe(200);
+  await expect(
+    page.locator('[data-testid="review-feedback-preview"]'),
+  ).toBeVisible();
 
   const respondPromise = page.waitForResponse(
     (r) =>
@@ -85,7 +98,7 @@ test("review HITL: off-list decision is rejected, then a UI rework request is ac
       r.request().method() === "POST",
   );
 
-  await rework.click();
+  await page.locator('[data-testid="review-feedback-preview-confirm"]').click();
 
   const respond = await respondPromise;
 

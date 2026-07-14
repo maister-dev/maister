@@ -156,6 +156,7 @@ type InlineLocator = {
   text?: string;
   hitlRequestId?: string;
   threadIds?: string[];
+  feedbackFingerprint?: string;
 };
 
 // The composed-payload evidence rows (kind human_note, locator inline) of a
@@ -514,7 +515,7 @@ describe("runGraph — ADR-072 review-comment compose into commentsVar", () => {
     expect(fix?.stdout).toBe("tighten-errors");
   }, 60_000);
 
-  it("zero open threads + no summary → nothing injected (seeded empty commentsVar renders)", async () => {
+  it("zero open threads + no summary records an empty deterministic delivery packet", async () => {
     const seeded = await seedGraphRun(composeFlow);
 
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
@@ -528,8 +529,14 @@ describe("runGraph — ADR-072 review-comment compose into commentsVar", () => {
     expect(fix?.status).toBe("Succeeded");
     expect(fix?.stdout).toBe("");
 
-    // No compose happened → no composed-payload evidence row either.
-    expect(await getComposedEvidence(seeded.runId)).toHaveLength(0);
+    const evidence = await getComposedEvidence(seeded.runId);
+
+    expect(evidence).toHaveLength(1);
+    const locator = evidence[0].locator as InlineLocator;
+
+    expect(locator.text).toBe("");
+    expect(locator.threadIds).toEqual([]);
+    expect(locator.feedbackFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
   }, 60_000);
 
   it("resolved threads never serialize", async () => {
@@ -759,6 +766,7 @@ describe("runGraph — ADR-072 composed-payload evidence (human_note, locator in
     expect(locator.hitlRequestId).toBe(gate.id);
     // Serialized order: lib/a.ts before lib/b.ts.
     expect(locator.threadIds).toEqual([rootA, rootB]);
+    expect(locator.feedbackFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
   }, 60_000);
 
   it("zero-thread compose records evidence with the raw summary and empty threadIds", async () => {

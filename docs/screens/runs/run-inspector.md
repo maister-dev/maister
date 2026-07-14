@@ -162,7 +162,7 @@ facts, action labels, `inspectorStale`, `inspectorSession*`) plus `workbench`,
 `scratch`, `readiness`, and lifecycle action keys; no dedicated `runInspector`
 namespace was needed.
 
-## Review-source summary (Designed — ADR-137)
+## Review-source summary (Implemented — ADR-138)
 
 For a Flow run with an open review gate, the inspector's Changes affordance
 opens `wb=review&scope=review` and labels the count as **current review**. The

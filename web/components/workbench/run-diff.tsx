@@ -58,7 +58,7 @@ export interface RunDiffReviewContext {
   labels: RunDiffReviewLabels;
 }
 
-// ADR-137: the diff scope switcher. Optional — surfaces that
+// ADR-138: the diff scope switcher. Optional — surfaces that
 // pass labels get the toggle; everything else keeps the default `run` scope
 // and an unchanged request shape.
 export const DIFF_SCOPES = [

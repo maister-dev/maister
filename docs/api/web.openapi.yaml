@@ -4240,7 +4240,7 @@ paths:
   /api/runs/{runId}/diff:
     get:
       tags: [runs]
-      summary: Implemented (scratch + flow-run, M22) — read workspace diff
+      summary: Implemented (M22, ADR-138) — read workspace diff
       description: |
         Returns the diff between the run workspace branch and its
         server-resolved base commit, plus a changed-files summary (`files`).
@@ -4264,7 +4264,7 @@ paths:
             enum: [run, review, since-last-review, last-node, uncommitted]
             default: run
           description: |
-            **(ADR-137 Designed)** `review` is Flow-only and means
+            **(ADR-138 Implemented)** `review` is Flow-only and means
             `workspace.baseCommit -> current working tree`, including committed,
             staged, unstaged, and untracked reviewable files. Its source has an
             opaque fingerprint. The default remains `run`. `run`: `workspace.baseCommit..branch`
@@ -4283,6 +4283,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RunDiffResponse" }
+              examples:
+                current-review:
+                  summary: Flow base-to-working-tree review source.
+                  value:
+                    runId: 00000000-0000-4000-8000-000000000001
+                    scope: review
+                    scopes:
+                      run: { available: true }
+                      review: { available: true }
+                      since-last-review: { available: false, reason: last-review-missing }
+                      last-node: { available: false, reason: current-node-missing }
+                      uncommitted: { available: true }
+                    baseCommit: abc123
+                    reviewSourceFingerprint: "sha256:source-digest"
+                    sourceBranch: maister/task-1
+                    targetBranch: main
+                    diff: "diff --git a/src/parser.ts b/src/parser.ts"
+                    truncated: false
+                    files:
+                      - path: src/parser.ts
+                        status: M
+                        additions: 2
+                        deletions: 1
+                        binary: false
+                    perFile: []
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -4330,7 +4355,7 @@ paths:
   /api/runs/{runId}/change-summary:
     get:
       tags: [runs]
-      summary: Planned (M35) — read lightweight workspace change summary
+      summary: Implemented (M35, ADR-138) — read lightweight workspace change summary
       description: |
         Read-only run-inspector data. Returns repo-relative file status rows and
         total additions/deletions without preparing the full highlighted diff.
@@ -4413,6 +4438,33 @@ paths:
                         status: A
                         additions: 6
                         deletions: 0
+                        binary: false
+                current-review:
+                  summary: Same complete Flow review source as the Review Workspace diff.
+                  value:
+                    runId: 00000000-0000-4000-8000-000000000001
+                    scope: review
+                    scopes:
+                      run: { available: true }
+                      review: { available: true }
+                      since-last-review: { available: false, reason: last-review-missing }
+                      last-node: { available: false, reason: current-node-missing }
+                      uncommitted: { available: true }
+                    baseCommit: abc123
+                    reviewSourceFingerprint: "sha256:source-digest"
+                    sourceBranch: maister/task-1
+                    targetBranch: main
+                    dirty: true
+                    truncated: false
+                    unavailable: false
+                    fileCount: 1
+                    additions: 2
+                    deletions: 1
+                    files:
+                      - path: src/parser.ts
+                        status: M
+                        additions: 2
+                        deletions: 1
                         binary: false
                 dirty-uncommitted:
                   summary: Uncommitted scope with dirty worktree.
@@ -5313,7 +5365,7 @@ paths:
   /api/runs/{runId}/hitl/{hitlRequestId}/review-feedback-preview:
     post:
       tags: [hitl, review-comments]
-      summary: Designed (ADR-137) — preview verified Flow-review rework feedback
+      summary: Implemented (ADR-138) — preview verified Flow-review rework feedback
       description: |
         Session-authenticated, read-only preview for a live Flow
         `schema.review === true` rework decision. `runId` and `hitlRequestId`
@@ -5374,11 +5426,11 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
-            `PRECONDITION`: no live review rework gate, unavailable workspace/source,
-            pending gate-chat turn, or legacy graph without a proven feedback consumer.
+            `PRECONDITION`: run or review gate is absent/closed, the run is not
+            awaiting review, the workspace/source is unavailable, a gate-chat
+            turn is pending, or a legacy graph lacks a proven feedback consumer.
           content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
         "422":
           description: |
@@ -5460,9 +5512,9 @@ paths:
           until the composite reaches durable success or a final post-terminal
           failure.
 
-        **(M11a — Designed) graph `human_review` decisions.** For a graph
+        **(M11a, ADR-138 — Implemented) graph `human_review` decisions.** For a graph
         review HITL the reviewer's `decision` / `comments` / `workspacePolicy`
-        ride inside the existing `response` form payload. **(ADR-137 Designed)**
+        ride inside the existing `response` form payload. **(ADR-138 Implemented)**
         a fresh `response.decision="rework"` additionally supplies the two
         opaque top-level preview fingerprints; they are transport-only and are
         never stored in the canonical response or input artifact. Under the
@@ -5546,10 +5598,10 @@ paths:
                   response:
                     target: staging
               review-rework:
-                summary: (ADR-137 Designed) Graph review — verified rework with comments
+                summary: (ADR-138 Implemented) Graph review — verified rework with comments
                 value:
                   reviewSourceFingerprint: "sha256:source-digest"
-                  feedbackFingerprint: "sha256:packet-digest"
+                  reviewFeedbackFingerprint: "sha256:packet-digest"
                   response:
                     decision: "rework"
                     comments: "Tighten the error handling in the parser."
@@ -5680,7 +5732,7 @@ paths:
             (`CONFLICT`). `agent_question` also returns 409 for an answered,
             superseded, inactive, or different-payload request. For budget composites, also used when a different
             option arrives after a non-failed staged claim. Identifies a retry
-            contract violation, not a server bug. **(ADR-137 Designed)** a
+            contract violation, not a server bug. **(ADR-138 Implemented)** a
             fresh rework also returns `PRECONDITION` when its review source or
             feedback packet changed, when a gate-chat turn is live, or when the
             pinned graph cannot prove the declared target consumes feedback;
@@ -5766,7 +5818,7 @@ paths:
         visible after the gate closes, like the diff.
 
         Returns the run's review-comment threads (root + replies) with a
-        computed `placement` per thread: `scope=review` (ADR-137 Designed) uses
+        computed `placement` per thread: `scope=review` (ADR-138 Implemented) uses
         the Flow base-to-working-tree source and is required by Review Workspace
         deep links; legacy/default reads retain their existing source. Exactly one DB query for the run's
         comments plus AT MOST one in-memory parse of the server-recomputed
@@ -5813,7 +5865,7 @@ paths:
         NeedsInputIdle}`) AND a pending `hitl_requests` row
         (`respondedAt IS NULL`) with `kind = "human"` and
         `schema.review === true` must exist — otherwise 409 `PRECONDITION`.
-        **(ADR-137 Designed)** `scope=review` uses the same Flow current-review
+        **(ADR-138 Implemented)** `scope=review` uses the same Flow current-review
         source as diff/preview and locks the pending HITL through the mutation.
         The new comment references that row (`hitlRequestId`,
         `gateAttempt`). The write NEVER touches `runs.status` and is a single
@@ -15605,7 +15657,7 @@ components:
         reviewSourceFingerprint:
           type: string
           nullable: true
-          description: ADR-137 opaque SHA-256 source proof when `scope=review`; null for every other scope.
+          description: ADR-138 opaque SHA-256 source proof when `scope=review`; null for every other scope.
         sourceBranch:
           type: string
           nullable: true
@@ -15694,7 +15746,7 @@ components:
             uncommitted:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
           description: |
-            (ADR-137 Designed) Per-scope availability map shared with
+            (ADR-138 Implemented) Per-scope availability map shared with
             `GET /api/runs/{runId}/change-summary`. Flow runs report `review`
             plus the existing forensic scopes; scratch runs never expose review.
             Existing Flow runs report all forensic scopes (unavailable ones disabled with a `reason`); scratch runs
@@ -15703,7 +15755,7 @@ components:
         reviewSourceFingerprint:
           type: string
           nullable: true
-          description: ADR-137 opaque SHA-256 source proof when `scope=review`; null for every other scope.
+          description: ADR-138 opaque SHA-256 source proof when `scope=review`; null for every other scope.
         sourceBranch: { type: string }
         targetBranch: { type: string }
         diff: { type: string }
@@ -16150,11 +16202,11 @@ components:
         reviewSourceFingerprint:
           type: string
           pattern: "^sha256:[0-9A-Za-z_-]+$"
-          description: ADR-137 preview proof; required only for a fresh session-auth review rework and never persisted.
-        feedbackFingerprint:
+          description: ADR-138 preview proof; required only for a fresh session-auth review rework and never persisted.
+        reviewFeedbackFingerprint:
           type: string
           pattern: "^sha256:[0-9A-Za-z_-]+$"
-          description: ADR-137 packet preview proof; required only for a fresh session-auth review rework and never persisted.
+          description: ADR-138 packet preview proof; required only for a fresh session-auth review rework and never persisted.
         optionId:
           type: string
           minLength: 1
@@ -16834,6 +16886,12 @@ components:
           description: |
             (Implemented — ADR-072) Ids of the open root comments serialized
             into `text` at compose time.
+        feedbackFingerprint:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+          description: |
+            (Implemented — ADR-138) SHA-256 fingerprint of the deterministic
+            feedback packet delivered to the rework target.
 
     ArtifactInstanceList:
       type: object

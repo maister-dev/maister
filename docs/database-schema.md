@@ -1964,7 +1964,8 @@ validity FSM.
                                             //   | file{ path }
                                             //   | gate-verdict{ gateResultId }
                                             //   | hitl-response{ hitlRequestId }
-                                            //   | inline{ text }
+                                            //   | inline{ text, hitlRequestId?, threadIds?,
+                                            //            feedbackFingerprint? }
   uri?,                                     // optional human/direct display ref
   hash?,                                    // content hash (head SHA / file digest);
                                             //   first written by the M29 gate producer
@@ -2331,11 +2332,11 @@ Answer-only gate-chat turns between a reviewer and the parked agent at a
 A chat turn NEVER touches `runs.status` (no `→Running`) and NEVER writes
 `hitl_requests.responded_at`. Indexes: `(run_id)`, `(hitl_request_id)`.
 
-## `gate_chat_turns` (Designed — ADR-137, migration `0100`)
+## `gate_chat_turns` (Implemented — ADR-138, migration `0101`)
 
 The durable coordinator for one in-flight ACP gate-chat prompt. It supplements
-the append-only transcript; it is not a feedback-packet store. The planned
-migration is the sole schema change in the Flow Review Workspace delivery.
+the append-only transcript; it is not a feedback-packet store. This migration
+is the sole schema change in the Flow Review Workspace delivery.
 
 ```ts
 {
@@ -2343,12 +2344,12 @@ migration is the sole schema change in the Flow Review Workspace delivery.
   runId,                          // FK -> runs.id (cascade)
   hitlRequestId,                  // FK -> hitl_requests.id (cascade)
   userMessageId,                  // FK -> gate_chat_messages.id (cascade)
+  agentMessageId?,                // FK -> gate_chat_messages.id (SET NULL)
   state,                          // pending | completed | failed | aborted
   leaseExpiresAt,                 // pending lease; response claim reads it
-  terminalAt?,                    // set for completed/failed/aborted
-  terminalReason?,                // bounded machine-readable reason
-  createdAt,
-  updatedAt
+  errorCode?,                     // bounded terminal failure/abort reason
+  completedAt?,                   // terminal timestamp
+  createdAt
 }
 ```
 
@@ -2360,10 +2361,11 @@ can expire the lease. A late reply for a terminal row is dropped. Rework claim
 and packet composition include only `completed` turns.
 
 **Indexes and integrity.** The generated migration adds a lookup index on
-`(hitl_request_id, state, lease_expires_at)`, an index on `run_id`, and a partial
-unique index allowing at most one unexpired `pending` row for each HITL request.
-The response claim uses the lookup to reject a live pending row with `409
-PRECONDITION`; it does not hold a DB lock while calling ACP.
+`(hitl_request_id, state)` and a partial unique index allowing at most one
+`pending` row for each HITL request. The `state` and pending-lease checks make a
+pending row carry a lease and no terminal timestamp/reason; terminal rows clear
+the lease. The response claim uses the lookup to reject a live pending row with
+`409 PRECONDITION`; it does not hold a DB lock while calling ACP.
 
 ## `review_comments`
 
@@ -3144,9 +3146,8 @@ Created via Drizzle:
 | `artifact_instances`  | `artifact_instances_run_kind_idx`       | `(runId, kind)`                   | **(M12)** Filter by kind                                           |
 | `artifact_instances`  | `artifact_instances_run_validity_idx`   | `(runId, validity)`               | **(M12)** Filter by validity                                       |
 | `hitl_requests`       | `hitl_requests_run_idx`                 | `(runId)`                         | Pending HITL panel                                                 |
-| `gate_chat_turns`     | `gate_chat_turns_hitl_state_lease_idx`  | `(hitlRequestId, state, leaseExpiresAt)` | **(ADR-137 Designed)** response claim and packet lifecycle lookup |
-| `gate_chat_turns`     | `gate_chat_turns_run_idx`                | `(runId)`                         | **(ADR-137 Designed)** run cleanup and recovery lookup            |
-| `gate_chat_turns`     | `gate_chat_turns_one_pending_uq`         | `(hitlRequestId)` UNIQUE WHERE `state='pending'` | **(ADR-137 Designed)** one active chat turn per HITL              |
+| `gate_chat_turns`     | `gate_chat_turns_hitl_state_idx`         | `(hitlRequestId, state)` | **(ADR-138 Implemented)** response claim and packet lifecycle lookup |
+| `gate_chat_turns`     | `gate_chat_turns_pending_hitl_uq`        | `(hitlRequestId)` UNIQUE WHERE `state='pending'` | **(ADR-138 Implemented)** one active chat turn per HITL              |
 | `review_comments`     | `review_comments_run_created_idx`       | `(runId, createdAt)`              | **(ADR-072)** Thread listing per run in stable order               |
 | `review_comments`     | `review_comments_run_status_idx`        | `(runId, status)`                 | **(ADR-072)** Open-thread compose / unresolved counts              |
 | `review_comments`     | `review_comments_hitl_request_idx`      | `(hitlRequestId)`                 | **(ADR-072)** Comments per gate visit                              |
@@ -3196,9 +3197,8 @@ Created via Drizzle:
 | `token_audit_log` | `token_audit_token_idx` | `(tokenId)` | **(M16)** Per-token audit trail |
 | `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(M16, 0063 Implemented)** Chronological audit log per project; NULL rows are global/deleted-target rows |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
-| `gate_chat_turns` | `gate_chat_turns_hitl_state_lease_idx` | `(hitlRequestId, state, leaseExpiresAt)` | **(ADR-137 Designed)** response claim and packet lifecycle lookup |
-| `gate_chat_turns` | `gate_chat_turns_run_idx` | `(runId)` | **(ADR-137 Designed)** run cleanup and recovery lookup |
-| `gate_chat_turns` | `gate_chat_turns_one_pending_uq` | `(hitlRequestId)` UNIQUE WHERE `state='pending'` | **(ADR-137 Designed)** one active chat turn per HITL |
+| `gate_chat_turns` | `gate_chat_turns_hitl_state_idx` | `(hitlRequestId, state)` | **(ADR-138 Implemented)** response claim and packet lifecycle lookup |
+| `gate_chat_turns` | `gate_chat_turns_pending_hitl_uq` | `(hitlRequestId)` UNIQUE WHERE `state='pending'` | **(ADR-138 Implemented)** one active chat turn per HITL |
 | `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-077 Implemented)** Project-scope subscription lookup (NULL = platform rows) |
 | `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-077 Implemented)** Ordered fanout-pass claim scan |
 | `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-077 Implemented)** Ordered drain-pass claim scan |

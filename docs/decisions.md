@@ -162,7 +162,7 @@
 | [ADR-135](#adr-135-testcontainers-only-ephemeral-postgres-for-database-backed-tests) | Testcontainers-only ephemeral Postgres for database-backed tests | Accepted | 2026-07-12 |
 | [ADR-136](#adr-136-task-bound-human-ask-clarification-handoff) | Task-bound Human-ask clarification handoff | Implemented | 2026-07-13 |
 | [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
-| [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Accepted — Designed | 2026-07-14 |
+| [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Implemented | 2026-07-14 |
 
 ---
 
@@ -11968,7 +11968,7 @@ locked parent/sibling set.
 ### ADR-138: Flow Review Workspace — complete working-tree review and verified rework feedback delivery
 
 **Date:** 2026-07-14
-**Status:** Accepted — Designed
+**Status:** Implemented
 
 **Context:** A Flow review gate currently separates the human decision from the
 code being reviewed. The Inbox can invite an inline decision, the workbench's
@@ -12015,9 +12015,9 @@ without changing the Flow's review decision.
 
 - A reviewer receives a complete and fresh review source and a single decision
   location, while a Flow receives a packet that was previewed and verified.
-- The implementation adds one generated Drizzle migration after `0099` and
-  updates the web/external OpenAPI, analytics, screen, and DSL contracts before
-  code lands.
+- The implementation adds generated Drizzle migration `0101` and keeps the
+  web/external OpenAPI, analytics, screen, and DSL contracts synchronized with
+  the shipped contract.
 - Existing non-review HITL and external confidence callers retain compatibility;
   an external token cannot become a blind code-review actor.
 

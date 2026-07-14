@@ -244,7 +244,7 @@ controls until completion.
 - Terminal consensus success shows exactly one current `consensus_plan` and one
   current `debate_log` artifact close to the node result and in Evidence.
 
-## Review-gate decision placement (Designed — ADR-137)
+## Review-gate decision placement (Implemented — ADR-138)
 
 An open Flow review gate renders one Review Workspace decision rail, reached by
 `wb=review&scope=review`; `RunHitlResponse` is not rendered elsewhere on this

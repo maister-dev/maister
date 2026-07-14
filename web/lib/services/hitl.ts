@@ -528,7 +528,7 @@ export type RespondInput = {
     raiseTo?: unknown;
     // ADR-125: tolerant top-level alias for response.dropWorkspace on abandon.
     dropWorkspace?: unknown;
-    // ADR-137: opaque, preview-issued values required only for a fresh Flow
+    // ADR-138: opaque, preview-issued values required only for a fresh Flow
     // review rework. They are transport-only and are never stored in the
     // canonical HITL response or input artifact.
     reviewSourceFingerprint?: unknown;

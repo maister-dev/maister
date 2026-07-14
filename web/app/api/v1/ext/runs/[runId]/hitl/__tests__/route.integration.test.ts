@@ -69,7 +69,12 @@ vi.mock("@/lib/tokens/audit", async (importOriginal) => {
     ),
   };
 });
-vi.mock("@/lib/supervisor-client", () => supervisorMocks);
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return { ...actual, ...supervisorMocks };
+});
 vi.mock("@/lib/runs/resume-driver", () => resumeDriverMocks);
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
@@ -242,6 +247,7 @@ async function seedRun(
   projectId: string,
   flowId: string,
   status: string = "Running",
+  runKind: "agent" | "flow" = "flow",
 ) {
   const runId = randomUUID();
   const taskId = randomUUID();
@@ -270,6 +276,7 @@ async function seedRun(
     projectId,
     taskId,
     flowId,
+    runKind,
     status,
     flowVersion: "v1.0.0",
     currentStepId: "step-1",
@@ -577,7 +584,7 @@ describe("GET /api/v1/ext/runs/[runId]/hitl", () => {
     const { projectId, flowId } = await seedProject(
       `ext-hitl-agent-question-get-${randomUUID().slice(0, 8)}`,
     );
-    const { runId, taskId } = await seedRun(projectId, flowId, "Done");
+    const { runId, taskId } = await seedRun(projectId, flowId, "Done", "agent");
     const hitlId = await seedAgentQuestion({
       projectId,
       taskId,
@@ -1188,7 +1195,58 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     expect(body.code).toBe("UNAUTHORIZED");
   });
 
-  it("global user token with exact hitl:respond:human answers a human-kind HITL", async () => {
+  it("refuses a review gate before the shared response service can claim it", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-review-refusal-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = await seedUser("hitl-review-owner");
+
+    await seedProjectMember(projectId, ownerUserId);
+
+    const { runId } = await seedRun(projectId, flowId, "NeedsInput");
+    const hitlId = await seedHitlRequest(runId, "human");
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({
+        schema: {
+          review: true,
+          allowedDecisions: ["approve", "rework"],
+          transitions: { approve: "done", rework: "implement" },
+          reworkTargets: ["implement"],
+          workspacePolicies: ["keep"],
+        },
+      })
+      .where(eq(schema.hitlRequests.id, hitlId));
+    const token = await issueGlobalUserToken(ownerUserId, [
+      "hitl:respond:human",
+    ]);
+
+    const res = await POST(
+      makePostRequest(runId, hitlId, token.secret, {
+        response: { decision: "rework", comments: "Fix the parser." },
+      }),
+      { params: Promise.resolve({ runId, hitlRequestId: hitlId }) },
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "PRECONDITION",
+      message: expect.stringContaining("Review Workspace"),
+    });
+
+    const rows = await (db as any)
+      .select({
+        response: schema.hitlRequests.response,
+        respondedAt: schema.hitlRequests.respondedAt,
+      })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlId));
+
+    expect(rows[0]).toEqual({ response: null, respondedAt: null });
+  });
+
+  it("global user token with exact hitl:respond:human answers a non-review human HITL", async () => {
     const { projectId, flowId } = await seedProject(
       `ext-hitl-human-global-${randomUUID().slice(0, 8)}`,
     );
@@ -1247,7 +1305,7 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
 
     await seedProjectMember(projectId, ownerUserId);
 
-    const { runId, taskId } = await seedRun(projectId, flowId, "Done");
+    const { runId, taskId } = await seedRun(projectId, flowId, "Done", "agent");
     const hitlId = await seedAgentQuestion({
       projectId,
       taskId,

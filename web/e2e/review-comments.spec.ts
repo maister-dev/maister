@@ -20,8 +20,9 @@
 //      (POST 201 → thread renders, iteration badge = current gateAttempt,
 //      panel count refreshes) and a reply lands through the reply affordance;
 //   3. resolving a thread re-renders it resolved and decreases the count;
-//   4. the rework decision posts through the gate panel and the server
-//      validates + persists it (HTTP 200 ok:true).
+//   4. the rework decision requests a server-derived feedback preview, displays
+//      its exact packet, then sends the matching opaque fingerprints to the
+//      response route (HTTP 200 ok:true).
 //
 // e2e honesty (plan risk note): the stub supervisor cannot run agents — this
 // spec covers the UI surface + respond 200; the agent-receives-composed-prompt
@@ -74,7 +75,11 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
 }) => {
   const fx = loadFixture();
 
-  await page.goto(`/runs/${fx.runId}`);
+  await page.goto(`/runs/${fx.runId}?wb=review&scope=review`);
+
+  const workspace = page.locator('[data-testid="review-workspace"]');
+
+  await expect(workspace).toBeVisible();
 
   // (1) Gate panel: the loop chip + counts computed server-side against the
   // live diff. Seeded: 3 open roots, 1 of them outdated (stale line_content).
@@ -107,20 +112,16 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
 
   await expect(rework).toBeEnabled();
 
-  // (1) The workbench diff is the canonical review diff; the seeded inline
-  // threads render on
-  // their anchored lines (extendData stacks), tagged with visit 1.
-  await page.getByRole("tab", { name: "Diff" }).click();
-  await page.waitForURL(/[?&]wb=diff/);
-
-  const gateDiff = page.locator(
-    '[data-testid="run-workbench"] [data-testid="run-diff"]',
-  );
+  // (1) The Review Workspace keeps the canonical current-review diff beside
+  // the sole decision rail. The seeded inline threads render on their anchored
+  // lines (extendData stacks), tagged with visit 1.
+  const gateDiff = workspace.locator('[data-testid="run-diff"]');
 
   await expect(gateDiff).toBeVisible();
   const diffView = gateDiff.locator('[data-testid="diff-view"]');
 
   await expect(diffView).toBeVisible();
+  await gateDiff.getByRole("treeitem", { name: /greeting\.ts/ }).click();
   await expect(diffView).toContainText("export function greet");
   await expect(
     gateDiff.locator('[data-testid="review-inline-threads"]'),
@@ -180,7 +181,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
 
   const createRootPromise = page.waitForResponse(
     (r) =>
-      r.url().endsWith(`/api/runs/${fx.runId}/review-comments`) &&
+      r.url().includes(`/api/runs/${fx.runId}/review-comments?scope=review`) &&
       r.request().method() === "POST",
   );
 
@@ -209,7 +210,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
 
   const createReplyPromise = page.waitForResponse(
     (r) =>
-      r.url().endsWith(`/api/runs/${fx.runId}/review-comments`) &&
+      r.url().includes(`/api/runs/${fx.runId}/review-comments?scope=review`) &&
       r.request().method() === "POST",
   );
 
@@ -243,13 +244,31 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
     "3 unresolved",
   );
 
-  // (4) The rework decision posts {decision, comments, workspacePolicy} to
-  // the respond route and the server validates + accepts it (200 ok:true) —
-  // the synchronous, supervisor-independent contract (the composed
-  // comments-payload assertion lives in the runner integration tests).
+  // (4) Request changes first obtains the server-derived packet. Only a
+  // reviewer who sees that packet can confirm the response carrying its fresh
+  // source/feedback fingerprints.
   await page
     .locator("#hitl-review-comments")
     .fill("Apply the inline comments, then re-request review.");
+
+  const previewPromise = page.waitForResponse(
+    (r) =>
+      r.url().includes(`/api/runs/${fx.runId}/hitl/`) &&
+      r.url().endsWith("/review-feedback-preview") &&
+      r.request().method() === "POST",
+  );
+
+  await rework.click();
+
+  const preview = await previewPromise;
+
+  expect(preview.status()).toBe(200);
+  await expect(
+    page.locator('[data-testid="review-feedback-preview"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-testid="review-feedback-preview"] pre'),
+  ).toContainText("Apply the inline comments");
 
   const respondPromise = page.waitForResponse(
     (r) =>
@@ -258,7 +277,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
       r.request().method() === "POST",
   );
 
-  await rework.click();
+  await page.locator('[data-testid="review-feedback-preview-confirm"]').click();
 
   const respond = await respondPromise;
 

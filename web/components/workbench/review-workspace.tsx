@@ -44,7 +44,7 @@ export function ReviewWorkspaceUnavailable({
   );
 }
 
-// ADR-137: this is the only Flow-review decision location. The diff source is
+// ADR-138: this is the only Flow-review decision location. The diff source is
 // intentionally fixed to `review`, so a copied or stale URL cannot downgrade
 // the reviewer to the committed-run or uncommitted-only comparison.
 export function ReviewWorkspace({

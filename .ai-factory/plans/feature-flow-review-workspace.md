@@ -217,8 +217,8 @@ durable feedback entity still requires an explicit SDD amendment before code.
 ### ADR reservation
 
 `main` at planning time is `387d2e3d5`; its latest ADR is 136. Reserve
-**ADR-137: Flow Review Workspace — complete working-tree review and verified
-rework feedback delivery**. Phase 0 writes the ADR-137 header before linking
+**ADR-138: Flow Review Workspace — complete working-tree review and verified
+rework feedback delivery**. Phase 0 writes the ADR-138 header before linking
 to it. Before implementation/rebase, recheck main; if another branch has used
 137, renumber the ADR and all plan/docs links in one focused pass. Reserve the
 next migration number only after Phase 0 rechecks the migration journal; it is
@@ -231,7 +231,7 @@ expected to follow `0099_agent_human_ask.sql`.
 | `GET /api/runs/{runId}/diff` | Add `review` enum and response source fingerprint; keep default `run`. | `docs/api/web.openapi.yaml`, `docs/system-analytics/workbench.md`, `docs/screens/runs/workbench.md` |
 | `GET /api/runs/{runId}/change-summary` | Add the same `review` enum/source semantics so inspector links cannot disagree with the diff. | `docs/api/web.openapi.yaml`, `docs/screens/runs/run-inspector.md` |
 | Review-comment collection | Add documented `scope=review`; root anchors/list placement use the same review source. | `docs/api/web.openapi.yaml`, `docs/system-analytics/review-comments.md` |
-| `POST …/review-feedback-preview` | New read-only preview body, identifiers, response, errors, and no-side-effect guarantee. | `docs/api/web.openapi.yaml`, `docs/system-analytics/hitl.md`, ADR-137 |
+| `POST …/review-feedback-preview` | New read-only preview body, identifiers, response, errors, and no-side-effect guarantee. | `docs/api/web.openapi.yaml`, `docs/system-analytics/hitl.md`, ADR-138 |
 | Session `POST …/respond` | Add opaque preview fingerprints only for a first rework claim; stale packet/source is refusal and canonical retries remain idempotent. | `docs/api/web.openapi.yaml`, `docs/system-analytics/hitl.md` |
 | External `POST /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond` | Reject `schema.review === true` with `409 PRECONDITION`; retain all other existing eligibility. | `docs/api/external/operations.openapi.yaml`, `docs/system-analytics/hitl.md` |
 | Gate-chat lifecycle | Persist and recover one active ACP chat turn so packet composition and response claim cannot race. | `web/lib/db/schema.ts`, migration SQL/journal/snapshot, `docs/database-schema.md`, `docs/system-analytics/hitl.md` |
@@ -258,7 +258,7 @@ negative decision.
 
 ### Phase 0 — SDD contract freeze and baseline (blocking)
 
-- [x] **Task 1: Freeze ADR-137 and the review-domain specification before code.**
+- [x] **Task 1: Freeze ADR-138 and the review-domain specification before code.**
   - Files: `docs/decisions.md`, `docs/system-analytics/review-comments.md`,
     `docs/system-analytics/hitl.md`, `docs/system-analytics/workbench.md`,
     `docs/system-analytics/flow-graph.md`, `docs/flow-dsl.md`,
@@ -266,7 +266,7 @@ negative decision.
     `docs/screens/runs/workbench.md`, `docs/screens/runs/run-inspector.md`,
     `docs/api/web.openapi.yaml`, `docs/api/external/operations.openapi.yaml`,
     and `docs/database-schema.md`.
-  - Write ADR-137 before any citation, covering the scope/source distinction,
+  - Write ADR-138 before any citation, covering the scope/source distinction,
     one decision location, preview→claim→runner/evidence sequence, stale
     fingerprint refusal, canonical-retry rule, gate-chat lifecycle, external
     review refusal, and the one bounded migration. Update the ADR index in the
@@ -424,7 +424,7 @@ to a numbered acceptance criterion.
   - **Logging:** retain ids, action, status, and body length only; add no
     reviewer-content logging.
 
-- [ ] **Task 6 (RED → GREEN → refactor): Add durable gate-chat turn coordination.**
+- [x] **Task 6 (RED → GREEN → refactor): Add durable gate-chat turn coordination.**
   - Files: `web/lib/db/schema.ts`, the next numbered
     `web/lib/db/migrations/0100_*.sql`,
     `web/lib/db/migrations/meta/_journal.json`,
@@ -462,7 +462,7 @@ declared projects, then `pnpm --dir web test:unit`,
 
 ### Phase 2 — Verified feedback delivery and Flow fail-closed invariant
 
-- [ ] **Task 7 (RED): Define feedback packet parity, identifiers, and failure behaviour in tests.**
+- [x] **Task 7 (RED): Define feedback packet parity, identifiers, and failure behaviour in tests.**
   - Files: new `web/lib/review-comments/__tests__/feedback-packet.test.ts`,
     new `web/app/api/runs/[runId]/hitl/[hitlRequestId]/review-feedback-preview/__tests__/route.integration.test.ts`,
     `web/lib/flows/graph/__tests__/review-comments-compose.integration.test.ts`,
@@ -487,7 +487,7 @@ declared projects, then `pnpm --dir web test:unit`,
   - **Logging:** assert all route/runner observations are identifiers, counts,
     lengths, and digest only.
 
-- [ ] **Task 8 (GREEN → refactor): Implement the shared packet service, preview route, and atomic response check.**
+- [x] **Task 8 (GREEN → refactor): Implement the shared packet service, preview route, and atomic response check.**
   - Files: new `web/lib/review-comments/feedback-packet.ts`,
     `web/lib/review-comments/serialize.ts`,
     `web/lib/flows/graph/runner-graph.ts`,
@@ -536,7 +536,7 @@ declared projects, then `pnpm --dir web test:unit`,
     target, counts, digest, and result; rejection is `warn`; no payload,
     summary, comment body, or chat body is logged.
 
-- [ ] **Task 9 (RED → GREEN → refactor): Enforce feedback consumption for every human rework Flow.**
+- [x] **Task 9 (RED → GREEN → refactor): Enforce feedback consumption for every human rework Flow.**
   - Files: `web/lib/flows/graph/compile.ts`, `web/lib/config.ts`,
     `web/lib/config.schema.ts` only if needed for top-level key grammar,
     `web/lib/flows/flow-dsl-grammar.ts`, `web/lib/flows/authoring-skill.ts`,
@@ -567,7 +567,7 @@ by Vitest, followed by complete `pnpm --dir web test:unit`,
 
 ### Phase 3 — One human-facing Review Workspace
 
-- [ ] **Task 10 (RED → GREEN → refactor): Teach the reusable diff UI about the review scope and workspace composition.**
+- [x] **Task 10 (RED → GREEN → refactor): Teach the reusable diff UI about the review scope and workspace composition.**
   - Files: `web/components/workbench/run-diff.tsx`,
     `web/components/workbench/diff-view.tsx`, new
     `web/components/runs/review-workspace.tsx`, new corresponding component
@@ -593,7 +593,7 @@ by Vitest, followed by complete `pnpm --dir web test:unit`,
   - **Logging:** client logs nothing; all errors use localized server code
     mapping and the standard route diagnostics from Phase 2.
 
-- [ ] **Task 11 (RED → GREEN → refactor): Make run and Inbox navigation lead to exactly one review surface.**
+- [x] **Task 11 (RED → GREEN → refactor): Make run and Inbox navigation lead to exactly one review surface.**
   - Files: `web/app/(app)/runs/[runId]/layout.tsx`,
     `web/components/workbench/workbench-panel.tsx`,
     `web/components/workbench/workbench-tabs.tsx`,
@@ -627,7 +627,7 @@ by Vitest, followed by complete `pnpm --dir web test:unit`,
   - **Logging:** no client content logs; server-side query failures stay
     structured/redacted.
 
-- [ ] **Task 12 (RED → GREEN → refactor): Remove human confidence input without breaking supported callers.**
+- [x] **Task 12 (RED → GREEN → refactor): Remove human confidence input without breaking supported callers.**
   - Files: `web/components/board/run-hitl-response.tsx`,
     `web/components/board/hitl-decision-controls.tsx`, their tests, and EN/RU
     message keys only when no longer referenced.
@@ -651,7 +651,7 @@ validation before this phase can close.
 
 ### Phase 4 — End-to-end proof and as-built specification reconciliation
 
-- [ ] **Task 13 (RED → GREEN → refactor): Exercise the reviewer journey through the real browser and runner.**
+- [x] **Task 13 (RED → GREEN → refactor): Exercise the reviewer journey through the real browser and runner.**
   - Files: `web/e2e/_seed/seed-e2e.ts`, `web/e2e/inbox.spec.ts`,
     `web/e2e/review-comments.spec.ts`, `web/e2e/review-diff-scopes.spec.ts`,
     `web/e2e/m11a-review-rework.spec.ts`, and the Playwright config only if a
@@ -675,7 +675,7 @@ validation before this phase can close.
   - **Logging:** E2E captures request status/digest metadata for diagnosis but
     redacts review text in failure output.
 
-- [ ] **Task 14: Reconcile every SDD artifact against the implemented code and release contract.**
+- [x] **Task 14: Reconcile every SDD artifact against the implemented code and release contract.**
   - Files: all Phase 0 documentation plus `docs/api/web.openapi.yaml`,
     `docs/api/external/operations.openapi.yaml`, `docs/database-schema.md`,
     and any changed Flow grammar/authoring references.
@@ -702,7 +702,7 @@ and `pnpm --dir web typecheck`.
 
 ### Phase 5 — Completeness, consistency, and merge-readiness review
 
-- [ ] **Task 15: Perform adversarial completeness review and final verification.**
+- [x] **Task 15: Perform adversarial completeness review and final verification.**
   - Inspect the final diff against this plan’s scope/non-goals, the contract
     surface checklist, generated migration state, route identifier table, and
     all acceptance criteria. Grep every new `review` enum member and every
@@ -731,27 +731,40 @@ and `pnpm --dir web typecheck`.
 
 ## Final acceptance checklist
 
-- [ ] Inbox never offers a blind inline decision for a Flow review gate; it
+- [x] Inbox never offers a blind inline decision for a Flow review gate; it
   opens code review with a useful bounded change signal.
-- [ ] A Flow review workspace defaults to `base → working tree`, displaying
+- [x] A Flow review workspace defaults to `base → working tree`, displaying
   committed + staged + unstaged + untracked changes and inline comments on the
   same source.
-- [ ] The current review has one editable decision rail and one submit path.
-- [ ] Request changes has a server-derived preview, target/variable provenance,
+- [x] The current review has one editable decision rail and one submit path.
+- [x] Request changes has a server-derived preview, target/variable provenance,
   open/resolved accounting, freshness checks, and a durable actual-delivery
   evidence record; a same-payload retry stays idempotent and a stale first
   claim never writes an artifact.
-- [ ] An invalid Flow feedback channel fails before it can silently drop human
+- [x] An invalid Flow feedback channel fails before it can silently drop human
   review feedback; old live invalid gates fail visibly and safely.
-- [ ] External v1 HITL cannot issue a blind decision for a `schema.review`
+- [x] External v1 HITL cannot issue a blind decision for a `schema.review`
   gate; all other documented external HITL eligibility remains compatible.
-- [ ] Gate chat has one durable active-turn lifecycle: no ACP call holds a DB
+- [x] Gate chat has one durable active-turn lifecycle: no ACP call holds a DB
   transaction, incomplete turns recover by lease policy, and only completed
   turns enter the feedback packet.
-- [ ] No human-facing confidence input remains; public compatibility and
+- [x] No human-facing confidence input remains; public compatibility and
   historical `human_confidence` data are retained.
-- [ ] Exactly one reviewed gate-chat lifecycle migration and its schema,
+- [x] Exactly one reviewed gate-chat lifecycle migration and its schema,
   journal, snapshot, and database documentation change exist; no packet table,
   confidence migration, deployment change, or new error code is introduced.
-- [ ] Documentation, OpenAPI, analytics, screens, grammar/authoring guidance,
+- [x] Documentation, OpenAPI, analytics, screens, grammar/authoring guidance,
   tests, i18n, and code all express the same source and delivery contract.
+
+## Completion evidence (2026-07-14)
+
+- Focused review unit tests: 58 passed; focused review integration tests: 56
+  passed.
+- Full `pnpm --dir web test:unit` and Docker-backed
+  `pnpm --dir web test:integration` passed.
+- Reviewer browser journey passed: `pnpm --dir web test:e2e --
+  e2e/review-comments.spec.ts e2e/review-diff-scopes.spec.ts
+  e2e/m17-hitl-hybrid.spec.ts` (8 scenarios).
+- `pnpm --dir web typecheck`, `pnpm validate:contracts`, and
+  `pnpm validate:docs:all` passed; the latter validated 365 Mermaid blocks and
+  679 ADR anchors.

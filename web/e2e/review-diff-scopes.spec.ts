@@ -2,9 +2,9 @@
 // on the review-comments fixture (real worktree, parked review HITL).
 //
 // Asserted, supervisor-independent outcomes:
-//   1. the gate diff renders the 4-scope toggle; `uncommitted` is enabled and
-//      switching to it loads the working-tree diff (the spec's own dirty
-//      file appears as an addition);
+//   1. the Review Workspace starts with the complete `review` source, so the
+//      spec's unstaged file appears without switching to a forensic scope;
+//      the secondary workbench switcher still exposes `uncommitted`;
 //   2. scopes whose base does not exist degrade DISABLED, not erroring:
 //      `since-last-review` (prior visit has no review_tip_sha — pre-M30 row)
 //      and `last-node` (no attempt carries a checkpoint ref);
@@ -40,7 +40,7 @@ function loadFixtures(): Fixtures {
 // Mutating spec (dirty file + recorded resolution) — keep the steps ordered.
 test.describe.configure({ mode: "serial" });
 
-test("scope toggle: uncommitted loads the working-tree diff; sha-less scopes degrade disabled", async ({
+test("Review Workspace starts with complete current-review diff; secondary scopes degrade safely", async ({
   page,
 }) => {
   const fx = loadFixtures().byKey.reviewComments;
@@ -50,7 +50,19 @@ test("scope toggle: uncommitted loads the working-tree diff; sha-less scopes deg
     "uncommitted reviewer-visible change\n",
   );
 
-  await page.goto(`/runs/${fx.runId}`);
+  await page.goto(`/runs/${fx.runId}?wb=review&scope=review`);
+
+  const workspaceDiff = page.locator(
+    '[data-testid="review-workspace"] [data-testid="run-diff"]',
+  );
+
+  await expect(workspaceDiff).toBeVisible();
+  await expect(workspaceDiff.getByText("dirty-e2e.txt").first()).toBeVisible();
+
+  await expect(
+    workspaceDiff.locator('[data-testid="diff-scope-switcher"]'),
+  ).toHaveCount(0);
+  await page.goto(`/runs/${fx.runId}?wb=diff&scope=review`);
 
   const switcher = page.locator('[data-testid="diff-scope-switcher"]');
 

@@ -40,9 +40,15 @@ let db: NodePgDatabase;
 let runtimeRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/supervisor-client", () => ({
-  deliverPermission: vi.fn(async () => ({ ok: true })),
-}));
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    deliverPermission: vi.fn(async () => ({ ok: true })),
+  };
+});
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: vi.fn(async () => {}),
 }));
