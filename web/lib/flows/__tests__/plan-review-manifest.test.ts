@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 
 import { loadFlowManifest } from "@/lib/config";
+import type { FlowYamlV1 } from "@/lib/config.schema";
 import { isMaisterError } from "@/lib/errors";
+import { compileManifest } from "@/lib/flows/graph/compile";
+import { planReviewCaptureTargetForProducer } from "@/lib/flows/graph/runner-graph";
 
 let workDir: string;
 
@@ -30,8 +33,18 @@ function manifest(engineMin = "3.1.0"): Record<string, unknown> {
         action: { prompt: "Produce a plan and strict review JSON." },
         output: {
           produces: [
-            { id: "plan-document", kind: "plan", path: "plan.md", current: true },
-            { id: "plan-review", kind: "plan", path: "plan-review.json", current: true },
+            {
+              id: "plan-document",
+              kind: "plan",
+              path: "plan.md",
+              current: true,
+            },
+            {
+              id: "plan-review",
+              kind: "plan",
+              path: "plan-review.json",
+              current: true,
+            },
           ],
         },
         transitions: { success: "review" },
@@ -39,7 +52,12 @@ function manifest(engineMin = "3.1.0"): Record<string, unknown> {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"], commentsVar: "plan_review_comments" } },
+        finish: {
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "plan_review_comments",
+          },
+        },
         transitions: { approve: "implement", rework: "plan" },
         rework: {
           allowedTargets: ["plan"],
@@ -76,7 +94,9 @@ async function load(value: Record<string, unknown>): Promise<unknown> {
   return loadFlowManifest(path);
 }
 
-async function expectConfigRefusal(value: Record<string, unknown>): Promise<void> {
+async function expectConfigRefusal(
+  value: Record<string, unknown>,
+): Promise<void> {
   try {
     await load(value);
   } catch (error) {
@@ -100,10 +120,43 @@ describe("Plan-review manifest contract", () => {
     const invalidOutcomes = manifest();
     const nodes = invalidOutcomes.nodes as Array<Record<string, unknown>>;
 
-    (nodes[1].finish as { human: { decisions: string[] } }).human.decisions.push(
-      "takeover",
-    );
+    (
+      nodes[1].finish as { human: { decisions: string[] } }
+    ).human.decisions.push("takeover");
     await expectConfigRefusal(invalidOutcomes);
+  });
+
+  it("captures Plan-review artifacts from the direct producer, not the rework target", async () => {
+    const value = manifest();
+    const nodes = value.nodes as Array<Record<string, unknown>>;
+    const plan = nodes[0];
+
+    delete plan.output;
+    plan.transitions = { success: "improve" };
+    nodes.splice(1, 0, {
+      id: "improve",
+      type: "ai_coding",
+      action: { prompt: "Write the immutable plan artifacts." },
+      output: {
+        produces: [
+          { id: "plan-document", kind: "plan", path: "plan.md", current: true },
+          {
+            id: "plan-review",
+            kind: "plan",
+            path: "plan-review.json",
+            current: true,
+          },
+        ],
+      },
+      transitions: { success: "review" },
+    });
+
+    const graph = compileManifest((await load(value)) as FlowYamlV1);
+
+    expect(planReviewCaptureTargetForProducer(graph, "plan")).toBeUndefined();
+    expect(planReviewCaptureTargetForProducer(graph, "improve")).toMatchObject({
+      reviewNode: { id: "review" },
+    });
   });
 
   it("refuses manual takeover and a rework transition that is not declared", async () => {
@@ -117,10 +170,13 @@ describe("Plan-review manifest contract", () => {
     await expectConfigRefusal(takeover);
 
     const missingRework = manifest();
-    const reworkNode = (missingRework.nodes as Array<Record<string, unknown>>)[1];
+    const reworkNode = (
+      missingRework.nodes as Array<Record<string, unknown>>
+    )[1];
 
-    (reworkNode.settings as { plan_review: { rework_transition: string } }).plan_review.rework_transition =
-      "missing";
+    (
+      reworkNode.settings as { plan_review: { rework_transition: string } }
+    ).plan_review.rework_transition = "missing";
     await expectConfigRefusal(missingRework);
   });
 });

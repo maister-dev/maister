@@ -3,10 +3,35 @@ import { expect, test } from "@playwright/test";
 import { loadFixtures } from "./_seed/fixtures";
 
 test.describe("Plan-review decision requests", () => {
-  test("shows every blocking decision on run detail and removes only the answered child", async ({
+  test("answers a blocking decision from Inbox, keeps its parent chat, and schedules rework after the final answer", async ({
     page,
   }) => {
     const fixture = loadFixtures().byKey.planReview;
+    const inboxProject = page.locator(
+      'section[aria-label="MAIster E2E Plan Review"]',
+    );
+
+    await page.goto("/inbox");
+
+    await expect(inboxProject.getByTestId("hitl-card")).toHaveCount(3);
+    const inboxDatabaseDecision = inboxProject
+      .getByTestId("hitl-card")
+      .filter({ hasText: "Choose a database" });
+
+    await inboxDatabaseDecision
+      .getByRole("button", { name: "Respond" })
+      .click();
+    await expect(
+      inboxDatabaseDecision.getByTestId("plan-decision-card"),
+    ).toBeVisible();
+    await inboxDatabaseDecision
+      .getByRole("button", { name: /Postgres/ })
+      .click();
+    await expect(
+      inboxProject
+        .getByTestId("hitl-card")
+        .filter({ hasText: "Choose a database" }),
+    ).toHaveCount(0);
 
     await page.goto(`/runs/${fixture.runId}`);
 
@@ -21,17 +46,14 @@ test.describe("Plan-review decision requests", () => {
       hasText: "Choose a resume mode",
     });
 
-    await expect(decisionCards).toHaveCount(2);
-    await expect(databaseDecision).toHaveCount(1);
+    await expect(page.locator("#agent-chat")).toBeVisible();
+    await expect(decisionCards).toHaveCount(1);
+    await expect(databaseDecision).toHaveCount(0);
     await expect(resumeDecision).toHaveCount(1);
-    await expect(
-      databaseDecision.getByRole("button", { name: /Postgres/ }),
-    ).toBeVisible();
 
-    await databaseDecision.getByRole("button", { name: /Postgres/ }).click();
+    await resumeDecision.getByRole("button", { name: /Graph/ }).click();
 
-    await expect(page.getByTestId("plan-decision-card")).toHaveCount(1);
-    await expect(resumeDecision).toHaveCount(1);
-    await expect(page.getByTestId("pending-input-card").first()).toBeFocused();
+    await expect(page.getByTestId("plan-decision-card")).toHaveCount(0);
+    await expect(page.locator("#agent-chat")).toHaveCount(0);
   });
 });

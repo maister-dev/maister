@@ -1,9 +1,9 @@
 # AIF flow test fixtures
 
-Verbatim snapshot of the five AIF flow graphs (v1 manifests, pre-`aif/v2.0.0`
-bump) taken when `plugins/aif` was extracted to the external `maister-plugins`
-repo (ADR-088). These are **test fixtures** for engine-behavior tests
-(manifest loading, graph validation, settings, rework comments, authoring
-round-trips) — NOT the shipped package. The canonical package lives in
-`maister-plugins/packages/aif` and is validated through the package install
-pipeline.
+Snapshot of the five AIF flow graphs (v1 manifests) taken when `plugins/aif`
+was extracted to the external `maister-plugins` repo (ADR-088), with the
+maintained Plan-review contract overlay used by this branch's engine tests.
+These are **test fixtures** for engine behavior (manifest loading, graph
+validation, settings, rework comments, authoring round-trips) — NOT the
+shipped package. The canonical package is `maister-plugins/packages/aif` at
+`aif/v2.5.0` (`e25937f`) and is validated through the package install pipeline.

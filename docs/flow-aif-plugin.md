@@ -5,9 +5,10 @@ commands) into five MAIster flow graphs used to dogfood MAIster against its
 own task board.
 
 **Package source: the external `maister-plugins` repo** —
-`packages/aif/`, versioned by the per-package tag `aif/v2.0.0` (ADR-088).
+`packages/aif/`, versioned by the per-package tag `aif/v2.5.0`
+(`e25937f`, ADR-088).
 The package was extracted from this repo's former `plugins/aif/` on
-2026-06-12; a verbatim fixture snapshot of the five flow graphs remains at
+2026-06-12; a maintained fixture snapshot of the five flow graphs remains at
 `web/test-fixtures/aif-flows/` for engine-behavior tests.
 
 ## What it ships
@@ -30,7 +31,7 @@ packages/aif/
 | `aif-roadmap` | Large/multi-milestone initiative needing a roadmap. |
 | `aif-init`    | One-time: project not yet AIF-initialized. |
 
-All five are typed-node **graphs** (engine ≥ 1.4.0 since `aif/v2.0.0`):
+All five are typed-node **graphs** (engine ≥ 3.1.0 since `aif/v2.5.0`):
 `retry_policy` on every `ai_coding` node, explicit
 `defaults.session_policy: resume`, reviewer-selectable
 `workspacePolicies: [keep, rewind-to-node-checkpoint]` on the dev/bugfix fix
@@ -62,7 +63,7 @@ flows:
 packages:
   - id: aif
     source: github.com/<org>/maister-plugins   # or file:///…/maister-plugins
-    version: aif/v2.0.0
+    version: aif/v2.5.0
     path: packages/aif
 ```
 
@@ -106,12 +107,13 @@ asserting a clean tree + a Conventional Commits subject.
 - `docs/system-analytics/packages.md` — package management (ADR-088).
 - `docs/pv/package-management.md` — design + follow-up briefs.
 - The package's own `README.md` in `maister-plugins/packages/aif/` —
-  provenance + the `aif/v2.0.0` bump notes.
+  provenance and release notes for `aif/v2.5.0`.
 
 ## Plan-review producer contract (Implemented — ADR-137)
 
-Current source planning Flows will write the runner-provided Markdown-plan and
-`plan-review.json` paths. The JSON has strict V1 assumptions and blockers;
-planning prompts classify them instead of relying on Markdown parsing. Only
-new source package tags adopt this capability; pinned installed revisions and
-active runs remain immutable.
+Current source planning Flows at `aif/v2.5.0` write the runner-provided
+Markdown-plan and `plan-review.json` paths. The JSON has strict V1 assumptions
+and blockers; planning prompts classify them instead of relying on Markdown
+parsing. The release commit is `e25937f`; only new source package tags adopt
+this capability, so pinned installed revisions and active runs remain
+immutable.

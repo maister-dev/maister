@@ -309,18 +309,23 @@ function planReviewSettingsForNode(
   return settings.plan_review;
 }
 
-function planReviewCaptureTargetForProducer(
+export function planReviewCaptureTargetForProducer(
   graph: ReturnType<typeof compileManifest>,
   producerNodeId: string,
 ): PlanReviewCaptureTarget | undefined {
+  const producerNode = graph.nodes.get(producerNodeId);
+  if (!producerNode) {
+    return undefined;
+  }
+
   for (const reviewNode of graph.nodes.values()) {
     const settings = planReviewSettingsForNode(reviewNode);
 
     if (!settings) continue;
 
     const isDirectPredecessor = Object.values(
-      reviewNode.source.node.transitions ?? {},
-    ).includes(producerNodeId);
+      producerNode.source.node.transitions ?? {},
+    ).includes(reviewNode.id);
 
     if (isDirectPredecessor) {
       return { reviewNode, settings };

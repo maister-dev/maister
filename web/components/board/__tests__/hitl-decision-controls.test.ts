@@ -161,7 +161,11 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       version: 1,
       question: "Which runtime should the plan target?",
       options: [
-        { id: "node", label: "Node", consequences: "Use the existing runtime." },
+        {
+          id: "node",
+          label: "Node",
+          consequences: "Use the existing runtime.",
+        },
         { id: "bun", label: "Bun", consequences: "Add a runtime dependency." },
       ],
       recommendation: "node",
@@ -218,6 +222,49 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
   });
 
   describe("review branch (human review HITL)", () => {
+    it("shows assumptions and disables approval while blocking decisions remain", () => {
+      const reviewSchema = {
+        allowedDecisions: ["approve", "rework"],
+        transitions: { approve: "implement", rework: "improve" },
+        reworkTargets: ["improve"],
+        workspacePolicies: ["keep"],
+        planReview: {
+          assumptions: [
+            {
+              id: "scope",
+              statement: "Keep the current scope.",
+              defaultDecision: { label: "Keep scope" },
+              impact: "Avoids expanding the implementation work.",
+            },
+          ],
+          decisions: [{ id: "database" }],
+        },
+      };
+
+      const html = render({
+        kind: "human",
+        reviewSchema,
+        labels: {
+          ...LABELS,
+          planReviewAssumptions: "Assumptions",
+          planReviewAssumptionDefault: "Default",
+          planReviewAssumptionImpact: "Impact",
+          planReviewApprovalBlocked: "Answer blockers first",
+        },
+      });
+
+      expect(html).toContain("Keep the current scope.");
+      expect(html).toContain("Keep scope");
+      expect(html).toContain("Avoids expanding the implementation work.");
+      expect(html).toContain("Answer blockers first");
+      expect(html).toMatch(
+        /<button[^>]*disabled[^>]*>run\.decisionApprove<\/button>/,
+      );
+      expect(html).toMatch(
+        /<button(?![^>]*disabled)[^>]*>run\.decisionRework<\/button>/,
+      );
+    });
+
     it("renders a button for each allowedDecision", () => {
       const reviewSchema = {
         allowedDecisions: ["approve", "rework"],

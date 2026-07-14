@@ -304,11 +304,12 @@ the read and confirmation. Cancel sends no trust request.
   (`/api/admin/package-sources*`, `/api/admin/package-installs`,
   `/api/projects/{slug}/packages*`).
 - AIF package content: the `maister-plugins` repo (`packages/aif`,
-  tag `aif/v2.0.0`); consumption notes in
+  release `aif/v2.5.0` at `e25937f`); consumption notes in
   [`../flow-aif-plugin.md`](../flow-aif-plugin.md).
 
 ## Plan-review package releases (Implemented — ADR-137)
 
-The AIF and superpowers packages release this capability independently under
-new package-scoped tags. Each source declares engine 3.1.0 and its artifact
-contract; historic tags, installs, and SHA-pinned runs remain unchanged.
+The AIF release is `aif/v2.5.0` (`e25937f`) and the superpowers release is
+`superpowers/v1.2.0` (`0fecf20`). Each source declares engine 3.1.0 and its
+artifact contract; historic tags, installs, and SHA-pinned runs remain
+unchanged.

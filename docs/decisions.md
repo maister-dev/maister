@@ -11915,8 +11915,8 @@ manual takeover, gate chat, or the Inbox's projection model.
    and gate-chat semantics remain unchanged.
 8. Inbox is a read projection over `hitl_requests` and assignments. It gains
    cards only for open child requests; social unread/read rows and counters are
-   unchanged. Session SSE and outbound webhook payloads may add optional
-   metadata only: `parentHitlRequestId`, `sourceArtifactId`, `decisionId`,
+   unchanged. Outbound webhook payloads may add optional metadata only:
+   `parentHitlRequestId`, `sourceArtifactId`, `decisionId`,
    `remainingDecisionCount`, and lifecycle `state`. They never carry plan,
    options' prose, or selected answer. External token lists omit child rows and
    direct external response returns `403 UNAUTHORIZED`; no token scope grants
@@ -11928,8 +11928,9 @@ manual takeover, gate chat, or the Inbox's projection model.
    mandatory. Gate chat remains parent-review clarification only.
 10. Only current Plan-review package sources (`aif-dev`, `superpowers/dev`,
     `superpowers/plan`) change. Each package releases independently under a
-    new package-scoped tag; installed SHA-pinned revisions and in-flight runs
-    remain immutable.
+    new package-scoped tag: `aif/v2.5.0` (`e25937f`) and
+    `superpowers/v1.2.0` (`0fecf20`). Each declares engine `3.1.0`; installed
+    SHA-pinned revisions and in-flight runs remain immutable.
 
 **Observability and recovery:** lifecycle logs/events contain IDs, artifact
 hash, byte count, counts, state, and error code—not plan text, option

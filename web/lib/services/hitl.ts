@@ -1791,10 +1791,23 @@ export async function reconcilePlanReviewDecisionHandoffs(args: {
   const candidates = await args.db
     .select({ id: hitlRequests.id })
     .from(hitlRequests)
-    .where(
-      and(eq(hitlRequests.kind, "human"), isNotNull(hitlRequests.response)),
+    .innerJoin(runs, eq(runs.id, hitlRequests.runId))
+    .innerJoin(
+      artifactInstances,
+      sql`${artifactInstances.id} = ${hitlRequests.schema} -> 'planReview' ->> 'sourceArtifactId'`,
     )
-    .orderBy(asc(hitlRequests.createdAt))
+    .where(
+      and(
+        eq(hitlRequests.kind, "human"),
+        isNotNull(hitlRequests.response),
+        inArray(runs.status, Array.from(PENDING_HITL_RUN_STATUS)),
+        eq(runs.currentStepId, hitlRequests.stepId),
+        sql`${hitlRequests.schema} @> '{"planReview": {}}'::jsonb`,
+        eq(artifactInstances.runId, runs.id),
+        eq(artifactInstances.validity, "current"),
+      ),
+    )
+    .orderBy(asc(hitlRequests.createdAt), asc(hitlRequests.id))
     .limit(args.limit ?? 50);
   let resumed = 0;
 
@@ -2007,6 +2020,40 @@ async function handlePlanReviewDecisionResponse(
         throw new MaisterError("CONFLICT", "parent review is closing");
       }
 
+      const stamped = await tx
+        .update(hitlRequests)
+        .set({ respondedAt: new Date() })
+        .where(
+          and(
+            eq(hitlRequests.id, hitlRequestId),
+            isNull(hitlRequests.respondedAt),
+          ),
+        )
+        .returning({ id: hitlRequests.id });
+
+      if (stamped.length > 0) {
+        await completeResponseAssignment(tx, assignmentClaim, { response });
+        await args.recordSuccessAudit?.(tx, 200);
+        await emitWebhookEvent({
+          db: tx,
+          type: "hitl.responded",
+          projectId: runRow.projectId,
+          runId,
+          data: {
+            hitlRequestId,
+            kind: "decision_request",
+            via: "user",
+            planReview: {
+              parentHitlRequestId: parent.id,
+              sourceArtifactId: childSchema.sourceArtifactId,
+              decisionId: childSchema.decisionId,
+              remainingDecisionCount: remaining.length,
+              state: "awaiting-decisions",
+            },
+          },
+        });
+      }
+
       return {
         kind: "awaiting-decisions" as const,
         remainingDecisionCount: remaining.length,
@@ -2074,38 +2121,6 @@ async function handlePlanReviewDecisionResponse(
   }
 
   if (outcome.kind === "awaiting-decisions") {
-    await db.transaction(async (tx: any) => {
-      await tx
-        .update(hitlRequests)
-        .set({ respondedAt: new Date() })
-        .where(
-          and(
-            eq(hitlRequests.id, hitlRequestId),
-            isNull(hitlRequests.respondedAt),
-          ),
-        );
-      await completeResponseAssignment(tx, assignmentClaim, { response });
-      await args.recordSuccessAudit?.(tx, 200);
-      await emitWebhookEvent({
-        db: tx,
-        type: "hitl.responded",
-        projectId: runRow.projectId,
-        runId,
-        data: {
-          hitlRequestId,
-          kind: "decision_request",
-          via: "user",
-          planReview: {
-            parentHitlRequestId: outcome.parentHitlRequestId,
-            sourceArtifactId: childSchema.sourceArtifactId,
-            decisionId: childSchema.decisionId,
-            remainingDecisionCount: outcome.remainingDecisionCount,
-            state: "awaiting-decisions",
-          },
-        },
-      });
-    });
-
     return NextResponse.json(
       {
         ok: true,

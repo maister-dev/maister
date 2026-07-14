@@ -380,6 +380,7 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
 
     const detail = await getRunDetail("run-plan-review");
 
+    expect(detail?.pendingHitl?.hitlRequestId).toBe("parent-plan-review");
     expect(detail?.pendingHitls.map((hitl) => hitl.hitlRequestId)).toEqual(
       expect.arrayContaining([
         "parent-plan-review",

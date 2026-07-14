@@ -132,6 +132,15 @@ export interface RunPendingHitl {
   dirtyResolution: "commit" | "discard" | "proceed" | null;
 }
 
+function isPlanReviewParentHitl(hitl: RunPendingHitl): boolean {
+  return (
+    hitl.kind === "human" &&
+    typeof hitl.schema === "object" &&
+    hitl.schema !== null &&
+    "planReview" in hitl.schema
+  );
+}
+
 export interface RunDetail {
   runId: string;
   projectId: string;
@@ -436,7 +445,11 @@ export const getRunDetail = cache(async function getRunDetail(
       dirtyResolution: pending.dirtyResolution ?? null,
     };
   });
-  const pending = pendingHitls[0] ?? null;
+  const orderedPendingHitls = [
+    ...pendingHitls.filter(isPlanReviewParentHitl),
+    ...pendingHitls.filter((hitl) => !isPlanReviewParentHitl(hitl)),
+  ];
+  const pending = orderedPendingHitls[0] ?? null;
   const runnerResolutionWarningRows = await client
     .select({
       sessionName: runSessions.sessionName,
@@ -553,7 +566,7 @@ export const getRunDetail = cache(async function getRunDetail(
     })),
     autoPromotion,
     pendingHitl: pending,
-    pendingHitls,
+    pendingHitls: orderedPendingHitls,
   };
 });
 

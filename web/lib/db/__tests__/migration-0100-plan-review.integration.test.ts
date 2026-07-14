@@ -121,6 +121,23 @@ describe("migration 0100 — plan-review decision requests", () => {
     ).rejects.toThrow(/hitl_requests_decision_request_shape_check/);
   });
 
+  it("rejects decision-only provenance on a non-decision request", async () => {
+    const source = await seedPlanReviewSource();
+
+    await expect(
+      db.execute(sql`
+        INSERT INTO hitl_requests (
+          id, run_id, step_id, kind, schema, prompt, parent_hitl_request_id,
+          source_artifact_id, decision_id
+        ) VALUES (
+          ${id()}, ${source.runId}, 'review_plan', 'human',
+          '{"review":true}'::jsonb, 'Review the plan',
+          ${source.parentHitlRequestId}, ${source.artifactId}, 'database'
+        )
+      `),
+    ).rejects.toThrow(/hitl_requests_decision_request_shape_check/);
+  });
+
   it("creates the pending-decision index for the parent review queue", async () => {
     const indexes = await db.execute<IndexRow>(sql`
       SELECT indexdef

@@ -13,6 +13,6 @@ project:
 packages:
   - id: aif
     source: https://github.com/kanischev/maister-plugins
-    version: aif/v2.0.0
+    version: aif/v2.5.0
     path: packages/aif
 flows: []

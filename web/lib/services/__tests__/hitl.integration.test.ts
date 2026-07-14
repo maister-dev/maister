@@ -46,6 +46,9 @@ vi.mock("@/lib/supervisor-client", () => ({
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: vi.fn(async () => {}),
 }));
+vi.mock("@/lib/runs/resume-driver", () => ({
+  scheduleResumedSessionDrive: vi.fn(),
+}));
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
 }));
@@ -622,6 +625,12 @@ describe("respondToHitl integration — plan-review decision requests", () => {
     expect(JSON.parse(await readFile(inputPath, "utf8"))).toMatchObject(
       parent.response,
     );
+    const { scheduleResumedSessionDrive } = await import(
+      "@/lib/runs/resume-driver"
+    );
+
+    await vi.waitFor(() => expect(runFlow).toHaveBeenCalledWith(runId));
+    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled();
 
     const replay = await respondToHitl(
       {
@@ -634,6 +643,122 @@ describe("respondToHitl integration — plan-review decision requests", () => {
     );
 
     expect(replay.status).toBe(202);
+  });
+
+  it("rejects parent approval while a decision child is unanswered", async () => {
+    const projectId = await seedProject("test-plan-review-approve-blocker");
+    const runId = await seedRun(projectId);
+    const { parentHitlRequestId, childHitlRequestIds } =
+      await seedPlanReviewHitls(runId);
+    const actor: HitlActor = {
+      kind: "user",
+      userId: "u-1",
+      label: "Test User",
+    };
+
+    await expect(
+      respondToHitl(
+        {
+          runId,
+          hitlRequestId: parentHitlRequestId,
+          body: { response: { decision: "approve", comments: "Ship it" } },
+        },
+        actor,
+        { db },
+      ),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      message: "all blocking plan decisions must be answered before approval",
+    });
+
+    const rows = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    const parent = rows.find(
+      (row: { id: string }) => row.id === parentHitlRequestId,
+    );
+    const children = rows.filter((row: { id: string }) =>
+      childHitlRequestIds.includes(row.id),
+    );
+
+    expect(parent.response).toBeNull();
+    expect(parent.respondedAt).toBeNull();
+    expect(children).toHaveLength(2);
+    expect(
+      children.every(
+        (child: { response: unknown; respondedAt: Date | null }) =>
+          child.response === null && child.respondedAt === null,
+      ),
+    ).toBe(true);
+  });
+
+  it("commits one non-final decision response and emits a redacted event only once", async () => {
+    const projectId = await seedProject("test-plan-review-nonfinal-replay");
+    const runId = await seedRun(projectId);
+    const { parentHitlRequestId, childHitlRequestIds, sourceArtifactId } =
+      await seedPlanReviewHitls(runId);
+    const actor: HitlActor = {
+      kind: "user",
+      userId: "u-1",
+      label: "Test User",
+    };
+
+    const first = await respondToHitl(
+      {
+        runId,
+        hitlRequestId: childHitlRequestIds[0],
+        body: { optionId: "postgres" },
+      },
+      actor,
+      { db },
+    );
+    const replay = await respondToHitl(
+      {
+        runId,
+        hitlRequestId: childHitlRequestIds[0],
+        body: { optionId: "postgres" },
+      },
+      actor,
+      { db },
+    );
+
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+
+    const [child] = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[0]));
+    const events = await (db as any)
+      .select()
+      .from(schema.webhookEvents)
+      .where(eq(schema.webhookEvents.runId, runId));
+    const childEvents = events.filter(
+      (event: { type: string; data: { hitlRequestId?: string } }) =>
+        event.type === "hitl.responded" &&
+        event.data.hitlRequestId === childHitlRequestIds[0],
+    );
+
+    expect(child.response).toEqual({ optionId: "postgres" });
+    expect(child.respondedAt).toBeInstanceOf(Date);
+    expect(childEvents).toHaveLength(1);
+    expect(childEvents[0].data).toEqual({
+      hitlRequestId: childHitlRequestIds[0],
+      kind: "decision_request",
+      via: "user",
+      planReview: {
+        parentHitlRequestId,
+        sourceArtifactId,
+        decisionId: "database",
+        remainingDecisionCount: 1,
+        state: "awaiting-decisions",
+      },
+    });
+    expect(JSON.stringify(childEvents[0].data)).not.toContain("postgres");
+    expect(JSON.stringify(childEvents[0].data)).not.toContain(
+      "Which database should store review answers?",
+    );
   });
 
   it("replays a committed plan-review handoff after a process restart", async () => {
@@ -700,6 +825,92 @@ describe("respondToHitl integration — plan-review decision requests", () => {
     await expect(readFile(inputPath, "utf8")).resolves.toContain(
       '"decision": "rework"',
     );
+    await vi.waitFor(() => expect(runFlow).toHaveBeenCalledWith(runId));
+  });
+
+  it("skips historical answered rows when recovering a current plan-review handoff", async () => {
+    const projectId = await seedProject("test-plan-review-recovery-priority");
+    const runId = await seedRun(projectId);
+    const { parentHitlRequestId, childHitlRequestIds, sourceArtifactId } =
+      await seedPlanReviewHitls(runId);
+    const parentResponse = {
+      decision: "rework",
+      workspacePolicy: "keep",
+      comments: "",
+      plan_answers: {
+        schemaVersion: 1,
+        sourceArtifactId,
+        answers: [
+          { decisionId: "database", optionId: "postgres" },
+          { decisionId: "resume", optionId: "graph" },
+        ],
+      },
+    };
+
+    const staleArtifactIds = Array.from({ length: 25 }, () => randomUUID());
+
+    await (db as any).insert(schema.artifactInstances).values(
+      staleArtifactIds.map((id, index) => ({
+        id,
+        runId,
+        artifactDefId: "plan-review",
+        nodeId: "improve",
+        attempt: index + 2,
+        kind: "plan",
+        producer: "runner",
+        locator: { kind: "file", path: `artifacts/stale-${index}.json` },
+        validity: "stale",
+      })),
+    );
+    await (db as any).insert(schema.hitlRequests).values([
+      ...Array.from({ length: 25 }, (_, index) => ({
+        id: randomUUID(),
+        runId,
+        stepId: `historic-${index}`,
+        kind: "human",
+        prompt: "Historical review",
+        schema: { review: true },
+        response: { decision: "approve" },
+        createdAt: new Date(0),
+      })),
+      ...staleArtifactIds.map((staleArtifactId, index) => ({
+        id: randomUUID(),
+        runId,
+        stepId: "review_plan",
+        kind: "human",
+        prompt: "Historical plan review",
+        schema: {
+          planReview: {
+            sourceArtifactId: staleArtifactId,
+            answersVar: "plan_answers",
+            decisions: [],
+            assumptions: [],
+          },
+        },
+        response: { decision: "rework" },
+        createdAt: new Date(index),
+      })),
+    ]);
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({
+        response: parentResponse,
+        decision: "rework",
+        workspacePolicy: "keep",
+      })
+      .where(eq(schema.hitlRequests.id, parentHitlRequestId));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "postgres" }, respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[0]));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "graph" } })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[1]));
+
+    await expect(
+      reconcilePlanReviewDecisionHandoffs({ db }),
+    ).resolves.toBeGreaterThanOrEqual(1);
     await vi.waitFor(() => expect(runFlow).toHaveBeenCalledWith(runId));
   });
 

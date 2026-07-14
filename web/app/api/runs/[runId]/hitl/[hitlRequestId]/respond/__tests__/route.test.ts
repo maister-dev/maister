@@ -1267,6 +1267,25 @@ describe("HITL respond route — error cases", () => {
     expect(hitl.respondedAt).toBeNull();
   });
 
+  it("rejects a plan-review decision body with only the wrong field", async () => {
+    const { runId, hitlRequestId } = seedFormRow("human");
+    const hitl = dbState.tables.hitl_requests[0];
+
+    hitl.kind = "decision_request";
+
+    const res = await invokePost(runId, hitlRequestId, {
+      decisionId: "postgres",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CONFIG",
+      message: "decision_request requires exactly an optionId response",
+    });
+    expect(hitl.response).toBeNull();
+    expect(hitl.respondedAt).toBeNull();
+  });
+
   it("unknown hitlRequestId (empty table) returns 409 PRECONDITION", async () => {
     const res = await invokePost("run-x", "unknown-hitl", {
       optionId: "allow",
