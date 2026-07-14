@@ -17,9 +17,9 @@ runner_profiles:
     model: claude-sonnet-4-6
     provider:
       kind: anthropic
-# Graph form (nodes[]) → engine_min >= 1.1.0; typed artifacts → >= 1.2.0.
+# Graph form (nodes[]) → engine_min >= 1.1.0; typed Plan review → >= 3.1.0.
 compat:
-  engine_min: 1.2.0
+  engine_min: 3.1.0
 # Flow-level calibration default, folded into the advisory ai_judgment gate at compile.
 verdict_calibration:
   confidence_min: 0.7
@@ -57,11 +57,30 @@ nodes:
         /aif-improve
 
         Non-interactive run — do NOT ask the user clarifying questions; apply your best-judgment improvements directly.
+
+        Write the final Markdown plan to $MAISTER_PLAN_DOCUMENT_FILE. Write the
+        matching strict PlanReviewV1 JSON contract to $MAISTER_PLAN_REVIEW_FILE.
+    output:
+      produces:
+        - id: plan-document
+          kind: plan
+          current: true
+        - id: plan-review
+          kind: plan
+          current: true
     transitions:
       success: plan_review
 
   - id: plan_review
     type: human
+    settings:
+      plan_review:
+        plan_document_artifact: plan-document
+        plan_review_artifact: plan-review
+        comments_var: plan_review_comments
+        answers_var: plan_review_answers
+        rework_transition: rework
+        max_decision_reworks: 2
     finish:
       human:
         role: maintainer

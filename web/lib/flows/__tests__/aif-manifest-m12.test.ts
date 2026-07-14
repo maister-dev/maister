@@ -52,8 +52,26 @@ function producesById(node: NodeDef | undefined, id: string) {
 }
 
 describe("aif-dev flow.yaml — M12 declared-artifact contract", () => {
-  it("declares compat.engine_min 1.2.0 (typed artifacts)", () => {
-    expect(manifest.compat?.engine_min).toBe("1.2.0");
+  it("declares compat.engine_min 3.1.0 for typed Plan review", () => {
+    expect(manifest.compat?.engine_min).toBe("3.1.0");
+  });
+
+  it("captures typed plan review artifacts before the plan-review pause", () => {
+    const improve = nodeById("improve");
+    const review = nodeById("plan_review");
+
+    expect(producesById(improve, "plan-document")?.kind).toBe("plan");
+    expect(producesById(improve, "plan-review")?.kind).toBe("plan");
+    const planReview = (review?.settings as {
+      plan_review?: Record<string, unknown>;
+    } | undefined)?.plan_review;
+
+    expect(planReview).toMatchObject({
+      plan_document_artifact: "plan-document",
+      plan_review_artifact: "plan-review",
+      rework_transition: "rework",
+      max_decision_reworks: 2,
+    });
   });
 
   it("implement produces impl-diff (diff) requiredFor review+merge", () => {
