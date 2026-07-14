@@ -127,7 +127,7 @@ function reworkManifest(
       {
         id: "implement",
         type: "ai_coding",
-        action: { prompt: "/impl" },
+        action: { prompt: "/impl\n\n{{ review_comments }}" },
         transitions: { success: "review" },
         ...(opts.nodeSessionPolicy
           ? { session_policy: opts.nodeSessionPolicy }
@@ -136,12 +136,13 @@ function reworkManifest(
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"] } },
+        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
         transitions: { approve: "done", rework: "implement" },
         rework: {
           allowedTargets: ["implement"],
           workspacePolicies: ["keep"],
           maxLoops: 3,
+          commentsVar: "review_comments",
           ...(opts.reworkSessionPolicy
             ? { session_policy: opts.reworkSessionPolicy }
             : {}),

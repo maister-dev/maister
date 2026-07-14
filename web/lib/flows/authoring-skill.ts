@@ -70,7 +70,10 @@ complete worked example. Key rules:
   (artifact + kind) — presence is enforced (a missing required artifact is a
   PRECONDITION failure).
 - Rework loops are \`rework: { allowedTargets, maxLoops, commentsVar }\` plus a
-  matching \`transitions\` decision (e.g. \`rework: <targetNodeId>\`).
+  matching \`transitions\` decision (e.g. \`rework: <targetNodeId>\`). For a human
+  rework, every allowed target must render the exact top-level \`commentsVar\` in
+  \`action.prompt\` (\`ai_coding\`/\`judge\`/\`orchestrator\`) or \`action.command\`
+  (\`cli\`/\`check\`); \`{{ commentsVar ?? '' }}\` is valid.
 
 ## Working method
 
@@ -82,7 +85,8 @@ complete worked example. Key rules:
 4. Copy \`baseHash\` from the file inventory. Use \`baseHash: null\` only for a
    new file.
 5. Keep YAML valid. Confirm node ids referenced by
-   \`transitions\`/\`rework.allowedTargets\` exist before proposing content.
+   \`transitions\`/\`rework.allowedTargets\` exist before proposing content, and
+   every human-rework target renders the exact feedback variable.
 6. For a new package file, put it under the right kind dir (see layout) so the
    editor classifies it correctly.
 
@@ -161,7 +165,8 @@ const REF_EDITING_TIPS = `# Editing tips for the docked assistant
   editor (no graph canvas) — confirm your edit parses.
 - After changing a flow graph: every node id named in \`transitions\` and
   \`rework.allowedTargets\` MUST exist. \`done\` is the implicit terminal and needs
-  no node.
+  no node. Every human-rework target MUST render the exact effective
+  \`commentsVar\` in its supported action field.
 - Prefer the smallest diff. Do not reformat or reorder unrelated nodes/keys.
 - A proposed change is not "done" until the full replacement content is
   internally consistent (ids resolve, required artifacts are produced upstream).

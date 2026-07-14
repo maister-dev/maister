@@ -242,7 +242,7 @@ describe("runGraph — artifact enforcement (T3.2, engine_min 1.2.0)", () => {
         {
           id: "work",
           type: "cli",
-          action: { command: "echo work" },
+          action: { command: "echo work {{ review_comments ?? '' }}" },
           output: {
             produces: [
               { id: "out-x", kind: "generic_file", path: "missing.txt" },
@@ -279,7 +279,7 @@ describe("runGraph — artifact enforcement (T3.2, engine_min 1.2.0)", () => {
         {
           id: "work",
           type: "cli",
-          action: { command: "echo work" },
+          action: { command: "echo work {{ review_comments ?? '' }}" },
           output: {
             produces: [{ id: "impl-diff", kind: "diff" }],
           },
@@ -288,12 +288,13 @@ describe("runGraph — artifact enforcement (T3.2, engine_min 1.2.0)", () => {
         {
           id: "review",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"] } },
+          finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
           transitions: { approve: "done", rework: "work" },
           rework: {
             allowedTargets: ["work"],
             workspacePolicies: ["keep"],
             maxLoops: 2,
+            commentsVar: "review_comments",
           },
         },
       ],

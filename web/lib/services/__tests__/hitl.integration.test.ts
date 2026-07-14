@@ -358,7 +358,7 @@ describe("respondToHitl integration — permission response with real Postgres",
 });
 
 describe("respondToHitl integration — review human decision with real Postgres", () => {
-  it("review human_review decision persists decision/workspacePolicy/reworkTarget", async () => {
+  it("review approval persists the canonical decision without a preview", async () => {
     const projectId = await seedProject("test-review");
     const runId = await seedRun(projectId);
     const hitlRequestId = await seedFormHitl(runId, "approve-step");
@@ -387,9 +387,7 @@ describe("respondToHitl integration — review human decision with real Postgres
         hitlRequestId,
         body: {
           response: {
-            decision: "rework",
-            comments: "needs more work",
-            workspacePolicy: "keep",
+            decision: "approve",
           },
         },
       },
@@ -405,9 +403,9 @@ describe("respondToHitl integration — review human decision with real Postgres
       .where(eq(schema.hitlRequests.id, hitlRequestId));
     const row = rows[0];
 
-    expect(row.decision).toBe("rework");
-    expect(row.workspacePolicy).toBe("keep");
-    expect(row.reworkTarget).toBe("implement");
+    expect(row.decision).toBe("approve");
+    expect(row.workspacePolicy).toBeNull();
+    expect(row.reworkTarget).toBeNull();
     expect(row.respondedAt).toBeInstanceOf(Date);
   });
 });

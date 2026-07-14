@@ -117,6 +117,7 @@ export async function GET(
     const availability = gateChatAvailability({
       runStatus: run.status,
       hitlKind: hitl.kind,
+      hitlResponse: hitl.response,
       hitlRespondedAt: hitl.respondedAt,
       acpSessionId: activeSession?.acpSessionId ?? null,
     });

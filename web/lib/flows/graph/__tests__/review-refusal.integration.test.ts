@@ -162,7 +162,7 @@ describe("T4.4: review refusal when evidence not ready (integration)", () => {
         {
           id: "work",
           type: "cli",
-          action: { command: "echo work" },
+          action: { command: "echo work {{ review_comments ?? '' }}" },
           transitions: { success: "review" },
         },
         {
@@ -182,6 +182,7 @@ describe("T4.4: review refusal when evidence not ready (integration)", () => {
             human: {
               role: "maintainer",
               decisions: ["approve", "rework"],
+              commentsVar: "review_comments",
             },
           },
           transitions: { approve: "done", rework: "work" },
@@ -189,6 +190,7 @@ describe("T4.4: review refusal when evidence not ready (integration)", () => {
             allowedTargets: ["work"],
             workspacePolicies: ["keep"],
             maxLoops: 1,
+            commentsVar: "review_comments",
           },
         },
       ],

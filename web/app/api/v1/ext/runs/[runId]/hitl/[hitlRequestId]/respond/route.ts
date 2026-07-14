@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import { respondToHitl } from "@/lib/services/hitl";
 import {
   handleExt,
@@ -97,7 +98,11 @@ export async function POST(
 
       // Existence-hide hitlRequest within this run.
       const hitlRows = await db
-        .select({ id: hitlRequests.id, kind: hitlRequests.kind })
+        .select({
+          id: hitlRequests.id,
+          kind: hitlRequests.kind,
+          schema: hitlRequests.schema,
+        })
         .from(hitlRequests)
         .where(
           and(
@@ -110,6 +115,17 @@ export async function POST(
         return NextResponse.json(
           { code: "NOT_FOUND", message: "hitl request not found" },
           { status: 404 },
+        );
+      }
+
+      if (isReviewSchema(hitlRows[0].schema)) {
+        return NextResponse.json(
+          {
+            code: "PRECONDITION",
+            message:
+              "review gates must be decided in the authenticated Review Workspace",
+          },
+          { status: 409 },
         );
       }
 

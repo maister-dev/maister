@@ -3300,6 +3300,66 @@ export const gateChatMessages = pgTable(
   }),
 );
 
+// ADR-137: a durable coordinator for one ACP-backed gate-chat turn. The
+// transcript remains in gate_chat_messages; this table records only ownership
+// and terminal outcome so an interrupted prompt can be fenced before a review
+// decision freezes its feedback packet.
+export const gateChatTurns = pgTable(
+  "gate_chat_turns",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    hitlRequestId: text("hitl_request_id")
+      .notNull()
+      .references(() => hitlRequests.id, { onDelete: "cascade" }),
+    userMessageId: text("user_message_id")
+      .notNull()
+      .references(() => gateChatMessages.id, { onDelete: "cascade" }),
+    agentMessageId: text("agent_message_id").references(
+      () => gateChatMessages.id,
+      { onDelete: "set null" },
+    ),
+    state: text("state", {
+      enum: ["pending", "completed", "failed", "aborted"],
+    }).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    errorCode: text("error_code"),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxHitlState: index("gate_chat_turns_hitl_state_idx").on(
+      t.hitlRequestId,
+      t.state,
+    ),
+    // PostgreSQL is the final concurrency backstop. The service also locks the
+    // HITL row so it can reap an expired row before accepting the next turn.
+    uniqPendingHitl: uniqueIndex("gate_chat_turns_pending_hitl_uq")
+      .on(t.hitlRequestId)
+      .where(sql`${t.state} = 'pending'`),
+    stateCheck: check(
+      "gate_chat_turns_state_check",
+      sql`${t.state} in ('pending', 'completed', 'failed', 'aborted')`,
+    ),
+    pendingLeaseCheck: check(
+      "gate_chat_turns_pending_lease_check",
+      sql`(${t.state} = 'pending' and ${t.leaseExpiresAt} is not null and ${t.completedAt} is null and ${t.errorCode} is null) or (${t.state} <> 'pending' and ${t.leaseExpiresAt} is null)`,
+    ),
+  }),
+);
+
 export const projectMembers = pgTable(
   "project_members",
   {

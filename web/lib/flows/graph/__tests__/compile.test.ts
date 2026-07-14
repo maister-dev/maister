@@ -12,7 +12,7 @@ const graph: FlowYamlV1 = {
     {
       id: "implement",
       type: "ai_coding",
-      action: { prompt: "/aif-implement" },
+      action: { prompt: "/aif-implement\n\n{{ c }}" },
       transitions: { success: "review" },
     },
     {
@@ -51,6 +51,84 @@ describe("compileManifest — graph nodes[]", () => {
     expect(review.gates).toHaveLength(1);
     expect(review.rework?.maxLoops).toBe(3);
     expect(review.finishHuman?.decisions).toEqual(["approve", "rework"]);
+  });
+
+  it("rejects a human rework target that does not render its feedback variable", () => {
+    const invalid = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === "implement"
+          ? { ...node, action: { prompt: "/aif-implement" } }
+          : node,
+      ),
+    } as FlowYamlV1;
+
+    expect(() => compileManifest(invalid)).toThrow(
+      'human review node "review" rework target "implement" must render commentsVar "c" in action.prompt',
+    );
+  });
+
+  it("accepts the default-expression form and refuses a missing feedback variable", () => {
+    const guarded = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === "implement"
+          ? { ...node, action: { prompt: "Fix: {{ c ?? '' }}" } }
+          : node,
+      ),
+    } as FlowYamlV1;
+    const missing = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === "review"
+          ? {
+              ...node,
+              finish: { human: { decisions: ["approve", "rework"] } },
+              rework: { ...node.rework, commentsVar: undefined },
+            }
+          : node,
+      ),
+    } as FlowYamlV1;
+
+    expect(() => compileManifest(guarded)).not.toThrow();
+    expect(() => compileManifest(missing)).toThrow(
+      'human review node "review" needs a valid top-level commentsVar',
+    );
+  });
+
+  it("rejects a dotted feedback key before a rework packet can be lost", () => {
+    const invalid = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === "review"
+          ? { ...node, rework: { ...node.rework, commentsVar: "review.notes" } }
+          : node,
+      ),
+    } as FlowYamlV1;
+
+    expect(() => compileManifest(invalid)).toThrow(
+      'human review node "review" needs a valid top-level commentsVar',
+    );
+  });
+
+  it("requires every rework target to be a renderer reading the exact variable", () => {
+    const cliTarget = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === "implement"
+          ? {
+              id: "implement",
+              type: "cli",
+              action: { command: "echo {{ another_value }}" },
+              transitions: { success: "review" },
+            }
+          : node,
+      ),
+    } as FlowYamlV1;
+
+    expect(() => compileManifest(cliTarget)).toThrow(
+      'human review node "review" rework target "implement" must render commentsVar "c" in action.command',
+    );
   });
 
   // M11c task 3.0 — thread typed `settings` through CompiledNode so the

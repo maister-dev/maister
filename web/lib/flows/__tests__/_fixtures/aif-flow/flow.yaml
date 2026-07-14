@@ -44,7 +44,7 @@ nodes:
   - id: implement
     type: ai_coding
     action:
-      prompt: "/aif-implement"
+      prompt: "/aif-implement\n\n{{ review_comments }}"
     input:
       requires:
         - artifact: plan-summary

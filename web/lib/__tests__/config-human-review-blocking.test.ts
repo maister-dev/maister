@@ -50,7 +50,7 @@ function baseGraphManifest(): GraphManifest {
       {
         id: "implement",
         type: "ai_coding",
-        action: { prompt: "/test" },
+        action: { prompt: "/test\n\n{{ review_comments }}" },
         transitions: { success: "review" },
         pre_finish: {
           gates: [],
@@ -59,12 +59,15 @@ function baseGraphManifest(): GraphManifest {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"] } },
+        finish: {
+          human: { decisions: ["approve", "rework"], commentsVar: "review_comments" },
+        },
         transitions: { approve: "done", rework: "implement" },
         rework: {
           allowedTargets: ["implement"],
           workspacePolicies: ["keep"],
           maxLoops: 3,
+          commentsVar: "review_comments",
         },
         pre_finish: {
           gates: [],

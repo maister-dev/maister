@@ -314,6 +314,21 @@ async function chatRows(hitlId: string) {
   }>;
 }
 
+async function chatTurnRows(hitlId: string) {
+  const result = await pool.query(
+    `SELECT state, lease_expires_at, agent_message_id, error_code
+      FROM gate_chat_turns WHERE hitl_request_id = $1 ORDER BY created_at`,
+    [hitlId],
+  );
+
+  return result.rows as Array<{
+    state: string;
+    lease_expires_at: Date | null;
+    agent_message_id: string | null;
+    error_code: string | null;
+  }>;
+}
+
 async function runRow(runId: string) {
   const r = await pool.query(
     `SELECT status, keepalive_until FROM runs WHERE id = $1`,
@@ -374,6 +389,15 @@ describe("sendGateChatTurn — live (DD3)", () => {
     ).rows[0];
 
     expect(hitl.responded_at).toBeNull();
+
+    expect(await chatTurnRows(hitlId)).toEqual([
+      expect.objectContaining({
+        state: "completed",
+        lease_expires_at: null,
+        agent_message_id: out.agentMessage.id,
+        error_code: null,
+      }),
+    ]);
   }, 60_000);
 
   it("chat input is sent verbatim (never Mustache-evaluated)", async () => {
@@ -679,6 +703,14 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].role).toBe("user");
+    expect(await chatTurnRows(hitlId)).toEqual([
+      expect.objectContaining({
+        state: "failed",
+        lease_expires_at: null,
+        agent_message_id: null,
+        error_code: "ACP_PROTOCOL",
+      }),
+    ]);
   }, 60_000);
 
   it("a failed respawn rolls the claim back to NeedsInputIdle and prompts nothing", async () => {
@@ -798,7 +830,7 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
     expect(rows[0].role).toBe("user");
   }, 60_000);
 
-  it("serializes concurrent live turns: no duplicate seq, a lost race is CONFLICT", async () => {
+  it("serializes concurrent live turns through one pending coordinator", async () => {
     const { runId, hitlId } = await seedChatPause();
     const api = makeFakeApi();
 
@@ -826,12 +858,12 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
     );
     const results = await Promise.allSettled(racers);
 
-    // Every lost race is a clean CONFLICT (never a raw 23505 / 500), and at
-    // least one turn wins.
+    // A second reviewer sees the durable pending turn rather than a raw unique
+    // violation or a second prompt. At least one turn wins.
     for (const r of results) {
       if (r.status === "rejected") {
         expect(r.reason).toBeInstanceOf(MaisterError);
-        expect((r.reason as MaisterError).code).toBe("CONFLICT");
+        expect((r.reason as MaisterError).code).toBe("PRECONDITION");
       }
     }
 

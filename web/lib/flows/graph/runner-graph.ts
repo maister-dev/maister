@@ -172,15 +172,7 @@ import {
   type WorkspacePolicy,
 } from "@/lib/config.schema";
 import { projectRunEvents } from "@/lib/projector/artifact-projector";
-import {
-  compareThreadReplies,
-  compareThreadRoots,
-} from "@/lib/review-comments/order";
-import {
-  composeReworkPayload,
-  type ComposeRootComment,
-  type ComposeThread,
-} from "@/lib/review-comments/serialize";
+import { buildReviewFeedbackPacket } from "@/lib/review-comments/feedback-packet";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import { checkpointSession, listSessions } from "@/lib/supervisor-client";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
@@ -224,8 +216,11 @@ import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, runSessions, hitlRequests, reviewComments, gateChatMessages } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  runs,
+  runSessions,
+  hitlRequests,
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-runner-graph",
@@ -1755,91 +1750,6 @@ export function collectDeclaredCommentsVars(
   return seeded;
 }
 
-// ADR-072: a review_comments row in the structural shape the composer reads,
-// plus the thread-assembly fields. Replies reuse the root shape with null
-// anchor columns (DB CHECK).
-type ReviewCommentRow = ComposeRootComment & {
-  parentId: string | null;
-  status: "open" | "resolved";
-};
-
-// ADR-072: load the run's OPEN review-comment threads (open roots + their
-// replies) for the rework compose. Queries the schema directly instead of
-// M30 (ADR-078): gate-chat transcript of this review node's DECIDING visit —
-// the latest hitl row for (run, node) — in seq order, mapped for the rework
-// composer. Direct table read for the same cycle reason as
-// loadOpenReviewThreads below.
-async function loadGateChatForCompose(
-  runId: string,
-  nodeId: string,
-  db: Db,
-): Promise<
-  Array<{ role: "user" | "agent"; authorLabel: string; body: string }>
-> {
-  const hitlRows: Array<{ id: string }> = await db
-    .select({ id: hitlRequests.id })
-    .from(hitlRequests)
-    .where(and(eq(hitlRequests.runId, runId), eq(hitlRequests.stepId, nodeId)))
-    .orderBy(desc(hitlRequests.createdAt))
-    .limit(1);
-  const hitlId = hitlRows[0]?.id;
-
-  if (!hitlId) return [];
-
-  const rows: Array<{
-    role: "user" | "agent";
-    authorLabel: string;
-    body: string;
-  }> = await db
-    .select({
-      role: gateChatMessages.role,
-      authorLabel: gateChatMessages.authorLabel,
-      body: gateChatMessages.body,
-    })
-    .from(gateChatMessages)
-    .where(eq(gateChatMessages.hitlRequestId, hitlId))
-    .orderBy(gateChatMessages.seq);
-
-  return rows;
-}
-
-// lib/review-comments/service.ts `listThreads`: that module imports
-// lib/services/hitl.ts (PENDING_HITL_RUN_STATUS), which imports
-// lib/flows/runner.ts → this module — a cycle. The frozen ordering contract
-// still has ONE home: the comparators in lib/review-comments/order.ts are
-// shared with the service, and the composer re-sorts defensively.
-async function loadOpenReviewThreads(
-  runId: string,
-  db: Db,
-): Promise<ComposeThread[]> {
-  const rows = (await db
-    .select()
-    .from(reviewComments)
-    .where(eq(reviewComments.runId, runId))) as ReviewCommentRow[];
-
-  const repliesByRoot = new Map<string, ReviewCommentRow[]>();
-
-  for (const row of rows) {
-    if (row.parentId === null) continue;
-
-    const bucket = repliesByRoot.get(row.parentId);
-
-    if (bucket) {
-      bucket.push(row);
-    } else {
-      repliesByRoot.set(row.parentId, [row]);
-    }
-  }
-
-  return rows
-    .filter((row) => row.parentId === null && row.status === "open")
-    .sort(compareThreadRoots)
-    .map((root) => ({
-      root,
-      replies: (repliesByRoot.get(root.id) ?? []).sort(compareThreadReplies),
-    }));
-}
-
 // ADR-072 (D4) evidence snapshot: the composed rework payload as ONE
 // artifact_instances row (kind human_note, producer runner, locator inline
 // with additive {hitlRequestId, threadIds}), linked to the gate's
@@ -1854,28 +1764,14 @@ async function recordComposedCommentsEvidence(
     nodeAttemptId: string;
     attempt: number;
     composed: string;
+    feedbackFingerprint?: string;
+    hitlRequestId: string;
     threadIds: string[];
   },
   db: Db,
   logger: pino.Logger,
 ): Promise<void> {
   try {
-    // The gate visit just consumed = the latest responded hitl row for this
-    // node (mirrors the recordDefaultArtifacts hitl-response lookup).
-    const hitlRows = (await db
-      .select({ id: hitlRequests.id })
-      .from(hitlRequests)
-      .where(
-        and(
-          eq(hitlRequests.runId, args.runId),
-          eq(hitlRequests.stepId, args.nodeId),
-          isNotNull(hitlRequests.response),
-        ),
-      )
-      .orderBy(desc(hitlRequests.createdAt))
-      .limit(1)) as Array<{ id: string }>;
-    const hitlRequestId = hitlRows[0]?.id;
-
     await recordArtifact(
       {
         // Reserved `adr071:` namespace — declared-output ids are
@@ -1894,8 +1790,11 @@ async function recordComposedCommentsEvidence(
         locator: {
           kind: "inline",
           text: args.composed,
-          ...(hitlRequestId !== undefined ? { hitlRequestId } : {}),
+          hitlRequestId: args.hitlRequestId,
           threadIds: args.threadIds,
+          ...(args.feedbackFingerprint !== undefined
+            ? { feedbackFingerprint: args.feedbackFingerprint }
+            : {}),
         },
         validity: "current",
       },
@@ -1906,8 +1805,11 @@ async function recordComposedCommentsEvidence(
         runId: args.runId,
         nodeId: args.nodeId,
         nodeAttemptId: args.nodeAttemptId,
-        hitlRequestId,
+        hitlRequestId: args.hitlRequestId,
         threadCount: args.threadIds.length,
+        ...(args.feedbackFingerprint !== undefined
+          ? { feedbackFingerprint: args.feedbackFingerprint }
+          : {}),
         composedLength: args.composed.length,
       },
       "rework comments evidence recorded",
@@ -1918,6 +1820,35 @@ async function recordComposedCommentsEvidence(
       "rework comments evidence record failed (non-fatal)",
     );
   }
+}
+
+async function loadLatestRespondedReviewHitlId(
+  runId: string,
+  nodeId: string,
+  db: Db,
+): Promise<string> {
+  const rows = (await db
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, runId),
+        eq(hitlRequests.stepId, nodeId),
+        isNotNull(hitlRequests.response),
+      ),
+    )
+    .orderBy(desc(hitlRequests.createdAt))
+    .limit(1)) as Array<{ id: string }>;
+  const hitlRequestId = rows[0]?.id;
+
+  if (!hitlRequestId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `rework response is missing its review HITL row for node ${nodeId}`,
+    );
+  }
+
+  return hitlRequestId;
 }
 
 // M14 T4.1: resolve + materialize a capability profile for a capability-declaring
@@ -4646,78 +4577,101 @@ export async function runGraph(
         // markDownstreamStale: this review node is itself downstream of the
         // rework target, so recording the evidence row earlier would let the
         // same rework's staling immediately flip it stale.
-        const commentsVar =
-          node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
+        const planReview = planReviewSettingsForNode(node);
+        const vars = result.vars as Record<string, unknown>;
 
-        if (commentsVar) {
-          const vars = result.vars as Record<string, unknown>;
-          const summary = vars[commentsVar] ?? vars.comments;
-          const openThreads = await loadOpenReviewThreads(runId, db);
-          // M30 (ADR-078): the deciding visit's gate-chat transcript folds
-          // into the rework payload alongside the review comments.
-          const chatMessages = await loadGateChatForCompose(runId, node.id, db);
-          const hasComposeInput =
-            openThreads.length > 0 || chatMessages.length > 0;
-
-          // D3 zero-input guarantee: with no open threads AND no chat the raw
-          // summary value passes through UNTOUCHED (byte-identical injection;
-          // nothing injected when none was submitted) — pre-ADR-072 behavior.
-          const composed = hasComposeInput
-            ? composeReworkPayload(
-                typeof summary === "string" ? summary : "",
-                openThreads,
-                chatMessages,
-              )
-            : typeof summary === "string"
-              ? summary
-              : undefined;
-          const injected = hasComposeInput ? composed : summary;
-
-          const planReview = planReviewSettingsForNode(node);
-          const planReviewAnswers = planReview
-            ? vars[planReview.answers_var]
-            : undefined;
+        if (planReview) {
+          const comments = vars[planReview.comments_var];
+          const answers = vars[planReview.answers_var];
           const serializedAnswers =
-            planReviewAnswers === undefined
+            answers === undefined
               ? undefined
-              : typeof planReviewAnswers === "string"
-                ? planReviewAnswers
-                : JSON.stringify(planReviewAnswers);
+              : typeof answers === "string"
+                ? answers
+                : JSON.stringify(answers);
+          const injectedComments =
+            typeof comments === "string" ? comments : undefined;
 
-          if (injected !== undefined || serializedAnswers !== undefined) {
+          if (
+            injectedComments !== undefined ||
+            serializedAnswers !== undefined
+          ) {
             pendingInjectedVars = {
-              ...(injected !== undefined ? { [commentsVar]: injected } : {}),
-              ...(planReview && serializedAnswers !== undefined
+              ...(injectedComments !== undefined
+                ? { [planReview.comments_var]: injectedComments }
+                : {}),
+              ...(serializedAnswers !== undefined
                 ? { [planReview.answers_var]: serializedAnswers }
                 : {}),
             };
           }
 
-          if (composed !== undefined) {
+          if (injectedComments !== undefined) {
+            const hitlRequestId = await loadLatestRespondedReviewHitlId(
+              runId,
+              node.id,
+              db,
+            );
+
             await recordComposedCommentsEvidence(
               {
                 runId,
                 nodeId: node.id,
                 nodeAttemptId,
                 attempt: nodeAttemptNumber,
-                composed,
-                threadIds: openThreads.map((t) => t.root.id),
+                composed: injectedComments,
+                hitlRequestId,
+                threadIds: [],
               },
               db,
               log2,
             );
           }
+        } else {
+          const hitlRequestId = await loadLatestRespondedReviewHitlId(
+            runId,
+            node.id,
+            db,
+          );
+          const feedback = await buildReviewFeedbackPacket({
+            db,
+            runId,
+            hitlRequestId,
+            response: result.vars,
+          });
 
-          log2.debug(
+          pendingInjectedVars = {
+            [feedback.target.commentsVar]: feedback.payload,
+          };
+
+          await recordComposedCommentsEvidence(
             {
+              runId,
               nodeId: node.id,
-              commentsVar,
-              openThreadCount: openThreads.length,
-              composedLength: composed?.length ?? null,
-              injected: injected !== undefined,
-              planReviewAnswersInjected: serializedAnswers !== undefined,
+              nodeAttemptId,
+              attempt: nodeAttemptNumber,
+              composed: feedback.payload,
+              feedbackFingerprint: feedback.fingerprint,
+              hitlRequestId,
+              threadIds: feedback.openThreadIds,
             },
-            "rework comments composed",
+            db,
+            log2,
+          );
+
+          log2.info(
+            {
+              runId,
+              hitlRequestId,
+              nodeId: node.id,
+              targetNodeId: feedback.target.nodeId,
+              commentsVar: feedback.target.commentsVar,
+              openThreadCount: feedback.openThreadIds.length,
+              resolvedThreadCount: feedback.resolvedThreadCount,
+              gateChatMessageCount: feedback.gateChatMessageCount,
+              feedbackFingerprint: feedback.fingerprint,
+            },
+            "review feedback packet delivered to rework target",
           );
         }
       } else {

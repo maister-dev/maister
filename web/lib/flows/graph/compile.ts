@@ -12,6 +12,10 @@ import { parseWhen } from "./when-grammar";
 
 import { TERMINAL_TRANSITION_TARGET } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors-core";
+import {
+  findMustacheClose,
+  parseDefaultExpression,
+} from "@/lib/flows/template-expressions";
 
 const log = pino({
   name: "flow-compile",
@@ -290,6 +294,107 @@ function verifyReworkReset(
   }
 }
 
+const TOP_LEVEL_TEMPLATE_KEY_RE = /^[A-Za-z0-9_-]+$/;
+
+function templateReadsTopLevelVar(template: string, variable: string): boolean {
+  let cursor = 0;
+
+  while (cursor < template.length) {
+    const start = template.indexOf("{{", cursor);
+
+    if (start === -1) return false;
+    const close = findMustacheClose(template, start);
+
+    if (close === -1) return false;
+
+    const rawTag = template.slice(start + 2, close).trim();
+    const expression = parseDefaultExpression(rawTag);
+    const path = expression?.path ?? rawTag;
+
+    if (path === variable) return true;
+    cursor = close + 2;
+  }
+
+  return false;
+}
+
+function rendererTemplate(node: NodeDef): { field: string; value: string } | null {
+  switch (node.type) {
+    case "ai_coding":
+    case "judge":
+    case "orchestrator":
+      return { field: "action.prompt", value: node.action.prompt };
+    case "cli":
+    case "check":
+      return { field: "action.command", value: node.action.command };
+    default:
+      return null;
+  }
+}
+
+// ADR-137: every human-review rework must be able to deliver the exact packet
+// to each declared destination. Runtime re-checks open legacy gates, while new
+// manifests fail at compile/load before an agent session can start.
+function verifyHumanReviewFeedbackConsumers(
+  node: NodeDef,
+  nodesById: Map<string, NodeDef>,
+): void {
+  if (node.type !== "human" || node.rework === undefined) return;
+
+  const reworkDecisionTargets = Object.values(node.transitions ?? {}).filter(
+    (target) => node.rework?.allowedTargets.includes(target),
+  );
+
+  if (reworkDecisionTargets.length === 0) return;
+
+  const commentsVar = node.rework.commentsVar ?? node.finish?.human?.commentsVar;
+
+  if (
+    typeof commentsVar !== "string" ||
+    !TOP_LEVEL_TEMPLATE_KEY_RE.test(commentsVar)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `human review node "${node.id}" needs a valid top-level commentsVar for rework feedback`,
+    );
+  }
+
+  for (const targetId of node.rework.allowedTargets) {
+    const target = nodesById.get(targetId);
+
+    if (!target) {
+      throw new MaisterError(
+        "CONFIG",
+        `human review node "${node.id}" rework target "${targetId}" does not exist for commentsVar "${commentsVar}"`,
+      );
+    }
+
+    const template = rendererTemplate(target);
+
+    if (!template) {
+      throw new MaisterError(
+        "CONFIG",
+        `human review node "${node.id}" rework target "${targetId}" cannot consume commentsVar "${commentsVar}" (supported target types: ai_coding, judge, orchestrator, cli, check)`,
+      );
+    }
+    if (!templateReadsTopLevelVar(template.value, commentsVar)) {
+      throw new MaisterError(
+        "CONFIG",
+        `human review node "${node.id}" rework target "${targetId}" must render commentsVar "${commentsVar}" in ${template.field}`,
+      );
+    }
+  }
+
+  log.debug(
+    {
+      nodeId: node.id,
+      targets: node.rework.allowedTargets,
+      commentsVar,
+    },
+    "[review-feedback] verified rework targets consume feedback",
+  );
+}
+
 function compileGraph(
   graphNodes: NodeDef[],
   flowVerdictCalibration: FlowYamlV1["verdict_calibration"],
@@ -343,6 +448,7 @@ function compileGraph(
   for (const node of graphNodes) {
     verifyDecideAndOnMismatch(node);
     verifyReworkReset(node, nodesById);
+    verifyHumanReviewFeedbackConsumers(node, nodesById);
 
     const rawGates = node.pre_finish?.gates ?? [];
     const gates: GateDef[] = rawGates.map((g) => {

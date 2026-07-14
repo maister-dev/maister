@@ -485,7 +485,7 @@ describe("runGraph — M26 structured node output (P1)", () => {
           type: "cli",
           action: {
             command:
-              'if [ ! -f once.marker ]; then echo \'{"verdict":"v1"}\' > "$MAISTER_OUTPUT_FILE"; touch once.marker; fi; echo worked',
+              'if [ ! -f once.marker ]; then echo \'{"verdict":"v1"}\' > "$MAISTER_OUTPUT_FILE"; touch once.marker; fi; echo worked; : "{{ review_comments }}"',
           },
           output: { result: { schema: "./schemas/result.json" } },
           transitions: { success: "review" },
@@ -493,12 +493,13 @@ describe("runGraph — M26 structured node output (P1)", () => {
         {
           id: "review",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"] } },
+          finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
           transitions: { approve: "done", rework: "work" },
           rework: {
             allowedTargets: ["work"],
             workspacePolicies: ["keep"],
             maxLoops: 2,
+            commentsVar: "review_comments",
           },
         },
       ],

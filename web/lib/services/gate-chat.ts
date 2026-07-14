@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
@@ -33,8 +33,14 @@ import {
 } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { gateChatMessages, hitlRequests, projects, runs, workspaces } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  gateChatMessages,
+  gateChatTurns,
+  hitlRequests,
+  projects,
+  runs,
+  workspaces,
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -46,6 +52,19 @@ const log = pino({
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 60_000;
+
+// The coordinator lease must outlive the bounded supervisor handoff and leave
+// enough recovery room for the post-prompt transcript write. It is deliberately
+// server-owned: clients cannot extend an in-flight turn by retrying requests.
+export const GATE_CHAT_TURN_LEASE_MS = 180_000;
+
+type GateChatTurnState = "pending" | "completed" | "failed" | "aborted";
+
+type GateChatTurnRow = {
+  id: string;
+  state: GateChatTurnState;
+  leaseExpiresAt: Date | null;
+};
 
 // M30 (ADR-078 L1): the instruct layer — server-side constant prepended to
 // every chat prompt, never user text. L2/L3 back it up.
@@ -80,6 +99,7 @@ function rethrowSeqConflict(err: unknown): never {
 export function gateChatAvailability(input: {
   runStatus: string;
   hitlKind: string | null;
+  hitlResponse?: unknown;
   hitlRespondedAt: Date | null;
   acpSessionId: string | null;
 }): { available: boolean; reason?: string } {
@@ -101,6 +121,12 @@ export function gateChatAvailability(input: {
   if (input.hitlRespondedAt !== null) {
     return { available: false, reason: "the pause already resolved" };
   }
+  if (input.hitlResponse !== null && input.hitlResponse !== undefined) {
+    return {
+      available: false,
+      reason: "the pause response is being delivered",
+    };
+  }
   if (!input.acpSessionId) {
     return {
       available: false,
@@ -109,6 +135,113 @@ export function gateChatAvailability(input: {
   }
 
   return { available: true };
+}
+
+function turnLeaseExpiresAt(now: Date): Date {
+  return new Date(now.getTime() + GATE_CHAT_TURN_LEASE_MS);
+}
+
+// This helper is intentionally called while the HITL row is already locked.
+// Both response claim and chat admission take locks hitl_request → turn, which
+// makes a response and a long-running ACP prompt mutually fenceable without
+// ever retaining a database transaction during the prompt.
+export async function abortExpiredGateChatTurns(
+  tx: Db,
+  hitlRequestId: string,
+  now = new Date(),
+): Promise<number> {
+  const rows = await tx
+    .update(gateChatTurns)
+    .set({
+      state: "aborted",
+      leaseExpiresAt: null,
+      completedAt: now,
+      errorCode: "LEASE_EXPIRED",
+    })
+    .where(
+      and(
+        eq(gateChatTurns.hitlRequestId, hitlRequestId),
+        eq(gateChatTurns.state, "pending"),
+        lte(gateChatTurns.leaseExpiresAt, now),
+      ),
+    )
+    .returning({ id: gateChatTurns.id });
+
+  return rows.length;
+}
+
+export async function requireNoLiveGateChatTurn(
+  tx: Db,
+  hitlRequestId: string,
+): Promise<void> {
+  const expiredCount = await abortExpiredGateChatTurns(tx, hitlRequestId);
+  const rows = (await tx
+    .select({
+      id: gateChatTurns.id,
+      state: gateChatTurns.state,
+      leaseExpiresAt: gateChatTurns.leaseExpiresAt,
+    })
+    .from(gateChatTurns)
+    .where(
+      and(
+        eq(gateChatTurns.hitlRequestId, hitlRequestId),
+        eq(gateChatTurns.state, "pending"),
+      ),
+    )
+    .for("update")) as GateChatTurnRow[];
+
+  if (rows[0]) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "a gate-chat turn is still in progress; retry after it completes",
+    );
+  }
+
+  if (expiredCount > 0) {
+    log.info(
+      { hitlRequestId, expiredCount },
+      "[gate-chat] expired turns aborted before response/admission",
+    );
+  }
+}
+
+async function failGateChatTurn(args: {
+  db: Db;
+  turnId: string;
+  hitlRequestId: string;
+  errorCode: string;
+}): Promise<void> {
+  await args.db.transaction(async (tx: Db) => {
+    const hitlRows = await tx
+      .select({
+        response: hitlRequests.response,
+        respondedAt: hitlRequests.respondedAt,
+      })
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, args.hitlRequestId))
+      .for("update");
+    const hitl = hitlRows[0];
+    const turnRows = await tx
+      .select({ id: gateChatTurns.id, state: gateChatTurns.state })
+      .from(gateChatTurns)
+      .where(eq(gateChatTurns.id, args.turnId))
+      .for("update");
+    const turn = turnRows[0];
+
+    if (!turn || turn.state !== "pending") return;
+
+    const isClaimed =
+      !hitl || hitl.response !== null || hitl.respondedAt !== null;
+    await tx
+      .update(gateChatTurns)
+      .set({
+        state: isClaimed ? "aborted" : "failed",
+        leaseExpiresAt: null,
+        completedAt: new Date(),
+        errorCode: args.errorCode,
+      })
+      .where(eq(gateChatTurns.id, args.turnId));
+  });
 }
 
 export type GateChatSupervisorApi = {
@@ -358,6 +491,7 @@ export async function sendGateChatTurn(args: {
   const availability = gateChatAvailability({
     runStatus: run.status,
     hitlKind: hitl.kind,
+    hitlResponse: hitl.response,
     hitlRespondedAt: hitl.respondedAt,
     acpSessionId: activeAcpSessionId,
   });
@@ -422,42 +556,131 @@ export async function sendGateChatTurn(args: {
     }
   }
 
-  // (3) persist the user turn. The visit number mirrors the review schema's
-  // gateAttempt (ADR-072) when present; non-review (form) pauses default to 1.
-  const gateAttempt =
-    typeof (hitl.schema as { gateAttempt?: unknown } | null)?.gateAttempt ===
-    "number"
-      ? (hitl.schema as { gateAttempt: number }).gateAttempt
-      : 1;
-  const seqRows = await d
-    .select({ max: sql<number>`coalesce(max(${gateChatMessages.seq}), 0)` })
-    .from(gateChatMessages)
-    .where(eq(gateChatMessages.hitlRequestId, args.hitlRequestId));
-  const baseSeq = Number(seqRows[0]?.max ?? 0);
+  // (3) Admission is a short transaction. It locks the exact HITL row shared
+  // with response claim, reaps an expired abandoned prompt, then persists the
+  // user transcript row and its pending coordinator together. Nothing below
+  // this point holds a database transaction across ACP.
   const userLabel = args.actorLabel ?? "user";
-  let userInsert: Array<{ id: string; createdAt: Date }>;
+  let admitted: {
+    turnId: string;
+    nodeId: string;
+    gateAttempt: number;
+    userMessage: GateChatMessageView;
+  };
 
   try {
-    userInsert = await d
-      .insert(gateChatMessages)
-      .values({
-        runId: args.runId,
-        hitlRequestId: args.hitlRequestId,
-        nodeId: hitl.stepId,
-        gateAttempt,
-        role: "user",
-        authorUserId: args.actorUserId ?? null,
-        authorLabel: userLabel,
-        body: args.message,
+    admitted = await d.transaction(async (tx: Db) => {
+      const lockedHitlRows = await tx
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, args.hitlRequestId))
+        .for("update");
+      const lockedHitl = lockedHitlRows[0];
+      const lockedRunRows = await tx
+        .select()
+        .from(runs)
+        .where(eq(runs.id, args.runId))
+        .for("update");
+      const lockedRun = lockedRunRows[0];
+
+      if (!lockedRun || !lockedHitl || lockedHitl.runId !== args.runId) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "gate-chat source is no longer available",
+        );
+      }
+
+      const lockedAvailability = gateChatAvailability({
+        runStatus: lockedRun.status,
+        hitlKind: lockedHitl.kind,
+        hitlResponse: lockedHitl.response,
+        hitlRespondedAt: lockedHitl.respondedAt,
         acpSessionId: activeAcpSessionId,
-        seq: baseSeq + 1,
-      })
-      .returning({
-        id: gateChatMessages.id,
-        createdAt: gateChatMessages.createdAt,
       });
+
+      if (!lockedAvailability.available) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `gate-chat unavailable: ${lockedAvailability.reason}`,
+        );
+      }
+
+      await requireNoLiveGateChatTurn(tx, args.hitlRequestId);
+
+      const gateAttempt =
+        typeof (lockedHitl.schema as { gateAttempt?: unknown } | null)
+          ?.gateAttempt === "number"
+          ? (lockedHitl.schema as { gateAttempt: number }).gateAttempt
+          : 1;
+      const seqRows = await tx
+        .select({ max: sql<number>`coalesce(max(${gateChatMessages.seq}), 0)` })
+        .from(gateChatMessages)
+        .where(eq(gateChatMessages.hitlRequestId, args.hitlRequestId));
+      const baseSeq = Number(seqRows[0]?.max ?? 0);
+      const insertedUserRows = await tx
+        .insert(gateChatMessages)
+        .values({
+          runId: args.runId,
+          hitlRequestId: args.hitlRequestId,
+          nodeId: lockedHitl.stepId,
+          gateAttempt,
+          role: "user",
+          authorUserId: args.actorUserId ?? null,
+          authorLabel: userLabel,
+          body: args.message,
+          acpSessionId: activeAcpSessionId,
+          seq: baseSeq + 1,
+        })
+        .returning({
+          id: gateChatMessages.id,
+          createdAt: gateChatMessages.createdAt,
+        });
+      const userMessage = insertedUserRows[0];
+
+      if (!userMessage) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "gate-chat user turn was not written",
+        );
+      }
+
+      const turnRows = await tx
+        .insert(gateChatTurns)
+        .values({
+          runId: args.runId,
+          hitlRequestId: args.hitlRequestId,
+          userMessageId: userMessage.id,
+          state: "pending",
+          leaseExpiresAt: turnLeaseExpiresAt(new Date()),
+        })
+        .returning({ id: gateChatTurns.id });
+      const turn = turnRows[0];
+
+      if (!turn) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "gate-chat turn was not admitted",
+        );
+      }
+
+      return {
+        turnId: turn.id,
+        nodeId: lockedHitl.stepId,
+        gateAttempt,
+        userMessage: {
+          id: userMessage.id,
+          role: "user" as const,
+          authorLabel: userLabel,
+          body: args.message,
+          seq: baseSeq + 1,
+          mutationReverted: false,
+          createdAt: userMessage.createdAt,
+        },
+      };
+    });
   } catch (err) {
-    // Lost the seq race before prompting — reject cleanly, never double-prompt.
+    // The partial unique index is a final backstop if an application-level
+    // transaction is bypassed or a future writer forgets the HITL row lock.
     rethrowSeqConflict(err);
   }
 
@@ -466,21 +689,31 @@ export async function sendGateChatTurn(args: {
   let supervisorSessionId: string;
   let resumed = false;
 
-  if (run.status === "NeedsInput") {
-    const sessions = await api.listSessions();
-    const live = sessions.find(
-      (s) => s.runId === args.runId && s.status === "live",
-    );
+  try {
+    if (run.status === "NeedsInput") {
+      const sessions = await api.listSessions();
+      const live = sessions.find(
+        (s) => s.runId === args.runId && s.status === "live",
+      );
 
-    if (live) {
-      supervisorSessionId = live.sessionId;
+      if (live) {
+        supervisorSessionId = live.sessionId;
+      } else {
+        // The pause says live but no session exists (crash window) — treat as
+        // idle-style resume rather than refusing the reviewer.
+        supervisorSessionId = await chatResume();
+      }
     } else {
-      // The pause says live but no session exists (crash window) — treat as
-      // idle-style resume rather than refusing the reviewer.
       supervisorSessionId = await chatResume();
     }
-  } else {
-    supervisorSessionId = await chatResume();
+  } catch (err) {
+    await failGateChatTurn({
+      db: d,
+      turnId: admitted.turnId,
+      hitlRequestId: args.hitlRequestId,
+      errorCode: "ACP_PROTOCOL",
+    });
+    throw err;
   }
 
   async function chatResume(): Promise<string> {
@@ -613,6 +846,12 @@ export async function sendGateChatTurn(args: {
     // X-DEFER: release the stream consumer on EVERY failure path.
     abort.abort();
     await consumer;
+    await failGateChatTurn({
+      db: d,
+      turnId: admitted.turnId,
+      hitlRequestId: args.hitlRequestId,
+      errorCode: "ACP_PROTOCOL",
+    });
     throw new MaisterError(
       "ACP_PROTOCOL",
       `gate-chat prompt failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -623,41 +862,135 @@ export async function sendGateChatTurn(args: {
   abort.abort();
   await consumer;
 
-  // The pause stays warm while the reviewer is asking questions.
-  await bumpKeepalive(args.runId, { db: d });
-
-  // (5) L3 sense + restore — unconditional, fail-closed.
-  const sensed = await senseAndRestore({
-    worktreePath: workspace.worktreePath,
-    baselineRef,
-  });
-
-  // (6) persist the agent turn — the marker lands AFTER the side-effects.
-  const replyBody = replyFromEvent ?? replyChunks;
-  let agentInsert: Array<{ id: string; createdAt: Date }>;
+  let sensed: { reverted: boolean };
 
   try {
-    agentInsert = await d
-      .insert(gateChatMessages)
-      .values({
-        runId: args.runId,
-        hitlRequestId: args.hitlRequestId,
-        nodeId: hitl.stepId,
-        gateAttempt,
-        role: "agent",
-        authorUserId: null,
+    // The pause stays warm while the reviewer is asking questions.
+    await bumpKeepalive(args.runId, { db: d });
+
+    // (5) L3 sense + restore — unconditional, fail-closed.
+    sensed = await senseAndRestore({
+      worktreePath: workspace.worktreePath,
+      baselineRef,
+    });
+  } catch (err) {
+    await failGateChatTurn({
+      db: d,
+      turnId: admitted.turnId,
+      hitlRequestId: args.hitlRequestId,
+      errorCode: err instanceof MaisterError ? err.code : "CHECKPOINT",
+    });
+    throw err;
+  }
+
+  // (6) persist the agent turn and mark the coordinator completed in one
+  // transaction. A response that won after an expired lease causes an abort;
+  // the late ACP reply is deliberately dropped.
+  const replyBody = replyFromEvent ?? replyChunks;
+  let agentMessage: GateChatMessageView & { mutationReverted: boolean };
+
+  try {
+    agentMessage = await d.transaction(async (tx: Db) => {
+      const lockedHitlRows = await tx
+        .select({
+          response: hitlRequests.response,
+          respondedAt: hitlRequests.respondedAt,
+        })
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, args.hitlRequestId))
+        .for("update");
+      const lockedHitl = lockedHitlRows[0];
+      const turnRows = await tx
+        .select({ id: gateChatTurns.id, state: gateChatTurns.state })
+        .from(gateChatTurns)
+        .where(eq(gateChatTurns.id, admitted.turnId))
+        .for("update");
+      const turn = turnRows[0];
+
+      if (
+        !turn ||
+        turn.state !== "pending" ||
+        !lockedHitl ||
+        lockedHitl.response !== null ||
+        lockedHitl.respondedAt !== null
+      ) {
+        if (turn?.state === "pending") {
+          await tx
+            .update(gateChatTurns)
+            .set({
+              state: "aborted",
+              leaseExpiresAt: null,
+              completedAt: new Date(),
+              errorCode: "RESPONSE_CLAIMED",
+            })
+            .where(eq(gateChatTurns.id, turn.id));
+        }
+        throw new MaisterError(
+          "PRECONDITION",
+          "gate-chat turn became stale before its agent reply could be stored",
+        );
+      }
+
+      const agentRows = await tx
+        .insert(gateChatMessages)
+        .values({
+          runId: args.runId,
+          hitlRequestId: args.hitlRequestId,
+          nodeId: admitted.nodeId,
+          gateAttempt: admitted.gateAttempt,
+          role: "agent",
+          authorUserId: null,
+          authorLabel: "agent",
+          body: replyBody,
+          acpSessionId: activeAcpSessionId,
+          seq: admitted.userMessage.seq + 1,
+          mutationReverted: sensed.reverted,
+        })
+        .returning({
+          id: gateChatMessages.id,
+          createdAt: gateChatMessages.createdAt,
+        });
+      const storedAgent = agentRows[0];
+
+      if (!storedAgent) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "gate-chat agent turn was not written",
+        );
+      }
+
+      await tx
+        .update(gateChatTurns)
+        .set({
+          state: "completed",
+          agentMessageId: storedAgent.id,
+          leaseExpiresAt: null,
+          completedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(gateChatTurns.id, admitted.turnId),
+            eq(gateChatTurns.state, "pending"),
+          ),
+        );
+
+      return {
+        id: storedAgent.id,
+        role: "agent" as const,
         authorLabel: "agent",
         body: replyBody,
-        acpSessionId: activeAcpSessionId,
-        seq: baseSeq + 2,
+        seq: admitted.userMessage.seq + 1,
         mutationReverted: sensed.reverted,
-      })
-      .returning({
-        id: gateChatMessages.id,
-        createdAt: gateChatMessages.createdAt,
-      });
+        createdAt: storedAgent.createdAt,
+      };
+    });
   } catch (err) {
-    // A racing turn took baseSeq+2 between this turn's user and agent inserts.
+    await failGateChatTurn({
+      db: d,
+      turnId: admitted.turnId,
+      hitlRequestId: args.hitlRequestId,
+      errorCode: err instanceof MaisterError ? err.code : "ACP_PROTOCOL",
+    });
     rethrowSeqConflict(err);
   }
 
@@ -673,24 +1006,8 @@ export async function sendGateChatTurn(args: {
   );
 
   return {
-    userMessage: {
-      id: userInsert[0].id,
-      role: "user",
-      authorLabel: userLabel,
-      body: args.message,
-      seq: baseSeq + 1,
-      mutationReverted: false,
-      createdAt: userInsert[0].createdAt,
-    },
-    agentMessage: {
-      id: agentInsert[0].id,
-      role: "agent",
-      authorLabel: "agent",
-      body: replyBody,
-      seq: baseSeq + 2,
-      mutationReverted: sensed.reverted,
-      createdAt: agentInsert[0].createdAt,
-    },
+    userMessage: admitted.userMessage,
+    agentMessage,
     resumed,
   };
 }

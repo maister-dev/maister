@@ -183,13 +183,13 @@ function onExhaustionFlow() {
       {
         id: "work",
         type: "cli",
-        action: { command: "echo work" },
+        action: { command: "echo work {{ review_comments ?? '' }}" },
         transitions: { success: "review" },
       },
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"] } },
+        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
         transitions: {
           approve: "done",
           rework: "work",
@@ -200,6 +200,7 @@ function onExhaustionFlow() {
           workspacePolicies: ["keep"],
           maxLoops: 1,
           onExhaustion: "exhausted",
+          commentsVar: "review_comments",
         },
       },
       {
@@ -223,18 +224,19 @@ function noOnExhaustionFlow() {
       {
         id: "work",
         type: "cli",
-        action: { command: "echo work" },
+        action: { command: "echo work {{ review_comments ?? '' }}" },
         transitions: { success: "review" },
       },
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"] } },
+        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
         transitions: { approve: "done", rework: "work" },
         rework: {
           allowedTargets: ["work"],
           workspacePolicies: ["keep"],
           maxLoops: 1,
+          commentsVar: "review_comments",
         },
       },
     ],
@@ -326,7 +328,7 @@ function resetLoopFlow(withReset: boolean) {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"] } },
+        finish: { human: { decisions: ["approve", "rework"], commentsVar: "human_notes" } },
         transitions: {
           approve: "done",
           rework: "implement",
@@ -337,6 +339,7 @@ function resetLoopFlow(withReset: boolean) {
           workspacePolicies: ["keep"],
           maxLoops: 1,
           onExhaustion: "exhausted",
+          commentsVar: "human_notes",
         },
       },
       {
@@ -472,19 +475,20 @@ function onExhaustionTerminalFlow() {
       {
         id: "work",
         type: "cli",
-        action: { command: "echo work" },
+        action: { command: "echo work {{ review_comments ?? '' }}" },
         transitions: { success: "review" },
       },
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"] } },
+        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
         transitions: { approve: "done", rework: "work", exhausted: "done" },
         rework: {
           allowedTargets: ["work"],
           workspacePolicies: ["keep"],
           maxLoops: 1,
           onExhaustion: "exhausted",
+          commentsVar: "review_comments",
         },
       },
     ],

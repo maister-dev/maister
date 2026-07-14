@@ -71,7 +71,7 @@ const resumeManifest = {
     {
       id: "implement",
       type: "ai_coding",
-      action: { prompt: "/impl" },
+      action: { prompt: "/impl\n\n{{ review_comments }}" },
       transitions: { success: REENTRY_NODE },
     },
     {
@@ -97,6 +97,7 @@ const resumeManifest = {
         human: {
           role: "maintainer",
           decisions: ["approve", "rework", "takeover"],
+          commentsVar: "review_comments",
         },
       },
       transitions: {
@@ -108,6 +109,7 @@ const resumeManifest = {
         allowedTargets: ["implement"],
         workspacePolicies: ["keep"],
         maxLoops: 3,
+        commentsVar: "review_comments",
       },
     },
   ],

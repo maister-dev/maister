@@ -30,7 +30,12 @@ const bodySchema = z.object({
   // ADR-125 budget discard/drop compatibility alias. The service canonicalizes
   // this with response.dropWorkspace after deriving the HITL kind from DB state.
   dropWorkspace: z.boolean().optional(),
-});
+  // ADR-137: opaque values from the side-effect-free review preview. The
+  // service accepts them only for a first review-rework claim and rejects any
+  // other review-rework transport fields after it knows the stored gate kind.
+  reviewSourceFingerprint: z.string().optional(),
+  reviewFeedbackFingerprint: z.string().optional(),
+}).passthrough();
 
 function errorResponse(
   err: unknown,

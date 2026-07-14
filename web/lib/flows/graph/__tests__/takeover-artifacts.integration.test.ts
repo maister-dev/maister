@@ -81,7 +81,7 @@ async function seedRun(): Promise<string> {
         {
           id: "work",
           type: "cli",
-          action: { command: "echo done" },
+          action: { command: "echo done {{ review_comments ?? '' }}" },
           transitions: { success: "review" },
         },
         {
@@ -91,10 +91,11 @@ async function seedRun(): Promise<string> {
             human: {
               role: "maintainer",
               decisions: ["approve", "takeover"],
+              commentsVar: "review_comments",
             },
           },
           transitions: { approve: "done", takeover: "work" },
-          rework: { allowedTargets: ["work"] },
+          rework: { allowedTargets: ["work"], commentsVar: "review_comments" },
         },
       ],
     },

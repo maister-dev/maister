@@ -167,7 +167,7 @@ describe("T4.1: artifact staleness on rework", () => {
         {
           id: "work",
           type: "cli",
-          action: { command: "echo work" },
+          action: { command: "echo work {{ review_comments ?? '' }}" },
           transitions: { success: "check" },
         },
         {
@@ -183,6 +183,7 @@ describe("T4.1: artifact staleness on rework", () => {
             human: {
               role: "maintainer",
               decisions: ["approve", "rework"],
+              commentsVar: "review_comments",
             },
           },
           transitions: { approve: "done", rework: "work" },
@@ -190,6 +191,7 @@ describe("T4.1: artifact staleness on rework", () => {
             allowedTargets: ["work"],
             workspacePolicies: ["keep"],
             maxLoops: 1,
+            commentsVar: "review_comments",
           },
         },
       ],

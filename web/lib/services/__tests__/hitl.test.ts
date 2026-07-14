@@ -810,7 +810,7 @@ describe("respondToHitl service — graph review decision", () => {
     workspacePolicies: ["keep"],
   };
 
-  it("valid rework decision: 200, persists decision/workspace_policy/rework_target", async () => {
+  it("rejects a fresh rework decision without preview fingerprints before mutation", async () => {
     const { runId, hitlRequestId } = seedFormRow("human", {
       schema: reviewSchema,
     });
@@ -820,29 +820,27 @@ describe("respondToHitl service — graph review decision", () => {
       label: "Test User",
     };
 
-    const res = await respondToHitl(
-      {
-        runId,
-        hitlRequestId,
-        body: {
-          response: {
-            decision: "rework",
-            comments: "tighten errors",
-            workspacePolicy: "keep",
+    await expect(
+      respondToHitl(
+        {
+          runId,
+          hitlRequestId,
+          body: {
+            response: {
+              decision: "rework",
+              comments: "tighten errors",
+              workspacePolicy: "keep",
+            },
           },
         },
-      },
-      actor,
-      { db: fakeDb },
-    );
-
-    expect(res.status).toBe(200);
+        actor,
+        { db: fakeDb },
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
     const row = dbState.tables.hitl_requests[0];
 
-    expect(row.decision).toBe("rework");
-    expect(row.workspacePolicy).toBe("keep");
-    expect(row.reworkTarget).toBe("implement");
-    expect(row.respondedAt).toBeInstanceOf(Date);
+    expect(row.response).toBeNull();
+    expect(row.respondedAt).toBeNull();
   });
 
   it("approve decision (terminal target): 200, no rework_target/workspace_policy", async () => {

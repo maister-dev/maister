@@ -48,6 +48,10 @@ import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snap
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  assertReviewFeedbackPresent,
+  buildReviewFeedbackPreview,
+} from "@/lib/review-comments/feedback-packet";
 import { runtimeRoot } from "@/lib/runtime-root";
 import {
   classifyForceRelaunchLaunchability,
@@ -72,6 +76,7 @@ import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
 import { sendTaskToTriageInTransaction } from "@/lib/services/triage";
+import { requireNoLiveGateChatTurn } from "@/lib/services/gate-chat";
 import { actorForUserId } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
@@ -423,6 +428,50 @@ function payloadsEqual(a: unknown, b: unknown): boolean {
   }
 }
 
+type ReviewPreviewFingerprints = {
+  reviewSourceFingerprint: string;
+  reviewFeedbackFingerprint: string;
+};
+
+const REVIEW_REWORK_TRANSPORT_KEYS = new Set([
+  "response",
+  "confidence",
+  "reviewSourceFingerprint",
+  "reviewFeedbackFingerprint",
+]);
+
+function requireReviewPreviewFingerprints(
+  body: RespondInput["body"],
+): ReviewPreviewFingerprints {
+  const unexpectedKeys = Object.keys(body).filter(
+    (key) => !REVIEW_REWORK_TRANSPORT_KEYS.has(key),
+  );
+
+  if (unexpectedKeys.length > 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `review rework request has unsupported transport fields: ${unexpectedKeys.join(", ")}`,
+    );
+  }
+
+  const source = body.reviewSourceFingerprint;
+  const feedback = body.reviewFeedbackFingerprint;
+  const isFingerprint = (value: unknown): value is string =>
+    typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+
+  if (!isFingerprint(source) || !isFingerprint(feedback)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "request changes requires fresh review-source and feedback preview fingerprints",
+    );
+  }
+
+  return {
+    reviewSourceFingerprint: source,
+    reviewFeedbackFingerprint: feedback,
+  };
+}
+
 function assignmentResponsePayload(
   hitlSchema: unknown,
   response: unknown,
@@ -479,6 +528,12 @@ export type RespondInput = {
     raiseTo?: unknown;
     // ADR-125: tolerant top-level alias for response.dropWorkspace on abandon.
     dropWorkspace?: unknown;
+    // ADR-137: opaque, preview-issued values required only for a fresh Flow
+    // review rework. They are transport-only and are never stored in the
+    // canonical HITL response or input artifact.
+    reviewSourceFingerprint?: unknown;
+    reviewFeedbackFingerprint?: unknown;
+    [key: string]: unknown;
   };
 };
 
@@ -1347,8 +1402,18 @@ async function handlePermissionResponse(
 }
 
 type FormClaim =
-  | { kind: "claimed"; storedResponse: unknown; runStatus: string }
-  | { kind: "already-delivered"; storedResponse: unknown; runStatus: string };
+  | {
+      kind: "claimed";
+      storedResponse: unknown;
+      runStatus: string;
+      assignmentClaim: ResponseAssignmentClaim;
+    }
+  | {
+      kind: "already-delivered";
+      storedResponse: unknown;
+      runStatus: string;
+      assignmentClaim: ResponseAssignmentClaim;
+    };
 
 type PlanReviewParentState = {
   sourceArtifactId: string;
@@ -2477,6 +2542,7 @@ async function handleFormHumanResponse(
     workspacePolicy?: string | null;
     reworkTarget?: string | null;
   } = {};
+  let reviewPreviewFingerprints: ReviewPreviewFingerprints | null = null;
   let canonicalResponse: unknown | null = null;
 
   if (isConsensusResolutionSchema(hitlRow.schema)) {
@@ -2518,6 +2584,9 @@ async function handleFormHumanResponse(
       workspacePolicy: resolved.workspacePolicy ?? null,
       reworkTarget: resolved.reworkTarget ?? null,
     };
+    if (resolved.reworkTarget) {
+      reviewPreviewFingerprints = requireReviewPreviewFingerprints(body);
+    }
   } else {
     // Non-review: validate confidence first (422 before CONFIG 400).
     confidence = resolveConfidence(body.confidence);
@@ -2559,13 +2628,6 @@ async function handleFormHumanResponse(
     throw new MaisterError("PRECONDITION", "project slug not found");
   }
 
-  const assignmentClaim = await claimAssignmentForResponse({
-    db,
-    hitlRequestId,
-    projectId: runRow.projectId,
-    actor: args.actor,
-  });
-
   // Phase 1: claim the row before touching the filesystem. Concurrent
   // double-submits with the same payload are idempotent; conflicting
   // payloads return 409 BEFORE either request can write to disk.
@@ -2595,10 +2657,18 @@ async function handleFormHumanResponse(
     // the run is genuinely awaiting it, closing the HumanWorking replay hole.
     if (lockedHitl.respondedAt) {
       if (payloadsEqual(lockedHitl.response, responseToStore)) {
+        const assignmentClaim = await claimAssignmentForResponse({
+          db: tx,
+          hitlRequestId,
+          projectId: runRow.projectId,
+          actor: args.actor,
+        });
+
         return {
           kind: "already-delivered",
           storedResponse: lockedHitl.response,
           runStatus: lockedRun.status as string,
+          assignmentClaim,
         } as const;
       }
       throw new MaisterError("CONFLICT", "hitl request already delivered");
@@ -2612,10 +2682,18 @@ async function handleFormHumanResponse(
       }
 
       // same payload — idempotent retry. Fall through to artifact write.
+      const assignmentClaim = await claimAssignmentForResponse({
+        db: tx,
+        hitlRequestId,
+        projectId: runRow.projectId,
+        actor: args.actor,
+      });
+
       return {
         kind: "claimed",
         storedResponse: lockedHitl.response,
         runStatus: lockedRun.status as string,
+        assignmentClaim,
       } as const;
     }
 
@@ -2629,6 +2707,68 @@ async function handleFormHumanResponse(
         `run is not awaiting this response (status=${lockedRun.status}); cannot respond`,
       );
     }
+
+    // The same HITL row lock serializes a fresh decision with a durable
+    // gate-chat turn. A live ACP question must settle (or its lease must
+    // expire) before the review packet can be frozen; an already-claimed
+    // canonical retry above stays intentionally independent of live chat.
+    await requireNoLiveGateChatTurn(tx, hitlRequestId);
+
+    if (reviewPreviewFingerprints) {
+      const preview = await buildReviewFeedbackPreview({
+        db: tx,
+        runId,
+        hitlRequestId,
+        response: rawResponse,
+      });
+
+      assertReviewFeedbackPresent({
+        packet: preview.feedback,
+        schema: lockedHitl.schema,
+        response: rawResponse,
+      });
+
+      if (
+        preview.reviewSource.fingerprint !==
+          reviewPreviewFingerprints.reviewSourceFingerprint ||
+        preview.feedback.fingerprint !==
+          reviewPreviewFingerprints.reviewFeedbackFingerprint
+      ) {
+        log.warn(
+          {
+            runId,
+            hitlRequestId,
+            nodeId: preview.feedback.target.nodeId,
+            sourceFingerprint: preview.reviewSource.fingerprint,
+            feedbackFingerprint: preview.feedback.fingerprint,
+          },
+          "review rework rejected — preview is stale",
+        );
+        throw new MaisterError(
+          "PRECONDITION",
+          "review source or feedback changed; refresh the preview before requesting changes",
+        );
+      }
+
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          nodeId: preview.feedback.target.nodeId,
+          threadCount: preview.feedback.openThreadIds.length,
+          gateChatMessageCount: preview.feedback.gateChatMessageCount,
+          feedbackFingerprint: preview.feedback.fingerprint,
+        },
+        "review rework preview verified for response claim",
+      );
+    }
+
+    const assignmentClaim = await claimAssignmentForResponse({
+      db: tx,
+      hitlRequestId,
+      projectId: runRow.projectId,
+      actor: args.actor,
+    });
 
     const confidenceFields =
       confidence !== undefined ? { humanConfidence: confidence } : {};
@@ -2653,6 +2793,7 @@ async function handleFormHumanResponse(
       kind: "claimed",
       storedResponse: responseToStore,
       runStatus: lockedRun.status as string,
+      assignmentClaim,
     } as const;
   });
 
@@ -2660,7 +2801,7 @@ async function handleFormHumanResponse(
     await db.transaction(async (tx: any) => {
       await completeResponseAssignment(
         tx,
-        assignmentClaim,
+        claim.assignmentClaim,
         assignmentResponsePayload(hitlRow.schema, claim.storedResponse),
       );
       await args.recordSuccessAudit?.(tx, 200);
@@ -2749,7 +2890,7 @@ async function handleFormHumanResponse(
 
     await completeResponseAssignment(
       tx,
-      assignmentClaim,
+      claim.assignmentClaim,
       assignmentResponsePayload(hitlRow.schema, claim.storedResponse),
     );
     await args.recordSuccessAudit?.(tx, 200);

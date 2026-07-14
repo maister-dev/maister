@@ -60,6 +60,15 @@ describe("gateChatAvailability (DD2 allow-list)", () => {
       gateChatAvailability({ ...base, hitlRespondedAt: new Date() }).available,
     ).toBe(false);
   });
+
+  it("excludes a pause after its response has been claimed but not delivered", () => {
+    expect(
+      gateChatAvailability({
+        ...base,
+        hitlResponse: { decision: "rework" },
+      }).available,
+    ).toBe(false);
+  });
 });
 
 describe("gateChatStepId (DD4 marker)", () => {

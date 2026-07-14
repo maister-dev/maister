@@ -209,6 +209,14 @@ commentsVar?, session_policy? }\` bounds a feedback loop. \`decide: { from, case
 routes dynamically (\`from: verdict\` with a \`cases\` table, or
 \`from: output.<dot.path>\`).
 
+For a \`human\` node with a declared rework transition, \`commentsVar\` is required
+(from \`rework.commentsVar\` or \`finish.human.commentsVar\`) and must be a
+top-level template key. Every \`rework.allowedTargets\` destination must be an
+\`ai_coding\`, \`judge\`, \`orchestrator\`, \`cli\`, or \`check\` renderer that reads that
+exact key in its rendered \`action.prompt\` or \`action.command\`. Use
+\`{{ review_comments }}\` or a guarded \`{{ review_comments ?? '' }}\` form. The
+compiler rejects a Flow that could otherwise drop reviewer feedback.
+
 ## Complete example
 
 \`\`\`yaml

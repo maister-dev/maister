@@ -32,7 +32,7 @@ function compileErr(nodes: Record<string, unknown>[]): string | null {
 const loopNode = (over: Record<string, unknown> = {}) => ({
   id: "loop",
   type: "ai_coding",
-  action: { prompt: "x" },
+  action: { prompt: "x {{ c }}" },
   transitions: { success: "done" },
   rework: {
     allowedTargets: ["loop"],
@@ -118,12 +118,13 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"] } },
+          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],
             workspacePolicies: ["keep"],
             maxLoops: 2,
+            commentsVar: "c",
             resetTargets: ["loop"],
           },
         },
@@ -138,12 +139,13 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"] } },
+          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],
             workspacePolicies: ["keep"],
             maxLoops: 2,
+            commentsVar: "c",
             resetTargets: ["ghost"],
           },
         },
@@ -166,12 +168,13 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"] } },
+          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],
             workspacePolicies: ["keep"],
             maxLoops: 2,
+            commentsVar: "c",
             resetTargets: ["plain"],
           },
         },
@@ -198,12 +201,13 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"] } },
+          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],
             workspacePolicies: ["keep"],
             maxLoops: 2,
+            commentsVar: "c",
             resetTargets: ["island"],
           },
         },

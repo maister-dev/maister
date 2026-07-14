@@ -212,15 +212,19 @@ describe("runReviewHuman stamps review_tip_sha (ADR-082)", () => {
         {
           id: "implement",
           type: "ai_coding",
-          action: { prompt: "/impl" },
+          action: { prompt: "/impl\n\n{{ review_comments }}" },
           transitions: { success: "review" },
         },
         {
           id: "review",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"] } },
+          finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
           transitions: { approve: null, rework: "implement" },
-          rework: { allowedTargets: ["implement"], maxLoops: 2 },
+          rework: {
+            allowedTargets: ["implement"],
+            maxLoops: 2,
+            commentsVar: "review_comments",
+          },
         },
       ],
     };
