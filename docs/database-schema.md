@@ -2278,7 +2278,7 @@ reads. Its source IDs deliberately have no cascading foreign keys to the source
 run/HITL rows, so clarification history survives source cleanup; task deletion
 remains the owning lifecycle.
 
-### Plan-review decision extension (Designed — ADR-137, migration `0100`)
+### Plan-review decision extension (Implemented — ADR-137, migration `0100`)
 
 `decision_request` extends the same `hitl_requests` lifecycle. It has a direct
 `parent_hitl_request_id` FK to its same-run Plan-review `human` parent, a

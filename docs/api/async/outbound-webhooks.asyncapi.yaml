@@ -29,7 +29,7 @@ info:
     `deliveryId` and `attempt` are injected per send. The `ping` envelope is
     synthetic (test only) and is never persisted.
 
-    **ADR-137 (Designed):** HITL events may add an optional `planReview` object
+    **ADR-137 (Implemented):** HITL events may add an optional `planReview` object
     with parent/source/decision ids, remaining count, and lifecycle state after
     commit. They never include plan text, option labels, or a selected answer.
 

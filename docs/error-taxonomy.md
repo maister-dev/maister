@@ -478,7 +478,7 @@ gate (D7). See [ADR-055](decisions.md#adr-055-hitl-response-service--hitl-over-m
 - [Configuration](configuration.md) — `CONFIG` is thrown on every
   malformed `maister.yaml` / `flow.yaml` / `form_schema`
 
-## Typed Plan-review refusal (Designed — ADR-137)
+## Typed Plan-review refusal (Implemented — ADR-137)
 
 Malformed or missing `plan-review.json`, a missing immutable output, or an
 invalid Plan-review capability fails before a review card with existing

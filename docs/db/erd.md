@@ -1486,7 +1486,7 @@ history survives source-run and HITL cleanup.
 
 Source: `web/lib/db/schema.ts`.
 
-## Planned Plan-review ownership (ADR-137 / migration `0100`)
+## Plan-review ownership (Implemented — ADR-137 / migration `0100`)
 
 ```mermaid
 erDiagram

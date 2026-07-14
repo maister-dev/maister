@@ -62,7 +62,7 @@ info:
     (`POST /api/scratch-runs`, sub-plan 2026-06-17, Option 2); see
     `web.openapi.yaml`.
 
-    **ADR-137 (Designed):** Plan-review lifecycle invalidation continues to use
+    **ADR-137 (Implemented):** Plan-review lifecycle invalidation continues to use
     this single per-run stream. Clients refetch the run HITL projection after a
     durable decision transition; no second EventSource or plan-content event is
     introduced.

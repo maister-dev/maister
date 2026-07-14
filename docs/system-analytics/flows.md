@@ -266,7 +266,7 @@ flowchart LR
 - Schemas: `web/lib/config.schema.ts` (graph-only node union).
 - Source: `web/lib/config.ts` (`loadFlowManifest`).
 
-## Plan-review capability validation (Designed — ADR-137)
+## Plan-review capability validation (Implemented — ADR-137)
 
 Flow compilation owns `settings.plan_review` validation: `human` type, engine
 floor 3.1.0, declared current artifacts, positive decision-rework bound, exact

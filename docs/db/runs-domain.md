@@ -632,7 +632,7 @@ only after confirmed termination. A later task-bound standalone launch may set
 - Capabilities: [`capabilities-domain.md`](capabilities-domain.md).
 - Source: `web/lib/db/schema.ts`.
 
-## Plan-review recovery (Designed — ADR-137)
+## Plan-review recovery (Implemented — ADR-137)
 
 No status is added for decision requests. A final decision returns a graph-owned
 run from `NeedsInputIdle` to `NeedsInput` only after the scheduler claim, then

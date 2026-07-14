@@ -1141,7 +1141,7 @@ here and does not write an artifact, call `runFlow`, or call the supervisor.
   `mcp/src/tools.ts`.
 - SDD: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).
 
-## Plan-review decision children (Designed — ADR-137)
+## Plan-review decision children (Implemented — ADR-137)
 
 `decision_request` is a child of a graph-human parent, not an agent question
 or a standalone Inbox entity. It exposes only server-allowed options and is

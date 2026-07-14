@@ -223,7 +223,7 @@ The row is never deleted (cascades from `runs` and `projects` only).
   `web/lib/config.schema.ts` (`formSchemaSchema`),
   `web/lib/config.ts` (`validateFormSchemaVersion`).
 
-## Plan-review decision children (Designed — ADR-137 / migration `0100`)
+## Plan-review decision children (Implemented — ADR-137 / migration `0100`)
 
 ```text
 parent human review

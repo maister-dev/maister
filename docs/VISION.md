@@ -167,7 +167,7 @@ controls: draft/publish, dedup, severity, cooldowns and human feedback.
 - cross-project task moves;
 - GitHub issue / Linear / YouGile sync.
 
-## Typed Plan review (Designed — ADR-137)
+## Typed Plan review (Implemented — ADR-137)
 
 Planning is reviewed from immutable, strict `plan-document` and `plan-review`
 artifacts rather than prose interpretation. Assumptions are accepted with their

@@ -796,7 +796,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   (`node_attempts`, `gate_results`).
 ```
 
-## Typed Plan-review gate (Designed — ADR-137)
+## Typed Plan-review gate (Implemented — ADR-137)
 
 A `human` node with `settings.plan_review` captures a strict V1 companion
 artifact before `runReviewHuman()` creates a forced pause. The parent review

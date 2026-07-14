@@ -429,7 +429,7 @@ to the supervisor's external address.
 - Local dev: [`getting-started.md`](getting-started.md).
 - Supervisor prose reference: [`supervisor.md`](supervisor.md).
 
-## Typed Plan-review artifact boundary (Designed — ADR-137)
+## Typed Plan-review artifact boundary (Implemented — ADR-137)
 
 The graph runner, not ACP or the browser, captures and validates the confined
 plan document and `plan-review.json` outputs. It persists immutable artifact

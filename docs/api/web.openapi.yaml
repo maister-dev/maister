@@ -9,7 +9,7 @@ info:
 
     **Milestone status: M34 Platform Agents Stage 3, with earlier routes retained.**
 
-    **ADR-137 (Designed) — typed Plan review.** A session-authenticated caller
+    **ADR-137 (Implemented) — typed Plan review.** A session-authenticated caller
     may answer a `decision_request` only with `{ optionId }`; the server derives
     the parent review, current immutable plan-review artifact, allowed option,
     and Flow rework input. A non-final answer returns `200` with

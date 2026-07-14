@@ -1094,7 +1094,7 @@ asking ACP session.
 - Source: `web/lib/db/schema.ts` (runs table),
   `supervisor/src/heartbeat.ts`, `supervisor/src/spawn.ts`.
 
-## Plan-review decision recovery (Designed — ADR-137)
+## Plan-review decision recovery (Implemented — ADR-137)
 
 Plan-review decision pauses stay in `NeedsInput` or `NeedsInputIdle`. The final
 idle handoff claims capacity under the scheduler lock, changes only to

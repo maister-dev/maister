@@ -126,7 +126,7 @@ superseding row leaves the superseded row as-is, with a null `superseded_by_id`
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Source (Implemented): `web/lib/db/schema.ts` (new tables, migration `0015`).
 
-## Plan-review provenance (Designed — ADR-137)
+## Plan-review provenance (Implemented — ADR-137)
 
 The `plan-review` artifact is an immutable validated snapshot, not an agent
 claimed locator. `decision_request.source_artifact_id` references this exact

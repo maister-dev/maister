@@ -161,7 +161,7 @@
 | [ADR-134](#adr-134-observatory-agentization-and-commit-provenance) | Observatory agentization and commit provenance | Implemented | 2026-07-12 |
 | [ADR-135](#adr-135-testcontainers-only-ephemeral-postgres-for-database-backed-tests) | Testcontainers-only ephemeral Postgres for database-backed tests | Accepted | 2026-07-12 |
 | [ADR-136](#adr-136-task-bound-human-ask-clarification-handoff) | Task-bound Human-ask clarification handoff | Implemented | 2026-07-13 |
-| [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Designed | 2026-07-14 |
+| [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
 
 ---
 

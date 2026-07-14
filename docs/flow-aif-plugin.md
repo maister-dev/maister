@@ -108,7 +108,7 @@ asserting a clean tree + a Conventional Commits subject.
 - The package's own `README.md` in `maister-plugins/packages/aif/` —
   provenance + the `aif/v2.0.0` bump notes.
 
-## Plan-review producer contract (Designed — ADR-137)
+## Plan-review producer contract (Implemented — ADR-137)
 
 Current source planning Flows will write the runner-provided Markdown-plan and
 `plan-review.json` paths. The JSON has strict V1 assumptions and blockers;

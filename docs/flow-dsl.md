@@ -1594,7 +1594,7 @@ provide role/capability registries.
 - `docs/supervisor.md` — ACP wire, SSE events, prompt endpoint.
 - `docs/getting-started.md` — end-to-end "Launch a run" recipe.
 
-## `settings.plan_review` (Designed — ADR-137)
+## `settings.plan_review` (Implemented — ADR-137)
 
 Only a `human` node may opt in. It names current `plan-document` and
 `plan-review` artifacts, `comments_var`, ordered `answers_var`, a declared

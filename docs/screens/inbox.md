@@ -190,7 +190,7 @@ resolution. EN + RU parity is required.
   `web/lib/queries/portfolio.ts` (`getCrossProjectHitlInbox`),
   `web/lib/queries/inbox.ts`, `web/lib/queries/inbox-context.ts`.
 
-## Plan-review decision card (Designed — ADR-137)
+## Plan-review decision card (Implemented — ADR-137)
 
 The card identifies the immutable plan review, shows the blocking question,
 recommended option and consequences, and offers only the server-provided option

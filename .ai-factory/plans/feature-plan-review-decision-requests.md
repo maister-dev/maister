@@ -239,13 +239,13 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ### Phase 0 — SDD contract freeze (must complete before code)
 
-- [ ] Task 1: Freeze the product, architecture, persistence, state-machine, API, event, and screen contract in a new ADR and analytics set.
+- [x] Task 1: Freeze the product, architecture, persistence, state-machine, API, event, and screen contract in a new ADR and analytics set.
   - Files: `docs/decisions.md` (reserve/recheck ADR-137), `docs/VISION.md`, `docs/PRODUCT_VIEW.md`, `docs/architecture.md`, `docs/flow-dsl.md`, `docs/flow-aif-plugin.md`, `docs/system-analytics/{flow-graph,hitl,artifacts,flows,flow-packages,packages,runs,social-board}.md`, `docs/database-schema.md`, `docs/db/{erd,hitl-domain,artifacts-domain,runs-domain}.md`, `docs/screens/{inbox.md,runs/flow-run.md}`, `docs/api/{web.openapi.yaml,external/operations.openapi.yaml,async/web-runs.asyncapi.yaml,async/outbound-webhooks.asyncapi.yaml}`, `docs/error-taxonomy.md`, and `.ai-factory/ROADMAP.md` only if a new M44 is explicitly accepted.
   - Deliverable: a single internally consistent V1 contract with the JSON schema, semantic capability grammar including forced pause and `max_decision_reworks`, direct parent/child FK and closure semantics, tables/indexes/CHECKs, exact state transitions/refusals, graph-only idle-resume path, API examples/statuses, authorization matrix, external omission/403 policy, Inbox read/unread policy, package immutability policy, sequence/state/failure-recovery diagrams, and a no-new-supervisor-protocol decision.
   - Logging: define event names/fields and redaction rules in the spec; implementation logs must include ids/hashes/counts/statuses, never plan text or answers.
   - Dependencies: none. Exit gate: ADR/migration candidates rechecked against `main`; Mermaid and ADR anchors validate; every described piece is labeled Designed until code reaches its phase.
 
-- [ ] Task 2: Write the RED contract and migration tests before production changes.
+- [x] Task 2: Write the RED contract and migration tests before production changes.
   - Files: new focused tests beside `web/lib/flows/{config,output-schema}/__tests__`, `web/lib/flows/graph/__tests__/{node-output,runner-graph-artifacts,runner-graph.integration}.test.ts`, `web/lib/services/__tests__/hitl.integration.test.ts`, `web/lib/db/__tests__/{schema-shape,migration-0100-plan-review}.integration.test.ts`, plus test-runner config only if `vitest list` proves a path is not included.
   - Deliverable: failing tests with the ownership matrix above: V1 contract validation, semantic manifest refusal (auto-pass/takeover/cycle bounds), immutable capture, migration parent-FK/shape/indexes, decision creation/deduplication, parent-rework child closure, all decision/rework transitions, session/external authorization, exact 200/202/403 contracts, idempotent replay, graph-only idle recovery, and legacy-kind compatibility.
   - Logging: test fixtures assert event/log metadata only (ids, kind, count, status), not sensitive payload content.
@@ -253,7 +253,7 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ### Phase 1 — Typed artifact and DSL foundation
 
-- [ ] Task 3: Implement strict Plan-review artifact capture and reusable Flow capability validation.
+- [x] Task 3: Implement strict Plan-review artifact capture and reusable Flow capability validation.
   - Files: `web/lib/flows/{engine-version,config.schema,config}.ts`, `web/lib/flows/graph/{compile,node-output,artifact-store,artifact-content,runner-graph}.ts`, `web/lib/flows/output-schema.ts` or a focused `plan-review-contract.ts`, related unit/integration tests, and EN/RU-independent Flow editor labels/validation surfaces as needed.
   - Deliverable: engine `3.1.0`; strict V1 parser; runner-provided confined plan-document/plan-review staging paths; bounded immutable copies + SHA-256 metadata; current/stale/superseded handling; compile-time `settings.plan_review` validation without node-id/prompt heuristics; required positive `max_decision_reworks`; exactly `approve|rework`; and a forced assigned human pause that cannot auto-pass, notify-only, or offer takeover. Invalid artifacts or exhausted decision cycles fail before a human pause/child card.
   - Logging: `INFO` for capture/validation success with run/node/attempt/artifact id/hash/byte count; `WARN` for invalid/missing output; `ERROR` only for unrecoverable copy/read failures, with no payload body.
@@ -261,13 +261,13 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ### Phase 2 — Durable decision-request model
 
-- [ ] Task 4: Add the additive migration and schema/query fan-out for `decision_request`.
+- [x] Task 4: Add the additive migration and schema/query fan-out for `decision_request`.
   - Files: `web/lib/db/schema.ts`, `web/lib/db/migrations/0100_*`, `web/lib/db/migrations/meta/{_journal.json,0100_snapshot.json}`, `web/lib/assignments/{service.ts,...}`, `web/lib/queries/{hitl,portfolio,inbox-context,hitl-stage}.ts`, schema/migration/integration tests.
   - Deliverable: persisted kind/action unions, `parent_hitl_request_id` + `source_artifact_id` + `decision_id`, decision row-shape checks, a locked same-run parent-kind/schema invariant, partial unique/idempotency and parent-pending projection indexes, and query DTOs that expose a structured card view. Existing rows require no backfill and old kind values remain valid.
   - Logging: `INFO` for decision request creation/deduplication/completion (run, artifact, decision id, assignment id); `WARN` for a stale/malformed reference; never log option consequences or answers.
   - Dependencies: Task 1, Task 2, Task 3. Exit gate: migration applies to a populated representative DB without data loss; newest journal/snapshot pair matches; schema and migration suites are green.
 
-- [ ] Task 5: Create decisions atomically when a configured Plan-review human node pauses.
+- [x] Task 5: Create decisions atomically when a configured Plan-review human node pauses.
   - Files: `web/lib/flows/graph/{runner-graph,ledger,default-artifacts}.ts`, `web/lib/assignments/service.ts`, domain/webhook event helpers, `web/lib/runs/{run-stream-event,stream-options}.ts`, runner/assignment/artifact tests.
   - Deliverable: one transaction creates the parent review HITL, its assignment, zero-or-more deduplicated blocker requests linked by parent FK and their assignments, pending state, and durable event intent. The parent schema carries server-derived artifact provenance, assumptions, and decision-cycle counter; only blockers project as child cards. A no-blocker Plan review follows legacy behavior plus explicit assumptions. A bounded-cycle refusal occurs before this transaction, so no partial/card-without-rework state is possible.
   - Logging: `INFO` with `blockerCount`, artifact hash and ids after commit; `DEBUG` for an empty blocker set; `WARN` on a dedupe/re-entry no-op.
@@ -275,13 +275,13 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ### Phase 3 — Safe answers, rework, and recovery
 
-- [ ] Task 6: Extend the HITL response service with decision-specific validation, final-answer handoff, and reconciliation.
+- [x] Task 6: Extend the HITL response service with decision-specific validation, final-answer handoff, and reconciliation.
   - Files: `web/lib/services/hitl.ts`, a focused `web/lib/services/plan-review-decisions.ts`, `web/lib/flows/{hitl-validate.ts,graph/runner-graph.ts}`, `web/lib/runs/{resume,resume-driver,keepalive-sweeper,state-transitions}.ts` only where existing recovery hooks require it, `web/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts`, and integration/route tests.
   - Deliverable: separate Plan-review parent/child dispatch from legacy form/human handling; exact state allow-list; locked direct-parent/sibling checks; server-derived options and assumptions; explicit premature-approval refusal; deterministic answer envelope into the configured rework/comments variables; final-answer two-phase write/delivery; same-payload retry; conflicting-retry `CONFLICT`; parent-rework system closure of unresolved children; and restart/idle recovery through `ensurePlanReviewDecisionHandoff()`. `NeedsInputIdle` uses a scheduler-locked graph claim followed by `runFlow()`—never `resumeRun()` or a permission resume-driver.
   - Logging: `DEBUG` for validation branch, parent id, and remaining count; `INFO` for accepted decision, child system closure, and final rework scheduling; `WARN` for retryable atomic-write/recovery; `ERROR` for terminal refusal with run/request ids and error code only.
   - Dependencies: Task 4–5. Exit gate: integration tests simulate concurrent final answers, child-vs-parent-rework races, disk-write failure between every phase, process restart, `NeedsInputIdle`/cap queue with no supervisor call, stale artifact, terminal rejection, and unchanged legacy form/human/agent-question paths; full web unit + integration suites are green.
 
-- [ ] Task 7: Publish exact HTTP/SSE/webhook contracts and prohibit unintended external decision authority.
+- [x] Task 7: Publish exact HTTP/SSE/webhook contracts and prohibit unintended external decision authority.
   - Files: `web/app/api/v1/ext/{hitl,runs/[runId]/hitl}/route.ts` and response route where filtering/refusal is required, `web/lib/runs/{run-stream-event,run-stream-controller}.ts`, `web/app/api/runs/[runId]/stream/route.ts` if DTO forwarding needs it, `docs/api/{web.openapi.yaml,external/operations.openapi.yaml,async/web-runs.asyncapi.yaml,async/outbound-webhooks.asyncapi.yaml}`, route/stream/contract tests.
   - Deliverable: documented response request/response/error examples—`200 awaiting-decisions`, `202 rework-scheduled|resume-queued`, and session-only child `{ optionId }`; `answerHitl` authorization; url/auth/body identifier table; external list omission and direct `403 UNAUTHORIZED` refusal; and post-commit backward-compatible optional `planReview` event payloads for request/answer/remaining-count changes. Supervisor SSE and ACP contracts are unchanged.
   - Logging: structured HTTP refusal/response fields (`runId`, `hitlRequestId`, `kind`, `remainingCount`, `code`, latency); no request body or answer value.
@@ -289,7 +289,7 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ### Phase 4 — Mature Plan-review and Inbox UX
 
-- [ ] Task 8: Add localized Plan-review assumptions and structured decision-card UX without altering unrelated Inbox semantics.
+- [x] Task 8: Add localized Plan-review assumptions and structured decision-card UX without altering unrelated Inbox semantics.
   - Files: `web/components/{board/run-hitl-response,board/hitl-decision-controls,inbox/hitl-card,inbox/hitl-inbox-list}.tsx`, `web/app/(app)/runs/[runId]/layout.tsx`, `web/lib/queries/{hitl,inbox-context}.ts`, `web/i18n/{en,ru}/*.json`, component/query tests, `web/e2e/inbox.spec.ts` and a dedicated Plan-review journey.
   - Deliverable: immutable-plan context, assumption/default/impact display, explicit approval text/count, recommended-option/consequence cards, disabled premature approval, meaningful loading/error/retry states, answered-card removal, remaining count, action-local refresh, and keyboard/screen-reader behavior. Reuse the existing `RunStreamProvider`/`useRunPageStream` subscription; do not open another EventSource. Gate chat remains available only as existing parent-review clarification and never renders decision choices as free-form JSON.
   - Logging: client-visible errors map typed codes to localized remedies; client telemetry/logging (if any) contains kind/id/status only and never the plan or answer.
@@ -297,7 +297,7 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ### Phase 5 — Migrate only source Plan-review Flows and release safely
 
-- [ ] Task 9: Upgrade every current source Flow that performs Plan review, then cut package-scoped releases without touching historic installs.
+- [x] Task 9: Upgrade every current source Flow that performs Plan review, then cut package-scoped releases without touching historic installs.
   - Files outside this repository (separate scoped changes): `maister-plugins/packages/aif/flows/dev/flow.yaml`, `maister-plugins/packages/aif/{schemas,prompts,capability/skills/aif-plan,...}` as discovery confirms, `maister-plugins/packages/superpowers/flows/{dev,plan}/flow.yaml` and their schema/prompt files; mirrored test fixtures in this repository: `web/test-fixtures/aif-flows/**`, `web/lib/flows/__tests__/_fixtures/aif-flow/flow.yaml` only where their fixture contract intentionally covers the new capability; `docs/flow-aif-plugin.md`.
   - Deliverable: new semantic configuration, declared plan document/contract artifacts, agent instructions to write valid JSON and classify assumptions vs blockers, answer-envelope injection on rework, and raised engine minimum. Package-source releases are one package per version/tag (`aif/vX.Y.Z`, `superpowers/vX.Y.Z`); installed SHA-pinned revisions and active runs are untouched.
   - Logging: planning prompts instruct agents not to log/copy secret content; platform logs package id/version/resolved SHA and contract validation outcome only.
@@ -305,7 +305,7 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ### Phase 6 — Cross-layer verification, as-built docs, and merge readiness
 
-- [ ] Task 10: Run the completeness/consistency review, rebase reservation check, and release gates.
+- [x] Task 10: Run the completeness/consistency review, rebase reservation check, and release gates.
   - Files: every Phase-0 specification artifact listed in Task 1, affected implementation tests/contracts, and the plan checklist; only directly discovered consistency corrections, no opportunistic refactoring.
   - Deliverable: convert frozen docs from Designed to Implemented only for landed behavior after every backend, contract, and UI phase is present; retain explicit deferrals, and produce a diff-derived inventory proving requirements, config/compiler, forced-pause/cycle policy, artifact lifecycle, migration triple and parent ownership, DB docs/ERDs, session and external OpenAPI/AsyncAPI, single-provider run stream, response guards, Inbox/UI, i18n, Flow sources, tests, and package tags agree. Re-check ADR/migration reservation at rebased `main`; renumber all linked artifacts together if needed.
   - Logging: confirm every lifecycle outcome has an observable structured event/log field and no sensitive payload leakage; document known operational alerts and recovery instructions.
@@ -339,16 +339,16 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 
 ## Final completeness checklist
 
-- [ ] Phase-0 docs are complete, internally consistent, labeled honestly, and precede code.
-- [ ] Contract has one authority, strict versioning/limits, immutable provenance, and no prose parsing fallback.
-- [ ] Every persisted field has a migration rationale; `0100` is additive, journaled, snapshotted, and preserves live data.
-- [ ] Every child request has a direct validated parent FK; parent rework system-closes children atomically and cannot race an answer into the next plan.
-- [ ] Every decision transition names transaction boundaries, side effects, idempotency key, failure response, crash window, and recovery predicate.
-- [ ] Plan-review cannot auto-pass, notify-only, or takeover; its decision-rework cycle is bounded and fails closed before unusable cards exist.
-- [ ] No new run status was added; all existing status/read-model/scheduler/sweeper guards were consciously checked.
-- [ ] `NeedsInputIdle` uses the graph-only cap-safe claim then `runFlow()`; no ACP permission resume-driver is invoked for Plan-review.
-- [ ] HTTP 200/202, external omission/403, authz, session/external OpenAPI, SSE, webhook, UI DTO, and error taxonomy agree.
-- [ ] Inbox is a projection and social unread/read behavior is unchanged by design and by test.
-- [ ] Flow source list is exhaustive (`aif-dev`, `superpowers dev`, `superpowers plan`); fixtures are clearly distinguished from shipped sources; historical installed revisions are unchanged.
-- [ ] Tests are RED first, runner-discovered, ownership-partitioned with no trivial overlap, green per phase, and include integration/recovery/auth/E2E coverage.
-- [ ] EN/RU UX, accessibility, observability/redaction, docs validation, contracts, migration integrity, and package release gates are green.
+- [x] Phase-0 docs are complete, internally consistent, labeled honestly, and precede code.
+- [x] Contract has one authority, strict versioning/limits, immutable provenance, and no prose parsing fallback.
+- [x] Every persisted field has a migration rationale; `0100` is additive, journaled, snapshotted, and preserves live data.
+- [x] Every child request has a direct validated parent FK; parent rework system-closes children atomically and cannot race an answer into the next plan.
+- [x] Every decision transition names transaction boundaries, side effects, idempotency key, failure response, crash window, and recovery predicate.
+- [x] Plan-review cannot auto-pass, notify-only, or takeover; its decision-rework cycle is bounded and fails closed before unusable cards exist.
+- [x] No new run status was added; all existing status/read-model/scheduler/sweeper guards were consciously checked.
+- [x] `NeedsInputIdle` uses the graph-only cap-safe claim then `runFlow()`; no ACP permission resume-driver is invoked for Plan-review.
+- [x] HTTP 200/202, external omission/403, authz, session/external OpenAPI, SSE, webhook, UI DTO, and error taxonomy agree.
+- [x] Inbox is a projection and social unread/read behavior is unchanged by design and by test.
+- [x] Flow source list is exhaustive (`aif-dev`, `superpowers dev`, `superpowers plan`); fixtures are clearly distinguished from shipped sources; historical installed revisions are unchanged.
+- [x] Tests are RED first, runner-discovered, ownership-partitioned with no trivial overlap, green per phase, and include integration/recovery/auth/E2E coverage.
+- [x] EN/RU UX, accessibility, observability/redaction, docs validation, contracts, migration integrity, and package release gates are green.
