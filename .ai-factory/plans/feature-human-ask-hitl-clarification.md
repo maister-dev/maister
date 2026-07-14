@@ -362,7 +362,10 @@ failure is insufficient evidence.
   false intermediate state. Reuse assignment creation/closure services.
   Persist `pending_termination` before `deleteSession`; keep it non-actionable;
   retry same-payload incomplete activation; and classify unavailable/network
-  as retryable 503 and verified-gone/session misuse as terminal typed failure.
+  and supervisor 5xx as retryable 503. A matching live session that returns
+  DELETE 404, or no live session for the bound run, is a confirmed-gone result
+  that activates the ask and finalizes the source `Done`; a live same-run ACP
+  identity mismatch or another supervisor 4xx is a terminal typed failure.
   Add a bounded `pending_termination` recovery pass to `web/lib/reconcile.ts`
   and the existing `web/lib/scheduler/system-sweeps.ts` composition—no new
   scheduler job, environment variable, or poller. It must recover the

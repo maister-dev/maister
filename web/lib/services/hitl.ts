@@ -44,6 +44,7 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
 import {
   assertBudgetBreachOptionAvailable,
   budgetBreachClaimRef,
@@ -108,6 +109,13 @@ const TERMINAL_RUN_STATUS = new Set([
   "Done",
   "Abandoned",
   "Review",
+]);
+const AGENT_QUESTION_SOURCE_STATUSES: Array<
+  "Running" | "Failed" | "Crashed" | "Abandoned" | "Review"
+> = ["Running", "Failed", "Crashed", "Abandoned", "Review"];
+const AGENT_QUESTION_SOURCE_STATUS_SET = new Set<string>([
+  "Done",
+  ...AGENT_QUESTION_SOURCE_STATUSES,
 ]);
 
 // A form/human/permission HITL is genuinely pending ONLY while the run awaits
@@ -3435,6 +3443,36 @@ async function handleAgentQuestionResponse(
         );
       }
 
+      const sourceRows = await tx
+        .select({ status: runs.status, runKind: runs.runKind })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+      const source = sourceRows[0];
+
+      if (
+        !source ||
+        source.runKind !== "agent" ||
+        !AGENT_QUESTION_SOURCE_STATUS_SET.has(source.status)
+      ) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "agent_question source run cannot be finalized as Done",
+        );
+      }
+      if (source.status !== "Done") {
+        await tx
+          .update(runs)
+          .set({ status: "Done", endedAt: new Date(), currentStepId: null })
+          .where(
+            and(
+              eq(runs.id, runId),
+              inArray(runs.status, AGENT_QUESTION_SOURCE_STATUSES),
+            ),
+          );
+        await revokeAgentRunTokensForRun(runId, tx);
+      }
+
       if (lockedHitl.respondedAt !== null) {
         if (!payloadsEqual(lockedHitl.response, response)) {
           throw new MaisterError(
@@ -3447,7 +3485,6 @@ async function handleAgentQuestionResponse(
 
         return { kind: "replayed", reTriggerMode } as const;
       }
-
       if (
         lockedHitl.activationState !== "active" ||
         lockedHitl.supersededAt !== null ||
@@ -3492,6 +3529,7 @@ async function handleAgentQuestionResponse(
       }
 
       const now = new Date();
+
       await tx
         .update(hitlRequests)
         .set({ response, respondedAt: now })
@@ -3628,7 +3666,7 @@ async function handleAgentQuestionResponse(
     );
 
     return NextResponse.json(
-      { ok: true, runStatus: runRow.status, idempotent: true },
+      { ok: true, runStatus: "Done", idempotent: true },
       { status: 200 },
     );
   }
@@ -3644,10 +3682,7 @@ async function handleAgentQuestionResponse(
     "agent_question answered and re-trigger fact committed",
   );
 
-  return NextResponse.json(
-    { ok: true, runStatus: runRow.status },
-    { status: 200 },
-  );
+  return NextResponse.json({ ok: true, runStatus: "Done" }, { status: 200 });
 }
 
 export async function respondToHitl(

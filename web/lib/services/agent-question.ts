@@ -1,7 +1,11 @@
 import "server-only";
 
 import type { FormSchema } from "@/lib/config.schema";
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type {
+  DeleteSessionIfPresentOutcome,
+  SupervisorSessionRecord,
+} from "@/lib/supervisor-client";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
 
@@ -13,18 +17,23 @@ import {
   systemCloseActiveAssignmentsForHitlRequest,
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { promoteNextPending } from "@/lib/scheduler";
-import { deleteSession, listSessions } from "@/lib/supervisor-client";
+import { deleteSessionIfPresent, listSessions } from "@/lib/supervisor-client";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, runs, taskClarifications, tasks } =
-  schemaModule as unknown as Record<string, any>;
+const { hitlRequests, runs, taskClarifications, tasks } = schema;
 
-type Db = any;
+type Db = NodePgDatabase<typeof schema>;
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+// FIXME(any): dual drizzle peer-dep variants. Integration tests inject a
+// testcontainer client that is runtime-compatible with the app client.
+function resolveDb(db?: Db): Db {
+  return db ?? (getDb() as unknown as Db);
+}
 
 const log = pino({
   name: "agent-question",
@@ -36,7 +45,14 @@ const TERMINAL_SOURCE_STATUSES = new Set([
   "Failed",
   "Crashed",
   "Abandoned",
+  "Review",
 ]);
+const SOURCE_STATUSES_FINALIZED_BY_HUMAN_ASK: Array<
+  "Running" | "Failed" | "Crashed" | "Abandoned" | "Review"
+> = ["Running", "Failed", "Crashed", "Abandoned", "Review"];
+const SOURCE_STATUS_FINALIZED_BY_HUMAN_ASK_SET = new Set<string>(
+  SOURCE_STATUSES_FINALIZED_BY_HUMAN_ASK,
+);
 
 export type AgentQuestionReTriggerMode = "agent" | "triage";
 
@@ -61,8 +77,10 @@ export type AgentQuestionResult = {
 type ActivationDeps = {
   db?: Db;
   listSessions?: () => Promise<SupervisorSessionRecord[]>;
-  deleteSession?: (sessionId: string) => Promise<void>;
-  recordSuccessAudit?: (tx: Db, statusCode: number) => Promise<void>;
+  deleteSession?: (
+    sessionId: string,
+  ) => Promise<DeleteSessionIfPresentOutcome | void>;
+  recordSuccessAudit?: (tx: Tx, statusCode: number) => Promise<void>;
 };
 
 type PendingQuestion = {
@@ -97,10 +115,11 @@ function sameQuestionPayload(
   );
 }
 
-async function inTransaction<T>(db: Db, fn: (tx: Db) => Promise<T>): Promise<T> {
-  if (typeof db.transaction !== "function") return await fn(db);
-
-  return await db.transaction(fn);
+async function inTransaction<T>(
+  db: Db,
+  fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  return await db.transaction(async (tx) => await fn(tx));
 }
 
 async function persistPendingQuestion(
@@ -111,7 +130,9 @@ async function persistPendingQuestion(
     const taskRows = await tx
       .select({ id: tasks.id })
       .from(tasks)
-      .where(and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)))
+      .where(
+        and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+      )
       .for("update");
 
     if (!taskRows[0]) {
@@ -171,7 +192,8 @@ async function persistPendingQuestion(
           id: existing.id,
           taskId: input.taskId,
           runId: input.sourceRunId,
-          activationState: existing.activationState as PendingQuestion["activationState"],
+          activationState:
+            existing.activationState as PendingQuestion["activationState"],
           created: false,
         };
       }
@@ -189,7 +211,10 @@ async function persistPendingQuestion(
       );
     }
 
-    if (input.reTriggerMode === "triage" && input.sourceAgentId !== "core:triager") {
+    if (
+      input.reTriggerMode === "triage" &&
+      input.sourceAgentId !== "core:triager"
+    ) {
       throw new MaisterError(
         "UNAUTHORIZED",
         "triage re-trigger is restricted to the core triager",
@@ -197,7 +222,9 @@ async function persistPendingQuestion(
     }
 
     const sequenceRows = await tx
-      .select({ maxSeq: sql<number>`coalesce(max(${taskClarifications.seq}), 0)` })
+      .select({
+        maxSeq: sql<number>`coalesce(max(${taskClarifications.seq}), 0)`,
+      })
       .from(taskClarifications)
       .where(eq(taskClarifications.taskId, input.taskId));
     const nextSequence = Number(sequenceRows[0]?.maxSeq ?? 0) + 1;
@@ -259,18 +286,27 @@ async function terminateSourceSession(
   if (!activeSession?.acpSessionId) return "pending";
 
   const sessions = await deps.listSessions();
-  const live = sessions.find(
-    (session) =>
-      session.runId === sourceRunId &&
-      session.status === "live" &&
-      session.acpSessionId === activeSession.acpSessionId,
+  const liveSessionsForRun = sessions.filter(
+    (session) => session.runId === sourceRunId && session.status === "live",
+  );
+  const live = liveSessionsForRun.find(
+    (session) => session.acpSessionId === activeSession.acpSessionId,
   );
 
-  if (!live) return "gone";
+  if (!live) {
+    if (liveSessionsForRun.length > 0) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "supervisor has a live source session with a different ACP identity",
+      );
+    }
 
-  await deps.deleteSession(live.sessionId);
+    return "gone";
+  }
 
-  return "terminated";
+  const outcome = await deps.deleteSession(live.sessionId);
+
+  return outcome ?? "terminated";
 }
 
 async function markActivationFailed(
@@ -305,10 +341,16 @@ async function activatePendingQuestion(
     const question = rows[0];
 
     if (!question || question.kind !== "agent_question") {
-      throw new MaisterError("PRECONDITION", "human ask disappeared before activation");
+      throw new MaisterError(
+        "PRECONDITION",
+        "human ask disappeared before activation",
+      );
     }
     if (question.activationState === "active") return "replayed";
-    if (question.activationState === "failed" || question.supersededAt !== null) {
+    if (
+      question.activationState === "failed" ||
+      question.supersededAt !== null
+    ) {
       throw new MaisterError("CONFLICT", "human ask cannot be activated");
     }
 
@@ -331,18 +373,26 @@ async function activatePendingQuestion(
       source.projectId === null ||
       source.taskId !== pending.taskId
     ) {
-      throw new MaisterError("PRECONDITION", "source run cannot activate human ask");
+      throw new MaisterError(
+        "PRECONDITION",
+        "source run cannot activate human ask",
+      );
     }
 
-    if (source.status === "Running") {
+    if (SOURCE_STATUS_FINALIZED_BY_HUMAN_ASK_SET.has(source.status)) {
       await tx
         .update(runs)
         .set({ status: "Done", endedAt: new Date(), currentStepId: null })
-        .where(and(eq(runs.id, pending.runId), eq(runs.status, "Running")));
-      await revokeAgentRunTokensForRun(pending.runId, tx);
+        .where(
+          and(
+            eq(runs.id, pending.runId),
+            inArray(runs.status, SOURCE_STATUSES_FINALIZED_BY_HUMAN_ASK),
+          ),
+        );
     } else if (!TERMINAL_SOURCE_STATUSES.has(source.status)) {
       return "pending";
     }
+    await revokeAgentRunTokensForRun(pending.runId, tx);
 
     await tx
       .update(hitlRequests)
@@ -384,7 +434,7 @@ export async function createOrActivateAgentQuestion(
   input: CreateAgentQuestionInput,
   deps: ActivationDeps = {},
 ): Promise<AgentQuestionResult> {
-  const db = deps.db ?? getDb();
+  const db = resolveDb(deps.db);
   const pending = await persistPendingQuestion(input, db);
 
   if (pending.activationState === "active") {
@@ -399,11 +449,15 @@ export async function createOrActivateAgentQuestion(
 
   const terminate = await terminateSourceSession(pending.runId, db, {
     listSessions: deps.listSessions ?? listSessions,
-    deleteSession: deps.deleteSession ?? deleteSession,
+    deleteSession: deps.deleteSession ?? deleteSessionIfPresent,
   }).catch(async (error: unknown) => {
     if (isMaisterError(error) && error.code === "EXECUTOR_UNAVAILABLE") {
       log.warn(
-        { hitlRequestId: pending.id, sourceRunId: pending.runId, code: error.code },
+        {
+          hitlRequestId: pending.id,
+          sourceRunId: pending.runId,
+          code: error.code,
+        },
         "agent human ask termination remains pending after retryable supervisor failure",
       );
       throw error;
@@ -461,75 +515,97 @@ export async function cancelOpenAgentQuestionsForTask(args: {
   taskId: string;
   supersedingRunId: string;
 }): Promise<number> {
-  const db = args.db ?? getDb();
+  const db = resolveDb(args.db);
 
-  return await inTransaction(db, async (tx) => {
-    const taskRows = await tx
-      .select({ id: tasks.id, projectId: tasks.projectId })
-      .from(tasks)
-      .where(eq(tasks.id, args.taskId))
-      .for("update");
-    const task = taskRows[0];
+  return await inTransaction(
+    db,
+    async (tx) => await cancelOpenAgentQuestionsForTaskInTransaction(tx, args),
+  );
+}
 
-    if (!task) return 0;
+export async function cancelOpenAgentQuestionsForTaskInTransaction(
+  tx: Tx,
+  args: {
+    taskId: string;
+    supersedingRunId: string;
+  },
+): Promise<number> {
+  const taskRows = await tx
+    .select({ id: tasks.id, projectId: tasks.projectId })
+    .from(tasks)
+    .where(eq(tasks.id, args.taskId))
+    .for("update");
+  const task = taskRows[0];
 
-    const openRows = await tx
-      .select({ id: hitlRequests.id })
-      .from(hitlRequests)
-      .where(
-        and(
-          eq(hitlRequests.taskId, args.taskId),
-          eq(hitlRequests.kind, "agent_question"),
-          isNull(hitlRequests.respondedAt),
-          isNull(hitlRequests.supersededAt),
-          inArray(hitlRequests.activationState, ["pending_termination", "active"]),
-        ),
-      )
-      .for("update");
-    const ids = openRows.map((row: { id: string }) => row.id);
+  if (!task) return 0;
 
-    if (ids.length === 0) {
-      log.debug(
-        { taskId: args.taskId, supersedingRunId: args.supersedingRunId },
-        "no open agent questions to supersede",
-      );
-      return 0;
-    }
+  const openRows = await tx
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.taskId, args.taskId),
+        eq(hitlRequests.kind, "agent_question"),
+        isNull(hitlRequests.respondedAt),
+        isNull(hitlRequests.supersededAt),
+        inArray(hitlRequests.activationState, [
+          "pending_termination",
+          "active",
+        ]),
+      ),
+    )
+    .for("update");
+  const ids = openRows.map((row) => row.id);
 
-    const supersededAt = new Date();
-    await tx
-      .update(hitlRequests)
-      .set({ supersededAt, supersededByRunId: args.supersedingRunId })
-      .where(inArray(hitlRequests.id, ids));
-    await tx
-      .update(taskClarifications)
-      .set({ supersededAt, supersededByRunId: args.supersedingRunId })
-      .where(inArray(taskClarifications.sourceHitlRequestId, ids));
-
-    for (const hitlRequestId of ids) {
-      await systemCloseActiveAssignmentsForHitlRequest({
-        db: tx,
-        hitlRequestId,
-        projectId: task.projectId,
-        reason: "superseded by a newer task-bound agent run",
-      });
-    }
-
-    log.info(
-      { taskId: args.taskId, supersedingRunId: args.supersedingRunId, count: ids.length },
-      "open agent questions superseded by successor run",
+  if (ids.length === 0) {
+    log.debug(
+      { taskId: args.taskId, supersedingRunId: args.supersedingRunId },
+      "no open agent questions to supersede",
     );
 
-    return ids.length;
-  });
+    return 0;
+  }
+
+  const supersededAt = new Date();
+
+  await tx
+    .update(hitlRequests)
+    .set({ supersededAt, supersededByRunId: args.supersedingRunId })
+    .where(inArray(hitlRequests.id, ids));
+  await tx
+    .update(taskClarifications)
+    .set({ supersededAt, supersededByRunId: args.supersedingRunId })
+    .where(inArray(taskClarifications.sourceHitlRequestId, ids));
+
+  for (const hitlRequestId of ids) {
+    await systemCloseActiveAssignmentsForHitlRequest({
+      db: tx,
+      hitlRequestId,
+      projectId: task.projectId,
+      reason: "superseded by a newer task-bound agent run",
+    });
+  }
+
+  log.info(
+    {
+      taskId: args.taskId,
+      supersedingRunId: args.supersedingRunId,
+      count: ids.length,
+    },
+    "open agent questions superseded by successor run",
+  );
+
+  return ids.length;
 }
 
 export async function recoverPendingAgentQuestions(args: {
   db?: Db;
   sessions: readonly SupervisorSessionRecord[];
-  deleteSession?: (sessionId: string) => Promise<void>;
+  deleteSession?: (
+    sessionId: string,
+  ) => Promise<DeleteSessionIfPresentOutcome | void>;
 }): Promise<number> {
-  const db = args.db ?? getDb();
+  const db = resolveDb(args.db);
   const rows = await db
     .select({
       id: hitlRequests.id,
@@ -557,6 +633,7 @@ export async function recoverPendingAgentQuestions(args: {
       activationState: "pending_termination",
       created: false,
     };
+
     try {
       const [source] = await db
         .select({ status: runs.status })
@@ -566,20 +643,12 @@ export async function recoverPendingAgentQuestions(args: {
       if (!source) continue;
 
       if (!TERMINAL_SOURCE_STATUSES.has(source.status)) {
-        const activeSession = await loadActiveRunSession(db, row.runId);
-        const live = activeSession?.acpSessionId
-          ? args.sessions.find(
-              (session) =>
-                session.runId === row.runId &&
-                session.status === "live" &&
-                session.acpSessionId === activeSession.acpSessionId,
-            )
-          : undefined;
+        const termination = await terminateSourceSession(row.runId, db, {
+          listSessions: async () => [...args.sessions],
+          deleteSession: args.deleteSession ?? deleteSessionIfPresent,
+        });
 
-        if (!activeSession?.acpSessionId) continue;
-        if (live) {
-          await (args.deleteSession ?? deleteSession)(live.sessionId);
-        }
+        if (termination === "pending") continue;
       }
 
       const result = await activatePendingQuestion(pending, db, undefined, 200);

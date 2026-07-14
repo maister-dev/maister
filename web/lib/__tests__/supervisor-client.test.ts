@@ -22,6 +22,7 @@ import {
   checkpointSession,
   createSession,
   deleteSession,
+  deleteSessionIfPresent,
   deliverPermission,
   getPlatformStatus,
   listSessions,
@@ -216,6 +217,33 @@ describe("deleteSession", () => {
   });
 });
 
+describe("deleteSessionIfPresent", () => {
+  it("reconciles a session that exited between list and delete", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "PRECONDITION", message: "unknown session" }),
+        { status: 404 },
+      ),
+    );
+
+    await expect(deleteSessionIfPresent("gone")).resolves.toBe("gone");
+  });
+
+  it("classifies a supervisor 5xx as retryable even with a permanent body code", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "PRECONDITION", message: "supervisor restart" }),
+        { status: 503 },
+      ),
+    );
+
+    await expect(deleteSessionIfPresent("retry")).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      message: "supervisor restart",
+    });
+  });
+});
+
 describe("listSessions", () => {
   it("returns the array body", async () => {
     const records = [{ sessionId: "s1", status: "live" }];
@@ -225,6 +253,20 @@ describe("listSessions", () => {
     const result = await listSessions();
 
     expect(result).toEqual(records);
+  });
+
+  it("classifies a supervisor 5xx as retryable", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "PRECONDITION", message: "supervisor restart" }),
+        { status: 500 },
+      ),
+    );
+
+    await expect(listSessions()).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      message: "supervisor restart",
+    });
   });
 });
 

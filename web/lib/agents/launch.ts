@@ -62,7 +62,7 @@ import {
 } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
-import { cancelOpenAgentQuestionsForTask } from "@/lib/services/agent-question";
+import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
@@ -1326,6 +1326,13 @@ export async function launchAgentRun(
           .onConflictDoNothing({ target: workspaces.worktreePath });
       }
 
+      if (input.taskId) {
+        await cancelOpenAgentQuestionsForTaskInTransaction(tx, {
+          taskId: input.taskId,
+          supersedingRunId: runId,
+        });
+      }
+
       return true;
     });
 
@@ -1357,14 +1364,6 @@ export async function launchAgentRun(
   if (workspace === "none") {
     await mkdir(agentWorkdirPath(ctx.project.slug, runId), {
       recursive: true,
-    });
-  }
-
-  if (input.taskId) {
-    await cancelOpenAgentQuestionsForTask({
-      db: _db,
-      taskId: input.taskId,
-      supersedingRunId: runId,
     });
   }
 
@@ -2042,7 +2041,35 @@ export async function finalizeAgentRun(
         rootRunId: runs.rootRunId,
       })
       .from(runs)
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .for("update");
+    const pendingHumanAskRows = await tx
+      .select({ id: hitlRequests.id })
+      .from(hitlRequests)
+      .where(
+        and(
+          eq(hitlRequests.runId, runId),
+          eq(hitlRequests.kind, "agent_question"),
+          eq(hitlRequests.activationState, "pending_termination"),
+          isNull(hitlRequests.respondedAt),
+          isNull(hitlRequests.supersededAt),
+        ),
+      )
+      .limit(1);
+
+    if (pendingHumanAskRows[0]) {
+      log.info(
+        {
+          runId,
+          outcome,
+          hitlRequestId: pendingHumanAskRows[0].id,
+        },
+        "agent finalization deferred to pending human-ask activation",
+      );
+
+      return false;
+    }
+
     // M37 (ADR-102): a shared writable-worktree child finalizes to Review even
     // when it owns no `workspaces` row (a reuser child — the allocator owns the
     // UNIQUE worktree_path). The shared tree is one branch = one diff, reviewed and

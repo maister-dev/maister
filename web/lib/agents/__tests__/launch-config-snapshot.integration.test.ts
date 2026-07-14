@@ -313,10 +313,7 @@ describe("ADR-111 launch-time config snapshot", () => {
       })
       .from(schema.hitlRequests)
       .where(
-        (await import("drizzle-orm")).eq(
-          schema.hitlRequests.id,
-          hitlRequestId,
-        ),
+        (await import("drizzle-orm")).eq(schema.hitlRequests.id, hitlRequestId),
       );
     const [assignment] = await db
       .select({ status: schema.assignments.status })
@@ -330,14 +327,154 @@ describe("ADR-111 launch-time config snapshot", () => {
     const [successor] = await db
       .select({ id: schema.runs.id, taskId: schema.runs.taskId })
       .from(schema.runs)
-      .where(
-        (await import("drizzle-orm")).eq(schema.runs.id, result.runId),
-      );
+      .where((await import("drizzle-orm")).eq(schema.runs.id, result.runId));
 
     expect(successor).toEqual({ id: result.runId, taskId });
     expect(question?.supersededAt).toBeInstanceOf(Date);
     expect(question?.supersededByRunId).toBe(result.runId);
     expect(assignment?.status).toBe("cancelled");
+  });
+
+  it("rolls back the successor when superseding an active question fails", async () => {
+    const agentId = await seedTriager(null);
+    const schema = await import("@/lib/db/schema");
+    const taskId = randomUUID();
+    const sourceRunId = randomUUID();
+    const hitlRequestId = randomUUID();
+
+    await db.insert(schema.tasks).values({
+      id: taskId,
+      projectId,
+      number: 1,
+      title: "Clarify deployment target",
+      prompt: "Deploy the service",
+    });
+    await db.insert(schema.runs).values({
+      id: sourceRunId,
+      runKind: "agent",
+      projectId,
+      taskId,
+      agentId,
+      status: "Done",
+      flowVersion: "agent",
+      flowRevision: "manual",
+      agentWorkspace: "none",
+    });
+    await db.insert(schema.hitlRequests).values({
+      id: hitlRequestId,
+      runId: sourceRunId,
+      stepId: "agent",
+      kind: "agent_question",
+      taskId,
+      activationState: "active",
+      reTriggerMode: "agent",
+      prompt: "Which deployment target should be used?",
+      schema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "target",
+            type: "enum",
+            required: true,
+            options: ["staging", "production"],
+          },
+        ],
+      },
+    });
+    await db.insert(schema.taskClarifications).values({
+      id: randomUUID(),
+      taskId,
+      seq: 1,
+      sourceHitlRequestId: hitlRequestId,
+      originRunId: sourceRunId,
+      originAgentId: agentId,
+      question: "Which deployment target should be used?",
+      questionSchema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "target",
+            type: "enum",
+            required: true,
+            options: ["staging", "production"],
+          },
+        ],
+      },
+      reTriggerMode: "agent",
+    });
+    await db.insert(schema.assignments).values({
+      id: randomUUID(),
+      projectId,
+      runId: sourceRunId,
+      taskId,
+      hitlRequestId,
+      actionKind: "agent_question",
+      title: "Agent clarification required",
+    });
+
+    await pool.query(`
+      CREATE FUNCTION raise_agent_question_supersession() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'forced agent-question supersession failure';
+      END;
+      $$
+    `);
+    await pool.query(`
+      CREATE TRIGGER raise_agent_question_supersession
+      BEFORE UPDATE OF superseded_at ON hitl_requests
+      FOR EACH ROW
+      WHEN (NEW.kind = 'agent_question')
+      EXECUTE FUNCTION raise_agent_question_supersession()
+    `);
+
+    try {
+      await expect(
+        launchAgentRun({
+          agentId,
+          projectId,
+          taskId,
+          trigger: { source: "manual" },
+          db,
+        }),
+      ).rejects.toThrow("forced agent-question supersession failure");
+    } finally {
+      await pool.query(
+        "DROP TRIGGER IF EXISTS raise_agent_question_supersession ON hitl_requests",
+      );
+      await pool.query(
+        "DROP FUNCTION IF EXISTS raise_agent_question_supersession()",
+      );
+    }
+
+    const successors = await db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(
+        (await import("drizzle-orm")).and(
+          (await import("drizzle-orm")).eq(schema.runs.taskId, taskId),
+          (await import("drizzle-orm")).ne(schema.runs.id, sourceRunId),
+        ),
+      );
+    const [question] = await db
+      .select({ supersededAt: schema.hitlRequests.supersededAt })
+      .from(schema.hitlRequests)
+      .where(
+        (await import("drizzle-orm")).eq(schema.hitlRequests.id, hitlRequestId),
+      );
+    const [assignment] = await db
+      .select({ status: schema.assignments.status })
+      .from(schema.assignments)
+      .where(
+        (await import("drizzle-orm")).eq(
+          schema.assignments.hitlRequestId,
+          hitlRequestId,
+        ),
+      );
+
+    expect(successors).toEqual([]);
+    expect(question?.supersededAt).toBeNull();
+    expect(assignment?.status).toBe("open");
   });
 
   it("persists runs.agent_config = resolved (instance over declared default)", async () => {

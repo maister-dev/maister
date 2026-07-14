@@ -2264,7 +2264,7 @@ round-trip.
 ### Agent-question extension (Implemented — ADR-136, migration `0099`)
 
 `agent_question` extends `hitl_requests` without changing legacy Flow HITL.
-It alone may have nullable `task_id`, an `activation_state` of
+It alone may have a non-null `task_id`, an `activation_state` of
 `pending_termination | active | failed`, and supersession metadata. A CHECK
 requires `task_id` and activation state for this kind, preserves null additions
 for every legacy kind, and permits at most one of

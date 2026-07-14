@@ -636,19 +636,47 @@ export async function createSession(
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}`;
+  const res = await requestSessionDeletion(sessionId);
 
-  logger.debug({ url, sessionId }, "deleteSession");
-  let res: Response;
-
-  try {
-    res = await fetch(url, { method: "DELETE" });
-  } catch (err) {
-    throw networkErrorToMaister(err, "deleteSession");
-  }
   if (!res.ok) {
     throw await asMaisterError(res, "ACP_PROTOCOL");
   }
+}
+
+export type DeleteSessionIfPresentOutcome = "terminated" | "gone";
+
+async function requestSessionDeletion(sessionId: string): Promise<Response> {
+  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}`;
+
+  logger.debug({ url, sessionId }, "deleteSession");
+
+  try {
+    return await fetch(url, { method: "DELETE" });
+  } catch (err) {
+    throw networkErrorToMaister(err, "deleteSession");
+  }
+}
+
+// Human-ask activation has already bound the session to a durable run before
+// it calls this operation. A 404 therefore means that exact session exited in
+// the list/delete interval, not that the caller may delete an arbitrary ID.
+export async function deleteSessionIfPresent(
+  sessionId: string,
+): Promise<DeleteSessionIfPresentOutcome> {
+  const res = await requestSessionDeletion(sessionId);
+
+  if (res.ok) return "terminated";
+  if (res.status === 404) return "gone";
+  if (res.status >= 500) {
+    const message = await readErrorMessage(
+      res,
+      `supervisor ${res.status} while deleting session`,
+    );
+
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", message);
+  }
+
+  throw await asMaisterError(res, "ACP_PROTOCOL");
 }
 
 export async function listSessions(): Promise<SupervisorSessionRecord[]> {
@@ -661,6 +689,14 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
     res = await fetch(url);
   } catch (err) {
     throw networkErrorToMaister(err, "listSessions");
+  }
+  if (res.status >= 500) {
+    const message = await readErrorMessage(
+      res,
+      `supervisor ${res.status} while listing sessions`,
+    );
+
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", message);
   }
   if (!res.ok) {
     throw await asMaisterError(res, "ACP_PROTOCOL");

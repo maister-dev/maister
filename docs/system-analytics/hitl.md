@@ -1060,6 +1060,12 @@ terminates the source session, and only then atomically activates the question,
 records its immutable `task_clarifications` snapshot, revokes the source-agent
 token, and marks the source run `Done`.
 
+A matching listed session that exits before DELETE returns is confirmed absent
+on its scoped `404` and follows the same activation path. Supervisor network or
+5xx failures leave the durable intent pending for recovery; another 4xx or a
+live session with a different ACP identity marks it failed without exposing an
+Inbox assignment.
+
 ```mermaid
 stateDiagram-v2
     [*] --> pending_termination: validated ask_human
@@ -1128,7 +1134,9 @@ here and does not write an artifact, call `runFlow`, or call the supervisor.
 - Source: `web/lib/config.ts` (`validateFormSchemaVersion`),
   `web/lib/atomic.ts` (`atomicWriteJson`),
   `web/lib/db/schema.ts` (hitl_requests table),
-  `web/lib/services/hitl.ts`, `web/app/api/v1/ext/runs/[runId]/hitl/route.ts`,
+  `web/lib/services/agent-question.ts`, `web/lib/services/hitl.ts`,
+  `web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks/route.ts`,
+  `web/app/api/v1/ext/runs/[runId]/hitl/route.ts`,
   `web/app/api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts`,
   `mcp/src/tools.ts`.
 - SDD: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).

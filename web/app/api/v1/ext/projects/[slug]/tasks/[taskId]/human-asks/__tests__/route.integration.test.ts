@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import * as schema from "@/lib/db/schema";
@@ -15,6 +23,7 @@ import {
 
 const supervisor = vi.hoisted(() => ({
   deleteSession: vi.fn(),
+  deleteSessionIfPresent: vi.fn(),
   listSessions: vi.fn(),
   promoteNextPending: vi.fn(),
 }));
@@ -30,6 +39,7 @@ vi.mock("@/lib/scheduler", async (importOriginal) => ({
 vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/supervisor-client")>()),
   deleteSession: supervisor.deleteSession,
+  deleteSessionIfPresent: supervisor.deleteSessionIfPresent,
   listSessions: supervisor.listSessions,
 }));
 
@@ -64,17 +74,22 @@ function body(): Record<string, unknown> {
 }
 
 function request(token: string): NextRequest {
-  return new NextRequest("http://localhost/api/v1/ext/projects/demo/tasks/task/human-asks", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
+  return new NextRequest(
+    "http://localhost/api/v1/ext/projects/demo/tasks/task/human-asks",
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body()),
     },
-    body: JSON.stringify(body()),
-  });
+  );
 }
 
-function params(seed: Seed): { params: Promise<{ slug: string; taskId: string }> } {
+function params(seed: Seed): {
+  params: Promise<{ slug: string; taskId: string }>;
+} {
   return { params: Promise.resolve({ slug: seed.slug, taskId: seed.taskId }) };
 }
 
@@ -131,7 +146,12 @@ async function seed(): Promise<Seed> {
     sessionName: "default",
     acpSessionId: sessionId,
   });
-  const issued = await issueAgentRunToken({ agentId, projectId, runId, db: database });
+  const issued = await issueAgentRunToken({
+    agentId,
+    projectId,
+    runId,
+    db: database,
+  });
 
   return {
     agentId,
@@ -160,6 +180,7 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   supervisor.deleteSession.mockResolvedValue(undefined);
+  supervisor.deleteSessionIfPresent.mockResolvedValue("terminated");
   supervisor.promoteNextPending.mockResolvedValue(undefined);
   await testDatabase.pool.query('TRUNCATE TABLE "projects" CASCADE');
 });
@@ -167,6 +188,7 @@ beforeEach(async () => {
 describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
   it("rejects an attached agent token without hitl:request before it can persist an existence-bearing request", async () => {
     const seeded = await seed();
+
     await database
       .update(schema.projectTokens)
       .set({ scopes: ["tasks:read"] })
@@ -180,7 +202,10 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
       .from(schema.hitlRequests)
       .where(eq(schema.hitlRequests.runId, seeded.runId));
     const audits = await database
-      .select({ result: schema.tokenAuditLog.result, statusCode: schema.tokenAuditLog.status_code })
+      .select({
+        result: schema.tokenAuditLog.result,
+        statusCode: schema.tokenAuditLog.status_code,
+      })
       .from(schema.tokenAuditLog)
       .where(
         and(
@@ -195,6 +220,7 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
 
   it("accepts only the attached running agent identity, terminalizes it, and commits exactly one agent-audited request", async () => {
     const seeded = await seed();
+
     supervisor.listSessions.mockResolvedValue([
       {
         sessionId: "supervisor-session-1",
@@ -218,18 +244,26 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
       sourceRunId: seeded.runId,
       activationState: "active",
     });
-    expect(supervisor.deleteSession).toHaveBeenCalledWith("supervisor-session-1");
+    expect(supervisor.deleteSessionIfPresent).toHaveBeenCalledWith(
+      "supervisor-session-1",
+    );
 
     const [source] = await database
       .select({ status: schema.runs.status })
       .from(schema.runs)
       .where(eq(schema.runs.id, seeded.runId));
     const requests = await database
-      .select({ id: schema.hitlRequests.id, activationState: schema.hitlRequests.activationState })
+      .select({
+        id: schema.hitlRequests.id,
+        activationState: schema.hitlRequests.activationState,
+      })
       .from(schema.hitlRequests)
       .where(eq(schema.hitlRequests.runId, seeded.runId));
     const assignments = await database
-      .select({ actionKind: schema.assignments.actionKind, status: schema.assignments.status })
+      .select({
+        actionKind: schema.assignments.actionKind,
+        status: schema.assignments.status,
+      })
       .from(schema.assignments)
       .where(eq(schema.assignments.hitlRequestId, requests[0]?.id ?? ""));
     const [token] = await database
@@ -252,13 +286,18 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
     expect(source?.status).toBe("Done");
     expect(requests).toHaveLength(1);
     expect(requests[0]?.activationState).toBe("active");
-    expect(assignments).toEqual([{ actionKind: "agent_question", status: "open" }]);
+    expect(assignments).toEqual([
+      { actionKind: "agent_question", status: "open" },
+    ]);
     expect(token?.revokedAt).toBeInstanceOf(Date);
-    expect(audits).toEqual([{ actorLabel: `agent:${seeded.agentId}`, result: "ok" }]);
+    expect(audits).toEqual([
+      { actorLabel: `agent:${seeded.agentId}`, result: "ok" },
+    ]);
   });
 
   it("returns one retryable 503 audit without a false success, then turns the same pending payload active on replay", async () => {
     const seeded = await seed();
+
     supervisor.listSessions.mockRejectedValueOnce(
       new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor unavailable"),
     );
@@ -267,9 +306,13 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
 
     expect(failed.status).toBe(503);
     const [pending] = await database
-      .select({ id: schema.hitlRequests.id, activationState: schema.hitlRequests.activationState })
+      .select({
+        id: schema.hitlRequests.id,
+        activationState: schema.hitlRequests.activationState,
+      })
       .from(schema.hitlRequests)
       .where(eq(schema.hitlRequests.runId, seeded.runId));
+
     expect(pending?.activationState).toBe("pending_termination");
 
     supervisor.listSessions.mockResolvedValue([]);
@@ -289,7 +332,10 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
         ),
       );
     const requests = await database
-      .select({ id: schema.hitlRequests.id, activationState: schema.hitlRequests.activationState })
+      .select({
+        id: schema.hitlRequests.id,
+        activationState: schema.hitlRequests.activationState,
+      })
       .from(schema.hitlRequests)
       .where(eq(schema.hitlRequests.runId, seeded.runId));
 
