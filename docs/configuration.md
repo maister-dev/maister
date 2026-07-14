@@ -168,16 +168,16 @@ constants live in `web/lib/brain/policy.ts` (not env, not DB) — including
 
 ## `maister.yaml` v2
 
-> **`maister.yaml` is OPTIONAL at manual registration (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).**
-> When the resolved repo has **no** manifest, `POST /api/projects` registers the
-> project from **DB defaults** with the repo left untouched and
-> `projects.maister_yaml_path = NULL` (the "config lives only in the DB" signal).
-> A **present-but-invalid** manifest still fails `CONFIG` (422) — only a
-> *missing* file takes the DB-default branch. An opt-in **persist** action
-> (Project Settings → Git) later serializes the DB config back into a complete
-> `maister.yaml` and commits it. The `MAISTER_PROJECTS_DIR` auto-discovery path
-> stays manifest-gated (it needs a marker); only the manual path becomes
-> optional. Behavior:
+> **`maister.yaml` is bootstrapped at manual registration (Implemented).** When
+> the resolved repo has **no** manifest, `POST /api/projects` atomically writes a
+> minimal schema-valid v2 file (`project.name`, resolved default branch, and
+> `flows: []`) before following the normal validation and registration path.
+> `body.name` wins over the directory basename for that initial file. A
+> **present-but-invalid** manifest still fails `CONFIG` (422) and is never
+> overwritten. `projects.maister_yaml_path` is set for all new registrations;
+> `NULL` remains a legacy recovery state, and only those legacy rows can use the
+> opt-in **persist** action to commit their DB-held configuration. The
+> `MAISTER_PROJECTS_DIR` auto-discovery path remains manifest-gated. Behavior:
 > [`system-analytics/projects.md`](system-analytics/projects.md).
 
 ```yaml

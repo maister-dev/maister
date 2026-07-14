@@ -1184,14 +1184,14 @@ paths:
 
         It then **stats `maister.yaml` v2** at `{resolvedDir}/maister.yaml`.
         **Present** → today's path (validate, derive slug from `project.name`
-        kebab-case server-side, install each `flows[]` plugin). **Absent**
-        (Implemented) → register from **DB defaults** with the repo untouched:
-        `name = body.name || basename(resolvedDir)`, slug derived from it,
-        `maister_yaml_path = null` (the "config lives only in the DB" signal),
-        no flow/package install. Either path checks `slug` / `repo_path` /
-        `taskKey` uniqueness, persists `projects` (incl. nullable `repo_url` +
-        `provider`), and inserts a `project_members` row for the caller with
-        `role = "owner"`.
+        kebab-case server-side, install each `flows[]` plugin). **Absent** →
+        atomically bootstrap a minimal schema-valid v2 manifest using
+        `name = body.name || basename(resolvedDir)`, the resolved default branch,
+        and `flows: []`; then follow that same validation and registration path.
+        A generated file is removed when registration fails unless an operator
+        changed it first. Both paths check `slug` / `repo_path` / `taskKey`
+        uniqueness, persist `projects` (including `maister_yaml_path`), and
+        insert a `project_members` row for the caller with `role = "owner"`.
 
         Phases and their error codes:
         1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` or
@@ -1200,7 +1200,7 @@ paths:
            `PRECONDITION` (409) on clone failure (with advisory `reason` +
            redacted `detail`), missing dir, or a target/new path collision
         3. Stat `maister.yaml` — **present-but-invalid** → `CONFIG` (422);
-           **missing** → DB-default branch (no 422)
+           **missing** → atomically bootstrap the minimal manifest, then validate it
         4. Slug/repo_path/taskKey collision check — `CONFLICT` (409)
         5. DB write (project + owner membership, plus executors/flows on the
            present-manifest path) in ONE transaction — `CONFIG` (422) on
@@ -1305,8 +1305,8 @@ paths:
           description: |
             A **present** `maister.yaml` is invalid YAML, fails schema
             validation, or its `project.name` cannot be kebab-cased (`CONFIG`).
-            A **missing** manifest does NOT 422 — it registers from DB defaults
-            (Implemented,
+            A **missing** manifest does NOT 422 — MAIster atomically generates a
+            minimal manifest, then validates and registers it (Implemented,
             [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
           content:
             application/json:
@@ -1328,11 +1328,12 @@ paths:
       description: |
         **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
-        Opt-in: serialize the project's DB-held config into a complete,
-        schema-valid `maister.yaml` v2 and **commit it on the main branch**,
-        then flip `projects.maister_yaml_path`. The durable home for this
-        action is **Project Settings → Git**; the dismissible banner is the
-        nudge. `requireProjectAction(projectId, "editSettings")` — `slug` is a
+        Legacy-only opt-in: serialize a DB-only project's configuration into a
+        complete, schema-valid `maister.yaml` v2 and **commit it on the main
+        branch**, then set `projects.maister_yaml_path`. New registrations
+        already bootstrap the file. The durable home for this action is
+        **Project Settings → Git**; the dismissible banner is the nudge.
+        `requireProjectAction(projectId, "editSettings")` — `slug` is a
         `url-param`, `projectId`/`repo_path` come from `server-state` (never the
         body).
 
@@ -12410,11 +12411,11 @@ components:
         existing local directory when `repoUrl` is omitted). Deep path/URL
         validation runs server-side before any filesystem access.
 
-        **(Implemented)** `maister.yaml` is **optional** at manual registration:
-        when the resolved repo has no manifest the project registers from DB
-        defaults (repo untouched, `maister_yaml_path = null`). `mode` selects
-        the onboarding mode; `name` is the explicit project name used when no
-        manifest is present; `token` is a one-off HTTPS clone credential. All
+        **(Implemented)** when the resolved repo has no `maister.yaml`, manual
+        registration atomically generates a minimal v2 manifest and then follows
+        the normal registration path. `mode` selects the onboarding mode; `name`
+        is the explicit project name used in the generated manifest; `token` is a
+        one-off HTTPS clone credential. All
         are `body-controlled` creation attributes, each independently validated
         server-side (`mode` allow-list; `name` → `deriveSlug`; `token` →
         askpass secret handling — never persisted).

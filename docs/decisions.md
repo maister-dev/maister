@@ -7116,6 +7116,13 @@ promotion.
 
 **Decision:**
 
+> **Superseded for new registrations (2026-07-14).** A missing manifest is now
+> bootstrapped atomically as a minimal `maister.yaml` and then registered through
+> the normal manifest-validation path. `maister_yaml_path = NULL` remains only
+> for legacy rows created before this change; see
+> [`system-analytics/projects.md`](system-analytics/projects.md) for the current
+> contract.
+
 - **`maister.yaml` is OPTIONAL at manual registration.** Absent → register from
   DB defaults with the repo left untouched and `projects.maister_yaml_path = NULL`
   (the "config lives only in the DB" signal). A present-but-**invalid** manifest

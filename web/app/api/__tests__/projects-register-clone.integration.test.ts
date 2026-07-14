@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -99,6 +106,25 @@ async function buildBareRepo(
   return bare;
 }
 
+async function buildBareRepoWithoutManifest(name: string): Promise<string> {
+  const work = await mkdtemp(join(tmpdir(), "maister-work-"));
+
+  execFileSync("git", [...GIT_IDENT, "init", work], { stdio: "pipe" });
+  await writeFile(join(work, "README.md"), "# Test repository\n");
+  execFileSync("git", ["-C", work, "add", "."], { stdio: "pipe" });
+  execFileSync("git", ["-C", work, ...GIT_IDENT, "commit", "-m", "init"], {
+    stdio: "pipe",
+  });
+
+  const bareParent = await mkdtemp(join(tmpdir(), "maister-bare-"));
+  const bare = join(bareParent, `${name}.git`);
+
+  execFileSync("git", ["clone", "--bare", work, bare], { stdio: "pipe" });
+  await rm(work, { recursive: true, force: true });
+
+  return bare;
+}
+
 // Like buildBareRepo but commits arbitrary (possibly invalid) maister.yaml
 // content — used to fail a post-clone step and exercise clone compensation.
 async function buildBareRepoRaw(name: string, yaml: string): Promise<string> {
@@ -167,6 +193,24 @@ afterAll(async () => {
 });
 
 describe("POST /api/projects — real source resolution (integration)", () => {
+  it("clone without maister.yaml bootstraps and registers the manifest", async () => {
+    const bare = await buildBareRepoWithoutManifest("bootstrap-no-manifest");
+    const repoUrl = `file://${bare}`;
+    const repoName = basename(bare).replace(/\.git$/, "");
+    const projectDir = join(reposRoot, repoName);
+
+    const res = await POST(request({ repoUrl }));
+
+    expect(res.status).toBe(201);
+    expect(await readFile(join(projectDir, "maister.yaml"), "utf8")).toBe(
+      "schemaVersion: 2\nproject:\n  name: bootstrap-no-manifest\nflows: []\n",
+    );
+
+    const row = await projectRow("bootstrap-no-manifest");
+
+    expect(row.maisterYamlPath).toBe(join(projectDir, "maister.yaml"));
+  });
+
   it("clone success: clones a file:// bare repo, derives repo_path, provider=generic", async () => {
     const bare = await buildBareRepo("clone-success", "Clone Success Proj");
     const derivedName = basename(bare).replace(/\.git$/, "");

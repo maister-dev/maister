@@ -177,7 +177,7 @@ flowchart TD
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (M27 list + ADR-129 hub) |
 | [`projects/project-experiments.md`](projects/project-experiments.md) | Experiment Comparison Studio (list, create flow, lab) | `/projects/{slug}/experiments` and `/projects/{slug}/experiments/{experimentId}` | Implemented (ADR-124) |
-| [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
+| [`projects/add-project.md`](projects/add-project.md) | Add-project form (modes, prefill, bootstrap, classified clone errors) | `/projects/new` | Implemented |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
 | [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Implemented (M39, ADR-106) |
 | [`projects/project-settings-brain.md`](projects/project-settings-brain.md) | Project Settings → Brain (enablement, home resolution, projection flow) | `/projects/{slug}?tab=settings` | Implemented (ADR-127/128) |

@@ -94,7 +94,7 @@ the credentials from `pnpm db:seed`. Active routes:
 | `/login`                     | Credentials sign-in (Auth.js v5).                                           |
 | `/`                          | Portfolio home — workspaces grid across all projects.                       |
 | `/projects`                  | Registered projects list + "Add project" button (admin only).               |
-| `/projects/new`              | Add-project form (admin only). Accepts absolute path to `maister.yaml` dir. |
+| `/projects/new`              | Add-project form (admin only). Accepts a repository directory and bootstraps `maister.yaml` when needed. |
 | `/projects/[slug]`           | Per-project board — Backlog, Prepare, In Delivery, In Review columns.       |
 | `/projects/[slug]/tasks/new` | Task creation form (member+).                                               |
 | `/flows`                     | Authored Flow drafts and installed package inventory.                       |
@@ -270,9 +270,10 @@ account has `must_change_password = true`, so you are routed to
 registration always creates a `member`** — it never grants admin.
 
 **Registering a project** requires the `admin` global role. After signing
-in, navigate to `/projects/new`, paste the absolute path to a directory
-containing `maister.yaml`, and submit. The server validates the manifest,
-installs referenced Flow plugins, and creates the project row. You
+in, navigate to `/projects/new`, paste the absolute path to a repository
+directory, and submit. If the directory has no manifest, the server bootstraps a
+minimal `maister.yaml`; otherwise it validates the existing file. It then installs
+referenced Flow plugins and creates the project row. You
 (the admin) are automatically the project `owner`.
 
 **EN/RU language toggle.** The UI ships with English and Russian. The

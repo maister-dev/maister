@@ -34,8 +34,8 @@ without a pre-existing `maister.yaml` or a guess-and-retry loop.
 - **Entry:** the "Add project" button on `/projects` (admin) and the
   [left rail](../chrome/left-rail.md) projects section.
 - **Exit:** a successful registration lands on the new project board
-  (`/projects/{slug}`); when the repo had no `maister.yaml`, the
-  [persist banner](project-settings-git.md) appears there.
+  (`/projects/{slug}`) with a validated existing or bootstrapped
+  `maister.yaml`.
 
 ```mermaid
 flowchart TD
@@ -95,8 +95,8 @@ stateDiagram-v2
   clone-failure `409` body gains advisory `reason?` / `detail?` (code stays
   `PRECONDITION`). See [`../../api/web.openapi.yaml`](../../api/web.openapi.yaml).
 - Client-only prefill derives the name + task key from the URL; the server still
-  validates and explicit values win. Behavior (DB-default registration, the three
-  modes, the `maisterYamlPath == null` signal):
+  validates and uses explicit values to initialize a missing manifest. Behavior
+  (manifest bootstrap and the three modes):
   [`../../system-analytics/projects.md`](../../system-analytics/projects.md).
   Clone-error classification + token / `gh` / SSH paths:
   [`../../system-analytics/git-integration.md`](../../system-analytics/git-integration.md).

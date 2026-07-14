@@ -21,8 +21,9 @@ configuration is reproducible from git alone.
 | Project admin / owner (or global admin) | List/add/edit/remove remotes, push/fetch, and the persist action — all gated by `requireProjectAction(projectId, "editSettings")`. |
 | Project member / viewer | Sees the project board but not the Git settings section's write controls; the route enforces `editSettings`. |
 
-The persist CTA renders only while `maisterYamlPath == null` **and** the viewer
-can `editSettings` — never a CTA that would 403.
+The persist CTA renders only for a legacy `maisterYamlPath == null` row **and**
+when the viewer can `editSettings` — never a CTA that would 403. New project
+registration bootstraps `maister.yaml` immediately and does not show this CTA.
 
 ## Navigation
 
@@ -40,9 +41,9 @@ can `editSettings` — never a CTA that would 403.
   table+modal pattern from `web/CLAUDE.md` and the acp-runners panel.
 - **Add / edit remote modal** — name + URL; adding/setting `origin` syncs
   `projects.repo_url` + `provider`.
-- **Persist config action** (shown while `maisterYamlPath == null`) — confirm
-  dialog → `POST …/persist-config`; on success the action and any banner clear,
-  and the toast surfaces `usedDefaultAuthor` / `pushWarning` when present.
+- **Persist config action** (legacy rows with `maisterYamlPath == null` only) —
+  confirm dialog → `POST …/persist-config`; on success the action and any banner
+  clear, and the toast surfaces `usedDefaultAuthor` / `pushWarning` when present.
 
 ## States
 

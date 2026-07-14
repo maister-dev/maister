@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, symlink, writeFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -304,6 +311,7 @@ beforeEach(async () => {
     gitStatus: "no-remote",
     clonedByUs: false,
   };
+  await rm(join(noManifestDir, "maister.yaml"), { force: true });
   await db.delete(schema.projects);
   await db.delete(schema.platformAcpRunners);
 });
@@ -554,7 +562,7 @@ describe("POST /api/projects — packages[] bootstrap (ADR-088, integration)", (
   });
 });
 
-describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", () => {
+describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
   function req(body: Record<string, unknown>): NextRequest {
     return new NextRequest("http://localhost/api/projects", {
       method: "POST",
@@ -563,13 +571,18 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
     });
   }
 
-  it("registers from DB defaults when no maister.yaml is on disk", async () => {
+  it("generates and registers a default maister.yaml when none exists", async () => {
     currentResolved = {
       dir: noManifestDir,
       repoUrl: null,
       provider: null,
       gitStatus: "no-remote",
       clonedByUs: false,
+    };
+    currentConfig = {
+      ...seedConfig,
+      project: { ...seedConfig.project, name: "no-manifest" },
+      flows: [],
     };
 
     const res = await POST(req({ target: "ignored-by-mock" }));
@@ -580,11 +593,14 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
     const rows = await projectRows("no-manifest");
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].maisterYamlPath).toBeNull();
+    expect(rows[0].maisterYamlPath).toBe(join(noManifestDir, "maister.yaml"));
     expect(rows[0].name).toBe("no-manifest");
     expect(rows[0].mainBranch).toBe("main"); // non-git dir → tier-3 fallback
     expect(rows[0].taskKey).toBe("NOM"); // deriveTaskKey("no-manifest")
     expect(installFlowPlugin).not.toHaveBeenCalled();
+    expect(await readFile(join(noManifestDir, "maister.yaml"), "utf8")).toBe(
+      "schemaVersion: 2\nproject:\n  name: no-manifest\nflows: []\n",
+    );
 
     const members = await db
       .select()
@@ -603,6 +619,11 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
       gitStatus: "no-remote",
       clonedByUs: false,
     };
+    currentConfig = {
+      ...seedConfig,
+      project: { ...seedConfig.project, name: "My Cool App" },
+      flows: [],
+    };
 
     const res = await POST(
       req({ target: "ignored", name: "My Cool App", taskKey: "COOL" }),
@@ -615,7 +636,7 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe("My Cool App");
     expect(rows[0].taskKey).toBe("COOL");
-    expect(rows[0].maisterYamlPath).toBeNull();
+    expect(rows[0].maisterYamlPath).toBe(join(noManifestDir, "maister.yaml"));
   });
 
   it("still loads the manifest (maisterYamlPath set) when maister.yaml is present", async () => {
@@ -670,6 +691,11 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
       clonedByUs: false,
       createdByUs: true,
     };
+    currentConfig = {
+      ...seedConfig,
+      project: { ...seedConfig.project, name: "Fresh App" },
+      flows: [],
+    };
 
     const res = await POST(
       req({ target: "ignored", name: "Fresh App", mode: "new" }),
@@ -680,7 +706,7 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
     const rows = await projectRows("fresh-app");
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].maisterYamlPath).toBeNull();
+    expect(rows[0].maisterYamlPath).toBe(join(noManifestDir, "maister.yaml"));
 
     // register's "initialized" branch ran the (mocked) gitInit on the dir.
     const { gitInit } = await import("@/lib/repo-source");

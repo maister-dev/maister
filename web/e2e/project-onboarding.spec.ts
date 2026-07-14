@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { test, expect, type Page } from "@playwright/test";
@@ -5,8 +6,8 @@ import { test, expect, type Page } from "@playwright/test";
 import { countRows } from "./_seed/db";
 
 // Register a new-empty (greenfield) project and land on its board. Returns the
-// derived slug. The greenfield repo is git-initialized on `main` (ADR-093), so
-// it is persist-eligible.
+// derived slug. The greenfield repo is git-initialized on `main` with a
+// generated `maister.yaml`.
 async function registerNewEmpty(page: Page, location: string): Promise<string> {
   const slug = path.basename(location);
 
@@ -48,7 +49,7 @@ test("prefills name + task key from the Git URL; a manual edit stops prefill", a
   await expect(page.locator('input[name="name"]')).toHaveValue("Custom Name");
 });
 
-test("registers a new empty project with no maister.yaml (initialized)", async ({
+test("registers a new empty project with a generated maister.yaml", async ({
   page,
 }) => {
   // Absolute path under the e2e runtime root → mkdir stays out of ~/.maister.
@@ -78,10 +79,13 @@ test("registers a new empty project with no maister.yaml (initialized)", async (
     page.getByRole("link", { name: /Open project/ }),
   ).toHaveAttribute("href", `/projects/${expectedSlug}`);
 
-  // Registered from DB defaults — the config lives only in the DB.
+  expect(await readFile(path.join(location, "maister.yaml"), "utf8")).toBe(
+    `schemaVersion: 2\nproject:\n  name: ${expectedSlug}\nflows: []\n`,
+  );
+
   const count = await countRows(
     "projects",
-    "slug = $1 AND maister_yaml_path IS NULL",
+    "slug = $1 AND maister_yaml_path IS NOT NULL",
     [expectedSlug],
   );
 
@@ -110,41 +114,6 @@ test("renders a classified, collapsible error when a clone fails", async ({
 
   // The collapsible git-output block is unique to the clone-error surface.
   await expect(page.getByText("Show git output")).toBeVisible();
-});
-
-test("persists a new-empty project's config from the board banner", async ({
-  page,
-}) => {
-  const slug = await registerNewEmpty(
-    page,
-    path.resolve(`e2e/.runtime/persist-${Date.now()}`),
-  );
-
-  // The persist banner shows on the board (admin + config lives only in the DB).
-  await expect(
-    page.getByRole("button", { name: "Persist to maister.yaml" }),
-  ).toBeVisible();
-
-  const persisted = page.waitForResponse(
-    (response) =>
-      response.url().includes(`/projects/${slug}/persist-config`) &&
-      response.request().method() === "POST",
-  );
-
-  await page.getByRole("button", { name: "Persist to maister.yaml" }).click();
-  // The confirm step's button is the bare "Persist".
-  await page.getByRole("button", { name: "Persist", exact: true }).click();
-  expect((await persisted).status()).toBe(200);
-
-  await expect(
-    page.getByText("Config persisted to maister.yaml"),
-  ).toBeVisible();
-
-  // Closing refreshes server data → needsPersist flips → the banner is gone.
-  await page.getByRole("button", { name: "Close" }).click();
-  await expect(
-    page.getByRole("button", { name: "Persist to maister.yaml" }),
-  ).toHaveCount(0);
 });
 
 test("adds a git remote from Settings → Git", async ({ page }) => {
