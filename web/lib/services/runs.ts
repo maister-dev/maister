@@ -7,7 +7,7 @@ import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types"
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -122,6 +122,7 @@ const {
   projects,
   runs,
   runSessions,
+  runSyncAttempts,
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
@@ -1847,16 +1848,34 @@ export async function launchRun(
   return step.value;
 }
 
+// ADR-138: the latest branch-sync attempt projection, matching the OpenAPI
+// `RunDTO.syncAttempt` wire schema (docs/api/external/operations.openapi.yaml).
+export type RunSyncAttemptDTO = {
+  attempt: number;
+  strategy: "rebase" | "merge";
+  mode: "mechanical" | "agent";
+  phase: string;
+  pushed: boolean;
+  errorCode: string | null;
+};
+
 export type RunDTO = {
   id: string;
   taskId: string | null;
   projectId: string;
   status: string;
   flowId: string | null;
+  // Pre-existing wire naming: the OpenAPI documents this as `executorId`. The
+  // ext route serializes this object verbatim; do not rename here.
   runnerId: string;
   currentStepId: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
+  // ADR-137 PR lifecycle: provider PR state + conflict flag from the workspace.
+  prState: "open" | "merged" | "closed" | null;
+  prHasConflicts: boolean | null;
+  // ADR-138: the latest branch-sync attempt (by `attempt` desc), null when none.
+  syncAttempt: RunSyncAttemptDTO | null;
 };
 
 export async function getRunDTO(
@@ -1876,13 +1895,31 @@ export async function getRunDTO(
       currentStepId: runs.currentStepId,
       startedAt: runs.startedAt,
       finishedAt: runs.endedAt,
+      prState: workspaces.prState,
+      prHasConflicts: workspaces.prHasConflicts,
     })
     .from(runs)
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .where(and(eq(runs.id, runId), eq(runs.projectId, projectId)));
 
   if (rows.length === 0) return null;
 
   const row = rows[0];
+
+  const syncRows = await (_db as any)
+    .select({
+      attempt: runSyncAttempts.attempt,
+      strategy: runSyncAttempts.strategy,
+      mode: runSyncAttempts.mode,
+      phase: runSyncAttempts.phase,
+      pushed: runSyncAttempts.pushed,
+      errorCode: runSyncAttempts.errorCode,
+    })
+    .from(runSyncAttempts)
+    .where(eq(runSyncAttempts.runId, runId))
+    .orderBy(desc(runSyncAttempts.attempt))
+    .limit(1);
+  const sync = syncRows[0];
 
   return {
     id: row.id,
@@ -1894,5 +1931,17 @@ export async function getRunDTO(
     currentStepId: row.currentStepId ?? null,
     startedAt: row.startedAt ?? null,
     finishedAt: row.finishedAt ?? null,
+    prState: row.prState ?? null,
+    prHasConflicts: row.prHasConflicts ?? null,
+    syncAttempt: sync
+      ? {
+          attempt: sync.attempt,
+          strategy: sync.strategy,
+          mode: sync.mode,
+          phase: sync.phase,
+          pushed: sync.pushed,
+          errorCode: sync.errorCode ?? null,
+        }
+      : null,
   };
 }

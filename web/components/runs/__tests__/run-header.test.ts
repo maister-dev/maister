@@ -139,3 +139,38 @@ describe("RunHeader — budget warn badge (AC-BADGE-1)", () => {
     expect(html).not.toContain('data-testid="run-header-budget-warn"');
   });
 });
+
+describe("RunHeader — PR-state chip (ADR-137)", () => {
+  const prLabels: RunHeaderLabels = {
+    ...labels,
+    prChip: {
+      open: "PR open",
+      merged: "PR merged",
+      closed: "PR closed",
+      conflicts: "Conflicts",
+      reopen: "Reopen",
+    },
+  };
+
+  it("renders the merged PR chip in the header facts row", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunHeader, {
+        title: "t",
+        status: "Done",
+        inspectorOpen: false,
+        labels: prLabels,
+        prState: "merged",
+        prHasConflicts: false,
+      }),
+    );
+
+    expect(html).toContain('data-testid="pr-state-chip"');
+    expect(html).toContain('data-pr-state="merged"');
+  });
+
+  it("omits the chip when prChip labels are absent (non-run-detail consumer)", () => {
+    const html = render({ prState: "merged" });
+
+    expect(html).not.toContain('data-testid="pr-state-chip"');
+  });
+});

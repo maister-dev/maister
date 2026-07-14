@@ -950,6 +950,13 @@ export default async function RunDetailLayout({
     promote: t("inspectorActionPromote"),
     promotionStarted: t("promotionStarted"),
     targetDrift: t("targetDrift"),
+    prChip: {
+      open: t("prOpen"),
+      merged: t("prMerged"),
+      closed: t("prClosed"),
+      conflicts: t("prConflicts"),
+      reopen: t("prReopen"),
+    },
   };
   const inspectorLabels: RunInspectorLabels = {
     overview: t("inspectorOverview"),
@@ -1309,6 +1316,8 @@ export default async function RunDetailLayout({
         }
         keyRef={detail.taskRef}
         labels={shellLabels}
+        prHasConflicts={detail.prHasConflicts}
+        prState={detail.prState}
         projectHref={`/projects/${detail.projectSlug}`}
         projectLabel={t("backToBoard")}
         promotionOperation={headerPromotionOperation}

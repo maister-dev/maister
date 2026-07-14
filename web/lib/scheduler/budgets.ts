@@ -10,7 +10,8 @@ export type SchedulerBudgetKey =
   | "domain_event_dispatch"
   | "auto_launch_triaged"
   | "auto_promote"
-  | "repo_delivery_scan";
+  | "repo_delivery_scan"
+  | "pr_state_scan";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
@@ -23,6 +24,7 @@ export type SchedulerBudgetLimits = {
   autoLaunchTriaged: number;
   autoPromote: number;
   repoDeliveryScan: number;
+  prStateScan: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -48,6 +50,9 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     // ADR-134: project-scoped remote scans are network-bound and sequentially
     // bounded. This is deliberately not operator-configurable.
     repoDeliveryScan: 1,
+    // ADR-137: per-project PR-state poll — provider CLI/REST only, network-bound,
+    // sequentially bounded, not operator-configurable.
+    prStateScan: 1,
   };
 }
 

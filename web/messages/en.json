@@ -2183,6 +2183,11 @@
     "readinessReady": "Ready to promote",
     "readinessBlocked": "Promotion blocked",
     "prLink": "Pull request",
+    "prOpen": "PR open",
+    "prMerged": "PR merged",
+    "prClosed": "PR closed",
+    "prConflicts": "PR conflicts",
+    "prReopen": "Reopen pull request",
     "targetDrift": "The target branch advanced since this review. Re-review the updated diff, or promote anyway.",
     "promoteAnyway": "Promote anyway",
     "relaunchToPromote": "This run predates branch targeting and has no promotion metadata. Relaunch the task to promote it.",
@@ -2883,7 +2888,8 @@
       "domain_event_dispatch": "domain_event_dispatch",
       "auto_launch_triaged": "auto_launch_triaged",
       "auto_promote": "auto_promote",
-      "repo_delivery_scan": "repo_delivery_scan"
+      "repo_delivery_scan": "repo_delivery_scan",
+      "pr_state_scan": "pr_state_scan"
     },
     "state": {
       "active": "active",

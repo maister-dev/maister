@@ -12,6 +12,10 @@ import clsx from "clsx";
 import { FLOW_CHIP } from "@/components/board/task-card";
 import { LaunchPopover } from "@/components/board/launch-popover";
 import {
+  PrStateChip,
+  type PrStateChipLabels,
+} from "@/components/pr-state-chip";
+import {
   TaskDecomposition,
   type TaskDecompositionLabels,
 } from "@/components/board/task-decomposition";
@@ -33,6 +37,8 @@ export interface FlightCardLabels {
   readyToPromote: string;
   // ADR-126: the "auto" glyph tooltip on an auto-promoted Done card ({lane}).
   autoPromoted: (lane: string) => string;
+  // ADR-137 PR-state chip labels (open / merged / closed / conflicts / reopen).
+  prChip: PrStateChipLabels;
   runsCount: (count: number) => string;
   launch: string;
   launchUnavailable: string;
@@ -236,7 +242,10 @@ export function FlightCard({
         ) : null}
         {card.awaitingClarification ? (
           <span
-            className={clsx(BADGE, "border-amber-line bg-amber-soft text-amber")}
+            className={clsx(
+              BADGE,
+              "border-amber-line bg-amber-soft text-amber",
+            )}
             data-testid="flight-card-awaiting-clarification"
           >
             {labels.awaitingClarification}
@@ -335,6 +344,11 @@ export function FlightCard({
             ⚡ auto
           </span>
         ) : null}
+        <PrStateChip
+          labels={labels.prChip}
+          prHasConflicts={card.prHasConflicts}
+          prState={card.prState}
+        />
         {card.runCount > 0 ? (
           <span
             className={clsx(BADGE, "border-line bg-ivory text-ink-2")}

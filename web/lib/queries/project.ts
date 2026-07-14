@@ -353,6 +353,8 @@ export async function getProjectPageData(
           archivedBranch: workspaces.archivedBranch,
           removedAt: workspaces.removedAt,
           promotionLane: workspaces.promotionLane,
+          prState: workspaces.prState,
+          prHasConflicts: workspaces.prHasConflicts,
           startedAt: runs.startedAt,
           scratchDialogStatus: scratchRuns.dialogStatus,
         })
@@ -507,6 +509,8 @@ export async function getProjectPageData(
     // ACTIVE_RUN_STATUSES excludes Done/Abandoned; a gate-less run → "ready".
     readiness: readinessByRun.get(row.runId) ?? "ready",
     autoPromotedLane: row.promotionLane ?? null,
+    prState: row.prState ?? null,
+    prHasConflicts: row.prHasConflicts ?? null,
   }));
 
   const platformDefaultRunnerId =

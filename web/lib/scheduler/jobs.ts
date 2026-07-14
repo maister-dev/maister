@@ -128,6 +128,8 @@ export const DEFAULT_AUTO_PROMOTE_JOB_ID = "auto_promote.default";
 const DEFAULT_AUTO_PROMOTE_CADENCE_SECONDS = 60;
 
 export const REPO_DELIVERY_SCAN_CADENCE_SECONDS = 60 * 60;
+// ADR-137: PR-state poll cadence. A code constant — no env var (owner decision).
+export const PR_STATE_SCAN_CADENCE_SECONDS = 300;
 
 export function isSchedulerJobKind(value: string): value is SchedulerJobKind {
   return SCHEDULER_JOB_KINDS.includes(value as SchedulerJobKind);
@@ -157,6 +159,8 @@ export function schedulerBudgetForKind(
       return "auto_promote";
     case "repo_delivery_scan":
       return "repo_delivery_scan";
+    case "pr_state_scan":
+      return "pr_state_scan";
   }
 }
 
@@ -371,10 +375,16 @@ export async function ensureDefaultSchedulerJobs(
 
   await ensureRepoDeliveryScanJobs({ now, db });
   await disableArchivedRepoDeliveryScanJobs({ now, db });
+  await ensurePrStateScanJobs({ now, db });
+  await disableArchivedPrStateScanJobs({ now, db });
 }
 
 export function repoDeliveryScanJobId(projectId: string): string {
   return `repo_delivery_scan.${projectId}`;
+}
+
+export function prStateScanJobId(projectId: string): string {
+  return `pr_state_scan.${projectId}`;
 }
 
 export async function ensureRepoDeliveryScanJobs(
@@ -435,6 +445,64 @@ export async function disableArchivedRepoDeliveryScanJobs(
   `);
 }
 
+export async function ensurePrStateScanJobs(
+  input: EnsureDefaultSchedulerJobsInput = {},
+): Promise<void> {
+  const now = input.now ?? new Date();
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+
+  await db.execute(sql`
+    INSERT INTO scheduler_jobs (
+      id,
+      project_id,
+      job_kind,
+      target,
+      cadence_interval_seconds,
+      next_run_at,
+      max_failures,
+      created_at,
+      updated_at
+    )
+    SELECT
+      'pr_state_scan.' || p.id,
+      p.id,
+      'pr_state_scan',
+      jsonb_build_object('projectId', p.id),
+      ${PR_STATE_SCAN_CADENCE_SECONDS},
+      ${now},
+      3,
+      ${now},
+      ${now}
+    FROM projects p
+    WHERE p.archived_at IS NULL
+    ON CONFLICT (id) DO UPDATE
+    SET
+      disabled_at = NULL,
+      consecutive_failures = 0,
+      next_run_at = EXCLUDED.next_run_at,
+      updated_at = EXCLUDED.updated_at
+    WHERE scheduler_jobs.disabled_at IS NOT NULL
+      AND scheduler_jobs.consecutive_failures < scheduler_jobs.max_failures
+  `);
+}
+
+export async function disableArchivedPrStateScanJobs(
+  input: EnsureDefaultSchedulerJobsInput = {},
+): Promise<void> {
+  const now = input.now ?? new Date();
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+
+  await db.execute(sql`
+    UPDATE scheduler_jobs j
+    SET disabled_at = ${now}, updated_at = ${now}
+    FROM projects p
+    WHERE j.project_id = p.id
+      AND j.job_kind = 'pr_state_scan'
+      AND p.archived_at IS NOT NULL
+      AND j.disabled_at IS NULL
+  `);
+}
+
 export async function claimDueJobs(
   input: ClaimDueJobsInput = {},
 ): Promise<ClaimedSchedulerJob[]> {
@@ -468,7 +536,8 @@ export async function claimDueJobs(
         ('domain_event_dispatch'::text, ${budgets.domainEventDispatch}::int),
         ('auto_launch_triaged'::text, ${budgets.autoLaunchTriaged}::int),
         ('auto_promote'::text, ${budgets.autoPromote}::int),
-        ('repo_delivery_scan'::text, ${budgets.repoDeliveryScan}::int)
+        ('repo_delivery_scan'::text, ${budgets.repoDeliveryScan}::int),
+        ('pr_state_scan'::text, ${budgets.prStateScan}::int)
     ),
     active_budget AS (
       SELECT
@@ -483,6 +552,7 @@ export async function claimDueJobs(
           WHEN 'auto_launch_triaged' THEN 'auto_launch_triaged'
           WHEN 'auto_promote' THEN 'auto_promote'
           WHEN 'repo_delivery_scan' THEN 'repo_delivery_scan'
+          WHEN 'pr_state_scan' THEN 'pr_state_scan'
         END AS budget_key,
         count(*)::int AS active_count
       FROM scheduler_job_runs r
@@ -504,6 +574,7 @@ export async function claimDueJobs(
           WHEN 'auto_launch_triaged' THEN 'auto_launch_triaged'
           WHEN 'auto_promote' THEN 'auto_promote'
           WHEN 'repo_delivery_scan' THEN 'repo_delivery_scan'
+          WHEN 'pr_state_scan' THEN 'pr_state_scan'
         END AS budget_key,
         bl.max_concurrent,
         coalesce(ab.active_count, 0) AS active_count
@@ -519,6 +590,7 @@ export async function claimDueJobs(
         WHEN 'auto_launch_triaged' THEN 'auto_launch_triaged'
         WHEN 'auto_promote' THEN 'auto_promote'
         WHEN 'repo_delivery_scan' THEN 'repo_delivery_scan'
+        WHEN 'pr_state_scan' THEN 'pr_state_scan'
       END
       LEFT JOIN active_budget ab ON ab.budget_key = bl.budget_key
       WHERE j.disabled_at IS NULL

@@ -15,8 +15,10 @@ import {
 import * as schema from "@/lib/db/schema";
 import {
   claimDueJobs,
+  disableArchivedPrStateScanJobs,
   disableArchivedRepoDeliveryScanJobs,
   ensureDefaultSchedulerJobs,
+  ensurePrStateScanJobs,
   ensureRepoDeliveryScanJobs,
   reapStuckSchedulerAttempts,
   recordJobAttemptResult,
@@ -109,6 +111,64 @@ describe("scheduler job SQL integration", () => {
         .select()
         .from(schema.schedulerJobs)
         .where(eq(schema.schedulerJobs.id, `repo_delivery_scan.${projectId}`))
+    )[0];
+    expect(job.disabledAt).toBeNull();
+    expect(job.consecutiveFailures).toBe(0);
+  });
+
+  it("seeds an active project pr-state scan, claims its database project id, and re-enables it after unarchive", async () => {
+    const now = new Date("2026-06-05T10:00:00.000Z");
+    const projectId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      slug: `scan-${projectId.slice(0, 8)}`,
+      name: "PR-state scan project",
+      repoPath: `/repos/${projectId}`,
+      taskKey: `SCAN${projectId.replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+    });
+    await ensurePrStateScanJobs({ now, db: schedulerDb });
+
+    const claimed = await claimDueJobs({
+      now,
+      jobKind: "pr_state_scan",
+      db: schedulerDb,
+    });
+
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]).toMatchObject({
+      id: `pr_state_scan.${projectId}`,
+      jobKind: "pr_state_scan",
+      projectId,
+      target: { projectId },
+    });
+
+    await db
+      .update(schema.projects)
+      .set({ archivedAt: now })
+      .where(eq(schema.projects.id, projectId));
+    await disableArchivedPrStateScanJobs({ now, db: schedulerDb });
+
+    let job = (
+      await db
+        .select()
+        .from(schema.schedulerJobs)
+        .where(eq(schema.schedulerJobs.id, `pr_state_scan.${projectId}`))
+    )[0];
+
+    expect(job.disabledAt).toEqual(now);
+
+    await db
+      .update(schema.projects)
+      .set({ archivedAt: null })
+      .where(eq(schema.projects.id, projectId));
+    await ensurePrStateScanJobs({ now, db: schedulerDb });
+
+    job = (
+      await db
+        .select()
+        .from(schema.schedulerJobs)
+        .where(eq(schema.schedulerJobs.id, `pr_state_scan.${projectId}`))
     )[0];
     expect(job.disabledAt).toBeNull();
     expect(job.consecutiveFailures).toBe(0);

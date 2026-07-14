@@ -175,6 +175,10 @@ export interface RunDetail {
   promotionMode: string | null;
   prUrl: string | null;
   prNumber: number | null;
+  // ADR-137 PR lifecycle: provider PR state + conflict flag from the run's
+  // workspace row. Null until the pr_state_scan first records them.
+  prState: "open" | "merged" | "closed" | null;
+  prHasConflicts: boolean | null;
   deliveryPolicySnapshot: DeliveryPolicy | null;
   executionPolicy: ExecutionPolicy | null;
   // Cost-budget governance (AC-BADGE-1): derived run-scope warn signal — the
@@ -280,6 +284,8 @@ export const getRunDetail = cache(async function getRunDetail(
       promotionMode: workspaces.promotionMode,
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
+      prState: workspaces.prState,
+      prHasConflicts: workspaces.prHasConflicts,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       executionPolicy: runs.executionPolicy,
       budgetState: runs.budgetState,
@@ -537,6 +543,8 @@ export const getRunDetail = cache(async function getRunDetail(
     promotionMode: row.promotionMode,
     prUrl: row.prUrl,
     prNumber: row.prNumber,
+    prState: row.prState ?? null,
+    prHasConflicts: row.prHasConflicts ?? null,
     deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
     executionPolicy: row.executionPolicy ?? null,
     budgetStatus,

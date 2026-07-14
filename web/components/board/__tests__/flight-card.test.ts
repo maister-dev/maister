@@ -37,6 +37,13 @@ const labels: FlightCardLabels = {
   // M18 Phase 4: ready-to-promote / PR badge label.
   readyToPromote: "Ready to promote",
   autoPromoted: (lane: string) => `Auto-promoted via ${lane}`,
+  prChip: {
+    open: "PR open",
+    merged: "PR merged",
+    closed: "PR closed",
+    conflicts: "Conflicts",
+    reopen: "Reopen",
+  },
   runsCount: (count: number) => `${count} runs`,
   launch: "Run again",
   launchUnavailable: "Unavailable",
@@ -99,6 +106,8 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readiness: "ready",
     readyToPromote: false,
     prNumber: null,
+    prState: null,
+    prHasConflicts: null,
     autoPromotedLane: null,
     blockedBy: [],
     childTasks: [],
@@ -502,5 +511,32 @@ describe("FlightCard — compact identity-first contract", () => {
     const html = render(baseCard());
 
     expect(html).toMatch(/^<div [^>]*data-testid="flight-card"/);
+  });
+});
+
+describe("FlightCard — PR-state chip (ADR-137)", () => {
+  it("renders the merged PR chip on a Done card when prState is merged", () => {
+    const html = render(
+      baseCard({ status: "done", prState: "merged", prHasConflicts: false }),
+    );
+
+    expect(html).toContain('data-testid="pr-state-chip"');
+    expect(html).toContain('data-pr-state="merged"');
+    expect(html).toContain("PR merged");
+  });
+
+  it("renders the conflicts variant with a disabled reopen when prHasConflicts", () => {
+    const html = render(baseCard({ prState: "open", prHasConflicts: true }));
+
+    expect(html).toContain('data-pr-conflicts="true"');
+    expect(html).toContain("Conflicts");
+    expect(html).toContain('data-testid="pr-reopen"');
+    expect(html).toContain("disabled");
+  });
+
+  it("omits the PR chip when there is no PR state and no conflict", () => {
+    const html = render(baseCard({ prState: null, prHasConflicts: null }));
+
+    expect(html).not.toContain('data-testid="pr-state-chip"');
   });
 });

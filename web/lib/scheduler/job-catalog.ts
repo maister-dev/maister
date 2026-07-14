@@ -11,6 +11,7 @@ export const ALL_SCHEDULER_JOB_KINDS = [
   "auto_launch_triaged",
   "auto_promote",
   "repo_delivery_scan",
+  "pr_state_scan",
 ] as const satisfies readonly SchedulerJobKind[];
 
 export const CREATABLE_SCHEDULER_JOB_KINDS = [
@@ -78,6 +79,13 @@ export const SCHEDULER_JOB_KIND_CATALOG: Record<
     systemManaged: true,
   },
   repo_delivery_scan: {
+    creatable: false,
+    filterable: true,
+    systemManaged: true,
+  },
+  // ADR-137: per-project PR-state poll. Not creatable, system-managed, and NOT
+  // a seeded singleton (one job per project, seeded by ensurePrStateScanJobs).
+  pr_state_scan: {
     creatable: false,
     filterable: true,
     systemManaged: true,

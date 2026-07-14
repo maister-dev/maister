@@ -39,6 +39,8 @@ function workspace(over: Partial<PortfolioWorkspace> = {}): PortfolioWorkspace {
     lifecycleActions: [],
     readiness: "ready",
     autoPromotedLane: null,
+    prState: null,
+    prHasConflicts: null,
     ...over,
   };
 }

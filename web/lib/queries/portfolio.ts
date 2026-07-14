@@ -136,6 +136,10 @@ export interface PortfolioWorkspace {
   // the sweep promotes (the run then leaves the active set), so this is null on
   // the typical active-workspace row — present for parity with the board card.
   autoPromotedLane: string | null;
+  // ADR-137 PR lifecycle: provider PR state + conflict flag from the workspace
+  // row. Null until the pr_state_scan records them.
+  prState: "open" | "merged" | "closed" | null;
+  prHasConflicts: boolean | null;
 }
 
 export interface PortfolioRecentMerge {
@@ -387,6 +391,8 @@ export async function getPortfolio(
         archivedBranch: workspaces.archivedBranch,
         removedAt: workspaces.removedAt,
         promotionLane: workspaces.promotionLane,
+        prState: workspaces.prState,
+        prHasConflicts: workspaces.prHasConflicts,
         startedAt: runs.startedAt,
         scratchDialogStatus: scratchRuns.dialogStatus,
       })
@@ -630,6 +636,8 @@ export async function getPortfolio(
       // non-terminal; a run with no gates/artifacts rolls up to "ready".
       readiness: readinessByRun.get(row.runId) ?? "ready",
       autoPromotedLane: row.promotionLane ?? null,
+      prState: row.prState ?? null,
+      prHasConflicts: row.prHasConflicts ?? null,
     });
     workspacesByProject.set(projectId, list);
   }

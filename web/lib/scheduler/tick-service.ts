@@ -19,6 +19,7 @@ import { runAutoPromoteJob } from "@/lib/scheduler/handlers/auto-promote";
 import { runCommandJob } from "@/lib/scheduler/handlers/command";
 import { runDomainEventDispatchJob } from "@/lib/scheduler/handlers/domain-event-dispatch";
 import { runScheduledFlowJob } from "@/lib/scheduler/handlers/flow-run";
+import { runPrStateScanJob } from "@/lib/scheduler/handlers/pr-state-scan";
 import { runRepoDeliveryScanJob } from "@/lib/scheduler/handlers/repo-delivery-scan";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { runSystemSweep } from "@/lib/scheduler/system-sweeps";
@@ -201,6 +202,15 @@ async function runClaimedJob(
         });
 
         return succeeded(job);
+      case "pr_state_scan":
+        await recordJobAttemptResult({
+          jobId: job.id,
+          attemptId: job.attemptId,
+          status: "Succeeded",
+          summary: await runPrStateScanJob({ projectId: job.projectId }),
+        });
+
+        return succeeded(job);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -211,7 +221,8 @@ async function runClaimedJob(
     const isSkip =
       isMaisterError(err) &&
       err.code === "PRECONDITION" &&
-      job.jobKind !== "repo_delivery_scan";
+      job.jobKind !== "repo_delivery_scan" &&
+      job.jobKind !== "pr_state_scan";
     const status = isSkip ? "Skipped" : "Failed";
     const errorCode = isMaisterError(err) ? err.code : "SCHEDULER_HANDLER";
 

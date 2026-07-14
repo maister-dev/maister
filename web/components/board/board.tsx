@@ -113,6 +113,14 @@ export async function Board({
     // M18 (T4.4): ready-to-promote / PR badge label.
     readyToPromote: t("readyToPromote"),
     autoPromoted: (lane: string) => t("autoPromoted", { lane }),
+    // ADR-137 PR-state chip labels — sourced from the shared `run` namespace.
+    prChip: {
+      open: tRun("prOpen"),
+      merged: tRun("prMerged"),
+      closed: tRun("prClosed"),
+      conflicts: tRun("prConflicts"),
+      reopen: tRun("prReopen"),
+    },
     runsCount: (count: number) => t("runsCount", { count }),
     launch: t("runAgain"),
     launchUnavailable: t("launchUnavailable"),
@@ -241,6 +249,7 @@ export async function Board({
                   className="[[data-layout=swimlanes]_&]:w-[268px] [[data-layout=swimlanes]_&]:flex-none"
                 >
                   <TaskCard
+                    awaitingClarificationLabel={t("awaitingClarification")}
                     blockedByLabel={t("launchBlocked")}
                     canAct={canAct}
                     card={card}
@@ -270,7 +279,6 @@ export async function Board({
                     runsCountLabel={(count) => t("runsCount", { count })}
                     slug={slug}
                     triagedLabel={t("triaged")}
-                    awaitingClarificationLabel={t("awaitingClarification")}
                     unconfiguredLabel={t("unconfigured")}
                   />
                 </div>

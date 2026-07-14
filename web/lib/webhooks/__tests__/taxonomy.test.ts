@@ -33,6 +33,9 @@ const EXPECTED_TYPES = [
   "run.failed",
   "run.crashed",
   "run.abandoned",
+  "run.pr_merged",
+  "run.pr_closed",
+  "run.pr_conflicts",
   "gate.decided",
   "ping",
 ] as const;
@@ -58,8 +61,8 @@ describe("WEBHOOK_API_VERSION", () => {
 });
 
 describe("WEBHOOK_EVENT_TYPES", () => {
-  it("has exactly the 13 listed types in order", () => {
-    expect(WEBHOOK_EVENT_TYPES).toHaveLength(13);
+  it("has exactly the 16 listed types in order", () => {
+    expect(WEBHOOK_EVENT_TYPES).toHaveLength(16);
     expect([...WEBHOOK_EVENT_TYPES]).toEqual([...EXPECTED_TYPES]);
   });
 
@@ -215,6 +218,22 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
     { type: "run.failed", data: { errorCode: "CONFIG" } },
     { type: "run.crashed", data: { errorCode: null } },
     { type: "run.abandoned", data: { source: "user" } },
+    {
+      type: "run.pr_merged",
+      data: {
+        prNumber: 42,
+        prUrl: "https://github.com/o/r/pull/42",
+        mergeCommitSha: "abc123",
+      },
+    },
+    {
+      type: "run.pr_closed",
+      data: { prNumber: 42, prUrl: "https://github.com/o/r/pull/42" },
+    },
+    {
+      type: "run.pr_conflicts",
+      data: { prNumber: 42, prUrl: "https://github.com/o/r/pull/42" },
+    },
     {
       type: "gate.decided",
       data: {

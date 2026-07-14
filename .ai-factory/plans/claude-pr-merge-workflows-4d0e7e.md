@@ -753,7 +753,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 2: PR lifecycle tracking
 
-- [ ] **Task 5: Provider `getPrState` reads in `pr-adapter.ts`.**
+- [x] **Task 5: Provider `getPrState` reads in `pr-adapter.ts`.**
 
   Extend the 4-provider adapter family (`web/lib/runs/pr-adapter.ts`) with
   `getPrState({remoteUrl, prNumber})`: `github` (gh CLI), `gitlab` (glab CLI),
@@ -770,7 +770,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
   **Logging:** DEBUG per query with provider/pr number/duration; WARN
   classification on failure; never tokens/URLs-with-creds.
 
-- [ ] **Task 6: `pr_state_scan` scheduler job.**
+- [x] **Task 6: `pr_state_scan` scheduler job.**
 
   Register the kind at ALL sites per decision 2a (three `schema.ts` enum edits;
   `job-catalog.ts` per-project shape; `budgets.ts` 3 points +
@@ -802,7 +802,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
   **Logging:** INFO per tick: project, scanned/updated/skipped counts, cursor;
   WARN per poison item with reason; no payloads.
 
-- [ ] **Task 7: PR state surfacing.**
+- [x] **Task 7: PR state surfacing.**
 
   Webhook taxonomy: add `run.pr_merged`, `run.pr_closed`, `run.pr_conflicts`
   (`webhooks/taxonomy.ts:9` + the matching asyncapi edits from Task 1). DTO

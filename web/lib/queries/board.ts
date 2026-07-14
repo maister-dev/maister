@@ -185,6 +185,11 @@ export interface FlightCard {
   // M18 (T4.4): the pre-seeded PR number for a `pull_request`-mode run (display
   // only); null when no PR has been recorded.
   prNumber: number | null;
+  // ADR-137 PR lifecycle: provider PR state + conflict flag from the workspace
+  // row, driving the PR-state chip on Done/InDelivery/OnReview cards. Null until
+  // the pr_state_scan records them.
+  prState: "open" | "merged" | "closed" | null;
+  prHasConflicts: boolean | null;
   // ADR-126: the lane class an auto-promotion promoted this run through
   // (workspaces.promotion_lane). Non-null ⇒ the run was promoted by the sweep,
   // driving the "auto" glyph on the Done card. Null on manual/pending runs.
@@ -482,6 +487,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       archivedBranch: workspaces.archivedBranch,
       removedAt: workspaces.removedAt,
       prNumber: workspaces.prNumber,
+      prState: workspaces.prState,
+      prHasConflicts: workspaces.prHasConflicts,
       promotionLane: workspaces.promotionLane,
     })
     .from(runs)
@@ -740,6 +747,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         run.status === "Review" &&
         (readinessByRun.get(run.runId) ?? "ready") === "ready",
       prNumber: run.prNumber ?? null,
+      prState: run.prState ?? null,
+      prHasConflicts: run.prHasConflicts ?? null,
       autoPromotedLane: run.promotionLane ?? null,
       blockedBy: openBlockers.get(task.taskId) ?? [],
       childTasks: childTasksByTask.get(task.taskId) ?? [],

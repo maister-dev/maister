@@ -5,6 +5,11 @@ import Link from "next/link";
 import clsx from "clsx";
 import { CurrencyDollarIcon } from "@heroicons/react/24/outline";
 
+import {
+  PrStateChip,
+  type PrState,
+  type PrStateChipLabels,
+} from "@/components/pr-state-chip";
 import { MarkdownBody } from "@/components/social/markdown-body";
 import { RunHeaderPromotionAction } from "@/components/runs/run-header-promotion-action";
 
@@ -35,6 +40,9 @@ export interface RunHeaderLabels {
   promote?: string;
   promotionStarted?: string;
   targetDrift?: string;
+  // ADR-137 PR-state chip labels. Optional so non-run-detail consumers (no PR
+  // signal) keep compiling; the chip renders only when present.
+  prChip?: PrStateChipLabels;
 }
 
 export interface RunHeaderProps {
@@ -52,6 +60,9 @@ export interface RunHeaderProps {
   status: string;
   branch?: string | null;
   targetBranch?: string | null;
+  // ADR-137 PR lifecycle: provider PR state + conflict flag for the header chip.
+  prState?: PrState | null;
+  prHasConflicts?: boolean | null;
   changeSummary?: RunHeaderChangeSummary | null;
   // Derived run-scope budget warn signal (null = no badge).
   budgetStatus?: { warn: boolean; pct: number } | null;
@@ -97,6 +108,8 @@ export function RunHeader({
   status,
   branch,
   targetBranch,
+  prState,
+  prHasConflicts,
   changeSummary,
   budgetStatus,
   inspectorOpen,
@@ -179,6 +192,13 @@ export function RunHeader({
               <CurrencyDollarIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {budgetBadge}
             </span>
+          ) : null}
+          {labels.prChip ? (
+            <PrStateChip
+              labels={labels.prChip}
+              prHasConflicts={prHasConflicts ?? null}
+              prState={prState ?? null}
+            />
           ) : null}
         </div>
         <h1 className="m-0 truncate font-sans text-[22px] font-bold leading-tight text-ink md:text-[26px]">
