@@ -248,7 +248,6 @@ function PreviewPane({
         compact
         disabled
         comments=""
-        confidence=""
         criticality={null}
         error={null}
         formValues={{}}
@@ -258,9 +257,7 @@ function PreviewPane({
         options={[]}
         reviewSchema={null}
         schema={schema}
-        showConfidence={false}
         onCommentsChange={NOOP_STR}
-        onConfidenceChange={NOOP_STR}
         onDecision={NOOP_STR}
         onFormFieldChange={NOOP_FIELD}
         onJsonChange={NOOP_STR}

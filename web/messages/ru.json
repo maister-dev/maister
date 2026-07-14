@@ -764,6 +764,7 @@
     "agentQuestion": "Вопрос агента",
     "answerClarification": "Ответить на уточнение",
     "viewRun": "Открыть ран",
+    "reviewCode": "Ревью кода",
     "contextLoading": "Загрузка контекста…",
     "contextError": "Не удалось загрузить контекст.",
     "retry": "Повторить",
@@ -2109,6 +2110,14 @@
     "step": "шаг",
     "reviewComments": "Комментарии ревью",
     "reviewCommentsPlaceholder": "Что нужно изменить? (необязательно)",
+    "reviewWorkspaceTitle": "Рабочее пространство ревью",
+    "reviewWorkspaceSource": "Текущее ревью сравнивает базу Flow-воркспейса с текущим рабочим деревом: коммиты, staged, unstaged и новые файлы, доступные для ревью.",
+    "reviewWorkspaceDecision": "Решение по ревью",
+    "reviewWorkspaceUnavailable": "В этом запуске нет открытого Flow-гейта ревью. Рабочее пространство ревью недоступно.",
+    "reviewPreviewTitle": "Подтвердите фидбэк для доработки",
+    "reviewPreviewBody": "Целевой узел доработки — {target}. Пакет основан на {source}; в нём {threads} открытых тредов, {resolved} решённых тредов исключено и {chat} завершённых сообщений чата.",
+    "reviewPreviewConfirm": "Запросить доработку",
+    "reviewPreviewCancel": "Продолжить ревью",
     "decisionApprove": "Одобрить",
     "decisionRework": "Вернуть на доработку",
     "reworking": "Доработка",
@@ -2211,7 +2220,6 @@
     "discarding": "Удаление…",
     "discardConfirmTitle": "Удалить этот запуск?",
     "discardConfirmBody": "Удаление отменяет запуск и планирует удаление его рабочего дерева. Это действие необратимо.",
-    "confidenceLabel": "Уверенность",
     "criticalityLabel": "Критичность",
     "criticality": {
       "low": "низкая",
@@ -2543,6 +2551,7 @@
       "scope": {
         "label": "Диапазон диффа",
         "run": "Весь ран",
+        "review": "Текущее ревью",
         "sinceLastReview": "С прошлого ревью",
         "lastNode": "Последняя нода",
         "uncommitted": "Незакоммиченное"
@@ -3614,7 +3623,6 @@
             "high": "высокая",
             "critical": "критическая"
           },
-          "confidenceLabel": "Уверенность",
           "reviewComments": "Комментарии ревью",
           "decisionApprove": "Одобрить",
           "decisionRework": "Вернуть на доработку",

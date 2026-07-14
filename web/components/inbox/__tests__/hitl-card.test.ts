@@ -97,10 +97,18 @@ describe("HitlCard — collapsed tier", () => {
     expect(html).not.toContain("inbox.respond");
   });
 
-  it("form/human asks show a Respond affordance, not inline options", () => {
-    expect(
-      render({ kind: "human", options: [], schema: REVIEW_SCHEMA }),
-    ).toContain("inbox.respond");
+  it("review gates link directly to the code Review Workspace", () => {
+    const html = render({ kind: "human", options: [], schema: REVIEW_SCHEMA });
+
+    expect(html).toContain("inbox.reviewCode");
+    expect(html).toContain('href="/runs/run-1?wb=review&amp;scope=review"');
+    expect(html).not.toContain("inbox.respond");
+  });
+
+  it("ordinary form/human asks retain the inline Respond affordance", () => {
+    expect(render({ kind: "human", options: [], schema: null })).toContain(
+      "inbox.respond",
+    );
     expect(render({ kind: "form", options: [], schema: null })).toContain(
       "inbox.respond",
     );

@@ -135,6 +135,16 @@ function staleCount(summary: Record<string, unknown> | null): number {
   return typeof count === "number" && count > 0 ? count : 0;
 }
 
+function isReviewGate(item: HitlItem): boolean {
+  return (
+    item.kind === "human" &&
+    typeof item.schema === "object" &&
+    item.schema !== null &&
+    !Array.isArray(item.schema) &&
+    (item.schema as { review?: unknown }).review === true
+  );
+}
+
 export interface HitlCardProps {
   item: HitlItem;
   canAct: boolean;
@@ -183,6 +193,8 @@ export function HitlCard({
   const stale = staleCount(item.assignmentStaleEvidenceSummary);
   const isPermission = item.kind === "permission";
   const isAgentQuestion = item.kind === "agent_question";
+  const isReview = isReviewGate(item);
+  const reviewHref = `/runs/${item.runId}?wb=review&scope=review`;
 
   return (
     <article
@@ -267,7 +279,15 @@ export function HitlCard({
       </button>
 
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3.5 pt-2.5">
-        {isPermission && canAct ? (
+        {isReview ? (
+          <a
+            className="inline-flex items-center gap-1.5 rounded-md border border-amber bg-amber px-2.5 py-1 font-mono text-[11px] font-semibold text-white transition-colors hover:bg-amber-2"
+            href={reviewHref}
+          >
+            {t("reviewCode")}
+            <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+          </a>
+        ) : isPermission && canAct ? (
           <RunHitlResponse
             compact
             availableOptions={item.availableOptions}
@@ -308,7 +328,7 @@ export function HitlCard({
 
         <a
           className="ml-auto inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-accent-2 hover:underline"
-          href={`/runs/${item.runId}`}
+          href={isReview ? reviewHref : `/runs/${item.runId}`}
         >
           {t("viewRun")}
           <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
@@ -339,7 +359,7 @@ export function HitlCard({
             <ExpandedContext context={context} stale={stale} t={t} />
           ) : null}
 
-          {!isPermission && canAct ? (
+          {!isReview && !isPermission && canAct ? (
             <div className="mt-3.5 border-t border-line pt-3.5">
               <RunHitlResponse
                 compact

@@ -6,6 +6,7 @@ import {
 export { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
 
 export const RUN_WORKBENCH_TABS = [
+  "review",
   "files",
   "diff",
   "evidence",

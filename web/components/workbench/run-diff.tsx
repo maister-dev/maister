@@ -58,11 +58,12 @@ export interface RunDiffReviewContext {
   labels: RunDiffReviewLabels;
 }
 
-// M30 (ADR-082): the 4-mode diff scope switcher. Optional — surfaces that
+// ADR-137: the diff scope switcher. Optional — surfaces that
 // pass labels get the toggle; everything else keeps the default `run` scope
 // and an unchanged request shape.
 export const DIFF_SCOPES = [
   "run",
+  "review",
   "since-last-review",
   "last-node",
   "uncommitted",
@@ -74,11 +75,12 @@ export type DiffScopeAvailability = Partial<
   Record<DiffScope, { available: boolean; reason?: string }>
 >;
 
-export type ReviewCommentScope = Extract<DiffScope, "run" | "uncommitted">;
+export type ReviewCommentScope = Extract<DiffScope, "review">;
 
 export interface RunDiffScopeLabels {
   label: string;
   run: string;
+  review: string;
   sinceLastReview: string;
   lastNode: string;
   uncommitted: string;
@@ -92,6 +94,10 @@ export interface RunDiffProps {
   review?: RunDiffReviewContext;
   // Absent → no scope toggle (default `run` scope only).
   scopeSwitcher?: RunDiffScopeLabels;
+  // A Review Workspace owns an immutable current-review source. It never
+  // silently falls back to the normal committed-run diff when a copied URL
+  // lacks `scope=review`.
+  forcedScope?: DiffScope;
 }
 
 type DiffState =
@@ -128,16 +134,14 @@ export function reviewEnabledForScope(
 export function reviewCommentScopeForDiffScope(
   scope: DiffScope,
 ): ReviewCommentScope | null {
-  return scope === "run" || scope === "uncommitted" ? scope : null;
+  return scope === "review" ? scope : null;
 }
 
 function reviewCommentsCollectionUrl(
   runId: string,
   scope: ReviewCommentScope,
 ): string {
-  const query = scope === "run" ? "" : `?scope=${scope}`;
-
-  return `/api/runs/${runId}/review-comments${query}`;
+  return `/api/runs/${runId}/review-comments?scope=${scope}`;
 }
 
 // Maps a mutation onto the ADR-071 route family: POST collection for
@@ -146,7 +150,7 @@ function reviewCommentsCollectionUrl(
 export function reviewMutationRequest(
   runId: string,
   mutation: ReviewMutation,
-  scope: ReviewCommentScope = "run",
+  scope: ReviewCommentScope = "review",
 ): { url: string; init: RequestInit } {
   const collection = reviewCommentsCollectionUrl(runId, scope);
   const itemCollection = `/api/runs/${runId}/review-comments`;
@@ -228,7 +232,7 @@ function errorMessageOf(err: unknown): string {
 
 export async function fetchReviewThreads(
   runId: string,
-  scope: ReviewCommentScope = "run",
+  scope: ReviewCommentScope = "review",
 ): Promise<ReviewThread[]> {
   const res = await fetch(reviewCommentsCollectionUrl(runId, scope));
 
@@ -249,7 +253,7 @@ export async function loadReviewThreads(
   runId: string,
   enabled: boolean,
   apply: (result: ReviewThreadsResult) => void,
-  scope: ReviewCommentScope = "run",
+  scope: ReviewCommentScope = "review",
 ): Promise<void> {
   if (!enabled) return;
 
@@ -276,7 +280,7 @@ export async function executeReviewMutation(
   runId: string,
   mutation: ReviewMutation,
   effects: ReviewMutationEffects,
-  scope: ReviewCommentScope = "run",
+  scope: ReviewCommentScope = "review",
 ): Promise<void> {
   effects.setBusy(true);
 
@@ -357,11 +361,13 @@ export default function RunDiff({
   labels,
   review,
   scopeSwitcher,
+  forcedScope,
 }: RunDiffProps): ReactElement {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const requestedScope = diffScopeOrDefault(searchParams.get("scope"));
+  const requestedScope =
+    forcedScope ?? diffScopeOrDefault(searchParams.get("scope"));
   const [state, setState] = useState<DiffState>({ kind: "loading" });
   const [scope, setScope] = useState<DiffScope>(requestedScope);
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -469,7 +475,7 @@ export default function RunDiff({
           setError: setReviewError,
           refresh: () => router.refresh(),
         },
-        reviewScope ?? "run",
+        reviewScope ?? "review",
       ),
     [runId, router, reviewScope],
   );
@@ -530,6 +536,8 @@ export default function RunDiff({
   const scopeLabel = (s: DiffScope): string =>
     s === "run"
       ? (scopeSwitcher?.run ?? s)
+      : s === "review"
+        ? (scopeSwitcher?.review ?? s)
       : s === "since-last-review"
         ? (scopeSwitcher?.sinceLastReview ?? s)
         : s === "last-node"

@@ -85,7 +85,6 @@ const FORM_SCHEMA_LABELS = {
     "criticality.medium": "medium",
     "criticality.high": "high",
     "criticality.critical": "critical",
-    confidenceLabel: "Confidence",
     reviewComments: "Review comments",
     decisionApprove: "Approve",
     decisionRework: "Request rework",

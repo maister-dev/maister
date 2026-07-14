@@ -196,7 +196,6 @@ export function formSchemaBuilderLabels(te: T): FormSchemaBuilderLabels {
       "criticality.critical": te(
         "artifacts.formSchema.preview.criticality.critical",
       ),
-      confidenceLabel: te("artifacts.formSchema.preview.confidenceLabel"),
       reviewComments: te("artifacts.formSchema.preview.reviewComments"),
       decisionApprove: te("artifacts.formSchema.preview.decisionApprove"),
       decisionRework: te("artifacts.formSchema.preview.decisionRework"),

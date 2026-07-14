@@ -47,7 +47,6 @@ const LABELS: BuilderProps["labels"] = {
     "criticality.medium": "Medium",
     "criticality.high": "High",
     "criticality.critical": "Critical",
-    confidenceLabel: "Confidence",
     reviewComments: "Review comments",
     decisionApprove: "Approve",
     decisionRework: "Rework",

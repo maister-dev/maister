@@ -20,11 +20,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //   with i18n labels run.criticalityLabel + run.criticality.{level}).
 // - review branch (when reviewSchema present): comments textarea + decision
 //   buttons (one per allowedDecisions) + dedicated "send back with comments"
-//   button + confidence input (when showConfidence).
-// - permission branch: option buttons (from options[]) + NO confidence input.
-// - form/human branch: raw-JSON textarea + schema <details> + confidence input
-//   (when showConfidence) + submit button.
-// - confidence input: <input type="number" min={0} max={1} step={0.1}>.
+//   button.
+// - permission branch: option buttons (from options[]).
+// - form/human branch: raw-JSON textarea + schema <details> + submit button.
 // - `compact` class adds tighter spacing (e.g. textarea min-h-[60px] vs [90/120px]).
 // - error line when error is set.
 //
@@ -56,7 +54,6 @@ const LABELS = {
   "criticality.medium": "run.criticality.medium",
   "criticality.high": "run.criticality.high",
   "criticality.critical": "run.criticality.critical",
-  confidenceLabel: "run.confidenceLabel",
   reviewComments: "run.reviewComments",
   decisionApprove: "run.decisionApprove",
   decisionRework: "run.decisionRework",
@@ -127,15 +124,12 @@ function render(over: Partial<ControlsProps> = {}): string {
     options: [],
     schema: null,
     criticality: null,
-    showConfidence: false,
-    confidence: "",
     comments: "",
     jsonValue: "{}",
     formValues: {},
     disabled: false,
     error: null,
     labels: LABELS,
-    onConfidenceChange: vi.fn(),
     onCommentsChange: vi.fn(),
     onJsonChange: vi.fn(),
     onFormFieldChange: vi.fn(),
@@ -297,7 +291,7 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("looks good");
     });
 
-    it("renders the confidence input when showConfidence is true", () => {
+    it("does not render a human confidence input", () => {
       const reviewSchema = {
         allowedDecisions: ["approve"],
         transitions: {},
@@ -308,30 +302,6 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       const html = render({
         kind: "human",
         reviewSchema,
-        showConfidence: true,
-        confidence: "0.8",
-      });
-
-      expect(html).toContain("run.confidenceLabel");
-      expect(html).toContain("0.8");
-      // Should have a number input with min/max.
-      expect(html).toContain('type="number"');
-      expect(html).toContain('min="0"');
-      expect(html).toContain('max="1"');
-    });
-
-    it("does not render the confidence input when showConfidence is false", () => {
-      const reviewSchema = {
-        allowedDecisions: ["approve"],
-        transitions: {},
-        reworkTargets: [],
-        workspacePolicies: [],
-      };
-
-      const html = render({
-        kind: "human",
-        reviewSchema,
-        showConfidence: false,
       });
 
       // The label and input should not be present.
@@ -371,21 +341,6 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("Deny");
     });
 
-    it("does NOT render a confidence input for permission", () => {
-      const options: HitlOption[] = [
-        { optionId: "allow", label: "Allow this request" },
-      ];
-
-      const html = render({
-        kind: "permission",
-        options,
-        showConfidence: true, // Even if true, permission ignores it.
-        confidence: "0.9",
-      });
-
-      // Confidence input and label should not appear.
-      expect(html).not.toContain("run.confidenceLabel");
-    });
   });
 
   describe("form/human branch (structured form)", () => {
@@ -433,21 +388,9 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).not.toContain("run.schemaLabel");
     });
 
-    it("renders the confidence input when showConfidence is true", () => {
+    it("does not render a form confidence input", () => {
       const html = render({
         kind: "form",
-        showConfidence: true,
-        confidence: "0.5",
-      });
-
-      expect(html).toContain("run.confidenceLabel");
-      expect(html).toContain("0.5");
-    });
-
-    it("does not render the confidence input when showConfidence is false", () => {
-      const html = render({
-        kind: "form",
-        showConfidence: false,
       });
 
       expect(html).not.toContain("run.confidenceLabel");
@@ -523,16 +466,6 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain('value="yes"');
     });
 
-    it("does NOT render a confidence input for an options form", () => {
-      const html = render({
-        kind: "form",
-        schema: intakeSchema,
-        showConfidence: true,
-        confidence: "0.5",
-      });
-
-      expect(html).not.toContain("run.confidenceLabel");
-    });
 
     it("renders the submit button for an options form", () => {
       const html = render({ kind: "form", schema: intakeSchema });
@@ -625,15 +558,6 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("approved");
     });
 
-    it("carries the confidence value in the input", () => {
-      const html = render({
-        kind: "form",
-        showConfidence: true,
-        confidence: "0.75",
-      });
-
-      expect(html).toContain('value="0.75"');
-    });
   });
 
   describe("disabled state", () => {
@@ -917,9 +841,7 @@ describe("reviewLoopInfo — pure boundary helper (mirrors hitl-validate)", () =
 // The card renders for kind="budget_breach" with the LOCKED watchdog schema
 // { kind, scope, meter, current, limit, decisions }: a breach summary, a "New
 // ceiling" number input, a primary "Raise & resume" button, and a destructive
-// "Abandon" button. Mirrors the infra_recovery card pattern; confidence is
-// never shown (a raise/abandon choice carries no confidence — enforced in
-// run-hitl-response, which passes showConfidence=false here).
+// "Abandon" button. Mirrors the infra_recovery card pattern.
 // ---------------------------------------------------------------------------
 
 const BUDGET_BREACH_SCHEMA = {
@@ -1084,19 +1006,6 @@ describe("HitlDecisionControls — budget_breach card", () => {
     expect(html).toContain("1200 / 1000");
     expect(html).toContain("2 / 5");
     expect(html).toContain("3 files, +10 / -2");
-  });
-
-  it("never renders a confidence input for budget_breach", () => {
-    const html = render({
-      kind: "budget_breach",
-      schema: BUDGET_BREACH_SCHEMA,
-      labels: BUDGET_LABELS,
-      // Even if a caller forced showConfidence, the breach branch ignores it.
-      showConfidence: true,
-      confidence: "0.9",
-    });
-
-    expect(html).not.toContain("run.confidenceLabel");
   });
 
   it("localizes the task-scope failures meter in the summary", () => {
@@ -1278,17 +1187,6 @@ describe("HitlDecisionControls — consensus resolution card (M41)", () => {
     expect(html).not.toContain("runner-secret-id");
   });
 
-  it("never renders a confidence input for consensus resolution", () => {
-    const html = render({
-      kind: "human",
-      schema: CONSENSUS_SCHEMA,
-      labels: CONSENSUS_LABELS,
-      showConfidence: true,
-      confidence: "0.9",
-    });
-
-    expect(html).not.toContain("run.confidenceLabel");
-  });
 });
 
 describe("consensusHitlFromSchema — pure schema narrowing", () => {
@@ -1340,7 +1238,7 @@ describe("consensusHitlFromSchema — pure schema narrowing", () => {
 // the escalator schema { kind, rule, decisions:["resume","abort"], toolCall? }:
 // a localized rule summary, the offending tool-call line (when present), a
 // primary "Resume" and a destructive "Abort" button. Mirrors the budget_breach
-// card; confidence is never shown (run-hitl-response passes showConfidence=false).
+// card.
 // ---------------------------------------------------------------------------
 
 const HOOK_TRIP_LABELS = {
@@ -1420,19 +1318,6 @@ describe("HitlDecisionControls — hook_trip card (M40)", () => {
     expect(html).toContain('data-testid="hook-trip-card"');
     expect(html).toContain("capability guard");
     expect(html).toContain("Last tool: mcp__gitlab__create_issue");
-  });
-
-  it("never renders a confidence input for hook_trip", () => {
-    const html = render({
-      kind: "hook_trip",
-      schema: HOOK_TRIP_SCHEMA,
-      labels: HOOK_TRIP_LABELS,
-      // Even if a caller forced showConfidence, the trip branch ignores it.
-      showConfidence: true,
-      confidence: "0.9",
-    });
-
-    expect(html).not.toContain("run.confidenceLabel");
   });
 
   it("disables both buttons when disabled", () => {

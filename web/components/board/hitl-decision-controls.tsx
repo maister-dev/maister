@@ -22,7 +22,6 @@ export interface HitlDecisionControlsLabels {
   "criticality.medium": string;
   "criticality.high": string;
   "criticality.critical": string;
-  confidenceLabel: string;
   reviewComments: string;
   decisionApprove: string;
   decisionRework: string;
@@ -271,8 +270,6 @@ export interface HitlDecisionControlsProps {
   // ADR-071: server-computed open/outdated thread counts for the gate panel
   // (run-detail layout only — board/inbox consumers omit it).
   reviewCounts?: ReviewThreadCountsView | null;
-  showConfidence: boolean;
-  confidence: string;
   comments: string;
   jsonValue: string;
   formValues: Record<string, string>;
@@ -289,7 +286,6 @@ export interface HitlDecisionControlsProps {
   compact?: boolean;
   error: string | null;
   labels: HitlDecisionControlsLabels;
-  onConfidenceChange: (v: string) => void;
   onCommentsChange: (v: string) => void;
   onJsonChange: (v: string) => void;
   onFormFieldChange: (name: string, value: string) => void;
@@ -704,40 +700,6 @@ function CriticalityBadge({
   );
 }
 
-function ConfidenceInput({
-  confidence,
-  label,
-  onChange,
-  disabled,
-}: {
-  confidence: string;
-  label: string;
-  onChange: (v: string) => void;
-  disabled: boolean;
-}): ReactElement {
-  return (
-    <div className="flex items-center gap-2">
-      <label
-        className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
-        htmlFor="hitl-confidence"
-      >
-        {label}
-      </label>
-      <input
-        className="w-20 rounded-[7px] border border-line bg-paper px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-amber"
-        disabled={disabled}
-        id="hitl-confidence"
-        max={1}
-        min={0}
-        step={0.1}
-        type="number"
-        value={confidence}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </div>
-  );
-}
-
 function FormFieldControl({
   field,
   value,
@@ -1004,8 +966,6 @@ export function HitlDecisionControls({
   schema,
   criticality,
   reviewCounts,
-  showConfidence,
-  confidence,
   comments,
   jsonValue,
   formValues,
@@ -1020,7 +980,6 @@ export function HitlDecisionControls({
   compact,
   error,
   labels,
-  onConfidenceChange,
   onCommentsChange,
   onJsonChange,
   onFormFieldChange,
@@ -1232,14 +1191,6 @@ export function HitlDecisionControls({
             >
               {exhaustedText}
             </p>
-          ) : null}
-          {showConfidence ? (
-            <ConfidenceInput
-              confidence={confidence}
-              disabled={disabled}
-              label={labels.confidenceLabel}
-              onChange={onConfidenceChange}
-            />
           ) : null}
         </>
       ) : consensusHitl ? (
@@ -1654,14 +1605,6 @@ export function HitlDecisionControls({
                 {JSON.stringify(schema, null, 2)}
               </pre>
             </details>
-          ) : null}
-          {showConfidence ? (
-            <ConfidenceInput
-              confidence={confidence}
-              disabled={disabled}
-              label={labels.confidenceLabel}
-              onChange={onConfidenceChange}
-            />
           ) : null}
           <button
             className="mt-1 inline-flex w-max items-center rounded-full bg-amber px-5 py-2.5 text-[13px] font-semibold text-white shadow-[0_8px_24px_-8px_var(--amber)] transition-all hover:bg-amber-2 disabled:opacity-60"

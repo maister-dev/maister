@@ -29,6 +29,13 @@ describe("run-query-state", () => {
     });
   });
 
+  it("preserves the dedicated Flow review workspace state", () => {
+    const state = parseRunQueryState("wb=review&scope=review");
+
+    expect(state.workbench).toBe("review");
+    expect(state.scope).toBe("review");
+  });
+
   it("falls back on invalid enum values without dropping unrelated params", () => {
     const state = parseRunQueryState(
       "wb=graph&file=README.md&fileView=render&diffview=sideways&scope=bad&inspector=pinned",

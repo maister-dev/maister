@@ -764,6 +764,7 @@
     "agentQuestion": "Agent question",
     "answerClarification": "Answer clarification",
     "viewRun": "View run",
+    "reviewCode": "Review code",
     "contextLoading": "Loading context…",
     "contextError": "Couldn't load context.",
     "retry": "Retry",
@@ -2109,6 +2110,14 @@
     "step": "step",
     "reviewComments": "Review comments",
     "reviewCommentsPlaceholder": "What needs to change? (optional)",
+    "reviewWorkspaceTitle": "Review workspace",
+    "reviewWorkspaceSource": "Current review compares the Flow workspace base with its current working tree, including committed, staged, unstaged, and untracked reviewable changes.",
+    "reviewWorkspaceDecision": "Review decision",
+    "reviewWorkspaceUnavailable": "This run has no open Flow review gate. The review workspace is unavailable.",
+    "reviewPreviewTitle": "Confirm rework feedback",
+    "reviewPreviewBody": "The rework target is {target}. This packet is based on {source} and includes {threads} open threads, {resolved} resolved threads excluded, and {chat} completed chat messages.",
+    "reviewPreviewConfirm": "Request changes",
+    "reviewPreviewCancel": "Keep reviewing",
     "decisionApprove": "Approve",
     "decisionRework": "Request rework",
     "reworking": "Reworking",
@@ -2211,7 +2220,6 @@
     "discarding": "Discarding…",
     "discardConfirmTitle": "Discard this run?",
     "discardConfirmBody": "Discarding abandons the run and schedules its worktree for removal. This cannot be undone.",
-    "confidenceLabel": "Confidence",
     "criticalityLabel": "Criticality",
     "criticality": {
       "low": "low",
@@ -2543,6 +2551,7 @@
       "scope": {
         "label": "Diff scope",
         "run": "Run",
+        "review": "Current review",
         "sinceLastReview": "Since last review",
         "lastNode": "Last node",
         "uncommitted": "Uncommitted"
@@ -3614,7 +3623,6 @@
             "high": "high",
             "critical": "critical"
           },
-          "confidenceLabel": "Confidence",
           "reviewComments": "Review comments",
           "decisionApprove": "Approve",
           "decisionRework": "Request rework",

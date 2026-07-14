@@ -76,6 +76,10 @@ import RunDiff, {
   type RunDiffReviewContext,
   type RunDiffScopeLabels,
 } from "@/components/workbench/run-diff";
+import {
+  ReviewWorkspace,
+  ReviewWorkspaceUnavailable,
+} from "@/components/workbench/review-workspace";
 import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
@@ -451,6 +455,7 @@ export default async function RunDetailLayout({
   const workbenchDiffScopeLabels: RunDiffScopeLabels = {
     label: tWorkbench("diff.scope.label"),
     run: tWorkbench("diff.scope.run"),
+    review: tWorkbench("diff.scope.review"),
     sinceLastReview: tWorkbench("diff.scope.sinceLastReview"),
     lastNode: tWorkbench("diff.scope.lastNode"),
     uncommitted: tWorkbench("diff.scope.uncommitted"),
@@ -913,7 +918,7 @@ export default async function RunDetailLayout({
     detail.parentRepoPath,
     reposRoot(),
   );
-  const dirtyDiffHref = `/runs/${detail.runId}?wb=diff&scope=uncommitted`;
+  const reviewDiffHref = `/runs/${detail.runId}?wb=review&scope=review`;
   const inspectorChangeScope = dirtySummary ? "uncommitted" : "run";
   let changeSummary: RunInspectorChangeSummary | null = null;
 
@@ -1606,7 +1611,7 @@ export default async function RunDetailLayout({
                   (dirtySummary || detail.pendingHitl.dirtyResolution) ? (
                     <DirtyResolutionBanner
                       canAct={canAct}
-                      diffHref={dirtyDiffHref}
+                      diffHref={reviewDiffHref}
                       dirty={
                         dirtySummary ?? {
                           files: [],
@@ -1636,20 +1641,51 @@ export default async function RunDetailLayout({
                       runId={detail.runId}
                     />
                   ) : null}
-                  <RunHitlResponse
-                    restoreFocusAfterResponse
-                    availableOptions={detail.pendingHitl.availableOptions}
-                    budgetProgress={detail.pendingHitl.budgetProgress}
-                    canAct={canAct}
-                    claimStage={detail.pendingHitl.claimStage}
-                    criticality={detail.pendingHitl.criticality}
-                    hitlRequestId={detail.pendingHitl.hitlRequestId}
-                    kind={detail.pendingHitl.kind}
-                    options={detail.pendingHitl.options}
-                    reviewCounts={reviewGateCounts}
-                    runId={detail.runId}
-                    schema={detail.pendingHitl.schema}
-                  />
+                  {hasReviewGate && gateDiffReview ? (
+                    <ReviewWorkspace
+                      decision={
+                        <RunHitlResponse
+                          restoreFocusAfterResponse
+                          availableOptions={detail.pendingHitl.availableOptions}
+                          budgetProgress={detail.pendingHitl.budgetProgress}
+                          canAct={canAct}
+                          claimStage={detail.pendingHitl.claimStage}
+                          criticality={detail.pendingHitl.criticality}
+                          hitlRequestId={detail.pendingHitl.hitlRequestId}
+                          kind={detail.pendingHitl.kind}
+                          options={detail.pendingHitl.options}
+                          reviewCounts={reviewGateCounts}
+                          runId={detail.runId}
+                          schema={detail.pendingHitl.schema}
+                        />
+                      }
+                      diffLabels={
+                        flowGraphData?.diffLabels ?? workbenchDiffLabels
+                      }
+                      labels={{
+                        title: t("reviewWorkspaceTitle"),
+                        source: t("reviewWorkspaceSource"),
+                        decision: t("reviewWorkspaceDecision"),
+                      }}
+                      review={gateDiffReview}
+                      runId={detail.runId}
+                    />
+                  ) : (
+                    <RunHitlResponse
+                      restoreFocusAfterResponse
+                      availableOptions={detail.pendingHitl.availableOptions}
+                      budgetProgress={detail.pendingHitl.budgetProgress}
+                      canAct={canAct}
+                      claimStage={detail.pendingHitl.claimStage}
+                      criticality={detail.pendingHitl.criticality}
+                      hitlRequestId={detail.pendingHitl.hitlRequestId}
+                      kind={detail.pendingHitl.kind}
+                      options={detail.pendingHitl.options}
+                      reviewCounts={reviewGateCounts}
+                      runId={detail.runId}
+                      schema={detail.pendingHitl.schema}
+                    />
+                  )}
                   {canClaim ? (
                     <div className="mt-4 border-t border-dashed border-amber-line pt-4">
                       <RunTakeoverActions
@@ -1718,6 +1754,12 @@ export default async function RunDetailLayout({
             </section>
           ))}
 
+          {!hasReviewGate ? (
+            <ReviewWorkspaceUnavailable
+              message={t("reviewWorkspaceUnavailable")}
+            />
+          ) : null}
+
           {isHumanWorking ? (
             <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
               <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
@@ -1741,7 +1783,6 @@ export default async function RunDetailLayout({
                 diff={
                   <RunDiff
                     labels={flowGraphData?.diffLabels ?? workbenchDiffLabels}
-                    review={hasReviewGate ? gateDiffReview : undefined}
                     runId={detail.runId}
                     scopeSwitcher={workbenchDiffScopeLabels}
                   />

@@ -27,6 +27,27 @@ import { requestPendingHitlFocus } from "@/components/board/pending-hitl-focus-r
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 
+type ReviewFeedbackPreview = {
+  reviewSource: {
+    scope: "review";
+    baseCommit: string;
+    fingerprint: string;
+  };
+  feedback: {
+    fingerprint: string;
+    target: { nodeId: string; commentsVar: string };
+    openThreadIds: string[];
+    resolvedThreadCount: number;
+    gateChatMessageCount: number;
+    payload: string;
+  };
+};
+
+type PendingReviewRework = {
+  response: Record<string, unknown>;
+  preview: ReviewFeedbackPreview;
+};
+
 export interface RunHitlResponseProps {
   runId: string;
   hitlRequestId: string;
@@ -79,7 +100,8 @@ export function RunHitlResponse({
   const [json, setJson] = useState("{}");
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [comments, setComments] = useState("");
-  const [confidence, setConfidence] = useState("");
+  const [pendingReviewRework, setPendingReviewRework] =
+    useState<PendingReviewRework | null>(null);
   const [budgetParkMode, setBudgetParkMode] =
     useState<BudgetBreachParkMode>("snapshot");
   const [budgetBranchName, setBudgetBranchName] = useState("");
@@ -140,6 +162,52 @@ export function RunHitlResponse({
     }
   }
 
+  async function previewReviewRework(
+    response: Record<string, unknown>,
+  ): Promise<void> {
+    setBusy(true);
+    setError(null);
+
+    try {
+      const res = await fetch(
+        `/api/runs/${runId}/hitl/${hitlRequestId}/review-feedback-preview`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ response }),
+        },
+      );
+      const body = (await res.json().catch(() => null)) as
+        | (ReviewFeedbackPreview & { code?: string })
+        | null;
+
+      if (!res.ok || body === null || !("feedback" in body)) {
+        setError(errorMessage(body?.code));
+
+        return;
+      }
+
+      setPendingReviewRework({ response, preview: body });
+    } catch {
+      setError(errorMessage("EXECUTOR_UNAVAILABLE"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmReviewRework(): void {
+    if (pendingReviewRework === null) return;
+
+    const { preview, response } = pendingReviewRework;
+
+    setPendingReviewRework(null);
+    void post({
+      response,
+      reviewSourceFingerprint: preview.reviewSource.fingerprint,
+      reviewFeedbackFingerprint: preview.feedback.fingerprint,
+    });
+  }
+
   function submitJson(): void {
     let parsed: unknown;
 
@@ -151,13 +219,7 @@ export function RunHitlResponse({
       return;
     }
 
-    const payload: Record<string, unknown> = { response: parsed };
-
-    if (confidence !== "") {
-      payload.confidence = Math.min(1, Math.max(0, Number(confidence)));
-    }
-
-    void post(payload);
+    void post({ response: parsed });
   }
 
   function handleFormFieldChange(name: string, value: string): void {
@@ -240,13 +302,11 @@ export function RunHitlResponse({
       response.workspacePolicy = policies[0] ?? "keep";
     }
 
-    const payload: Record<string, unknown> = { response };
-
-    if (confidence !== "") {
-      payload.confidence = Math.min(1, Math.max(0, Number(confidence)));
+    if (isReworkDecision(decision)) {
+      void previewReviewRework(response);
+    } else {
+      void post({ response });
     }
-
-    void post(payload);
   }
 
   function handleSendBack(): void {
@@ -324,25 +384,12 @@ export function RunHitlResponse({
     });
   }
 
-  // Confidence applies to form/human/review; NOT a task clarification,
-  // permission, infra_recovery, budget_breach, or hook_trip. An agent question
-  // records the human's schema answer only and never resumes its terminal source.
-  const showConfidence =
-    kind !== "permission" &&
-    kind !== "agent_question" &&
-    kind !== "infra_recovery" &&
-    kind !== "budget_breach" &&
-    kind !== "hook_trip" &&
-    kind !== "decision_request" &&
-    !consensusHitl;
-
   const labels = {
     criticalityLabel: t("criticalityLabel"),
     "criticality.low": t("criticality.low"),
     "criticality.medium": t("criticality.medium"),
     "criticality.high": t("criticality.high"),
     "criticality.critical": t("criticality.critical"),
-    confidenceLabel: t("confidenceLabel"),
     reviewComments: t("reviewComments"),
     decisionApprove: t("decisionApprove"),
     decisionRework: t("decisionRework"),
@@ -446,7 +493,6 @@ export function RunHitlResponse({
         claimStage={claimStage}
         comments={comments}
         compact={compact}
-        confidence={confidence}
         criticality={criticality}
         disabled={disabled}
         error={error}
@@ -458,7 +504,6 @@ export function RunHitlResponse({
         reviewCounts={reviewCounts}
         reviewSchema={reviewSchema}
         schema={schema}
-        showConfidence={showConfidence}
         onBudgetAbandon={handleBudgetAbandon}
         onBudgetBranchNameChange={setBudgetBranchName}
         onBudgetCeilingChange={setBudgetCeiling}
@@ -468,7 +513,6 @@ export function RunHitlResponse({
         onBudgetRaise={handleBudgetRaise}
         onBudgetRestart={handleBudgetRestart}
         onCommentsChange={setComments}
-        onConfidenceChange={setConfidence}
         onDecision={handleDecision}
         onFormFieldChange={handleFormFieldChange}
         onJsonChange={setJson}
@@ -477,6 +521,48 @@ export function RunHitlResponse({
         onSubmitForm={submitForm}
         onSubmitJson={submitJson}
       />
+      {pendingReviewRework ? (
+        <ConfirmDialog
+          body={t("reviewPreviewBody", {
+            source: pendingReviewRework.preview.reviewSource.baseCommit,
+            target: pendingReviewRework.preview.feedback.target.nodeId,
+            threads: pendingReviewRework.preview.feedback.openThreadIds.length,
+            resolved: pendingReviewRework.preview.feedback.resolvedThreadCount,
+            chat: pendingReviewRework.preview.feedback.gateChatMessageCount,
+          })}
+          busy={busy}
+          cancelLabel={t("reviewPreviewCancel")}
+          testId="review-feedback-preview"
+          title={t("reviewPreviewTitle")}
+          titleId="review-feedback-preview-title"
+          onClose={() => setPendingReviewRework(null)}
+        >
+          <div className="grid gap-3">
+            <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-ivory p-3 whitespace-pre-wrap font-mono text-[11px] leading-[1.5] text-ink-2">
+              {pendingReviewRework.preview.feedback.payload}
+            </pre>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                className="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold text-mute hover:border-mute hover:text-ink-2 disabled:opacity-50"
+                disabled={busy}
+                type="button"
+                onClick={() => setPendingReviewRework(null)}
+              >
+                {t("reviewPreviewCancel")}
+              </button>
+              <button
+                className="rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-50"
+                data-testid="review-feedback-preview-confirm"
+                disabled={busy}
+                type="button"
+                onClick={confirmReviewRework}
+              >
+                {t("reviewPreviewConfirm")}
+              </button>
+            </div>
+          </div>
+        </ConfirmDialog>
+      ) : null}
       {confirmingBudgetAbandon ? (
         <ConfirmDialog
           body={t("budgetDropConfirm")}
