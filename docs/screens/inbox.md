@@ -189,3 +189,11 @@ resolution. EN + RU parity is required.
 - Source: `web/app/(app)/inbox/page.tsx`, `web/lib/queries/needs-you.ts`,
   `web/lib/queries/portfolio.ts` (`getCrossProjectHitlInbox`),
   `web/lib/queries/inbox.ts`, `web/lib/queries/inbox-context.ts`.
+
+## Plan-review decision card (Designed — ADR-137)
+
+The card identifies the immutable plan review, shows the blocking question,
+recommended option and consequences, and offers only the server-provided option
+IDs. On submit it disables the choice, reports localized failure/retry feedback,
+and removes itself when answered or parent-reworked. It does not create or mark
+social Inbox items; the parent review keeps its existing gate chat.

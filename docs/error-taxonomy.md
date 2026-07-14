@@ -477,3 +477,12 @@ gate (D7). See [ADR-055](decisions.md#adr-055-hitl-response-service--hitl-over-m
   surfaces alongside error codes
 - [Configuration](configuration.md) — `CONFIG` is thrown on every
   malformed `maister.yaml` / `flow.yaml` / `form_schema`
+
+## Typed Plan-review refusal (Designed — ADR-137)
+
+Malformed or missing `plan-review.json`, a missing immutable output, or an
+invalid Plan-review capability fails before a review card with existing
+`CONFIG` or `PRECONDITION` semantics. Exhausting `max_decision_reworks` is a
+`PRECONDITION` refusal before child creation. A stale, terminal, malformed, or
+conflicting decision response uses the existing `CONFLICT`/`PRECONDITION`
+classification; no new error code is introduced.

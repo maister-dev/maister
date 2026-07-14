@@ -265,3 +265,10 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 - Source (Implemented): `web/lib/social/*`, `web/lib/queries/inbox.ts`,
   `web/lib/queries/activity.ts`, `web/app/api/projects/[slug]/tasks/[number]/*`,
   `web/app/api/inbox/*`.
+
+## Inbox projection boundary (Designed — ADR-137)
+
+Open Plan-review decision children project as actionable Inbox work from the
+same `hitl_requests` and assignments substrate. They do not create `inbox_items`
+or alter social unread/read counts; once answered or system-closed, the card
+disappears from the projection.

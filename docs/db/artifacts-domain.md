@@ -125,3 +125,11 @@ superseding row leaves the superseded row as-is, with a null `superseded_by_id`
 - Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Source (Implemented): `web/lib/db/schema.ts` (new tables, migration `0015`).
+
+## Plan-review provenance (Designed — ADR-137)
+
+The `plan-review` artifact is an immutable validated snapshot, not an agent
+claimed locator. `decision_request.source_artifact_id` references this exact
+instance; the parent review schema repeats only server-derived ID/hash/attempt
+metadata needed for validation and presentation. A superseded artifact cannot
+open a decision child or authorize approval.

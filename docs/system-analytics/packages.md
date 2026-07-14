@@ -306,3 +306,9 @@ the read and confirmation. Cancel sends no trust request.
 - AIF package content: the `maister-plugins` repo (`packages/aif`,
   tag `aif/v2.0.0`); consumption notes in
   [`../flow-aif-plugin.md`](../flow-aif-plugin.md).
+
+## Plan-review package releases (Designed — ADR-137)
+
+The AIF and superpowers packages release this capability independently under
+new package-scoped tags. Each source declares engine 3.1.0 and its artifact
+contract; historic tags, installs, and SHA-pinned runs remain unchanged.

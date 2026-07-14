@@ -1593,3 +1593,14 @@ provide role/capability registries.
 - `docs/flow-installer.md` — install pipeline + local-source path.
 - `docs/supervisor.md` — ACP wire, SSE events, prompt endpoint.
 - `docs/getting-started.md` — end-to-end "Launch a run" recipe.
+
+## `settings.plan_review` (Designed — ADR-137)
+
+Only a `human` node may opt in. It names current `plan-document` and
+`plan-review` artifacts, `comments_var`, ordered `answers_var`, a declared
+`rework` transition, and a positive `max_decision_reworks`. It requires engine
+`3.1.0`, exactly `approve|rework` outcomes, and an approve transition that is
+outside the node's declared rework targets.
+The compiler rejects auto-pass, notify-only, safe-forward, takeover, implicit
+node-id/prompt matching, missing artifacts, and unbounded cycles. Runtime
+forces the human pause; decision answers re-enter only the declared target.

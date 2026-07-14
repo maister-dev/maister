@@ -428,3 +428,12 @@ to the supervisor's external address.
   [`system-analytics/`](system-analytics/).
 - Local dev: [`getting-started.md`](getting-started.md).
 - Supervisor prose reference: [`supervisor.md`](supervisor.md).
+
+## Typed Plan-review artifact boundary (Designed — ADR-137)
+
+The graph runner, not ACP or the browser, captures and validates the confined
+plan document and `plan-review.json` outputs. It persists immutable artifact
+instances before one atomic parent/child HITL creation transaction. A final
+decision uses the normal graph input artifact and `runFlow()` recovery path;
+it does not add a supervisor protocol or a run status. Cross-tier events expose
+only IDs, counts, and state, never plan or answer bodies.

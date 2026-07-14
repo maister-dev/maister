@@ -166,3 +166,12 @@ controls: draft/publish, dedup, severity, cooldowns and human feedback.
 - full Kanban (Done as drag-target / WIP limits / swim-lanes);
 - cross-project task moves;
 - GitHub issue / Linear / YouGile sync.
+
+## Typed Plan review (Designed — ADR-137)
+
+Planning is reviewed from immutable, strict `plan-document` and `plan-review`
+artifacts rather than prose interpretation. Assumptions are accepted with their
+server-derived defaults; blockers become bounded Flow-native decision requests
+and the final answer reworks the plan before a fresh approval. The Inbox remains
+a projection over HITL and assignments, while package-pinned historical runs
+retain their previous behavior. See [ADR-137](decisions.md#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests).

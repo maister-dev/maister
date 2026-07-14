@@ -61,6 +61,11 @@ info:
     the launch request's OWN `text/event-stream` response
     (`POST /api/scratch-runs`, sub-plan 2026-06-17, Option 2); see
     `web.openapi.yaml`.
+
+    **ADR-137 (Designed):** Plan-review lifecycle invalidation continues to use
+    this single per-run stream. Clients refetch the run HITL projection after a
+    durable decision transition; no second EventSource or plan-content event is
+    introduced.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster

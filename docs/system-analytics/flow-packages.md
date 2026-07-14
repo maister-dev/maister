@@ -416,3 +416,10 @@ flowchart LR
   (`/api/projects/{slug}/flow-packages/*`).
 - Related domains: [`flows.md`](flows.md), [`projects.md`](projects.md),
   [`runs.md`](runs.md), [`external-operations.md`](external-operations.md).
+
+## Plan-review source compatibility (Designed — ADR-137)
+
+Only the released source Flow definitions that actually perform Plan review are
+migrated. Package installation remains content-addressed by resolved SHA; a
+reinstall or a new tag cannot mutate an active run's manifest or artifact
+contract. Fixture copies are engine tests, never package-release sources.

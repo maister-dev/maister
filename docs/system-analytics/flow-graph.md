@@ -795,3 +795,12 @@ readiness interaction: [`readiness.md`](readiness.md).
   `web/lib/flows/graph/gates-exec.ts`, `web/lib/db/schema.ts`
   (`node_attempts`, `gate_results`).
 ```
+
+## Typed Plan-review gate (Designed — ADR-137)
+
+A `human` node with `settings.plan_review` captures a strict V1 companion
+artifact before `runReviewHuman()` creates a forced pause. The parent review
+stores immutable provenance and a bounded decision-cycle count; blockers create
+child `decision_request` HITLs in the same transaction. The parent can only
+approve a clean review or rework; no auto-pass, notify-only, or takeover branch
+exists for this capability. Exhaustion fails `PRECONDITION` before card creation.

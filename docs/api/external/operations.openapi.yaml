@@ -38,6 +38,10 @@ info:
 
     **Milestone status: M16 (Implemented), as of 2026-06-02.**
 
+    **ADR-137 (Designed) restriction.** External HITL list endpoints omit
+    `decision_request`; a direct external response to one returns `403
+    UNAUTHORIZED` without mutation. Typed Plan decisions are session-auth-only.
+
 servers:
   - url: "{origin}"
     description: |
@@ -71,7 +75,9 @@ tags:
       session responder or a global personal user token with exact
       `hitl:respond:human` may answer it. `infra_recovery` and `budget_breach`
       responses remain session-auth-only in ADR-125 and are not opened to
-      external token actors.
+      external token actors. ADR-137 Designed `decision_request` rows are
+      omitted from external list projections and always reject external answer
+      attempts with `403 UNAUTHORIZED`.
   - name: comments
     description: |
       (ADR-078, Implemented) Task comment list + create via token auth. The

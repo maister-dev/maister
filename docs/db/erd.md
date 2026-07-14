@@ -1485,3 +1485,23 @@ history survives source-run and HITL cleanup.
 | `brain_proposal_decision_stats` | `brain_proposal_decision_stats_pk` | `(project_id, kind, blast_radius)` PRIMARY KEY | **(Implemented, ADR-128)** Autonomy-graduation counters by proposal class. |
 
 Source: `web/lib/db/schema.ts`.
+
+## Planned Plan-review ownership (ADR-137 / migration `0100`)
+
+```mermaid
+erDiagram
+    HITL_REQUESTS ||--o{ HITL_REQUESTS : "parent_hitl_request_id"
+    ARTIFACT_INSTANCES ||--o{ HITL_REQUESTS : "source_artifact_id"
+    RUNS ||--o{ HITL_REQUESTS : "run_id"
+
+    HITL_REQUESTS {
+        text kind "decision_request child"
+        text parent_hitl_request_id FK "same-run plan-review parent"
+        text source_artifact_id FK "immutable plan-review artifact"
+        text decision_id "strict contract id"
+    }
+```
+
+The migration's row-shape CHECK and service-side locked same-run/schema proof
+prevent a child from attaching to a non-Plan-review parent. Its partial unique
+index is `(run_id, source_artifact_id, decision_id)`.

@@ -298,3 +298,11 @@ promote a clean run branch to the selected target branch. It should also start
 at least one scratch workspace outside the task board, show it in the active
 workspace list, preserve its dialog/capability snapshot, and discard or promote
 its branch through the same workspace review path.
+
+## Typed Plan review (Designed — ADR-137)
+
+Plan approval is an explicit trust boundary: it displays immutable plan evidence
+and assumption defaults, refuses approval while any declared blocker is open,
+and turns the last selected option into a Flow-declared rework. This keeps a
+human in control without asking them to translate prose into machine state or
+creating a separate Inbox product. External tokens have no decision authority.

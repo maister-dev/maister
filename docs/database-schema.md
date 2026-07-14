@@ -2278,6 +2278,25 @@ reads. Its source IDs deliberately have no cascading foreign keys to the source
 run/HITL rows, so clarification history survives source cleanup; task deletion
 remains the owning lifecycle.
 
+### Plan-review decision extension (Designed — ADR-137, migration `0100`)
+
+`decision_request` extends the same `hitl_requests` lifecycle. It has a direct
+`parent_hitl_request_id` FK to its same-run Plan-review `human` parent, a
+`source_artifact_id` FK to the immutable validated `plan-review` instance, and
+the contract's `decision_id`. A row-shape CHECK requires all three only for this
+kind and requires all three to be null for every other kind. The service locks
+the parent and verifies same-run parent kind/schema before insert; a foreign key
+alone cannot prove that semantic invariant.
+
+Migration `0100` adds `decision_request` to `hitl_requests.kind` and
+`assignments.action_kind`, a partial unique index on
+`(run_id, source_artifact_id, decision_id)` for decision rows, and a pending
+parent projection index. The parent schema holds server-derived artifact
+provenance, assumptions, ordered-answer target, cycle count, and cycle bound.
+No row is backfilled; legacy kinds retain null extension columns. Parent rework
+locks and system-closes unanswered children in the same transaction as its
+rework intent, preserving direct ownership and race safety.
+
 ## `gate_chat_messages`
 
 **(M30 — Implemented, [ADR-078](decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality), migration `0041`.)**

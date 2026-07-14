@@ -1140,3 +1140,12 @@ here and does not write an artifact, call `runFlow`, or call the supervisor.
   `web/app/api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts`,
   `mcp/src/tools.ts`.
 - SDD: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).
+
+## Plan-review decision children (Designed — ADR-137)
+
+`decision_request` is a child of a graph-human parent, not an agent question
+or a standalone Inbox entity. It exposes only server-allowed options and is
+idempotent by `(run, source artifact, decision id)`. Nonfinal answers keep the
+parent pending; the final answer atomically prepares the declared rework. A
+parent rework system-closes unresolved children under the same parent/sibling
+lock. Gate chat remains attached to the parent and never resolves a child.

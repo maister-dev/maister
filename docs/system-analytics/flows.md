@@ -265,3 +265,10 @@ flowchart LR
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md) (flows table).
 - Schemas: `web/lib/config.schema.ts` (graph-only node union).
 - Source: `web/lib/config.ts` (`loadFlowManifest`).
+
+## Plan-review capability validation (Designed — ADR-137)
+
+Flow compilation owns `settings.plan_review` validation: `human` type, engine
+floor 3.1.0, declared current artifacts, positive decision-rework bound, exact
+parent outcomes, and a Flow-declared rework target. This is reusable manifest
+semantics, not a convention tied to a `plan_review` node name or prompt text.

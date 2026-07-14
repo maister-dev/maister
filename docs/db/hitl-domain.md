@@ -222,3 +222,17 @@ The row is never deleted (cascades from `runs` and `projects` only).
   table — migration `0039`),
   `web/lib/config.schema.ts` (`formSchemaSchema`),
   `web/lib/config.ts` (`validateFormSchemaVersion`).
+
+## Plan-review decision children (Designed — ADR-137 / migration `0100`)
+
+```text
+parent human review
+  └── decision_request (same run, one source artifact + decision id)
+```
+
+Each child holds a direct parent FK, immutable source-artifact FK, and contract
+decision ID. The database permits only the row shape; the locked service proves
+the parent schema and same-run relationship. `UNIQUE (run_id, source_artifact_id,
+decision_id) WHERE kind='decision_request'` is the replay guard. Open children
+are queried by `(parent_hitl_request_id, created_at)` and are system-closed when
+the parent starts ordinary rework.

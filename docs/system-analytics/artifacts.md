@@ -489,3 +489,11 @@ All logs use the module-local pino logger per the existing pattern
   (`artifactContents` → `ctx.artifacts[id].content`), `web/lib/flows/graph/runner-graph.ts`
   (collect + inject wiring), `web/lib/config.ts` + `web/lib/config.schema.ts`
   (engine 2.2.0 floor + `inline` grammar + D12 node-type restriction).
+
+## Plan-review snapshots (Designed — ADR-137)
+
+`plan-document` and `plan-review` are copied from runner-confined staging paths
+into immutable per-attempt storage, SHA-256 hashed, and recorded before a review
+opens. The source JSON never supplies its own artifact identity or provenance.
+Stale/superseded artifact instances cannot be approved or used to create a new
+decision child.

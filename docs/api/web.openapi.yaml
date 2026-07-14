@@ -9,6 +9,15 @@ info:
 
     **Milestone status: M34 Platform Agents Stage 3, with earlier routes retained.**
 
+    **ADR-137 (Designed) — typed Plan review.** A session-authenticated caller
+    may answer a `decision_request` only with `{ optionId }`; the server derives
+    the parent review, current immutable plan-review artifact, allowed option,
+    and Flow rework input. A non-final answer returns `200` with
+    `state: awaiting-decisions`; a final answer returns `202` with
+    `state: rework-scheduled|resume-queued`. Parent approval rejects while a
+    blocker remains open. Events expose provenance ids/counts only, never plan
+    content or selected values.
+
     Routes shipped to date:
 
     - `POST /api/projects/{slug}/flow-packages/install` and the
@@ -5328,6 +5337,19 @@ paths:
           `input-<stepId>.json` atomically. `respondedAt` is marked
           after the artifact write succeeds. A losing concurrent
           submission gets 409 BEFORE it can corrupt the artifact.
+        - **decision_request** (ADR-137, Implemented): session-auth-only,
+          Flow-native Plan-review blocker. Its body is exactly `{optionId}`;
+          the option, direct human parent, current immutable source artifact,
+          sibling completeness, rework target, and input path are all derived
+          from locked server state. A non-final answer atomically closes only
+          its child card and returns `200 {ok:true, state:"awaiting-decisions",
+          remainingDecisionCount}`. The final answer uses a durable intent →
+          atomic parent-input write → delivered-marker handoff and returns
+          `202 {ok:true, state:"rework-scheduled"|"resume-queued",
+          remainingDecisionCount:0}`. Same-payload retries repair incomplete
+          handoff; a conflicting option, stale artifact, terminal run, or
+          parent closure returns 409. This path calls graph `runFlow()` only;
+          it never invokes ACP permission recovery.
         - **agent_question** (ADR-136, Implemented): human-only task
           clarification. The route locks the task and active request, records
           one answer and supersedes competing questions, then inserts either a
@@ -5452,6 +5474,10 @@ paths:
                 value:
                   response:
                     decision: "approve"
+              plan-review-decision:
+                summary: (ADR-137) Session-only Plan-review decision option
+                value:
+                  optionId: "postgres"
               consensus-provide-resolution:
                 summary: (M41) Consensus — provide human resolution
                 value:
@@ -5507,12 +5533,14 @@ paths:
             restart terminalized the old run and launched or queued a new one,
             park preserved work and abandoned the run, or discard failed the run
             (and optionally dropped the workspace). For `agent_question`, the
-            answer and outbox event were committed; no session is resumed.
+            answer and outbox event were committed; no session is resumed. For
+            a non-final `decision_request`, only the child card was delivered
+            and `state="awaiting-decisions"` exposes the remaining count.
           content:
             application/json:
               schema:
                 type: object
-                required: [ok, runStatus]
+                required: [ok]
                 properties:
                   ok: { type: boolean, enum: [true] }
                   runStatus:
@@ -5532,6 +5560,12 @@ paths:
                       a resumed run to `Running` as soon as it picks up the
                       work. Budget restart may additionally return a new run id
                       in the implementation DTO.
+                  state:
+                    type: string
+                    enum: [awaiting-decisions]
+                  remainingDecisionCount:
+                    type: integer
+                    minimum: 0
         "401":
           description: No valid session (`UNAUTHENTICATED`).
           content:
@@ -5574,16 +5608,23 @@ paths:
             inside the runner-agent (typically 5-60 s). Subsequent
             same-payload retries while `respondedAt IS NULL` keep
             returning 202; after auto-delivery completes the retries
-            return 200 idempotent.
+            return 200 idempotent. For ADR-137 Plan-review final answers, the
+            graph-only claim returns `rework-scheduled` or `resume-queued` and
+            never calls `resumeRun`.
           content:
             application/json:
               schema:
                 type: object
-                required: [ok, runStatus]
+                required: [ok, state]
                 properties:
                   ok: { type: boolean, enum: [true] }
                   runStatus: { type: string, enum: ["NeedsInput"] }
-                  state: { type: string, enum: ["resume-in-progress"] }
+                  state:
+                    type: string
+                    enum: [resume-in-progress, rework-scheduled, resume-queued]
+                  remainingDecisionCount:
+                    type: integer
+                    minimum: 0
         "410":
           description: |
             Either (M7) permission deferred expired before delivery

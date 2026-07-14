@@ -156,6 +156,112 @@ async function seedFormHitl(
   return hitlRequestId;
 }
 
+async function seedPlanReviewHitls(runId: string): Promise<{
+  parentHitlRequestId: string;
+  childHitlRequestIds: [string, string];
+  sourceArtifactId: string;
+}> {
+  const sourceArtifactId = randomUUID();
+  const parentHitlRequestId = randomUUID();
+  const childHitlRequestIds: [string, string] = [randomUUID(), randomUUID()];
+  const decisions = [
+    {
+      id: "database",
+      question: "Which database should store review answers?",
+      options: [
+        {
+          id: "postgres",
+          label: "Postgres",
+          consequences: "Keeps review state transactional.",
+        },
+        {
+          id: "files",
+          label: "Files",
+          consequences: "Requires a separate consistency protocol.",
+        },
+      ],
+      recommendation: "postgres",
+    },
+    {
+      id: "resume",
+      question: "How should a completed review resume?",
+      options: [
+        {
+          id: "graph",
+          label: "Graph continuation",
+          consequences: "Preserves the run scheduler contract.",
+        },
+        {
+          id: "direct",
+          label: "Direct node wake",
+          consequences: "Would bypass graph scheduling.",
+        },
+      ],
+      recommendation: "graph",
+    },
+  ];
+
+  await (db as any).insert(schema.artifactInstances).values({
+    id: sourceArtifactId,
+    runId,
+    artifactDefId: "plan-review",
+    nodeId: "improve",
+    attempt: 1,
+    kind: "plan",
+    producer: "runner",
+    locator: { kind: "file", path: "artifacts/improve/plan-review.json" },
+    validity: "current",
+  });
+  await (db as any).insert(schema.hitlRequests).values({
+    id: parentHitlRequestId,
+    runId,
+    stepId: "review_plan",
+    kind: "human",
+    prompt: "Review the implementation plan",
+    schema: {
+      review: true,
+      allowedDecisions: ["approve", "rework"],
+      transitions: { approve: "implement", rework: "improve" },
+      reworkTargets: ["improve"],
+      workspacePolicies: ["keep"],
+      planReview: {
+        sourceArtifactId,
+        answersVar: "plan_answers",
+        assumptions: [
+          {
+            id: "scope",
+            defaultDecision: { id: "default", label: "Keep scope" },
+          },
+        ],
+        decisions,
+      },
+    },
+  });
+
+  for (const [index, decision] of decisions.entries()) {
+    await (db as any).insert(schema.hitlRequests).values({
+      id: childHitlRequestIds[index],
+      runId,
+      stepId: "review_plan",
+      kind: "decision_request",
+      prompt: `Plan decision required: ${decision.question}`,
+      schema: {
+        version: 1,
+        sourceArtifactId,
+        decisionId: decision.id,
+        question: decision.question,
+        options: decision.options,
+        recommendation: decision.recommendation,
+      },
+      parentHitlRequestId,
+      sourceArtifactId,
+      decisionId: decision.id,
+    });
+  }
+
+  return { parentHitlRequestId, childHitlRequestIds, sourceArtifactId };
+}
+
 describe("respondToHitl integration — form response with real Postgres", () => {
   it("form response → row.response set + respondedAt set + input-<stepId>.json written", async () => {
     const projectId = await seedProject("test-form");
@@ -424,5 +530,93 @@ describe("respondToHitl integration — concurrent two-racer CAS (409 contract)"
     expect([{ approved: true }, { approved: false }]).toContainEqual(
       rows[0].response,
     );
+  });
+});
+
+describe("respondToHitl integration — plan-review decision requests", () => {
+  it("serializes concurrent child answers, persists ordered parent input, and replays the final answer idempotently", async () => {
+    const projectId = await seedProject("test-plan-review-decisions");
+    const runId = await seedRun(projectId);
+    const {
+      parentHitlRequestId,
+      childHitlRequestIds,
+      sourceArtifactId,
+    } = await seedPlanReviewHitls(runId);
+    const actor: HitlActor = {
+      kind: "user",
+      userId: "u-1",
+      label: "Test User",
+    };
+
+    const results = await Promise.all([
+      respondToHitl(
+        {
+          runId,
+          hitlRequestId: childHitlRequestIds[0],
+          body: { optionId: "postgres" },
+        },
+        actor,
+        { db },
+      ),
+      respondToHitl(
+        {
+          runId,
+          hitlRequestId: childHitlRequestIds[1],
+          body: { optionId: "graph" },
+        },
+        actor,
+        { db },
+      ),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([200, 202]);
+
+    const rows = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    const parent = rows.find((row: { id: string }) => row.id === parentHitlRequestId);
+    const children = rows.filter(
+      (row: { kind: string }) => row.kind === "decision_request",
+    );
+
+    expect(parent.respondedAt).toBeInstanceOf(Date);
+    expect(parent.response).toMatchObject({
+      decision: "rework",
+      plan_answers: {
+        schemaVersion: 1,
+        sourceArtifactId,
+        answers: [
+          { decisionId: "database", optionId: "postgres" },
+          { decisionId: "resume", optionId: "graph" },
+        ],
+      },
+    });
+    expect(children).toHaveLength(2);
+    expect(children.every((child: { respondedAt: Date | null }) => child.respondedAt instanceof Date)).toBe(true);
+
+    const inputPath = join(
+      runtimeRoot,
+      ".maister",
+      "test-plan-review-decisions",
+      "runs",
+      runId,
+      "input-review_plan.json",
+    );
+    expect(JSON.parse(await readFile(inputPath, "utf8"))).toMatchObject(
+      parent.response,
+    );
+
+    const replay = await respondToHitl(
+      {
+        runId,
+        hitlRequestId: childHitlRequestIds[1],
+        body: { optionId: "graph" },
+      },
+      actor,
+      { db },
+    );
+
+    expect(replay.status).toBe(202);
   });
 });

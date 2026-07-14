@@ -261,3 +261,10 @@ controls until completion.
   `web/components/board/run-timeline.tsx`,
   `web/components/board/evidence-graph-section.tsx`,
   `web/components/runs/review-panel.tsx`.
+
+## Plan-review panel (Designed — ADR-137)
+
+The parent review displays captured plan provenance and each assumption's
+statement, default, and impact. Approve explicitly records those current
+defaults and is disabled while any decision child remains. The panel subscribes
+through the page's existing run stream provider; it opens no second EventSource.
