@@ -103,6 +103,7 @@ import {
   planReviewStagingPaths,
   type PlanReviewStagingPaths,
 } from "./plan-review-artifact";
+import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import {
   parsePlanReviewContract,
   type PlanReviewV1,
@@ -216,11 +217,10 @@ import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const {
-  runs,
-  runSessions,
-  hitlRequests,
-} = schemaModule as unknown as Record<string, any>;
+const { runs, runSessions, hitlRequests } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 const log = pino({
   name: "flow-runner-graph",
@@ -1765,7 +1765,7 @@ async function recordComposedCommentsEvidence(
     attempt: number;
     composed: string;
     feedbackFingerprint?: string;
-    hitlRequestId: string;
+    hitlRequestId?: string;
     threadIds: string[];
   },
   db: Db,
@@ -1790,7 +1790,9 @@ async function recordComposedCommentsEvidence(
         locator: {
           kind: "inline",
           text: args.composed,
-          hitlRequestId: args.hitlRequestId,
+          ...(args.hitlRequestId !== undefined
+            ? { hitlRequestId: args.hitlRequestId }
+            : {}),
           threadIds: args.threadIds,
           ...(args.feedbackFingerprint !== undefined
             ? { feedbackFingerprint: args.feedbackFingerprint }
@@ -1805,7 +1807,9 @@ async function recordComposedCommentsEvidence(
         runId: args.runId,
         nodeId: args.nodeId,
         nodeAttemptId: args.nodeAttemptId,
-        hitlRequestId: args.hitlRequestId,
+        ...(args.hitlRequestId !== undefined
+          ? { hitlRequestId: args.hitlRequestId }
+          : {}),
         threadCount: args.threadIds.length,
         ...(args.feedbackFingerprint !== undefined
           ? { feedbackFingerprint: args.feedbackFingerprint }
@@ -1822,13 +1826,18 @@ async function recordComposedCommentsEvidence(
   }
 }
 
-async function loadLatestRespondedReviewHitlId(
+type RespondedHitl = {
+  id: string;
+  schema: unknown;
+};
+
+async function findLatestRespondedHitl(
   runId: string,
   nodeId: string,
   db: Db,
-): Promise<string> {
+): Promise<RespondedHitl | null> {
   const rows = (await db
-    .select({ id: hitlRequests.id })
+    .select({ id: hitlRequests.id, schema: hitlRequests.schema })
     .from(hitlRequests)
     .where(
       and(
@@ -1838,17 +1847,8 @@ async function loadLatestRespondedReviewHitlId(
       ),
     )
     .orderBy(desc(hitlRequests.createdAt))
-    .limit(1)) as Array<{ id: string }>;
-  const hitlRequestId = rows[0]?.id;
-
-  if (!hitlRequestId) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `rework response is missing its review HITL row for node ${nodeId}`,
-    );
-  }
-
-  return hitlRequestId;
+    .limit(1)) as RespondedHitl[];
+  return rows[0] ?? null;
 }
 
 // M14 T4.1: resolve + materialize a capability profile for a capability-declaring
@@ -4607,12 +4607,6 @@ export async function runGraph(
           }
 
           if (injectedComments !== undefined) {
-            const hitlRequestId = await loadLatestRespondedReviewHitlId(
-              runId,
-              node.id,
-              db,
-            );
-
             await recordComposedCommentsEvidence(
               {
                 runId,
@@ -4620,7 +4614,6 @@ export async function runGraph(
                 nodeAttemptId,
                 attempt: nodeAttemptNumber,
                 composed: injectedComments,
-                hitlRequestId,
                 threadIds: [],
               },
               db,
@@ -4628,51 +4621,73 @@ export async function runGraph(
             );
           }
         } else {
-          const hitlRequestId = await loadLatestRespondedReviewHitlId(
-            runId,
-            node.id,
-            db,
-          );
-          const feedback = await buildReviewFeedbackPacket({
-            db,
-            runId,
-            hitlRequestId,
-            response: result.vars,
-          });
+          const hitl = await findLatestRespondedHitl(runId, node.id, db);
 
-          pendingInjectedVars = {
-            [feedback.target.commentsVar]: feedback.payload,
-          };
-
-          await recordComposedCommentsEvidence(
-            {
+          if (hitl && isReviewSchema(hitl.schema)) {
+            const feedback = await buildReviewFeedbackPacket({
+              db,
               runId,
-              nodeId: node.id,
-              nodeAttemptId,
-              attempt: nodeAttemptNumber,
-              composed: feedback.payload,
-              feedbackFingerprint: feedback.fingerprint,
-              hitlRequestId,
-              threadIds: feedback.openThreadIds,
-            },
-            db,
-            log2,
-          );
+              hitlRequestId: hitl.id,
+              response: result.vars,
+            });
 
-          log2.info(
-            {
-              runId,
-              hitlRequestId,
-              nodeId: node.id,
-              targetNodeId: feedback.target.nodeId,
-              commentsVar: feedback.target.commentsVar,
-              openThreadCount: feedback.openThreadIds.length,
-              resolvedThreadCount: feedback.resolvedThreadCount,
-              gateChatMessageCount: feedback.gateChatMessageCount,
-              feedbackFingerprint: feedback.fingerprint,
-            },
-            "review feedback packet delivered to rework target",
-          );
+            pendingInjectedVars = {
+              [feedback.target.commentsVar]: feedback.payload,
+            };
+
+            await recordComposedCommentsEvidence(
+              {
+                runId,
+                nodeId: node.id,
+                nodeAttemptId,
+                attempt: nodeAttemptNumber,
+                composed: feedback.payload,
+                feedbackFingerprint: feedback.fingerprint,
+                hitlRequestId: hitl.id,
+                threadIds: feedback.openThreadIds,
+              },
+              db,
+              log2,
+            );
+
+            log2.info(
+              {
+                runId,
+                hitlRequestId: hitl.id,
+                nodeId: node.id,
+                targetNodeId: feedback.target.nodeId,
+                commentsVar: feedback.target.commentsVar,
+                openThreadCount: feedback.openThreadIds.length,
+                resolvedThreadCount: feedback.resolvedThreadCount,
+                gateChatMessageCount: feedback.gateChatMessageCount,
+                feedbackFingerprint: feedback.fingerprint,
+              },
+              "review feedback packet delivered to rework target",
+            );
+          } else {
+            const commentsVar =
+              node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
+            const comments = commentsVar
+              ? (vars[commentsVar] ?? vars.comments)
+              : undefined;
+
+            if (commentsVar && typeof comments === "string") {
+              pendingInjectedVars = { [commentsVar]: comments };
+
+              await recordComposedCommentsEvidence(
+                {
+                  runId,
+                  nodeId: node.id,
+                  nodeAttemptId,
+                  attempt: nodeAttemptNumber,
+                  composed: comments,
+                  threadIds: [],
+                },
+                db,
+                log2,
+              );
+            }
+          }
         }
       } else {
         await markNodeSucceeded(
