@@ -46,6 +46,12 @@ pnpm install --frozen-lockfile                    # monorepo root install
 cp .env.example .env                              # then fill in DB_URL etc.
 
 docker compose up -d                              # Postgres only (pgvector/pgvector:pg16)
+cp ./web/.env.sample ./web/.env.local
+cp ./supervisor/.env.sample ./supervisor/.env.local
+
+update env AUTH_SECRET in ./supervisor/.env.local (any string)
+`AUTH_SECRET=your-generated-secret-here`
+
 pnpm --filter maister-web db:migrate              # main migration lineage
 pnpm --filter maister-web db:migrate:brain        # Project-Brain lineage (ADR-122)
 pnpm --filter maister-web db:seed                 # admin user + dev seed
