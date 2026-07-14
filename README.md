@@ -50,6 +50,7 @@ cp ./web/.env.sample ./web/.env.local
 cp ./supervisor/.env.sample ./supervisor/.env.local
 
 update env AUTH_SECRET in ./supervisor/.env.local (any string)
+`openssl rand -base64 33`
 `AUTH_SECRET=your-generated-secret-here`
 
 pnpm --filter maister-web db:migrate              # main migration lineage

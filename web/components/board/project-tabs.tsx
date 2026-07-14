@@ -83,5 +83,9 @@ export async function ProjectTabs({
     count: tab === "board" ? boardCount : undefined,
   }));
 
-  return <Tabs activeKey={active} className="mb-[22px]" items={items} />;
+  return (
+    <div className="overflow-x-auto">
+      <Tabs activeKey={active} className="mb-[22px]" items={items} />
+    </div>
+  );
 }

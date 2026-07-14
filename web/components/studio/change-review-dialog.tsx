@@ -172,7 +172,7 @@ export function ChangeReviewDialog({
       data-testid="change-review-dialog"
       role="dialog"
     >
-      <div className="flex max-h-[85vh] w-full max-w-[760px] flex-col gap-3 rounded-[16px] border border-line bg-paper p-6 shadow-xl">
+      <div className="flex max-h-[85vh] w-full max-w-[1024px] flex-col gap-3 rounded-[16px] border border-line bg-paper p-6 shadow-xl">
         <div className="flex items-center justify-between gap-2">
           <h3
             className="m-0 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-mute"
