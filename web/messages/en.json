@@ -2292,6 +2292,12 @@
     "consensusProvideResolution": "Use resolution",
     "consensusRerunRound": "Run another round",
     "consensusAbort": "Abort",
+    "planDecisionTitle": "Plan decision",
+    "planDecisionRecommendation": "Recommended",
+    "planReviewAssumptions": "Assumptions",
+    "planReviewAssumptionDefault": "Default",
+    "planReviewAssumptionImpact": "Impact",
+    "planReviewApprovalBlocked": "Answer blocking plan decisions before approval.",
     "consensusResolutionRequired": "Write a resolution before submitting.",
     "error": {
       "generic": "Something went wrong. Try again.",

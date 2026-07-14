@@ -107,6 +107,12 @@ export interface HitlDecisionControlsLabels {
   consensusProvideResolution?: string;
   consensusRerunRound?: string;
   consensusAbort?: string;
+  planDecisionTitle?: string;
+  planDecisionRecommendation?: string;
+  planReviewAssumptions?: string;
+  planReviewAssumptionDefault?: string;
+  planReviewAssumptionImpact?: string;
+  planReviewApprovalBlocked?: string;
 }
 
 export interface ReviewSchema {
@@ -119,6 +125,66 @@ export interface ReviewSchema {
   // 1-based visit number of this gate. Absent on pre-ADR-071 rows.
   maxLoops?: number | null;
   gateAttempt?: number;
+  planReview?: unknown;
+}
+
+type PlanReviewAssumptionView = {
+  id: string;
+  statement: string;
+  defaultLabel: string;
+  impact: string;
+};
+
+type PlanReviewParentView = {
+  assumptions: PlanReviewAssumptionView[];
+  decisionCount: number;
+};
+
+function planReviewParentFromSchema(
+  schema: ReviewSchema | null,
+): PlanReviewParentView | null {
+  const raw = schema?.planReview;
+
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as { assumptions?: unknown; decisions?: unknown };
+
+  if (!Array.isArray(value.assumptions) || !Array.isArray(value.decisions)) {
+    return null;
+  }
+
+  const assumptions = value.assumptions
+    .map((assumption) => {
+      if (!assumption || typeof assumption !== "object") return null;
+      const item = assumption as {
+        id?: unknown;
+        statement?: unknown;
+        impact?: unknown;
+        defaultDecision?: { label?: unknown };
+      };
+
+      if (
+        typeof item.id !== "string" ||
+        typeof item.statement !== "string" ||
+        typeof item.impact !== "string" ||
+        typeof item.defaultDecision?.label !== "string"
+      ) {
+        return null;
+      }
+
+      return {
+        id: item.id,
+        statement: item.statement,
+        defaultLabel: item.defaultDecision.label,
+        impact: item.impact,
+      };
+    })
+    .filter(
+      (assumption): assumption is PlanReviewAssumptionView => assumption !== null,
+    );
+
+  return assumptions.length === value.assumptions.length
+    ? { assumptions, decisionCount: value.decisions.length }
+    : null;
 }
 
 export interface ReviewLoopInfo {
@@ -196,7 +262,8 @@ export interface HitlDecisionControlsProps {
     | "agent_question"
     | "infra_recovery"
     | "budget_breach"
-    | "hook_trip";
+    | "hook_trip"
+    | "decision_request";
   reviewSchema: ReviewSchema | null;
   options: HitlOption[];
   schema: unknown;
@@ -300,6 +367,59 @@ export function hookTripFromSchema(schema: unknown): HookTripView | null {
     toolCall && typeof toolCall.title === "string" ? toolCall.title : undefined;
 
   return { rule: s.rule, ...(title ? { toolCallTitle: title } : {}) };
+}
+
+export interface PlanReviewDecisionView {
+  question: string;
+  options: Array<{ id: string; label: string; consequences: string }>;
+  recommendation?: string;
+}
+
+export function planReviewDecisionFromSchema(
+  schema: unknown,
+): PlanReviewDecisionView | null {
+  if (!schema || typeof schema !== "object") return null;
+  const value = schema as Record<string, unknown>;
+
+  if (value.version !== 1 || typeof value.question !== "string") return null;
+
+  const options = Array.isArray(value.options)
+    ? value.options
+        .map((option) => {
+          if (!option || typeof option !== "object") return null;
+          const record = option as Record<string, unknown>;
+
+          if (
+            typeof record.id !== "string" ||
+            typeof record.label !== "string" ||
+            typeof record.consequences !== "string"
+          ) {
+            return null;
+          }
+
+          return {
+            id: record.id,
+            label: record.label,
+            consequences: record.consequences,
+          };
+        })
+        .filter(
+          (
+            option,
+          ): option is { id: string; label: string; consequences: string } =>
+            option !== null,
+        )
+    : [];
+
+  if (options.length < 2) return null;
+
+  return {
+    question: value.question,
+    options,
+    ...(typeof value.recommendation === "string"
+      ? { recommendation: value.recommendation }
+      : {}),
+  };
 }
 
 export interface ConsensusDraftChoiceView {
@@ -925,6 +1045,8 @@ export function HitlDecisionControls({
   const budgetBreach =
     kind === "budget_breach" ? budgetBreachFromSchema(schema) : null;
   const hookTrip = kind === "hook_trip" ? hookTripFromSchema(schema) : null;
+  const planReviewDecision =
+    kind === "decision_request" ? planReviewDecisionFromSchema(schema) : null;
   const consensusHitl =
     kind === "human" ? consensusHitlFromSchema(schema) : null;
   const decisionLabel = (d: string): string => {
@@ -948,6 +1070,7 @@ export function HitlDecisionControls({
   // server-stamped schema fields; open/outdated badges + approve soft-warn
   // from the server-computed counts. Approve is NEVER blocked.
   const loopInfo = reviewLoopInfo(reviewSchema);
+  const planReviewParent = planReviewParentFromSchema(reviewSchema);
   const reworkExhausted = loopInfo?.exhausted ?? false;
   const openCount = reviewCounts?.openCount ?? 0;
   const outdatedCount = reviewCounts?.outdatedCount ?? 0;
@@ -975,6 +1098,30 @@ export function HitlDecisionControls({
 
       {reviewSchema ? (
         <>
+          {planReviewParent ? (
+            <div className="flex flex-col gap-2 rounded-[8px] border border-line bg-paper p-3">
+              <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+                {labels.planReviewAssumptions ?? "Assumptions"}
+              </p>
+              {planReviewParent.assumptions.map((assumption) => (
+                <div key={assumption.id} className="text-[11.5px] text-ink-2">
+                  <p>{assumption.statement}</p>
+                  <p className="mt-1 text-mute">
+                    {labels.planReviewAssumptionDefault ?? "Default"}: {assumption.defaultLabel}
+                  </p>
+                  <p className="mt-1 text-mute">
+                    {labels.planReviewAssumptionImpact ?? "Impact"}: {assumption.impact}
+                  </p>
+                </div>
+              ))}
+              {planReviewParent.decisionCount > 0 ? (
+                <p className="font-mono text-[11px] text-amber">
+                  {labels.planReviewApprovalBlocked ??
+                    "Answer blocking plan decisions before approval."}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           {loopInfo !== null || openCount > 0 || outdatedCount > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5">
               {loopInfo && labels.reviewLoopChip ? (
@@ -1044,9 +1191,18 @@ export function HitlDecisionControls({
                   isReworkDecision(d)
                     ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
                     : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
-                  (disabled || reworkLocked(d)) && "opacity-60",
+                  (disabled ||
+                    reworkLocked(d) ||
+                    (d === "approve" &&
+                      (planReviewParent?.decisionCount ?? 0) > 0)) &&
+                    "opacity-60",
                 )}
-                disabled={disabled || reworkLocked(d)}
+                disabled={
+                  disabled ||
+                  reworkLocked(d) ||
+                  (d === "approve" &&
+                    (planReviewParent?.decisionCount ?? 0) > 0)
+                }
                 title={
                   reworkLocked(d) ? (exhaustedText ?? undefined) : undefined
                 }
@@ -1096,6 +1252,41 @@ export function HitlDecisionControls({
           onCommentsChange={onCommentsChange}
           onDecision={onDecision}
         />
+      ) : kind === "decision_request" && planReviewDecision ? (
+        <div className="flex flex-col gap-3" data-testid="plan-decision-card">
+          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
+            {labels.planDecisionTitle ?? "Plan decision"}
+          </p>
+          <p className="text-[13px] leading-[1.5] text-ink">
+            {planReviewDecision.question}
+          </p>
+          <div className="flex flex-col gap-2">
+            {planReviewDecision.options.map((option) => (
+              <button
+                key={option.id}
+                className={clsx(
+                  "rounded-[8px] border border-line bg-paper px-3 py-2 text-left hover:border-amber disabled:opacity-60",
+                  disabled && "opacity-60",
+                )}
+                disabled={disabled}
+                type="button"
+                onClick={() => onOption(option.id)}
+              >
+                <span className="block text-[12.5px] font-semibold text-ink">
+                  {option.label}
+                  {planReviewDecision.recommendation === option.id ? (
+                    <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.06em] text-amber">
+                      {labels.planDecisionRecommendation ?? "Recommended"}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="mt-1 block text-[11.5px] leading-[1.45] text-mute">
+                  {option.consequences}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
       ) : kind === "permission" ? (
         <div className="flex flex-wrap gap-2">
           {options.map((opt) => (

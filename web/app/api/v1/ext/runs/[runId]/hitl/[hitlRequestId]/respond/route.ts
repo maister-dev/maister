@@ -114,6 +114,16 @@ export async function POST(
       }
 
       const hitlKind = hitlRows[0].kind as string;
+
+      if (hitlKind === "decision_request") {
+        return NextResponse.json(
+          {
+            code: "UNAUTHORIZED",
+            message: "external tokens cannot answer plan decisions",
+          },
+          { status: 403 },
+        );
+      }
       const humanOnly = isHumanOnlyHitlKind(hitlKind);
       const scopeUsed = humanOnly ? HUMAN_SCOPE : SCOPE;
       const actor =

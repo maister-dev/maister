@@ -82,8 +82,12 @@ export async function GET(
 
       const rows = await getHitlRequestsForRun(runId, ctx.projectId, { db });
 
+      const externallyVisible = rows.filter(
+        (row) => row.kind !== "decision_request",
+      );
+
       return NextResponse.json(
-        { hitl: rows.map(toExtHitlDTO) },
+        { hitl: externallyVisible.map(toExtHitlDTO) },
         { status: 200 },
       );
     },

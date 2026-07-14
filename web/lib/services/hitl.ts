@@ -8,7 +8,7 @@ import type {
 
 import path from "node:path";
 
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
@@ -32,6 +32,7 @@ import {
   isReviewSchema,
   resolveConfidence,
 } from "@/lib/flows/hitl-validate";
+import { isPlanReviewDecisionRequestSchema } from "@/lib/flows/graph/plan-review-decisions";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
@@ -82,6 +83,7 @@ import { headCommit, localBranchHead, remoteBranchHead } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
+  artifactInstances,
   assignments,
   hitlRequests,
   projects,
@@ -159,6 +161,48 @@ function scheduleResume(runId: string): void {
         ),
       ),
   );
+}
+
+async function claimGraphResumeSlot(
+  db: any,
+  runId: string,
+): Promise<"ready" | "queued" | "noop"> {
+  return db.transaction(async (tx: any) => {
+    await takeSchedulerLock(tx);
+
+    const [current]: Array<{ status: string }> = await tx
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    if (!current) return "noop";
+
+    if (current.status === "NeedsInput") return "ready";
+
+    if (current.status !== "NeedsInputIdle") return "noop";
+
+    if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
+      await tx
+        .update(runs)
+        .set({ resumeRequestedAt: new Date() })
+        .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
+
+      return "queued";
+    }
+
+    const resumed = await tx
+      .update(runs)
+      .set({
+        status: "NeedsInput",
+        resumeRequestedAt: null,
+        keepaliveUntil: null,
+        checkpointAt: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
+      .returning({ id: runs.id });
+
+    return resumed.length > 0 ? "ready" : "noop";
+  });
 }
 
 // ADR-121 (INV-1): cap-safe agent idle-resume claim, shared by the hook_trip
@@ -1275,6 +1319,826 @@ async function handlePermissionResponse(
 type FormClaim =
   | { kind: "claimed"; storedResponse: unknown; runStatus: string }
   | { kind: "already-delivered"; storedResponse: unknown; runStatus: string };
+
+type PlanReviewParentState = {
+  sourceArtifactId: string;
+  answersVar: string;
+  decisions: Array<{ id: string }>;
+  assumptions: Array<{
+    id: string;
+    defaultDecision: { id: string; label: string };
+  }>;
+};
+
+function planReviewParentState(schema: unknown): PlanReviewParentState | null {
+  if (!schema || typeof schema !== "object") return null;
+  const planReview = (schema as { planReview?: unknown }).planReview;
+
+  if (!planReview || typeof planReview !== "object") return null;
+  const value = planReview as Record<string, unknown>;
+
+  if (
+    typeof value.sourceArtifactId !== "string" ||
+    typeof value.answersVar !== "string" ||
+    !Array.isArray(value.decisions) ||
+    !Array.isArray(value.assumptions)
+  ) {
+    return null;
+  }
+
+  const decisions = value.decisions
+    .map((decision) => {
+      if (!decision || typeof decision !== "object") return null;
+      const id = (decision as { id?: unknown }).id;
+
+      return typeof id === "string" ? { id } : null;
+    })
+    .filter((decision): decision is { id: string } => decision !== null);
+  const assumptions = value.assumptions
+    .map((assumption) => {
+      if (!assumption || typeof assumption !== "object") return null;
+      const record = assumption as {
+        id?: unknown;
+        defaultDecision?: { id?: unknown; label?: unknown };
+      };
+
+      if (
+        typeof record.id !== "string" ||
+        typeof record.defaultDecision?.id !== "string" ||
+        typeof record.defaultDecision.label !== "string"
+      ) {
+        return null;
+      }
+
+      return {
+        id: record.id,
+        defaultDecision: {
+          id: record.defaultDecision.id,
+          label: record.defaultDecision.label,
+        },
+      };
+    })
+    .filter(
+      (
+        assumption,
+      ): assumption is {
+        id: string;
+        defaultDecision: { id: string; label: string };
+      } => assumption !== null,
+    );
+
+  if (
+    decisions.length !== value.decisions.length ||
+    assumptions.length !== value.assumptions.length
+  ) {
+    return null;
+  }
+
+  return {
+    sourceArtifactId: value.sourceArtifactId,
+    answersVar: value.answersVar,
+    decisions,
+    assumptions,
+  };
+}
+
+function planReviewCommentsVar(schema: unknown): string | undefined {
+  if (!schema || typeof schema !== "object") return undefined;
+  const value = (schema as { commentsVar?: unknown }).commentsVar;
+
+  return typeof value === "string" ? value : undefined;
+}
+
+function planReviewParentInput({
+  decision,
+  workspacePolicy,
+  comments,
+  commentsVar,
+  answersVar,
+  sourceArtifactId,
+  answers,
+  assumptions,
+}: {
+  decision: "approve" | "rework";
+  workspacePolicy: string;
+  comments: string;
+  commentsVar?: string;
+  answersVar: string;
+  sourceArtifactId: string;
+  answers: Array<{ decisionId: string; optionId: string }>;
+  assumptions: Array<{
+    id: string;
+    defaultDecision: { id: string; label: string };
+  }>;
+}): Record<string, unknown> {
+  const answerEnvelope = {
+    schemaVersion: 1,
+    sourceArtifactId,
+    answers,
+  };
+
+  return {
+    decision,
+    workspacePolicy,
+    comments,
+    ...(commentsVar ? { [commentsVar]: comments } : {}),
+    [answersVar]: answerEnvelope,
+    ...(decision === "approve"
+      ? {
+          acceptedAssumptions: assumptions.map((assumption) => ({
+            assumptionId: assumption.id,
+            defaultDecision: assumption.defaultDecision,
+          })),
+        }
+      : {}),
+  };
+}
+
+async function planReviewInputPath(
+  db: any,
+  projectId: string,
+  runId: string,
+  stepId: string,
+): Promise<string> {
+  const projectRows = await db
+    .select({ slug: projects.slug })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  const projectSlug = projectRows[0]?.slug;
+
+  if (!projectSlug) {
+    throw new MaisterError("PRECONDITION", "project slug not found");
+  }
+
+  return path.join(
+    runtimeRoot(),
+    ".maister",
+    projectSlug,
+    "runs",
+    runId,
+    `input-${stepId}.json`,
+  );
+}
+
+async function assertCurrentPlanReviewArtifact(
+  tx: any,
+  sourceArtifactId: string,
+  runId: string,
+): Promise<void> {
+  const [artifact] = await tx
+    .select({
+      id: artifactInstances.id,
+      runId: artifactInstances.runId,
+      validity: artifactInstances.validity,
+    })
+    .from(artifactInstances)
+    .where(eq(artifactInstances.id, sourceArtifactId));
+
+  if (
+    !artifact ||
+    artifact.runId !== runId ||
+    artifact.validity !== "current"
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      "plan review artifact is no longer current; open the replacement review",
+    );
+  }
+}
+
+function decisionAnswerFromResponse(
+  response: unknown,
+): { optionId: string } | null {
+  if (!response || typeof response !== "object") return null;
+  const optionId = (response as { optionId?: unknown }).optionId;
+
+  return typeof optionId === "string" ? { optionId } : null;
+}
+
+async function completePlanReviewResponse(
+  args: {
+    db: any;
+    runId: string;
+    projectId: string;
+    parentHitlRequestId: string;
+    childHitlRequestId?: string;
+    parentAssignmentClaim?: ResponseAssignmentClaim;
+    childAssignmentClaim?: ResponseAssignmentClaim;
+    recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+  },
+): Promise<void> {
+  await args.db.transaction(async (tx: any) => {
+    const now = new Date();
+
+    if (args.childHitlRequestId) {
+      await tx
+        .update(hitlRequests)
+        .set({ respondedAt: now })
+        .where(
+          and(
+            eq(hitlRequests.id, args.childHitlRequestId),
+            isNull(hitlRequests.respondedAt),
+          ),
+        );
+      await completeResponseAssignment(
+        tx,
+        args.childAssignmentClaim ?? null,
+      );
+    }
+
+    const stamped = await tx
+      .update(hitlRequests)
+      .set({ respondedAt: now })
+      .where(
+        and(
+          eq(hitlRequests.id, args.parentHitlRequestId),
+          isNull(hitlRequests.respondedAt),
+        ),
+      )
+      .returning({ id: hitlRequests.id });
+
+    await completeResponseAssignment(tx, args.parentAssignmentClaim ?? null);
+    await systemCloseActiveAssignmentsForHitlRequest({
+      db: tx,
+      hitlRequestId: args.parentHitlRequestId,
+      projectId: args.projectId,
+      reason: "plan-review rework delivered",
+    });
+    await args.recordSuccessAudit?.(tx, 202);
+
+    if (stamped.length > 0) {
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.responded",
+        projectId: args.projectId,
+        runId: args.runId,
+        data: {
+          hitlRequestId: args.parentHitlRequestId,
+          kind: "human",
+          via: "user",
+          planReview: {
+            parentHitlRequestId: args.parentHitlRequestId,
+            state: "rework-scheduled",
+          },
+        },
+      });
+    }
+  });
+}
+
+async function handlePlanReviewDecisionResponse(
+  args: HandlerArgs,
+): Promise<NextResponse> {
+  const { db, hitlRow, runRow, body, runId, hitlRequestId, actor } = args;
+  const optionId = body.optionId;
+  const parentHitlRequestId = hitlRow.parentHitlRequestId;
+
+  if (
+    typeof optionId !== "string" ||
+    body.response !== undefined ||
+    body.confidence !== undefined ||
+    body.raiseTo !== undefined ||
+    body.dropWorkspace !== undefined
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      "decision_request requires exactly an optionId response",
+    );
+  }
+
+  const childSchema = isPlanReviewDecisionRequestSchema(hitlRow.schema)
+    ? hitlRow.schema
+    : null;
+
+  if (
+    !childSchema ||
+    !childSchema.options.some(
+      (option: { id: string }) => option.id === optionId,
+    )
+  ) {
+    throw new MaisterError(
+      "NEEDS_INPUT",
+      "optionId is not declared by this plan decision",
+    );
+  }
+  if (typeof parentHitlRequestId !== "string") {
+    throw new MaisterError(
+      "PRECONDITION",
+      "plan decision request has no parent review",
+    );
+  }
+
+  const assignmentClaim = await claimAssignmentForResponse({
+    db,
+    hitlRequestId,
+    projectId: runRow.projectId,
+    actor,
+  });
+  const response = { optionId };
+  const outcome = await db.transaction(async (tx: any) => {
+    // Lock the common parent before any child. Concurrent answers therefore
+    // serialize through one stable row, then lock children in ascending id
+    // order below; this prevents child-A -> parent -> child-B deadlocks.
+    const parent = await lockHitlRow(tx, parentHitlRequestId);
+    const child = await lockHitlRow(tx, hitlRequestId);
+
+    if (
+      !child ||
+      child.kind !== "decision_request" ||
+      child.parentHitlRequestId !== parentHitlRequestId
+    ) {
+      throw new MaisterError("PRECONDITION", "plan decision request disappeared");
+    }
+    if (!parent || parent.kind !== "human" || parent.runId !== runId) {
+      throw new MaisterError("CONFLICT", "plan decision parent is invalid");
+    }
+    const parentState = planReviewParentState(parent.schema);
+
+    if (!parentState || parentState.sourceArtifactId !== child.sourceArtifactId) {
+      throw new MaisterError("CONFLICT", "plan decision parent provenance changed");
+    }
+    await assertCurrentPlanReviewArtifact(
+      tx,
+      parentState.sourceArtifactId,
+      runId,
+    );
+
+    const runRows = await tx
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
+    const lockedRun = runRows[0];
+
+    if (!lockedRun || !PENDING_HITL_RUN_STATUS.has(lockedRun.status)) {
+      throw new MaisterError("CONFLICT", "run is not awaiting plan decisions");
+    }
+    if (child.respondedAt) {
+      if (payloadsEqual(child.response, response)) {
+        if (parent.respondedAt) {
+          return {
+            kind: "already-delivered" as const,
+            parentHitlRequestId: parent.id,
+          };
+        }
+      } else {
+        throw new MaisterError("CONFLICT", "plan decision already answered");
+      }
+    }
+    if (parent.respondedAt) {
+      throw new MaisterError("CONFLICT", "parent review is already closed");
+    }
+    if (child.response !== null && child.response !== undefined) {
+      if (!payloadsEqual(child.response, response)) {
+        throw new MaisterError("CONFLICT", "plan decision answer conflicts");
+      }
+    } else {
+      await tx
+        .update(hitlRequests)
+        .set({ response })
+        .where(
+          and(
+            eq(hitlRequests.id, child.id),
+            isNull(hitlRequests.respondedAt),
+            isNull(hitlRequests.response),
+          ),
+        );
+    }
+
+    const siblings = await tx
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.parentHitlRequestId, parent.id))
+      .orderBy(asc(hitlRequests.id))
+      .for("update");
+    const answers = new Map<string, string>();
+
+    for (const sibling of siblings) {
+      const siblingAnswer =
+        sibling.id === child.id
+          ? response
+          : decisionAnswerFromResponse(sibling.response);
+
+      if (siblingAnswer) answers.set(sibling.decisionId, siblingAnswer.optionId);
+    }
+
+    const remaining = parentState.decisions.filter(
+      (decision) => !answers.has(decision.id),
+    );
+
+    if (remaining.length > 0) {
+      if (parent.response !== null && parent.response !== undefined) {
+        throw new MaisterError("CONFLICT", "parent review is closing");
+      }
+
+      return {
+        kind: "awaiting-decisions" as const,
+        remainingDecisionCount: remaining.length,
+        parentHitlRequestId: parent.id,
+      };
+    }
+
+    const orderedAnswers = parentState.decisions.map((decision) => ({
+      decisionId: decision.id,
+      optionId: answers.get(decision.id)!,
+    }));
+    const parentResponse = planReviewParentInput({
+      decision: "rework",
+      workspacePolicy: "keep",
+      comments: "",
+      commentsVar: planReviewCommentsVar(parent.schema),
+      answersVar: parentState.answersVar,
+      sourceArtifactId: parentState.sourceArtifactId,
+      answers: orderedAnswers,
+      assumptions: parentState.assumptions,
+    });
+
+    if (parent.response !== null && parent.response !== undefined) {
+      if (!payloadsEqual(parent.response, parentResponse)) {
+        throw new MaisterError("CONFLICT", "parent review is closing");
+      }
+    } else {
+      await tx
+        .update(hitlRequests)
+        .set({
+          response: parentResponse,
+          decision: "rework",
+          workspacePolicy: "keep",
+        })
+        .where(
+          and(
+            eq(hitlRequests.id, parent.id),
+            isNull(hitlRequests.respondedAt),
+            isNull(hitlRequests.response),
+          ),
+        );
+    }
+
+    return {
+      kind: "rework-pending" as const,
+      parentHitlRequestId: parent.id,
+      parentStepId: parent.stepId,
+      parentResponse,
+    };
+  });
+
+  if (outcome.kind === "already-delivered") {
+    const resume = await claimGraphResumeSlot(db, runId);
+
+    if (resume === "ready") scheduleResume(runId);
+
+    return NextResponse.json(
+      {
+        ok: true,
+        state: resume === "queued" ? "resume-queued" : "rework-scheduled",
+        remainingDecisionCount: 0,
+      },
+      { status: 202 },
+    );
+  }
+
+  if (outcome.kind === "awaiting-decisions") {
+    await db.transaction(async (tx: any) => {
+      await tx
+        .update(hitlRequests)
+        .set({ respondedAt: new Date() })
+        .where(
+          and(eq(hitlRequests.id, hitlRequestId), isNull(hitlRequests.respondedAt)),
+        );
+      await completeResponseAssignment(tx, assignmentClaim, { response });
+      await args.recordSuccessAudit?.(tx, 200);
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.responded",
+        projectId: runRow.projectId,
+        runId,
+        data: {
+          hitlRequestId,
+          kind: "decision_request",
+          via: "user",
+          planReview: {
+            parentHitlRequestId: outcome.parentHitlRequestId,
+            sourceArtifactId: childSchema.sourceArtifactId,
+            decisionId: childSchema.decisionId,
+            remainingDecisionCount: outcome.remainingDecisionCount,
+            state: "awaiting-decisions",
+          },
+        },
+      });
+    });
+
+    return NextResponse.json(
+      {
+        ok: true,
+        state: "awaiting-decisions",
+        remainingDecisionCount: outcome.remainingDecisionCount,
+      },
+      { status: 200 },
+    );
+  }
+
+  const inputPath = await planReviewInputPath(
+    db,
+    runRow.projectId,
+    runId,
+    outcome.parentStepId,
+  );
+
+  try {
+    await atomicWriteJson(inputPath, outcome.parentResponse);
+  } catch (err) {
+    log.warn(
+      { runId, hitlRequestId, err: err instanceof Error ? err.message : String(err) },
+      "plan-review final answer input write failed — retryable",
+    );
+
+    return NextResponse.json(
+      {
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "could not persist plan-review input; retry",
+      },
+      { status: 503 },
+    );
+  }
+
+  await completePlanReviewResponse({
+    db,
+    runId,
+    projectId: runRow.projectId,
+    parentHitlRequestId: outcome.parentHitlRequestId,
+    childHitlRequestId: hitlRequestId,
+    childAssignmentClaim: assignmentClaim,
+    recordSuccessAudit: args.recordSuccessAudit,
+  });
+  const resume = await claimGraphResumeSlot(db, runId);
+
+  if (resume === "ready") scheduleResume(runId);
+
+  return NextResponse.json(
+    {
+      ok: true,
+      state: resume === "queued" ? "resume-queued" : "rework-scheduled",
+      remainingDecisionCount: 0,
+    },
+    { status: 202 },
+  );
+}
+
+async function handlePlanReviewParentResponse(
+  args: HandlerArgs,
+): Promise<NextResponse> {
+  const { db, hitlRow, runRow, body, runId, hitlRequestId, actor } = args;
+  const parentState = planReviewParentState(hitlRow.schema);
+
+  if (!parentState) {
+    throw new MaisterError("CONFIG", "plan-review parent schema is malformed");
+  }
+  if (body.response === undefined) {
+    throw new MaisterError("CONFIG", "plan-review response is required");
+  }
+
+  const resolved = assertReviewDecision(body.response, hitlRow.schema);
+
+  if (resolved.decision !== "approve" && resolved.decision !== "rework") {
+    throw new MaisterError(
+      "NEEDS_INPUT",
+      "plan-review requires approve or rework",
+    );
+  }
+  const planDecision: "approve" | "rework" = resolved.decision;
+
+  const submitted = body.response as { comments?: unknown };
+  const comments =
+    typeof submitted.comments === "string" ? submitted.comments : "";
+  const assignmentClaim = await claimAssignmentForResponse({
+    db,
+    hitlRequestId,
+    projectId: runRow.projectId,
+    actor,
+  });
+  const phaseOne = await db.transaction(async (tx: any) => {
+    const parent = await lockHitlRow(tx, hitlRequestId);
+
+    if (!parent || parent.kind !== "human") {
+      throw new MaisterError("PRECONDITION", "plan-review parent disappeared");
+    }
+    const lockedState = planReviewParentState(parent.schema);
+
+    if (!lockedState) {
+      throw new MaisterError("CONFLICT", "plan-review parent contract changed");
+    }
+    await assertCurrentPlanReviewArtifact(
+      tx,
+      lockedState.sourceArtifactId,
+      runId,
+    );
+
+    const runRows = await tx
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
+    const lockedRun = runRows[0];
+
+    if (!lockedRun || !PENDING_HITL_RUN_STATUS.has(lockedRun.status)) {
+      throw new MaisterError("CONFLICT", "run is not awaiting plan review");
+    }
+    const siblings = await tx
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.parentHitlRequestId, parent.id))
+      .orderBy(asc(hitlRequests.id))
+      .for("update");
+    const openChildren = siblings.filter(
+      (child: { respondedAt: Date | null }) => child.respondedAt === null,
+    );
+
+    if (parent.respondedAt) {
+      return { kind: "already-delivered" as const, parent };
+    }
+    if (planDecision === "approve" && openChildren.length > 0) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "all blocking plan decisions must be answered before approval",
+      );
+    }
+
+    const answers = new Map<string, string>();
+
+    for (const child of siblings) {
+      const answer = decisionAnswerFromResponse(child.response);
+
+      if (answer) answers.set(child.decisionId, answer.optionId);
+    }
+    const orderedAnswers = lockedState.decisions
+      .map((decision) => {
+        const optionId = answers.get(decision.id);
+
+        return optionId ? { decisionId: decision.id, optionId } : null;
+      })
+      .filter(
+        (answer): answer is { decisionId: string; optionId: string } =>
+          answer !== null,
+      );
+    const parentResponse = planReviewParentInput({
+      decision: planDecision,
+      workspacePolicy: resolved.workspacePolicy ?? "keep",
+      comments,
+      commentsVar: planReviewCommentsVar(parent.schema),
+      answersVar: lockedState.answersVar,
+      sourceArtifactId: lockedState.sourceArtifactId,
+      answers: orderedAnswers,
+      assumptions: lockedState.assumptions,
+    });
+
+    if (parent.response !== null && parent.response !== undefined) {
+      if (!payloadsEqual(parent.response, parentResponse)) {
+        throw new MaisterError(
+          "CONFLICT",
+          "plan-review response is already pending delivery",
+        );
+      }
+
+      return {
+        kind: "pending-delivery" as const,
+        parent,
+        parentResponse,
+        closedChildCount: 0,
+      };
+    }
+
+    if (planDecision === "rework") {
+      const now = new Date();
+
+      for (const child of openChildren) {
+        await tx
+          .update(hitlRequests)
+          .set({
+            response: {
+              kind: "parent_reworked",
+              parentHitlRequestId: parent.id,
+            },
+            respondedAt: now,
+          })
+          .where(
+            and(eq(hitlRequests.id, child.id), isNull(hitlRequests.respondedAt)),
+          );
+        await systemCloseActiveAssignmentsForHitlRequest({
+          db: tx,
+          hitlRequestId: child.id,
+          projectId: runRow.projectId,
+          reason: "parent review reworked",
+        });
+      }
+    }
+
+    await tx
+      .update(hitlRequests)
+      .set({
+        response: parentResponse,
+        decision: planDecision,
+        workspacePolicy: resolved.workspacePolicy ?? "keep",
+        reworkTarget: resolved.reworkTarget ?? null,
+      })
+      .where(
+        and(
+          eq(hitlRequests.id, parent.id),
+          isNull(hitlRequests.respondedAt),
+          isNull(hitlRequests.response),
+        ),
+      );
+
+    return {
+      kind: "pending-delivery" as const,
+      parent,
+      parentResponse,
+      closedChildCount: planDecision === "rework" ? openChildren.length : 0,
+    };
+  });
+
+  if (phaseOne.kind === "already-delivered") {
+    const resume = await claimGraphResumeSlot(db, runId);
+
+    if (resume === "ready") scheduleResume(runId);
+
+    return NextResponse.json({ ok: true, runStatus: "NeedsInput" }, { status: 200 });
+  }
+
+  const inputPath = await planReviewInputPath(
+    db,
+    runRow.projectId,
+    runId,
+    phaseOne.parent.stepId,
+  );
+
+  try {
+    await atomicWriteJson(inputPath, phaseOne.parentResponse);
+  } catch (err) {
+    log.warn(
+      { runId, hitlRequestId, err: err instanceof Error ? err.message : String(err) },
+      "plan-review parent input write failed — retryable",
+    );
+
+    return NextResponse.json(
+      {
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "could not persist plan-review input; retry",
+      },
+      { status: 503 },
+    );
+  }
+
+  await db.transaction(async (tx: any) => {
+    const stamped = await tx
+      .update(hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(
+        and(eq(hitlRequests.id, hitlRequestId), isNull(hitlRequests.respondedAt)),
+      )
+      .returning({ id: hitlRequests.id });
+    await completeResponseAssignment(tx, assignmentClaim);
+    await args.recordSuccessAudit?.(tx, 200);
+
+    if (stamped.length > 0) {
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.responded",
+        projectId: runRow.projectId,
+        runId,
+        data: {
+          hitlRequestId,
+          kind: "human",
+          via: "user",
+          planReview: {
+            parentHitlRequestId: hitlRequestId,
+            remainingDecisionCount: 0,
+            state:
+              planDecision === "rework"
+                ? "rework-scheduled"
+                : "approved",
+          },
+        },
+      });
+    }
+  });
+
+  const resume = await claimGraphResumeSlot(db, runId);
+
+  if (resume === "ready") scheduleResume(runId);
+
+  log.info(
+    {
+      runId,
+      hitlRequestId,
+      decision: planDecision,
+      closedChildCount: phaseOne.closedChildCount,
+      resume,
+    },
+    "plan-review parent response delivered",
+  );
+
+  return NextResponse.json({ ok: true, runStatus: "NeedsInput" }, { status: 200 });
+}
 
 async function handleFormHumanResponse(
   args: HandlerArgs,
@@ -3745,6 +4609,7 @@ export async function respondToHitl(
     // bypass it.
     if (
       hitlRow.kind === "human" ||
+      hitlRow.kind === "decision_request" ||
       hitlRow.kind === "agent_question" ||
       hitlRow.kind === "infra_recovery" ||
       hitlRow.kind === "budget_breach" ||
@@ -3840,6 +4705,38 @@ export async function respondToHitl(
       runId,
       hitlRequestId,
       startedAt,
+      recordSuccessAudit,
+    });
+  }
+
+  if (hitlRow.kind === "decision_request") {
+    log.debug({ runId, hitlRequestId, branch: "decision_request" }, "dispatch");
+
+    return await handlePlanReviewDecisionResponse({
+      db,
+      hitlRow,
+      runRow,
+      body,
+      runId,
+      hitlRequestId,
+      startedAt,
+      actor,
+      recordSuccessAudit,
+    });
+  }
+
+  if (hitlRow.kind === "human" && planReviewParentState(hitlRow.schema)) {
+    log.debug({ runId, hitlRequestId, branch: "plan_review_parent" }, "dispatch");
+
+    return await handlePlanReviewParentResponse({
+      db,
+      hitlRow,
+      runRow,
+      body,
+      runId,
+      hitlRequestId,
+      startedAt,
+      actor,
       recordSuccessAudit,
     });
   }

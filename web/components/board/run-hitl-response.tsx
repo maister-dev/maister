@@ -36,7 +36,8 @@ export interface RunHitlResponseProps {
     | "agent_question"
     | "infra_recovery"
     | "budget_breach"
-    | "hook_trip";
+    | "hook_trip"
+    | "decision_request";
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];
   budgetProgress?: BudgetBreachProgressDto | null;
@@ -325,6 +326,7 @@ export function RunHitlResponse({
     kind !== "infra_recovery" &&
     kind !== "budget_breach" &&
     kind !== "hook_trip" &&
+    kind !== "decision_request" &&
     !consensusHitl;
 
   const labels = {
@@ -417,6 +419,12 @@ export function RunHitlResponse({
     consensusProvideResolution: t("consensusProvideResolution"),
     consensusRerunRound: t("consensusRerunRound"),
     consensusAbort: t("consensusAbort"),
+    planDecisionTitle: t("planDecisionTitle"),
+    planDecisionRecommendation: t("planDecisionRecommendation"),
+    planReviewAssumptions: t("planReviewAssumptions"),
+    planReviewAssumptionDefault: t("planReviewAssumptionDefault"),
+    planReviewAssumptionImpact: t("planReviewAssumptionImpact"),
+    planReviewApprovalBlocked: t("planReviewApprovalBlocked"),
   };
 
   return (

@@ -46,6 +46,7 @@ import {
   budgetBreachFromSchema,
   consensusHitlFromSchema,
   hookTripFromSchema,
+  planReviewDecisionFromSchema,
   reviewLoopInfo,
 } from "@/components/board/hitl-decision-controls";
 
@@ -153,6 +154,33 @@ function render(over: Partial<ControlsProps> = {}): string {
 describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("renders typed plan-decision options without exposing a raw JSON editor", () => {
+    const schema = {
+      version: 1,
+      question: "Which runtime should the plan target?",
+      options: [
+        { id: "node", label: "Node", consequences: "Use the existing runtime." },
+        { id: "bun", label: "Bun", consequences: "Add a runtime dependency." },
+      ],
+      recommendation: "node",
+    };
+    const html = render({
+      kind: "decision_request",
+      schema,
+      labels: {
+        ...LABELS,
+        planDecisionTitle: "Plan decision",
+        planDecisionRecommendation: "Recommended",
+      },
+    });
+
+    expect(planReviewDecisionFromSchema(schema)?.recommendation).toBe("node");
+    expect(html).toContain("Which runtime should the plan target?");
+    expect(html).toContain("Use the existing runtime.");
+    expect(html).toContain("Recommended");
+    expect(html).not.toContain('id="hitl-json-response"');
   });
 
   describe("criticality badge", () => {

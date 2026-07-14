@@ -2292,6 +2292,12 @@
     "consensusProvideResolution": "Использовать решение",
     "consensusRerunRound": "Запустить ещё раунд",
     "consensusAbort": "Прекратить",
+    "planDecisionTitle": "Решение по плану",
+    "planDecisionRecommendation": "Рекомендуется",
+    "planReviewAssumptions": "Допущения",
+    "planReviewAssumptionDefault": "По умолчанию",
+    "planReviewAssumptionImpact": "Влияние",
+    "planReviewApprovalBlocked": "Ответьте на блокирующие вопросы плана перед утверждением.",
     "consensusResolutionRequired": "Введите решение перед отправкой.",
     "error": {
       "generic": "Что-то пошло не так. Попробуйте ещё раз.",

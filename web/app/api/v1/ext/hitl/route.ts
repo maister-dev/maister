@@ -51,17 +51,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // web-internal inbox item carries assignment/actor/agent/schema fields
       // that are NOT part of the external contract and must not cross this
       // boundary (docs/api/external/operations.openapi.yaml).
-      const items = inbox.items.map((item) => ({
-        projectId: item.projectId,
-        projectSlug: item.projectSlug,
-        runId: item.runId,
-        hitlRequestId: item.hitlRequestId,
-        kind: item.kind,
-        title: item.prompt,
-        createdAt: item.createdAt,
-      }));
+      const items = inbox.items
+        .filter((item) => item.kind !== "decision_request")
+        .map((item) => ({
+          projectId: item.projectId,
+          projectSlug: item.projectSlug,
+          runId: item.runId,
+          hitlRequestId: item.hitlRequestId,
+          kind: item.kind,
+          title: item.prompt,
+          createdAt: item.createdAt,
+        }));
 
-      return NextResponse.json({ items, count: inbox.count }, { status: 200 });
+      return NextResponse.json({ items, count: items.length }, { status: 200 });
     },
   );
 }
