@@ -239,7 +239,7 @@ async function invokeGet(runId: string, query = "") {
   return GET(req, { params: Promise.resolve({ runId }) });
 }
 
-async function invokePost(runId: string, body: unknown, query = "") {
+async function invokePost(runId: string, body: unknown, query = "scope=review") {
   const { POST } = await import("../route");
   const req = new NextRequest(
     new Request(reviewCommentsUrl(runId, query), {
@@ -277,7 +277,7 @@ beforeEach(() => {
   });
   vi.mocked(diffWorkingTree).mockReset();
   vi.mocked(diffWorkingTree).mockResolvedValue({
-    text: UNTRACKED_DIFF,
+    text: `${FIXTURE_DIFF}${UNTRACKED_DIFF}`,
     truncated: false,
     nameStatus: [{ path: "docs/new.md", status: "A" }],
   });
@@ -529,6 +529,31 @@ describe("GET /api/runs/[runId]/review-comments — threads + placement", () => 
     expect(diffWorkingTree).toHaveBeenCalledWith("/repos/demo/.maister/wt-1");
     expect(diffRunWorkspace).not.toHaveBeenCalled();
   });
+
+  it("uses the base-to-working-tree review source for review placement", async () => {
+    seedRun();
+    vi.mocked(listThreads).mockResolvedValueOnce([
+      {
+        root: commentRow({
+          filePath: "docs/new.md",
+          line: 1,
+          lineContent: "# Draft",
+        }),
+        replies: [],
+      },
+    ]);
+
+    const res = await invokeGet(RUN_ID, "scope=review");
+    const body = (await res.json()) as { threads: { placement: string }[] };
+
+    expect(res.status).toBe(200);
+    expect(body.threads.map((thread) => thread.placement)).toEqual(["inline"]);
+    expect(diffWorkingTree).toHaveBeenCalledWith(
+      "/repos/demo/.maister/wt-1",
+      "feedbeef",
+    );
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/runs/[runId]/review-comments — root comments", () => {
@@ -591,7 +616,7 @@ describe("POST /api/runs/[runId]/review-comments — root comments", () => {
     expect(Object.keys(body.comment).sort()).toEqual(COMMENT_DTO_KEYS);
   });
 
-  it("201: validates an uncommitted root anchor against the working-tree diff, including untracked additions", async () => {
+  it("refuses root creation against an alternate forensic source", async () => {
     seedRun();
 
     const res = await invokePost(
@@ -605,21 +630,34 @@ describe("POST /api/runs/[runId]/review-comments — root comments", () => {
       "scope=uncommitted",
     );
 
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRECONDITION");
+    expect(diffWorkingTree).not.toHaveBeenCalled();
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(createRoot).not.toHaveBeenCalled();
+  });
+
+  it("201: validates a review root anchor against the complete review source", async () => {
+    seedRun();
+
+    const res = await invokePost(
+      RUN_ID,
+      {
+        filePath: "docs/new.md",
+        side: "new",
+        line: 1,
+        body: "comment on current review",
+      },
+      "scope=review",
+    );
+
     expect(res.status).toBe(201);
-    expect(diffWorkingTree).toHaveBeenCalledWith("/repos/demo/.maister/wt-1");
+    expect(diffWorkingTree).toHaveBeenCalledWith(
+      "/repos/demo/.maister/wt-1",
+      "feedbeef",
+    );
     expect(diffRunWorkspace).not.toHaveBeenCalled();
     expect(createRoot).toHaveBeenCalledTimes(1);
-
-    const [, , calledRunId, input] = vi.mocked(createRoot).mock.calls[0];
-
-    expect(calledRunId).toBe(RUN_ID);
-    expect(input).toEqual({
-      filePath: "docs/new.md",
-      side: "new",
-      line: 1,
-      lineContent: "# Draft",
-      body: "comment on untracked",
-    });
   });
 
   it("returns 401 when unauthenticated", async () => {

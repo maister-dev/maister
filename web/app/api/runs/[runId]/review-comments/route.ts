@@ -203,6 +203,13 @@ export async function POST(
 
     await requireProjectAction(run.projectId, "answerHitl");
 
+    if (scope !== "review") {
+      throw new MaisterError(
+        "PRECONDITION",
+        "review comments can be created only from the current review source",
+      );
+    }
+
     const actor = {
       userId: sessionUser.id,
       label: sessionUser.name ?? sessionUser.email ?? sessionUser.id,

@@ -12,6 +12,7 @@ export const MATERIALIZED_REVIEW_CHANGE_PATHS = [
 
 export type ReviewableChangeEntry = {
   path: string;
+  oldPath?: string;
 };
 
 function normalizeRepoPath(path: string): string {
@@ -35,8 +36,17 @@ export function isReviewableChangePath(path: string): boolean {
   return !isMaterializedReviewChangePath(path);
 }
 
+export function isReviewableChangeEntry(
+  entry: ReviewableChangeEntry,
+): boolean {
+  return (
+    isReviewableChangePath(entry.path) &&
+    (entry.oldPath === undefined || isReviewableChangePath(entry.oldPath))
+  );
+}
+
 export function filterReviewableChangeEntries<T extends ReviewableChangeEntry>(
   entries: readonly T[],
 ): T[] {
-  return entries.filter((entry) => isReviewableChangePath(entry.path));
+  return entries.filter(isReviewableChangeEntry);
 }

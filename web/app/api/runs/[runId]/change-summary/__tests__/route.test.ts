@@ -13,6 +13,7 @@ import {
 import { MaisterError } from "@/lib/errors";
 import {
   diffChangeStats,
+  diffWorkingTree,
   diffWorkingTreeChangeStats,
   headCommit,
   resolveBaseRef,
@@ -116,6 +117,11 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
         binary: false,
       },
     ]),
+    diffWorkingTree: vi.fn(async () => ({
+      text: "",
+      truncated: false,
+      nameStatus: [],
+    })),
     headCommit: vi.fn(async () => "head000000000000000000000000000000000000"),
     resolveBaseRef: vi.fn(
       async () => "base000000000000000000000000000000000000",
@@ -257,6 +263,12 @@ beforeEach(() => {
       binary: false,
     },
   ]);
+  vi.mocked(diffWorkingTree).mockClear();
+  vi.mocked(diffWorkingTree).mockResolvedValue({
+    text: "",
+    truncated: false,
+    nameStatus: [],
+  });
   vi.mocked(headCommit).mockClear();
   vi.mocked(headCommit).mockResolvedValue(
     "head000000000000000000000000000000000000",
@@ -363,6 +375,45 @@ describe("GET /api/runs/[runId]/change-summary", () => {
       scope: "uncommitted",
       dirty: true,
       baseCommit: "head000000000000000000000000000000000000",
+    });
+  });
+
+  it("uses the workspace base through the working tree for Flow review scope", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(diffWorkingTreeChangeStats).mockResolvedValueOnce([
+      {
+        path: "committed-and-dirty.ts",
+        status: "M",
+        additions: 3,
+        deletions: 1,
+        binary: false,
+      },
+      {
+        path: "untracked-review.ts",
+        status: "A",
+        additions: 2,
+        deletions: 0,
+        binary: false,
+      },
+    ]);
+
+    const res = await invokeGet(runId, "review");
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(diffWorkingTreeChangeStats).toHaveBeenCalledWith(
+      "/repos/demo/.maister/wt-1",
+      "feedbeef",
+    );
+    expect(diffChangeStats).not.toHaveBeenCalled();
+    expect(body).toMatchObject({
+      scope: "review",
+      baseCommit: "feedbeef",
+      dirty: true,
+      fileCount: 2,
+      reviewSourceFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      scopes: { review: { available: true } },
     });
   });
 

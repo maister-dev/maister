@@ -223,6 +223,21 @@ describe("open-review-gate guard", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
+  it("rejects PRECONDITION once the response is claimed before it is delivered", async () => {
+    const { runId, hitlRequestId } = await seedOpenGate("NeedsInput");
+    const { actor } = await seedUser("Alice");
+
+    await db
+      .update(schema.hitlRequests)
+      .set({ response: { decision: "rework" } })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+
+    await expect(
+      createRoot(db, actor, runId, anchorInput()),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(await commentRows(runId)).toEqual([]);
+  });
+
   it("rejects PRECONDITION when the pending hitl row is not kind=human", async () => {
     const runId = await seedRun("NeedsInput");
 

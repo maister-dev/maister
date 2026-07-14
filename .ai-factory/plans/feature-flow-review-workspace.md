@@ -347,7 +347,7 @@ to a numbered acceptance criterion.
 
 ### Phase 1 — Current-review source and safe comment anchoring
 
-- [ ] **Task 3 (RED): Prove the five diff-source cases before implementation.**
+- [x] **Task 3 (RED): Prove the five diff-source cases before implementation.**
   - Files: `web/app/api/runs/[runId]/diff/__tests__/route.test.ts`,
     `web/app/api/runs/__tests__/diff-scope.integration.test.ts`,
     `web/app/api/runs/[runId]/change-summary/__tests__/route.test.ts`,
@@ -371,7 +371,7 @@ to a numbered acceptance criterion.
   - **Logging:** assert structured diff logs include `runId`, `scope`, base,
     file count/summary and never raw diff content.
 
-- [ ] **Task 4 (GREEN → refactor): Add `review` to diff and change-summary without changing the REST default.**
+- [x] **Task 4 (GREEN → refactor): Add `review` to diff and change-summary without changing the REST default.**
   - Files: `web/app/api/runs/[runId]/diff/route.ts`,
     `web/app/api/runs/[runId]/change-summary/route.ts`,
     `web/lib/runs/change-summary.ts`, `web/lib/runs/run-query-state.ts`,
@@ -400,7 +400,7 @@ to a numbered acceptance criterion.
     counts only), `warn` for render degradation, `error` only for unexpected
     failure; no full source or path outside existing authorized DTOs.
 
-- [ ] **Task 5 (RED → GREEN → refactor): Make review comments use the canonical source and close the response race.**
+- [x] **Task 5 (RED → GREEN → refactor): Make review comments use the canonical source and close the response race.**
   - Files: `web/lib/review-comments/run-diff-source.ts`,
     `web/lib/review-comments/service.ts`,
     `web/app/api/runs/[runId]/review-comments/route.ts`, and the focused

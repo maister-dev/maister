@@ -112,6 +112,36 @@ describe("filterDiffByPath — reviewable section filtering", () => {
     expect(filtered).toContain("diff --git a/src/a.ts b/src/a.ts");
     expect(filtered).not.toContain("diff --git a/b.ts b/b.ts");
   });
+
+  it("excludes renames and copies crossing materialized paths in either direction", () => {
+    const crossingDiff = [
+      "diff --git a/.claude/agents/reviewer.md b/src/reviewer.md",
+      "similarity index 100%",
+      "rename from .claude/agents/reviewer.md",
+      "rename to src/reviewer.md",
+      "diff --git a/src/copied.ts b/.claude/skills/aif-review/SKILL.md",
+      "similarity index 100%",
+      "copy from src/copied.ts",
+      "copy to .claude/skills/aif-review/SKILL.md",
+      "diff --git a/src/old.ts b/src/new.ts",
+      "similarity index 100%",
+      "rename from src/old.ts",
+      "rename to src/new.ts",
+    ].join("\n");
+
+    const filtered = filterDiffByPath(
+      crossingDiff,
+      (path) => !path.startsWith(".claude/"),
+    );
+
+    expect(filtered).toContain("diff --git a/src/old.ts b/src/new.ts");
+    expect(filtered).not.toContain(
+      "diff --git a/.claude/agents/reviewer.md b/src/reviewer.md",
+    );
+    expect(filtered).not.toContain(
+      "diff --git a/src/copied.ts b/.claude/skills/aif-review/SKILL.md",
+    );
+  });
 });
 
 describe("prepareDiff — perFile split + payload", () => {

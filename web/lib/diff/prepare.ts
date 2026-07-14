@@ -17,6 +17,7 @@ const log = pino({
 
 export type DiffFileSummary = {
   path: string;
+  oldPath?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -47,6 +48,7 @@ const OMITTED_DIFF_BUNDLE_KEYS = new Set([
 type ParsedSection = {
   section: string;
   path: string;
+  oldPath?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -85,6 +87,14 @@ function parsePath(headerLine: string): string {
   return repoRelPath(tokens[tokens.length - 1] ?? "");
 }
 
+function parseOldPath(headerLine: string): string | undefined {
+  const match = headerLine.match(/^diff --git a\/(.+) b\/(.+)$/);
+
+  if (match) return match[1];
+
+  return undefined;
+}
+
 function deriveStatus(section: string): string {
   if (/^new file mode /m.test(section)) return "A";
   if (/^deleted file mode /m.test(section)) return "D";
@@ -113,15 +123,17 @@ function countChanges(section: string): {
 function parseSection(section: string): ParsedSection {
   const headerLine = section.split("\n", 1)[0];
   const path = parsePath(headerLine);
+  const oldPath = parseOldPath(headerLine);
   const status = deriveStatus(section);
   const { additions, deletions } = countChanges(section);
 
-  return { section, path, status, additions, deletions };
+  return { section, path, oldPath, status, additions, deletions };
 }
 
 function summarizeSections(sections: ParsedSection[]): DiffFileSummary[] {
   return sections.map((s) => ({
     path: s.path,
+    ...(s.oldPath && s.oldPath !== s.path ? { oldPath: s.oldPath } : {}),
     status: s.status,
     additions: s.additions,
     deletions: s.deletions,
@@ -130,11 +142,11 @@ function summarizeSections(sections: ParsedSection[]): DiffFileSummary[] {
 
 export function filterDiffByPath(
   rawDiff: string,
-  includePath: (path: string) => boolean,
+  includePath: (path: string, oldPath: string | undefined) => boolean,
 ): string {
   const sections = splitSections(rawDiff)
     .map(parseSection)
-    .filter((section) => includePath(section.path))
+    .filter((section) => includePath(section.path, section.oldPath))
     .map((section) => section.section);
 
   return sections.length > 0 ? `${sections.join("\n")}\n` : "";

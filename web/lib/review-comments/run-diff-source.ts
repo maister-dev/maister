@@ -18,7 +18,9 @@ import { filterDiffByPath, prepareDiff } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import { computePlacement } from "@/lib/review-comments/anchor";
 import { listThreads } from "@/lib/review-comments/service";
-import { isReviewableChangePath } from "@/lib/runs/reviewable-changes";
+import { isReviewableChangeEntry } from "@/lib/runs/reviewable-changes";
+import { type RunDiffScope } from "@/lib/runs/diff-scopes";
+import { readReviewSource } from "@/lib/runs/review-source";
 import {
   diffRunWorkspace,
   diffWorkingTree,
@@ -53,7 +55,11 @@ interface ReviewDiffRows {
   project: ProjectRow;
 }
 
-export const REVIEW_COMMENT_SCOPES = ["run", "uncommitted"] as const;
+export const REVIEW_COMMENT_SCOPES = [
+  "run",
+  "review",
+  "uncommitted",
+] as const satisfies readonly RunDiffScope[];
 
 export type ReviewCommentScope = (typeof REVIEW_COMMENT_SCOPES)[number];
 
@@ -61,6 +67,7 @@ export function reviewCommentScopeOrDefault(
   raw: string | null,
 ): ReviewCommentScope {
   if (raw === null || raw === "run") return "run";
+  if (raw === "review") return "review";
   if (raw === "uncommitted") return "uncommitted";
 
   throw new MaisterError("CONFIG", `unsupported review-comment scope: ${raw}`);
@@ -184,9 +191,31 @@ async function computeUncommittedReviewDiff(
 ): Promise<DiffPrepResult> {
   const { workspace } = await loadReviewDiffRows(dbh, run);
   const { text, truncated } = await diffWorkingTree(workspace.worktreePath);
-  const reviewableDiff = filterDiffByPath(text, isReviewableChangePath);
+  const reviewableDiff = filterDiffByPath(text, (path, oldPath) =>
+    isReviewableChangeEntry({ path, oldPath }),
+  );
 
   return prepareDiff(reviewableDiff, truncated);
+}
+
+async function computeCurrentReviewDiff(
+  dbh: NodePgDatabase<typeof schema>,
+  run: RunDiffSourceRef,
+): Promise<DiffPrepResult> {
+  const { workspace, project } = await loadReviewDiffRows(dbh, run);
+  const baseCommit =
+    workspace.baseCommit ??
+    (await resolveBaseRef({
+      worktreePath: workspace.worktreePath,
+      branch: workspace.branch,
+      mainBranch: project.mainBranch,
+    }));
+  const source = await readReviewSource({
+    worktreePath: workspace.worktreePath,
+    baseCommit,
+  });
+
+  return prepareDiff(source.diff, source.truncated);
 }
 
 export function computeReviewDiff(
@@ -195,6 +224,7 @@ export function computeReviewDiff(
   scope: ReviewCommentScope,
 ): Promise<DiffPrepResult> {
   if (scope === "run") return computeRunDiff(dbh, run);
+  if (scope === "review") return computeCurrentReviewDiff(dbh, run);
 
   return computeUncommittedReviewDiff(dbh, run);
 }

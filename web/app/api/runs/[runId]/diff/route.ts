@@ -16,9 +16,16 @@ import {
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   filterReviewableChangeEntries,
-  isReviewableChangePath,
+  isReviewableChangeEntry,
 } from "@/lib/runs/reviewable-changes";
 import {
+  isRunDiffScope,
+  RUN_DIFF_SCOPES,
+  type RunDiffScope,
+} from "@/lib/runs/diff-scopes";
+import { readReviewSource } from "@/lib/runs/review-source";
+import {
+  type DiffFileEntry,
   diffNameStatus,
   diffRange,
   diffRunWorkspace,
@@ -109,18 +116,11 @@ async function loadScratchDiffRows(db: Db, runId: string) {
   return { scratch, workspace };
 }
 
-// M30 (ADR-082): the 4-mode diff scope switcher. `run` stays the default
+// M30 (ADR-082): the diff scope switcher. `run` stays the default
 // (workspace base → branch); the other scopes resolve their base from
 // server-state rows and degrade gracefully when that base does not exist
 // (disabled in the availability map; a direct request gets PRECONDITION).
-const DIFF_SCOPES = [
-  "run",
-  "since-last-review",
-  "last-node",
-  "uncommitted",
-] as const;
-
-type DiffScope = (typeof DIFF_SCOPES)[number];
+type DiffScope = RunDiffScope;
 
 type ScopeAvailability = Record<
   DiffScope,
@@ -170,14 +170,14 @@ async function prepareDiffForResponse(input: {
 function parseScope(req: Request): DiffScope {
   const raw = new URL(req.url).searchParams.get("scope") ?? "run";
 
-  if (!(DIFF_SCOPES as readonly string[]).includes(raw)) {
+  if (!isRunDiffScope(raw)) {
     throw new MaisterError(
       "CONFIG",
-      `invalid diff scope ${JSON.stringify(raw)} — expected one of ${DIFF_SCOPES.join("|")}`,
+      `invalid diff scope ${JSON.stringify(raw)} — expected one of ${RUN_DIFF_SCOPES.join("|")}`,
     );
   }
 
-  return raw as DiffScope;
+  return raw;
 }
 
 // Prior review visit = the most recent RESPONDED human HITL carrying a
@@ -336,6 +336,13 @@ export async function GET(
     }
 
     if (run.runKind === "scratch") {
+      if (scope === "review") {
+        throw new MaisterError(
+          "PRECONDITION",
+          "review diff scope is available only for Flow runs",
+        );
+      }
+
       const { scratch, workspace } = await loadScratchDiffRows(db, runId);
 
       await requireProjectAction(run.projectId, "readScratchRun");
@@ -403,6 +410,7 @@ export async function GET(
 
     const scopes: ScopeAvailability = {
       run: { available: true },
+      review: { available: true },
       "since-last-review": priorReviewTipSha
         ? { available: true }
         : { available: false, reason: "no prior review visit recorded" },
@@ -427,13 +435,33 @@ export async function GET(
     let base: string;
     let diff: string;
     let truncated: boolean;
-    let nameStatus: Array<{ path: string; status: string }>;
+    let nameStatus: DiffFileEntry[];
+    let reviewSourceFingerprint: string | null = null;
 
-    if (scope === "uncommitted") {
+    if (scope === "review") {
+      base =
+        workspace.baseCommit ??
+        (await resolveBaseRef({
+          worktreePath: workspace.worktreePath,
+          branch: workspace.branch,
+          mainBranch: project.mainBranch,
+        }));
+      const source = await readReviewSource({
+        worktreePath: workspace.worktreePath,
+        baseCommit: base,
+      });
+
+      diff = source.diff;
+      truncated = source.truncated;
+      nameStatus = source.nameStatus;
+      reviewSourceFingerprint = source.fingerprint;
+    } else if (scope === "uncommitted") {
       base = await headCommit({ worktreePath: workspace.worktreePath });
       const wtDiff = await diffWorkingTree(workspace.worktreePath);
 
-      diff = filterDiffByPath(wtDiff.text, isReviewableChangePath);
+      diff = filterDiffByPath(wtDiff.text, (path, oldPath) =>
+        isReviewableChangeEntry({ path, oldPath }),
+      );
       truncated = wtDiff.truncated;
       nameStatus = filterReviewableChangeEntries(wtDiff.nameStatus);
     } else {
@@ -491,7 +519,16 @@ export async function GET(
       };
     });
 
-    log.debug({ runId, scope, base }, "[diff-scope] resolved");
+    log.debug(
+      {
+        runId,
+        scope,
+        base,
+        fileCount: files.length,
+        reviewSourceFingerprint,
+      },
+      "[diff-scope] resolved",
+    );
 
     return NextResponse.json({
       runId,
@@ -501,6 +538,7 @@ export async function GET(
       sourceBranch: workspace.branch,
       targetBranch:
         workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
+      reviewSourceFingerprint,
       diff,
       truncated: prepared.truncated,
       files,

@@ -323,6 +323,54 @@ describe("GET /api/runs/{runId}/diff?scope= (ADR-082)", () => {
     // Committed-only content does not appear.
     expect(body.diff).not.toContain("a1.txt");
   });
+
+  it("review diffs the workspace base through committed, staged, unstaged, and untracked reviewable changes", async () => {
+    const runId = "run-scope-review";
+    const fx = await buildFixture(runId);
+
+    seedTables(fx, runId);
+
+    await writeFile(join(fx.worktree, "staged-review.txt"), "staged\n");
+    await git(fx.worktree, "add", "staged-review.txt");
+    await writeFile(join(fx.worktree, "a2.txt"), "attempt-2 unstaged\n");
+    await writeFile(join(fx.worktree, "untracked-review.txt"), "untracked\n");
+
+    const res = await getDiff(runId, "review");
+
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as Record<string, any>;
+
+    expect(body.scope).toBe("review");
+    expect(body.baseCommit).toBe(fx.baseSha);
+    expect(body.reviewSourceFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(body.diff).toContain("a1.txt");
+    expect(body.diff).toContain("a2.txt");
+    expect(body.diff).toContain("staged-review.txt");
+    expect(body.diff).toContain("untracked-review.txt");
+    expect(body.files.map((file: { path: string }) => file.path)).toEqual(
+      expect.arrayContaining([
+        "a1.txt",
+        "a2.txt",
+        "staged-review.txt",
+        "untracked-review.txt",
+      ]),
+    );
+    expect(body.scopes.review).toEqual({ available: true });
+  });
+
+  it("returns PRECONDITION for review scope when the workspace was removed", async () => {
+    const runId = "run-scope-review-removed";
+    const fx = await buildFixture(runId);
+
+    seedTables(fx, runId);
+    tables.workspaces[0].removedAt = new Date();
+
+    const res = await getDiff(runId, "review");
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRECONDITION");
+  });
 });
 
 describe("diffWorkingTree primitive (never mutates the real index)", () => {

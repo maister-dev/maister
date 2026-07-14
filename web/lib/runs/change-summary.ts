@@ -10,7 +10,13 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  isRunDiffScope,
+  RUN_DIFF_SCOPES,
+  type RunDiffScope,
+} from "@/lib/runs/diff-scopes";
 import { filterReviewableChangeEntries } from "@/lib/runs/reviewable-changes";
+import { readReviewSource } from "@/lib/runs/review-source";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
   diffChangeStats,
@@ -33,14 +39,9 @@ function db(): NodePgDatabase<typeof schema> {
   return getDb();
 }
 
-export const RUN_CHANGE_SUMMARY_SCOPES = [
-  "run",
-  "since-last-review",
-  "last-node",
-  "uncommitted",
-] as const;
+export const RUN_CHANGE_SUMMARY_SCOPES = RUN_DIFF_SCOPES;
 
-export type RunChangeSummaryScope = (typeof RUN_CHANGE_SUMMARY_SCOPES)[number];
+export type RunChangeSummaryScope = RunDiffScope;
 
 export type RunChangeSummaryScopeAvailability = Record<
   RunChangeSummaryScope,
@@ -63,6 +64,7 @@ export interface RunChangeSummaryResponse {
   baseCommit: string;
   sourceBranch: string;
   targetBranch: string;
+  reviewSourceFingerprint: string | null;
   fileCount: number;
   additions: number;
   deletions: number;
@@ -119,14 +121,14 @@ export function parseRunChangeSummaryScope(
 ): RunChangeSummaryScope {
   const value = raw ?? "run";
 
-  if (!(RUN_CHANGE_SUMMARY_SCOPES as readonly string[]).includes(value)) {
+  if (!isRunDiffScope(value)) {
     throw new MaisterError(
       "CONFIG",
       `invalid change-summary scope ${JSON.stringify(value)} — expected one of ${RUN_CHANGE_SUMMARY_SCOPES.join("|")}`,
     );
   }
 
-  return value as RunChangeSummaryScope;
+  return value;
 }
 
 export async function loadRunChangeSummaryAccess(
@@ -278,6 +280,10 @@ async function loadLastNodeCheckpointRef(
 function scratchScopeAvailability(): RunChangeSummaryScopeAvailability {
   return {
     run: { available: true },
+    review: {
+      available: false,
+      reason: "review scope is available only for Flow runs",
+    },
     "since-last-review": {
       available: false,
       reason: "scratch runs do not have review visits",
@@ -310,6 +316,7 @@ async function flowScopeAvailability(
     lastNodeBaseSha,
     scopes: {
       run: { available: true },
+      review: { available: true },
       "since-last-review": priorReviewTipSha
         ? { available: true }
         : { available: false, reason: "no prior review visit recorded" },
@@ -380,6 +387,7 @@ function buildResponse(input: {
   baseCommit: string;
   sourceBranch: string;
   targetBranch: string;
+  reviewSourceFingerprint?: string;
   files: DiffChangeStatEntry[];
 }): RunChangeSummaryResponse {
   const files = input.files.map(toSummaryFile);
@@ -393,10 +401,13 @@ function buildResponse(input: {
     baseCommit: input.baseCommit,
     sourceBranch: input.sourceBranch,
     targetBranch: input.targetBranch,
+    reviewSourceFingerprint: input.reviewSourceFingerprint ?? null,
     fileCount: files.length,
     additions,
     deletions,
-    dirty: input.scope === "uncommitted" && files.length > 0,
+    dirty:
+      (input.scope === "uncommitted" || input.scope === "review") &&
+      files.length > 0,
     truncated: false,
     unavailable: false,
     files,
@@ -471,6 +482,35 @@ async function getFlowChangeSummary(input: {
   );
 
   assertScopeAvailable(input.scope, availability.scopes);
+
+  if (input.scope === "review") {
+    const baseCommit =
+      workspace.baseCommit ??
+      (await resolveBaseRef({
+        worktreePath: workspace.worktreePath,
+        branch: workspace.branch,
+        mainBranch: project.mainBranch,
+      }));
+    const [source, rawFiles] = await Promise.all([
+      readReviewSource({
+        worktreePath: workspace.worktreePath,
+        baseCommit,
+      }),
+      diffWorkingTreeChangeStats(workspace.worktreePath, baseCommit),
+    ]);
+
+    return buildResponse({
+      runId: input.run.id,
+      scope: input.scope,
+      scopes: availability.scopes,
+      baseCommit,
+      sourceBranch: workspace.branch,
+      targetBranch:
+        workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
+      reviewSourceFingerprint: source.fingerprint,
+      files: filterReviewableChangeEntries(rawFiles),
+    });
+  }
 
   if (input.scope === "uncommitted") {
     const [baseCommit, rawFiles] = await Promise.all([
@@ -554,6 +594,7 @@ export async function getRunChangeSummary(input: {
         fileCount: summary.fileCount,
         additions: summary.additions,
         deletions: summary.deletions,
+        reviewSourceFingerprint: summary.reviewSourceFingerprint,
       },
       "run change summary read",
     );

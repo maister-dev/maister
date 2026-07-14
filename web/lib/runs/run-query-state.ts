@@ -1,3 +1,10 @@
+import {
+  RUN_DIFF_SCOPES,
+  type RunDiffScope,
+} from "@/lib/runs/diff-scopes";
+
+export { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
+
 export const RUN_WORKBENCH_TABS = [
   "files",
   "diff",
@@ -7,12 +14,6 @@ export const RUN_WORKBENCH_TABS = [
 
 export const RUN_FILE_VIEWS = ["preview", "source"] as const;
 export const RUN_DIFF_VIEWS = ["split", "unified"] as const;
-export const RUN_DIFF_SCOPES = [
-  "run",
-  "since-last-review",
-  "last-node",
-  "uncommitted",
-] as const;
 export const RUN_DIFF_BODY_MODES = ["rich", "raw"] as const;
 export const RUN_DIFF_FILE_TREE_MODES = ["shown", "hidden"] as const;
 export const RUN_INSPECTOR_STATES = ["open", "closed"] as const;
@@ -21,7 +22,6 @@ export const RUN_FLOW_STATES = ["fullscreen"] as const;
 export type RunWorkbenchTab = (typeof RUN_WORKBENCH_TABS)[number];
 export type RunFileView = (typeof RUN_FILE_VIEWS)[number];
 export type RunDiffView = (typeof RUN_DIFF_VIEWS)[number];
-export type RunDiffScope = (typeof RUN_DIFF_SCOPES)[number];
 export type RunDiffBodyMode = (typeof RUN_DIFF_BODY_MODES)[number];
 export type RunDiffFileTreeMode = (typeof RUN_DIFF_FILE_TREE_MODES)[number];
 export type RunInspectorState = (typeof RUN_INSPECTOR_STATES)[number];

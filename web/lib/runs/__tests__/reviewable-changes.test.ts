@@ -34,4 +34,32 @@ describe("reviewable-changes", () => {
 
     expect(entries).toEqual([{ path: ".ai-factory/PLAN.md", status: "A" }]);
   });
+
+  it("excludes a rename or copy when either old or new path is materialized", () => {
+    const entries = filterReviewableChangeEntries([
+      {
+        path: "src/reviewable.ts",
+        oldPath: ".claude/agents/reviewer.md",
+        status: "R",
+      },
+      {
+        path: ".claude/skills/aif-review/SKILL.md",
+        oldPath: "src/reviewable-copy.ts",
+        status: "C",
+      },
+      {
+        path: "src/new-name.ts",
+        oldPath: "src/old-name.ts",
+        status: "R",
+      },
+    ]);
+
+    expect(entries).toEqual([
+      {
+        path: "src/new-name.ts",
+        oldPath: "src/old-name.ts",
+        status: "R",
+      },
+    ]);
+  });
 });

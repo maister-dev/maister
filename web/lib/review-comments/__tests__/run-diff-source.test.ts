@@ -207,6 +207,27 @@ describe("computeReviewDiff", () => {
     expect(diffWorkingTree).toHaveBeenCalledWith("/tmp/wt");
     expect(diffRunWorkspace).not.toHaveBeenCalled();
   });
+
+  it("uses the workspace base through the working tree for review anchors", async () => {
+    const prepared = await computeReviewDiff(
+      fakeDb as unknown as NodePgDatabase<typeof schema>,
+      { id: "run-1", projectId: "p-1" },
+      "review" as never,
+    );
+
+    expect(
+      placementOf(
+        prepared,
+        rootRow({
+          filePath: "docs/new.md",
+          line: 1,
+          lineContent: "# Draft",
+        }),
+      ),
+    ).toBe("inline");
+    expect(diffWorkingTree).toHaveBeenCalledWith("/tmp/wt", "abc123");
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

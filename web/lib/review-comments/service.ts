@@ -60,10 +60,13 @@ type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ReviewGateRow = typeof hitlRequests.$inferSelect;
 
-// Open-review-gate guard (allow-list, ADR-072): run exists, runs.status ∈
-// PENDING_HITL_RUN_STATUS, and a pending kind=human hitl row whose stored
-// schema declares review === true. Shared precondition for every write;
-// otherwise 409 PRECONDITION at the route. Never a `!terminal` complement.
+// Open-review-gate guard (allow-list, ADR-137): run exists, runs.status ∈
+// PENDING_HITL_RUN_STATUS, and an unclaimed kind=human hitl row whose stored
+// schema declares review === true. The gate row is locked for the lifetime of
+// the short comment transaction, sharing the response-claim serialization
+// boundary: a response cannot claim between this check and the write, and a
+// post-claim comment cannot alter the feedback packet. Never a `!terminal`
+// complement.
 async function requireOpenReviewGate(
   tx: Tx,
   runId: string,
@@ -88,10 +91,12 @@ async function requireOpenReviewGate(
       and(
         eq(hitlRequests.runId, runId),
         eq(hitlRequests.kind, "human"),
+        isNull(hitlRequests.response),
         isNull(hitlRequests.respondedAt),
       ),
     )
-    .orderBy(desc(hitlRequests.createdAt));
+    .orderBy(desc(hitlRequests.createdAt))
+    .for("update");
   const gate = pendingRows.find((row) => isHumanReviewGate(row));
 
   if (!gate) {
