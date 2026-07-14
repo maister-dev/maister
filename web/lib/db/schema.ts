@@ -146,6 +146,18 @@ export const projects = pgTable("projects", {
   // maister.yaml on disk; the manifest is optional at manual registration).
   maisterYamlPath: text("maister_yaml_path"),
   defaultRunnerId: text("default_runner_id"),
+  // ADR-138 (migration 0101): branch-sync defaults. `sync_strategy_default` is
+  // the project's default rebase|merge strategy; `sync_runner_id` is the resolver
+  // runner (nullable FK, SET NULL on runner delete — mirrors
+  // flowRevisions.defaultRunnerId, NOT the plain-text projects.default_runner_id).
+  syncStrategyDefault: text("sync_strategy_default", {
+    enum: ["rebase", "merge"],
+  })
+    .notNull()
+    .default("rebase"),
+  syncRunnerId: text("sync_runner_id").references(() => platformAcpRunners.id, {
+    onDelete: "set null",
+  }),
   promotionMode: text("promotion_mode"),
   deliveryPolicyDefault: jsonb(
     "delivery_policy_default",
@@ -2206,58 +2218,162 @@ export const repoDeliveryRollups = pgTable(
   }),
 );
 
-export const workspaces = pgTable("workspaces", {
-  id: text("id").primaryKey(),
-  runId: text("run_id")
-    .notNull()
-    .references(() => runs.id, { onDelete: "cascade" }),
-  projectId: text("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  branch: text("branch").notNull(),
-  worktreePath: text("worktree_path").notNull().unique(),
-  parentRepoPath: text("parent_repo_path").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-  removedAt: timestamp("removed_at", { withTimezone: true, mode: "date" }),
-  scheduledRemovalAt: timestamp("scheduled_removal_at", {
-    withTimezone: true,
-    mode: "date",
+export const workspaces = pgTable(
+  "workspaces",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    branch: text("branch").notNull(),
+    worktreePath: text("worktree_path").notNull().unique(),
+    parentRepoPath: text("parent_repo_path").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    removedAt: timestamp("removed_at", { withTimezone: true, mode: "date" }),
+    scheduledRemovalAt: timestamp("scheduled_removal_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    archivedBranch: text("archived_branch"),
+    archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+    baseBranch: text("base_branch"),
+    baseCommit: text("base_commit"),
+    targetBranch: text("target_branch"),
+    promotionMode: text("promotion_mode"),
+    prUrl: text("pr_url"),
+    prNumber: integer("pr_number"),
+    promotedAt: timestamp("promoted_at", { withTimezone: true, mode: "date" }),
+    promotionState: text("promotion_state").notNull().default("none"),
+    // ADR-126: lane class written by promoteRun finalize when the input carries
+    // auto-promotion attribution — the queryable "auto" glyph datum. NULL ⇒ the
+    // run was promoted manually (or not yet promoted).
+    promotionLane: text("promotion_lane").$type<LaneClass | null>(),
+    promotionClaimedAt: timestamp("promotion_claimed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    promotionOwnerUserId: text("promotion_owner_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    promotionAttemptId: text("promotion_attempt_id"),
+    lifecycleOperationState: text("lifecycle_operation_state")
+      .notNull()
+      .default("none"),
+    lifecycleOperationClaimedAt: timestamp("lifecycle_operation_claimed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
+    lifecycleOperationName: text("lifecycle_operation_name"),
+    // ADR-137 (migration 0100): PR lifecycle tracking. `pr_state` NULL = never
+    // scanned. `pr_merge_commit_sha` is the PROVIDER merge commit (provenance
+    // only) — distinct from `runs.merge_commit_sha`, which stays owned by the
+    // repo_delivery_scan (ADR-134). `pr_state_checked_at` is stamped on EVERY scan
+    // attempt (success or failure) so one bad row cannot stall the per-project job.
+    prState: text("pr_state", { enum: ["open", "merged", "closed"] }),
+    prHasConflicts: boolean("pr_has_conflicts"),
+    prMergedAt: timestamp("pr_merged_at", { withTimezone: true, mode: "date" }),
+    prMergeCommitSha: text("pr_merge_commit_sha"),
+    prStateCheckedAt: timestamp("pr_state_checked_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    prStateCheck: check(
+      "workspaces_pr_state_check",
+      sql`${t.prState} in ('open', 'merged', 'closed')`,
+    ),
+    // Partial index backing the pr_state_scan candidate query (decision 2).
+    prStateScanIdx: index("workspaces_pr_state_scan_idx")
+      .on(t.projectId)
+      .where(
+        sql`${t.prUrl} is not null and (${t.prState} is null or ${t.prState} = 'open')`,
+      ),
   }),
-  archivedBranch: text("archived_branch"),
-  archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
-  baseBranch: text("base_branch"),
-  baseCommit: text("base_commit"),
-  targetBranch: text("target_branch"),
-  promotionMode: text("promotion_mode"),
-  prUrl: text("pr_url"),
-  prNumber: integer("pr_number"),
-  promotedAt: timestamp("promoted_at", { withTimezone: true, mode: "date" }),
-  promotionState: text("promotion_state").notNull().default("none"),
-  // ADR-126: lane class written by promoteRun finalize when the input carries
-  // auto-promotion attribution — the queryable "auto" glyph datum. NULL ⇒ the
-  // run was promoted manually (or not yet promoted).
-  promotionLane: text("promotion_lane").$type<LaneClass | null>(),
-  promotionClaimedAt: timestamp("promotion_claimed_at", {
-    withTimezone: true,
-    mode: "date",
+);
+
+// ADR-138 (migration 0101): append-only branch-sync attempt ledger, one row per
+// sync/resolver attempt on a run. Shaped like node_attempts — `phase` is the
+// single plain-text lifecycle column (TS-only enum, NO DB CHECK), written BEFORE
+// each side effect.
+export const RUN_SYNC_PHASES = [
+  "starting",
+  "rebasing",
+  "agent_running",
+  "verifying",
+  "pushing",
+  "succeeded",
+  "failed",
+  "aborted",
+] as const;
+export type RunSyncPhase = (typeof RUN_SYNC_PHASES)[number];
+
+export const runSyncAttempts = pgTable(
+  "run_sync_attempts",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    attempt: integer("attempt").notNull(),
+    strategy: text("strategy", { enum: ["rebase", "merge"] }).notNull(),
+    mode: text("mode", { enum: ["mechanical", "agent"] }).notNull(),
+    phase: text("phase", { enum: RUN_SYNC_PHASES })
+      .notNull()
+      .default("starting"),
+    targetRef: text("target_ref"),
+    targetSha: text("target_sha"),
+    headShaBefore: text("head_sha_before"),
+    headShaAfter: text("head_sha_after"),
+    // captured via `git ls-remote` BEFORE the target-scoped fetch, for the
+    // explicit-SHA force-with-lease (decision 11).
+    remoteShaBefore: text("remote_sha_before"),
+    conflictedFiles: jsonb("conflicted_files").$type<string[]>(),
+    // resolved runner SNAPSHOT (plain text, no FK — the terminal path reads this,
+    // never re-resolves; runner deletion must not mutate a historical attempt).
+    runnerId: text("runner_id"),
+    sessionName: text("session_name"),
+    // active-time duration cap: stamped at Review->Running launch, re-stamped on
+    // every NeedsInput->Running HITL resume (decision 16).
+    agentRunningSince: timestamp("agent_running_since", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    // the ai_rebase_merge autoFinalize toggle (decision 19), default OFF.
+    autoFinalize: boolean("auto_finalize").notNull().default(false),
+    pushed: boolean("pushed").notNull().default(false),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    actorType: text("actor_type", { enum: ["user", "agent", "system"] }),
+    actorId: text("actor_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRunAttempt: unique("run_sync_attempts_run_attempt_uq").on(
+      t.runId,
+      t.attempt,
+    ),
+    idxRun: index("run_sync_attempts_run_idx").on(t.runId),
   }),
-  promotionOwnerUserId: text("promotion_owner_user_id").references(
-    () => users.id,
-    { onDelete: "set null" },
-  ),
-  promotionAttemptId: text("promotion_attempt_id"),
-  lifecycleOperationState: text("lifecycle_operation_state")
-    .notNull()
-    .default("none"),
-  lifecycleOperationClaimedAt: timestamp("lifecycle_operation_claimed_at", {
-    withTimezone: true,
-    mode: "date",
-  }),
-  lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
-  lifecycleOperationName: text("lifecycle_operation_name"),
-});
+);
+
+export type RunSyncAttemptRow = typeof runSyncAttempts.$inferSelect;
+export type RunSyncAttemptInsert = typeof runSyncAttempts.$inferInsert;
 
 export type RunScheduleOverlapPolicy = "skip" | "queue_one" | "start_anyway";
 export type RunScheduleFireOutcome =
@@ -4381,6 +4497,9 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "triage_requeued",
   "agent_quarantined",
   "experiment_concluded",
+  // ADR-137 (migration 0100): PR merged onto target — merged-only board feed
+  // (closed/conflict surface via chip + webhook, not task_activity).
+  "run_pr_merged",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -4423,7 +4542,7 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged')`,
     ),
     actorTypeCheck: check(
       "task_activity_actor_type_check",
@@ -4518,7 +4637,7 @@ export const inboxItems = pgTable(
     ),
     eventKindCheck: check(
       "inbox_items_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged')`,
     ),
   }),
 );

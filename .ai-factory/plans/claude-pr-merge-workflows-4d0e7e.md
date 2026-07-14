@@ -712,7 +712,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 1: persistence
 
-- [ ] **Task 3: Migration `0100_pr_state_tracking` + schema.**
+- [x] **Task 3: Migration `0100_pr_state_tracking` + schema.**
 
   `web/lib/db/schema.ts`: workspaces `pr_state`, `pr_has_conflicts`,
   `pr_merged_at`, `pr_merge_commit_sha`, `pr_state_checked_at`; expand the
@@ -730,7 +730,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
   **Logging:** none beyond migration runner defaults.
 
-- [ ] **Task 4: Migration `0101_branch_sync` + schema.**
+- [x] **Task 4: Migration `0101_branch_sync` + schema.**
 
   `run_sync_attempts` table per decision 12 (UNIQUE `(run_id, attempt)`, FK
   run/workspace, a single plain-text `phase` column with a TS-only enum — mirror
