@@ -559,7 +559,10 @@ export async function dispatchTool(opts: {
     return { isError: true, status: 401, message: "Missing bearer token" };
   }
 
-  const { method, path, body } = resolveRouting(name, args);
+  const { method, path, body } = resolveRouting(
+    name,
+    coerceNumericArgs(name, args),
+  );
 
   let res: Response;
 
@@ -582,6 +585,51 @@ export async function dispatchTool(opts: {
 
     return { isError: true, status: res.status, code: "UPSTREAM", message };
   }
+}
+
+function propertyIsNumeric(prop: unknown): boolean {
+  if (typeof prop !== "object" || prop === null) return false;
+  const type = (prop as { type?: unknown }).type;
+  const numeric = (t: unknown) => t === "number" || t === "integer";
+
+  return numeric(type) || (Array.isArray(type) && type.some(numeric));
+}
+
+// LLMs routinely emit numeric arguments as JSON strings ("0.8" instead of 0.8).
+// The MCP inputSchema is advisory only (main.ts registers a passthrough
+// z.record — args are never validated against it), so such a string would reach
+// the ext route's strict z.number() gate and fail 422. Normalize every arg whose
+// declared inputSchema type admits a number: a finite numeric string becomes a
+// number; anything else (null, non-numeric string, an already-numeric value) is
+// left untouched so genuinely bad input still surfaces at the route.
+function coerceNumericArgs(
+  name: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = (
+    TOOL_SPECS[name]?.inputSchema as
+      | { properties?: Record<string, unknown> }
+      | undefined
+  )?.properties;
+
+  if (!properties) return args;
+
+  const out: Record<string, unknown> = { ...args };
+
+  for (const [key, value] of Object.entries(out)) {
+    if (typeof value !== "string" || !propertyIsNumeric(properties[key])) {
+      continue;
+    }
+
+    const trimmed = value.trim();
+
+    if (trimmed === "") continue;
+    const parsed = Number(trimmed);
+
+    if (Number.isFinite(parsed)) out[key] = parsed;
+  }
+
+  return out;
 }
 
 function resolveRouting(

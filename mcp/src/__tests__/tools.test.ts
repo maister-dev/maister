@@ -1000,6 +1000,70 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     });
   });
 
+  it("triage_set coerces a stringified numeric confidence to a number (an LLM emits 0.8 as a string; the strict ext route needs a number)", async () => {
+    mockOnce({ ok: true, triageStatus: "triaged" }, 200);
+
+    await dispatchTool({
+      name: "triage_set",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        flowId: "bugfix",
+        runnerId: "runner-1",
+        baseBranch: "main",
+        confidence: "0.8",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    // The MCP seam normalizes numeric args to their declared inputSchema type,
+    // so the string never reaches the ext route's strict z.number() gate.
+    expect(parsedBody(lastRequest().init)).toEqual({
+      flowId: "bugfix",
+      runnerId: "runner-1",
+      baseBranch: "main",
+      confidence: 0.8,
+    });
+  });
+
+  it("triage_set leaves a non-numeric confidence string untouched (genuine bad input surfaces at the route, is not silently zeroed)", async () => {
+    mockOnce({ ok: true }, 200);
+
+    await dispatchTool({
+      name: "triage_set",
+      args: { slug: "demo", taskId: "task-1", confidence: "high" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    // "high" is not a finite number → forwarded verbatim so the ext route
+    // returns a clear invalid_type error, rather than the seam turning it into
+    // NaN/0 and hiding the mistake.
+    expect(parsedBody(lastRequest().init)).toEqual({ confidence: "high" });
+  });
+
+  it("relation_add coerces a stringified integer toNumber (the numeric normalization spans integer fields, not just confidence)", async () => {
+    mockOnce({ ok: true }, 200);
+
+    await dispatchTool({
+      name: "relation_add",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        kind: "depends_on",
+        toNumber: "5",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    expect(parsedBody(lastRequest().init)).toEqual({
+      kind: "depends_on",
+      toNumber: 5,
+    });
+  });
+
   it("relation_list → GET /api/v1/ext/projects/{slug}/tasks/{taskId}/relations", async () => {
     mockOnce({ relations: [] }, 200);
 

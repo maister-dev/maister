@@ -412,6 +412,14 @@ occurs.
 - The Streamable-HTTP MCP transport MUST require a per-request inbound bearer
   forwarded verbatim to `/api/v1/ext`; the MCP server MUST hold no ambient
   token and MUST return 401 if no bearer is present. (Implemented)
+- The MCP facade's per-tool `inputSchema` is advisory only — the server
+  registers every tool with a passthrough `z.record` and does NOT validate args
+  against the declared schema. Before forwarding, the facade MUST coerce any
+  argument whose declared `inputSchema` type is `number` or `integer` from a
+  finite numeric string to a number (an LLM routinely emits `confidence: "0.8"`),
+  because the ext routes gate strictly with `z.number()`; a `null`, an
+  already-numeric value, or a non-numeric string MUST pass through unchanged so
+  genuinely invalid input still surfaces as `422 CONFIG`. (Implemented)
 - Session-auth routes MUST NOT accept project tokens; `/api/v1/ext` routes MUST
   NOT accept session cookies. The two auth surfaces are mutually exclusive. (Implemented)
 - Token `scopes` are enforced on every `/api/v1/ext` route. The `*` wildcard is
