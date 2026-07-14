@@ -544,6 +544,8 @@ const REWORK_RESET_ENGINE_MIN = "2.1.0";
 // `collectContentArtifactIds` scan so load-time and runtime never drift.
 const ARTIFACT_INLINE_ENGINE_MIN = "2.2.0";
 
+const PLAN_REVIEW_ENGINE_MIN = "3.1.0";
+
 // ADR-120 (D12): `input.requires[].inline: true` is valid ONLY on prompt-bearing
 // runner nodes — auto-appending an XML block makes no sense on a cli/check command
 // or a prompt-less human/form node.
@@ -741,6 +743,126 @@ function declaresReworkResetOrOnExhaustion(nodes: NodeDef[]): boolean {
 // floor.
 function declaresArtifactContentInjection(nodes: NodeDef[]): boolean {
   return nodes.some((n) => collectContentArtifactIds(n).length > 0);
+}
+
+function declaresPlanReview(nodes: NodeDef[]): boolean {
+  return nodes.some(
+    (node) =>
+      node.type === "human" && node.settings?.plan_review !== undefined,
+  );
+}
+
+function validatePlanReviewNodes(
+  nodes: NodeDef[],
+  flowYamlPath: string,
+): void {
+  for (const node of nodes) {
+    if (node.type !== "human" || node.settings?.plan_review === undefined) {
+      continue;
+    }
+
+    const planReview = node.settings.plan_review;
+    const transitions = node.transitions ?? {};
+    const decisions = node.finish?.human?.decisions ?? [];
+    const transitionKeys = Object.keys(transitions).sort();
+    const expectedOutcomes = ["approve", "rework"];
+
+    if (
+      transitionKeys.length !== expectedOutcomes.length ||
+      !expectedOutcomes.every((outcome) => transitionKeys.includes(outcome)) ||
+      decisions.length !== expectedOutcomes.length ||
+      !expectedOutcomes.every((outcome) => decisions.includes(outcome))
+    ) {
+      throw new MaisterError(
+        "CONFIG",
+        `Plan-review node "${node.id}" must declare exactly approve and rework outcomes in finish.human.decisions and transitions in ${flowYamlPath}`,
+      );
+    }
+
+    if (
+      transitions.approve === undefined ||
+      node.rework?.allowedTargets.includes(transitions.approve)
+    ) {
+      throw new MaisterError(
+        "CONFIG",
+        `Plan-review node "${node.id}" approve must be a forward transition outside rework.allowedTargets in ${flowYamlPath}`,
+      );
+    }
+
+    const reworkTarget = transitions[planReview.rework_transition];
+
+    if (
+      reworkTarget === undefined ||
+      node.rework === undefined ||
+      !node.rework.allowedTargets.includes(reworkTarget)
+    ) {
+      throw new MaisterError(
+        "CONFIG",
+        `Plan-review node "${node.id}" rework_transition "${planReview.rework_transition}" must resolve to a declared rework target in ${flowYamlPath}`,
+      );
+    }
+
+    if (node.settings.allowTakeover === true) {
+      throw new MaisterError(
+        "CONFIG",
+        `Plan-review node "${node.id}" must not enable manual takeover in ${flowYamlPath}`,
+      );
+    }
+
+    if (node.rework.commentsVar !== planReview.comments_var) {
+      throw new MaisterError(
+        "CONFIG",
+        `Plan-review node "${node.id}" rework.commentsVar must equal settings.plan_review.comments_var in ${flowYamlPath}`,
+      );
+    }
+
+    const requiredArtifacts = [
+      planReview.plan_document_artifact,
+      planReview.plan_review_artifact,
+    ];
+
+    if (new Set(requiredArtifacts).size !== requiredArtifacts.length) {
+      throw new MaisterError(
+        "CONFIG",
+        `Plan-review node "${node.id}" must use distinct plan document and review artifact ids in ${flowYamlPath}`,
+      );
+    }
+
+    const producers = nodes.filter((candidate) =>
+      Object.values(candidate.transitions ?? {}).includes(node.id),
+    );
+
+    if (producers.length !== 1) {
+      throw new MaisterError(
+        "CONFIG",
+        `Plan-review node "${node.id}" must have exactly one direct artifact-producing predecessor in ${flowYamlPath}`,
+      );
+    }
+
+    for (const artifactId of requiredArtifacts) {
+      const artifact = producers[0].output?.produces?.find(
+        (candidate) => candidate.id === artifactId,
+      );
+
+      if (artifact?.kind !== "plan" || artifact.current !== true) {
+        throw new MaisterError(
+          "CONFIG",
+          `Plan-review node "${node.id}" requires direct predecessor "${producers[0].id}" to produce current plan artifact "${artifactId}" in ${flowYamlPath}`,
+        );
+      }
+    }
+
+    log.debug(
+      {
+        flowYamlPath,
+        nodeId: node.id,
+        planDocumentArtifact: planReview.plan_document_artifact,
+        planReviewArtifact: planReview.plan_review_artifact,
+        maxDecisionReworks: planReview.max_decision_reworks,
+      },
+      "Plan-review manifest capability validated",
+    );
+  }
 }
 
 // ADR-120 (D12): returns the first node that declares `input.requires[].inline:
@@ -1059,6 +1181,13 @@ export function validateGraphManifest(
     }
   }
 
+  if (declaresPlanReview(nodes) && !semverGte(engineMin, PLAN_REVIEW_ENGINE_MIN)) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring settings.plan_review but engine_min "${engineMin}" < ${PLAN_REVIEW_ENGINE_MIN} — bump compat.engine_min to ${PLAN_REVIEW_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
   // ADR-120 (D12): `input.requires[].inline: true` is valid only on prompt-bearing
   // nodes (ai_coding/judge/orchestrator). On cli/check/human/form an auto-appended
   // XML block would corrupt the command or land on a prompt-less node — refuse.
@@ -1125,6 +1254,8 @@ export function validateGraphManifest(
   if (semverGte(engineMin, ARTIFACT_ENGINE_MIN)) {
     validateArtifacts(nodes, flowYamlPath);
   }
+
+  validatePlanReviewNodes(nodes, flowYamlPath);
 
   // Rule 6 (M15): blocking human_review gates deadlock promotion — reject always.
   validateNoBlockingHumanReview(nodes, flowYamlPath);

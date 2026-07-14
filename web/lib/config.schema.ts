@@ -798,6 +798,19 @@ export const judgeSettingsSchema = z
   })
   .strict();
 
+export const planReviewSettingsSchema = z
+  .object({
+    plan_document_artifact: z.string().min(1),
+    plan_review_artifact: z.string().min(1),
+    comments_var: z.string().min(1),
+    answers_var: z.string().min(1),
+    rework_transition: z.string().min(1),
+    max_decision_reworks: z.number().int().positive(),
+  })
+  .strict();
+
+export type PlanReviewSettings = z.infer<typeof planReviewSettingsSchema>;
+
 export const humanSettingsSchema = z
   .object({
     roles: z.array(z.string().min(1)).optional(),
@@ -810,6 +823,7 @@ export const humanSettingsSchema = z
     returnRequires: z.array(z.string().min(1)).optional(),
     // M17 ADR-054: flow-author-declared criticality for this HITL node.
     criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
+    plan_review: planReviewSettingsSchema.optional(),
   })
   .strict();
 

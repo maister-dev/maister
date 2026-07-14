@@ -168,6 +168,26 @@ export function extractOptions(
 
   if (!Array.isArray(opts)) return [];
 
+  if (kind === "decision_request") {
+    return opts
+      .map((option) => {
+        if (option === null || typeof option !== "object") return null;
+        const optionId = (option as { id?: unknown }).id;
+        const label = (option as { label?: unknown }).label;
+
+        return typeof optionId === "string" && optionId.length > 0
+          ? {
+              optionId,
+              label:
+                typeof label === "string" && label.length > 0
+                  ? label
+                  : optionId,
+            }
+          : null;
+      })
+      .filter((option): option is HitlOption => option !== null);
+  }
+
   return opts
     .map((o) => {
       if (o === null || typeof o !== "object") return null;

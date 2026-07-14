@@ -2825,6 +2825,7 @@ export const assignments = pgTable(
         "infra_recovery",
         "budget_breach",
         "hook_trip",
+        "decision_request",
       ],
     }).notNull(),
     status: text("status", {
@@ -2950,6 +2951,7 @@ export const hitlRequests = pgTable(
         "infra_recovery",
         "budget_breach",
         "hook_trip",
+        "decision_request",
       ],
     }).notNull(),
     schema: jsonb("schema"),
@@ -2970,6 +2972,15 @@ export const hitlRequests = pgTable(
     supersededByHitlRequestId: text("superseded_by_hitl_request_id"),
     supersededByRunId: text("superseded_by_run_id"),
     response: jsonb("response"),
+    parentHitlRequestId: text("parent_hitl_request_id").references(
+      (): AnyPgColumn => hitlRequests.id,
+      { onDelete: "cascade" },
+    ),
+    sourceArtifactId: text("source_artifact_id").references(
+      () => artifactInstances.id,
+      { onDelete: "cascade" },
+    ),
+    decisionId: text("decision_id"),
     // M11a (ADR-028): review-decision fields claimed from response.decision for
     // a graph human_review HITL, validated against schema's allow-list.
     decision: text("decision"),
@@ -3001,6 +3012,27 @@ export const hitlRequests = pgTable(
   },
   (t) => ({
     idxRun: index("hitl_requests_run_idx").on(t.runId),
+    uniqDecisionRequest: uniqueIndex("hitl_requests_decision_request_uq")
+      .on(t.runId, t.sourceArtifactId, t.decisionId)
+      .where(sql`${t.kind} = 'decision_request'`),
+    idxPendingDecisionRequests: index("hitl_requests_pending_decision_idx")
+      .on(t.parentHitlRequestId, t.respondedAt, t.createdAt)
+      .where(sql`${t.kind} = 'decision_request'`),
+    decisionRequestShapeCheck: check(
+      "hitl_requests_decision_request_shape_check",
+      sql`(
+        ${t.kind} = 'decision_request'
+        AND ${t.parentHitlRequestId} IS NOT NULL
+        AND ${t.sourceArtifactId} IS NOT NULL
+        AND ${t.decisionId} IS NOT NULL
+        AND ${t.schema} IS NOT NULL
+      ) OR (
+        ${t.kind} <> 'decision_request'
+        AND ${t.parentHitlRequestId} IS NULL
+        AND ${t.sourceArtifactId} IS NULL
+        AND ${t.decisionId} IS NULL
+      )`,
+    ),
     idxAgentQuestionActive: index("hitl_requests_agent_question_active_idx")
       .on(t.taskId, t.createdAt)
       .where(

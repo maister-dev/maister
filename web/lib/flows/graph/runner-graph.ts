@@ -10,6 +10,7 @@ import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type {
   FormSettings,
+  PlanReviewSettings,
   RetryPolicy,
   SessionPolicy,
 } from "@/lib/config.schema";
@@ -23,7 +24,15 @@ import { randomUUID } from "node:crypto";
 import { access, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { and, count, desc, eq, isNotNull, notInArray } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  isNotNull,
+  isNull,
+  notInArray,
+} from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext } from "../context";
@@ -89,6 +98,16 @@ import {
   recordArtifact,
   recordCurrentArtifact,
 } from "./artifact-store";
+import {
+  capturePlanReviewArtifacts,
+  planReviewStagingPaths,
+  type PlanReviewStagingPaths,
+} from "./plan-review-artifact";
+import {
+  parsePlanReviewContract,
+  type PlanReviewV1,
+} from "../plan-review-contract";
+import { createPlanReviewDecisionRequests } from "./plan-review-decisions";
 import { recordDefaultArtifacts } from "./default-artifacts";
 import { assertEvidenceReady } from "./evidence-readiness";
 import {
@@ -183,6 +202,7 @@ import { autoResolveDirtyAtReview } from "@/lib/runs/dirty-resolution";
 import {
   artifactInlineMaxBytes,
   autoRetryMaxAttempts,
+  nodeOutputMaxBytes,
 } from "@/lib/instance-config";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
@@ -270,6 +290,44 @@ async function emitNeedsInputStreamEvent(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+type PlanReviewCaptureTarget = {
+  reviewNode: CompiledNode;
+  settings: PlanReviewSettings;
+};
+
+function planReviewSettingsForNode(
+  node: CompiledNode,
+): PlanReviewSettings | undefined {
+  if (node.nodeType !== "human" || !isRecord(node.settings)) {
+    return undefined;
+  }
+
+  const settings = node.settings as { plan_review?: PlanReviewSettings };
+
+  return settings.plan_review;
+}
+
+function planReviewCaptureTargetForProducer(
+  graph: ReturnType<typeof compileManifest>,
+  producerNodeId: string,
+): PlanReviewCaptureTarget | undefined {
+  for (const reviewNode of graph.nodes.values()) {
+    const settings = planReviewSettingsForNode(reviewNode);
+
+    if (!settings) continue;
+
+    const isDirectPredecessor = Object.values(
+      reviewNode.source.node.transitions ?? {},
+    ).includes(producerNodeId);
+
+    if (isDirectPredecessor) {
+      return { reviewNode, settings };
+    }
+  }
+
+  return undefined;
 }
 
 // M37 (ADR-098) T5.1 / ADR-100: count an orchestrator run's PENDING (non-SETTLED)
@@ -591,6 +649,160 @@ async function escalateAutoRetryExhaustion(args: {
   );
 }
 
+type PlanReviewParentSchema = {
+  schemaVersion: 1;
+  sourceArtifactId: string;
+  sourceArtifactHash: string;
+  documentArtifactId: string;
+  assumptions: PlanReviewV1["assumptions"];
+  decisions: PlanReviewV1["decisions"];
+  answersVar: string;
+  maxDecisionReworks: number;
+  decisionReworkCount: number;
+};
+
+async function loadPlanReviewParentSchema(
+  node: CompiledNode,
+  loaded: LoadedRun,
+  ctx: { runtimeRoot: string; worktreePath?: string; db: Db },
+): Promise<PlanReviewParentSchema | undefined> {
+  const settings = planReviewSettingsForNode(node);
+
+  if (!settings) return undefined;
+
+  const [sourceArtifact, documentArtifact] = await Promise.all([
+    getCurrentArtifact(loaded.run.id, settings.plan_review_artifact, ctx.db),
+    getCurrentArtifact(loaded.run.id, settings.plan_document_artifact, ctx.db),
+  ]);
+
+  if (
+    !sourceArtifact ||
+    sourceArtifact.kind !== "plan" ||
+    sourceArtifact.hash === null ||
+    !documentArtifact ||
+    documentArtifact.kind !== "plan"
+  ) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `Plan-review node ${node.id} is missing current captured plan artifacts`,
+    );
+  }
+
+  const worktreePath = ctx.worktreePath ?? loaded.workspace?.worktreePath;
+
+  if (!worktreePath) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `Plan-review node ${node.id} has no workspace for artifact verification`,
+    );
+  }
+
+  const content = await resolveArtifactContent(sourceArtifact, {
+    runtimeRoot: ctx.runtimeRoot,
+    worktreePath,
+    projectSlug: loaded.projectSlug,
+    runId: loaded.run.id,
+    db: ctx.db,
+    maxBytes: nodeOutputMaxBytes() + 1,
+  });
+
+  if (content.kind !== "text") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `Plan-review node ${node.id} cannot read its current review artifact`,
+    );
+  }
+
+  let parsed: PlanReviewV1;
+
+  try {
+    parsed = parsePlanReviewContract(JSON.parse(content.text) as unknown);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `Plan-review node ${node.id} has an invalid captured review artifact`,
+      { cause: asError(err) },
+    );
+  }
+
+  if (parsed.plan.documentArtifact !== settings.plan_document_artifact) {
+    throw new MaisterError(
+      "CONFIG",
+      `Plan-review node ${node.id} contract references a different plan document artifact`,
+    );
+  }
+
+  const priorParents = (await ctx.db
+    .select({ schema: hitlRequests.schema, response: hitlRequests.response })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, loaded.run.id),
+        eq(hitlRequests.kind, "human"),
+      ),
+    )) as Array<{ schema: unknown; response: unknown }>;
+  const decisionReworkCount = priorParents.filter((parent) => {
+    if (!isRecord(parent.schema) || !isRecord(parent.response)) return false;
+    const previousPlanReview = parent.schema.planReview;
+
+    if (!isRecord(previousPlanReview)) return false;
+    const answersVar = previousPlanReview.answersVar;
+
+    if (typeof answersVar !== "string") return false;
+    const answerEnvelope = parent.response[answersVar];
+
+    return (
+      isRecord(answerEnvelope) &&
+      Array.isArray(answerEnvelope.answers) &&
+      answerEnvelope.answers.length > 0
+    );
+  }).length;
+
+  if (decisionReworkCount >= settings.max_decision_reworks) {
+    log.warn(
+      {
+        runId: loaded.run.id,
+        nodeId: node.id,
+        decisionReworkCount,
+        maxDecisionReworks: settings.max_decision_reworks,
+      },
+      "plan-review decision-rework bound exhausted before pause",
+    );
+    throw new MaisterError(
+      "PRECONDITION",
+      `Plan-review decision rework limit (${settings.max_decision_reworks}) is exhausted`,
+    );
+  }
+
+  const schema = {
+    schemaVersion: 1 as const,
+    sourceArtifactId: sourceArtifact.id,
+    sourceArtifactHash: sourceArtifact.hash,
+    documentArtifactId: documentArtifact.id,
+    assumptions: parsed.assumptions,
+    decisions: parsed.decisions,
+    answersVar: settings.answers_var,
+    maxDecisionReworks: settings.max_decision_reworks,
+    decisionReworkCount,
+  };
+
+  log.info(
+    {
+      runId: loaded.run.id,
+      nodeId: node.id,
+      sourceArtifactId: schema.sourceArtifactId,
+      sourceArtifactHash: schema.sourceArtifactHash,
+      documentArtifactId: schema.documentArtifactId,
+      assumptions: schema.assumptions.length,
+      decisions: schema.decisions.length,
+      decisionReworkCount,
+    },
+    "plan-review captured artifacts validated for pause",
+  );
+
+  return schema;
+}
+
 // Human review node: on resume read the operator's decision from the input
 // artifact; on first visit create the review HITL (with the manifest-derived
 // allow-list in `schema`) and pause. Full decision validation + rework
@@ -601,6 +813,7 @@ export async function runReviewHuman(
   prompt: string,
   ctx: {
     runtimeRoot: string;
+    worktreePath?: string;
     db: Db;
     gateAttempt: number;
     // forcePause (rework-exhaustion escalate): always create the HITL pause,
@@ -653,6 +866,9 @@ export async function runReviewHuman(
     };
   }
 
+  const planReview = await loadPlanReviewParentSchema(node, loaded, ctx);
+  const isPlanReview = planReview !== undefined;
+
   // B2/B3 (execution-policy human-gate auto-pass + on-stuck routing): under the
   // `unattended` preset (humanGate=auto_pass), resolve this human gate WITHOUT a
   // human once Group-A machine review has passed (assertEvidenceReady). When it
@@ -662,7 +878,7 @@ export async function runReviewHuman(
   let assignHitl = true;
   const humanGate = humanGateFromSnapshot(loaded.run.executionPolicy ?? null);
 
-  if (humanGate === "auto_pass" && ctx.forcePause !== true) {
+  if (humanGate === "auto_pass" && ctx.forcePause !== true && !isPlanReview) {
     // Safe-default = the forward (non-rework) decision (mirrors A.2's rule).
     const reworkTargets = node.rework?.allowedTargets ?? [];
     const safeDefault = (node.finishHuman?.decisions ?? []).find(
@@ -776,6 +992,7 @@ export async function runReviewHuman(
     // node's rework bound — null when the node declares no rework.
     maxLoops: node.rework?.maxLoops ?? null,
     gateAttempt: ctx.gateAttempt,
+    planReview,
   };
 
   const needsInputPath = path.join(dir, "needs-input.json");
@@ -788,7 +1005,6 @@ export async function runReviewHuman(
     requestedAt: new Date().toISOString(),
   });
 
-  const hitlRequestId = randomUUID();
   const settingsRoleRefs =
     node.nodeType === "human" &&
     isRecord(node.settings) &&
@@ -841,6 +1057,71 @@ export async function runReviewHuman(
     });
   }
 
+  const existingPlanReviewParent = planReview
+    ? (
+        await ctx.db
+          .select({ id: hitlRequests.id, schema: hitlRequests.schema })
+          .from(hitlRequests)
+          .where(
+            and(
+              eq(hitlRequests.runId, loaded.run.id),
+              eq(hitlRequests.stepId, node.id),
+              eq(hitlRequests.kind, "human"),
+              isNull(hitlRequests.respondedAt),
+            ),
+          )
+      ).find((candidate: { id: string; schema: unknown }) => {
+        if (!isRecord(candidate.schema)) return false;
+        const candidatePlanReview = candidate.schema.planReview;
+
+        return (
+          isRecord(candidatePlanReview) &&
+          candidatePlanReview.sourceArtifactId === planReview.sourceArtifactId
+        );
+      })
+    : undefined;
+
+  if (existingPlanReviewParent && planReview) {
+    const ensureDecisionRequests = async (tx: Db): Promise<void> => {
+      await createPlanReviewDecisionRequests({
+        db: tx,
+        projectId: loaded.run.projectId,
+        runId: loaded.run.id,
+        nodeId: node.id,
+        parentHitlRequestId: existingPlanReviewParent.id,
+        sourceArtifactId: planReview.sourceArtifactId,
+        decisions: planReview.decisions,
+        roleRefs,
+      });
+    };
+
+    if (typeof (ctx.db as { transaction?: unknown }).transaction === "function") {
+      await (ctx.db as TransactionalDb).transaction(ensureDecisionRequests);
+    } else {
+      await ensureDecisionRequests(ctx.db);
+    }
+
+    log.info(
+      {
+        runId: loaded.run.id,
+        nodeId: node.id,
+        hitlRequestId: existingPlanReviewParent.id,
+        sourceArtifactId: planReview.sourceArtifactId,
+      },
+      "plan-review pause replay reused its existing parent and decision requests",
+    );
+
+    return {
+      ok: false,
+      stdout: "",
+      vars: {},
+      durationMs: Date.now() - startedAt,
+      needsInput: true,
+    };
+  }
+
+  const hitlRequestId = randomUUID();
+
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
     await tx.insert(hitlRequests).values({
       id: hitlRequestId,
@@ -877,6 +1158,18 @@ export async function runReviewHuman(
         projectId: loaded.run.projectId,
         runId: loaded.run.id,
         data: { hitlRequestId, kind: "human", nodeId: node.id },
+      });
+    }
+    if (planReview) {
+      await createPlanReviewDecisionRequests({
+        db: tx,
+        projectId: loaded.run.projectId,
+        runId: loaded.run.id,
+        nodeId: node.id,
+        parentHitlRequestId: hitlRequestId,
+        sourceArtifactId: planReview.sourceArtifactId,
+        decisions: planReview.decisions,
+        roleRefs,
       });
     }
   };
@@ -1154,6 +1447,7 @@ async function executeNodeAction(
     sessionName?: string;
     sessionExecutor?: LoadedRun["executor"];
     sessionRunner?: LoadedRun["runner"];
+    planReviewStagingPaths?: PlanReviewStagingPaths;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -1281,9 +1575,17 @@ async function executeNodeAction(
               id: sessionExecutor.id,
               agent: sessionExecutor.agent,
               model: sessionExecutor.model,
-              env: (sessionExecutor.env ?? undefined) as
-                | Record<string, string>
-                | undefined,
+              env: {
+                ...(sessionExecutor.env ?? {}),
+                ...(ctx.planReviewStagingPaths
+                  ? {
+                      MAISTER_PLAN_DOCUMENT_FILE:
+                        ctx.planReviewStagingPaths.planDocumentStagingPath,
+                      MAISTER_PLAN_REVIEW_FILE:
+                        ctx.planReviewStagingPaths.planReviewStagingPath,
+                    }
+                  : {}),
+              },
               router: sessionExecutor.router ?? undefined,
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
@@ -1338,8 +1640,10 @@ async function executeNodeAction(
     case "human":
       return runReviewHuman(node, loaded, `Review "${node.id}"`, {
         runtimeRoot: ctx.runtimeRoot,
+        worktreePath: ctx.worktreePath,
         db: ctx.db,
         gateAttempt: ctx.nodeAttemptNumber,
+        forcePause: planReviewSettingsForNode(node) !== undefined,
       });
     case "form":
       return runFormCollect(node, loaded, def.settings, {
@@ -1409,6 +1713,10 @@ export function collectDeclaredCommentsVars(
       node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
 
     if (commentsVar) seeded[commentsVar] = "";
+
+    const planReview = planReviewSettingsForNode(node);
+
+    if (planReview) seeded[planReview.answers_var] = "";
   }
 
   return seeded;
@@ -2900,6 +3208,18 @@ export async function runGraph(
         }
       }
 
+      const planReviewCaptureTarget = planReviewCaptureTargetForProducer(
+        graph,
+        node.id,
+      );
+      const planReviewPaths = planReviewCaptureTarget
+        ? planReviewStagingPaths({
+            runtimeRoot,
+            projectSlug: loaded.projectSlug,
+            runId,
+            nodeAttemptId,
+          })
+        : undefined;
       let result: NodeResult;
 
       if (reusesCompletedAttempt && lastForNode) {
@@ -2935,6 +3255,7 @@ export async function runGraph(
               sessionName: nodeSessionName,
               sessionExecutor: nodeExecutor,
               sessionRunner: nodeRunnerSnapshot,
+              planReviewStagingPaths: planReviewPaths,
               db,
             });
           } finally {
@@ -3381,6 +3702,118 @@ export async function runGraph(
         decideVerdict = gateOutcome.verdict as DecideVerdict | undefined;
       }
 
+      const planReviewCapturedArtifactIds = new Set<string>();
+
+      if (planReviewCaptureTarget && planReviewPaths) {
+        try {
+          const captured = await capturePlanReviewArtifacts({
+            paths: planReviewPaths,
+            maxBytes: nodeOutputMaxBytes(),
+          });
+          const definitions = new Map(
+            (node.output?.produces ?? []).map((produces) => [
+              produces.id,
+              produces,
+            ]),
+          );
+          const planDocumentDefinition = definitions.get(
+            planReviewCaptureTarget.settings.plan_document_artifact,
+          );
+          const planReviewDefinition = definitions.get(
+            planReviewCaptureTarget.settings.plan_review_artifact,
+          );
+
+          if (!planDocumentDefinition || !planReviewDefinition) {
+            throw new MaisterError(
+              "CONFIG",
+              `Plan-review artifacts are not declared on producer ${node.id}`,
+            );
+          }
+
+          await recordCurrentArtifact(
+            {
+              id: `run:${nodeAttemptId}:${planDocumentDefinition.id}`,
+              runId,
+              nodeAttemptId,
+              nodeId: node.id,
+              attempt: nodeAttemptNumber,
+              artifactDefId: planDocumentDefinition.id,
+              kind: "plan",
+              producer: "runner",
+              locator: {
+                kind: "file",
+                path: captured.planDocument.relativePath,
+              },
+              hash: captured.planDocument.hash,
+              sizeBytes: captured.planDocument.bytes,
+              validity: "current",
+              requiredFor: planDocumentDefinition.requiredFor,
+              visibility: planDocumentDefinition.visibility ?? "internal",
+              retention: planDocumentDefinition.retention ?? "run",
+            },
+            db,
+          );
+          await recordCurrentArtifact(
+            {
+              id: `run:${nodeAttemptId}:${planReviewDefinition.id}`,
+              runId,
+              nodeAttemptId,
+              nodeId: node.id,
+              attempt: nodeAttemptNumber,
+              artifactDefId: planReviewDefinition.id,
+              kind: "plan",
+              producer: "runner",
+              locator: {
+                kind: "file",
+                path: captured.planReview.relativePath,
+              },
+              hash: captured.planReview.hash,
+              sizeBytes: captured.planReview.bytes,
+              validity: "current",
+              requiredFor: planReviewDefinition.requiredFor,
+              visibility: planReviewDefinition.visibility ?? "internal",
+              retention: planReviewDefinition.retention ?? "run",
+            },
+            db,
+          );
+          planReviewCapturedArtifactIds.add(planDocumentDefinition.id);
+          planReviewCapturedArtifactIds.add(planReviewDefinition.id);
+          log2.info(
+            {
+              nodeId: node.id,
+              reviewNodeId: planReviewCaptureTarget.reviewNode.id,
+              nodeAttemptId,
+              planDocumentArtifactId: planDocumentDefinition.id,
+              planDocumentHash: captured.planDocument.hash,
+              planDocumentBytes: captured.planDocument.bytes,
+              planReviewArtifactId: planReviewDefinition.id,
+              planReviewHash: captured.planReview.hash,
+              planReviewBytes: captured.planReview.bytes,
+            },
+            "plan-review output artifacts captured",
+          );
+        } catch (err) {
+          const error = isMaisterError(err)
+            ? err
+            : new MaisterError("CRASH", asError(err).message, {
+                cause: asError(err),
+              });
+
+          log2.warn(
+            { nodeId: node.id, nodeAttemptId, code: error.code },
+            "plan-review output capture failed — node Failed",
+          );
+          await markNodeFailed(
+            nodeAttemptId,
+            { errorCode: error.code, stdout: error.message },
+            db,
+          );
+          failed = true;
+          runErrorCode = error.code;
+          break;
+        }
+      }
+
       // M12 (T3.2): output artifact recording — path/diff/commit_set kinds plus
       // the F1 catch-all inline producer for every OTHER declared kind
       // (lint_report/ai_judgment/etc.), sourced from the node's captured output.
@@ -3391,6 +3824,8 @@ export async function runGraph(
         const currentAttempt = nodeAttemptNumber;
 
         for (const produces of node.output.produces) {
+          if (planReviewCapturedArtifactIds.has(produces.id)) continue;
+
           if (produces.path !== undefined) {
             // File kind: verify a regular file exists under the run dir.
             // stat().isFile() (not access()) so an empty/dot path resolving to
@@ -4205,8 +4640,24 @@ export async function runGraph(
               : undefined;
           const injected = hasComposeInput ? composed : summary;
 
-          if (injected !== undefined) {
-            pendingInjectedVars = { [commentsVar]: injected };
+          const planReview = planReviewSettingsForNode(node);
+          const planReviewAnswers = planReview
+            ? vars[planReview.answers_var]
+            : undefined;
+          const serializedAnswers =
+            planReviewAnswers === undefined
+              ? undefined
+              : typeof planReviewAnswers === "string"
+                ? planReviewAnswers
+                : JSON.stringify(planReviewAnswers);
+
+          if (injected !== undefined || serializedAnswers !== undefined) {
+            pendingInjectedVars = {
+              ...(injected !== undefined ? { [commentsVar]: injected } : {}),
+              ...(planReview && serializedAnswers !== undefined
+                ? { [planReview.answers_var]: serializedAnswers }
+                : {}),
+            };
           }
 
           if (composed !== undefined) {
@@ -4231,6 +4682,7 @@ export async function runGraph(
               openThreadCount: openThreads.length,
               composedLength: composed?.length ?? null,
               injected: injected !== undefined,
+              planReviewAnswersInjected: serializedAnswers !== undefined,
             },
             "rework comments composed",
           );

@@ -45,7 +45,9 @@ const log = pino({
 // runtime `collectContentArtifactIds` regex.
 // Bumped 2.2.0 -> 3.0.0 for the graph-only cut-over (ADR-131): `steps[]`
 // manifests are refused and `nodes[]` is the only executable Flow shape.
-export const MAISTER_ENGINE_VERSION = "3.0.0";
+// Bumped 3.0.0 -> 3.1.0 for strict typed Plan-review artifacts and the
+// declarative `settings.plan_review` graph capability (ADR-137).
+export const MAISTER_ENGINE_VERSION = "3.1.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

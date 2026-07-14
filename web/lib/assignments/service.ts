@@ -75,6 +75,7 @@ export type CreateHitlAssignmentArgs = CreateAssignmentArgs & {
     | "form"
     | "agent_question"
     | "human_review"
+    | "decision_request"
     | "infra_recovery"
     | "budget_breach"
     | "hook_trip"
