@@ -352,6 +352,18 @@ async function materializeSharedPackageRootSchemas(args: {
   const source = sourceFiles ?? new Map<string, Buffer>();
   const target = targetFiles ?? new Map<string, Buffer>();
 
+  if (source.size === 0) {
+    log.debug(
+      {
+        sharedSchemaDir: args.sharedSchemaDir,
+        installedPath: args.installedPath,
+        legacyMemberSchemaCount: target.size,
+      },
+      "package has no root schemas; preserving member flow schemas",
+    );
+    return 0;
+  }
+
   for (const targetPath of target.keys()) {
     if (!source.has(targetPath)) {
       throw new MaisterError(

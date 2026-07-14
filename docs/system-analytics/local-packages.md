@@ -274,11 +274,16 @@ Studio writes canonical `./schemas/<name>.json`, while the legacy bare form is
 normalized to the same path. Cut and Publish call
 `assertPackageCuttable` before export/push, revalidating the entire clean committed
 baseline so a legacy invalid reference cannot escape through lifecycle actions.
-During package install, the validated package-root `schemas/` directory is copied
-into each member flow revision before that revision becomes `Installed`; the
-runtime therefore resolves the same `./schemas/<name>.json` path within its
-flow-revision root. A pre-existing member `schemas/` file must be byte-identical
-to the package-root source or the install fails rather than overwriting it.
+During package install, when a package provides root `schemas/` artifacts, the
+validated directory is copied into each member flow revision before that revision
+becomes `Installed`; the runtime therefore resolves the same
+`./schemas/<name>.json` path within its flow-revision root. A pre-existing member
+`schemas/` file must be byte-identical to the package-root source or the install
+fails rather than overwriting it. A legacy package with no root schema artifacts
+keeps its member-flow `schemas/` files so that an old installed version cannot
+block a project from adopting a newer package version; each referenced file is
+still parsed and validated. Local-package authoring and cuts remain root-schema
+only.
 Because a launch needs a committed state, an invalid artifact is inherently
 un-launchable; WIP lives in the uncommitted, lock-preserved working dir. A shared
 `ChangeReviewDialog` (diff + editable, prefilled commit message) is introduced

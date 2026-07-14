@@ -304,6 +304,87 @@ steps:
     }
   });
 
+  it("preserves a member schema when its package has no root schema artifacts", async () => {
+    const packageRoot = await mkdtemp(join(tmpdir(), "attach-int-legacy-schema-"));
+
+    try {
+      await buildPackage(packageRoot, ["legacy-schema"]);
+      await mkdir(join(packageRoot, "flows/legacy-schema/schemas"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(packageRoot, "flows/legacy-schema/schemas/intake.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          fields: [{ name: "summary", type: "string", required: true }],
+        }),
+      );
+      await writeFile(
+        join(packageRoot, "flows/legacy-schema/flow.yaml"),
+        `schemaVersion: 1
+name: legacy-schema
+compat:
+  engine_min: 3.0.0
+nodes:
+  - id: collect
+    type: form
+    settings:
+      form_schema: ./schemas/intake.json
+    transitions:
+      success: done
+`,
+      );
+
+      const installed = await installPackageRevision({
+        source: packageRoot,
+        version: "attpkg/legacy-schema-v1.0.0",
+        trustStatus: "trusted_by_policy",
+        db,
+      });
+      const [memberRevision] = (await db
+        .select({ installedPath: schema.flowRevisions.installedPath })
+        .from(schema.flowRevisions)
+        .where(
+          and(
+            eq(
+              schema.flowRevisions.resolvedRevision,
+              installed.resolvedRevision,
+            ),
+            eq(schema.flowRevisions.flowRefId, "legacy-schema"),
+          ),
+        )) as Array<{ installedPath: string }>;
+
+      expect(memberRevision).toBeDefined();
+      if (!memberRevision) {
+        throw new Error("legacy-schema member revision is missing");
+      }
+      const [cachedPackage] = (await db
+        .select({ installedPath: schema.packageInstalls.installedPath })
+        .from(schema.packageInstalls)
+        .where(eq(schema.packageInstalls.id, installed.id))) as Array<{
+        installedPath: string;
+      }>;
+
+      if (!cachedPackage) {
+        throw new Error("legacy-schema package cache row is missing");
+      }
+
+      await expect(
+        stat(join(cachedPackage.installedPath, "schemas/intake.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        readAndValidateFormSchemaDoc(
+          memberRevision.installedPath,
+          "./schemas/intake.json",
+        ),
+      ).resolves.toMatchObject({
+        fields: [{ name: "summary", type: "string", required: true }],
+      });
+    } finally {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a package member that bypasses the root schema reference contract", async () => {
     const packageRoot = await mkdtemp(join(tmpdir(), "attach-int-nonroot-"));
 

@@ -77,8 +77,11 @@ maister-plugins/
     aif/
       maister-package.yaml       # package manifest (§4)
       README.md                  # provenance: extracted from maister@<sha>; upstream ai-factory@2.x
+      schemas/
+        intake.json
+        review-outcome.json
       flows/
-        dev/flow.yaml  (+ schemas/*.json)
+        dev/flow.yaml
         bugfix/flow.yaml
         evolve/flow.yaml
         roadmap/flow.yaml
