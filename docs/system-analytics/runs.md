@@ -1096,8 +1096,12 @@ asking ACP session.
 
 ## Plan-review decision recovery (Implemented — ADR-137)
 
-Plan-review decision pauses stay in `NeedsInput` or `NeedsInputIdle`. The final
-idle handoff claims capacity under the scheduler lock, changes only to
-`NeedsInput`, and invokes `runFlow()`; it must not call ACP permission resume.
-The durable input-write marker allows a restart to retry a missing graph wake
-without replaying a different answer.
+Plan-review decision pauses stay in `NeedsInput` or `NeedsInputIdle`. On Node
+startup and on the existing reconciliation sweep, the handoff repair scans only
+persisted Plan-review parent responses for the current review step and current
+artifact. Before `responded_at`, it rewrites the deterministic parent input
+then completes delivery; after `responded_at`, it retries only the missing graph
+wake. The final idle handoff claims capacity under the scheduler lock, changes
+only to `NeedsInput`, and invokes `runFlow()`; at the cap it stays
+`NeedsInputIdle` with `resume_requested_at`. It must not call ACP permission
+resume or depend on supervisor availability.

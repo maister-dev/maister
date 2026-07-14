@@ -661,6 +661,40 @@ type PlanReviewParentSchema = {
   decisionReworkCount: number;
 };
 
+type PlanReviewParentHistory = {
+  stepId: string;
+  schema: unknown;
+  response: unknown;
+};
+
+export function countPlanReviewDecisionReworks(
+  parents: readonly PlanReviewParentHistory[],
+  nodeId: string,
+): number {
+  return parents.filter((parent) => {
+    if (
+      parent.stepId !== nodeId ||
+      !isRecord(parent.schema) ||
+      !isRecord(parent.response)
+    ) {
+      return false;
+    }
+    const previousPlanReview = parent.schema.planReview;
+
+    if (!isRecord(previousPlanReview)) return false;
+    const answersVar = previousPlanReview.answersVar;
+
+    if (typeof answersVar !== "string") return false;
+    const answerEnvelope = parent.response[answersVar];
+
+    return (
+      isRecord(answerEnvelope) &&
+      Array.isArray(answerEnvelope.answers) &&
+      answerEnvelope.answers.length > 0
+    );
+  }).length;
+}
+
 async function loadPlanReviewParentSchema(
   node: CompiledNode,
   loaded: LoadedRun,
@@ -733,30 +767,22 @@ async function loadPlanReviewParentSchema(
   }
 
   const priorParents = (await ctx.db
-    .select({ schema: hitlRequests.schema, response: hitlRequests.response })
+    .select({
+      stepId: hitlRequests.stepId,
+      schema: hitlRequests.schema,
+      response: hitlRequests.response,
+    })
     .from(hitlRequests)
     .where(
       and(
         eq(hitlRequests.runId, loaded.run.id),
         eq(hitlRequests.kind, "human"),
       ),
-    )) as Array<{ schema: unknown; response: unknown }>;
-  const decisionReworkCount = priorParents.filter((parent) => {
-    if (!isRecord(parent.schema) || !isRecord(parent.response)) return false;
-    const previousPlanReview = parent.schema.planReview;
-
-    if (!isRecord(previousPlanReview)) return false;
-    const answersVar = previousPlanReview.answersVar;
-
-    if (typeof answersVar !== "string") return false;
-    const answerEnvelope = parent.response[answersVar];
-
-    return (
-      isRecord(answerEnvelope) &&
-      Array.isArray(answerEnvelope.answers) &&
-      answerEnvelope.answers.length > 0
-    );
-  }).length;
+    )) as PlanReviewParentHistory[];
+  const decisionReworkCount = countPlanReviewDecisionReworks(
+    priorParents,
+    node.id,
+  );
 
   if (decisionReworkCount >= settings.max_decision_reworks) {
     log.warn(
@@ -1095,7 +1121,9 @@ export async function runReviewHuman(
       });
     };
 
-    if (typeof (ctx.db as { transaction?: unknown }).transaction === "function") {
+    if (
+      typeof (ctx.db as { transaction?: unknown }).transaction === "function"
+    ) {
       await (ctx.db as TransactionalDb).transaction(ensureDecisionRequests);
     } else {
       await ensureDecisionRequests(ctx.db);

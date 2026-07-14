@@ -23,6 +23,7 @@ import {
   consensusHitlFromSchema,
   formFieldsFromSchema,
 } from "@/components/board/hitl-decision-controls";
+import { requestPendingHitlFocus } from "@/components/board/pending-hitl-focus-restorer";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 
@@ -45,6 +46,7 @@ export interface RunHitlResponseProps {
   schema: unknown;
   canAct: boolean;
   onRespond?: () => void;
+  restoreFocusAfterResponse?: boolean;
   compact?: boolean;
   criticality?: "low" | "medium" | "high" | "critical" | null;
   // ADR-071 Task 13: server-computed open/outdated review-thread counts for
@@ -64,6 +66,7 @@ export function RunHitlResponse({
   schema,
   canAct,
   onRespond,
+  restoreFocusAfterResponse = false,
   compact,
   criticality,
   reviewCounts,
@@ -124,6 +127,10 @@ export function RunHitlResponse({
       if (onRespond) {
         onRespond();
       } else {
+        if (restoreFocusAfterResponse) {
+          requestPendingHitlFocus(runId);
+        }
+
         startTransition(() => router.refresh());
       }
     } catch {

@@ -88,6 +88,12 @@ export type E2EM17Fixture = {
   project2Branch: string;
 };
 
+export type E2EPlanReviewFixture = {
+  projectSlug: string;
+  runId: string;
+  taskTitle: string;
+};
+
 export type E2EM23Fixture = {
   projectId: string;
   projectSlug: string;
@@ -223,6 +229,7 @@ export type E2EFixtures = {
     liveCcr: E2EProjectFixture;
     registration: E2ERegistrationFixture;
     m17: E2EM17Fixture;
+    planReview: E2EPlanReviewFixture;
     m19: E2EM19Fixture;
     m16: E2EM16Fixture;
     m22: E2EM22Fixture;

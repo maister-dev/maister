@@ -118,6 +118,14 @@ Runs once on Node boot from `web/instrumentation.ts`, AFTER the two
 existing recovery sweeps (`runResumeRecoverySweep`,
 `runTakeoverReturnRecoverySweep`) and BEFORE the keep-alive sweeper.
 
+Before the `Running`-only crash classifier, this same startup call repairs
+ADR-137 Plan-review graph handoffs. It examines only current-step,
+current-artifact parent responses in `NeedsInput|NeedsInputIdle`; it either
+rewrites a missing parent input and marks delivery, or reclaims a delivered
+graph wake with the existing scheduler-cap policy. This is a distinct durable
+handoff recovery path and does not broaden the crash classifier's `Running`
+candidate set.
+
 ```mermaid
 flowchart TD
     Start([Node boot]) --> Load[Per project: SELECT runs<br/>WHERE status=Running<br/>join workspace + pinned manifest]
@@ -140,6 +148,10 @@ A `globalThis`-singleton timer
 default 60) re-runs the same classification on a cadence. This is the
 sanctioned recovery poll (heartbeat + reconcile), NOT a banned live-path
 transition poll — the live path stays ACP-notification-driven.
+
+The cadence also retries the bounded Plan-review handoff repair described above.
+It has no supervisor side effect: a ready graph wake calls `runFlow()` and an
+at-cap idle run records `resume_requested_at` for normal scheduler admission.
 
 ```mermaid
 flowchart TD

@@ -51,8 +51,7 @@ const {
   runs,
   tasks,
   workspaces,
-} =
-  schemaModule as unknown as Record<string, any>;
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -861,6 +860,25 @@ export async function runReconcileSweep(
     opts.scheduleResumedSessionDrive ?? scheduleResumedSessionDrive;
   const now = opts.now ?? (() => new Date());
   const graceSeconds = reconcileGraceSeconds();
+
+  try {
+    const { reconcilePlanReviewDecisionHandoffs } = await import(
+      "@/lib/services/hitl"
+    );
+    const resumed = await reconcilePlanReviewDecisionHandoffs({ db });
+
+    if (resumed > 0) {
+      log.info(
+        { resumed },
+        "reconcile: recovered plan-review decision handoffs",
+      );
+    }
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "reconcile: plan-review handoff recovery failed — continuing sweep",
+    );
+  }
 
   await closeTerminalRunAssignments(db);
 

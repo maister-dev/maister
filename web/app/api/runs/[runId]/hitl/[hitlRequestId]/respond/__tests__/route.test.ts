@@ -1247,6 +1247,26 @@ describe("HITL respond route — consensus resolution decision (M41)", () => {
 });
 
 describe("HITL respond route — error cases", () => {
+  it("rejects an unknown top-level field for a plan-review decision", async () => {
+    const { runId, hitlRequestId } = seedFormRow("human");
+    const hitl = dbState.tables.hitl_requests[0];
+
+    hitl.kind = "decision_request";
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "postgres",
+      ignored: true,
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CONFIG",
+      message: "decision_request requires exactly an optionId response",
+    });
+    expect(hitl.response).toBeNull();
+    expect(hitl.respondedAt).toBeNull();
+  });
+
   it("unknown hitlRequestId (empty table) returns 409 PRECONDITION", async () => {
     const res = await invokePost("run-x", "unknown-hitl", {
       optionId: "allow",

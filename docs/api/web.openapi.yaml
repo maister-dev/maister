@@ -10,7 +10,8 @@ info:
     **Milestone status: M34 Platform Agents Stage 3, with earlier routes retained.**
 
     **ADR-137 (Implemented) — typed Plan review.** A session-authenticated caller
-    may answer a `decision_request` only with `{ optionId }`; the server derives
+    may answer a `decision_request` only with exactly `{ optionId }` (unknown
+    fields are rejected); the server derives
     the parent review, current immutable plan-review artifact, allowed option,
     and Flow rework input. A non-final answer returns `200` with
     `state: awaiting-decisions`; a final answer returns `202` with
@@ -5339,15 +5340,17 @@ paths:
           submission gets 409 BEFORE it can corrupt the artifact.
         - **decision_request** (ADR-137, Implemented): session-auth-only,
           Flow-native Plan-review blocker. Its body is exactly `{optionId}`;
-          the option, direct human parent, current immutable source artifact,
+          unknown fields are rejected before persistence. The option,
+          direct human parent, current immutable source artifact,
           sibling completeness, rework target, and input path are all derived
           from locked server state. A non-final answer atomically closes only
           its child card and returns `200 {ok:true, state:"awaiting-decisions",
           remainingDecisionCount}`. The final answer uses a durable intent →
           atomic parent-input write → delivered-marker handoff and returns
           `202 {ok:true, state:"rework-scheduled"|"resume-queued",
-          remainingDecisionCount:0}`. Same-payload retries repair incomplete
-          handoff; a conflicting option, stale artifact, terminal run, or
+          remainingDecisionCount:0}`. Same-payload retries are idempotent, and
+          startup plus the existing reconciliation sweep repair either durable
+          handoff crash window. A conflicting option, stale artifact, terminal run, or
           parent closure returns 409. This path calls graph `runFlow()` only;
           it never invokes ACP permission recovery.
         - **agent_question** (ADR-136, Implemented): human-only task

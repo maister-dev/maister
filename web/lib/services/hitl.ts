@@ -8,7 +8,17 @@ import type {
 
 import path from "node:path";
 
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  sql,
+} from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
@@ -145,6 +155,21 @@ async function lockHitlRow(tx: any, hitlRequestId: string): Promise<any> {
     .for("update");
 
   return rows[0];
+}
+
+// A Plan-review parent is the serialization boundary for both child answers and
+// direct parent rework. Acquire one transaction-scoped key before row locks so
+// a child-assignment claim cannot invert the parent/child lock order under
+// concurrent responses.
+async function lockPlanReviewParent(
+  tx: any,
+  parentHitlRequestId: string,
+): Promise<any> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${parentHitlRequestId}))`,
+  );
+
+  return lockHitlRow(tx, parentHitlRequestId);
 }
 
 // Schedule a runner wake-up for a delivered HITL row. Called from both
@@ -440,6 +465,10 @@ export type HitlActor =
 export type RespondInput = {
   runId: string;
   hitlRequestId: string;
+  // The route preserves raw top-level keys because Zod's default object parser
+  // strips unknown fields before the kind-specific decision contract can reject
+  // them. Direct service callers omit it and use the typed body keys instead.
+  bodyKeys?: readonly string[];
   body: {
     optionId?: string;
     response?: unknown;
@@ -457,6 +486,7 @@ type HandlerArgs = {
   db: any;
   hitlRow: any;
   runRow: any;
+  bodyKeys: readonly string[];
   body: RespondInput["body"];
   runId: string;
   hitlRequestId: string;
@@ -1515,18 +1545,16 @@ function decisionAnswerFromResponse(
   return typeof optionId === "string" ? { optionId } : null;
 }
 
-async function completePlanReviewResponse(
-  args: {
-    db: any;
-    runId: string;
-    projectId: string;
-    parentHitlRequestId: string;
-    childHitlRequestId?: string;
-    parentAssignmentClaim?: ResponseAssignmentClaim;
-    childAssignmentClaim?: ResponseAssignmentClaim;
-    recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
-  },
-): Promise<void> {
+async function completePlanReviewResponse(args: {
+  db: any;
+  runId: string;
+  projectId: string;
+  parentHitlRequestId: string;
+  childHitlRequestId?: string;
+  parentAssignmentClaim?: ResponseAssignmentClaim;
+  childAssignmentClaim?: ResponseAssignmentClaim;
+  recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+}): Promise<void> {
   await args.db.transaction(async (tx: any) => {
     const now = new Date();
 
@@ -1540,10 +1568,7 @@ async function completePlanReviewResponse(
             isNull(hitlRequests.respondedAt),
           ),
         );
-      await completeResponseAssignment(
-        tx,
-        args.childAssignmentClaim ?? null,
-      );
+      await completeResponseAssignment(tx, args.childAssignmentClaim ?? null);
     }
 
     const stamped = await tx
@@ -1586,14 +1611,255 @@ async function completePlanReviewResponse(
   });
 }
 
+type PlanReviewHandoff =
+  | { kind: "not-ready" }
+  | {
+      kind: "already-delivered";
+      runId: string;
+    }
+  | {
+      kind: "pending-delivery";
+      childHitlRequestIds: string[];
+      parentDecision: "approve" | "rework";
+      parentHitlRequestId: string;
+      parentResponse: unknown;
+      parentStepId: string;
+      projectId: string;
+      runId: string;
+    };
+
+async function loadPlanReviewHandoff(
+  db: any,
+  parentHitlRequestId: string,
+): Promise<PlanReviewHandoff> {
+  return db.transaction(async (tx: any) => {
+    const parent = await lockPlanReviewParent(tx, parentHitlRequestId);
+
+    if (
+      !parent ||
+      parent.kind !== "human" ||
+      parent.response === null ||
+      parent.response === undefined
+    ) {
+      return { kind: "not-ready" as const };
+    }
+    const parentState = planReviewParentState(parent.schema);
+
+    if (!parentState) return { kind: "not-ready" as const };
+
+    const runRows = await tx
+      .select({
+        currentStepId: runs.currentStepId,
+        projectId: runs.projectId,
+        status: runs.status,
+      })
+      .from(runs)
+      .where(eq(runs.id, parent.runId))
+      .for("update");
+    const run = runRows[0];
+
+    if (
+      !run ||
+      run.projectId === null ||
+      run.currentStepId !== parent.stepId ||
+      !PENDING_HITL_RUN_STATUS.has(run.status)
+    ) {
+      return { kind: "not-ready" as const };
+    }
+
+    await assertCurrentPlanReviewArtifact(
+      tx,
+      parentState.sourceArtifactId,
+      parent.runId,
+    );
+
+    if (parent.respondedAt) {
+      return { kind: "already-delivered" as const, runId: parent.runId };
+    }
+
+    const children = await tx
+      .select({
+        id: hitlRequests.id,
+        kind: hitlRequests.kind,
+        respondedAt: hitlRequests.respondedAt,
+        response: hitlRequests.response,
+      })
+      .from(hitlRequests)
+      .where(eq(hitlRequests.parentHitlRequestId, parent.id))
+      .orderBy(asc(hitlRequests.id))
+      .for("update");
+    const childHitlRequestIds = children
+      .filter(
+        (child: {
+          id: string;
+          kind: string;
+          respondedAt: Date | null;
+          response: unknown;
+        }) =>
+          child.kind === "decision_request" &&
+          child.respondedAt === null &&
+          decisionAnswerFromResponse(child.response) !== null,
+      )
+      .map((child: { id: string }) => child.id);
+
+    return {
+      kind: "pending-delivery" as const,
+      childHitlRequestIds,
+      parentDecision: parent.decision === "approve" ? "approve" : "rework",
+      parentHitlRequestId: parent.id,
+      parentResponse: parent.response,
+      parentStepId: parent.stepId,
+      projectId: run.projectId,
+      runId: parent.runId,
+    };
+  });
+}
+
+async function completeRecoveredPlanReviewHandoff(
+  args: Extract<PlanReviewHandoff, { kind: "pending-delivery" }> & {
+    db: any;
+  },
+): Promise<boolean> {
+  return args.db.transaction(async (tx: any) => {
+    const now = new Date();
+
+    if (args.childHitlRequestIds.length > 0) {
+      await tx
+        .update(hitlRequests)
+        .set({ respondedAt: now })
+        .where(
+          and(
+            inArray(hitlRequests.id, args.childHitlRequestIds),
+            isNull(hitlRequests.respondedAt),
+          ),
+        );
+
+      for (const hitlRequestId of args.childHitlRequestIds) {
+        await systemCloseActiveAssignmentsForHitlRequest({
+          db: tx,
+          hitlRequestId,
+          projectId: args.projectId,
+          reason: "plan-review response recovered after restart",
+        });
+      }
+    }
+
+    const stamped = await tx
+      .update(hitlRequests)
+      .set({ respondedAt: now })
+      .where(
+        and(
+          eq(hitlRequests.id, args.parentHitlRequestId),
+          isNull(hitlRequests.respondedAt),
+        ),
+      )
+      .returning({ id: hitlRequests.id });
+
+    if (stamped.length === 0) return false;
+
+    await systemCloseActiveAssignmentsForHitlRequest({
+      db: tx,
+      hitlRequestId: args.parentHitlRequestId,
+      projectId: args.projectId,
+      reason: "plan-review response recovered after restart",
+    });
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.responded",
+      projectId: args.projectId,
+      runId: args.runId,
+      data: {
+        hitlRequestId: args.parentHitlRequestId,
+        kind: "human",
+        via: "reconciliation",
+        planReview: {
+          parentHitlRequestId: args.parentHitlRequestId,
+          state:
+            args.parentDecision === "approve" ? "approved" : "rework-scheduled",
+        },
+      },
+    });
+
+    return true;
+  });
+}
+
+export async function reconcilePlanReviewDecisionHandoffs(args: {
+  db: any;
+  limit?: number;
+}): Promise<number> {
+  const candidates = await args.db
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(eq(hitlRequests.kind, "human"), isNotNull(hitlRequests.response)),
+    )
+    .orderBy(asc(hitlRequests.createdAt))
+    .limit(args.limit ?? 50);
+  let resumed = 0;
+
+  for (const candidate of candidates) {
+    try {
+      const handoff = await loadPlanReviewHandoff(args.db, candidate.id);
+
+      if (handoff.kind === "not-ready") continue;
+
+      if (handoff.kind === "pending-delivery") {
+        const inputPath = await planReviewInputPath(
+          args.db,
+          handoff.projectId,
+          handoff.runId,
+          handoff.parentStepId,
+        );
+
+        await atomicWriteJson(inputPath, handoff.parentResponse);
+
+        const delivered = await completeRecoveredPlanReviewHandoff({
+          ...handoff,
+          db: args.db,
+        });
+
+        if (!delivered) continue;
+      }
+
+      const resume = await claimGraphResumeSlot(args.db, handoff.runId);
+
+      if (resume === "ready") scheduleResume(handoff.runId);
+      if (resume !== "noop") resumed += 1;
+
+      log.info(
+        {
+          runId: handoff.runId,
+          parentHitlRequestId: candidate.id,
+          resume,
+        },
+        "[FIX:plan-review-handoff] reconciled durable response",
+      );
+    } catch (err) {
+      log.warn(
+        {
+          parentHitlRequestId: candidate.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[FIX:plan-review-handoff] reconciliation failed; retaining intent for retry",
+      );
+    }
+  }
+
+  return resumed;
+}
+
 async function handlePlanReviewDecisionResponse(
   args: HandlerArgs,
 ): Promise<NextResponse> {
-  const { db, hitlRow, runRow, body, runId, hitlRequestId, actor } = args;
+  const { db, hitlRow, runRow, body, bodyKeys, runId, hitlRequestId, actor } =
+    args;
   const optionId = body.optionId;
   const parentHitlRequestId = hitlRow.parentHitlRequestId;
 
   if (
+    bodyKeys.length !== 1 ||
+    bodyKeys[0] !== "optionId" ||
     typeof optionId !== "string" ||
     body.response !== undefined ||
     body.confidence !== undefined ||
@@ -1636,10 +1902,10 @@ async function handlePlanReviewDecisionResponse(
   });
   const response = { optionId };
   const outcome = await db.transaction(async (tx: any) => {
-    // Lock the common parent before any child. Concurrent answers therefore
-    // serialize through one stable row, then lock children in ascending id
-    // order below; this prevents child-A -> parent -> child-B deadlocks.
-    const parent = await lockHitlRow(tx, parentHitlRequestId);
+    // Serialize child answers through the common parent before taking any
+    // child-row locks. The transaction-scoped advisory key prevents a
+    // child-assignment claim from inverting this lock order.
+    const parent = await lockPlanReviewParent(tx, parentHitlRequestId);
     const child = await lockHitlRow(tx, hitlRequestId);
 
     if (
@@ -1647,15 +1913,24 @@ async function handlePlanReviewDecisionResponse(
       child.kind !== "decision_request" ||
       child.parentHitlRequestId !== parentHitlRequestId
     ) {
-      throw new MaisterError("PRECONDITION", "plan decision request disappeared");
+      throw new MaisterError(
+        "PRECONDITION",
+        "plan decision request disappeared",
+      );
     }
     if (!parent || parent.kind !== "human" || parent.runId !== runId) {
       throw new MaisterError("CONFLICT", "plan decision parent is invalid");
     }
     const parentState = planReviewParentState(parent.schema);
 
-    if (!parentState || parentState.sourceArtifactId !== child.sourceArtifactId) {
-      throw new MaisterError("CONFLICT", "plan decision parent provenance changed");
+    if (
+      !parentState ||
+      parentState.sourceArtifactId !== child.sourceArtifactId
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        "plan decision parent provenance changed",
+      );
     }
     await assertCurrentPlanReviewArtifact(
       tx,
@@ -1719,7 +1994,8 @@ async function handlePlanReviewDecisionResponse(
           ? response
           : decisionAnswerFromResponse(sibling.response);
 
-      if (siblingAnswer) answers.set(sibling.decisionId, siblingAnswer.optionId);
+      if (siblingAnswer)
+        answers.set(sibling.decisionId, siblingAnswer.optionId);
     }
 
     const remaining = parentState.decisions.filter(
@@ -1803,7 +2079,10 @@ async function handlePlanReviewDecisionResponse(
         .update(hitlRequests)
         .set({ respondedAt: new Date() })
         .where(
-          and(eq(hitlRequests.id, hitlRequestId), isNull(hitlRequests.respondedAt)),
+          and(
+            eq(hitlRequests.id, hitlRequestId),
+            isNull(hitlRequests.respondedAt),
+          ),
         );
       await completeResponseAssignment(tx, assignmentClaim, { response });
       await args.recordSuccessAudit?.(tx, 200);
@@ -1848,7 +2127,11 @@ async function handlePlanReviewDecisionResponse(
     await atomicWriteJson(inputPath, outcome.parentResponse);
   } catch (err) {
     log.warn(
-      { runId, hitlRequestId, err: err instanceof Error ? err.message : String(err) },
+      {
+        runId,
+        hitlRequestId,
+        err: err instanceof Error ? err.message : String(err),
+      },
       "plan-review final answer input write failed — retryable",
     );
 
@@ -1917,7 +2200,7 @@ async function handlePlanReviewParentResponse(
     actor,
   });
   const phaseOne = await db.transaction(async (tx: any) => {
-    const parent = await lockHitlRow(tx, hitlRequestId);
+    const parent = await lockPlanReviewParent(tx, hitlRequestId);
 
     if (!parent || parent.kind !== "human") {
       throw new MaisterError("PRECONDITION", "plan-review parent disappeared");
@@ -2021,7 +2304,10 @@ async function handlePlanReviewParentResponse(
             respondedAt: now,
           })
           .where(
-            and(eq(hitlRequests.id, child.id), isNull(hitlRequests.respondedAt)),
+            and(
+              eq(hitlRequests.id, child.id),
+              isNull(hitlRequests.respondedAt),
+            ),
           );
         await systemCloseActiveAssignmentsForHitlRequest({
           db: tx,
@@ -2061,7 +2347,10 @@ async function handlePlanReviewParentResponse(
 
     if (resume === "ready") scheduleResume(runId);
 
-    return NextResponse.json({ ok: true, runStatus: "NeedsInput" }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, runStatus: "NeedsInput" },
+      { status: 200 },
+    );
   }
 
   const inputPath = await planReviewInputPath(
@@ -2075,7 +2364,11 @@ async function handlePlanReviewParentResponse(
     await atomicWriteJson(inputPath, phaseOne.parentResponse);
   } catch (err) {
     log.warn(
-      { runId, hitlRequestId, err: err instanceof Error ? err.message : String(err) },
+      {
+        runId,
+        hitlRequestId,
+        err: err instanceof Error ? err.message : String(err),
+      },
       "plan-review parent input write failed — retryable",
     );
 
@@ -2093,9 +2386,13 @@ async function handlePlanReviewParentResponse(
       .update(hitlRequests)
       .set({ respondedAt: new Date() })
       .where(
-        and(eq(hitlRequests.id, hitlRequestId), isNull(hitlRequests.respondedAt)),
+        and(
+          eq(hitlRequests.id, hitlRequestId),
+          isNull(hitlRequests.respondedAt),
+        ),
       )
       .returning({ id: hitlRequests.id });
+
     await completeResponseAssignment(tx, assignmentClaim);
     await args.recordSuccessAudit?.(tx, 200);
 
@@ -2112,10 +2409,7 @@ async function handlePlanReviewParentResponse(
           planReview: {
             parentHitlRequestId: hitlRequestId,
             remainingDecisionCount: 0,
-            state:
-              planDecision === "rework"
-                ? "rework-scheduled"
-                : "approved",
+            state: planDecision === "rework" ? "rework-scheduled" : "approved",
           },
         },
       });
@@ -2137,7 +2431,10 @@ async function handlePlanReviewParentResponse(
     "plan-review parent response delivered",
   );
 
-  return NextResponse.json({ ok: true, runStatus: "NeedsInput" }, { status: 200 });
+  return NextResponse.json(
+    { ok: true, runStatus: "NeedsInput" },
+    { status: 200 },
+  );
 }
 
 async function handleFormHumanResponse(
@@ -4559,6 +4856,7 @@ export async function respondToHitl(
 ): Promise<NextResponse> {
   const { db, recordSuccessAudit } = deps;
   const { runId, hitlRequestId, body } = input;
+  const bodyKeys = input.bodyKeys ?? Object.keys(body);
   const startedAt = Date.now();
 
   log.info(
@@ -4638,6 +4936,7 @@ export async function respondToHitl(
       db,
       hitlRow,
       runRow,
+      bodyKeys,
       body,
       runId,
       hitlRequestId,
@@ -4654,6 +4953,7 @@ export async function respondToHitl(
       db,
       hitlRow,
       runRow,
+      bodyKeys,
       body,
       runId,
       hitlRequestId,
@@ -4716,6 +5016,7 @@ export async function respondToHitl(
       db,
       hitlRow,
       runRow,
+      bodyKeys,
       body,
       runId,
       hitlRequestId,
@@ -4726,12 +5027,16 @@ export async function respondToHitl(
   }
 
   if (hitlRow.kind === "human" && planReviewParentState(hitlRow.schema)) {
-    log.debug({ runId, hitlRequestId, branch: "plan_review_parent" }, "dispatch");
+    log.debug(
+      { runId, hitlRequestId, branch: "plan_review_parent" },
+      "dispatch",
+    );
 
     return await handlePlanReviewParentResponse({
       db,
       hitlRow,
       runRow,
+      bodyKeys,
       body,
       runId,
       hitlRequestId,
@@ -4747,6 +5052,7 @@ export async function respondToHitl(
     db,
     hitlRow,
     runRow,
+    bodyKeys,
     body,
     runId,
     hitlRequestId,

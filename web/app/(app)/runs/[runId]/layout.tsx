@@ -7,6 +7,7 @@ import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
+import { PendingHitlFocusRestorer } from "@/components/board/pending-hitl-focus-restorer";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
 import { type EvidenceGraphLabels } from "@/components/board/evidence-graph";
 import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
@@ -1490,6 +1491,13 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
+          <PendingHitlFocusRestorer
+            pendingHitlIds={detail.pendingHitls.map(
+              (pendingHitl) => pendingHitl.hitlRequestId,
+            )}
+            runId={detail.runId}
+          />
+
           {detail.pendingHitl && !isCutoverHistory ? (
             (() => {
               const staleText = staleSummaryText(
@@ -1499,10 +1507,20 @@ export default async function RunDetailLayout({
               return (
                 <section
                   className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5"
+                  data-pending-hitl-card="true"
+                  data-testid="pending-input-card"
                   id="pending-input"
+                  tabIndex={-1}
                 >
                   <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
                     {t("pendingTitle")}
+                    {detail.pendingHitls.length > 1 ? (
+                      <span className="font-mono text-[10.5px] font-semibold tracking-[0.04em] text-mute">
+                        {t("pendingCount", {
+                          count: detail.pendingHitls.length,
+                        })}
+                      </span>
+                    ) : null}
                   </h2>
                   <p className="mb-4 text-[14px] leading-[1.4] text-ink">
                     {detail.pendingHitl.prompt}
@@ -1619,6 +1637,7 @@ export default async function RunDetailLayout({
                     />
                   ) : null}
                   <RunHitlResponse
+                    restoreFocusAfterResponse
                     availableOptions={detail.pendingHitl.availableOptions}
                     budgetProgress={detail.pendingHitl.budgetProgress}
                     canAct={canAct}
@@ -1652,6 +1671,52 @@ export default async function RunDetailLayout({
               {t("noPending")}
             </p>
           )}
+
+          {detail.pendingHitls.slice(1).map((pendingHitl) => (
+            <section
+              key={pendingHitl.hitlRequestId}
+              className="mt-4 rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_25%,var(--paper))] p-5"
+              data-pending-hitl-card="true"
+              data-testid="pending-input-card"
+              tabIndex={-1}
+            >
+              <p className="mb-3 text-[14px] leading-[1.4] text-ink">
+                {pendingHitl.prompt}
+              </p>
+              <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
+                {pendingHitl.assignmentActionKind ? (
+                  <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                    {t("assignmentAction", {
+                      action: pendingHitl.assignmentActionKind,
+                    })}
+                  </span>
+                ) : null}
+                <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                  {pendingHitl.assigneeLabel
+                    ? t("assignmentClaimedBy", {
+                        actor: pendingHitl.assigneeLabel,
+                      })
+                    : t("assignmentUnclaimed")}
+                </span>
+              </div>
+              <RunHitlResponse
+                restoreFocusAfterResponse
+                availableOptions={pendingHitl.availableOptions}
+                budgetProgress={pendingHitl.budgetProgress}
+                canAct={canAct}
+                claimStage={pendingHitl.claimStage}
+                criticality={pendingHitl.criticality}
+                hitlRequestId={pendingHitl.hitlRequestId}
+                kind={pendingHitl.kind}
+                options={pendingHitl.options}
+                reviewCounts={
+                  pendingHitl.kind === "human" ? reviewGateCounts : null
+                }
+                runId={detail.runId}
+                schema={pendingHitl.schema}
+              />
+            </section>
+          ))}
 
           {isHumanWorking ? (
             <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">

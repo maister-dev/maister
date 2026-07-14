@@ -311,6 +311,13 @@ Every test is introduced RED, made GREEN by the smallest production change, then
   - Logging: confirm every lifecycle outcome has an observable structured event/log field and no sensitive payload leakage; document known operational alerts and recovery instructions.
   - Dependencies: Task 1–9. Exit gate: `pnpm --dir web typecheck`; `pnpm --dir web test:unit`; `pnpm --dir web test:integration`; focused `pnpm --dir web test:e2e`; `pnpm validate:docs:all`; `pnpm validate:contracts`; migration journal/snapshot integrity; `git diff --check`; and package release/installation validation all pass. Any unavailable infrastructure is reported as blocked, never masked by syntax checks.
 
+### Phase 7 — Post-review correctness closure
+
+- [x] Task 11: Close every branch-review finding without changing the feature's ownership boundaries.
+  - Files: `web/lib/services/hitl.ts`, `web/lib/reconcile.ts`, `web/lib/flows/graph/runner-graph.ts`, `web/lib/queries/run.ts`, the run-detail response surface, route/integration/migration/E2E regressions, and the affected ADR/API/analytics/screen contracts.
+  - Deliverable: startup and periodic reconciliation recover both durable Plan-review handoff crash windows; decision-rework bounds count only parents for the current graph node; the route rejects every decision child payload except exactly `{ optionId }`; run detail renders every unresolved child, exposes the outstanding count, and restores focus after an answer. Add race, external-denial, real migration, recovery/idle-cap, and E2E proof with no duplicate test responsibility.
+  - Dependencies: Task 10. Exit gate: focused RED → GREEN regressions, typecheck, docs/contracts validation, focused integration and E2E suites, and `git diff --check`; Docker-backed gates remain explicitly blocked if no container runtime is available.
+
 ## Commit plan
 
 - **Commit 1** (after Tasks 1–2): `docs(plan-review): freeze typed decision-request contract`
@@ -318,6 +325,7 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 - **Commit 3** (after Tasks 6–8): `feat(hitl): handle plan-review decisions safely`
 - **Commit 4** (after Task 9): `feat(aif): emit typed plan-review artifacts`
 - **Commit 5** (after Task 10): `test(plan-review): close cross-layer acceptance coverage`
+- **Commit 6** (after Task 11): `fix(plan-review): recover decision handoffs`
 
 ## Risks and mandated mitigations
 
@@ -352,3 +360,4 @@ Every test is introduced RED, made GREEN by the smallest production change, then
 - [x] Flow source list is exhaustive (`aif-dev`, `superpowers dev`, `superpowers plan`); fixtures are clearly distinguished from shipped sources; historical installed revisions are unchanged.
 - [x] Tests are RED first, runner-discovered, ownership-partitioned with no trivial overlap, green per phase, and include integration/recovery/auth/E2E coverage.
 - [x] EN/RU UX, accessibility, observability/redaction, docs validation, contracts, migration integrity, and package release gates are green.
+- [x] Post-review handoff recovery, exact decision payload enforcement, node-scoped rework bounds, all-card UI, and focused regression gates are green.

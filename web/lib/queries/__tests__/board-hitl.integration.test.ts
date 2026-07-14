@@ -329,4 +329,63 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
     expect(detail?.taskPrompt).toBe("Do something");
     expect(detail?.flowRef).toBe("bugfix");
   });
+
+  it("projects every open plan-review decision child for the run-detail response surface", async () => {
+    await seedProject("proj-plan-review");
+    await seedExecutor("ex-plan-review", "proj-plan-review");
+    await seedFlow("fl-plan-review", "proj-plan-review", "plan-review");
+    await seedTask("task-plan-review", "proj-plan-review", "fl-plan-review");
+    await seedRun(
+      "run-plan-review",
+      "task-plan-review",
+      "proj-plan-review",
+      "fl-plan-review",
+      "ex-plan-review",
+      "NeedsInput",
+    );
+    await seedWorkspace("run-plan-review", "proj-plan-review");
+
+    await pool.query(
+      `INSERT INTO artifact_instances (
+         id, run_id, artifact_def_id, node_id, attempt, kind, producer, locator, validity
+       ) VALUES (
+         'artifact-plan-review', 'run-plan-review', 'plan-review', 'improve', 1,
+         'plan', 'runner', '{"kind":"file","path":"artifacts/plan-review.json"}'::jsonb, 'current'
+       )`,
+    );
+    await pool.query(
+      `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+       VALUES (
+         'parent-plan-review', 'run-plan-review', 'review_plan', 'human',
+         '{"planReview":{"answersVar":"plan_answers"}}'::jsonb,
+         'Review the implementation plan'
+       )`,
+    );
+    await pool.query(
+      `INSERT INTO hitl_requests (
+         id, run_id, step_id, kind, schema, prompt, parent_hitl_request_id,
+         source_artifact_id, decision_id
+       ) VALUES
+         (
+           'decision-plan-review-a', 'run-plan-review', 'review_plan', 'decision_request',
+           '{"version":1,"sourceArtifactId":"artifact-plan-review","decisionId":"database","question":"Choose a database","options":[{"id":"postgres","label":"Postgres","consequences":"Transactional"}]}'::jsonb,
+           'Choose a database', 'parent-plan-review', 'artifact-plan-review', 'database'
+         ),
+         (
+           'decision-plan-review-b', 'run-plan-review', 'review_plan', 'decision_request',
+           '{"version":1,"sourceArtifactId":"artifact-plan-review","decisionId":"resume","question":"Choose a resume mode","options":[{"id":"graph","label":"Graph","consequences":"Cap-safe"}]}'::jsonb,
+           'Choose a resume mode', 'parent-plan-review', 'artifact-plan-review', 'resume'
+         )`,
+    );
+
+    const detail = await getRunDetail("run-plan-review");
+
+    expect(detail?.pendingHitls.map((hitl) => hitl.hitlRequestId)).toEqual(
+      expect.arrayContaining([
+        "parent-plan-review",
+        "decision-plan-review-a",
+        "decision-plan-review-b",
+      ]),
+    );
+  });
 });

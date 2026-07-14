@@ -335,6 +335,53 @@ async function seedHitlRequest(
   return hitlRequestId;
 }
 
+async function seedPlanReviewDecisionRequest(runId: string): Promise<string> {
+  const artifactId = randomUUID();
+  const parentHitlRequestId = randomUUID();
+  const hitlRequestId = randomUUID();
+
+  await (db as any).insert(schema.artifactInstances).values({
+    id: artifactId,
+    runId,
+    artifactDefId: "plan-review",
+    nodeId: "improve",
+    attempt: 1,
+    kind: "plan",
+    producer: "runner",
+    locator: { kind: "file", path: "artifacts/plan-review.json" },
+    validity: "current",
+  });
+  await (db as any).insert(schema.hitlRequests).values({
+    id: parentHitlRequestId,
+    runId,
+    stepId: "step-1",
+    kind: "human",
+    prompt: "Review the plan",
+    schema: { planReview: { answersVar: "plan_answers" } },
+  });
+  await (db as any).insert(schema.hitlRequests).values({
+    id: hitlRequestId,
+    runId,
+    stepId: "step-1",
+    kind: "decision_request",
+    prompt: "Choose a database",
+    schema: {
+      version: 1,
+      sourceArtifactId: artifactId,
+      decisionId: "database",
+      question: "Choose a database",
+      options: [
+        { id: "postgres", label: "Postgres", consequences: "Transactional" },
+      ],
+    },
+    parentHitlRequestId,
+    sourceArtifactId: artifactId,
+    decisionId: "database",
+  });
+
+  return hitlRequestId;
+}
+
 async function seedHitlAssignment(args: {
   projectId: string;
   runId: string;
@@ -375,6 +422,11 @@ async function seedAgentQuestion(args: {
       },
     ],
   };
+
+  await (db as any)
+    .update(schema.runs)
+    .set({ runKind: "agent" })
+    .where(eq(schema.runs.id, args.runId));
 
   await (db as any).insert(schema.hitlRequests).values({
     id: hitlRequestId,
@@ -715,6 +767,41 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     expect(auditRows[0]).toMatchObject({
       result: "ok",
     });
+  });
+
+  it("rejects a plan-review decision even when the token has hitl:respond", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-plan-review-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId } = await seedRun(projectId, flowId, "NeedsInput");
+    const hitlRequestId = await seedPlanReviewDecisionRequest(runId);
+    const token = await issueToken(
+      { projectId, name: "plan-review-token", createdByUserId: null },
+      db,
+    );
+
+    await (db as any)
+      .update(schema.projectTokens)
+      .set({ scopes: ["hitl:respond"] })
+      .where(eq(schema.projectTokens.id, token.tokenId));
+
+    const res = await POST(
+      makePostRequest(runId, hitlRequestId, token.secret, {
+        optionId: "postgres",
+      }),
+      { params: Promise.resolve({ runId, hitlRequestId }) },
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    const [decision] = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+
+    expect(decision.respondedAt).toBeNull();
   });
 
   it("answers a form HITL with hitl:respond token → 200", async () => {

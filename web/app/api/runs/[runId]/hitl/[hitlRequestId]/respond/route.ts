@@ -105,9 +105,18 @@ export async function POST(
     const sessionUser = await requireActiveSession();
 
     let body: z.infer<typeof bodySchema>;
+    let bodyKeys: string[];
 
     try {
-      body = bodySchema.parse(await req.json());
+      const rawBody: unknown = await req.json();
+
+      body = bodySchema.parse(rawBody);
+      bodyKeys =
+        rawBody !== null &&
+        typeof rawBody === "object" &&
+        !Array.isArray(rawBody)
+          ? Object.keys(rawBody)
+          : [];
     } catch (err) {
       return errorResponse(
         new MaisterError(
@@ -123,7 +132,7 @@ export async function POST(
     const label = sessionUser.name ?? sessionUser.email ?? sessionUser.id;
 
     return await respondToHitl(
-      { runId, hitlRequestId, body },
+      { runId, hitlRequestId, body, bodyKeys },
       { kind: "user", userId: sessionUser.id, label },
       { db },
     );

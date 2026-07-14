@@ -268,3 +268,8 @@ The parent review displays captured plan provenance and each assumption's
 statement, default, and impact. Approve explicitly records those current
 defaults and is disabled while any decision child remains. The panel subscribes
 through the page's existing run stream provider; it opens no second EventSource.
+Every unresolved Plan-review child is also rendered as its own actionable
+run-detail card. The primary card shows the total outstanding-request count;
+after an answer refreshes the page, focus moves to the first remaining pending
+card so keyboard users continue the decision sequence without searching the
+page.

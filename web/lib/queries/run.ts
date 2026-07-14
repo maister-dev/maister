@@ -173,6 +173,7 @@ export interface RunDetail {
   // the run scope carries no positive token ceiling (nothing to warn about).
   budgetStatus: { warn: boolean; pct: number } | null;
   pendingHitl: RunPendingHitl | null;
+  pendingHitls: RunPendingHitl[];
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
   takeoverOwnerUserId: string | null;
@@ -349,35 +350,93 @@ export const getRunDetail = cache(async function getRunDetail(
     .from(hitlRequests)
     .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
     .orderBy(desc(hitlRequests.createdAt));
-  const pending = hitlRows[0];
-  const pendingAssignmentRows = pending
-    ? await client
-        .select()
-        .from(assignments)
-        .where(eq(assignments.hitlRequestId, pending.id))
-    : [];
-  const pendingAssignment = pendingAssignmentRows[0] ?? null;
+  const pendingHitlIds = hitlRows.map((hitl) => hitl.id);
+  const pendingAssignmentRows =
+    pendingHitlIds.length > 0
+      ? await client
+          .select()
+          .from(assignments)
+          .where(inArray(assignments.hitlRequestId, pendingHitlIds))
+      : [];
+  const assignmentByHitlRequestId = new Map(
+    pendingAssignmentRows
+      .filter((assignment) => assignment.hitlRequestId !== null)
+      .map((assignment) => [assignment.hitlRequestId, assignment]),
+  );
+  const pendingAssigneeActorIds = pendingAssignmentRows
+    .map((assignment) => assignment.assigneeActorId)
+    .filter((actorId): actorId is string => actorId !== null);
   const pendingAssigneeRows =
-    pendingAssignment?.assigneeActorId != null
+    pendingAssigneeActorIds.length > 0
       ? await client
           .select({
+            id: actorIdentities.id,
             label: actorIdentities.label,
             userId: actorIdentities.userId,
           })
           .from(actorIdentities)
-          .where(eq(actorIdentities.id, pendingAssignment.assigneeActorId))
+          .where(inArray(actorIdentities.id, pendingAssigneeActorIds))
       : [];
-  const pendingAssignee = pendingAssigneeRows[0] ?? null;
-  const pendingBudgetContext =
-    pending?.kind === "budget_breach"
-      ? await getInboxCardContext({
-          id: row.runId,
-          projectId: requireRunProjectId(row.projectId, row.runId),
-          currentStepId: row.currentStepId,
-          flowRevisionId: row.flowRevisionId,
-          flowId: row.flowId,
-        })
-      : null;
+  const pendingAssigneeByActorId = new Map(
+    pendingAssigneeRows.map((assignee) => [assignee.id, assignee]),
+  );
+  const pendingBudgetContexts: Array<
+    [string, Awaited<ReturnType<typeof getInboxCardContext>>]
+  > = await Promise.all(
+    hitlRows
+      .filter((hitl) => hitl.kind === "budget_breach")
+      .map(
+        async (hitl) =>
+          [
+            hitl.id,
+            await getInboxCardContext({
+              id: row.runId,
+              projectId: requireRunProjectId(row.projectId, row.runId),
+              currentStepId: row.currentStepId,
+              flowRevisionId: row.flowRevisionId,
+              flowId: row.flowId,
+            }),
+          ] as [string, Awaited<ReturnType<typeof getInboxCardContext>>],
+      ),
+  );
+  const pendingBudgetContextByHitlRequestId = new Map(pendingBudgetContexts);
+  const pendingHitls: RunPendingHitl[] = hitlRows.map((pending) => {
+    const assignment = assignmentByHitlRequestId.get(pending.id) ?? null;
+    const assigneeActorId = assignment?.assigneeActorId ?? null;
+    const assignee =
+      assigneeActorId !== null
+        ? (pendingAssigneeByActorId.get(assigneeActorId) ?? null)
+        : null;
+    const budgetContext =
+      pendingBudgetContextByHitlRequestId.get(pending.id) ?? null;
+
+    return {
+      hitlRequestId: pending.id,
+      kind: pending.kind,
+      assignmentId: assignment?.id ?? null,
+      assignmentStatus: assignment?.status ?? null,
+      assignmentActionKind: assignment?.actionKind ?? null,
+      assignmentRoleRefs: assignment?.roleRefs ?? [],
+      assignmentStaleEvidenceSummary: assignment?.staleEvidenceSummary ?? null,
+      assigneeLabel: assignee?.label ?? null,
+      assigneeUserId: assignee?.userId ?? null,
+      prompt: pending.prompt,
+      options:
+        budgetContext?.availableOptions.map((option) => ({
+          optionId: option.optionId,
+          label: option.label,
+        })) ?? extractOptions(pending.kind, pending.rawSchema),
+      ...(budgetContext?.availableOptions
+        ? { availableOptions: budgetContext.availableOptions }
+        : {}),
+      budgetProgress: budgetContext?.budgetProgress ?? null,
+      claimStage: budgetContext?.claimStage ?? null,
+      schema: pending.kind === "permission" ? null : pending.rawSchema,
+      criticality: pending.criticality ?? null,
+      dirtyResolution: pending.dirtyResolution ?? null,
+    };
+  });
+  const pending = pendingHitls[0] ?? null;
   const runnerResolutionWarningRows = await client
     .select({
       sessionName: runSessions.sessionName,
@@ -493,38 +552,8 @@ export const getRunDetail = cache(async function getRunDetail(
       warning: warningRow.warning as RunnerResolutionWarning,
     })),
     autoPromotion,
-    pendingHitl: pending
-      ? {
-          hitlRequestId: pending.id,
-          kind: pending.kind,
-          assignmentId: pendingAssignment?.id ?? null,
-          assignmentStatus: pendingAssignment?.status ?? null,
-          assignmentActionKind: pendingAssignment?.actionKind ?? null,
-          assignmentRoleRefs: pendingAssignment?.roleRefs ?? [],
-          assignmentStaleEvidenceSummary:
-            pendingAssignment?.staleEvidenceSummary ?? null,
-          assigneeLabel: pendingAssignee?.label ?? null,
-          assigneeUserId: pendingAssignee?.userId ?? null,
-          prompt: pending.prompt,
-          options:
-            pendingBudgetContext?.availableOptions.map((option) => ({
-              optionId: option.optionId,
-              label: option.label,
-            })) ?? extractOptions(pending.kind, pending.rawSchema),
-          ...(pendingBudgetContext?.availableOptions
-            ? { availableOptions: pendingBudgetContext.availableOptions }
-            : {}),
-          budgetProgress: pendingBudgetContext?.budgetProgress ?? null,
-          claimStage: pendingBudgetContext?.claimStage ?? null,
-          // Permission `schema` carries supervisor-internal handles (requestId,
-          // supervisorSessionId, toolCall) — never serialize them to the browser.
-          // Mirrors queries/board.ts and queries/hitl.ts; the permission UI
-          // renders only `options`, so nulling `schema` loses nothing.
-          schema: pending.kind === "permission" ? null : pending.rawSchema,
-          criticality: pending.criticality ?? null,
-          dirtyResolution: pending.dirtyResolution ?? null,
-        }
-      : null,
+    pendingHitl: pending,
+    pendingHitls,
   };
 });
 

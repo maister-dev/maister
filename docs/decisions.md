@@ -11820,7 +11820,7 @@ and successor-launch races, and re-trigger only the intended agent.
 ### ADR-137: Typed Plan-review artifacts and Flow-native decision requests
 
 **Date:** 2026-07-14
-**Status:** Designed
+**Status:** Implemented
 
 **Context:** A generic `human` Plan-review gate can approve prose which has no
 machine-readable record of assumptions or blocking choices. Parsing Markdown,
@@ -11900,7 +11900,11 @@ manual takeover, gate chat, or the Inbox's projection model.
    envelope to the parent input artifact outside its intent transaction, then
    marks delivery and schedules exactly one declared rework; it returns `202
    rework-scheduled` or `resume-queued`. Same-payload replay is idempotent;
-   a different replay is `CONFLICT`. Parent manual rework locks the same set,
+   a different replay is `CONFLICT`. Startup and the existing reconciliation
+   sweep also recover a locked persisted parent response: before its delivered
+   marker they atomically rewrite the deterministic input and complete delivery;
+   after its marker they re-claim the graph wake. Parent manual rework locks the
+   same set,
    atomically system-closes open children using the server actor and provenance
    `parent_reworked`; a racing child receives `CONFLICT` and cannot leak into a
    later plan. Recovery replays only unmarked durable intent.
@@ -11932,10 +11936,11 @@ hash, byte count, counts, state, and error code—not plan text, option
 consequences, prompts, or answers. Durable transition boundaries are: creation
 transaction; answer intent transaction; atomic input write; delivered-marker
 transaction; post-commit graph wake. A process death before intent leaves no
-claim; after intent before write is retryable; after write before marker is
-reconciled by matching bytes and marking delivery; after marker before wake is
-reconciled by the graph handoff. Parent rework closure and child answer share
-the same locked parent/sibling set.
+claim; after intent before write is retryable; after write before marker the
+startup/reconcile owner atomically rewrites the persisted deterministic input
+and marks delivery; after marker before wake that same owner reclaims the
+cap-aware graph wake. Parent rework closure and child answer share the same
+locked parent/sibling set.
 
 **Consequences:**
 

@@ -800,7 +800,10 @@ readiness interaction: [`readiness.md`](readiness.md).
 
 A `human` node with `settings.plan_review` captures a strict V1 companion
 artifact before `runReviewHuman()` creates a forced pause. The parent review
-stores immutable provenance and a bounded decision-cycle count; blockers create
-child `decision_request` HITLs in the same transaction. The parent can only
-approve a clean review or rework; no auto-pass, notify-only, or takeover branch
-exists for this capability. Exhaustion fails `PRECONDITION` before card creation.
+stores immutable provenance and a bounded decision-cycle count. The count is
+derived only from prior Plan-review parents for the same graph node
+(`hitl_requests.step_id`), never from another Plan-review node in the run;
+blockers create child `decision_request` HITLs in the same transaction. The
+parent can only approve a clean review or rework; no auto-pass, notify-only, or
+takeover branch exists for this capability. Exhaustion fails `PRECONDITION`
+before card creation.

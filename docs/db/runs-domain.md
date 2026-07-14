@@ -634,7 +634,11 @@ only after confirmed termination. A later task-bound standalone launch may set
 
 ## Plan-review recovery (Implemented — ADR-137)
 
-No status is added for decision requests. A final decision returns a graph-owned
-run from `NeedsInputIdle` to `NeedsInput` only after the scheduler claim, then
-uses `runFlow()` to consume the durable parent input. The parent/child HITL
-records make a restart replay deterministic without an ACP permission session.
+No status is added for decision requests. The startup/reconcile handoff owner
+uses the durable parent response as intent: it rewrites `input-<stepId>.json`
+before a missing delivery marker, or reclaims a marker-complete graph wake. A
+final idle decision returns a graph-owned run from `NeedsInputIdle` to
+`NeedsInput` only after the scheduler claim, then uses `runFlow()` to consume
+the durable parent input. At capacity it remains idle with
+`resume_requested_at`. The parent/child HITL records make restart recovery
+deterministic without an ACP permission session.

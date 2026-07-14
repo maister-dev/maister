@@ -235,4 +235,6 @@ decision ID. The database permits only the row shape; the locked service proves
 the parent schema and same-run relationship. `UNIQUE (run_id, source_artifact_id,
 decision_id) WHERE kind='decision_request'` is the replay guard. Open children
 are queried by `(parent_hitl_request_id, created_at)` and are system-closed when
-the parent starts ordinary rework.
+the parent starts ordinary rework. A child response accepts exactly one
+top-level `optionId`; extra fields are rejected before the stored response can
+change.

@@ -2070,6 +2070,7 @@
     "inspectorActionOpenPendingInput": "Open pending input",
     "inspectorActionOpenAgentChat": "Ask the agent",
     "pendingTitle": "Waiting on you",
+    "pendingCount": "({count} requests)",
     "responseLabel": "Response (JSON)",
     "responseHint": "Enter a JSON value matching the requested schema below.",
     "schemaLabel": "Requested schema",

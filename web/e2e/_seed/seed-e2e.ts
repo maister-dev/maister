@@ -1002,6 +1002,8 @@ const M17_PROJECT1_SLUG = "e2e-m17-project1";
 const M17_PROJECT2_SLUG = "e2e-m17-project2";
 const M17_BRANCH1 = "maister/e2e-m17-proj1";
 const M17_BRANCH2 = "maister/e2e-m17-proj2";
+const PLAN_REVIEW_SLUG = "e2e-plan-review";
+const PLAN_REVIEW_TASK_TITLE = "Plan review decisions";
 
 const M17_REVIEW_SCHEMA = {
   review: true,
@@ -3513,6 +3515,12 @@ type M17FixtureRecord = {
   project2Branch: string;
 };
 
+type PlanReviewFixtureRecord = {
+  projectSlug: string;
+  runId: string;
+  taskTitle: string;
+};
+
 type BudgetForkFixtureRecord = {
   projectSlug: string;
   projectId: string;
@@ -3746,6 +3754,134 @@ async function seedM17Fixture(
     project2RunId: ids.run2,
     project2HitlId: ids.hitl2,
     project2Branch: M17_BRANCH2,
+  };
+}
+
+async function seedPlanReviewFixture(
+  pool: Pool,
+): Promise<PlanReviewFixtureRecord> {
+  const ids = {
+    artifact: randomUUID(),
+    flow: randomUUID(),
+    parentHitl: randomUUID(),
+    project: randomUUID(),
+    run: randomUUID(),
+    task: randomUUID(),
+    workspace: randomUUID(),
+    decisionA: randomUUID(),
+    decisionB: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-plan-review`;
+  const parentSchema = {
+    review: true,
+    allowedDecisions: ["approve", "rework"],
+    transitions: { approve: "done", rework: "implement" },
+    reworkTargets: ["implement"],
+    workspacePolicies: ["keep"],
+    planReview: {
+      sourceArtifactId: ids.artifact,
+      answersVar: "plan_answers",
+      assumptions: [],
+      decisions: [{ id: "database" }, { id: "resume" }],
+    },
+  };
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [PLAN_REVIEW_SLUG]);
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, 'MAIster E2E Plan Review', $3, $4, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [ids.project, PLAN_REVIEW_SLUG, repoPath, `${repoPath}/maister.yaml`],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'plan-review', 'github.com/maister/plan-review', 'v0.0.1', $3, $4, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      `/tmp/maister-e2e/flows/plan-review@v0.0.1`,
+      JSON.stringify(M17_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, 1, $3, 'Review this plan', $4, 'InFlight', 'InFlight')`,
+    [ids.task, ids.project, PLAN_REVIEW_TASK_TITLE, ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: PLATFORM_DEFAULT_RUNNER_ID,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(PLATFORM_DEFAULT_RUNNER_ID),
+  });
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, 'maister/e2e-plan-review', $4, $5)`,
+    [ids.workspace, ids.run, ids.project, worktreePath, repoPath],
+  );
+  await pool.query(
+    `INSERT INTO artifact_instances (
+      id, run_id, artifact_def_id, node_id, attempt, kind, producer, locator, validity
+    ) VALUES ($1, $2, 'plan-review', 'implement', 1, 'plan', 'runner', $3, 'current')`,
+    [
+      ids.artifact,
+      ids.run,
+      JSON.stringify({ kind: "file", path: "artifacts/plan-review.json" }),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, 'Review the plan')`,
+    [ids.parentHitl, ids.run, JSON.stringify(parentSchema)],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (
+      id, run_id, step_id, kind, schema, prompt, parent_hitl_request_id, source_artifact_id, decision_id
+    ) VALUES
+      ($1, $2, 'review', 'decision_request', $3, 'Choose a database', $4, $5, 'database'),
+      ($6, $2, 'review', 'decision_request', $7, 'Choose a resume mode', $4, $5, 'resume')`,
+    [
+      ids.decisionA,
+      ids.run,
+      JSON.stringify({
+        version: 1,
+        sourceArtifactId: ids.artifact,
+        decisionId: "database",
+        question: "Choose a database",
+        options: [
+          { id: "postgres", label: "Postgres", consequences: "Transactional" },
+          { id: "files", label: "Files", consequences: "Separate protocol" },
+        ],
+      }),
+      ids.parentHitl,
+      ids.artifact,
+      ids.decisionB,
+      JSON.stringify({
+        version: 1,
+        sourceArtifactId: ids.artifact,
+        decisionId: "resume",
+        question: "Choose a resume mode",
+        options: [
+          { id: "graph", label: "Graph", consequences: "Cap-safe" },
+          {
+            id: "checkpoint",
+            label: "Checkpoint",
+            consequences: "Requires a later resume",
+          },
+        ],
+      }),
+    ],
+  );
+
+  return {
+    projectSlug: PLAN_REVIEW_SLUG,
+    runId: ids.run,
+    taskTitle: PLAN_REVIEW_TASK_TITLE,
   };
 }
 
@@ -6742,6 +6878,7 @@ async function main(): Promise<void> {
     const m15 = await seedM15Fixture(pool, admin.id);
     const m16 = await seedM16Fixture(pool, admin.id);
     const m17 = await seedM17Fixture(pool, admin.id);
+    const planReview = await seedPlanReviewFixture(pool);
     const budgetFork = await seedBudgetForkFixture(pool, admin.id);
     const m18 = await seedM18Fixture(pool, admin.id);
     const m27 = await seedM27Fixture(pool, admin.id);
@@ -6806,6 +6943,7 @@ async function main(): Promise<void> {
         m15,
         m16,
         m17,
+        planReview,
         budgetFork,
         m18,
         m27,

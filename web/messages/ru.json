@@ -2070,6 +2070,7 @@
     "inspectorActionOpenPendingInput": "К ожидающему вводу",
     "inspectorActionOpenAgentChat": "К чату с агентом",
     "pendingTitle": "Ждёт вашего ответа",
+    "pendingCount": "(запросов: {count})",
     "responseLabel": "Ответ (JSON)",
     "responseHint": "Введите JSON-значение по схеме ниже.",
     "schemaLabel": "Запрошенная схема",

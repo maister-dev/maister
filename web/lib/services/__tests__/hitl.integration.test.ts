@@ -22,7 +22,12 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
-import { respondToHitl, HitlActor } from "@/lib/services/hitl";
+import { runFlow } from "@/lib/flows/runner";
+import {
+  reconcilePlanReviewDecisionHandoffs,
+  respondToHitl,
+  type HitlActor,
+} from "@/lib/services/hitl";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -65,6 +70,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete process.env.MAISTER_RUNTIME_ROOT;
+  delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
   await rm(runtimeRoot, { recursive: true, force: true });
 });
 
@@ -200,6 +206,11 @@ async function seedPlanReviewHitls(runId: string): Promise<{
       recommendation: "graph",
     },
   ];
+
+  await (db as any)
+    .update(schema.runs)
+    .set({ currentStepId: "review_plan" })
+    .where(eq(schema.runs.id, runId));
 
   await (db as any).insert(schema.artifactInstances).values({
     id: sourceArtifactId,
@@ -537,11 +548,8 @@ describe("respondToHitl integration — plan-review decision requests", () => {
   it("serializes concurrent child answers, persists ordered parent input, and replays the final answer idempotently", async () => {
     const projectId = await seedProject("test-plan-review-decisions");
     const runId = await seedRun(projectId);
-    const {
-      parentHitlRequestId,
-      childHitlRequestIds,
-      sourceArtifactId,
-    } = await seedPlanReviewHitls(runId);
+    const { parentHitlRequestId, childHitlRequestIds, sourceArtifactId } =
+      await seedPlanReviewHitls(runId);
     const actor: HitlActor = {
       kind: "user",
       userId: "u-1",
@@ -575,7 +583,9 @@ describe("respondToHitl integration — plan-review decision requests", () => {
       .select()
       .from(schema.hitlRequests)
       .where(eq(schema.hitlRequests.runId, runId));
-    const parent = rows.find((row: { id: string }) => row.id === parentHitlRequestId);
+    const parent = rows.find(
+      (row: { id: string }) => row.id === parentHitlRequestId,
+    );
     const children = rows.filter(
       (row: { kind: string }) => row.kind === "decision_request",
     );
@@ -593,7 +603,12 @@ describe("respondToHitl integration — plan-review decision requests", () => {
       },
     });
     expect(children).toHaveLength(2);
-    expect(children.every((child: { respondedAt: Date | null }) => child.respondedAt instanceof Date)).toBe(true);
+    expect(
+      children.every(
+        (child: { respondedAt: Date | null }) =>
+          child.respondedAt instanceof Date,
+      ),
+    ).toBe(true);
 
     const inputPath = join(
       runtimeRoot,
@@ -603,6 +618,7 @@ describe("respondToHitl integration — plan-review decision requests", () => {
       runId,
       "input-review_plan.json",
     );
+
     expect(JSON.parse(await readFile(inputPath, "utf8"))).toMatchObject(
       parent.response,
     );
@@ -618,5 +634,241 @@ describe("respondToHitl integration — plan-review decision requests", () => {
     );
 
     expect(replay.status).toBe(202);
+  });
+
+  it("replays a committed plan-review handoff after a process restart", async () => {
+    const projectId = await seedProject("test-plan-review-recovery");
+    const runId = await seedRun(projectId);
+    const { parentHitlRequestId, childHitlRequestIds, sourceArtifactId } =
+      await seedPlanReviewHitls(runId);
+    const parentResponse = {
+      decision: "rework",
+      workspacePolicy: "keep",
+      comments: "",
+      plan_answers: {
+        schemaVersion: 1,
+        sourceArtifactId,
+        answers: [
+          { decisionId: "database", optionId: "postgres" },
+          { decisionId: "resume", optionId: "graph" },
+        ],
+      },
+    };
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({
+        response: parentResponse,
+        decision: "rework",
+        workspacePolicy: "keep",
+      })
+      .where(eq(schema.hitlRequests.id, parentHitlRequestId));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "postgres" }, respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[0]));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "graph" } })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[1]));
+
+    await expect(
+      reconcilePlanReviewDecisionHandoffs({ db }),
+    ).resolves.toBeGreaterThanOrEqual(1);
+
+    const rows = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    const parent = rows.find(
+      (row: { id: string }) => row.id === parentHitlRequestId,
+    );
+    const finalChild = rows.find(
+      (row: { id: string }) => row.id === childHitlRequestIds[1],
+    );
+    const inputPath = join(
+      runtimeRoot,
+      ".maister",
+      "test-plan-review-recovery",
+      "runs",
+      runId,
+      "input-review_plan.json",
+    );
+
+    expect(parent.respondedAt).toBeInstanceOf(Date);
+    expect(finalChild.respondedAt).toBeInstanceOf(Date);
+    await expect(readFile(inputPath, "utf8")).resolves.toContain(
+      '"decision": "rework"',
+    );
+    await vi.waitFor(() => expect(runFlow).toHaveBeenCalledWith(runId));
+  });
+
+  it("reclaims an already-delivered handoff after a process restart", async () => {
+    const projectId = await seedProject("test-plan-review-resume-recovery");
+    const runId = await seedRun(projectId);
+    const { parentHitlRequestId, childHitlRequestIds, sourceArtifactId } =
+      await seedPlanReviewHitls(runId);
+    const parentResponse = {
+      decision: "rework",
+      workspacePolicy: "keep",
+      comments: "",
+      plan_answers: {
+        schemaVersion: 1,
+        sourceArtifactId,
+        answers: [
+          { decisionId: "database", optionId: "postgres" },
+          { decisionId: "resume", optionId: "graph" },
+        ],
+      },
+    };
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({
+        response: parentResponse,
+        decision: "rework",
+        workspacePolicy: "keep",
+        respondedAt: new Date(),
+      })
+      .where(eq(schema.hitlRequests.id, parentHitlRequestId));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "postgres" }, respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[0]));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "graph" }, respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[1]));
+
+    await expect(
+      reconcilePlanReviewDecisionHandoffs({ db }),
+    ).resolves.toBeGreaterThanOrEqual(1);
+    await vi.waitFor(() => expect(runFlow).toHaveBeenCalledWith(runId));
+  });
+
+  it("queues an idle recovered handoff at the flow concurrency cap", async () => {
+    process.env.MAISTER_MAX_CONCURRENT_RUNS = "1";
+    const projectId = await seedProject("test-plan-review-idle-cap");
+    const runId = await seedRun(projectId);
+
+    await seedRun(projectId);
+    const { parentHitlRequestId, childHitlRequestIds, sourceArtifactId } =
+      await seedPlanReviewHitls(runId);
+    const parentResponse = {
+      decision: "rework",
+      workspacePolicy: "keep",
+      comments: "",
+      plan_answers: {
+        schemaVersion: 1,
+        sourceArtifactId,
+        answers: [
+          { decisionId: "database", optionId: "postgres" },
+          { decisionId: "resume", optionId: "graph" },
+        ],
+      },
+    };
+
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "NeedsInputIdle" })
+      .where(eq(schema.runs.id, runId));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({
+        response: parentResponse,
+        decision: "rework",
+        workspacePolicy: "keep",
+        respondedAt: new Date(),
+      })
+      .where(eq(schema.hitlRequests.id, parentHitlRequestId));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "postgres" }, respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[0]));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "graph" }, respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, childHitlRequestIds[1]));
+
+    await expect(
+      reconcilePlanReviewDecisionHandoffs({ db }),
+    ).resolves.toBeGreaterThanOrEqual(1);
+
+    const [recoveredRun] = await (db as any)
+      .select({
+        resumeRequestedAt: schema.runs.resumeRequestedAt,
+        status: schema.runs.status,
+      })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(recoveredRun.status).toBe("NeedsInputIdle");
+    expect(recoveredRun.resumeRequestedAt).toBeInstanceOf(Date);
+    expect(runFlow).not.toHaveBeenCalledWith(runId);
+  });
+
+  it("serializes a parent rework against a simultaneous child answer", async () => {
+    const projectId = await seedProject("test-plan-review-parent-race");
+    const runId = await seedRun(projectId);
+    const { parentHitlRequestId, childHitlRequestIds } =
+      await seedPlanReviewHitls(runId);
+    const actor: HitlActor = {
+      kind: "user",
+      userId: "u-1",
+      label: "Test User",
+    };
+
+    const outcomes = await Promise.allSettled([
+      respondToHitl(
+        {
+          runId,
+          hitlRequestId: parentHitlRequestId,
+          body: { response: { decision: "rework", comments: "Start over" } },
+        },
+        actor,
+        { db },
+      ),
+      respondToHitl(
+        {
+          runId,
+          hitlRequestId: childHitlRequestIds[0],
+          body: { optionId: "postgres" },
+        },
+        actor,
+        { db },
+      ),
+    ]);
+    const parentOutcome = outcomes[0];
+    const childOutcome = outcomes[1];
+
+    expect(parentOutcome).toMatchObject({ status: "fulfilled" });
+    expect(
+      childOutcome.status === "fulfilled" ||
+        (childOutcome.status === "rejected" &&
+          childOutcome.reason.code === "CONFLICT"),
+    ).toBe(true);
+
+    const rows = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    const parent = rows.find(
+      (row: { id: string }) => row.id === parentHitlRequestId,
+    );
+    const children = rows.filter(
+      (row: { kind: string }) => row.kind === "decision_request",
+    );
+
+    expect(parent.response).toMatchObject({
+      decision: "rework",
+      comments: "Start over",
+    });
+    expect(parent.respondedAt).toBeInstanceOf(Date);
+    expect(
+      children.every(
+        (child: { respondedAt: Date | null }) =>
+          child.respondedAt instanceof Date,
+      ),
+    ).toBe(true);
   });
 });
