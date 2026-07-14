@@ -1940,7 +1940,15 @@ paths:
         | response payload | body-controlled | validated by kind/schema |
         | token owner | auth-context | verified bearer token row |
 
-        The handler dispatches on the stored `hitl_requests.kind`:
+        **(ADR-137 Designed) Review refusal.** Before invoking the shared
+        response service, this route loads the stored schema and rejects every
+        `schema.review === true` gate with `409 PRECONDITION`. External tokens
+        have no authenticated code/diff/feedback-preview workspace and cannot
+        submit a blind review decision. The response directs the actor to the
+        session-authenticated Review Workspace. The refusal does not mutate the
+        HITL row or write an audit success outcome.
+
+        The handler otherwise dispatches on the stored `hitl_requests.kind`:
 
         - **permission**: supply `optionId`. Two-phase atomic claim; same
           `optionId` on retry → idempotent 200; idle-resume scheduled → 202.
@@ -2027,7 +2035,14 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: |
+            `CONFLICT` or `PRECONDITION`. In addition to existing stale/claimed
+            outcomes, every `schema.review === true` request is refused before
+            response delivery; use the authenticated Review Workspace to view
+            code and preview verified feedback.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "410":
           description: |
             Terminal idle-resume failure (`HITL_TIMEOUT`/`CHECKPOINT`): the

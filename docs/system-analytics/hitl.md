@@ -1107,6 +1107,76 @@ column may be non-null. `responded_at` means a real human answer only, never a
 supersession. The response endpoint rejects every non-`agent_question` branch
 here and does not write an artifact, call `runFlow`, or call the supervisor.
 
+## Flow Review Workspace feedback delivery (Designed — ADR-137)
+
+### Purpose
+
+Turn a Flow review rework into a verifiable preview → claim → runner sequence.
+Only the authenticated Review Workspace can make this decision; general HITL
+remains unchanged.
+
+### Entities
+
+- **Preview** — side-effect-free `POST /api/runs/{runId}/hitl/{hitlRequestId}/review-feedback-preview`.
+  URL ids locate rows; actor, project, Flow target, comments variable, workspace,
+  threads, and chat are server-derived.
+- **Fresh claim** — a session response with opaque review-source and feedback
+  fingerprints, valid only for `response.decision = rework`.
+- **Canonical retry** — stored response equality only; it does not recompute a
+  potentially later worktree or packet.
+- **Gate-chat turn** — durable lifecycle row `pending | completed | failed |
+  aborted`; only `completed` turns are packet input.
+
+### Process
+
+```mermaid
+sequenceDiagram
+    actor Reviewer
+    participant W as Review Workspace
+    participant H as HITL service
+    participant DB as Postgres
+    participant R as Graph runner
+    Reviewer->>W: Request changes
+    W->>H: POST review-feedback-preview {response}
+    H->>DB: derive current source + packet
+    H-->>W: target, counts, payload, opaque digests
+    W->>H: POST respond with response + digests
+    H->>DB: lock HITL; reject pending chat; recompute and compare
+    H->>DB: store canonical response only
+    H-->>R: schedule rework
+    R->>R: load same packet service
+    R->>DB: record human_note digest and included thread ids
+```
+
+### Expectations
+
+- Preview accepts no body-controlled project, workspace, node, path, comment,
+  target, or template identifiers. It returns `200` only for a live allowed
+  rework decision and has no mutation or runner side effect.
+- A live pending chat turn returns retryable `409 PRECONDITION`. The prompt is
+  performed outside a DB transaction, then completion/failure/abort is written
+  atomically; a lease finalizes abandoned work and late replies are dropped.
+- External v1 `respond` rejects `schema.review === true` with `409
+  PRECONDITION` before calling the shared response service. Permission, form,
+  and other eligible human compatibility remains unchanged.
+- Preview/runner logs use ids, counts, state, and SHA-256 digests only—never
+  review summary, thread, chat, diff, or composed packet text.
+
+### Edge cases
+
+- A stale source/packet fingerprint, missing feedback consumer, or changed
+  review gate → `409 PRECONDITION` with the HITL row still open.
+- Same canonical response after a successful claim → existing idempotent
+  response; different canonical response → `409 CONFLICT`.
+- `approve` never needs preview fingerprints and retains current semantics.
+
+### Linked artifacts
+
+- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+  [`review-comments.md`](review-comments.md), [`flow-graph.md`](flow-graph.md),
+  [`../api/web.openapi.yaml`](../api/web.openapi.yaml), and
+  [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml).
+
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),

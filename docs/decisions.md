@@ -162,6 +162,7 @@
 | [ADR-135](#adr-135-testcontainers-only-ephemeral-postgres-for-database-backed-tests) | Testcontainers-only ephemeral Postgres for database-backed tests | Accepted | 2026-07-12 |
 | [ADR-136](#adr-136-task-bound-human-ask-clarification-handoff) | Task-bound Human-ask clarification handoff | Implemented | 2026-07-13 |
 | [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
+| [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Accepted — Designed | 2026-07-14 |
 
 ---
 
@@ -11964,6 +11965,72 @@ locked parent/sibling set.
   can silently alter a plan; session-authenticated human review is intentional.
 - _Use the ACP idle resume driver_: rejected because there is no permission
   deferred to resolve for this graph-owned rework.
+### ADR-138: Flow Review Workspace — complete working-tree review and verified rework feedback delivery
+
+**Date:** 2026-07-14
+**Status:** Accepted — Designed
+
+**Context:** A Flow review gate currently separates the human decision from the
+code being reviewed. The Inbox can invite an inline decision, the workbench's
+committed range may omit staged, unstaged, and untracked work, and a reviewer
+cannot prove that their inline comments and chat context become the exact input
+to the rework target. A confidence self-report also occupies human decision UI
+without changing the Flow's review decision.
+
+**Decision:**
+
+- A Flow-only `scope=review` reads the server-resolved workspace base through
+  the current working tree. It includes committed, staged, unstaged, and
+  untracked **reviewable** files. `scope=run` remains the REST default, while
+  `uncommitted` retains its HEAD-to-working-tree forensic meaning.
+- `schema.review === true` opens exactly one authenticated Review Workspace.
+  Inbox is triage with a **Review code** deep link; it is not a second decision
+  form. The final-delivery `ReviewPanel` remains a separate promotion surface.
+- Before a session-authenticated `rework` claim, the browser requests a
+  side-effect-free feedback preview. The server derives the Flow target,
+  comments variable, open threads, completed gate-chat messages, review source,
+  and deterministic payload. The fresh claim re-computes and verifies opaque
+  source and packet fingerprints under the HITL lock. A canonical idempotent
+  retry compares only the stored canonical response and never re-reads a later
+  worktree.
+- Review-comment writes share the pending-HITL lock condition. Gate chat uses a
+  new durable `gate_chat_turns` lifecycle so an ACP prompt never holds a
+  database lock: only completed turns enter the packet; a pending live turn
+  blocks response with retryable `PRECONDITION`; expiry/abort drops a late reply.
+- Graph compilation fails closed when a human rework target cannot demonstrably
+  consume its effective `commentsVar` in the renderer's real prompt or command
+  field. The runner records the derived delivered-payload digest with its
+  existing `human_note` evidence.
+- External v1 tokens keep their existing permission/form compatibility but are
+  refused (`409 PRECONDITION`) for every `schema.review === true` gate because
+  they do not have the authenticated workspace/preview surface. Confidence UI
+  and browser emission are removed; the optional transport and historical DB
+  field remain compatible.
+- The sole new persistence is `gate_chat_turns`; no feedback-packet table,
+  confidence migration, new error code, event, environment variable, sidecar,
+  port, or deployment setting is introduced. Structured logs contain only ids,
+  counts, states, and digests—never diff, comment, chat, or packet text.
+
+**Consequences:**
+
+- A reviewer receives a complete and fresh review source and a single decision
+  location, while a Flow receives a packet that was previewed and verified.
+- The implementation adds one generated Drizzle migration after `0099` and
+  updates the web/external OpenAPI, analytics, screen, and DSL contracts before
+  code lands.
+- Existing non-review HITL and external confidence callers retain compatibility;
+  an external token cannot become a blind code-review actor.
+
+**Alternatives Considered:**
+
+- _Use the committed run diff for the review gate_: rejected because it hides
+  real current working-tree changes.
+- _Store the rendered feedback packet or trust browser-supplied target ids_:
+  rejected because both make review delivery stale or forgeable.
+- _Infer in-flight gate chat from transcript rows_: rejected because a crash or
+  late ACP reply cannot be distinguished safely without durable lifecycle state.
+- _Remove confidence transport and column now_: rejected because it is a
+  breaking external/API change unrelated to human UI ergonomics.
 
 ---
 

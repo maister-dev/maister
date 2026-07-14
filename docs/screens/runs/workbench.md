@@ -207,6 +207,21 @@ Consensus evidence uses the existing Evidence tab and artifact routes:
 M41 adds `plan` artifact-kind labels, consensus verifier/target labels, round
 labels, and parse-status labels. EN + RU parity required.
 
+## Flow Review Workspace (Designed — ADR-137)
+
+`wb=review` is a Flow-review-only primary workbench state and always resolves
+`scope=review`. It has three coordinated regions: a review-source/freshness
+header and changed-file rail, a complete diff with inline/outdated threads, and
+one decision rail. The preview dialog displays target node + `commentsVar`,
+exact deterministic payload, open/resolved-thread counts, completed chat count,
+and the explicit fact that resolved threads are excluded.
+
+On mobile, the decision rail follows the selected diff; it does not become a
+duplicate inline form. Focus order is header, file list, diff/thread controls,
+then decision. Loading, stale-source, missing-workspace, and failed-claim states
+are announced with `aria-live`, keep the diff inspectable, and provide localized
+recovery. A non-review or scratch URL state has an explicit unavailable state.
+
 ## Linked artifacts
 
 - Screens / blocks: [`flow-run.md`](flow-run.md), [`scratch-run.md`](scratch-run.md),

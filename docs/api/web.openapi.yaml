@@ -4261,11 +4261,13 @@ paths:
           required: false
           schema:
             type: string
-            enum: [run, since-last-review, last-node, uncommitted]
+            enum: [run, review, since-last-review, last-node, uncommitted]
             default: run
           description: |
-            **(M30 — Implemented, ADR-082)** Diff base selection (allow-list
-            validated; default `run`). `run`: `workspace.baseCommit..branch`
+            **(ADR-137 Designed)** `review` is Flow-only and means
+            `workspace.baseCommit -> current working tree`, including committed,
+            staged, unstaged, and untracked reviewable files. Its source has an
+            opaque fingerprint. The default remains `run`. `run`: `workspace.baseCommit..branch`
             (current behavior). `since-last-review`: `<prev-review-visit-sha>..branch`
             from `hitl_requests.review_tip_sha`. `last-node`:
             `<pre-attempt-checkpoint-sha>..branch` for the latest completed agent
@@ -4348,9 +4350,9 @@ paths:
           required: false
           schema:
             type: string
-            enum: [run, since-last-review, last-node, uncommitted]
+            enum: [run, review, since-last-review, last-node, uncommitted]
             default: run
-          description: Same diff scope allow-list as `GET /api/runs/{runId}/diff`.
+          description: Same diff scope allow-list as `GET /api/runs/{runId}/diff`; `review` is Flow-only and shares its source/filter/fingerprint semantics.
       responses:
         "200":
           description: Lightweight change summary.
@@ -5308,6 +5310,81 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/runs/{runId}/hitl/{hitlRequestId}/review-feedback-preview:
+    post:
+      tags: [hitl, review-comments]
+      summary: Designed (ADR-137) — preview verified Flow-review rework feedback
+      description: |
+        Session-authenticated, read-only preview for a live Flow
+        `schema.review === true` rework decision. `runId` and `hitlRequestId`
+        are URL locators; actor, project, stored allowed decisions, pinned Flow
+        graph, target, `commentsVar`, worktree, open threads, and completed
+        deciding-gate chat are server-derived. The request body cannot name a
+        project, workspace, node, path, thread, target, or template variable.
+
+        The service uses the same packet composer as the graph runner and
+        returns the exact deterministic payload plus opaque source/packet
+        SHA-256 fingerprints. It writes no response, input artifact, evidence,
+        run state, or ACP side effect. Resolved roots are excluded. Preview and
+        runner logging is limited to ids, counts, state, and digests.
+      operationId: previewRunReviewFeedback
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: hitlRequestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewFeedbackPreviewBody" }
+            examples:
+              rework:
+                value:
+                  response:
+                    decision: rework
+                    comments: "Please validate empty input."
+                    workspacePolicy: keep
+      responses:
+        "200":
+          description: Current deterministic feedback packet. No mutation occurred.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewFeedbackPreviewResponse" }
+              examples:
+                current:
+                  value:
+                    reviewSource:
+                      scope: review
+                      baseCommit: "a1b2c3d4"
+                      fingerprint: "sha256:source-digest"
+                    feedback:
+                      fingerprint: "sha256:packet-digest"
+                      target: { nodeId: fix, commentsVar: review_comments }
+                      openThreadIds: ["7c9e6679-7425-40de-944b-e07fc1f90ae7"]
+                      resolvedThreadCount: 1
+                      gateChatMessageCount: 2
+                      payload: "## Review summary\nPlease validate empty input."
+        "400":
+          description: Malformed response shape (`CONFIG`).
+          content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `PRECONDITION`: no live review rework gate, unavailable workspace/source,
+            pending gate-chat turn, or legacy graph without a proven feedback consumer.
+          content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
+        "422":
+          description: |
+            `NEEDS_INPUT`: rework has neither a non-blank summary nor an open root thread.
+          content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
+
   /api/runs/{runId}/hitl/{hitlRequestId}/respond:
     post:
       tags: [hitl]
@@ -5385,8 +5462,11 @@ paths:
 
         **(M11a — Designed) graph `human_review` decisions.** For a graph
         review HITL the reviewer's `decision` / `comments` / `workspacePolicy`
-        ride **inside** the existing `response` form payload — there are NO new
-        top-level body fields (the body schema stays `{ optionId?, response? }`).
+        ride inside the existing `response` form payload. **(ADR-137 Designed)**
+        a fresh `response.decision="rework"` additionally supplies the two
+        opaque top-level preview fingerprints; they are transport-only and are
+        never stored in the canonical response or input artifact. Under the
+        HITL lock the service recomputes both current values before claiming.
         The route validates `response.decision` against `allowedDecisions`, the
         resolved transition target against `transitions`, and (when reworking)
         `response.workspacePolicy` against `workspacePolicies` and the target
@@ -5466,8 +5546,10 @@ paths:
                   response:
                     target: staging
               review-rework:
-                summary: (M11a) Graph review — rework with comments
+                summary: (ADR-137 Designed) Graph review — verified rework with comments
                 value:
+                  reviewSourceFingerprint: "sha256:source-digest"
+                  feedbackFingerprint: "sha256:packet-digest"
                   response:
                     decision: "rework"
                     comments: "Tighten the error handling in the parser."
@@ -5598,7 +5680,11 @@ paths:
             (`CONFLICT`). `agent_question` also returns 409 for an answered,
             superseded, inactive, or different-payload request. For budget composites, also used when a different
             option arrives after a non-failed staged claim. Identifies a retry
-            contract violation, not a server bug.
+            contract violation, not a server bug. **(ADR-137 Designed)** a
+            fresh rework also returns `PRECONDITION` when its review source or
+            feedback packet changed, when a gate-chat turn is live, or when the
+            pinned graph cannot prove the declared target consumes feedback;
+            no response/artifact/runner wake is written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5680,7 +5766,9 @@ paths:
         visible after the gate closes, like the diff.
 
         Returns the run's review-comment threads (root + replies) with a
-        computed `placement` per thread: exactly one DB query for the run's
+        computed `placement` per thread: `scope=review` (ADR-137 Designed) uses
+        the Flow base-to-working-tree source and is required by Review Workspace
+        deep links; legacy/default reads retain their existing source. Exactly one DB query for the run's
         comments plus AT MOST one in-memory parse of the server-recomputed
         committed `base..branch` diff (no N+1; a run with zero threads
         short-circuits without computing the diff). `placement = "inline"`
@@ -5696,6 +5784,11 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [run, uncommitted, review] }
+          description: "`review` is Flow-only and shares the review-source filter; historic rows are recalculated, never rewritten."
       responses:
         "200":
           description: Review-comment threads with computed placement.
@@ -5720,6 +5813,8 @@ paths:
         NeedsInputIdle}`) AND a pending `hitl_requests` row
         (`respondedAt IS NULL`) with `kind = "human"` and
         `schema.review === true` must exist — otherwise 409 `PRECONDITION`.
+        **(ADR-137 Designed)** `scope=review` uses the same Flow current-review
+        source as diff/preview and locks the pending HITL through the mutation.
         The new comment references that row (`hitlRequestId`,
         `gateAttempt`). The write NEVER touches `runs.status` and is a single
         DB transaction with no artifact write and no supervisor call.
@@ -5742,6 +5837,11 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [run, uncommitted, review] }
+          description: "`review` is Flow-only and validates the root anchor against the current-review source."
       requestBody:
         required: true
         content:
@@ -15482,13 +15582,15 @@ components:
         runId: { type: string, format: uuid }
         scope:
           type: string
-          enum: [run, since-last-review, last-node, uncommitted]
+          enum: [run, review, since-last-review, last-node, uncommitted]
         scopes:
           type: object
           required: [run, since-last-review, last-node, uncommitted]
           additionalProperties: false
           properties:
             run:
+              { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+            review:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
             since-last-review:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
@@ -15500,6 +15602,10 @@ components:
           type: string
           nullable: true
           description: Server-resolved base commit or ref label for the selected scope.
+        reviewSourceFingerprint:
+          type: string
+          nullable: true
+          description: ADR-137 opaque SHA-256 source proof when `scope=review`; null for every other scope.
         sourceBranch:
           type: string
           nullable: true
@@ -15568,7 +15674,7 @@ components:
         runId: { type: string, format: uuid }
         scope:
           type: string
-          enum: [run, since-last-review, last-node, uncommitted]
+          enum: [run, review, since-last-review, last-node, uncommitted]
           description: |
             (M30 — Implemented, ADR-082) The effective diff scope for this
             response (the validated `scope` query value; default `run`). Scratch
@@ -15579,6 +15685,8 @@ components:
           properties:
             run:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+            review:
+              { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
             since-last-review:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
             last-node:
@@ -15586,11 +15694,16 @@ components:
             uncommitted:
               { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
           description: |
-            (M30 — Implemented, ADR-082) Per-scope availability map shared with
-            `GET /api/runs/{runId}/change-summary`. Flow runs report all four
-            scopes (unavailable ones disabled with a `reason`); scratch runs
+            (ADR-137 Designed) Per-scope availability map shared with
+            `GET /api/runs/{runId}/change-summary`. Flow runs report `review`
+            plus the existing forensic scopes; scratch runs never expose review.
+            Existing Flow runs report all forensic scopes (unavailable ones disabled with a `reason`); scratch runs
             report only `{ run: { available: true } }`.
         baseCommit: { type: string }
+        reviewSourceFingerprint:
+          type: string
+          nullable: true
+          description: ADR-137 opaque SHA-256 source proof when `scope=review`; null for every other scope.
         sourceBranch: { type: string }
         targetBranch: { type: string }
         diff: { type: string }
@@ -15980,6 +16093,51 @@ components:
         action:
           type: string
           enum: [switch_to_manual]
+    ReviewFeedbackPreviewBody:
+      type: object
+      required: [response]
+      additionalProperties: false
+      properties:
+        response:
+          type: object
+          required: [decision]
+          additionalProperties: false
+          properties:
+            decision: { type: string, enum: [rework] }
+            comments: { type: string, maxLength: 10000 }
+            workspacePolicy: { type: string }
+      description: |
+        Proposed decision only. All resource ids, Flow target metadata, review
+        source, comments, threads, and chat are server-derived.
+    ReviewFeedbackPreviewResponse:
+      type: object
+      required: [reviewSource, feedback]
+      additionalProperties: false
+      properties:
+        reviewSource:
+          type: object
+          required: [scope, baseCommit, fingerprint]
+          properties:
+            scope: { type: string, enum: [review] }
+            baseCommit: { type: string }
+            fingerprint: { type: string, pattern: "^sha256:[0-9A-Za-z_-]+$" }
+        feedback:
+          type: object
+          required: [fingerprint, target, openThreadIds, resolvedThreadCount, gateChatMessageCount, payload]
+          properties:
+            fingerprint: { type: string, pattern: "^sha256:[0-9A-Za-z_-]+$" }
+            target:
+              type: object
+              required: [nodeId, commentsVar]
+              properties:
+                nodeId: { type: string }
+                commentsVar: { type: string }
+            openThreadIds:
+              type: array
+              items: { type: string, format: uuid }
+            resolvedThreadCount: { type: integer, minimum: 0 }
+            gateChatMessageCount: { type: integer, minimum: 0 }
+            payload: { type: string }
     HitlResponseBody:
       type: object
       description: |
@@ -15989,6 +16147,14 @@ components:
         `form` | `human` | `agent_question` and may carry option-specific payload for
         `budget_breach`. Exactly ONE shape MUST match the row's `kind`.
       properties:
+        reviewSourceFingerprint:
+          type: string
+          pattern: "^sha256:[0-9A-Za-z_-]+$"
+          description: ADR-137 preview proof; required only for a fresh session-auth review rework and never persisted.
+        feedbackFingerprint:
+          type: string
+          pattern: "^sha256:[0-9A-Za-z_-]+$"
+          description: ADR-137 packet preview proof; required only for a fresh session-auth review rework and never persisted.
         optionId:
           type: string
           minLength: 1

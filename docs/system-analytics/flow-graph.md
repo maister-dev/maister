@@ -747,6 +747,55 @@ readiness interaction: [`readiness.md`](readiness.md).
   `formSchemaSchema` grammar, now reachable via `output.result`); declare
   `options` for every `enum` field.
 
+## Verified human-review feedback consumer (Designed — ADR-137)
+
+### Purpose
+
+Fail closed before a reviewer can submit feedback that a rework renderer would
+silently ignore.
+
+### Entities
+
+- **Effective comments variable** — `rework.commentsVar`, otherwise
+  `finish.human.commentsVar`; it must be a valid top-level template key.
+- **Rework renderer** — an allowed target of type `ai_coding`, `judge`,
+  `orchestrator`, `cli`, or `check`.
+
+### Process
+
+```mermaid
+flowchart TD
+    Manifest["compile pinned manifest"] --> Variable{"effective commentsVar valid?"}
+    Variable -- no --> Refuse["CONFIG before publish/install/launch"]
+    Variable -- yes --> Target{"every allowed rework target is a renderer?"}
+    Target -- no --> Refuse
+    Target -- yes --> Consume{"exact key rendered in prompt/command?"}
+    Consume -- no --> Refuse
+    Consume -- yes --> Gate["review gate may issue verified preview"]
+```
+
+### Expectations
+
+- `ai_coding`, `judge`, and `orchestrator` consume the exact key in
+  `action.prompt`; `cli` and `check` consume it in `action.command`.
+- The generic compiler rule covers built-in AIF flows and user-authored flows;
+  fixture inventory is an inventory regression, not a separate allow-list.
+- The runner loads the same feedback-packet service as preview and records its
+  digest and included thread ids in existing `human_note` evidence.
+
+### Edge cases
+
+- Legacy already-open gates that predate validation are refused at preview/rework
+  time with `409 PRECONDITION`, rather than running an unverified target.
+- Missing variable, unsupported target type, or non-consuming template is a
+  contextual `MaisterError("CONFIG")` before side effects.
+
+### Linked artifacts
+
+- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+  [`hitl.md`](hitl.md), [`review-comments.md`](review-comments.md), and
+  [`../flow-dsl.md`](../flow-dsl.md).
+
 ## Linked artifacts
 
 - ADRs:

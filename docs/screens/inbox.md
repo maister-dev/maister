@@ -173,6 +173,17 @@ resolution. EN + RU parity is required.
 - Active staged claims are not counted in needs-you and render disabled
   controls; `stage:"failed"` rows are answerable again.
 
+## Flow Review Workspace triage (Designed — ADR-137)
+
+For `schema.review === true`, a card remains scannable but is not answerable
+inline. It replaces generic decision controls with **Review code**, linking to
+`/runs/{runId}?wb=review&scope=review`. The card retains task, branch,
+iteration, and change summary context. Permissions, forms, clarification,
+consensus, budget, and non-review human HITL keep the current inline response.
+
+The CTA has EN/RU parity and a visible unavailable message when the run cannot
+open a review workspace. The Inbox never presents a second approve/rework form.
+
 ## Linked artifacts
 
 - Behavior: [`../system-analytics/hitl.md`](../system-analytics/hitl.md)

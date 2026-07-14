@@ -348,6 +348,71 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   is the threads section alone (no leading blank line); zero threads + no
   summary → nothing is injected (pre-feature behavior).
 
+## Flow Review Workspace source and claim (Designed — ADR-137)
+
+### Purpose
+
+Make a Flow review thread part of one verified code-review activity rather than
+a detached annotation stream. This design extends only `schema.review === true`
+gates; historical threads remain readable and are never rewritten.
+
+### Entities
+
+- **Review source** — `{ scope: "review", baseCommit, fingerprint }`, derived
+  from the Flow workspace base through its current working tree.
+- **Reviewable change** — a diff section whose old and new paths both pass the
+  materialized-path filter. The identical filter applies to text, name-status,
+  summary, root extraction, and placement.
+- **Feedback packet** — deterministic composition of the summary, open roots
+  and replies, and completed deciding-gate chat messages. Its digest and the
+  review-source digest are transport-only preview proofs, not persisted body
+  fields.
+
+### Process
+
+```mermaid
+sequenceDiagram
+    actor Reviewer
+    participant UI as Review Workspace
+    participant API as Review APIs
+    participant DB as Postgres
+    Reviewer->>UI: create/resolve comment
+    UI->>API: mutation scoped to review source
+    API->>DB: lock pending HITL; require response/respondedAt null
+    API-->>UI: thread with inline or outdated placement
+    Reviewer->>UI: request changes
+    UI->>API: feedback preview
+    API-->>UI: deterministic packet + source/packet fingerprints
+    UI->>API: fresh rework claim with opaque fingerprints
+    API->>DB: lock and verify fingerprints before storing response
+```
+
+### Expectations
+
+- `scope=review` is Flow-only. It means base-to-working-tree and includes
+  committed, staged, unstaged, and untracked reviewable changes. It is distinct
+  from the default committed `run` scope and the HEAD-to-working-tree
+  `uncommitted` scope.
+- Comment write, resolve, reopen, and edit operations are refused with `409
+  PRECONDITION` after a response claim; comments cannot race the verified packet.
+- Renames/copies crossing a materialized `.claude/*` path are excluded when
+  either side is non-reviewable. Older anchors that no longer match are returned
+  as `outdated`, never as a failing history read.
+
+### Edge cases
+
+- Missing/removed workspace or base → review source unavailable (`409
+  PRECONDITION` for source-dependent writes/preview; historical listing stays
+  readable with outdated placement).
+- Changed source or packet between preview and a fresh claim → `409
+  PRECONDITION`; no response, input artifact, or runner wake is written.
+- A rework with neither non-blank summary nor an open root → `422 NEEDS_INPUT`.
+
+### Linked artifacts
+
+- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+  [`hitl.md`](hitl.md), and [`workbench.md`](workbench.md).
+
 ## Linked artifacts
 
 - ADR: [ADR-072](../decisions.md#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard)

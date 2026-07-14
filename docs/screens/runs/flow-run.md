@@ -244,6 +244,15 @@ controls until completion.
 - Terminal consensus success shows exactly one current `consensus_plan` and one
   current `debate_log` artifact close to the node result and in Evidence.
 
+## Review-gate decision placement (Designed — ADR-137)
+
+An open Flow review gate renders one Review Workspace decision rail, reached by
+`wb=review&scope=review`; `RunHitlResponse` is not rendered elsewhere on this
+run page. The workspace shows its reviewed base-to-working-tree source,
+freshness, threads, feedback preview, and one approve/request-changes decision.
+The final delivery `ReviewPanel` stays a promotion surface with its own
+base-to-run-to-target meaning. Both paths must state that distinction in EN/RU.
+
 ## Linked artifacts
 
 - Blocks: [`run-inspector.md`](run-inspector.md), [`workbench.md`](workbench.md).

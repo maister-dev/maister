@@ -1586,6 +1586,23 @@ manifest schema checks, graph checks, and engine compatibility checks. Project
 reference checks run on project-context install, load, and launch paths that
 provide role/capability registries.
 
+## Human-review feedback consumer (Designed — ADR-137)
+
+For a `human` node whose allowed decision can rework, compilation must prove the
+feedback reaches every allowed target before the Flow can be published,
+installed, or launched. The effective variable is `rework.commentsVar`, falling
+back to `finish.human.commentsVar`; it is a valid top-level template key. Each
+target must be a renderer and reference that exact key in the field it renders:
+`action.prompt` for `ai_coding`, `judge`, and `orchestrator`; `action.command`
+for `cli` and `check`. Missing keys, non-renderer targets, and non-consuming
+templates fail with contextual `CONFIG` before a reviewer can lose feedback.
+
+The generated rework input is server-composed from the review summary, open
+threads, and completed gate-chat turns. Its byte format is stable. The review
+workspace previews the exact packet and target before fresh submission; the
+runner verifies/records the same packet digest when consuming it. This adds no
+DSL syntax and preserves the existing `commentsVar` transport.
+
 ## See also
 
 - `docs/flow-aif-plugin.md` — walkthrough of the bundled `aif` plugin.

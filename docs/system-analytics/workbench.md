@@ -271,6 +271,61 @@ flowchart LR
   `truncated: true` on `…/diff`; the review panel blocks promotion until the
   reviewer acknowledges (ADR-066). NOT a `409`/throw, NOT a silent partial render.
 
+## Review Workspace (Designed — ADR-137)
+
+### Purpose
+
+The Flow Review Workspace is the single code-review and decision surface for an
+open `schema.review === true` gate. It is distinct from the read-only/general
+workbench and the final-delivery ReviewPanel.
+
+### Entities
+
+- **Review tab** — `wb=review`, valid only for a Flow run with an open review
+  gate; it selects `scope=review`.
+- **Review source** — base-to-working-tree content plus a visible freshness
+  statement and opaque fingerprint.
+- **Decision rail** — one approve/request-changes control, summary, completed
+  gate-chat transcript, feedback-preview dialog, and mutation/error state.
+
+### Process
+
+```mermaid
+flowchart LR
+    Inbox["Inbox: Review code"] --> Workspace["wb=review / scope=review"]
+    Workspace --> Diff["complete review diff + inline threads"]
+    Workspace --> Preview["feedback preview"]
+    Preview --> Claim["one decision claim"]
+    Claim --> Evidence["runner evidence digest"]
+```
+
+### Expectations
+
+- Files remain git-tracked only. The review diff may include untracked files as
+  diff additions; it does not broaden the Files-pane trust boundary.
+- Invalid/non-review/scratch deep links show an explicit unavailable state;
+  they never silently substitute a committed-only diff.
+- Desktop uses changed-file rail, diff/threads, and a decision rail. On mobile
+  the rail collapses below the selected diff while preserving the one decision
+  control. Keyboard order is source statement → file rail → diff/thread actions
+  → decision rail. Async state uses `aria-live`; refusal moves focus to a
+  localized error summary.
+- EN and RU use the same source wording, freshness/refusal guidance, resolved
+  thread exclusion, and final-delivery distinction.
+
+### Edge cases
+
+- Source changes after preview → refresh-required state; request changes stays
+  disabled until a new preview is loaded.
+- Removed workspace, unavailable source, or no configured feedback consumer →
+  visible unavailable/refusal state, never a blank decision form.
+
+### Linked artifacts
+
+- [ADR-137](../decisions.md#adr-137-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
+  [`review-comments.md`](review-comments.md), [`hitl.md`](hitl.md), and
+  [`../screens/runs/workbench.md`](../screens/runs/workbench.md).
+
 ## Linked artifacts
 
 - ADRs:
