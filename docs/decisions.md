@@ -164,6 +164,8 @@
 | [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
 | [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Implemented | 2026-07-14 |
 | [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Implemented | 2026-07-15 |
+| [ADR-137](#adr-137-pr-lifecycle-tracking) | PR lifecycle tracking | Designed | 2026-07-14 |
+| [ADR-138](#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen) | Branch sync with AI conflict resolver and reopen | Designed | 2026-07-14 |
 
 ---
 
@@ -12115,6 +12117,247 @@ telemetry ambiguous.
   dispatch paths.
 - _Delete and reinsert agent bindings on each save_: rejected because it loses
   identity and telemetry and lets a stale full replacement erase unseen work.
+### ADR-137: PR lifecycle tracking
+
+**Date:** 2026-07-14
+**Status:** Designed
+
+**Context:** MAIster opens PRs during `pull_request` promotion but never learns
+their fate. `workspaces.pr_url`/`pr_number` are recorded at open time and never
+revisited: there is no merged/closed/conflicts visibility, no merge-commit
+provenance from the provider, and no signal to drive recovery when a PR
+conflicts against a moved target. `createOrUpdatePr` is open-PR-only and cannot
+report merge state. This blocks the M20 "ship non-trivial PRs end-to-end" goal.
+
+**Decision:**
+
+- Persist PR facts on `workspaces` (no new `pull_requests` table), extending the
+  existing `pr_url`/`pr_number` pair: `pr_state` (`open|merged|closed`, NULL =
+  never checked), `pr_has_conflicts` (boolean, NULL = unknown), `pr_merged_at`,
+  `pr_merge_commit_sha`, `pr_state_checked_at`. Existing rows keep NULL state and
+  are adopted by the first scan — no backfill guessing.
+- `pr_merge_commit_sha` records the **provider** merge commit as provenance only.
+  It is distinct from `runs.merge_commit_sha`, which stays owned by the shipped
+  `repo_delivery_scan` (ADR-134): a provider "merged" flag is not proof the commit
+  is reachable on the local target, and a second writer would race the delivery
+  scanner. The PR scan NEVER writes `runs.merge_commit_sha`.
+- A per-project `pr_state_scan` scheduler jobKind (seeded like `repo_delivery_scan`,
+  keyset cursor like `auto_promote`) polls open/unknown PRs at a fixed
+  `PR_STATE_SCAN_CADENCE_SECONDS = 300` code constant. It is programmatic-only:
+  provider CLI/REST reads (`gh`/`glab`/Gitea REST), zero LLM/agent tokens, and it
+  NEVER calls the supervisor client or mutates git. `pr_state_checked_at` is
+  stamped on every attempt (success or failure) so one bad row cannot stall the
+  job.
+- Provider reads extend the existing 4-provider adapter family
+  (`github`/`gitlab`/`gitea`/`gitverse`) with a `getPrState` capability. `generic`
+  is not an adapter — it is a typed per-item skip, never a job failure. Missing
+  CLI/token or provider 5xx is a transient per-item skip; a deleted/404 PR is a
+  deterministic terminal skip. Poison items never retry forever.
+- Each detected state edge fires in one edge-guarded transaction (previous
+  `pr_state`/`pr_has_conflicts` is the guard → exactly-once across re-scans; the
+  webhook emit is a transactional-outbox insert): **merged** sets
+  `pr_state`/`pr_merged_at`/`pr_merge_commit_sha`, emits `run.pr_merged`, and
+  writes a `run_pr_merged` `task_activity`; **closed** sets `pr_state` and emits
+  `run.pr_closed`; **conflicts** sets `pr_has_conflicts` and emits `run.pr_conflicts`
+  and raises the UI alarm surface. `task_activity` stays merged-only; closed and
+  conflict surface via chip + webhook only. Conflict detection only raises the
+  alarm — it never launches a resolver (that is ADR-138 and always an explicit
+  user action).
+- Surfaces: a PR-state chip on the run detail header/inspector and the task board
+  flight card, with a distinct conflicts affordance linking to reopen (ADR-138).
+  Ext `run_get` exposes `prState`/`prHasConflicts`. EN + RU.
+- **Bitbucket (Cloud and Server/Data Center) is deferred tech debt.** The agreed
+  shape when it lands: one REST adapter family with a configurable API base
+  covering both editions, plugged into the same `getPrState` contract.
+
+**Consequences:**
+
+- The PR loop closes: every MAIster-created PR reaches a truthful state within one
+  cadence, with merge-commit provenance and an alarm on conflicts.
+- No new domain-event kinds — webhooks only; the `domain_events` kind CHECK is
+  untouched. `run_pr_merged` expands both `task_activity_event_kind_check` and
+  `inbox_items_event_kind_check` (shared const).
+- The scan spends zero tokens and touches no session; it is observable in the
+  admin scheduler UI like every other jobKind.
+- Bitbucket users get no PR tracking until the deferred adapter ships.
+
+**Alternatives Considered:**
+
+- _A dedicated `pull_requests` table_: rejected — PR facts are 1:1 with a
+  workspace and the existing `pr_url`/`pr_number` pair already lives there.
+- _Co-writing `runs.merge_commit_sha` from the PR scan_: rejected — races the
+  delivery scanner (ADR-134) and conflates provider intent with target
+  reachability; split provenance onto `workspaces.pr_merge_commit_sha`.
+- _A global singleton scan job_: rejected — cadence and cursor are per-project,
+  matching `repo_delivery_scan`.
+- _Launching conflict resolution automatically on a detected conflict_: rejected —
+  resolver launch is always an explicit, conscious user action.
+
+---
+
+### ADR-138: Branch sync with AI conflict resolver and reopen
+
+**Date:** 2026-07-14
+**Status:** Designed
+
+**Context:** A `Review` run's branch goes stale when the target moves; today the
+only options are "promote anyway" (which fails on divergence) or manual local
+surgery. The `ai_rebase_merge` promotion mode exists but is a no-op that collapses
+to plain `rebase_merge`. There is no operator-driven "sync my branch onto the
+moved target, and if it conflicts let an agent resolve it" path, and no way to
+bring a `Done` run whose PR now conflicts back into review.
+
+**Decision:**
+
+- **Sync is a lifecycle operation.** Add a 6th `LifecycleOperationName` value
+  `"sync"` (TS-only; the column has no CHECK) claiming the existing
+  `lifecycle_operation_*` slot on `workspaces`, giving mutual exclusion with
+  `archive/drop/exportBranch/snapshotCommit/handoffBranch` for free. Because
+  promotion and lifecycle claims do not cross-guard today, add an **explicit double
+  fence**: the sync claim refuses when `promotion_state ∈ {claiming, done}` (unless
+  reopened), and `promoteRun`'s claim refuses when an active
+  `lifecycle_operation_name='sync'` claim exists. Both directions are matrix tested.
+- **Sync pipeline** (`web/lib/runs/sync-target.ts`), eligibility allow-list
+  `status='Review'`, `run_kind ∈ {flow, agent}`, `parent_run_id IS NULL`,
+  `workspace_mode <> 'shared'`, not an experiment member: target-scoped
+  `fetch origin <target>` (so the run branch's remote-tracking ref is NOT
+  refreshed — lease safety), fast-forward the local target (non-FF divergence →
+  typed `PRECONDITION` with both SHAs), compute ahead/behind, no-op when behind=0,
+  then rebase (default) or merge (per `projects.sync_strategy_default` or
+  per-invocation override) inside the worktree. A dirty worktree refuses with a
+  snapshot-commit hint.
+- **Conflict + agent path**: leave the conflicted state materialized; a new
+  `markSyncFromReview` CAS (`Review→Running`, mirroring `markReworkFromReview`)
+  runs behind a new caller-side FOR-UPDATE fence mirroring `reworkChildRun` (the
+  CAS does not own the fence). Spawn a **fresh** ACP session (never resume),
+  `cwd=<worktree>`, recorded as a NEW `run_sessions` row `sessionName='sync-<attempt>'`
+  (`runs` has no session column — dropped in M42). The resolver runner resolves
+  through a new sync tier: launch override → `projects.sync_runner_id` (nullable
+  text FK to `platform_acp_runners`) → project default → platform default. The
+  driver composes the two scratch layers explicitly: service-layer `createSession`
+  → scratch-style SSE consumer (permission → `hitl_requests` + `NeedsInput`; the
+  `NeedsInput→Running` flip is owned by the HITL-respond route) → blocking
+  `sendPrompt`. The agent completes the rebase/merge and leaves a clean tree; **it
+  never pushes** — the web side pushes after verification. `agent=false` + conflict
+  aborts cleanly with `outcome:'conflict'` (pre-sync SHA restored, no change).
+- **Verification gate** (web-side, mechanical, after the turn): no rebase/merge in
+  progress, working tree clean, `git diff --check` reports zero conflict markers
+  across the WHOLE worktree (the agent could paste a marker anywhere), target SHA
+  is an ancestor of the new HEAD. Fail → deterministic abort restoring the pre-sync
+  SHA, attempt `failed`, CAS `Running→Review`.
+- **Push policy**: `--force-with-lease` when `pr_url` is set or the branch has an
+  upstream (per-invocation override). Lease safety: capture the run branch's remote
+  SHA BEFORE the target-scoped fetch and push
+  `--force-with-lease=refs/heads/<branch>:<captured-sha>` — a bare
+  `--force-with-lease` after any fetch that touched `origin/<branch>` would lease
+  against the refreshed value and defeat the check. Lease failure → attempt
+  `failed`, typed `CONFLICT` with both SHAs; the local rebase result is kept.
+- **`run_sync_attempts` append-only ledger** (`node_attempts`-shaped: plain-text
+  phase/status, TS-only enum, no DB CHECK): `(run_id, attempt)` UNIQUE; durable
+  `phase` (`starting → rebasing → agent_running → verifying → pushing →
+  succeeded|failed|aborted`) written before each side effect; `strategy`, `mode`,
+  `target_ref/sha`, `head_sha_before/after`, `remote_sha_before` (lease),
+  `conflicted_files` jsonb, `runner_id`, `session_name`, `agent_running_since`
+  (active-time cap), `auto_finalize` (bool), `pushed`, `error_code/message`, actor,
+  timestamps. The attempt-number allocation, `starting` insert, `"sync"` claim, and
+  (agent path) the `markSyncFromReview` CAS are ONE transaction — the claim
+  serializes concurrent launches to exactly one attempt row.
+- **Concurrency**: the agent path holds a kind-pool slot while `Running` (a
+  `NeedsInput` resolver still holds it). `Review→Running` reclaims a slot and is
+  cap-gated — launch at cap → typed `CONFLICT`, no queueing. Finalize back to
+  `Review` calls `promoteNextPending`. Mechanical sync never changes status and
+  holds no slot.
+- **Keepalive + active-time duration cap**: runs with an active sync attempt are
+  excluded from the Running-status sweeps (`fetchTimeLimitCandidates`,
+  `fetchBudgetCandidates`) — a mid-rebase resolver must not be TTL-abandoned. The
+  backstop is `SYNC_ATTEMPT_MAX_MINUTES = 30` measured from `agent_running_since`
+  (stamped at launch, re-stamped on every `NeedsInput→Running` HITL resume): only
+  30 min of continuous `Running` with no interaction is swept. Human-wait time in
+  `NeedsInput` never counts. Consequence: a sync run parked in `NeedsInput` has no
+  keepalive auto-idle and holds its slot until the operator responds or stops it.
+- **Content-changing sync resets `runs.review_entered_at = now()`**, re-arming the
+  ADR-126 auto-promotion grace window so a lane cannot auto-promote the instant a
+  resolver finishes.
+- **Reopen** (`Done → Review`) for top-level `flow|agent` runs whose workspace has
+  an open or conflicted PR: a new exact-allow-list CAS (`Done` is terminal today),
+  one tx — set `promotion_state='reopened'` (new app-level value, no CHECK), clear
+  `scheduled_removal_at`, stamp `review_entered_at`, emit the reused `run.review`
+  webhook (no domain event — reopen is top-level only). `canReclaim` admits
+  `'reopened'`; the auto-promote prefilter adds `ne(promotion_state, 'reopened')`. A
+  GC'd workspace revives via `addWorktreeForBranch` (attaches an EXISTING branch, NO
+  `-b`; fetch-and-recreate when the local branch is gone; `PRECONDITION` when both
+  are gone). Re-promotion in `pull_request` mode reuses the SAME provider PR via
+  `createOrUpdatePr`. Documented side effects: the board card derives back to
+  OnReview and released task relations re-gate dependents — honest, because the PR
+  is in fact not merged.
+- **Resolver-backed `ai_rebase_merge`** (disambiguation: the prior no-op mode is
+  now the resolver). The mode reuses the sync rebase+resolver core and carries an
+  `autoFinalize` flag (opt-in launch checkbox, **default OFF**): clean rebase →
+  finalize to `Done` exactly as `rebase_merge`; conflict + `autoFinalize=false`
+  (two-step default) → delegate to the sync-resolver, which returns the run to
+  `Review` cleanly rebased for a manual clean re-promote; conflict +
+  `autoFinalize=true` → same resolver path then a **best-effort chained**
+  `promoteRun(rebase_merge)` to `Done`. The resolver always runs under the sync
+  lifecycle claim, never the promotion claim, so no new promotion crash window is
+  introduced; a chained-finalize failure degrades to the clean-`Review` two-step
+  outcome (benign). A plain `rebase_merge` promotion is unchanged.
+- **Crash windows W1–W6** each have a durable discriminant (the attempt row phase)
+  and a recovery predicate; the reconcile classifier gains an `activeSyncAttempt`
+  signal and branches BEFORE the flow reattach/redispatch arms (a sync session must
+  never be driven as a graph session). Startup reconcile treats a live sync session
+  as orphaned (no in-process driver post-restart → W2 deterministic abort); the
+  periodic sweep skips a healthy in-flight sync owned by an in-process driver. v1
+  recovery is deterministic abort; resolver reattach is a recorded future
+  enhancement. W6 (`autoFinalize=true` chained-finalize crash) is benign — the run
+  is a normal clean `Review`.
+- **Ext + MCP**: one new scope `runs:sync` covering `POST /api/v1/ext/runs/sync`
+  and `.../reopen` (NOT in `AGENT_TOKEN_SCOPES` nor `ORCHESTRATOR_TOKEN_SCOPES` —
+  manual-only), run-bound (project derived from the run row, existence-hidden 404).
+  MCP tools `run_sync` + `run_reopen`. No new error codes: reuse
+  `PRECONDITION`/`CONFLICT`/`EXECUTOR_UNAVAILABLE`/`CRASH`; `docs/error-taxonomy.md`
+  gains cell entries, not new rows.
+- **Manual-only stance**: resolver launch is always an explicit user action (a sync
+  click or the conscious `ai_rebase_merge` mode choice). No trigger-driven or
+  automatic resolver launch in v1.
+
+**Consequences:**
+
+- Stale `Review` branches gain a one-click sync with agent-assisted conflict
+  resolution; `Done` runs whose PR conflicts can be brought back safely.
+- `ai_rebase_merge` stops being a no-op and becomes the resolver-backed mode.
+- The double fence and single-transaction claim make sync/promote/lifecycle
+  mutually exclusive and concurrency-safe; every crash window recovers to a stable
+  state by reconcile/sweep.
+- Confinement: the resolver works inside the run worktree under a separate
+  configurable runner; worktree-mutating lifecycle ops are blocked while it works.
+  The agent is **instructed** not to push (prompt-level, decision 9) — this is NOT
+  enforced at the seam in v1 (the resolver must be read-write in the worktree, so
+  ADR-090's read-only enforcement does not apply). The **enforced** push safety net
+  is the web-side verification gate + the explicit-SHA `--force-with-lease`: the web
+  side performs the only authoritative push, after the mechanical gate. Bounded
+  blast radius: a misbehaving/prompt-injected resolver could at worst `git push` its
+  OWN run branch (never the target — promotion is web-side); if that self-push
+  happens and verification then fails, the web abort restores only the LOCAL
+  pre-sync SHA, so the remote PR branch may retain the agent's intermediate state
+  until the operator re-syncs. Seam-level no-remote-egress enforcement for the
+  `sync-<n>` session is a recorded future hardening.
+- v1 excludes scratch, shared-tree, experiment-member, and orchestrator-child runs
+  (typed `PRECONDITION`); resolver reattach after a web restart is deferred.
+
+**Alternatives Considered:**
+
+- _A flat wall-clock duration cap_: rejected as unsafe — it would kill a resolver
+  merely waiting on a human; the cap counts only active `Running` time.
+- _A bare `--force-with-lease`_: rejected — after a fetch that touched
+  `origin/<branch>` it leases against the refreshed SHA and passes even when the
+  branch moved; capture the expected SHA explicitly.
+- _Letting the agent push_: rejected — the web side pushes only after a mechanical
+  verification gate; an agent push would bypass the ancestor/marker checks.
+- _Resuming the run's existing session for resolution_: rejected — a fresh
+  `sync-<n>` session keeps the flow's `default` session identity intact and avoids
+  cross-process resume cost/semantics.
+- _Making `ai_rebase_merge` one-click async by default_: rejected — two-step is the
+  safe default; one-click is an explicit opt-in that degrades benignly.
 
 ---
 

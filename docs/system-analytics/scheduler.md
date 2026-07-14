@@ -111,6 +111,39 @@ without turning recovery sweeps into live-path polling.
   unarchive idempotently re-enables/seeds archive-style disabled jobs, but
   never clears a native threshold-poisoned job. This is the sole Git-fetch
   path for agentization—Observatory reads never fetch.
+- **`pr_state_scan` job kind** (**Designed, ADR-137**) — one system-managed job
+  per non-archived project (NOT a global singleton), seeded like
+  `repo_delivery_scan` via `ensurePrStateScanJobs` invoked from
+  `ensureDefaultSchedulerJobs` on every tick; archived projects are disabled via
+  `disableArchivedPrStateScanJobs`, and it is never creatable from the admin API.
+  A keyset cursor lives in `scheduler_jobs.target->'cursor'` (the `auto_promote`
+  idiom); cadence is the `PR_STATE_SCAN_CADENCE_SECONDS = 300` code constant (no
+  env var). Each tick pages project workspaces with `pr_url IS NOT NULL AND
+  (pr_state IS NULL OR pr_state = 'open')` (backed by a partial index) and reads
+  each PR through the `getPrState` capability on the provider adapters
+  (`gh`/`glab`/Gitea REST) — provider CLI/REST only, **zero LLM/agent tokens**,
+  it **never calls the supervisor client**, and it **never mutates git or
+  `runs.merge_commit_sha`** (that column stays owned by `repo_delivery_scan`,
+  ADR-134). On each detected PR-state edge it writes the `workspaces` PR columns
+  and emits a webhook in one edge-guarded single transaction, idempotent across
+  re-scans: merged → `run.pr_merged` + a `run_pr_merged` `task_activity`; closed
+  → `run.pr_closed`; conflicts → `run.pr_conflicts`. `pr_state_checked_at` is
+  stamped on EVERY attempt (success or failure). Poison policy: a deterministic
+  per-item failure (404 / deleted PR) is a recorded terminal skip; a transient
+  one (missing CLI / network / 5xx) skips the item this tick and advances the
+  cursor, while `recordJobAttemptResult` max-failures/backoff protects the job —
+  one bad row can never stall the per-project job.
+  - Registration fan-out (this kind is `systemManaged` and non-creatable, so it
+    is wired, not authored): the `SchedulerJobKind` union plus the
+    `schedulerJobs.jobKind` and `schedulerJobRuns.jobKind` enums (3 schema
+    edits); `ALL_SCHEDULER_JOB_KINDS` + `SCHEDULER_JOB_KIND_CATALOG`
+    (`creatable: false`, `systemManaged: true`, NOT in `SEEDED_SINGLETON_IDS`);
+    the `budgets.ts` union + `SchedulerBudgetLimits` + `schedulerBudgetLimits()`;
+    the `schedulerBudgetForKind` switch in `jobs.ts`; the `claimDueJobs` CTE; the
+    dispatch in `tick-service.ts` (plus its PRECONDITION-is-`Failed` catch
+    special-case); and i18n `adminScheduler.kind.pr_state_scan` (EN + RU). The
+    admin UI is data-driven (no hardcoded kind list). Handler:
+    `web/lib/scheduler/handlers/pr-state-scan.ts`.
 
 ## State machine
 
@@ -270,6 +303,11 @@ flowchart TD
   `Succeeded`.
 - `system_sweep` MUST remain a recovery/cleanup sweep and NEVER a live
   state-transition poller.
+- `pr_state_scan` (**Designed, ADR-137**) MUST stamp
+  `workspaces.pr_state_checked_at` on EVERY attempt (success or failure), MUST
+  NEVER launch an ACP session or call the supervisor client, and MUST run on a
+  per-project cadence of `PR_STATE_SCAN_CADENCE_SECONDS` (300s) rather than as a
+  global singleton.
 - The fallback timer MUST be off unless `MAISTER_SCHEDULER_TIMER_ENABLED=true`.
 - `/api/cron/gc` MUST keep its existing auth and response contract and run the
   shared GC bundle (workspace + revision GC + capabilities cleanup +
@@ -331,6 +369,13 @@ flowchart TD
   kind and never consumes a different kind's cap.
 - Handler failure records `Failed` with bounded error context and contributes to
   the route's 207 summary.
+- `pr_state_scan` poison item (**Designed, ADR-137**): a deterministic per-item
+  failure (404 / deleted PR, or a `generic`/unsupported provider) is recorded as
+  a terminal `Skipped`, never a job `Failed`; a transient one (missing CLI /
+  token, network, provider 5xx) skips the item this tick and advances the keyset
+  cursor, while the native `consecutive_failures >= max_failures` backoff
+  isolates a genuinely broken project — one bad row never stalls the per-project
+  job or fails the tick.
 - Invalid per-kind admin target payloads return `MaisterError("CONFIG")` as a
   422 route response. The typed editor should prevent common shape errors, but
   `web/lib/scheduler/job-admin.ts` remains the server boundary.
@@ -356,6 +401,9 @@ flowchart TD
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Implemented: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance)
   and [`observatory.md`](observatory.md).
+- PR lifecycle tracking (Designed, ADR-137):
+  [ADR-137](../decisions.md#adr-137-pr-lifecycle-tracking) — the per-project
+  `pr_state_scan` jobKind.
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,
   `web/lib/runs/keepalive-sweeper.ts`,

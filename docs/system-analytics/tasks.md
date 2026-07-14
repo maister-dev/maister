@@ -440,6 +440,40 @@ flowchart TD
     Card --> Evidence[show current/stale<br/>evidence summary]
 ```
 
+### Reopen effect on board state and relations (Designed, ADR-138)
+
+**Reopen** (ADR-138) pulls a top-level `flow`/`agent` run from `Done` back to
+`Review` when its PR is still open or conflicted — the PR was in fact never
+merged (the run-level machine is owned by [`branch-sync.md`](branch-sync.md)).
+Its board-axis consequences:
+
+- **Derived column.** `deriveStage` (`web/lib/board.ts`) keys the card's column
+  on the latest run status, so the card moves from **InDelivery**/**Done** back
+  to **OnReview**. `InDelivery` is only a worktree-presence approximation —
+  `deriveStage` returns `InDelivery` for a `Done` run whose worktree still
+  exists and `Done` once it is GC'd; reopen supersedes both by returning the run
+  to `Review`.
+- **Board status.** The task re-enters the `InFlight` bucket (its latest run is
+  `Review` again). Reopen is the one Designed path by which a `Done` task leaves
+  the `Done` board status; it returns to `InFlight`, never to `Backlog` (the
+  "Done never returns to Backlog" rule still holds).
+- **Relations re-gate.** `getOpenRelationBlockers`
+  (`web/lib/social/relations.ts`) counts a counterpart as an open blocker only
+  while its `tasks.status ∈ {Backlog, InFlight}` (`Done` and `Abandoned` both
+  release — see **Relations gate launching** above). Because reopen returns the
+  task to `InFlight`, every dependent whose blocker released when this task
+  reached `Done` re-gates: the dependent classifies `blocked` again at every
+  launch entry point. This is honest — the PR is not merged, so the dependency
+  is not truly satisfied.
+
+```mermaid
+flowchart TD
+    Done["latest run Done · task Done · card InDelivery or Done"] --> Reopen{"reopen: PR open or conflicted"}
+    Reopen -->|"run Done to Review, task Done to InFlight"| Review["latest run Review · task InFlight"]
+    Review --> Card["deriveStage returns OnReview column"]
+    Review --> Regate["getOpenRelationBlockers sees counterpart in InFlight, dependents re-gate as blocked"]
+```
+
 ## Expectations
 
 - Task ↔ Run cardinality is 1:N; a task can spawn many runs over its
@@ -595,13 +629,17 @@ observe a silent rewrite.
 ## Linked artifacts
 
 - ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
-  [ADR-083 Social board substrate](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+  [ADR-083 Social board substrate](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
+  [ADR-138 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen)
+  (Designed — reopen board/relation effect).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`executors.md`](executors.md), [`social-board.md`](social-board.md)
   (comments, activity, subscriptions, inbox),
   [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked),
   [`triage.md`](triage.md) (Implemented — `flagged`, `auto_launch_triaged` tick,
-  triager verdict/flag/enqueue ops).
+  triager verdict/flag/enqueue ops), and
+  [`branch-sync.md`](branch-sync.md) (Designed — reopen `Done→Review` board and
+  relation re-gate effect).
 - Source: `web/lib/db/schema.ts` (tasks + runs tables),
   `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Implemented).

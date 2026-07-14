@@ -329,6 +329,83 @@ Status: **Implemented (M27)** — `web/lib/workbench-lifecycle/service.ts` +
 `web/lib/worktree.ts`. Branch/remote/path inputs are validated by typed helper
 schemas, and secret-bearing remote output is redacted before errors surface.
 
+### PR-state reads (Designed, ADR-137)
+
+PR lifecycle tracking adds a `getPrState({ remoteUrl, prNumber })` capability to
+the existing 4-provider `PrAdapter` family. Where `createOrUpdatePr` is
+open-PR-only and cannot report a merge, `getPrState` reads the current provider
+state and normalizes every provider onto one shape. It dispatches on the same
+provider tag as PR creation; `generic` is not an adapter, so it is a typed
+per-item skip (mirroring `selectPrAdapter`'s unsupported-provider path), never a
+job failure. Provider tokens stay in the child-process env only and are never
+logged.
+
+```mermaid
+flowchart TD
+    Start([getPrState remoteUrl plus prNumber]) --> Tag{provider tag}
+    Tag -- github --> GH["gh pr view --json state, mergedAt, mergeCommit, mergeable, mergeStateStatus"]
+    Tag -- gitlab --> GL["glab mr view: state, has_conflicts, detailed_merge_status"]
+    Tag -- gitea --> GT["Gitea REST: state, merged, mergeable"]
+    Tag -- gitverse --> GT
+    Tag -- generic --> Skip["typed per-item skip; generic is not an adapter"]
+    GH --> Norm["normalize to state open / merged / closed, mergedAt?, mergeCommitSha?, hasConflicts?"]
+    GL --> Norm
+    GT --> Norm
+    Norm --> Out([normalized PR state])
+```
+
+Status: **Designed (ADR-137)** — `getPrState` on the `PrAdapter` family in
+`web/lib/runs/pr-adapter.ts`.
+
+### Push surface with force-with-lease (Designed, ADR-138)
+
+Branch sync publishes the rebased/merged run branch back to its remote with
+`git push --force-with-lease=refs/heads/<branch>:<remote_sha_before>` — an
+**explicit-SHA lease**, not a bare `--force-with-lease`. The run branch's remote
+SHA is captured BEFORE the target-scoped `fetch`; a bare `--force-with-lease`
+issued after any fetch that touched `origin/<branch>` would lease against the
+just-refreshed remote-tracking ref and succeed even when the branch moved
+underneath (the footgun). A lease rejection (the remote branch moved) surfaces as
+a typed `CONFLICT` with both SHAs; the local rebase/merge result is kept.
+
+```mermaid
+sequenceDiagram
+    participant ST as sync-target (web tier)
+    participant GIT as git (host)
+    participant REMOTE as origin
+    ST->>GIT: capture run-branch remote SHA BEFORE fetch (remote_sha_before)
+    Note over ST,GIT: a bare --force-with-lease after a fetch that touched origin/branch would lease against the refreshed ref and pass unsafely
+    ST->>GIT: fetch origin, target ref only (run branch tracking ref untouched)
+    ST->>GIT: rebase or merge the run branch onto target, in the worktree
+    ST->>REMOTE: git push --force-with-lease=refs/heads/branch:remote_sha_before
+    alt lease holds, remote branch unchanged
+        REMOTE-->>ST: push accepted
+    else lease rejected, branch moved remotely
+        REMOTE-->>ST: rejected
+        ST-->>ST: throw MaisterError CONFLICT with both SHAs, local result kept
+    end
+```
+
+Status: **Designed (ADR-138)** — the sync push path in
+`web/lib/runs/sync-target.ts` over `web/lib/worktree.ts`; see
+[`branch-sync.md`](branch-sync.md).
+
+### `ai_rebase_merge` promotion is now resolver-backed (Designed, ADR-138)
+
+The `ai_rebase_merge` promotion mode previously existed only as a label: it
+collapsed to a plain `rebase_merge` and did nothing extra on conflict (a no-op).
+ADR-138 makes it real by reusing the sync **rebase + AI-resolver core**. A clean
+rebase finalizes exactly as `rebase_merge` (→ `Done`); a conflict delegates to
+the sync resolver under the **sync** lifecycle claim (never the promotion claim,
+so no new promotion crash window), which returns the run to `Review` cleanly
+rebased for a manual re-promote, or — with the opt-in `autoFinalize` flag
+(default OFF) — best-effort chains the finalize to `Done`. A plain `rebase_merge`
+promotion is unchanged. The full state machine and crash windows live in
+[`branch-sync.md`](branch-sync.md).
+
+Status: **Designed (ADR-138)** — `ai_rebase_merge` in `web/lib/runs/promote.ts`
+delegating to the shared sync resolver core (`web/lib/runs/sync-target.ts`).
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential
@@ -446,7 +523,11 @@ metadata fails closed.
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
   (Implemented, M18),
   [ADR-093 Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
-  (Implemented).
+  (Implemented),
+  [ADR-137 PR lifecycle tracking](../decisions.md#adr-137-pr-lifecycle-tracking)
+  (Designed),
+  [ADR-138 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen)
+  (Designed).
 - Clone-failure `{ reason, detail }` shape + UI contract:
   [`../error-taxonomy.md`](../error-taxonomy.md).
 - Screens (Implemented, ADR-093): [`../screens/projects/add-project.md`](../screens/projects/add-project.md)
@@ -458,10 +539,14 @@ metadata fails closed.
   [`instance-config.md`](instance-config.md) (gh/glab + Gitea-API token status),
   [`workspaces.md`](workspaces.md) (promotion service that drives push + PR),
   [`workbench-lifecycle.md`](workbench-lifecycle.md) (snapshot, export, and
-  handoff operations).
+  handoff operations), and [`branch-sync.md`](branch-sync.md) (PR-state reads,
+  sync push, resolver-backed `ai_rebase_merge`).
 - Source: `web/lib/repo-source.ts`; **(Implemented, M18)** `web/lib/worktree.ts`
   (`pushBranch`), `web/lib/runs/pr-adapter.ts`; **(Implemented, M27)**
   `web/lib/worktree.ts` (`listRemotes`, `headCommit`, branch collision helpers,
   `createBranchAtHead`); **(Implemented, ADR-093)** `web/lib/repo-source.ts`
   (`classifyGitError`, token/askpass clone, `detectGhAuth`),
-  `web/lib/git-remotes.ts`, `web/app/api/projects/[slug]/remotes/route.ts`.
+  `web/lib/git-remotes.ts`, `web/app/api/projects/[slug]/remotes/route.ts`;
+  **(Designed, ADR-137)** `web/lib/runs/pr-adapter.ts` (`getPrState`);
+  **(Designed, ADR-138)** `web/lib/runs/sync-target.ts`,
+  `web/lib/runs/promote.ts` (`ai_rebase_merge`).

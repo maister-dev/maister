@@ -4966,6 +4966,138 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/sync:
+    post:
+      tags: [runs]
+      summary: (ADR-138 — Designed) Sync a Review run's branch onto its target
+      description: |
+        Requires project membership at `member` or above (`requireProjectAction`
+        `"promoteRun"`). Rebases (default) or merges the run branch onto its
+        promotion target inside the run's worktree, fast-forwarding the local
+        target from `origin/<target>` first, and — when the branch is published —
+        force-with-lease pushes using an expected-SHA lease captured before the
+        target-scoped fetch. On conflict with `agent=true` a fresh resolver ACP
+        session is launched (`Review → Running`, cap-gated) and the run resolves
+        via standard HITL; with `agent=false` the conflicted rebase is aborted
+        and `outcome:"conflict"` returned with no change. `runId`, project,
+        workspace path, source/target branch, and the resolved runner snapshot
+        are all derived from server state; the body carries only policy overrides.
+        Eligible runs: `status='Review'`, `run_kind ∈ {flow, agent}`, top-level
+        (`parent_run_id IS NULL`), `workspace_mode <> 'shared'`, not an experiment
+        member. Mutually exclusive with promotion and every other lifecycle op
+        (double fence).
+      operationId: syncRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                strategy:
+                  type: string
+                  enum: [rebase, merge]
+                  description: Overrides `projects.sync_strategy_default`.
+                agent:
+                  type: boolean
+                  description: When true (default) launch the AI resolver on conflict; when false abort with `outcome:"conflict"`.
+                push:
+                  type: boolean
+                  description: Overrides the auto push-iff-published policy.
+                runnerId:
+                  type: string
+                  description: Overrides the resolver runner; validated against the platform runner catalog (unknown → 422).
+      responses:
+        "200":
+          description: |
+            Mechanical sync completed. `outcome` = `synced` (branch rebased and
+            optionally pushed), `noop` (already up to date), or `conflict`
+            (`agent=false`, aborted cleanly). Run stays `Review`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRunResponse" }
+        "202":
+          description: |
+            Conflict with `agent=true` — a resolver session was launched
+            (`outcome` = `agent_launched`); the run is now `Running`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRunResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `PRECONDITION` — ineligible run (wrong status/kind, shared tree,
+            experiment member, scratch, orchestrator child), non-fast-forward
+            local-target divergence (both SHAs named), or a dirty worktree
+            (snapshot-commit first). Or `CONFLICT` — a competing sync/promotion
+            claim is active, the run-kind concurrency cap is reached, or the
+            force-with-lease push was rejected (branch moved remotely; the local
+            rebase result is kept). Both map to HTTP 409 via `httpStatusForCode`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Body validation failed (bad `strategy`/`runnerId`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            `EXECUTOR_UNAVAILABLE` — supervisor down or resolver spawn failed;
+            the conflicted state is aborted first and the run stays `Review`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/reopen:
+    post:
+      tags: [runs]
+      summary: (ADR-138 — Designed) Reopen a Done run whose PR is open/conflicted
+      description: |
+        Requires project membership at `member` or above (`requireProjectAction`
+        `"promoteRun"`). Flips `Done → Review` for a top-level `flow|agent` run
+        whose workspace has an open or conflicted PR: sets
+        `promotion_state='reopened'`, clears `scheduled_removal_at`, stamps
+        `review_entered_at`, emits `run.review`, and revives a GC'd worktree via
+        an existing-branch attach when needed. The board card derives back to
+        OnReview and released task relations re-gate. Empty body.
+      operationId: reopenRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Run reopened; it is now `Review`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReopenRunResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `PRECONDITION` — run not `Done`, not top-level `flow|agent`, no
+            open/conflicted PR, or the run branch is gone from both local and
+            remote. Or `CONFLICT` — a competing claim is active. Both map to
+            HTTP 409.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/delivery-policy:
     patch:
       tags: [runs]
@@ -16732,6 +16864,36 @@ components:
           description: |
             (M18, Implemented) Provider-assigned PR/MR number. Present only for
             successful `pull_request` promotions.
+    SyncRunResponse:
+      type: object
+      description: (ADR-138 — Designed) Result of a branch sync.
+      required: [attemptId, outcome]
+      additionalProperties: false
+      properties:
+        attemptId:
+          type: string
+          description: The `run_sync_attempts` row id for this attempt.
+        outcome:
+          type: string
+          enum: [noop, synced, conflict, agent_launched]
+        behind:
+          type: integer
+          nullable: true
+          description: Commits the run branch was behind target before the sync.
+        pushed:
+          type: boolean
+          description: Whether the branch was force-with-lease pushed.
+    ReopenRunResponse:
+      type: object
+      description: (ADR-138 — Designed) Result of a reopen.
+      required: [ok, status]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, enum: [true] }
+        status: { type: string, enum: [Review] }
+        worktreeRevived:
+          type: boolean
+          description: True when a GC'd worktree was re-attached from the existing branch.
     PatchRunDeliveryPolicyBody:
       type: object
       required: [action]

@@ -38,7 +38,7 @@ erDiagram
     SCHEDULER_JOBS {
         text id PK
         text project_id FK "nullable projects(id) ON DELETE CASCADE"
-        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged|auto_promote|repo_delivery_scan"
+        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged|auto_promote|repo_delivery_scan|pr_state_scan"
         jsonb target "validated per job_kind"
         integer cadence_interval_seconds
         timestamp next_run_at
@@ -167,6 +167,7 @@ erDiagram
 | `scheduler_jobs_project_kind_idx`   | `(project_id, job_kind)`     | Project-scoped job read model          |
 | `repo_delivery_rollups_project_branch_bucket_uq` (ADR-134) | `(project_id, branch, bucket_start, bucket_end)` UNIQUE | Idempotent daily target-branch denominator replacement |
 | `repo_delivery_rollups_project_branch_bucket_idx` (ADR-134) | `(project_id, branch, bucket_start)` | Bounded project Observatory range read |
+| `workspaces_pr_state_scan_idx` (ADR-137, Designed) | `(project_id) WHERE pr_url IS NOT NULL AND (pr_state IS NULL OR pr_state='open')` | `pr_state_scan` open/unknown-PR candidate query |
 | `scheduler_job_runs_job_idx`        | `(job_id)`                   | Job attempt history                    |
 | `scheduler_job_runs_lease_idx`      | `(status, lease_expires_at)` | Stuck-attempt reaper                   |
 | `agent_schedules_project_agent_idx` | `(project_id, agent_id)`     | Project agent schedule lookup          |
@@ -193,3 +194,4 @@ erDiagram
   [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
   [ADR-139](../decisions.md#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry).
 - Implemented: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance).
+- Designed: [ADR-137](../decisions.md#adr-137-pr-lifecycle-tracking).

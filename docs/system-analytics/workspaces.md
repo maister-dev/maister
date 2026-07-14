@@ -64,6 +64,36 @@ reconciliation on host or process restart.
   `web/lib/worktree.ts`, used by the manual-takeover return to capture the
   human's commits + diff against the existing worktree. No merge, push, or
   checkout-switch. See [`manual-takeover.md`](manual-takeover.md).
+- **PR lifecycle state (Designed, ADR-137)** — five workspace columns track the
+  provider state of a MAIster-created PR (`workspaces.pr_url`), polled by the
+  `pr_state_scan` scheduler job (provider CLI/REST only — no git mutation, zero
+  agent tokens): `pr_state` (`open | merged | closed`, NULL = never checked),
+  `pr_has_conflicts` (NULL = unknown), `pr_merged_at`, `pr_merge_commit_sha`
+  (the **provider** merge commit — provenance only, NEVER `runs.merge_commit_sha`,
+  which stays owned by the ADR-134 delivery scan), and `pr_state_checked_at`
+  (stamped on every scan attempt, success or failure). Each state edge emits a
+  webhook and the merged edge also writes a `run_pr_merged` task-activity entry;
+  the conflict flag raises the reopen affordance. Scan cadence, edge guards, and
+  provider reads live in [`branch-sync.md`](branch-sync.md) (R7).
+- **Reopen (Designed, ADR-138)** — a `Done` top-level (`parent_run_id IS NULL`)
+  `flow | agent` run whose PR is still open or conflicted can be flipped
+  `Done → Review`, which sets `workspaces.promotion_state = 'reopened'` (an
+  app-level value, no PG CHECK), clears `scheduled_removal_at`, and re-stamps
+  `runs.review_entered_at`. `reopened` is reclaimable by `promoteRun` but is
+  EXCLUDED from auto-promotion; a GC'd worktree is re-attached to the existing
+  run branch (no `-b`). Reopen flow detail lives in
+  [`branch-sync.md`](branch-sync.md) (R7).
+- **Sync lifecycle claim (Designed, ADR-138)** — "sync with target" is a 6th
+  `workspaces.lifecycle_operation_name` value `sync` (app-level, no PG CHECK)
+  claiming the existing `lifecycle_operation_*` slot, so it is mutually exclusive
+  with `archive | drop | exportBranch | snapshotCommit | handoffBranch` for free.
+  Because promotion and lifecycle claims do not otherwise cross-guard, an explicit
+  **double fence** is added: the sync claim tx refuses when
+  `promotion_state ∈ {claiming, done}` (unless `reopened`), and `promoteRun`'s
+  claim tx refuses when an active `lifecycle_operation_name = 'sync'` claim exists.
+  The sync pipeline, attempt ledger (`run_sync_attempts`), and AI conflict
+  resolver session are specified in [`branch-sync.md`](branch-sync.md) (R7 — not
+  restated here).
 
 ## Lifecycle state machine
 
@@ -258,7 +288,7 @@ only choose the side-effect path and the default UI selection:
 | `merge` | `git merge --no-ff` from run branch into target branch | Existing `local_merge` claim, readiness re-gate, target-drift token, conflict assignment, finalize CAS. |
 | `pull_request` | Push run branch and create/update provider PR/MR | Existing PR claim and idempotent PR lookup/update. |
 | `rebase_merge` | Rebase run branch onto target, then merge | Same claim and finalize token; on conflict abort/restore and surface command/path/status. |
-| `ai_rebase_merge` | Rebase run branch onto target while preserving the `ai_rebase_merge` policy/audit mode | Same claim/finalize token as `rebase_merge`; conflict HITL uses `merge_conflict` unless a later resolver adds standard HITL rows. |
+| `ai_rebase_merge` | Rebase run branch onto target, resolver-backed (ADR-138, Designed) | Clean rebase → finalize to `Done` exactly like `rebase_merge`. Conflict → delegate to the branch-sync AI resolver under the **sync** lifecycle claim (NOT the promotion claim, so no promotion crash window); with `autoFinalize=false` (default) the run returns to `Review` for a manual clean re-promote (two-step), with `autoFinalize=true` a best-effort chained `promoteRun(rebase_merge)` finalizes to `Done` (failure degrades to the clean-`Review` two-step, benign W6). See [branch-sync.md](branch-sync.md). |
 
 `push=on_success` means push the successfully delivered target or run branch only
 after the local side-effect succeeds. Push rejection is a degradation/refusal
@@ -513,6 +543,11 @@ flowchart LR
   creates NO new branch/target/PR and performs no push, merge, or
   checkout-switch (the worktree is already on the run branch). A failed git op
   raises `CONFLICT`. See [`manual-takeover.md`](manual-takeover.md).
+- **(Designed, ADR-138)** A `sync` lifecycle claim and a `promoteRun` promotion
+  claim MUST be mutually exclusive on the same workspace: the sync claim refuses
+  `CONFLICT` when `promotion_state ∈ {claiming, done}` unless it is `reopened`,
+  and `promoteRun` refuses when an active `lifecycle_operation_name = 'sync'`
+  claim exists — the double fence is enforced and tested in both directions.
 
 ## Edge cases
 
@@ -576,13 +611,20 @@ failure compensates the new branch/worktree before it returns a typed error.
   [ADR-058 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
   (Implemented, M18),
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Implemented, M18).
+  (Implemented, M18),
+  [ADR-137 PR lifecycle tracking](../decisions.md#adr-137-pr-lifecycle-tracking)
+  (Designed),
+  [ADR-138 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen)
+  (Designed).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
-  target/promotion claim columns from M18 and lifecycle operation claim columns
-  from M27).
+  target/promotion claim columns from M18, lifecycle operation claim columns
+  from M27, and the Designed ADR-137 PR-state columns + ADR-138
+  `run_sync_attempts` ledger).
 - Config reference: [`../configuration.md`](../configuration.md)
   (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).
 - Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
+  [`branch-sync.md`](branch-sync.md) (Designed — PR lifecycle scan, target sync,
+  AI conflict resolver, reopen; ADR-137/138),
   [`projects.md`](projects.md),
   [`git-integration.md`](git-integration.md) (push + provider PR dispatch),
   [`workbench-lifecycle.md`](workbench-lifecycle.md) (operator stop/archive/

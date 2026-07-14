@@ -309,7 +309,7 @@ components:
 
     WebhookEventType:
       type: string
-      description: The 13 curated outbound event types.
+      description: The 16 curated outbound event types.
       enum:
         - run.started
         - run.needs_input
@@ -322,6 +322,9 @@ components:
         - run.failed
         - run.crashed
         - run.abandoned
+        - run.pr_merged
+        - run.pr_closed
+        - run.pr_conflicts
         - gate.decided
         - ping
 
@@ -427,6 +430,9 @@ components:
             - $ref: "#/components/schemas/DataRunFailed"
             - $ref: "#/components/schemas/DataRunCrashed"
             - $ref: "#/components/schemas/DataRunAbandoned"
+            - $ref: "#/components/schemas/DataRunPrMerged"
+            - $ref: "#/components/schemas/DataRunPrClosed"
+            - $ref: "#/components/schemas/DataRunPrConflicts"
             - $ref: "#/components/schemas/DataGateDecided"
             - $ref: "#/components/schemas/DataPing"
 
@@ -550,6 +556,48 @@ components:
           format: uri
           nullable: true
           description: PR/MR URL for `pull_request` mode; `null` for `local_merge`.
+
+    DataRunPrMerged:
+      type: object
+      description: "`run.pr_merged` — the run's PR reached provider state `merged` (ADR-137). Edge-guarded, exactly-once across re-scans."
+      required: [prNumber, prUrl, mergeCommitSha]
+      additionalProperties: false
+      properties:
+        prNumber:
+          type: integer
+          description: Provider PR/MR number (`workspaces.pr_number`).
+        prUrl:
+          type: string
+          format: uri
+          description: PR/MR URL (`workspaces.pr_url`).
+        mergeCommitSha:
+          type: string
+          nullable: true
+          description: Provider merge commit (`workspaces.pr_merge_commit_sha`) — provenance only, NOT `runs.merge_commit_sha`; `null` when the provider did not report it.
+
+    DataRunPrClosed:
+      type: object
+      description: "`run.pr_closed` — the run's PR reached provider state `closed` (unmerged) (ADR-137). Edge-guarded, exactly-once."
+      required: [prNumber, prUrl]
+      additionalProperties: false
+      properties:
+        prNumber:
+          type: integer
+        prUrl:
+          type: string
+          format: uri
+
+    DataRunPrConflicts:
+      type: object
+      description: "`run.pr_conflicts` — the run's PR became mergeable=false / conflicted against target (ADR-137). Raises the alarm surface only; the resolver is launched exclusively by an explicit user action (ADR-138)."
+      required: [prNumber, prUrl]
+      additionalProperties: false
+      properties:
+        prNumber:
+          type: integer
+        prUrl:
+          type: string
+          format: uri
 
     DataRunDone:
       type: object

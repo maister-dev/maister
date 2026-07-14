@@ -91,7 +91,12 @@ The matrix is implemented as an allow-list in
 `web/lib/workbench-lifecycle/policy.ts`. Unknown future statuses expose no
 actions until deliberately added. Commit and handoff branch creation are not
 policy-level read-model actions; they are sub-actions inside the Export dialog
-and routes, gated by handoff metadata and lifecycle claims. The combined
+and routes, gated by handoff metadata and lifecycle claims. Branch **sync**
+(Designed, ADR-138) is likewise not a policy-level read-model action and takes no
+matrix column — it is a `Review`-run operation (top-level `flow`/`agent`,
+`workspace_mode <> 'shared'`, non-experiment) launched from the ReviewPanel,
+target-drift, and PR-conflict surfaces and gated by the shared lifecycle claim;
+see [`branch-sync.md`](branch-sync.md). The combined
 **Stop & archive** / **Stop & drop** below are not new policy actions either:
 they compose the existing `stop` (live) and `archive`/`drop` (parked) actions
 server-side so the operator clicks once.
@@ -192,6 +197,19 @@ effects and finalized only by the same attempt token. Stale `claiming` rows are
 reclaimable using the same timeout as promotion claims. Transient push failures
 leave the claim retryable; non-transient failures finalize as `failed`.
 
+**(Designed, ADR-138)** Branch **sync** adds a sixth `lifecycle_operation_name`
+value `"sync"` (TS-only — `lifecycle_operation_name` is plain `text` with no
+CHECK). It claims the SAME `lifecycle_operation_*` slot, so it is mutually
+exclusive with `archive | drop | exportBranch | snapshotCommit | handoffBranch`
+for free: a held `"sync"` claim blocks archive/drop/export/snapshot/handoff and
+vice versa, with no extra wiring. Beyond that shared slot, sync adds an explicit
+**cross-column double fence with promotion** — the lifecycle claim and the
+`promoteRun` claim do NOT otherwise cross-guard (only a shared `FOR UPDATE`
+workspace row-lock serializes them): the sync-claim transaction refuses when
+`promotion_state ∈ {claiming, done}` (unless `reopened`), and `promoteRun`'s
+claim transaction refuses when an active `lifecycle_operation_name='sync'` claim
+exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md).
+
 ## Expectations
 
 - Lifecycle controls render from one shared DTO:
@@ -280,8 +298,10 @@ leave the claim retryable; non-transient failures finalize as `failed`.
   [`../db/erd.md`](../db/erd.md) (`workspaces.lifecycle_operation_*`).
 - Related domains: [`workbench.md`](workbench.md), [`workspaces.md`](workspaces.md),
   [`scratch-runs.md`](scratch-runs.md), [`runs.md`](runs.md),
-  [`git-integration.md`](git-integration.md), and
-  [`reconciliation-gc.md`](reconciliation-gc.md).
+  [`git-integration.md`](git-integration.md),
+  [`reconciliation-gc.md`](reconciliation-gc.md), and
+  [`branch-sync.md`](branch-sync.md) (the `sync` lifecycle op + promotion double
+  fence).
 - Source: `web/lib/workbench-lifecycle/*`,
   `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/worktree.ts`.

@@ -44,6 +44,14 @@ registration bootstraps `maister.yaml` immediately and does not show this CTA.
 - **Persist config action** (legacy rows with `maisterYamlPath == null` only) —
   confirm dialog → `POST …/persist-config`; on success the action and any banner
   clear, and the toast surfaces `usedDefaultAuthor` / `pushWarning` when present.
+- **Sync defaults** (Designed, ADR-138) — two branch-sync fields beside the
+  existing runner/delivery-policy controls: a **Sync strategy default** select
+  (`rebase` | `merge`, default `rebase`, persisting `projects.sync_strategy_default`)
+  and a **Resolver runner** picker populated from the platform ACP runner catalog
+  (`platform_acp_runners`, nullable — an empty choice inherits the project/platform
+  default, persisting `projects.sync_runner_id`). Both save through the aggregate
+  settings PATCH (not per-field routes); a rejected sub-section rolls back the
+  whole write. Copy comes from the `settings` namespace.
 
 ## States
 
@@ -65,6 +73,11 @@ stateDiagram-v2
   `op` discriminator, reusing host-ambient auth.
 - Persist: `POST /api/projects/{slug}/persist-config` (body `push?`; response
   `usedDefaultAuthor?` / `pushWarning?`).
+- Sync defaults (Designed, ADR-138): `syncStrategyDefault` and `syncRunnerId`
+  are written through the aggregate `PATCH /api/projects/{slug}/settings`
+  (`ProjectSettingsPatchBody`), the same choke point as the runner/delivery-policy
+  defaults. Behavior:
+  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - Contracts: [`../../api/web.openapi.yaml`](../../api/web.openapi.yaml). Behavior
   (remote management, redaction, origin sync, host-ambient push):
   [`../../system-analytics/git-integration.md`](../../system-analytics/git-integration.md);
@@ -74,13 +87,18 @@ stateDiagram-v2
 ## i18n
 
 `projects` / `settings` (Git section title, remotes table columns, add/edit/remove
-+ push/fetch labels, persist dialog + banner strings).
++ push/fetch labels, persist dialog + banner strings). The Sync strategy default
+and Resolver runner field labels (Designed, ADR-138) live under `settings`; EN + RU
+parity required.
 
 ## Linked artifacts
 
-- ADR: [#adr-093](../../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).
+- ADRs: [#adr-093](../../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons),
+  [#adr-138](../../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen)
+  (sync strategy default + resolver runner).
 - Behavior: [`../../system-analytics/git-integration.md`](../../system-analytics/git-integration.md),
-  [`../../system-analytics/projects.md`](../../system-analytics/projects.md).
+  [`../../system-analytics/projects.md`](../../system-analytics/projects.md),
+  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - Source: `web/components/board/panels/settings-panel.tsx`,
   `web/app/api/projects/[slug]/remotes/route.ts`,
   `web/app/api/projects/[slug]/persist-config/route.ts`,

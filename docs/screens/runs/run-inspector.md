@@ -83,7 +83,13 @@ inspector must not repeat branch/worktree facts already visible there.
    target branch, base branch, and worktree path stay in the header or dedicated
    action dialogs instead of being duplicated here; the scratch inspector keeps
    its branch/base/target facts and falls back to the scratch metadata when the
-   workspace row's columns are null.
+   workspace row's columns are null. When PR lifecycle tracking ships (Designed,
+   ADR-137), Overview also lists the run's PR facts as read-only facts —
+   `prState` (`open` / `merged` / `closed`), the `prHasConflicts` flag, the
+   merged-at timestamp, and the provider merge-commit provenance
+   (`workspaces.pr_merge_commit_sha`, deliberately distinct from the delivery
+   scanner's `runs.merge_commit_sha`); the conflicts flag links to the Reopen
+   action in the Actions tab.
 2. **Changes** - total additions/deletions, file count, dirty-state badge, scope
    selector summary, directory-grouped changed files, file status icons, comment
    badges, and generated/large/truncated indicators where available.
@@ -100,6 +106,12 @@ inspector must not repeat branch/worktree facts already visible there.
    composer's turn-interrupt Stop. The scratch promote shortcut exposes a
    merge-mode selector (`local_merge` / `rebase_merge` / `pull_request`). The
    inspector does not expose an arbitrary push-to-remote action in this slice.
+   Branch sync + reopen (Designed, ADR-138) add two delivery-adjacent shortcuts:
+   **Sync branch** for an eligible `Review` run (opens the Sync branch dialog in
+   [`flow-run.md`](flow-run.md)) and **Reopen** for a `Done` run whose workspace
+   has an open or conflicted PR (`Done → Review`, reusing the SAME provider PR).
+   Both derive from server-side policy like every other action and show a
+   one-line disabled reason when ineligible.
 
 The inspector should keep text compact and use icons for repeated controls. It
 must not duplicate the main Flow result, conversation, or full diff.
@@ -154,13 +166,20 @@ Disabled actions display one-line reasons:
   `POST /api/scratch-runs/{runId}/stop`,
   `POST /api/scratch-runs/{runId}/interrupt` (composer turn-interrupt, not an
   inspector action), and `POST /api/scratch-runs/{runId}/discard`.
+- Branch sync + PR lifecycle (Designed, ADR-137/138): `POST /api/runs/{runId}/reopen`
+  backs the Reopen action and `POST /api/runs/{runId}/sync` backs Sync branch;
+  the Overview PR facts (`prState`, `prHasConflicts`, `prMergedAt`,
+  `prMergeCommitSha`) come from `getRunDetail` / workspace metadata. Behavior:
+  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 
 ## i18n
 
 The inspector reuses the `run` namespace (status, branch/base/target/worktree
 facts, action labels, `inspectorStale`, `inspectorSession*`) plus `workbench`,
 `scratch`, `readiness`, and lifecycle action keys; no dedicated `runInspector`
-namespace was needed.
+namespace was needed. ADR-137/138 add the PR facts (PR-state values, conflicts
+flag, merged-at, merge-commit provenance) and the Reopen / Sync branch action
+labels under the same `run` namespace; EN + RU parity required.
 
 ## Review-source summary (Implemented — ADR-138)
 
@@ -176,10 +195,13 @@ reviewable changes. Other scope controls remain forensic and explicitly named.
   [`workbench.md`](workbench.md).
 - Behavior: [`../../system-analytics/runs.md`](../../system-analytics/runs.md),
   [`../../system-analytics/scratch-runs.md`](../../system-analytics/scratch-runs.md),
-  [`../../system-analytics/flow-graph.md`](../../system-analytics/flow-graph.md).
+  [`../../system-analytics/flow-graph.md`](../../system-analytics/flow-graph.md),
+  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - ADRs: [ADR-052](../../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
   [ADR-058](../../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve),
   [ADR-066](../../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror),
-  [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher).
+  [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
+  [ADR-137](../../decisions.md#adr-137-pr-lifecycle-tracking),
+  [ADR-138](../../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen).
 - Source: `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/workbench-lifecycle/policy.ts`, `web/lib/runs/promote.ts`.

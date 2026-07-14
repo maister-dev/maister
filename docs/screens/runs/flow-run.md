@@ -95,6 +95,13 @@ still a later responsive pass.
    own line, the executor, compact `+/-` change size, and a collapsible **Task**
    block rendering the task prompt (Markdown). This replaces the prior
    `"<KEY-N> <branch>"` heading so the page answers "what is this run about".
+   When branch sync and PR lifecycle tracking ship (Designed, ADR-137/138), the
+   header also carries a **behind/ahead chip** summarizing the run branch's drift
+   against its target and a **PR-state chip** (`open` / `merged` / `closed`); a
+   conflicted PR renders a distinct conflicts affordance linking to Reopen. Both
+   render from the `run` namespace in `web/components/runs/run-header.tsx`; see
+   the [Branch sync & PR lifecycle](#branch-sync--pr-lifecycle-designed) section
+   below.
 2. **Main result** - the default center for non-scratch runs. Flow runs combine
    a readable graph or node list with a selected-node result panel. The selected
    node shows status, attempts, duration, token/cost contribution, produced
@@ -200,6 +207,13 @@ The landing focus follows state:
   node result and inspector summaries.
 - `GET /api/runs/{runId}/stream` supplies the SSE change trigger.
 - Workbench routes are listed in [`workbench.md`](workbench.md).
+- Branch sync + PR lifecycle (Designed, ADR-137/138): `POST /api/runs/{runId}/sync`
+  and `POST /api/runs/{runId}/reopen` back the Sync branch and Reopen actions;
+  `getRunDetail(runId)` additionally supplies the workspace PR facts (`prState`,
+  `prHasConflicts`, `prMergedAt`, `prMergeCommitSha`) and the current
+  `run_sync_attempts` phase that feed the header chips and the sync-in-progress
+  panel. Behavior:
+  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 
 Behavior belongs in [`../../system-analytics/runs.md`](../../system-analytics/runs.md),
 [`../../system-analytics/flow-graph.md`](../../system-analytics/flow-graph.md),
@@ -215,11 +229,51 @@ participant draft, verifier, target, round, agreement reached, no consensus,
 human resolution, consensus plan, debate log, and bounded excerpt labels. EN +
 RU parity is required.
 
+ADR-137/138 add branch-sync and PR-lifecycle labels under the existing `run`
+namespace: the behind/ahead and PR-state chips, the Sync branch dialog
+(strategy / runner / push / AI-resolver controls), the sync-in-progress phase
+labels and Stop, the drift-card Sync branch action, the Reopen action, and the
+`ai_rebase_merge` auto-finalize checkbox. EN + RU parity required.
+
 ADR-125 adds budget-breach labels under the existing run/HITL namespaces:
 progress metrics, `Raise & continue`, `Restart fresh`, `Park the result`,
 snapshot/export mode labels, branch-name validation text, discard/drop
 confirmation, and staged-claim status text. The same strings are used by the
 Inbox card and the run-detail panel.
+
+## Branch sync & PR lifecycle (Designed)
+
+Branch sync (ADR-138) and PR lifecycle tracking (ADR-137) add run-finishing
+affordances for a `Review` run whose branch fell behind its target and for a
+`Done` run whose PR later conflicts. Eligibility, the mechanical-vs-agent-resolver
+paths, the verification gate, and reopen live in
+[`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md);
+this screen owns only the surface. All copy comes from the `run` namespace.
+
+- **Behind/ahead chip** — the run-header drift indicator (ahead N / behind N)
+  against the promotion target; behind > 0 is what makes Sync branch actionable.
+  Rendered in `web/components/runs/run-header.tsx`.
+- **PR-state chip** — a header/inspector chip reflecting persisted
+  `workspaces.pr_state` (`open` / `merged` / `closed`). A conflicted PR
+  (`pr_has_conflicts`) renders a distinct conflicts affordance that links to the
+  Reopen action documented in [`run-inspector.md`](run-inspector.md).
+- **Sync branch dialog** — opened from the run header or the drift card; a modal
+  (`web/components/runs/sync-branch-dialog.tsx`) with a strategy select
+  (`rebase` / `merge`, defaulting to the project `sync_strategy_default`), a
+  resolver-runner select (defaulting through the sync-runner chain), a **push**
+  toggle, and a "resolve conflicts with AI agent" checkbox **default ON**.
+- **Sync-in-progress panel** — while an attempt runs it shows the durable
+  `run_sync_attempts` phase (`starting → rebasing → agent_running → verifying →
+  pushing`) and a **Stop** control. A resolver requesting permission surfaces
+  through the normal HITL / `NeedsInput` path, not this panel.
+- **Drift card action** — the existing target-drift card (`run.targetDrift`,
+  today offering only **Promote anyway**) gains **Sync branch** as a primary
+  action beside **Promote anyway** in `web/components/runs/review-panel.tsx` and
+  `run-header-promotion-action.tsx`.
+- **`ai_rebase_merge` promote dialog** — when the resolved promotion mode is
+  `ai_rebase_merge`, the promote dialog gains an **auto-finalize after resolve**
+  checkbox, **default OFF** (two-step default: a resolved conflict returns the run
+  to `Review` for a clean re-promote; checked finalizes to `Done` best-effort).
 
 ## Budget-breach panel
 
@@ -259,12 +313,15 @@ base-to-run-to-target meaning. Both paths must state that distinction in EN/RU.
 - Behavior: [`../../system-analytics/runs.md`](../../system-analytics/runs.md),
   [`../../system-analytics/flow-graph.md`](../../system-analytics/flow-graph.md),
   [`../../system-analytics/hitl.md`](../../system-analytics/hitl.md),
-  [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).
+  [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md),
+  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - ADRs: [ADR-052](../../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
   [ADR-053](../../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads),
   [ADR-066](../../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror),
   [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
-  [ADR-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
+  [ADR-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution),
+  [ADR-137](../../decisions.md#adr-137-pr-lifecycle-tracking),
+  [ADR-138](../../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen).
 - Source: `web/app/(app)/runs/[runId]/layout.tsx`,
   `web/components/board/flow-graph-view-section.tsx`,
   `web/components/board/run-timeline.tsx`,

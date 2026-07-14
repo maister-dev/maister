@@ -70,6 +70,19 @@ surface exists.
   reads. `tasks:update` (pre-existing, maps to `editTask`) is also in the
   agent-token set so the triager's clarify mode can sharpen the task
   title/prompt before recording a verdict.
+- **New scope** (ADR-138 — Designed) — `runs:sync` authorizes BOTH
+  `POST /api/v1/ext/runs/sync` and `POST /api/v1/ext/runs/reopen`, and backs the
+  MCP tools `run_sync` / `run_reopen`. The routes are **run-bound** — the project
+  is derived server-side from the run row (`resolveProjectId`), existence-hidden
+  `404` on cross-project mismatch. `runs:sync` MUST be mapped in
+  `PROJECT_ACTION_BY_SCOPE` to the **`promoteRun`** project action (member-level),
+  mirroring the internal `POST /api/runs/{runId}/sync` route (FR-B9); leaving it
+  unmapped would fall through to the `readBoard` (viewer) default —
+  `projectActionForScope` returns `PROJECT_ACTION_BY_SCOPE[scope] ?? "readBoard"`
+  — an authorization DOWNGRADE that would let a viewer-owned token launch a
+  resolver. It is **manual-only**: NOT in `AGENT_TOKEN_SCOPES` and NOT in
+  `ORCHESTRATOR_TOKEN_SCOPES` (`web/lib/agents/tokens.ts`). See
+  [branch-sync.md](branch-sync.md) and ADR-138.
 - **Memory scopes** (ADR-122/127/128) — `memory:read` covers recall and
   clusters; `memory:write` covers retain and propose. Both are in the
   `AGENT_TOKEN_SCOPES` fixed set. Scope alone never suffices: access is
