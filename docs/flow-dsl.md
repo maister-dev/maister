@@ -332,7 +332,8 @@ the Flow-declared validation path reruns and produces current results. In a
 graph flow, review routing is expressed only by node `transitions` and
 `finish.human.decisions`; arbitrary `goto_step` is not part of engine 3.
 
-**`rework.commentsVar` composed payload — (Implemented — ADR-072).** The value
+**`rework.commentsVar` composed payload — (Implemented — ADR-072, ADR-137
+verified-review extension).** The value
 injected as the top-level `{{ <commentsVar> }}` template var on the rework
 target's next attempt becomes a *composed* payload: the reviewer's free-text
 `comments` summary first, then the run's OPEN line-anchored review-comment
@@ -341,8 +342,9 @@ exact `line_content` snapshot quoted, replies included; resolved threads never
 serialize). **Backward-compatible by construction:** with zero open threads
 the injected value is byte-identical to the raw summary (and nothing is
 injected when no summary was submitted) — no flow.yaml grammar change, no
-engine version bump; `{{ review_comments }}` keeps working as-is. Format and
-guard rules:
+engine version bump; `{{ review_comments }}` keeps working as-is. For an
+ADR-137 review rework, the same packet also includes completed gate-chat turns
+and is previewed/fingerprint-verified before claim. Format and guard rules:
 [`system-analytics/review-comments.md`](system-analytics/review-comments.md).
 
 **Manual takeover — M11b local-handoff subset (Implemented).** Manual takeover is

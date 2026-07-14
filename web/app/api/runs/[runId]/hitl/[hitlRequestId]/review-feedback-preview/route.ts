@@ -13,6 +13,7 @@ import {
   assertReviewFeedbackPresent,
   buildReviewFeedbackPreview,
 } from "@/lib/review-comments/feedback-packet";
+import { assertNoActiveGateChatTurn } from "@/lib/services/gate-chat";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
@@ -87,7 +88,10 @@ export async function POST(
     const parsed = bodySchema.safeParse(await req.json());
 
     if (!parsed.success || !Object.hasOwn(parsed.data, "response")) {
-      throw new MaisterError("CONFIG", "preview body must contain only response");
+      throw new MaisterError(
+        "CONFIG",
+        "preview body must contain only response",
+      );
     }
 
     const db = getDb() as Db;
@@ -126,12 +130,15 @@ export async function POST(
       );
     }
 
+    await assertNoActiveGateChatTurn(db, hitlRequestId);
+
     const preview = await buildReviewFeedbackPreview({
       db,
       runId,
       hitlRequestId,
       response: parsed.data.response,
     });
+
     assertReviewFeedbackPresent({
       packet: preview.feedback,
       schema: hitl.schema,

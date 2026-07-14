@@ -2346,7 +2346,7 @@ is the sole schema change in the Flow Review Workspace delivery.
   userMessageId,                  // FK -> gate_chat_messages.id (cascade)
   agentMessageId?,                // FK -> gate_chat_messages.id (SET NULL)
   state,                          // pending | completed | failed | aborted
-  leaseExpiresAt,                 // pending lease; response claim reads it
+  leaseExpiresAt,                 // owner deadline; never authorizes response claim
   errorCode?,                     // bounded terminal failure/abort reason
   completedAt?,                   // terminal timestamp
   createdAt
@@ -2356,15 +2356,18 @@ is the sole schema change in the Flow Review Workspace delivery.
 **Lifecycle.** A short transaction claims the pending review HITL and creates
 the user transcript row plus `pending` coordinator row. The ACP prompt happens
 outside that transaction. A second transaction writes the agent message and
-marks the same turn `completed`, or marks it `failed`/`aborted`; a recovery pass
-can expire the lease. A late reply for a terminal row is dropped. Rework claim
-and packet composition include only `completed` turns.
+marks the same turn `completed`, or marks it `failed`/`aborted`. On lease
+expiry the owning handler asks the supervisor to cancel, waits for the prompt
+to settle, runs L3 restore, and only then marks the turn `aborted`. A lease
+never terminalizes a coordinator by itself: a pending row remains a fail-closed
+fence until its owner has settled L3. A late reply for a terminal row is
+dropped. Rework claim and packet composition include only `completed` turns.
 
 **Indexes and integrity.** The generated migration adds a lookup index on
 `(hitl_request_id, state)` and a partial unique index allowing at most one
 `pending` row for each HITL request. The `state` and pending-lease checks make a
 pending row carry a lease and no terminal timestamp/reason; terminal rows clear
-the lease. The response claim uses the lookup to reject a live pending row with
+the lease. The response claim uses the lookup to reject every pending row with
 `409 PRECONDITION`; it does not hold a DB lock while calling ACP.
 
 ## `review_comments`
@@ -2405,8 +2408,10 @@ review-driven rework loop. See
 A reply never carries an anchor; a root always does.
 
 **Anchoring (ADR-072).** `(file_path, side, line)` plus the exact
-`line_content` snapshot extracted server-side from the recomputed committed
-`base..branch` diff at POST time — no SHA, no fuzzy re-anchoring.
+`line_content` snapshot extracted server-side at POST time from the source
+selected by the request scope: Flow `scope=review` uses the base-to-current
+working-tree review source; legacy/default scope keeps committed
+`base..branch`. No SHA or fuzzy re-anchoring is used.
 Cross-iteration validity is computed at read time as `placement:
 "inline" | "outdated"` (exact content match at the same position in the
 *current* diff); placement is never stored. `file_path` is opaque anchor

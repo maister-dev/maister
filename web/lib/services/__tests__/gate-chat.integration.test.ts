@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -39,7 +39,9 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { resolveDirtyWorktree } from "@/lib/runs/dirty-resolution";
 import {
+  GATE_CHAT_TURN_LEASE_MS,
   GATE_CHAT_READONLY_PREAMBLE,
+  requireNoLiveGateChatTurn,
   sendGateChatTurn,
 } from "@/lib/services/gate-chat";
 import {
@@ -141,6 +143,7 @@ function makeFakeApi(opts: FakeApiOpts = {}) {
         acpSessionId: "acp-1",
       },
     ]),
+    cancelPrompt: vi.fn(async () => ({ cancelled: true })),
     sendPrompt: vi.fn(
       async (
         sessionId: string,
@@ -762,6 +765,85 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
 });
 
 describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078)", () => {
+  it("keeps the rework fence until a lease-expired prompt is cancelled and L3 has restored", async () => {
+    const { runId, hitlId, worktree } = await seedChatPause();
+    const cancelPrompt = vi.fn(async () => ({ cancelled: true }));
+    const realNow = Date.now;
+    const nowSpy = vi.spyOn(Date, "now");
+    let expiredFenceError: unknown;
+    const api = {
+      listSessions: vi.fn(async () => {
+        nowSpy.mockReturnValue(realNow() + GATE_CHAT_TURN_LEASE_MS + 1);
+        await pool.query(
+          `UPDATE gate_chat_turns
+             SET lease_expires_at = to_timestamp(0)
+           WHERE hitl_request_id = $1 AND state = 'pending'`,
+          [hitlId],
+        );
+        try {
+          await db.transaction(async (tx) => {
+            await requireNoLiveGateChatTurn(tx, hitlId);
+          });
+        } catch (err) {
+          expiredFenceError = err;
+        }
+
+        return [
+          {
+            sessionId: "sup-live",
+            runId,
+            projectSlug: "x",
+            stepId: "review",
+            status: "live" as const,
+            pid: 1,
+            startedAt: new Date().toISOString(),
+            logPath: "/tmp/x.log",
+            monotonicId: 1,
+            acpSessionId: "acp-1",
+          },
+        ];
+      }),
+      cancelPrompt,
+      sendPrompt: vi.fn(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await writeFile(join(worktree, "rogue-after-expiry.txt"), "rogue\n");
+
+        return { stopReason: "cancelled" as const };
+      }),
+      createSession: vi.fn(),
+      streamSession: async function* () {},
+    };
+
+    try {
+      await expect(
+        sendGateChatTurn({
+          runId,
+          hitlRequestId: hitlId,
+          message: "why this branch?",
+          db,
+          api: api as never,
+        }),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+      expect(cancelPrompt).toHaveBeenCalledWith("sup-live");
+      expect(expiredFenceError).toMatchObject({ code: "PRECONDITION" });
+      await expect(
+        readFile(join(worktree, "rogue-after-expiry.txt")),
+      ).rejects.toThrow();
+      expect(await chatRows(hitlId)).toHaveLength(1);
+      expect(await chatTurnRows(hitlId)).toEqual([
+        expect.objectContaining({
+          state: "aborted",
+          lease_expires_at: null,
+          agent_message_id: null,
+          error_code: "LEASE_EXPIRED",
+        }),
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  }, 60_000);
+
   it("releases the stream consumer when the prompt fails and persists no agent row (X-DEFER)", async () => {
     const { runId, hitlId } = await seedChatPause();
 

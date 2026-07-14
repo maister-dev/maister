@@ -11994,9 +11994,11 @@ without changing the Flow's review decision.
   retry compares only the stored canonical response and never re-reads a later
   worktree.
 - Review-comment writes share the pending-HITL lock condition. Gate chat uses a
-  new durable `gate_chat_turns` lifecycle so an ACP prompt never holds a
-  database lock: only completed turns enter the packet; a pending live turn
-  blocks response with retryable `PRECONDITION`; expiry/abort drops a late reply.
+  durable `gate_chat_turns` lifecycle so an ACP prompt never holds a database
+  lock: only completed turns enter the packet; every pending turn blocks
+  response with retryable `PRECONDITION`. Lease expiry requests cancellation,
+  then the owning turn completes L3 restore before it may abort, so rework can
+  never begin before a late restore is fenced.
 - Graph compilation fails closed when a human rework target cannot demonstrably
   consume its effective `commentsVar` in the renderer's real prompt or command
   field. The runner records the derived delivered-payload digest with its

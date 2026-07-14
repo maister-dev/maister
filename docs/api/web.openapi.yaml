@@ -5822,8 +5822,9 @@ paths:
         the Flow base-to-working-tree source and is required by Review Workspace
         deep links; legacy/default reads retain their existing source. Exactly one DB query for the run's
         comments plus AT MOST one in-memory parse of the server-recomputed
-        committed `base..branch` diff (no N+1; a run with zero threads
-        short-circuits without computing the diff). `placement = "inline"`
+        scope-selected diff: `review` uses Flow base-to-working-tree while
+        legacy/default scope uses committed `base..branch` (no N+1; a run with
+        zero threads short-circuits without computing the diff). `placement = "inline"`
         iff the stored `lineContent` exactly matches the current diff at the
         same `(filePath, side, line)`; otherwise `"outdated"` (no fuzzy
         re-anchoring; placement is never stored). Threads whose file fell past

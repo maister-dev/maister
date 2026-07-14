@@ -119,6 +119,9 @@ erDiagram
     RUNS ||--o{ GATE_CHAT_MESSAGES : "gate-chat turns (ADR-078)"
     HITL_REQUESTS ||--o{ GATE_CHAT_MESSAGES : "pause of authoring (ADR-078)"
     USERS ||--o{ GATE_CHAT_MESSAGES : "author (SET NULL)"
+    RUNS ||--o{ GATE_CHAT_TURNS : "durable prompt coordinator (ADR-137)"
+    HITL_REQUESTS ||--o{ GATE_CHAT_TURNS : "fenced review pause (ADR-137)"
+    GATE_CHAT_MESSAGES ||--o{ GATE_CHAT_TURNS : "user / optional agent message"
     RUNS ||--o{ ASSIGNMENTS : "work queue (M13)"
     HITL_REQUESTS ||--o| ASSIGNMENTS : "linked wait (M13)"
     NODE_ATTEMPTS ||--o{ ASSIGNMENTS : "optional attempt (M13)"
@@ -953,6 +956,19 @@ erDiagram
         timestamp created_at
     }
 
+    GATE_CHAT_TURNS {
+        text id PK "randomUUID (ADR-137, migration 0100)"
+        text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
+        text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE"
+        text user_message_id FK "NOT NULL -> gate_chat_messages(id) ON DELETE CASCADE"
+        text agent_message_id FK "NULL -> gate_chat_messages(id) ON DELETE SET NULL"
+        text state "pending|completed|failed|aborted"
+        timestamp lease_expires_at "pending owner deadline"
+        text error_code "terminal failure/abort reason"
+        timestamp completed_at "terminal timestamp"
+        timestamp created_at
+    }
+
     REVIEW_COMMENTS {
         text id PK "randomUUID (ADR-072, migration 0039)"
         text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
@@ -1422,6 +1438,8 @@ history survives source-run and HITL cleanup.
 | `gate_results` | `gate_results_run_idx` | `(run_id)` | **(M11a)** Per-run gate lookups. |
 | `gate_results` | `gate_results_node_attempt_idx` | `(node_attempt_id)` | **(M11a)** Gates for a node attempt. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |
+| `gate_chat_turns` | `gate_chat_turns_hitl_state_idx` | `(hitl_request_id, state)` | **(ADR-137 Implemented)** response fence lookup. |
+| `gate_chat_turns` | `gate_chat_turns_pending_hitl_uq` | `(hitl_request_id)` UNIQUE WHERE `state='pending'` | **(ADR-137 Implemented)** one active ACP turn per pause. |
 | `review_comments` | `review_comments_run_created_idx` | `(run_id, created_at)` | **(ADR-072)** Thread listing per run in stable order. |
 | `review_comments` | `review_comments_run_status_idx` | `(run_id, status)` | **(ADR-072)** Open-thread compose / unresolved counts. |
 | `review_comments` | `review_comments_hitl_request_idx` | `(hitl_request_id)` | **(ADR-072)** Comments per gate visit. |

@@ -143,7 +143,8 @@ NEEDS_INPUT`. This removes reasonless rework.
 The initial fresh-claim branch and the idempotent-retry branch are deliberately
 different. Preview fingerprints are transport-only and are never stored in the
 canonical response or input artifact. Once a row has a canonical response, an
-identical retry compares that canonical payload, returns the established
+identical retry compares the payload structurally (object key order is
+irrelevant), returns the established
 idempotent outcome, and does **not** recompute the live source/packet (the
 runner may already have changed the worktree). A different canonical response
 still returns `409 CONFLICT`. `approve` keeps its existing response contract
@@ -155,10 +156,12 @@ the packet between preview and runner consumption. Gate chat has a longer ACP
 side effect and therefore must not hold a database lock across the prompt. A
 durable `gate_chat_turns` lifecycle records a single `pending` turn before the
 prompt, atomically marks it `completed` with its agent message afterward, and
-marks failed/expired/aborted turns terminally. Response claim refuses a live
-pending turn with retryable `409 PRECONDITION`; packet composition includes
-only completed turns. A lease expiry lets a crashed prompt be finalized without
-blocking the review forever; a late agent reply for an aborted turn is dropped.
+marks failed/aborted turns terminally. Response claim refuses every pending
+turn with retryable `409 PRECONDITION`; packet composition includes only
+completed turns. Lease expiry requests cancellation, then the owning handler
+waits for prompt settlement and completes L3 restore before it can mark the
+turn aborted. A lease never releases the review fence by itself, so a late
+restore cannot overwrite accepted rework.
 The existing runner `human_note` evidence gains the derived digest and remains
 the durable proof of the payload actually supplied to the target.
 
@@ -202,7 +205,7 @@ the current append-only transcript cannot safely infer while an ACP prompt is
 in flight. Add `gate_chat_turns` with server-generated id, `run_id`,
 `hitl_request_id`, `user_message_id`, `state` (`pending | completed | failed |
 aborted`), `lease_expires_at`, terminal timestamp/reason, and timestamps. Add
-a partial unique constraint/index permitting at most one unexpired `pending`
+a partial unique constraint/index permitting at most one `pending`
 turn per HITL plus the lookup index used by response claim and packet loading.
 The migration must be represented in Drizzle schema, SQL, journal, and snapshot
 and documented in `docs/database-schema.md`.

@@ -417,12 +417,25 @@ async function scheduleBudgetBreachResume(args: {
   scheduleResume(runId);
 }
 
-// Stable comparison so retries with the same payload are idempotent.
-// Different key order with the same fields hashes differently — clients
-// retrying should send the same byte stream.
+// Stable comparison so semantically identical retry payloads are idempotent
+// even when an HTTP client serializes object keys in a different order.
+// Arrays retain order because their order is part of the response contract.
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`);
+
+    return `{${entries.join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
 function payloadsEqual(a: unknown, b: unknown): boolean {
   try {
-    return JSON.stringify(a) === JSON.stringify(b);
+    return stableJson(a) === stableJson(b);
   } catch {
     return false;
   }

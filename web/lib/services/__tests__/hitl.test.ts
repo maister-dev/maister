@@ -9,6 +9,7 @@ import {
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
   experimentRuns as experimentRunsTable,
+  gateChatTurns as gateChatTurnsTable,
   hitlRequests as hitlRequestsTable,
   domainEvents as domainEventsTable,
   projects as projectsTable,
@@ -41,6 +42,7 @@ type Tables = {
   webhook_events: Row[];
   domain_events: Row[];
   experiment_runs: Row[];
+  gate_chat_turns: Row[];
 };
 
 const dbState: {
@@ -58,6 +60,7 @@ const dbState: {
     webhook_events: [],
     domain_events: [],
     experiment_runs: [],
+    gate_chat_turns: [],
   },
   updates: [],
 };
@@ -73,6 +76,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === webhookEventsTable) return "webhook_events";
   if (t === domainEventsTable) return "domain_events";
   if (t === experimentRunsTable) return "experiment_runs";
+  if (t === gateChatTurnsTable) return "gate_chat_turns";
   throw new Error("unknown table");
 }
 
@@ -196,6 +200,11 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 vi.mock("@/lib/supervisor-client", () => ({
+  listSessions: vi.fn(async () => []),
+  cancelPrompt: vi.fn(async () => ({ cancelled: false })),
+  createSession: vi.fn(),
+  sendPrompt: vi.fn(),
+  streamSession: async function* () {},
   deliverPermission: (sessionId: string, requestId: string, optionId: string) =>
     deliverPermissionSpy(sessionId, requestId, optionId),
   cancelPermission: (sessionId: string, requestId: string, reason: string) =>
@@ -243,6 +252,7 @@ beforeEach(async () => {
     webhook_events: [],
     domain_events: [],
     experiment_runs: [],
+    gate_chat_turns: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();
@@ -808,6 +818,7 @@ describe("respondToHitl service — graph review decision", () => {
     transitions: { approve: "done", rework: "implement" },
     reworkTargets: ["implement"],
     workspacePolicies: ["keep"],
+    commentsVar: "comments",
   };
 
   it("rejects a fresh rework decision without preview fingerprints before mutation", async () => {
@@ -869,6 +880,45 @@ describe("respondToHitl service — graph review decision", () => {
     expect(row.decision).toBe("approve");
     expect(row.reworkTarget).toBeNull();
     expect(row.workspacePolicy).toBeNull();
+  });
+
+  it("treats a rework retry with reordered response keys as idempotent", async () => {
+    const storedResponse = {
+      decision: "rework",
+      comments: "tighten errors",
+      workspacePolicy: "keep",
+    };
+    const { runId, hitlRequestId } = seedFormRow("human", {
+      schema: reviewSchema,
+      response: storedResponse,
+      respondedAt: new Date(),
+    });
+    const actor: HitlActor = {
+      kind: "user",
+      userId: "u-test",
+      label: "Test User",
+    };
+
+    const res = await respondToHitl(
+      {
+        runId,
+        hitlRequestId,
+        body: {
+          response: {
+            workspacePolicy: "keep",
+            comments: "tighten errors",
+            decision: "rework",
+          },
+          reviewSourceFingerprint: `sha256:${"a".repeat(64)}`,
+          reviewFeedbackFingerprint: `sha256:${"b".repeat(64)}`,
+        },
+      },
+      actor,
+      { db: fakeDb },
+    );
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual(storedResponse);
   });
 
   it("undeclared decision throws NEEDS_INPUT, no mutation (pre-claim)", async () => {

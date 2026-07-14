@@ -189,6 +189,72 @@ describe("POST review-feedback-preview", () => {
     expect(rows[0]).toEqual({ response: null, respondedAt: null });
   });
 
+  it("rejects a pending gate-chat turn without claiming or mutating it", async () => {
+    const { runId, hitlRequestId } = await seedReviewGate();
+    const userMessageId = randomUUID();
+
+    await db.insert(schema.gateChatMessages).values({
+      id: userMessageId,
+      runId,
+      hitlRequestId,
+      nodeId: "review",
+      gateAttempt: 1,
+      role: "user",
+      authorLabel: "Reviewer",
+      body: "Can you explain this change?",
+      acpSessionId: "acp-review",
+      seq: 1,
+    });
+    await db.insert(schema.gateChatTurns).values({
+      runId,
+      hitlRequestId,
+      userMessageId,
+      state: "pending",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const response = await POST(
+      previewRequest({
+        response: {
+          decision: "rework",
+          comments: "Exercise empty input.",
+          workspacePolicy: "keep",
+        },
+      }),
+      { params: Promise.resolve({ runId, hitlRequestId }) },
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "PRECONDITION",
+    });
+
+    const [hitl, turn] = await Promise.all([
+      db
+        .select({
+          response: schema.hitlRequests.response,
+          respondedAt: schema.hitlRequests.respondedAt,
+        })
+        .from(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.id, hitlRequestId)),
+      db
+        .select({
+          state: schema.gateChatTurns.state,
+          completedAt: schema.gateChatTurns.completedAt,
+          errorCode: schema.gateChatTurns.errorCode,
+        })
+        .from(schema.gateChatTurns)
+        .where(eq(schema.gateChatTurns.hitlRequestId, hitlRequestId)),
+    ]);
+
+    expect(hitl[0]).toEqual({ response: null, respondedAt: null });
+    expect(turn[0]).toEqual({
+      state: "pending",
+      completedAt: null,
+      errorCode: null,
+    });
+  });
+
   it("rejects a body that names server-derived review resources", async () => {
     const { runId, hitlRequestId } = await seedReviewGate();
 

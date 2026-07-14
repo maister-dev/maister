@@ -422,7 +422,8 @@ sequenceDiagram
     RG->>DB: follow transitions.approve -> run Review
 ```
 
-**(Implemented — ADR-072) composed `commentsVar` payload.** The "commentsVar
+**(Implemented — ADR-072; ADR-137 verified-review extension) composed
+`commentsVar` payload.** The "commentsVar
 injected" step above becomes a runner-side compose at rework consumption: the
 runner loads the run's OPEN line-anchored review-comment threads
 (`review_comments` roots + replies), serializes them as deterministic
@@ -433,9 +434,11 @@ value is byte-identical to the raw summary** (and nothing is injected when no
 summary was submitted) — existing flows see exactly the pre-ADR-072 behavior.
 Resolved threads never serialize; open-but-outdated threads serialize with
 their stored snapshot quoted. The composed payload is also recorded as a
-`human_note` evidence artifact on the gate's `node_attempt`. The respond
-route, its two-phase commit, and `hitl_requests.response` /
-`input-<stepId>.json` are untouched. Serialization format + guard rules:
+`human_note` evidence artifact on the gate's `node_attempt`. ADR-137 review
+rework adds completed gate-chat turns and preview/fingerprint verification to
+the same packet; legacy/non-review response two-phase commit and
+`hitl_requests.response` / `input-<stepId>.json` stay untouched. Serialization
+format + guard rules:
 [`review-comments.md`](review-comments.md).
 
 ### Workspace policy execution + node checkpoints (M30 — Implemented)

@@ -1,7 +1,8 @@
 # HITL domain ERD
 
-Two tables — `hitl_requests` plus the **(ADR-072 — Implemented, migration
-`0039`)** `review_comments` thread store — and the in-jsonb shape of the
+Three tables — `hitl_requests`, the **(ADR-072 — Implemented, migration
+`0039`)** `review_comments` thread store, and the **(ADR-137 — Implemented,
+migration `0100`)** `gate_chat_turns` coordinator — plus the in-jsonb shape of the
 `schema` (form schema) and `response` payload. See
 [`../system-analytics/hitl.md`](../system-analytics/hitl.md) and
 [`../system-analytics/review-comments.md`](../system-analytics/review-comments.md)
@@ -17,6 +18,9 @@ erDiagram
     RUNS ||--o{ GATE_CHAT_MESSAGES : "gate-chat turns (ADR-078)"
     HITL_REQUESTS ||--o{ GATE_CHAT_MESSAGES : "pause of authoring (ADR-078)"
     USERS ||--o{ GATE_CHAT_MESSAGES : "author (SET NULL)"
+    RUNS ||--o{ GATE_CHAT_TURNS : "durable prompt coordinator (ADR-137)"
+    HITL_REQUESTS ||--o{ GATE_CHAT_TURNS : "fenced review pause (ADR-137)"
+    GATE_CHAT_MESSAGES ||--o{ GATE_CHAT_TURNS : "user / optional agent message"
 
     HITL_REQUESTS {
         text id PK
@@ -50,6 +54,19 @@ erDiagram
         text acp_session_id "session that produced/answered (server-only)"
         integer seq "NOT NULL - monotonic per hitl_request_id"
         boolean mutation_reverted "DEFAULT false - L3 reverted a mutation (DD11)"
+        timestamp created_at
+    }
+
+    GATE_CHAT_TURNS {
+        text id PK "randomUUID (ADR-137, migration 0100)"
+        text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
+        text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE"
+        text user_message_id FK "NOT NULL -> gate_chat_messages(id) ON DELETE CASCADE"
+        text agent_message_id FK "NULL -> gate_chat_messages(id) ON DELETE SET NULL"
+        text state "pending|completed|failed|aborted"
+        timestamp lease_expires_at "pending owner deadline"
+        text error_code "terminal failure/abort reason"
+        timestamp completed_at "terminal timestamp"
         timestamp created_at
     }
 
@@ -111,6 +128,16 @@ erDiagram
 > (`gateAttempt > maxLoops`; total visits = `maxLoops + 1`). See
 > [`../system-analytics/review-comments.md`](../system-analytics/review-comments.md).
 
+> **(ADR-137 — Implemented, migration `0100`.)** `gate_chat_turns` is the
+> durable, one-active-turn coordinator for ACP-backed review chat. It FK-cascades
+> from both `runs` and `hitl_requests`; its required `user_message_id` cascades
+> with the transcript and optional `agent_message_id` is SET NULL. A pending row
+> carries the lease and has no terminal fields. Lease expiry requests ACP
+> cancellation but does not release the response fence: L3 workspace restore
+> completes before the row becomes terminal. Indexes are
+> `(hitl_request_id, state)` and a partial unique `(hitl_request_id)` where
+> `state='pending'`.
+
 ## In-jsonb shape — `schema` column
 
 For `kind=form` and `kind=human`, `schema` stores the form schema and
@@ -167,6 +194,9 @@ Free-form `additionalProperties` are tolerated (forward-compat).
   `(run_id, created_at)`, `review_comments_run_status_idx`
   `(run_id, status)`, `review_comments_hitl_request_idx`
   `(hitl_request_id)`, `review_comments_parent_idx` `(parent_id)`.
+- **(ADR-137)** `gate_chat_turns` CHECK: only `pending` may retain a non-null
+  lease, and it must have neither terminal timestamp nor error. The partial
+  unique index permits at most one `pending` coordinator per HITL request.
 
 ### Human-ask extension (Implemented — ADR-136)
 
@@ -218,8 +248,8 @@ The row is never deleted (cascades from `runs` and `projects` only).
   [`../system-analytics/review-comments.md`](../system-analytics/review-comments.md)
   (Implemented — ADR-072).
 - Config: [`../configuration.md`](../configuration.md) §`form_schema versioning`.
-- Source: `web/lib/db/schema.ts` (`hitl_requests` table; `review_comments`
-  table — migration `0039`),
+- Source: `web/lib/db/schema.ts` (`hitl_requests`, `review_comments`, and
+  `gate_chat_turns` tables — migrations `0039` and `0100`),
   `web/lib/config.schema.ts` (`formSchemaSchema`),
   `web/lib/config.ts` (`validateFormSchemaVersion`).
 

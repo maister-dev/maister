@@ -1122,8 +1122,9 @@ remains unchanged.
   threads, and chat are server-derived.
 - **Fresh claim** — a session response with opaque review-source and feedback
   fingerprints, valid only for `response.decision = rework`.
-- **Canonical retry** — stored response equality only; it does not recompute a
-  potentially later worktree or packet.
+- **Canonical retry** — stored response equality is structural (object-key
+  order is irrelevant); it does not recompute a potentially later worktree or
+  packet.
 - **Gate-chat turn** — durable lifecycle row `pending | completed | failed |
   aborted`; only `completed` turns are packet input.
 
@@ -1142,7 +1143,7 @@ sequenceDiagram
     H-->>W: target, counts, payload, opaque digests
     W->>H: POST respond with response + digests
     H->>DB: lock HITL, reject pending chat, recompute and compare
-    H->>DB: store canonical response only
+    H->>DB: store the validated response only
     H-->>R: schedule rework
     R->>R: load same packet service
     R->>DB: record human_note digest and included thread ids
@@ -1153,9 +1154,11 @@ sequenceDiagram
 - Preview accepts no body-controlled project, workspace, node, path, comment,
   target, or template identifiers. It returns `200` only for a live allowed
   rework decision and has no mutation or runner side effect.
-- A live pending chat turn returns retryable `409 PRECONDITION`. The prompt is
-  performed outside a DB transaction, then completion/failure/abort is written
-  atomically; a lease finalizes abandoned work and late replies are dropped.
+- A pending chat turn returns retryable `409 PRECONDITION`. The prompt is
+  performed outside a DB transaction. Lease expiry only requests cancellation;
+  the owner waits for the prompt, completes L3 restore, and then writes its
+  terminal abort. The response fence therefore survives until a late restore is
+  impossible.
 - External v1 `respond` rejects `schema.review === true` with `409
   PRECONDITION` before calling the shared response service. Permission, form,
   and other eligible human compatibility remains unchanged.
@@ -1166,8 +1169,9 @@ sequenceDiagram
 
 - A stale source/packet fingerprint, missing feedback consumer, or changed
   review gate → `409 PRECONDITION` with the HITL row still open.
-- Same canonical response after a successful claim → existing idempotent
-  response; different canonical response → `409 CONFLICT`.
+- Same structurally equal response after a successful claim (object-key order is
+  irrelevant) → existing idempotent response; different response → `409
+  CONFLICT`.
 - `approve` never needs preview fingerprints and retains current semantics.
 
 ### Linked artifacts

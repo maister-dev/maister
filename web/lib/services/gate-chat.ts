@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
@@ -25,6 +25,7 @@ import {
   rollbackResumedRun,
 } from "@/lib/runs/state-transitions";
 import {
+  cancelPrompt as defaultCancelPrompt,
   createSession as defaultCreateSession,
   listSessions as defaultListSessions,
   sendPrompt as defaultSendPrompt,
@@ -64,6 +65,11 @@ type GateChatTurnRow = {
   id: string;
   state: GateChatTurnState;
   leaseExpiresAt: Date | null;
+};
+
+type GateChatTurnDeadline = {
+  clear: () => void;
+  expired: () => boolean;
 };
 
 // M30 (ADR-078 L1): the instruct layer — server-side constant prepended to
@@ -141,40 +147,59 @@ function turnLeaseExpiresAt(now: Date): Date {
   return new Date(now.getTime() + GATE_CHAT_TURN_LEASE_MS);
 }
 
-// This helper is intentionally called while the HITL row is already locked.
-// Both response claim and chat admission take locks hitl_request → turn, which
-// makes a response and a long-running ACP prompt mutually fenceable without
-// ever retaining a database transaction during the prompt.
-export async function abortExpiredGateChatTurns(
-  tx: Db,
-  hitlRequestId: string,
-  now = new Date(),
-): Promise<number> {
-  const rows = await tx
-    .update(gateChatTurns)
-    .set({
-      state: "aborted",
-      leaseExpiresAt: null,
-      completedAt: now,
-      errorCode: "LEASE_EXPIRED",
-    })
-    .where(
-      and(
-        eq(gateChatTurns.hitlRequestId, hitlRequestId),
-        eq(gateChatTurns.state, "pending"),
-        lte(gateChatTurns.leaseExpiresAt, now),
-      ),
-    )
-    .returning({ id: gateChatTurns.id });
+function armGateChatTurnDeadline(args: {
+  api: GateChatSupervisorApi;
+  hitlRequestId: string;
+  runId: string;
+  sessionId: string;
+  leaseExpiresAt: Date;
+}): GateChatTurnDeadline {
+  const delayMs = Math.max(0, args.leaseExpiresAt.getTime() - Date.now());
+  let leaseExpired = false;
+  const timer = setTimeout(() => {
+    leaseExpired = true;
+    void args.api
+      .cancelPrompt(args.sessionId)
+      .then(({ cancelled }) => {
+        log.warn(
+          {
+            runId: args.runId,
+            hitlRequestId: args.hitlRequestId,
+            sessionId: args.sessionId,
+            cancelled,
+          },
+          "[FIX:gate-chat-lease] cancellation requested after lease expiry",
+        );
+      })
+      .catch((err: unknown) => {
+        log.error(
+          {
+            runId: args.runId,
+            hitlRequestId: args.hitlRequestId,
+            sessionId: args.sessionId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "[FIX:gate-chat-lease] cancellation request failed",
+        );
+      });
+  }, delayMs);
 
-  return rows.length;
+  timer.unref?.();
+
+  return {
+    clear: () => clearTimeout(timer),
+    expired: () => leaseExpired,
+  };
 }
 
+// This helper is intentionally called while the HITL row is already locked.
+// Both response claim and chat admission take locks hitl_request → turn, which
+// keeps a response fenced from the ACP prompt without retaining a transaction
+// across the prompt or its mandatory L3 restore.
 export async function requireNoLiveGateChatTurn(
   tx: Db,
   hitlRequestId: string,
 ): Promise<void> {
-  const expiredCount = await abortExpiredGateChatTurns(tx, hitlRequestId);
   const rows = (await tx
     .select({
       id: gateChatTurns.id,
@@ -196,11 +221,30 @@ export async function requireNoLiveGateChatTurn(
       "a gate-chat turn is still in progress; retry after it completes",
     );
   }
+}
 
-  if (expiredCount > 0) {
-    log.info(
-      { hitlRequestId, expiredCount },
-      "[gate-chat] expired turns aborted before response/admission",
+// Preview is deliberately read-only: it neither expires nor mutates a chat
+// coordinator. It rejects every active coordinator because a preview that
+// cannot be confirmed would be misleading to the reviewer.
+export async function assertNoActiveGateChatTurn(
+  db: Db,
+  hitlRequestId: string,
+): Promise<void> {
+  const rows = (await db
+    .select({ id: gateChatTurns.id })
+    .from(gateChatTurns)
+    .where(
+      and(
+        eq(gateChatTurns.hitlRequestId, hitlRequestId),
+        eq(gateChatTurns.state, "pending"),
+      ),
+    )
+    .limit(1)) as Array<{ id: string }>;
+
+  if (rows[0]) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "a gate-chat turn is still in progress; retry after it completes",
     );
   }
 }
@@ -210,6 +254,7 @@ async function failGateChatTurn(args: {
   turnId: string;
   hitlRequestId: string;
   errorCode: string;
+  terminalState?: "failed" | "aborted";
 }): Promise<void> {
   await args.db.transaction(async (tx: Db) => {
     const hitlRows = await tx
@@ -232,10 +277,11 @@ async function failGateChatTurn(args: {
 
     const isClaimed =
       !hitl || hitl.response !== null || hitl.respondedAt !== null;
+
     await tx
       .update(gateChatTurns)
       .set({
-        state: isClaimed ? "aborted" : "failed",
+        state: args.terminalState ?? (isClaimed ? "aborted" : "failed"),
         leaseExpiresAt: null,
         completedAt: new Date(),
         errorCode: args.errorCode,
@@ -246,6 +292,7 @@ async function failGateChatTurn(args: {
 
 export type GateChatSupervisorApi = {
   listSessions: typeof defaultListSessions;
+  cancelPrompt: typeof defaultCancelPrompt;
   sendPrompt: typeof defaultSendPrompt;
   createSession: typeof defaultCreateSession;
   streamSession: typeof defaultStreamSession;
@@ -253,6 +300,7 @@ export type GateChatSupervisorApi = {
 
 const defaultApi: GateChatSupervisorApi = {
   listSessions: defaultListSessions,
+  cancelPrompt: defaultCancelPrompt,
   sendPrompt: defaultSendPrompt,
   createSession: defaultCreateSession,
   streamSession: defaultStreamSession,
@@ -565,6 +613,7 @@ export async function sendGateChatTurn(args: {
     turnId: string;
     nodeId: string;
     gateAttempt: number;
+    leaseExpiresAt: Date;
     userMessage: GateChatMessageView;
   };
 
@@ -644,6 +693,7 @@ export async function sendGateChatTurn(args: {
         );
       }
 
+      const leaseExpiresAt = turnLeaseExpiresAt(new Date());
       const turnRows = await tx
         .insert(gateChatTurns)
         .values({
@@ -651,7 +701,7 @@ export async function sendGateChatTurn(args: {
           hitlRequestId: args.hitlRequestId,
           userMessageId: userMessage.id,
           state: "pending",
-          leaseExpiresAt: turnLeaseExpiresAt(new Date()),
+          leaseExpiresAt,
         })
         .returning({ id: gateChatTurns.id });
       const turn = turnRows[0];
@@ -667,6 +717,7 @@ export async function sendGateChatTurn(args: {
         turnId: turn.id,
         nodeId: lockedHitl.stepId,
         gateAttempt,
+        leaseExpiresAt,
         userMessage: {
           id: userMessage.id,
           role: "user" as const,
@@ -836,8 +887,17 @@ export async function sendGateChatTurn(args: {
     }
   })();
 
+  const deadline = armGateChatTurnDeadline({
+    api,
+    hitlRequestId: args.hitlRequestId,
+    runId: args.runId,
+    sessionId: supervisorSessionId,
+    leaseExpiresAt: admitted.leaseExpiresAt,
+  });
+  let promptResult: Awaited<ReturnType<GateChatSupervisorApi["sendPrompt"]>>;
+
   try {
-    await api.sendPrompt(supervisorSessionId, {
+    promptResult = await api.sendPrompt(supervisorSessionId, {
       stepId,
       prompt: GATE_CHAT_READONLY_PREAMBLE + args.message,
       readOnlyTurn: true,
@@ -857,6 +917,8 @@ export async function sendGateChatTurn(args: {
       `gate-chat prompt failed: ${err instanceof Error ? err.message : String(err)}`,
       { cause: err instanceof Error ? err : undefined },
     );
+  } finally {
+    deadline.clear();
   }
 
   abort.abort();
@@ -883,9 +945,24 @@ export async function sendGateChatTurn(args: {
     throw err;
   }
 
+  if (promptResult.stopReason === "cancelled") {
+    await failGateChatTurn({
+      db: d,
+      turnId: admitted.turnId,
+      hitlRequestId: args.hitlRequestId,
+      errorCode: deadline.expired() ? "LEASE_EXPIRED" : "PROMPT_CANCELLED",
+      terminalState: "aborted",
+    });
+    throw new MaisterError(
+      "PRECONDITION",
+      "gate-chat turn was cancelled; retry after the workspace restore completes",
+    );
+  }
+
   // (6) persist the agent turn and mark the coordinator completed in one
-  // transaction. A response that won after an expired lease causes an abort;
-  // the late ACP reply is deliberately dropped.
+  // transaction. A pending coordinator fences response claim until this L3
+  // restore has completed; lease expiry requests cancellation but never clears
+  // that fence early.
   const replyBody = replyFromEvent ?? replyChunks;
   let agentMessage: GateChatMessageView & { mutationReverted: boolean };
 

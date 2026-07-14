@@ -12,7 +12,7 @@
 **Review comments** are PR-grade, line-anchored, threaded, resolvable remarks
 a reviewer leaves on the review-gate diff of a run, feeding the existing
 review-driven rework loop. The domain boundary is: the `review_comments`
-table, the anchor/placement model over the committed `base..branch` diff, the
+table, the anchor/placement model over the scope-selected diff source, the
 four run-scoped comment routes and their open-review-gate guard, the
 runner-side compose of open threads into the rework `commentsVar` payload,
 the `human_note` evidence snapshot, and the loop-exhaustion validate rule. It
@@ -44,7 +44,9 @@ deferred).
   Indexes: `(run_id, created_at)`, `(run_id, status)`, `(hitl_request_id)`,
   `(parent_id)`.
 - **Anchor** — `(file_path, side, line)` + the exact `line_content` snapshot
-  extracted server-side from the recomputed run diff at POST time. `side`
+  extracted server-side from the scope-selected run diff at POST time: Flow
+  `scope=review` uses the base-to-current-working-tree review source, while
+  legacy/default scope retains committed `base..branch`. `side`
   names the diff half (`old` = base, `new` = branch); `line` is the 1-based
   line number on that side. `file_path` is opaque anchor DATA — never used as
   a filesystem path component anywhere.
@@ -106,7 +108,7 @@ sequenceDiagram
     alt gate not open
         W-->>U: 409 PRECONDITION (no write)
     end
-    W->>G: recompute current diff (committed-only base..branch)
+    W->>G: recompute scope-selected current diff
     alt diff truncated OR filePath absent OR line not in that side's diff
         W-->>U: 409 PRECONDITION (no write)
     end
@@ -126,20 +128,20 @@ diff.
 
 ### Rework compose into `commentsVar` (Implemented)
 
-The respond route stays UNTOUCHED (two-phase commit, idempotency CAS,
-pristine `response`/`input-<stepId>.json` payloads). The compose happens
-runner-side, at rework consumption, in the existing
-`if (commentsVar)` branch.
+For legacy/non-review Flow responses, the existing respond two-phase commit,
+idempotency CAS, and pristine `response`/`input-<stepId>.json` payloads stay
+unchanged. Verified review rework adds the ADR-137 preview fingerprints and
+pending-chat fence before the same runner-side compose at rework consumption.
 
 ```mermaid
 sequenceDiagram
     actor U as Reviewer
-    participant W as Respond route (unchanged)
+    participant W as Respond route (ADR-137 verified review claim)
     participant R as Graph runner
     participant DB as Postgres
 
     U->>W: respond { decision: rework, comments: summary }
-    W->>DB: validate vs allow-list + exhaustion rule, claim, persist (unchanged contract)
+    W->>DB: validate + preview fingerprints, reject pending chat, claim, persist
     W-->>R: schedule runFlow
     R->>DB: load OPEN root threads (+ replies) for the run
     R->>R: compose deterministic markdown (summary first, then ordered threads)
@@ -261,7 +263,7 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   each a single DB transaction with no artifact write, no supervisor call,
   and no deferred created or released.
 - POST (root) MUST validate `(filePath, side, line)` against the
-  server-recomputed current diff (same `diffRunWorkspace` +
+  server-recomputed scope-selected current diff (same `diffRunWorkspace` +
   `lib/diff/prepare.ts` source the view renders) and store the
   server-extracted `line_content`; a `truncated` diff or a file absent from
   the parsed diff → 409 `PRECONDITION`.
