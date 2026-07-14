@@ -128,7 +128,11 @@ export function ScratchLaunchPopover({
             type="button"
             onClick={() => setOpen(false)}
           />
-          <section className="absolute left-3 right-3 top-[72px] max-h-[calc(100vh-96px)] overflow-hidden rounded-[20px] border border-line bg-paper-warm shadow-[var(--shadow-lg)] md:left-[276px] md:right-auto md:w-[min(900px,calc(100vw-304px))]">
+          {/* Center via left/right:0 + mx-auto, NOT a transform: a transformed
+              ancestor becomes the containing block for the composer's
+              position:fixed slash-command popover, mis-anchoring it away from
+              the caret. */}
+          <section className="absolute left-3 right-3 top-[72px] max-h-[calc(100vh-96px)] overflow-hidden rounded-[20px] border border-line bg-paper-warm shadow-[var(--shadow-lg)] md:left-0 md:right-0 md:mx-auto md:w-[min(900px,calc(100vw-48px))]">
             <header className="flex items-center justify-between gap-3 border-b border-line bg-[color-mix(in_oklab,var(--paper)_82%,var(--ivory)_18%)] px-4 py-3">
               <div className="min-w-0 space-y-0.5">
                 <h2
@@ -152,6 +156,7 @@ export function ScratchLaunchPopover({
             </header>
             <div className="max-h-[calc(100vh-153px)] overflow-y-auto p-3">
               <ScratchLauncher
+                embedded
                 initialProjectId={projectId ?? null}
                 onLaunched={(response) => {
                   setOpen(false);

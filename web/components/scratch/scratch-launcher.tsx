@@ -97,6 +97,10 @@ type ScratchLaunchResponse = {
 export type ScratchLauncherProps = {
   initialProjectId?: string | null;
   onLaunched?: (response: ScratchLaunchResponse) => void;
+  // embedded: rendered inside the launch modal, which already supplies the
+  // panel chrome — drop the launcher's own shell/border so it reads as one
+  // panel, not a panel nested in a panel.
+  embedded?: boolean;
 };
 
 const commandShell =
@@ -235,6 +239,26 @@ function MachineIcon(): ReactElement {
   );
 }
 
+function CapabilityIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.7"
+      viewBox="0 0 24 24"
+    >
+      <rect height="7" rx="1.5" width="7" x="3" y="3" />
+      <rect height="7" rx="1.5" width="7" x="14" y="3" />
+      <rect height="7" rx="1.5" width="7" x="3" y="14" />
+      <rect height="7" rx="1.5" width="7" x="14" y="14" />
+    </svg>
+  );
+}
+
 function AgentMark({
   agent,
 }: {
@@ -320,6 +344,7 @@ function CapabilityGroup({
 export function ScratchLauncher({
   initialProjectId,
   onLaunched,
+  embedded = false,
 }: ScratchLauncherProps = {}): ReactElement {
   const t = useTranslations("scratch");
   const router = useRouter();
@@ -469,14 +494,13 @@ export function ScratchLauncher({
   }, [selectedProject?.slug, composerAgent]);
   const contextCount =
     files.length + attachments.length + (linkedIssueUrl.trim() ? 1 : 0);
-  // skills are excluded: scratch always materializes all of them (broad,
-  // FR-C3), so they are not a user-selected capability to count here.
-  const capabilityCount = selectedCount(
-    mcpIds,
-    ruleIds,
-    agentDefinitionIds,
-    restrictionIds,
-  );
+  // Count everything that materializes into the run: the user-selectable
+  // capabilities plus every project skill (scratch always materializes all of
+  // them, broad, FR-C3). Excluding skills made the count read 0 whenever a run
+  // carried only package skills, which reads as "nothing attached".
+  const capabilityCount =
+    selectedCount(mcpIds, ruleIds, agentDefinitionIds, restrictionIds) +
+    (options?.capabilities.skills.length ?? 0);
   const canSubmit =
     !!projectId &&
     !!baseBranch &&
@@ -648,7 +672,7 @@ export function ScratchLauncher({
 
   return (
     <form ref={formRef} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-      <section className={commandShell}>
+      <section className={embedded ? undefined : commandShell}>
         <div
           className={clsx(
             commandBand,
@@ -674,7 +698,12 @@ export function ScratchLauncher({
           />
         </div>
 
-        <div className="mx-4 flex min-h-[280px] flex-col rounded-[18px] border border-line-soft bg-paper-warm p-3">
+        <div
+          className={clsx(
+            "mx-4 flex min-h-[280px] flex-col p-3",
+            !embedded && "rounded-[18px] border border-line-soft bg-paper-warm",
+          )}
+        >
           {files.length > 0 ||
           attachments.length > 0 ||
           linkedIssueUrl.trim() ? (
@@ -981,9 +1010,12 @@ export function ScratchLauncher({
               ))}
             </select>
           </label>
-          <span className={contextPill}>
-            <span className="font-mono text-[13px]">o</span>
-            <span>{capabilityCount}</span>
+          <span className={contextPill} title={t("capabilities")}>
+            <CapabilityIcon />
+            <span className="min-w-0 truncate">{t("capabilities")}</span>
+            <span className="rounded-full bg-ivory px-1.5 py-0.5 font-mono text-[11px] text-mute">
+              {capabilityCount}
+            </span>
           </span>
           {contextCount > 0 ? (
             <span className={contextPill}>
