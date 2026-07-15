@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { getDb } from "@/lib/db/client";
+import { socialActorForToken } from "@/lib/tokens/verify";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { syncRunTarget, type SyncActor } from "@/lib/runs/sync-target";
@@ -94,9 +95,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         }
       }
 
-      const actor: SyncActor = ctx.actor.agentId
-        ? { type: "agent", id: ctx.actor.agentId }
-        : { type: "user", id: ctx.actor.ownerUserId };
+      // Use the CANONICAL mapper (every other polymorphic-actor ext route does).
+      // A hand-rolled `agentId ? agent : user` mislabels an ownerless PROJECT
+      // token — the default project-token shape — as `{user, id: null}`, so the
+      // force-push ledger would claim a human did it and name nobody. The
+      // canonical mapper resolves that case to `{system, null}`.
+      const actor: SyncActor = socialActorForToken(ctx.actor);
 
       try {
         const result = await syncRunTarget({

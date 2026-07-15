@@ -1203,6 +1203,89 @@ the plan confirms the include glob matches (skill-context runnability rule).
      deep-equals the WHOLE summary, which legitimately gained my `syncRecovered`
      counter. Expectation updated.
 
+  **ADVERSARIAL PASS (3 independent reviewers: concurrency/claims · git-safety/
+  data-loss · authz/scope). It found SEVEN real defects — all now FIXED (commit
+  `899764036` + the actor fix). Every existing test passed WITH these bugs present,
+  which is the lesson: the suites asserted the mechanism, not the enforcement.**
+
+  *Concurrency — one root cause: the skip-vs-abort discriminant had no live producer.*
+  1. **CRITICAL — `registerSyncDriver` was never called by `syncRunTarget`** (only
+     by the resolver). The sweeps treat a non-terminal attempt with no registered
+     driver as a post-restart orphan, so ANY sweep tick landing mid-rebase would
+     `git rebase --abort` + `git reset --hard` under a LIVE mechanical sync and
+     release its claim (letting a concurrent promote in). Registration moved to
+     `syncRunTarget` (its true scope) and REMOVED from the resolver — the registry
+     is a plain Set, so a resolver `finally` would drop the driver during
+     verify/push. The old recovery test passed only because it called
+     `register(runId)` by hand.
+  2. **CRITICAL — the reconcile `syncDriverActive` branch was unreachable.** It sat
+     under `if (input.liveSession)`, but a resolver's `run_sessions` row is written
+     with `acp_session_id: null` and never backfilled, so `liveSession` is ALWAYS
+     false for a live resolver → every one was classified `sync-orphaned-idle` and
+     hard-reset under the running agent. The registry is now consulted FIRST;
+     `liveSession` only distinguishes W2 from W3. (The classifier had ZERO sync
+     coverage — 3 tests added.)
+  3. **CRITICAL — keepalive Pass1 idled a resolver-paused run.** `excludeActiveSyncAttempt`
+     was wired only to the Running watchdogs on the reasoning that Pass1/Pass2 "select
+     NeedsInput/NeedsInputIdle only, so a mid-sync Running run is invisible" — wrong in
+     the one direction that matters: a resolver `permission_request` parks the run at
+     exactly `NeedsInput`. Pass1 idled it → the respond flip-back (`NeedsInput`-guarded)
+     and the resolver finalize (`Running`-guarded) both silently no-op'd → a fully
+     synced run stranded until Pass2 ABANDONED it, and the sync claim leaked forever
+     (deadlocking promotion on that workspace). Now excluded from both passes.
+
+  *Git safety — the gate + lease are the ONLY enforcement (the resolver is merely
+  prompt-instructed not to push). Each was reproduced with real git by the reviewer.*
+  4. **CRITICAL — the conflict-marker gate was DEAD CODE.** `hasConflictMarkers` ran a
+     bare `git diff --check` (working tree vs index), but the gate returns early unless
+     the tree is already clean — so it could only ever return `false`. A resolver that
+     COMMITS markers passed, and the markers were force-pushed; with `autoFinalize` they
+     land on the target branch. Now checked over the COMMITTED range (`<target>...HEAD`).
+  5. **HIGH — `git rebase --skip` erased the run's commits and passed all four checks**
+     (git's own conflict hint suggests `--skip`). The branch became identical to the
+     target, the lease matched, and the force-push wiped the user's work from the branch
+     and its PR. The gate now rejects `ahead === 0`.
+  6. **MEDIUM — the gate measured `HEAD` while the push pushes `refs/heads/<branch>`.**
+     `git rebase --quit` leaves HEAD detached on the resolution while the branch ref sits
+     at the old tip → gate passes on a commit the push doesn't carry. Now rejects a
+     detached/mismatched HEAD.
+  7. **HIGH — a throw in the resolver's verify/push bypassed `failResolver`.**
+     `forceWithLeasePush` throws `EXECUTOR_UNAVAILABLE` for every transient push failure;
+     the outer catch terminalized only the ATTEMPT, leaving the run `Running` forever
+     (burning a concurrency slot) with the agent still writing to the tree — and the
+     now-terminal attempt locked the recovery sweeps out. Wrapped in try/catch with a
+     `settled` guard so handled paths don't double-terminalize.
+
+  Regression tests added for #1/#2/#4/#5/#6 (they fail against the old code).
+
+  *Authz — the ★Task-2 blocker fix HOLDS.* `PROJECT_ACTION_BY_SCOPE["runs:sync"] =
+  "promoteRun"` is present + test-locked; a viewer token is refused (existence-hidden
+  404). All six authz invariants verified holding (server-derived projectId,
+  cross-project 404, `promoteRun` gate on internal routes, absent from
+  AGENT/ORCHESTRATOR scopes, no secret/path leak). One MEDIUM fixed: the ext routes
+  hand-rolled the actor mapping, recording an ownerless PROJECT token (the DEFAULT
+  project-token shape) as `{user, id: null}` instead of `{system, null}` — a corrupt
+  audit trail on a force-push. Now uses the canonical `socialActorForToken`; the test
+  that encoded the old behavior was corrected.
+
+  **DEFERRED (LOW, with rationale — none is a data-loss or authz hole):**
+  - *Localized git stderr* (`addWorktreeForBranch` matches `"already exists"`, which
+    misses a non-English locale → `CONFLICT` instead of `PRECONDITION`). Misclassification
+    only; the file already flags localized git output as unreliable, and a proper fix is
+    an `LC_ALL=C` sweep across `runGit` — out of scope for this plan.
+  - *`createLocalBranchAt` doesn't validate `startPoint`.* Not exploitable: it is always a
+    `gitCommitSchema`-validated SHA and is preceded by `--`.
+  - *Run-existence oracle on the internal sync/reopen routes* (403 vs 404 for a
+    non-member). Pre-existing convention — `promote/route.ts` has the identical shape;
+    changing it is a repo-wide decision, not an ADR-140 one.
+  - *`autoFinalize` TOCTOU* (the initiator could be demoted during the resolver window).
+    Unreachable from the ext surface (`.strict()` schemas reject the field); the merge is
+    a continuation of an already-authorized `promoteRun`.
+  - *Unmapped ext scopes falling back to `readBoard`* (`runs:promote|delegate|collect|
+    cancel`). Pre-existing and currently masked; worth an explicit mapping + a
+    contract test asserting every ext scope resolves to a non-default action, but it is
+    outside this diff.
+
   **PRE-EXISTING FAILURES — proven, NOT introduced here, explicitly deferred:**
   - **Integration (17 files / 38 tests).** Proven by checking out the merge-base
     (`387d2e3d5`) and running the IDENTICAL failing-file set there: base = 17

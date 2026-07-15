@@ -290,7 +290,12 @@ describe("POST /api/v1/ext/runs/sync", () => {
     expect(call).toMatchObject({
       runId,
       strategy: "rebase",
-      actor: { type: "user" },
+      // This token is PROJECT-kind (no owner user, no agent), so the canonical
+      // `socialActorForToken` resolves it to the SYSTEM actor. It must never be
+      // recorded as `{user, id: null}` — the sync ledger backs a force-push, and
+      // an actor row claiming a human did it while naming nobody is a corrupt
+      // audit trail, indistinguishable from a genuine user-attributed sync.
+      actor: { type: "system", id: null },
     });
 
     const rows = await auditRows();

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
+import { socialActorForToken } from "@/lib/tokens/verify";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { reopenRun, type ReopenActor } from "@/lib/runs/reopen";
@@ -59,9 +60,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       db,
     },
     async (ctx) => {
-      const actor: ReopenActor = ctx.actor.agentId
-        ? { type: "agent", id: ctx.actor.agentId }
-        : { type: "user", id: ctx.actor.ownerUserId };
+      // Canonical mapper — see the note in the sibling sync route: a hand-rolled
+      // mapping records an ownerless PROJECT token as `{user, id: null}` rather
+      // than `{system, null}`, corrupting the lifecycle-op audit trail.
+      const actor: ReopenActor = socialActorForToken(ctx.actor);
 
       try {
         const result = await reopenRun({ runId: body.runId, actor, db });
