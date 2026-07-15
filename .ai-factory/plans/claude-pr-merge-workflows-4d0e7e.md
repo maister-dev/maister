@@ -625,12 +625,12 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 | Contract | Authoritative spec | GREEN owner (primary proof) |
 | --- | --- | --- |
-| S1 PR-state persistence | ADR-139; runs-domain ERD | Task 3 — migration 0100 integration test |
+| S1 PR-state persistence | ADR-139; runs-domain ERD | Task 3 — migration 0103 integration test |
 | S2 provider PR-state reads | ADR-139; git-integration.md | Task 5 — pr-adapter unit tests (mocked exec/fetch) |
 | S3 scan job lifecycle | scheduler.md; ADR-139 | Task 6 — handler integration + `runSchedulerTick({jobKind:"pr_state_scan"})` wiring-seam test |
 | S4 PR surfacing + events | outbound-webhooks.asyncapi; screens | Task 7 — query/emit/component tests |
 | S5 git sync helpers | branch-sync.md §git ops | Task 8 — real-git unit tests |
-| S6 sync ledger + attempts | ADR-140; branch-sync.md; sync ERD | Task 4 — migration 0101 integration test |
+| S6 sync ledger + attempts | ADR-140; branch-sync.md; sync ERD | Task 4 — migration 0104 integration test |
 | S7 mechanical sync + fences | branch-sync.md state machine | Task 9 — service/route integration incl. fence matrix |
 | S8 resolver session path | branch-sync.md; ADR-140 | Task 10 — driver integration (supervisor client mocked) |
 | S9 recovery + watchdogs | branch-sync.md crash windows | Task 11 — reconcile/sweep integration per window |
