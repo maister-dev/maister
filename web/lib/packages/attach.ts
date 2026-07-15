@@ -386,6 +386,16 @@ function manifestOf(install: any): PackageInstallManifest {
   return install.manifest as PackageInstallManifest;
 }
 
+function isReadyFlowRevision(revision: {
+  packageStatus: string;
+  setupStatus: string;
+}): boolean {
+  return (
+    revision.packageStatus === "Installed" &&
+    (revision.setupStatus === "not_required" || revision.setupStatus === "done")
+  );
+}
+
 // Records ingested on attach carry this origin so the config SET/CLEAR sweep
 // never disables them — attach/detach own their lifecycle (ADR-088).
 const ATTACHMENT_ORIGIN = "package-attachment";
@@ -1120,16 +1130,50 @@ export async function trustPackageRevision(opts: {
         ),
       );
 
+    const readyRevisionIds: string[] = [];
+
     for (const rev of revRows) {
-      if (rev.setupStatus === "pending") {
-        await runRevisionSetup({
-          revisionId: rev.id,
-          installedPath: rev.installedPath,
-          db,
-          signal: opts.signal,
-        });
+      const setupStatus =
+        rev.setupStatus === "pending"
+          ? await runRevisionSetup({
+              revisionId: rev.id,
+              installedPath: rev.installedPath,
+              db,
+              signal: opts.signal,
+            })
+          : rev.setupStatus;
+
+      if (
+        isReadyFlowRevision({
+          packageStatus: rev.packageStatus,
+          setupStatus,
+        })
+      ) {
+        readyRevisionIds.push(rev.id);
       }
     }
+
+    if (readyRevisionIds.length > 0) {
+      await db
+        .update(flows)
+        .set({ enablementState: "Enabled", updatedAt: new Date() })
+        .where(
+          and(
+            eq(flows.packageInstallId, install.id),
+            eq(flows.trustStatus, "trusted"),
+            eq(flows.enablementState, "Installed"),
+            inArray(flows.enabledRevisionId, readyRevisionIds),
+          ),
+        );
+    }
+
+    log.info(
+      {
+        packageInstallId: install.id,
+        readyFlowRevisionCount: readyRevisionIds.length,
+      },
+      "[FIX:package-trust-enable] ready member Flows enabled",
+    );
   }
 
   log.info(

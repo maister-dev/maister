@@ -634,6 +634,65 @@ steps:
     for (const imp of imports) expect(imp.trustStatus).toBe("trusted");
   });
 
+  it("trustPackageRevision enables ready member Flows", async () => {
+    const packageRoot = await mkdtemp(join(tmpdir(), "attach-int-trust-"));
+
+    try {
+      await buildMinimalPackage(packageRoot, {
+        name: "trustpkg",
+        flowId: "trust-flow",
+      });
+      const installed = await installPackageRevision({
+        source: packageRoot,
+        version: "trustpkg/v1.0.0",
+        db,
+      });
+      const attached = await attachPackage({
+        projectId,
+        projectSlug: "attach-int",
+        packageInstallId: installed.id,
+        workspaceRoot,
+        db,
+      });
+
+      expect(attached).not.toBeNull();
+      if (!attached) throw new Error("trusted package attachment is missing");
+      const memberFlowId = attached.memberFlows[0]?.flowRowId;
+      if (!memberFlowId) throw new Error("trusted package Flow is missing");
+
+      const [before] = await db
+        .select()
+        .from(schema.flows)
+        .where(eq(schema.flows.id, memberFlowId));
+
+      expect(before).toMatchObject({
+        enablementState: "Installed",
+        trustStatus: "untrusted",
+      });
+
+      await trustPackageRevision({ packageInstallId: installed.id, db });
+
+      const [after] = await db
+        .select()
+        .from(schema.flows)
+        .where(eq(schema.flows.id, memberFlowId));
+
+      expect(after).toMatchObject({
+        enablementState: "Enabled",
+        trustStatus: "trusted",
+      });
+      await expect(
+        detachPackage({
+          projectId,
+          attachmentId: attached.attachmentId,
+          db,
+        }),
+      ).resolves.toEqual({ detached: true });
+    } finally {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it("detach removes the group (CLEAR) and re-attach restores it (re-SET)", async () => {
     const result = await detachPackage({ projectId, attachmentId, db });
 
@@ -926,7 +985,10 @@ describe("package trust fan-out across projects (integration)", () => {
         );
 
       expect(rows.length).toBeGreaterThan(0);
-      for (const row of rows) expect(row.trustStatus).toBe("trusted");
+      for (const row of rows) {
+        expect(row.trustStatus).toBe("trusted");
+        expect(row.enablementState).toBe("Enabled");
+      }
     }
 
     await rm(fanDir, { recursive: true, force: true });
