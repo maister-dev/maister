@@ -20,6 +20,10 @@ import {
   markSyncReviewFromRunning,
 } from "@/lib/runs/state-transitions";
 import {
+  registerSyncDriver,
+  unregisterSyncDriver,
+} from "@/lib/runs/sync-driver-registry";
+import {
   buildResolverPrompt,
   runResolverSession,
   SYNC_STEP_ID,
@@ -39,6 +43,7 @@ import {
 } from "@/lib/supervisor-client";
 import {
   aheadBehindCounts,
+  currentBranchName,
   branchHasUpstream,
   abortSyncOperation,
   fetchRemote,
@@ -178,6 +183,7 @@ export function assertSyncEligible(
 export async function verifySyncGate(
   worktree: string,
   targetSha: string,
+  branch?: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (await syncOperationInProgress(worktree)) {
     return { ok: false, reason: "a rebase or merge is still in progress" };
@@ -185,17 +191,48 @@ export async function verifySyncGate(
   if ((await statusPorcelain({ worktreePath: worktree })).trim() !== "") {
     return { ok: false, reason: "the worktree is not clean" };
   }
-  if (await hasConflictMarkers(worktree)) {
+  // The gate measures HEAD, but the push pushes `refs/heads/<branch>`. A resolver
+  // that ends a conflicted rebase with `git rebase --quit` leaves HEAD DETACHED on
+  // its resolution while the branch ref still sits at the old tip — every other
+  // check would then pass against a commit the push does not carry.
+  if (branch) {
+    const head = await currentBranchName(worktree);
+
+    if (head !== branch) {
+      return {
+        ok: false,
+        reason: `HEAD is not on ${branch} (detached or switched) — the push would not carry the verified commit`,
+      };
+    }
+  }
+  // Markers are checked over the COMMITTED range: the tree is provably clean by
+  // now, so a working-tree check could never see a marker the resolver COMMITTED.
+  if (await hasConflictMarkers(worktree, targetSha)) {
     return { ok: false, reason: "leftover conflict markers remain" };
   }
   // aheadBehindCounts(base=target, ref=HEAD).behind === 0 ⇔ target ⊆ HEAD ⇔ the
   // target is an ancestor of the synced HEAD.
-  const { behind } = await aheadBehindCounts(worktree, targetSha, "HEAD");
+  const { ahead, behind } = await aheadBehindCounts(
+    worktree,
+    targetSha,
+    "HEAD",
+  );
 
   if (behind !== 0) {
     return {
       ok: false,
       reason: "the target is not an ancestor of the synced HEAD",
+    };
+  }
+  // The run's OWN work must survive the sync. `git rebase --skip` (which git's own
+  // conflict hint suggests) drops the conflicting commit; skipping every commit
+  // leaves the branch identical to the target and passes every check above, so the
+  // force-push would erase the user's committed work from the branch and its PR.
+  if (ahead === 0) {
+    return {
+      ok: false,
+      reason:
+        "the sync left the branch identical to the target — the run's own commits would be erased",
     };
   }
 
@@ -517,6 +554,16 @@ export async function syncRunTarget(
     return { attemptId, attempt, workspaceId: ws.id };
   });
 
+  // ADR-140 (Task 11): THIS call is the in-process sync driver — for the
+  // mechanical rebase AND, transitively, the agent resolver it awaits below.
+  // Registration MUST live here, not in the resolver: the recovery sweeps treat a
+  // non-terminal attempt with no registered driver as a post-restart ORPHAN and
+  // abort it (restore + release claim). Registering only around the resolver left
+  // every live MECHANICAL sync looking orphaned, so a sweep tick landing mid-rebase
+  // would `git rebase --abort` under it and release the claim while it ran.
+  // The registry is a plain Set (not refcounted) — register in exactly ONE place.
+  registerSyncDriver(runId);
+
   try {
     // 4. Fetch the target and fast-forward the LOCAL target from origin/<target>.
     //    Skipped for a purely local repo (no origin).
@@ -639,7 +686,11 @@ export async function syncRunTarget(
       projectRepoPath: repo,
       branch: targetBranch,
     });
-    const gate = await verifySyncGate(worktree, targetSha ?? targetBranch);
+    const gate = await verifySyncGate(
+      worktree,
+      targetSha ?? targetBranch,
+      branch,
+    );
 
     if (!gate.ok) {
       // Defensively unreachable after a clean rebase (clean tree, no markers,
@@ -715,6 +766,10 @@ export async function syncRunTarget(
     await abortSyncOperation(worktree).catch(() => undefined);
     await terminalizeSafetyNet(db, claim, err);
     throw err;
+  } finally {
+    // The driver is off the stack: any non-terminal attempt left behind IS now a
+    // real orphan, and the sweeps must be free to abort it.
+    unregisterSyncDriver(runId);
   }
 }
 
@@ -998,49 +1053,42 @@ async function runSyncResolver(
     );
   }
 
-  // Verify gate (REUSE Task 9).
-  await setAttemptPhase(db, claim.attemptId, "verifying");
-  const targetSha = await localBranchHead({
-    projectRepoPath: repo,
-    branch: targetBranch,
-  });
-  const gate = await verifySyncGate(worktree, targetSha ?? targetBranch);
-
-  log.info(
-    {
-      runId,
-      attemptId: claim.attemptId,
-      verifyOk: gate.ok,
-      reason: gate.ok ? undefined : gate.reason,
-    },
-    "sync resolver verify gate verdict",
-  );
-
-  if (!gate.ok) {
-    await deleteSession(sessionId).catch(() => undefined);
-    await failResolver({
-      db,
-      claim,
-      runId,
-      worktree,
-      headShaBefore,
-      pool,
-      errorCode: "PRECONDITION",
-      errorMessage: `verify gate failed: ${gate.reason}`,
-    });
-    throw new MaisterError(
-      "PRECONDITION",
-      `sync verification failed: ${gate.reason}`,
-    );
-  }
-
-  // Push policy (REUSE Task 9): explicit-SHA force-with-lease iff published.
-  const headShaAfter = await headCommit({ worktreePath: worktree });
-  const shouldPush = args.push ?? args.published;
+  // ADR-140: everything from the verify gate through the finalize runs inside a
+  // try/catch. The handled failures below terminalize explicitly (and set
+  // `settled`), but an UNHANDLED throw here — `forceWithLeasePush` raises
+  // EXECUTOR_UNAVAILABLE for every non-lease push failure (network blip, auth
+  // expiry, timeout), and any of these awaits can hit a DB blip — used to unwind
+  // to the outer catch, which only terminalizes the ATTEMPT. That left the RUN
+  // `Running` forever (holding a concurrency slot) with the agent session still
+  // live, and the now-terminal attempt locked the recovery sweeps out of it.
+  let targetSha: string | null = null;
+  let settled = false;
   let pushed = false;
 
-  if (shouldPush) {
-    if (args.published && args.remoteShaIndeterminate) {
+  try {
+    // Verify gate (REUSE Task 9).
+    await setAttemptPhase(db, claim.attemptId, "verifying");
+    targetSha = await localBranchHead({
+      projectRepoPath: repo,
+      branch: targetBranch,
+    });
+    const gate = await verifySyncGate(
+      worktree,
+      targetSha ?? targetBranch,
+      branch,
+    );
+
+    log.info(
+      {
+        runId,
+        attemptId: claim.attemptId,
+        verifyOk: gate.ok,
+        reason: gate.ok ? undefined : gate.reason,
+      },
+      "sync resolver verify gate verdict",
+    );
+
+    if (!gate.ok) {
       await deleteSession(sessionId).catch(() => undefined);
       await failResolver({
         db,
@@ -1049,19 +1097,91 @@ async function runSyncResolver(
         worktree,
         headShaBefore,
         pool,
-        errorCode: "CONFLICT",
-        errorMessage: `could not determine origin/${branch} before fetch — push refused`,
+        errorCode: "PRECONDITION",
+        errorMessage: `verify gate failed: ${gate.reason}`,
       });
+      settled = true;
       throw new MaisterError(
-        "CONFLICT",
-        `could not determine the remote head of ${branch} — push refused; retry the sync`,
+        "PRECONDITION",
+        `sync verification failed: ${gate.reason}`,
       );
     }
 
-    await setAttemptPhase(db, claim.attemptId, "pushing");
-    const push = await pushWithLease(worktree, branch, args.remoteShaBefore);
+    // Push policy (REUSE Task 9): explicit-SHA force-with-lease iff published.
+    const headShaAfter = await headCommit({ worktreePath: worktree });
+    const shouldPush = args.push ?? args.published;
 
-    if (!push.pushed) {
+    pushed = false;
+
+    if (shouldPush) {
+      if (args.published && args.remoteShaIndeterminate) {
+        await deleteSession(sessionId).catch(() => undefined);
+        await failResolver({
+          db,
+          claim,
+          runId,
+          worktree,
+          headShaBefore,
+          pool,
+          errorCode: "CONFLICT",
+          errorMessage: `could not determine origin/${branch} before fetch — push refused`,
+        });
+        settled = true;
+        throw new MaisterError(
+          "CONFLICT",
+          `could not determine the remote head of ${branch} — push refused; retry the sync`,
+        );
+      }
+
+      await setAttemptPhase(db, claim.attemptId, "pushing");
+      const push = await pushWithLease(worktree, branch, args.remoteShaBefore);
+
+      if (!push.pushed) {
+        await deleteSession(sessionId).catch(() => undefined);
+        await failResolver({
+          db,
+          claim,
+          runId,
+          worktree,
+          headShaBefore,
+          pool,
+          errorCode: "CONFLICT",
+          errorMessage: `force-with-lease rejected — ${branch} moved on origin`,
+        });
+        settled = true;
+        throw new MaisterError(
+          "CONFLICT",
+          `force-with-lease push rejected — ${branch} moved on origin; retry the sync`,
+        );
+      }
+      pushed = true;
+    }
+
+    // Success finalize: tear the session down, record `succeeded`, restart the
+    // auto-promotion grace window (HEAD moved), CAS Running→Review, release the
+    // claim, and free the pool slot.
+    await deleteSession(sessionId).catch(() => undefined);
+    await setAttemptPhase(db, claim.attemptId, "succeeded", {
+      headShaAfter,
+      pushed,
+    });
+    await db
+      .update(runs)
+      .set({ reviewEnteredAt: now() })
+      .where(eq(runs.id, runId));
+    await markSyncReviewFromRunning(runId, { db });
+    await releaseSyncClaim(db, claim.workspaceId);
+    await promoteNextPending({ db, pool });
+
+    log.info(
+      { runId, attemptId: claim.attemptId, behind, pushed },
+      "sync resolver finalized — agent_launched",
+    );
+  } catch (err) {
+    // Unhandled throw: the handled paths above already terminalized (settled).
+    // Tear the live session down and return the run to Review so it can never be
+    // stranded `Running` holding a slot with an agent still writing to the tree.
+    if (!settled) {
       await deleteSession(sessionId).catch(() => undefined);
       await failResolver({
         db,
@@ -1070,37 +1190,13 @@ async function runSyncResolver(
         worktree,
         headShaBefore,
         pool,
-        errorCode: "CONFLICT",
-        errorMessage: `force-with-lease rejected — ${branch} moved on origin`,
+        errorCode: isMaisterError(err) ? err.code : "CRASH",
+        errorMessage: err instanceof Error ? err.message : String(err),
       });
-      throw new MaisterError(
-        "CONFLICT",
-        `force-with-lease push rejected — ${branch} moved on origin; retry the sync`,
-      );
     }
-    pushed = true;
+
+    throw err;
   }
-
-  // Success finalize: tear the session down, record `succeeded`, restart the
-  // auto-promotion grace window (HEAD moved), CAS Running→Review, release the
-  // claim, and free the pool slot.
-  await deleteSession(sessionId).catch(() => undefined);
-  await setAttemptPhase(db, claim.attemptId, "succeeded", {
-    headShaAfter,
-    pushed,
-  });
-  await db
-    .update(runs)
-    .set({ reviewEnteredAt: now() })
-    .where(eq(runs.id, runId));
-  await markSyncReviewFromRunning(runId, { db });
-  await releaseSyncClaim(db, claim.workspaceId);
-  await promoteNextPending({ db, pool });
-
-  log.info(
-    { runId, attemptId: claim.attemptId, behind, pushed },
-    "sync resolver finalized — agent_launched",
-  );
 
   // ADR-140 (Task 13): autoFinalize opt-in — the resolver resolved and the run
   // is back in Review, cleanly rebased on the target. Best-effort chain

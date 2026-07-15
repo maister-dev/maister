@@ -3459,11 +3459,23 @@ export async function restoreWorktreeToCommit(
 // worktree. `--check` also flags whitespace errors and exits non-zero for both,
 // so the report (forced to a stable C locale) is scanned to single out conflict
 // markers; a `fatal:` diagnostic is a real failure and is surfaced typed.
-export async function hasConflictMarkers(worktree: string): Promise<boolean> {
+// ADR-140: `range` (e.g. `<targetSha>...HEAD`) is REQUIRED by the sync gate.
+// A bare `git diff --check` compares the WORKING TREE to the index, so it is
+// empty — and therefore always "clean" — for any committed conflict marker. The
+// sync gate only reaches this after proving the tree clean, which made the bare
+// form dead code: a resolver that COMMITS markers sailed through. Diffing the
+// committed range is what actually inspects the resolver's own commits.
+export async function hasConflictMarkers(
+  worktree: string,
+  sinceRef?: string,
+): Promise<boolean> {
   const wt = validate(absolutePathSchema, worktree, "worktree");
+  const rangeArgs = sinceRef
+    ? [`${validate(gitRefSchema, sinceRef, "sinceRef")}...HEAD`, "--"]
+    : [];
 
   try {
-    await execFileAsync("git", ["-C", wt, "diff", "--check"], {
+    await execFileAsync("git", ["-C", wt, "diff", "--check", ...rangeArgs], {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
       env: { ...process.env, LC_ALL: "C" },

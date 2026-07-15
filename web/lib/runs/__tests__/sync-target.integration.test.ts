@@ -787,6 +787,66 @@ describe("verifySyncGate", () => {
 
     expect(res.ok).toBe(false);
   });
+
+  // --- ADR-140 adversarial-review regressions (2026-07-15) -------------------
+  // The resolver is only PROMPT-instructed not to push; this gate + the lease are
+  // the only ENFORCEMENT. Each case below force-pushed (and, with autoFinalize,
+  // merged to the target) before these fixes.
+
+  it("REJECTS conflict markers the resolver COMMITTED (clean tree, marker in HEAD)", async () => {
+    const { parent } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/gate-markers");
+    const targetSha = await headSha(parent, "main");
+
+    // The resolver "resolves" by committing the file verbatim, markers and all,
+    // leaving a CLEAN tree with no rebase in progress.
+    await writeFile(
+      join(wt, "feature.txt"),
+      "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> main\n",
+    );
+    await git(wt, ["add", "feature.txt"]);
+    await git(wt, ["commit", "-m", "resolved (badly)"]);
+
+    const res = await verifySyncGate(wt, targetSha, "sync/gate-markers");
+
+    // A working-tree `git diff --check` sees nothing here — the tree IS clean.
+    // The gate must inspect the COMMITTED range instead.
+    expect(res).toEqual({
+      ok: false,
+      reason: "leftover conflict markers remain",
+    });
+  });
+
+  it("REJECTS a sync that erased the run's own commits (git rebase --skip)", async () => {
+    const { parent } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/gate-skipped");
+    const targetSha = await headSha(parent, "main");
+
+    // `git rebase --skip` (which git's own conflict hint suggests) dropped every
+    // commit: the branch is now identical to the target and the user's work is
+    // gone. Nothing is in progress, the tree is clean, target IS an ancestor.
+    await git(wt, ["reset", "--hard", targetSha]);
+
+    const res = await verifySyncGate(wt, targetSha, "sync/gate-skipped");
+
+    expect(res.ok).toBe(false);
+    expect((res as { reason: string }).reason).toContain("erased");
+  });
+
+  it("REJECTS a detached HEAD — the push would not carry the verified commit", async () => {
+    const { parent } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/gate-detached");
+    const targetSha = await headSha(parent, "main");
+
+    // `git rebase --quit` leaves HEAD detached on the resolution while
+    // refs/heads/<branch> still points at the old tip.
+    await git(wt, ["checkout", "--detach", "HEAD"]);
+
+    const res = await verifySyncGate(wt, targetSha, "sync/gate-detached");
+
+    expect(res.ok).toBe(false);
+    expect((res as { reason: string }).reason).toContain("HEAD is not on");
+  });
 });
 
 describe("POST /api/runs/[runId]/sync route", () => {

@@ -74,11 +74,19 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 const { hitlRequests, nodeAttempts, projects, runs, runSyncAttempts } =
   schemaModule as unknown as Record<string, any>;
 
-// ADR-140 (Task 11): a `Running` run with a non-terminal `run_sync_attempts`
-// row is owned by the branch-sync recovery path — it must NEVER be killed by
-// the keepalive Running-status watchdogs (time-limit / budget). This correlated
-// `NOT EXISTS` excludes such runs from those sweeps (Pass1/Pass2 select
-// NeedsInput/NeedsInputIdle only, so a mid-sync Running run is invisible there).
+// ADR-140 (Task 11): a run with a non-terminal `run_sync_attempts` row is owned
+// by the branch-sync recovery path — NO keepalive pass may idle, checkpoint, or
+// kill it. This correlated `NOT EXISTS` excludes such runs.
+//
+// It MUST be applied to Pass1/Pass2 as well as the Running watchdogs. An earlier
+// note here reasoned that "Pass1/Pass2 select NeedsInput/NeedsInputIdle only, so
+// a mid-sync Running run is invisible there" — that was WRONG in the one
+// direction that matters: a resolver permission_request parks the run at exactly
+// `NeedsInput` (see sync-resolver.ts persistResolverPermission) while its attempt
+// stays `agent_running`. Pass1 would then idle it to `NeedsInputIdle`, after
+// which the respond path's `NeedsInput`-guarded flip-back and the resolver's
+// `Running`-guarded finalize BOTH silently no-op — stranding a fully synced run
+// until Pass2 abandons it, and leaking the sync claim forever.
 function excludeActiveSyncAttempt(db: Db) {
   return notExists(
     db
@@ -189,6 +197,8 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
         eq(runs.status, "NeedsInput"),
         isNotNull(runs.keepaliveUntil),
         lt(runs.keepaliveUntil, now),
+        // A resolver parked on a permission_request lives at exactly this status.
+        excludeActiveSyncAttempt(db),
       ),
     )
     .orderBy(asc(runs.keepaliveUntil))
@@ -224,6 +234,9 @@ async function fetchPass2Candidates(
         // M37 Phase 8 (ADR-099): a persistent swarm member parks INDEFINITELY
         // until re-messaged or its tree terminates — never TTL-abandoned here.
         eq(runs.persistent, false),
+        // Defense in depth: Pass1 can no longer idle a mid-sync run into this
+        // status, but never abandon one that somehow reached it.
+        excludeActiveSyncAttempt(db),
       ),
     )
     .orderBy(asc(runs.checkpointAt))

@@ -517,3 +517,58 @@ describe("classifyRunReconcile — M37 T7.1: parked orchestrator (WaitingOnChild
     ).toEqual({ action: "skip", reason: "grace-window" });
   });
 });
+
+// ADR-140 (Task 11) — the branch-sync arm. The in-process sync-driver REGISTRY is
+// the skip-vs-abort discriminant, and it must be consulted INDEPENDENTLY of
+// `liveSession`: a resolver's `run_sessions` row carries `acp_session_id: null`
+// (the supervisor handle is never persisted for sync), so `liveSession` is always
+// FALSE for a live resolver. Nesting the registry check under `liveSession` made
+// the skip unreachable and classified every live resolver as an orphan — the
+// recovery arm then hard-reset the worktree under the running agent.
+describe("classifyRunReconcile — branch sync (ADR-140)", () => {
+  it("SKIPS a live in-process sync driver even though a sync session never reports liveSession", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          activeSyncAttempt: true,
+          syncDriverActive: true,
+          liveSession: false, // the real shape for a sync resolver
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "sync-driver-live" });
+  });
+
+  it("SKIPS a live driver regardless of liveSession (the registry wins outright)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          activeSyncAttempt: true,
+          syncDriverActive: true,
+          liveSession: true,
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "sync-driver-live" });
+  });
+
+  it("recovers an orphan with no driver — liveSession only picks W2 vs W3", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          activeSyncAttempt: true,
+          syncDriverActive: false,
+          liveSession: true,
+        }),
+      ),
+    ).toEqual({ action: "sync-recover", reason: "sync-orphaned-live" });
+
+    expect(
+      classifyRunReconcile(
+        input({
+          activeSyncAttempt: true,
+          syncDriverActive: false,
+          liveSession: false,
+        }),
+      ),
+    ).toEqual({ action: "sync-recover", reason: "sync-orphaned-idle" });
+  });
+});

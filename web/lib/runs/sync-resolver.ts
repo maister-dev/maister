@@ -9,10 +9,6 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import {
-  registerSyncDriver,
-  unregisterSyncDriver,
-} from "@/lib/runs/sync-driver-registry";
-import {
   createSession,
   deleteSession,
   sendPrompt,
@@ -222,63 +218,59 @@ export async function runResolverSession(args: {
 
   // ADR-140 (Task 11): mark this run as owned by a LIVE in-process resolver
   // driver — the skip-vs-abort discriminant for the periodic reconcile sweep.
-  // Registration spans the whole blocking turn (incl. HITL pauses); a web
-  // restart clears this in-memory registry, so a post-restart sync session is
-  // treated as orphaned → W2 abort.
-  registerSyncDriver(args.runId);
-
-  try {
-    log.info(
-      {
-        runId: args.runId,
-        sessionId,
-        sessionName: args.input.sessionName,
-        runnerTier: args.runnerTier,
-      },
-      "sync resolver session spawned",
-    );
-
-    const consumer = startResolverConsumer({
-      db: args.db,
+  // Registration is owned by `syncRunTarget`, which spans this session AND the
+  // mechanical rebase before it, and the verify/push after it. It is deliberately
+  // NOT re-registered here: the registry is a plain Set, so a `finally` here would
+  // drop the driver while `syncRunTarget` is still pushing — re-opening the very
+  // orphan window the registry exists to close.
+  log.info(
+    {
       runId: args.runId,
       sessionId,
-      api,
+      sessionName: args.input.sessionName,
+      runnerTier: args.runnerTier,
+    },
+    "sync resolver session spawned",
+  );
+
+  const consumer = startResolverConsumer({
+    db: args.db,
+    runId: args.runId,
+    sessionId,
+    api,
+  });
+
+  let promptResult: PromptResult;
+
+  try {
+    promptResult = await api.sendPrompt(sessionId, {
+      stepId: SYNC_STEP_ID,
+      prompt: args.prompt,
     });
-
-    let promptResult: PromptResult;
-
-    try {
-      promptResult = await api.sendPrompt(sessionId, {
-        stepId: SYNC_STEP_ID,
-        prompt: args.prompt,
-      });
-    } catch (err) {
-      consumer.abort.abort();
-      await consumer.done.catch(() => undefined);
-      await api.deleteSession(sessionId).catch(() => undefined);
-      throw err;
-    }
-
+  } catch (err) {
     consumer.abort.abort();
-    await consumer.done;
-
-    const persistFailure = consumer.permissionPersistFailure();
-
-    if (persistFailure) {
-      await api.deleteSession(sessionId).catch(() => undefined);
-      throw new MaisterError(
-        "CRASH",
-        `sync resolver HITL persistence failed: ${persistFailure.reason}`,
-      );
-    }
-
-    log.info(
-      { runId: args.runId, sessionId, stopReason: promptResult.stopReason },
-      "sync resolver session ended",
-    );
-
-    return { sessionId, stopReason: promptResult.stopReason };
-  } finally {
-    unregisterSyncDriver(args.runId);
+    await consumer.done.catch(() => undefined);
+    await api.deleteSession(sessionId).catch(() => undefined);
+    throw err;
   }
+
+  consumer.abort.abort();
+  await consumer.done;
+
+  const persistFailure = consumer.permissionPersistFailure();
+
+  if (persistFailure) {
+    await api.deleteSession(sessionId).catch(() => undefined);
+    throw new MaisterError(
+      "CRASH",
+      `sync resolver HITL persistence failed: ${persistFailure.reason}`,
+    );
+  }
+
+  log.info(
+    { runId: args.runId, sessionId, stopReason: promptResult.stopReason },
+    "sync resolver session ended",
+  );
+
+  return { sessionId, stopReason: promptResult.stopReason };
 }
