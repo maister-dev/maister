@@ -1,157 +1,235 @@
-# Plan: Flow reference resolution (UUID **or** human ref)
+# Plan: Flow reference resolution (UUID **or** human ref) — SDD
 
 **Branch:** `feature/flow-ref-resolution`
-**Base:** `main` (`4badadcb4`)
-**Created:** 2026-07-14
-**Type:** Enhancement (ergonomics/robustness)
+**Base:** `main` (`ce005fbd7`)
+**Created:** 2026-07-14 · **Refined:** 2026-07-14 (`/aif-improve`, SDD pass)
+**Type:** Contract-drift fix + ergonomics
 
 ## Settings
 
-- **Testing:** yes
+- **Testing:** yes — TDD, strict RED → GREEN → refactor
 - **Logging:** verbose (DEBUG on the resolver + each wired call site)
-- **Docs:** yes (mandatory docs checkpoint — this changes a wire contract's semantics)
+- **Docs:** yes — **specs lead** (Phase 1 gates all code)
 
-## Goal
+## Problem
 
-Let every flow-accepting write path resolve `flowId` by **either** its UUID
-(`flows.id`) **or** its human ref (`flows.flow_ref_id`, e.g. `aif-bugfix`), so
-MCP/ext/web callers can pass the readable ref the `flow_list` tool already hands
-them instead of an opaque UUID. On an unresolvable ref, return a **structured,
-self-correcting error** (expected forms + received value + the project's valid
-refs) so an agent fixes it in one shot.
+`docs/api/external/operations.openapi.yaml` documents the triage body with
+**executable examples that use a human ref**:
 
-Follow-up to the already-landed `confidence`-string coercion fix
-(`coerceNumericArgs`, `mcp/src/tools.ts`) — same session theme (agents need
-actionable errors), but a **separate** change.
+```yaml
+verdict:            { flowId: "bugfix", runnerId: "claude-code", ... }   # line ~462
+verdict-enqueue:    { flowId: "bugfix", runnerId: "claude-code", enqueue: true }  # ~473
+```
 
-## Confirmed facts (verified — live DB + code)
+`bugfix` is a real `flows.flow_ref_id` in the live DB. But
+`validateVerdictRefs` (`web/lib/services/triage.ts`) matches **`flows.id` (UUID)
+only** — so **a client following the spec's own example gets 422**.
 
-- `flows.flow_ref_id` = plain human slugs (`aif-bugfix`, `aif-dev`, `bugfix`);
-  package-prefixed, never colon-qualified, never UUID-shaped.
-- `unique("flows_project_ref_uq").on(project_id, flow_ref_id)`
-  (`web/lib/db/schema.ts:476`) → a ref resolves to exactly one flow per project.
-  No ambiguity; ref/UUID namespaces do not overlap.
-- `createTask` already validates `flowId` against `flows.id`
-  (`web/lib/services/tasks.ts:79-89`) → this is a strict **superset** (UUID keeps
-  working, ref newly accepted, garbage still rejected).
-- All stored `tasks.flow_id` / `runs.flow_id` are UUIDs → **no data migration**;
-  input-resolution only.
+Per `docs/CLAUDE.md` **R3**: *"API specs are the source of truth… Implementation
+drift is a bug — fix code OR fix the spec, never both silently."* This plan fixes
+the **code** (makes the documented examples true), because the ref is what
+`flow_list` already hands the caller.
 
-## Key decisions
+The spec is additionally **self-inconsistent**: `ExtFlowSummary.id` is described
+as *"The flow id (the value passed back as `ExtTriageBody.flowId`)"* while the
+examples pass `ref`. Phase 1 resolves that contradiction explicitly.
 
-- **Error-detail carrier: in the `message` string** (owner-chosen, minimal). The
-  resolver returns a discriminated result; callers format
-  `{ expected, received, validRefs }` into the `MaisterError` message — mirrors
-  how the Zod `confidence` error already surfaces and self-corrects an agent. **No
-  new error code, no `error-taxonomy.md` change, no `MaisterError.details` field.**
-- **Resolver returns `{ok:true;flowId} | {ok:false;detail}`, not a hard throw.**
-  Each caller maps a miss to its **existing** error taxonomy — `CONFIG` for
-  triage/create, `PRECONDITION` for launch — carrying the formatted detail.
-- **Scope: shared service layer** (ext + web via one implementation). **Run-launch
-  override included.** **Delegate excluded** — `runs/delegate` rejects any
-  `target.flowId` as a Phase-3 stub (`delegate/route.ts:145-154`); a resolver on a
-  path that rejects all flowIds is dead work.
-- **Identifier trust labels** (per project plan rule — body-controlled cross-resource id):
-  `flowId` / `ref` = **body-controlled** → MUST be validated against **server-state**;
-  `resolveFlowRef` IS that validation (project-scoped `flows` lookup). `projectId`
-  = **server-state** (caller-derived from the token/route, never the body).
-- **No ADR, no migration.** Reuses existing codes; documented in
-  `external-operations.md` Expectations. (If review disagrees, allocate the ADR
-  number from `main` HEAD per the numbering rule.)
+## Confirmed facts (evidence)
 
-## Contract surfaces (trace each to its spec)
+| Fact | Evidence |
+| ---- | -------- |
+| `flow_ref_id` = plain human slugs (`aif-bugfix`, `bugfix`), never UUID-shaped | live DB query over `flows ⋈ projects` |
+| A ref resolves to **exactly one** flow per project | `unique("flows_project_ref_uq").on(project_id, flow_ref_id)` — `web/lib/db/schema.ts:476` |
+| `createTask` already validates `flowId` against `flows.id` | `web/lib/services/tasks.ts:79-89` → this change is a strict **superset** |
+| All stored `tasks.flow_id` / `runs.flow_id` are UUIDs | resolution is **input-only** → **no migration** |
+| ext `POST /api/v1/ext/runs` **refuses** `flowId` (ADR-085, v1-compat) | openapi ~line 1092 → launch override is **session-auth only** |
+| MCP `run_launch` has **no** `flowId` param | `mcp/src/tools.ts` `run_launch.inputSchema` = `{taskId, runnerId, executorOverrideId, baseBranch, targetBranch}` |
+| `runs/delegate` `target.flowId` is a **Phase-3 stub** (`CONFIG` "not yet supported") | `web/app/api/v1/ext/runs/delegate/route.ts:145-154` |
+| Prior art for project-scoped ref lookup | `web/app/api/projects/[slug]/flow-packages/[flowRefId]/upgrade-preview/route.ts:40` — `and(eq(flows.projectId, …), eq(flows.flowRefId, …))` |
 
-| Surface | Spec/SSOT file | Change |
-| ------- | -------------- | ------ |
-| MCP tool descriptions (in-code SSOT shipped to agents) | `mcp/src/tools.ts` (`triage_set`/`task_create`/`run_launch` `flowId`) + `mcp/src/__tests__/tool-contract.test.ts` | "flow UUID or ref (e.g. `aif-bugfix`)" — NOT delegate |
-| ext body `flowId` semantics (meaning broadens: UUID → UUID-or-ref) | `docs/system-analytics/external-operations.md` (Expectations) + `docs/api/external/operations.openapi.yaml` (param *description* only — type stays `string`) | prose + one Expectations bullet |
-| Agent guidance | `../maister-plugins/packages/core/maister-agents/triager.md` (~line 188) | note ref accepted (**external repo** — separate commit) |
-| Facade bundle | `mcp/dist/main.js` | rebuild (`pnpm --filter @maister/mcp build`) — agents run the bundle, not source |
+## Requirements
 
-No DB/migration surface. No new error code.
+- **R1** — A `flowId` accepted from a request body MUST resolve when it equals
+  either `flows.id` **or** `flows.flow_ref_id`, scoped to the acting project.
+- **R2** — Matching MUST be **exact**; no prefix/fuzzy/case-insensitive matching.
+- **R3** — Persistence MUST always store the resolved **UUID** (`tasks.flow_id`,
+  `runs.flow_id`); a ref MUST NEVER reach the DB.
+- **R4** — A UUID belonging to **another project** MUST NOT resolve
+  (existence-hide; unchanged from today).
+- **R5** — An unresolvable `flowId` MUST produce a **structured, self-correcting**
+  error message naming: the field, the expected forms, the received value, and the
+  project's valid refs.
+- **R6** — Each call site MUST keep its **existing** error code — `CONFIG` for
+  triage/task-create/update, `PRECONDITION` for launch. Codes MUST NOT change.
+- **R7** — The existing **launchability/trust gate** (enabled + trusted +
+  not pin-divergent) MUST still run, on the **resolved UUID**.
+- **R8** — Resolution MUST be implemented **once** (DRY) and reused by every
+  write path (SOLID: one reason to change; KISS: one query, no cache).
+- **R9** — No DB migration, no new error code, no ext OpenAPI **type** change.
+
+## Acceptance criteria
+
+- **AC1** — The OpenAPI `verdict` and `verdict-enqueue` examples (`flowId: "bugfix"`)
+  **execute successfully** against a project owning the `bugfix` flow → `200 {ok:true, triageStatus:"triaged"}`. *(The drift is closed.)*
+- **AC2** — After a ref verdict, `tasks.flow_id` equals the flow's **UUID** (R3).
+- **AC3** — A UUID verdict behaves exactly as before (no regression).
+- **AC4** — An unknown ref → `422` whose message contains the received value **and**
+  the project's valid refs (R5).
+- **AC5** — Another project's UUID or ref → refused, not resolved (R4).
+- **AC6** — A disabled/untrusted flow referenced **by ref** is still refused by the
+  launchability gate (R7) — resolution MUST NOT bypass it.
+- **AC7** — `ExtFlowSummary.id`/`ref` docs state that **either** may be passed as
+  `ExtTriageBody.flowId`; no spec sentence contradicts the examples.
+- **AC8** — Full suites green: `maister-web` unit+integration, `@maister/mcp`, `tsc`,
+  scoped eslint; `pnpm validate:docs` + `npx @redocly/cli lint` clean.
+
+## Contract surfaces → spec file
+
+| Surface | Spec/SSOT | Change |
+| ------- | --------- | ------ |
+| `ExtTriageBody.flowId` (~2492) | `docs/api/external/operations.openapi.yaml` | description → "flow UUID (`flows.id`) **or** the project's `flows.flow_ref_id`" |
+| Triage route prose (~409, ~433) + 422 (~496) | same | note ref acceptance + the structured 422 detail |
+| `ExtFlowSummary.id` / `.ref` (~2558-2566) | same | **fix contradiction** — either may be passed back |
+| Task-create prose (~116) | same | "Validates that `flowId` belongs to the project" → UUID-or-ref |
+| `ExtTaskDto.flowId` (~3008) | same | clarify: always the **resolved UUID** |
+| `POST /api/v1/ext/runs` (~1092) | same | **no change** — correctly refuses `flowId` (ADR-085) |
+| delegate / plan `target.flowId` | same | **no change** — Phase-3 stub |
+| Triage domain behavior (`validateVerdictRefs` at line 184; Expectations ~229/233) | `docs/system-analytics/triage.md` | describe ref-or-UUID resolution; add a testable Expectation (R5a: normative, verbatim ids, ≤12 bullets) |
+| ext facade contract | `docs/system-analytics/external-operations.md` | one Expectations bullet |
+| MCP tool descriptions (in-code SSOT shipped to agents) | `mcp/src/tools.ts` — **`triage_set.flowId` + `task_create.flowId` ONLY** | "UUID or ref (e.g. `aif-bugfix`), as returned by `flow_list`" |
+| Facade bundle | `mcp/dist/main.js` | rebuild — agents run the bundle, not source |
+| Agent guidance | `../maister-plugins/.../triager.md` (~188) | **external repo**, separate commit |
+
+### DB migrations — **NONE** (evidence-backed)
+
+No column/table/index is added or altered. Resolution is **input-only**; every
+stored `flow_id` is already a UUID, so there is **nothing to backfill and no
+crash window**. The ref lookup is already index-backed by the existing
+`flows_project_ref_uq (project_id, flow_ref_id)` unique index; `flows.id` is the
+PK. Flows-per-project is single-digit, so no new index is warranted. → No
+`_journal.json` entry, no snapshot, no ADR number to reserve.
 
 ## Phases
 
-### Phase 0 — Housekeeping + docs-first
+### Phase 1 — SPECS (SDD gate — no code before this is green)
 
-- [ ] **T0.1 — Commit the pre-existing `confidence` coercion fix as its own commit.**
-  Files: `mcp/src/tools.ts`, `mcp/src/__tests__/tools.test.ts`,
-  `docs/system-analytics/external-operations.md` (the *confidence* Expectations bullet only).
-  It is a verified, self-contained fix from this session — keep it a clean unit
-  *before* layering this feature. Stage only those three files (`git add`), commit
-  via `/aif-commit`. (`mcp/dist/main.js` is gitignored — no need to stage.)
-  → verify: `git log` shows a standalone confidence-fix commit; working tree clean of it.
-- [ ] **T0.2 — Docs-first Expectations bullet (analytics before code).**
-  `docs/system-analytics/external-operations.md`: add a bullet — a body `flowId`
-  MAY be a flow UUID (`flows.id`) **or** the project's `flows.flow_ref_id`; both
-  resolve to the same stored UUID; an unresolvable ref returns a structured
-  `CONFIG`/`PRECONDITION` error naming the expected forms, the received value, and
-  the project's valid refs. Also update the `flowId` param *description* in
-  `docs/api/external/operations.openapi.yaml` (type unchanged). Tag `(Implemented)`
-  at phase end. → verify: `pnpm validate:docs` green.
+- [ ] **T1.1 — API contract.** `docs/api/external/operations.openapi.yaml`: apply
+  every row of the table above marked as changing. Do **not** touch the runs-launch
+  or delegate flowId prose. Keep `type: string` (R9).
+  → verify: `npx @redocly/cli lint docs/api/external/operations.openapi.yaml` → 0 errors;
+  the `verdict` examples are unchanged (they become *true* in Phase 3, AC1).
+- [ ] **T1.2 — System analytics.** `docs/system-analytics/triage.md` — rewrite the
+  line-184 sentence to describe UUID-or-ref resolution and add ONE Expectation:
+  *"A verdict `flowId` MUST resolve against `flows.id` OR `flows.flow_ref_id` within
+  the project; the resolved UUID (never the ref) is persisted to `tasks.flow_id`;
+  an unresolvable value MUST return `CONFIG` naming expected/received/validRefs."*
+  `docs/system-analytics/external-operations.md` — one mirroring bullet (R7:
+  cross-reference triage.md, do not duplicate). Tag `(Implemented)` at Phase 3 end,
+  `(Designed)` until then (R6).
+  → verify: `pnpm validate:docs` green; Expectations obey R5a (normative, testable, ≤12).
+- [ ] **T1.3 — Spec consistency gate.** Re-read the changed spec end-to-end: no
+  sentence may contradict the examples (AC7); every requirement R1-R9 is traceable to
+  a spec sentence.
+  → verify: checklist walked; AC7 satisfied.
 
-### Phase 1 — Core primitive (TDD)
+### Phase 2 — Core primitive (TDD: RED → GREEN → refactor)
 
-- [ ] **T1.1 — `resolveFlowRef`.** New `web/lib/flows/resolve-flow-ref.ts`.
-  Signature: `resolveFlowRef(projectId: string, ref: string, db?: Db): Promise<{ ok: true; flowId: string } | { ok: false; detail: { field: "flowId"; expected: string; received: string; validRefs: string[] } }>`.
-  One project-scoped query `WHERE project_id = :projectId AND (id = :ref OR flow_ref_id = :ref) LIMIT 1` → on hit return `flows.id`; on miss, one follow-up query for the project's `flow_ref_id` list to fill `validRefs`, return `ok:false`.
-  Plus `formatFlowRefError(detail): string` (expected/received/validRefs → message text) for callers.
-  Logging: DEBUG on entry (`projectId`, `ref`), DEBUG on hit/miss.
-  Identifiers: `ref` body-controlled → validated here against server-state.
-  → verify: T1.2 green.
-- [ ] **T1.2 — Unit tests** (`web/lib/flows/__tests__/resolve-flow-ref.test.ts`, **web integration project** — testcontainers, `pg-container.ts`).
-  Cases: UUID hit → flowId; ref hit → flowId; cross-project UUID → miss (+validRefs); unknown string → miss (+validRefs); another project's ref → miss.
-  → verify: confirm the file matches the integration runner glob (`vitest list`); suite green.
+- [ ] **T2.1 — RED.** `web/lib/flows/__tests__/resolve-flow-ref.test.ts`
+  (**web integration project**, testcontainers). Exactly 5 non-overlapping cases —
+  this is the ONLY place resolver edge cases are enumerated:
+  1. UUID hit → returns the UUID (R1)
+  2. ref hit → returns the UUID (R1 — the new capability)
+  3. unknown string → miss, `validRefs` populated (R5)
+  4. another project's UUID → miss (R4)
+  5. another project's ref → miss (R4)
+  *(No trivial tests: empty/absent `flowId` is already rejected by route zod
+  `minLength(1)` / skipped by `!= null` — not re-tested here.)*
+  → verify: `vitest list` confirms the runner glob matches; all 5 **fail**.
+- [ ] **T2.2 — GREEN.** `web/lib/flows/resolve-flow-ref.ts` — minimal code to pass:
+  `resolveFlowRef(projectId, ref, db?): Promise<{ok:true; flowId:string} | {ok:false; detail:{field:"flowId"; expected:string; received:string; validRefs:string[]}}>`.
+  One project-scoped query `WHERE project_id = ? AND (id = ? OR flow_ref_id = ?) LIMIT 1`
+  (mirror the prior-art predicate); on miss, one query for the project's refs → `detail`.
+  Plus `formatFlowRefError(detail): string`. DEBUG log on entry + hit/miss.
+  → verify: 5/5 green; no other suite regresses.
+- [ ] **T2.3 — Refactor.** Names, JSDoc for the non-obvious WHY (ref/UUID namespaces
+  cannot collide — see the unique constraint). No behavior change; stay green.
+  → verify: suite still green; `tsc` clean.
 
-### Phase 2 — Wire into the shared service layer (TDD per site)
+### Phase 3 — Wire into the shared service layer (TDD per site)
 
-- [ ] **T2.1 — Triage verdict.** `web/lib/services/triage.ts` `validateVerdictRefs`:
-  resolve `patch.flowId` at entry; miss → `throw MaisterError("CONFIG", formatFlowRefError(detail))`; hit → the launchability/trust gate runs on the resolved UUID.
-  **Persistence subtlety:** callers must WRITE the resolved UUID. Audit all three:
-  ext triage route (`…/triage/route.ts` builds `verdict` then `applyTriageVerdict` — same object), `updateTaskVerdict` (same object), `updateTask` (`tasks.ts:440` validates a *throwaway* `verdictPatch(input)` and writes `input.flowId` separately — resolution MUST rewrite the written value). Preferred shape: `resolveFlowRef` returns the UUID and each service assigns it explicitly (no reliance on in-place mutation).
-  → verify: T2.4 triage integration green; `tasks.flow_id` = UUID after a ref verdict.
-- [ ] **T2.2 — Task create/update.** `web/lib/services/tasks.ts` `createTask` + `updateTask`: resolve `flowId` → UUID before write; the existing `flows.id` existence check in `createTask` is subsumed by the resolver (miss → `CONFIG` with formatted detail).
-  → verify: T2.4 task-create integration green.
-- [ ] **T2.3 — Run launch.** `web/lib/services/runs.ts` `launchRun` (~717): resolve the `input.flowId` **override** → UUID before the `eq(flows.id, …)` lookup; `task.flowId` is already a UUID; miss → keep `PRECONDITION` with formatted detail.
-  → verify: T2.4 launch integration green.
-- [ ] **T2.4 — Integration tests** — mirror existing, pass a **ref**, assert stored UUID:
-  - triage: `web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/triage/__tests__/route.integration.test.ts` — `flowId:"aif-bugfix"` → `triaged` + `tasks.flow_id` = UUID; unknown ref → 422 `CONFIG` whose message contains `validRefs`.
-  - task-create integration (mirror the existing ext tasks test): ref → `tasks.flow_id` = UUID.
-  - launch: a ref override resolves; unknown ref → `PRECONDITION` with detail.
-  → verify: web unit + integration suites green (`pnpm --filter maister-web test:unit && …:integration`).
+> Each site: RED (its integration test) → GREEN (wire `resolveFlowRef`) → stay green.
+> Service tests assert **wiring + persistence + error mapping ONLY** — they do
+> not re-enumerate resolver cases (minimum overlap).
 
-### Phase 3 — MCP surface + agent guidance
+- [ ] **T3.1 — RED (all sites).** Add the failing integration tests:
+  - triage (`web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/triage/__tests__/route.integration.test.ts`): ref verdict → `triaged` + `tasks.flow_id` == UUID (AC1, AC2); unknown ref → 422 whose message carries received + validRefs (AC4); **ref → disabled/untrusted flow still refused** (AC6).
+  - task-create (mirror the existing ext tasks integration test): ref → `tasks.flow_id` == UUID.
+  - task-update: ref → the **written** value is the UUID (guards the throwaway-patch trap below).
+  - launch (**web session-auth only** — ext refuses flowId per ADR-085): ref override resolves; unknown ref → `PRECONDITION` (R6).
+  → verify: each new test fails for the right reason.
+- [ ] **T3.2 — GREEN: triage.** `web/lib/services/triage.ts` `validateVerdictRefs` —
+  resolve `patch.flowId` at entry; miss → `CONFIG` + `formatFlowRefError`; hit → the
+  launchability/trust gate runs on the resolved UUID (R7).
+  **Trap:** `updateTask` (`tasks.ts:440`) validates a *throwaway* `verdictPatch(input)`
+  and writes `input.flowId` separately — in-place mutation would NOT reach the write.
+  Return/assign the resolved UUID explicitly at each of the three callers (ext triage
+  route, `updateTaskVerdict`, `updateTask`).
+  → verify: triage + task-update tests green.
+- [ ] **T3.3 — GREEN: task create/update.** `web/lib/services/tasks.ts` — resolve
+  before write; `createTask`'s existing `flows.id` existence check is **replaced** by
+  the resolver (DRY — one resolution path, R8).
+  → verify: task-create test green.
+- [ ] **T3.4 — GREEN: run launch (web-only).** `web/lib/services/runs.ts` `launchRun`
+  (~717) — resolve the `input.flowId` **override** before the `eq(flows.id, …)` lookup;
+  `task.flowId` is already a UUID; miss → keep `PRECONDITION` (R6). Scope note: only
+  the session-auth `POST /api/runs` supplies `flowId`.
+  → verify: launch test green.
+- [ ] **T3.5 — Refactor + status flip.** Remove duplication across the four sites
+  (DRY); flip the Phase-1 `(Designed)` tags to `(Implemented)` (R6).
+  → verify: web unit + integration green.
 
-- [ ] **T3.1 — MCP tool descriptions.** `mcp/src/tools.ts`: `triage_set.flowId`, `task_create.flowId`, `run_launch.flowId` → "flow UUID or ref (e.g. `aif-bugfix`), as returned by `flow_list`". **Do NOT touch `delegate`.**
-  → verify: T3.2 green.
-- [ ] **T3.2 — MCP tests.** `mcp/src/__tests__/tools.test.ts` / `tool-contract.test.ts`: assert the three `flowId` descriptions mention "ref"; routing unchanged (facade forwards the string; the web service resolves). Runner: **mcp unit project**.
+### Phase 4 — MCP surface + agent guidance
+
+- [ ] **T4.1 — Tool descriptions.** `mcp/src/tools.ts`: **`triage_set.flowId` and
+  `task_create.flowId` ONLY** → "flow UUID or ref (e.g. `aif-bugfix`), as returned by
+  `flow_list`". **Do NOT touch `run_launch`** (no `flowId` param) **or `delegate`** (stub).
+  → verify: T4.2 green.
+- [ ] **T4.2 — MCP tests.** `mcp/src/__tests__/tools.test.ts` / `tool-contract.test.ts`:
+  the two descriptions mention "ref"; routing unchanged (the facade forwards the string;
+  the web service resolves). Runner: **mcp unit project**.
   → verify: `pnpm --filter @maister/mcp test` green.
-- [ ] **T3.3 — Rebuild facade bundle.** `pnpm --filter @maister/mcp build`; `grep -c resolveFlowRef` is web-side (n/a) — instead grep the new description text in `mcp/dist/main.js`.
-  → verify: bundle contains the updated descriptions.
-- [ ] **T3.4 — Triager guidance** (external repo). `../maister-plugins/packages/core/maister-agents/triager.md` (~line 188): note the ref is accepted alongside the id. Separate commit in that repo; flag to owner (not part of this repo's branch).
-  → verify: owner-visible note; no change to this repo's tree.
+- [ ] **T4.3 — Rebuild facade bundle.** `pnpm --filter @maister/mcp build`; grep the new
+  description text in `mcp/dist/main.js` (agents run the bundle, not source).
+  → verify: bundle carries the text.
+- [ ] **T4.4 — Triager guidance** (external repo `maister-plugins`, separate commit):
+  `packages/core/maister-agents/triager.md` ~188 — note the ref is accepted.
+  → verify: owner-visible; this repo's tree untouched.
 
-### Phase 4 — Verification
+### Phase 5 — Verification
 
-- [ ] **T4.1 — Full green + typecheck + lint.** `pnpm --filter maister-web test:unit && test:integration`, `pnpm --filter @maister/mcp test`, `tsc --noEmit` (both packages), scoped `eslint` (check-only) on touched files.
-  → verify: all green; touched files lint-clean (no repo-wide `--fix`).
-- [ ] **T4.2 — End-to-end sanity.** Drive `triage_set` with `flowId:"aif-bugfix"` against `maister-dev` → `triaged`, `tasks.flow_id` = the `aif-bugfix` UUID; an unknown ref → 422 whose message lists `validRefs`.
-  → verify: observed behavior matches.
+- [ ] **T5.1 — Gates.** web unit+integration, mcp suite, `tsc --noEmit` (both), scoped
+  check-only eslint on touched files, `pnpm validate:docs`, `redocly lint`.
+  → verify: AC8 green.
+- [ ] **T5.2 — Spec↔code conformance (AC1).** Execute the OpenAPI `verdict` example
+  verbatim (`flowId: "bugfix"`) against a project owning `bugfix` → `200 triaged`,
+  `tasks.flow_id` == UUID. The drift is closed.
+  → verify: observed.
 
-## Commit Plan (checkpoints — 10 tasks)
+## Commit Plan (checkpoints)
 
-1. **After Phase 0** — `chore: separate confidence coercion fix` (T0.1) + `docs(external-ops): flowId accepts uuid or ref` (T0.2). Two commits.
-2. **After Phase 1** — `feat(flows): resolveFlowRef primitive + tests`.
-3. **After Phase 2** — `feat(flows): resolve flowId ref across triage/task/launch services`.
-4. **After Phase 3** — `feat(mcp): flowId tool descriptions accept ref + rebuild bundle`.
-5. **After Phase 4** — no code; verification only.
+1. **Phase 1** → `docs(api,analytics): flowId accepts uuid or ref (spec-first)`
+2. **Phase 2** → `feat(flows): resolveFlowRef primitive + tests`
+3. **Phase 3** → `feat(flows): resolve flowId ref across triage/task/launch services`
+4. **Phase 4** → `feat(mcp): triage_set/task_create flowId accept ref + rebuild bundle`
+5. **Phase 5** → verification only (no commit)
 
-Integration: rebase onto `main`, owner FF-merges (per repo convention). Ask before push.
+Integration: rebase onto `main`, owner FF-merges. Ask before push.
+**Do not amend or rewrite existing `main` commits** (incl. `b95add686`) — this
+branch's own plan commit may be amended freely.
 
 ## Non-goals
 
-- No fuzzy/prefix/case-insensitive matching — exact ref or exact UUID only.
-- No data migration (all stored flowIds already UUIDs).
-- No change to the ext OpenAPI **type** of `flowId` (`string`); only its meaning/description broadens.
-- No `MaisterError.details` field / no new error code (owner chose message-embedded detail).
-- Delegate flow-target stays a Phase-3 stub.
+- No fuzzy/prefix/case-insensitive matching (R2).
+- No migration, no new error code, no ext OpenAPI type change (R9).
+- No ref support on ext run-launch (ADR-085 refuses `flowId` there) or delegate (stub).
+- No `MaisterError.details` field — the structured detail rides in `message` (owner-chosen).
