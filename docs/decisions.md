@@ -166,6 +166,12 @@
 | [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Implemented | 2026-07-15 |
 | [ADR-140](#adr-140-pr-lifecycle-tracking) | PR lifecycle tracking | Implemented | 2026-07-14 |
 | [ADR-141](#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen) | Branch sync with AI conflict resolver and reopen | Implemented | 2026-07-14 |
+| [ADR-139](#adr-139-evaluation-study-domain-and-legacy-experiment-compatibility) | Evaluation Study domain and legacy Experiment compatibility | Accepted | 2026-07-16 |
+| [ADR-140](#adr-140-package-sourced-evaluation-methods-and-trust-compatibility) | Package-sourced Evaluation Methods and trust compatibility | Accepted | 2026-07-16 |
+| [ADR-141](#adr-141-immutable-private-evidence-and-bounded-evaluator-retrieval) | Immutable private evidence and bounded evaluator retrieval | Accepted | 2026-07-16 |
+| [ADR-142](#adr-142-multi-judge-execution-aggregation-disagreement-and-human-verdict) | Multi-judge execution aggregation disagreement and human verdict | Accepted | 2026-07-16 |
+| [ADR-143](#adr-143-controlled-evaluation-recipes-and-slot-keyed-execution-profiles) | Controlled Evaluation recipes and slot-keyed execution profiles | Accepted | 2026-07-16 |
+| [ADR-144](#adr-144-advanced-evaluation-suites-calibration-and-recipe-standardization) | Advanced evaluation suites calibration and recipe standardization | Accepted | 2026-07-16 |
 
 ---
 
@@ -12399,6 +12405,304 @@ bring a `Done` run whose PR now conflicts back into review.
   cross-process resume cost/semantics.
 - _Making `ai_rebase_merge` one-click async by default_: rejected — two-step is the
   safe default; one-click is an explicit opt-in that degrades benignly.
+### ADR-139: Evaluation Study domain and legacy Experiment compatibility
+
+**Date:** 2026-07-16
+**Status:** Accepted
+
+**Context:** The implemented task-bound Experiment Comparison Studio (ADR-124)
+couples participant membership to launch semantics: an existing Run cannot be
+compared without inheriting relaunch/retention/promotion behaviour. The
+Evaluation Lab must compare 2..N Runs for one task without changing the
+semantics of observed Runs, and must keep objective facts separate from AI
+opinions. This is the domain/lifecycle foundation for milestones M46–M48
+(see `.ai-factory/plans/feature-evaluation-lab.md`, D1–D4, D14).
+
+**Decision:**
+
+- Introduce the **Evaluation Study** as the durable container (one project +
+  one task), with persisted status `draft | open | decided | archived` only;
+  readiness and active-evaluation count are **derived facets**, never persisted
+  lifecycle states.
+- **Participants** carry immutable `source_type` `observed | launched`.
+  Observed = an existing Run selected for comparison; it never gains Experiment
+  launch semantics, retention holds, relaunch inheritance, delivery holds, or
+  promotion exclusion. Launched = created from a Study recipe with an owning
+  launch lineage and a forced evaluation `promotionHold`.
+- The **human verdict** (`winner | tie | inconclusive`) is append-only and
+  conclusive; judges never conclude, promote, abandon, relaunch, or overwrite
+  it. A zero-citation verdict is allowed only with an explicit persisted
+  no-evaluation-evidence acknowledgement.
+- Legacy Experiments migrate losslessly into Studies (see ADR-141 for the
+  migration ledger); deep links `/projects/{slug}/experiments[...]` and the
+  legacy `experiment_get`/`experiment_advise`/`conclude` adapters are retained;
+  the canonical model uses `/evaluation-studies`.
+
+**Consequences:**
+
+- Observed membership has no path into launched-lineage predicates, so
+  auto-promotion / auto-delivery / relaunch / GC consumers move to an explicit
+  launched-lineage predicate and exclude observed participants by construction.
+- Two writer binaries must not run concurrently across the expand migration.
+- Milestone slicing M46 (foundation) / M47 (controlled expansion) / M48
+  (advanced) is locked; status labels keep future capability from appearing
+  implemented early.
+
+**Alternatives Considered:**
+
+- _Reuse `experiment_runs` for observed Runs_: rejected because selection would
+  retroactively change execution behaviour.
+- _A single `evaluating`/`ready` Study state_: rejected — concurrent
+  evaluations would race a lossy Study-level flip; readiness is derived.
+
+---
+
+### ADR-140: Package-sourced Evaluation Methods and trust compatibility
+
+**Date:** 2026-07-16
+**Status:** Accepted
+
+**Context:** Evaluation rubrics, judge roles, and aggregation policy must be
+portable, versioned content — not hardcoded like the current
+`core:experiment-judge`. Package content must never execute before trust
+(ADR-088/096/105/130 trust contour). Foundation for M46 (D6, D7, D11, D13).
+
+**Decision:**
+
+- Add optional `evaluationMethods[]` to `maister-package.yaml`; each entry
+  points at an `evaluation-method.yaml` (schemaVersion 1) plus referenced
+  prompt/schema assets. The platform entity is `EvaluationMethodRevision`,
+  qualified `packageName:methodId`. Its immutable version is the containing
+  package install `versionLabel` + resolved content digest — **no** method-local
+  version field (prevents version skew).
+- **Trust separation** stays physical: install/cut parses inert YAML → trust +
+  compatibility persisted → projection may be enabled → only an enabled,
+  trusted, compatible method may drive capture, prompts, objective checks, or
+  aggregation. Packages carry no credentials, concrete runner IDs, host model
+  IDs, secret values, or executable aggregation/check scripts.
+- Objective checks and aggregators resolve **only** through closed platform
+  registries (M46: `weighted_mean@1`, `median@1`, `majority@1`; objective
+  providers are recorded gate/artifact results, schema/contract validation,
+  source/diff manifest statistics, and operator-configured trusted host check
+  profiles). Build/test/lint runs only through a pre-registered host check
+  profile whose command and sandbox are platform-owned.
+- Bump `MAISTER_ENGINE_VERSION` 3.1.0 → 3.2.0. Old packages parse as
+  `evaluationMethods: []`; an engine that predates the entity rejects a newer
+  package loudly rather than silently discarding it; `compat.engine_min/max`
+  gate method enablement.
+
+**Consequences:**
+
+- A closed registry means new objective checks / aggregators are host code
+  changes, not package content — deliberate, to keep evaluation deterministic.
+- The maister-plugins release wrapper's missing
+  `validate:package-compatibility` gate must be restored and extended for
+  Evaluation Methods before any `core/v1.1.0` tag.
+
+**Alternatives Considered:**
+
+- _Executable package aggregators/checks_: rejected — arbitrary code before or
+  during evaluation breaks trust and reproducibility.
+- _Method-local version field_: rejected — dual version sources skew.
+
+---
+
+### ADR-141: Immutable private evidence and bounded evaluator retrieval
+
+**Date:** 2026-07-16
+**Status:** Accepted
+
+**Context:** A reproducible comparison must freeze exactly what each judge saw,
+keep private source/diff/logs out of public DTOs and telemetry, and prevent a
+judge agent from browsing the project. Foundation for M46 (D5, D9, D10) and the
+legacy migration ledger.
+
+**Decision:**
+
+- An **Evaluation Execution** always runs over a sealed, immutable evidence
+  **snapshot** frozen at a Run/event watermark. A sealed snapshot may be
+  attached to multiple executions when participant set and evidence-protocol
+  digests match (this is how different compatible methods compare over identical
+  evidence). Later Run progress never mutates a sealed snapshot; including later
+  state means a new execution with a new snapshot.
+- Capture is **commit-anchored**: each participant's branch tip SHA is resolved
+  at the watermark and all source/diff reads git objects at that SHA — never a
+  live worktree scan. Append-only run logs / `run.events.jsonl` are cut at the
+  watermark offset. Uncommitted working-tree changes are recorded as coverage
+  class `uncommitted_not_captured`, never captured.
+- Evidence metadata is normalized in Postgres; immutable payloads are
+  content-addressed under `MAISTER_EVALUATION_EVIDENCE_ROOT`
+  (default `~/.maister/evaluations`) with tmp + fsync + rename before the DB
+  seal transaction. Crash before seal leaves an orphan blob eligible for GC; the
+  DB never points at an absent unsealed blob. Deletion is preserve-then-prune,
+  reference-guarded, and audited.
+- Judge agents run `workspace:none` with an **attempt-bound token**; the
+  evaluator facade exposes only `evaluation_context_get`,
+  `evaluation_evidence_list`, `evaluation_evidence_read` (server-capped
+  offset/length), `evaluation_objective_results`, `evaluation_result_submit`.
+  No tool accepts a project/worktree path, supervisor/session id, study/run/
+  snapshot id when the token already binds it.
+- Migration ledger: `0104_evaluation_studies_expand`,
+  `0105_evaluation_platform_config`, `0106_evaluation_execution_evidence`, and
+  the deferred `0107_evaluation_legacy_contract`. Legacy Experiment rows/JSON
+  migrate losslessly with count/digest parity or the migration aborts.
+
+**Consequences:**
+
+- Judges cannot address arbitrary evidence; every attempt reads an identical,
+  bounded manifest — no unbounded repository prompt.
+- A new host storage root and GC/recovery arm are operational surface added in
+  M46.
+
+**Alternatives Considered:**
+
+- _Mutable/live evidence at judge time_: rejected — later progress would
+  silently change a historical comparison.
+- _Full worktree access for judges_: rejected — leaks private paths and defeats
+  reproducibility and prompt-injection isolation.
+
+---
+
+### ADR-142: Multi-judge execution aggregation disagreement and human verdict
+
+**Date:** 2026-07-16
+**Status:** Accepted
+
+**Context:** The current single hardcoded judge cannot express independent
+panels, strict schema validation, quorum, blinding, or auditable aggregation.
+Foundation for M46 (D8, D12, D13, D14).
+
+**Decision:**
+
+- **Judge Panels** (mutable admin config, optimistic revision) map logical
+  roles to package-qualified platform agents, independent attempt count, max
+  parallel attempts (hard-capped at `MAISTER_MAX_CONCURRENT_AGENTS − 1` so one
+  agent slot stays free), quorum, timeout, bounded retry, budgets, blind labels,
+  randomized order, allowed read-only MCPs, and poison-judge policy.
+  **Evaluation Profiles** combine one method revision + one panel + defaults +
+  hard limits + an allow-list of project/study overrides. Resolution precedence:
+  method hard constraints → Profile hard bounds → Panel binding → project
+  override → per-Study allowed override; the effective profile is snapshotted at
+  execution start.
+- Each independent attempt launches a **separate agent Run** with a dedicated
+  token; results stay sealed from peers until quorum or terminal panel state.
+  The attempt timeout clock starts at session `Running`, never at enqueue; queue
+  wait is metered separately. Invalid output is a terminal invalid attempt with
+  an optional bounded repair child; missing criteria never become numeric zero
+  (`scored | insufficient_evidence | not_applicable`).
+- **Aggregation** is versioned, deterministic, unrounded internally, and
+  auditable: it persists exact included attempt IDs, calculations, caps,
+  quorum decision, exclusions, and digests. One execution = exactly one method;
+  incompatible methods are shown side by side, never collapsed into a universal
+  score. Disagreement considers score/confidence spread, rationale conflict,
+  objective contradiction, insufficient-evidence asymmetry, and panel
+  completeness; low disagreement is not treated as high confidence.
+- Start and fan-out are **durable**: intent is persisted before side effects,
+  then an immediate in-process kick shares the M24 scheduler / domain-event
+  backstop; every waiting state has an emitter and a recovery predicate; client
+  progress is a replayable Study SSE, never polling as the primary mechanism.
+
+**Consequences:**
+
+- Judge attempts consume the shared agent concurrency budget and queue like any
+  agent Run; a dedicated judge budget is a known ops escape hatch, not M46.
+- Every number traces to exact attempt/objective IDs and an algorithm digest.
+
+**Alternatives Considered:**
+
+- _Single judge, agreement = confidence_: rejected — agreement with incomplete
+  evidence is not confidence.
+- _Cross-method universal score_: rejected — collapses incomparable scales; any
+  future cross-method policy must itself be explicit, versioned, and auditable.
+
+---
+
+### ADR-143: Controlled Evaluation recipes and slot-keyed execution profiles
+
+**Date:** 2026-07-16
+**Status:** Accepted
+
+**Context:** M47 must launch reproducible controlled variants (alternative
+compatible Flows / package revisions, per-slot runner/model bindings) without
+conflating participant provenance or weakening promotion/trust rules. Design
+locked now; implemented in M47 (D15, D16, D17).
+
+**Decision:**
+
+- An immutable **Evaluation Recipe** version pins `flow`
+  (flowRefId/revision/package provenance + input/output/artifact contract
+  digests), validated `inputs`, optional `nodeAgentBindings`, `slotBindings`
+  for every stable session/consensus slot key (concrete runner override or typed
+  runner intent), the existing `executionPolicy` (`supervised | assisted |
+  unattended`, labeled "Unattended within policy"), a typed `capabilityOverlay`,
+  `budgets`, `materializationIntent` (pins/overlays only — no path/credential/
+  env/executable hook), `replicatePolicy`, and a forced `promotionHold`
+  (`evaluation_study`) that a recipe cannot remove.
+- An alternative Flow is allowed only after preflight proves same project/task
+  ownership, input/form compatibility (or explicit deterministic mapping),
+  representable required fields + acceptance criteria, artifact-contract coverage
+  of the method evidence requirements, resolvable slots, package/trust/engine
+  compatibility, and no silent capability degradation. First M47 scope: exact
+  compatible contracts only — no arbitrary mappings or schema coercion.
+- Slot resolution persists the actual `run_sessions` snapshot; a requested
+  model is honoured by a concrete runner snapshot or refuses / records an
+  allowed soft mismatch — never an unenforced `modelId` claim.
+
+**Consequences:**
+
+- Every launched Evaluation participant is promotion-held; even
+  unattended-within-policy cannot auto-promote, and the existing no-blind-ship
+  guard still rejects a recipe that relaxes the human/promotion floor.
+- Controlled batch launch is a durable per-item intent; partial batches are
+  first-class and retries adopt existing Runs by durable item key.
+
+**Alternatives Considered:**
+
+- _`askQuestions` boolean_: rejected — `ExecutionPolicy` is the single source of
+  interaction truth.
+- _Arbitrary Flow input transforms in M47_: rejected — silent coercion hides
+  provenance; deferred.
+
+---
+
+### ADR-144: Advanced evaluation suites calibration and recipe standardization
+
+**Date:** 2026-07-16
+**Status:** Accepted
+
+**Context:** M48 turns evaluation into a reusable qualification/regression
+system (pairwise/tournament methods, scheduled suites, package-upgrade
+regression studies, calibration/longitudinal analytics) without introducing
+automatic winner promotion. Design locked now; implemented in M48.
+
+**Decision:**
+
+- Add `pairwise_tournament@1` to the aggregation registry and a `n_way` /
+  pairwise method mode without changing the Study/participant/evidence model;
+  the N-way Overview remains the default and pairwise UI appears only where
+  intrinsic.
+- Scheduled suites and package-upgrade regression Studies reuse the M24
+  scheduler / domain-event bus (no second clock). A benchmark/suite parent lives
+  outside the one-task Study; every generated Study remains one project/task.
+- **Recipe standardization is human-approved and non-automatic**: a project
+  admin may copy a winning immutable recipe into a project default/profile only
+  after a conclusive human verdict and a fresh compatibility/trust preflight,
+  through an explicit preview/confirm/audit path with rollback. No machine can
+  standardize or promote a winner.
+
+**Consequences:**
+
+- Longitudinal calibration reads over immutable evaluations only; drift/ground
+  truth are versioned; private data is minimized in telemetry.
+- M46/M47 contracts remain compatible; advanced capabilities are separately
+  labeled and shipped.
+
+**Alternatives Considered:**
+
+- _Automatic promotion of a winning recipe_: rejected — violates the
+  human-conclusive-verdict and no-auto-promotion invariants.
+- _A second scheduler clock for suites_: rejected — one polymorphic M24 tick
+  owns all cron work.
 
 ---
 

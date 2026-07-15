@@ -105,6 +105,16 @@ For the full vision, product model, architecture, and roadmap see
   CONFIG | EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL |
   CHECKPOINT`). UI branches on `code`, never on string matching.
 - **i18n**: EN + RU from day one.
+- **Evaluation Lab** (M46, in progress; ADR-139..144): a project-level
+  Evaluation Study compares 2..N observed (existing) or launched Runs for one
+  task without changing observed-Run semantics. Package-sourced versioned
+  Evaluation Methods run behind trust/compatibility through independently
+  configured Judge Panels over immutable, private, bounded evidence snapshots.
+  Objective facts stay separate from AI opinion; aggregation/disagreement are
+  versioned and auditable; the human verdict is append-only and conclusive
+  (judges never conclude or promote). Evolves the task-bound Experiment
+  Comparison Studio (ADR-124). See
+  `.ai-factory/plans/feature-evaluation-lab.md`.
 
 ## Tech Stack
 
