@@ -955,9 +955,14 @@ async function giteaPrState(
 
   try {
     // The token rides the Authorization header ONLY — never the URL.
+    // The timeout is REQUIRED, not defensive: this runs inside the
+    // `pr_state_scan` batch, and an unbounded fetch against a hung Gitea would
+    // hold the whole scan past its scheduler lease (the CLI adapters already
+    // bound themselves with the same budget).
     res = await fetch(url, {
       method: "GET",
       headers: { Authorization: `token ${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(EXEC_TIMEOUT_MS),
     });
   } catch (err) {
     return skip(

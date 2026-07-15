@@ -294,6 +294,56 @@ describe("runPrStateScanJob", () => {
     expect(stillCandidate).not.toContain(terminal.workspaceId);
   });
 
+  // ADR-139/140: a TERMINAL PR has no meaningful mergeability, and providers
+  // report it as unknown (`hasConflicts: null`). Without an explicit clear, the
+  // "unknown ⇒ leave as-is" rule preserves a `true` from the PR's OPEN days, and
+  // that stale flag is load-bearing: reopen accepts a conflicted PR, but
+  // re-promotion's `createOrUpdatePr` is open-PR-only, so a closed+conflicted row
+  // would silently open a SECOND PR — breaking the "re-promotion MUST reuse the
+  // SAME provider PR" expectation.
+  it("clears a stale conflict flag when the PR goes terminal reporting unknown mergeability", async () => {
+    const projectId = await seedProject();
+
+    await ensurePrStateScanSeed();
+
+    const candidate = await seedCandidate({ projectId, prNumber: 601 });
+
+    // Scan 1 — the PR is open and genuinely conflicted.
+    await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: (async () => ({
+        kind: "state",
+        state: "open",
+        mergedAt: null,
+        mergeCommitSha: null,
+        hasConflicts: true,
+      })) as unknown as typeof getPrState,
+    });
+
+    expect((await workspace(candidate.workspaceId)).prHasConflicts).toBe(true);
+
+    // Scan 2 — the PR is closed; the provider no longer reports mergeability.
+    await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: (async () => ({
+        kind: "state",
+        state: "closed",
+        mergedAt: null,
+        mergeCommitSha: null,
+        hasConflicts: null,
+      })) as unknown as typeof getPrState,
+    });
+
+    const after = await workspace(candidate.workspaceId);
+
+    expect(after.prState).toBe("closed");
+    // The decisive assertion: terminal ⇒ never conflicted, so the closed PR can
+    // never qualify for reopen on a flag that no longer means anything.
+    expect(after.prHasConflicts).toBe(false);
+  });
+
   it("excludes ineligible rows and resets the cursor after a short batch", async () => {
     const projectId = await seedProject();
 

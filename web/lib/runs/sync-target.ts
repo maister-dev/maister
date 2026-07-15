@@ -180,10 +180,14 @@ export function assertSyncEligible(
 // Decision-10 post-apply gate (reusable by the Task 10 resolver + Task 13). A
 // synced HEAD is promotable only when nothing is mid-flight, the tree is clean,
 // there are no leftover conflict markers, and the target is an ancestor of HEAD.
+// `branch` is REQUIRED, deliberately. It was optional once, and the recovery
+// call site simply omitted it — silently losing the detached-HEAD guard on the
+// exact path (crash recovery) where a detached HEAD is most likely. A required
+// parameter makes the compiler enforce that sweep: a new caller cannot forget it.
 export async function verifySyncGate(
   worktree: string,
   targetSha: string,
-  branch?: string,
+  branch: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (await syncOperationInProgress(worktree)) {
     return { ok: false, reason: "a rebase or merge is still in progress" };
@@ -195,15 +199,13 @@ export async function verifySyncGate(
   // that ends a conflicted rebase with `git rebase --quit` leaves HEAD DETACHED on
   // its resolution while the branch ref still sits at the old tip — every other
   // check would then pass against a commit the push does not carry.
-  if (branch) {
-    const head = await currentBranchName(worktree);
+  const head = await currentBranchName(worktree);
 
-    if (head !== branch) {
-      return {
-        ok: false,
-        reason: `HEAD is not on ${branch} (detached or switched) — the push would not carry the verified commit`,
-      };
-    }
+  if (head !== branch) {
+    return {
+      ok: false,
+      reason: `HEAD is not on ${branch} (detached or switched) — the push would not carry the verified commit`,
+    };
   }
   // Markers are checked over the COMMITTED range: the tree is provably clean by
   // now, so a working-tree check could never see a marker the resolver COMMITTED.
@@ -1064,6 +1066,14 @@ async function runSyncResolver(
   let targetSha: string | null = null;
   let settled = false;
   let pushed = false;
+  // Set the instant the force-push LANDS on origin. A landed push is a point of
+  // no return: the remote branch (and its PR) already carry the resolved commit,
+  // and nothing here can take that back. Past this point a failure may NEVER
+  // restore the worktree (it would diverge from what we pushed) nor record the
+  // attempt `failed` (the ledger would contradict the remote, and a retry would
+  // rebase from state that is no longer what origin has).
+  let pushCommitted = false;
+  let headShaAfter: string | null = null;
 
   try {
     // Verify gate (REUSE Task 9).
@@ -1108,7 +1118,7 @@ async function runSyncResolver(
     }
 
     // Push policy (REUSE Task 9): explicit-SHA force-with-lease iff published.
-    const headShaAfter = await headCommit({ worktreePath: worktree });
+    headShaAfter = await headCommit({ worktreePath: worktree });
     const shouldPush = args.push ?? args.published;
 
     pushed = false;
@@ -1155,6 +1165,8 @@ async function runSyncResolver(
         );
       }
       pushed = true;
+      // The remote now carries the resolved commit — irreversible from here.
+      pushCommitted = true;
     }
 
     // Success finalize: tear the session down, record `succeeded`, restart the
@@ -1178,11 +1190,17 @@ async function runSyncResolver(
       "sync resolver finalized — agent_launched",
     );
   } catch (err) {
-    // Unhandled throw: the handled paths above already terminalized (settled).
-    // Tear the live session down and return the run to Review so it can never be
-    // stranded `Running` holding a slot with an agent still writing to the tree.
-    if (!settled) {
-      await deleteSession(sessionId).catch(() => undefined);
+    // The session is torn down on every failing path (idempotent).
+    await deleteSession(sessionId).catch(() => undefined);
+
+    // `settled` — a handled path above already terminalized this attempt.
+    // `pushCommitted` — the force-push LANDED. Aborting now would restore the
+    // worktree to the pre-sync commit while origin keeps the resolved one, and
+    // would stamp `failed` on a sync that demonstrably happened: the local tree,
+    // the remote branch/PR, and the ledger would all disagree, and a retry would
+    // rebase from a base origin no longer has. A landed push is never rolled
+    // back; the post-push bookkeeping below is best-effort and reconcilable.
+    if (!settled && !pushCommitted) {
       await failResolver({
         db,
         claim,
@@ -1193,6 +1211,25 @@ async function runSyncResolver(
         errorCode: isMaisterError(err) ? err.code : "CRASH",
         errorMessage: err instanceof Error ? err.message : String(err),
       });
+    } else if (pushCommitted) {
+      log.error(
+        {
+          runId,
+          attemptId: claim.attemptId,
+          branch,
+          headShaAfter,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[FIX:ADR-140] sync push LANDED but finalization failed — worktree and remote agree and were NOT rolled back; releasing the run best-effort, attempt ledger may lag",
+      );
+      // The push landed and the tree matches it, so the run's work is done: free
+      // it and its slot best-effort rather than hold a sync claim that would
+      // deadlock promotion AND every future sync on this workspace forever. Each
+      // step is independent — a lagging attempt row is a reconcile concern, never
+      // a reason to strand the run.
+      await markSyncReviewFromRunning(runId, { db }).catch(() => undefined);
+      await releaseSyncClaim(db, claim.workspaceId).catch(() => undefined);
+      await promoteNextPending({ db, pool }).catch(() => undefined);
     }
 
     throw err;

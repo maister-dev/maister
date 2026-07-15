@@ -83,6 +83,21 @@ export function assertReopenEligible(
   const prOpen = workspace.prState === "open";
   const prConflicted = workspace.prHasConflicts === true;
 
+  // A TERMINAL PR can never be reused: re-promotion goes through
+  // `createOrUpdatePr`, which finds OPEN PRs only, so reopening onto a
+  // merged/closed PR would silently open a SECOND one and break the
+  // "re-promotion MUST reuse the SAME provider PR" expectation
+  // (docs/system-analytics/branch-sync.md). `pr_state_scan` now clears the
+  // conflict flag on a terminal PR (that stale flag was how this became
+  // reachable); this refusal is the defense in depth, so a lagging or
+  // hand-edited row can never reach the duplicate-PR path.
+  if (workspace.prState === "merged" || workspace.prState === "closed") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `reopen requires a reusable PR — this one is ${workspace.prState} and re-promotion would open a second PR`,
+    );
+  }
+
   if (!prOpen && !prConflicted) {
     throw new MaisterError(
       "PRECONDITION",

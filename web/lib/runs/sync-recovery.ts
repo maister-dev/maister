@@ -302,7 +302,14 @@ export async function recoverSyncAttemptOnReconcile(args: {
       projectRepoPath: ctx.repo,
       branch: ctx.targetBranch,
     })) ?? ctx.targetBranch;
-  const gate = await verifySyncGate(ctx.worktree, targetSha);
+  // `ctx.branch` is REQUIRED here, exactly as on the live path. Recovery pushes
+  // `refs/heads/<branch>` but measures HEAD: a crash that left HEAD DETACHED on
+  // the resolution (e.g. the resolver ran `git rebase --quit`) leaves the branch
+  // ref at its old commit. Without this argument every other check passes, the
+  // push then no-ops against the stale branch, and the attempt records
+  // `succeeded` with a `headShaAfter` that is not even reachable from it — a
+  // sync reported as done while the PR stays unchanged.
+  const gate = await verifySyncGate(ctx.worktree, targetSha, ctx.branch);
 
   if (!gate.ok) {
     await failAgentAttemptToReview(db, {

@@ -361,14 +361,31 @@ describe("assertReopenEligible", () => {
     ).not.toThrow();
   });
 
-  it("passes a Done run whose PR is conflicted (pr_has_conflicts=true)", () => {
+  it("passes a Done run whose OPEN PR is conflicted (pr_has_conflicts=true)", () => {
     expect(() =>
       assertReopenEligible({ ...base }, {
-        prState: "closed",
+        prState: "open",
         prHasConflicts: true,
       } as any),
     ).not.toThrow();
   });
+
+  // A terminal PR cannot be reused: re-promotion's `createOrUpdatePr` finds OPEN
+  // PRs only, so reopening onto one would open a SECOND PR and break the
+  // "re-promotion MUST reuse the SAME provider PR" expectation. A stale
+  // `pr_has_conflicts=true` surviving from the PR's open days must not buy its
+  // way past this — that combination is exactly how the hole was reachable.
+  it.each(["closed", "merged"] as const)(
+    "refuses a %s PR even with a stale conflict flag (re-promotion could not reuse it)",
+    (prState) => {
+      expect(() =>
+        assertReopenEligible({ ...base }, {
+          prState,
+          prHasConflicts: true,
+        } as any),
+      ).toThrow(/reusable PR/);
+    },
+  );
 
   it("refuses already-Review, child, shared, scratch, and non-PR runs with PRECONDITION", () => {
     const bads: Array<[any, any]> = [

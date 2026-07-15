@@ -762,7 +762,9 @@ describe("verifySyncGate", () => {
     const wt = await addRunWorktree(parent, "sync/gate-ok");
     const targetSha = await headSha(parent, "main");
 
-    await expect(verifySyncGate(wt, targetSha)).resolves.toEqual({ ok: true });
+    await expect(
+      verifySyncGate(wt, targetSha, "sync/gate-ok"),
+    ).resolves.toEqual({ ok: true });
   });
 
   it("fails when the target is not an ancestor of HEAD", async () => {
@@ -772,7 +774,7 @@ describe("verifySyncGate", () => {
     await advanceOriginMain(remote);
     await git(parent, ["fetch", "origin"]);
     const unrelated = await headSha(parent, "origin/main");
-    const res = await verifySyncGate(wt, unrelated);
+    const res = await verifySyncGate(wt, unrelated, "sync/gate-bad");
 
     expect(res.ok).toBe(false);
   });
@@ -783,7 +785,7 @@ describe("verifySyncGate", () => {
     const targetSha = await headSha(wt);
 
     await writeFile(join(wt, "dirty.txt"), "x\n");
-    const res = await verifySyncGate(wt, targetSha);
+    const res = await verifySyncGate(wt, targetSha, "sync/gate-dirty");
 
     expect(res.ok).toBe(false);
   });

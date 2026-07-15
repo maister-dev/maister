@@ -12,12 +12,31 @@ import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import { getPrState as defaultGetPrState } from "@/lib/runs/pr-adapter";
-import { prStateScanJobId } from "@/lib/scheduler/jobs";
+import {
+  prStateScanJobId,
+  schedulerAttemptTimeoutSeconds,
+} from "@/lib/scheduler/jobs";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // One bounded batch per tick; the durable keyset cursor (this job's
 // `target->'cursor'`) paginates the rest through the partial candidate index.
 const PR_STATE_SCAN_BATCH = 50;
+
+// The per-provider-call ceiling the adapters enforce (`EXEC_TIMEOUT_MS` in
+// pr-adapter.ts). Mirrored, not imported, to keep this handler off the adapter's
+// internals — it is only used to reserve headroom, so drift is safe.
+const PR_STATE_SCAN_CALL_BUDGET_MS = 60_000;
+
+// How long this handler may keep STARTING candidates before it must stop and let
+// the cursor resume next tick. Derived from the ACTUAL scheduler lease (the same
+// env-tunable value the reaper uses) so the two can never drift apart: reserve
+// one worst-case provider call plus a margin for the cursor write, because a
+// candidate started just under the deadline may still burn its full budget.
+function scanBudgetMs(): number {
+  const leaseMs = schedulerAttemptTimeoutSeconds() * 1_000;
+
+  return Math.max(1_000, leaseMs - PR_STATE_SCAN_CALL_BUDGET_MS - 10_000);
+}
 
 const log = pino({
   name: "pr-state-scan",
@@ -118,8 +137,21 @@ export async function runPrStateScanJob(input: {
 
   let updated = 0;
   let skipped = 0;
+  let lastProcessedId: string | null = null;
+  let deadlineHit = false;
+  const deadline = Date.now() + scanBudgetMs();
 
   for (const candidate of candidates) {
+    // Never START a candidate we cannot finish inside the lease. A full batch of
+    // slow providers (50 × the adapter's 60s budget) would otherwise run ~10x
+    // past the lease: the scheduler would reap this attempt as LEASE_EXPIRED and
+    // start a REPLACEMENT scan while this one is still writing — two unfenced
+    // scanners on the same rows, and enough repeated failures to disable the job.
+    if (Date.now() >= deadline) {
+      deadlineHit = true;
+      break;
+    }
+
     const outcome = await processCandidate({
       db,
       getPrState,
@@ -129,17 +161,36 @@ export async function runPrStateScanJob(input: {
       candidate,
     });
 
+    lastProcessedId = candidate.id;
+
     if (outcome === "updated") updated += 1;
     else if (outcome === "skipped") skipped += 1;
   }
 
-  // Advance past the processed window when it was full; a short (tail) batch
-  // resets the cursor so the next tick wraps to the head — every candidate is
-  // visited within ceil(N / batch) ticks regardless of never-moving rows.
-  const nextCursor =
-    candidates.length === PR_STATE_SCAN_BATCH
+  // The cursor must name the last candidate we ACTUALLY processed, never the
+  // window end — advancing past unvisited rows would silently skip them until
+  // the cursor wrapped. On a deadline stop we resume exactly where we left off
+  // (and hold the incoming cursor if we processed nothing at all).
+  // Otherwise: a full window advances; a short (tail) batch resets so the next
+  // tick wraps to the head — every candidate is visited within ceil(N / batch)
+  // ticks regardless of never-moving rows.
+  const nextCursor = deadlineHit
+    ? (lastProcessedId ?? cursor)
+    : candidates.length === PR_STATE_SCAN_BATCH
       ? candidates[candidates.length - 1].id
       : null;
+
+  if (deadlineHit) {
+    log.warn(
+      {
+        projectId,
+        scanned: candidates.length,
+        processed: (updated + skipped) as number,
+        cursor: nextCursor,
+      },
+      "[FIX:ADR-139] pr state scan stopped at its lease budget — resuming from the cursor next tick",
+    );
+  }
 
   await writeCursor(db, projectId, nextCursor);
 
@@ -263,12 +314,22 @@ async function applyStateEdges(args: {
   const { db, projectId, candidate, state } = args;
   let changed = false;
 
+  // A TERMINAL PR (merged/closed) has no meaningful mergeability, and providers
+  // report it as unknown (`hasConflicts: null`) — which the "leave as-is" rule
+  // below would turn into a STALE `true` surviving from the PR's open days. That
+  // stale flag is load-bearing: reopen eligibility accepts a conflicted PR, so a
+  // closed PR would qualify, and re-promotion's `createOrUpdatePr` is
+  // open-PR-only — it would silently open a SECOND PR, breaking the
+  // "re-promotion MUST reuse the SAME provider PR" expectation
+  // (docs/system-analytics/branch-sync.md). Terminal ⇒ no conflicts, always.
+  const terminalPr = state.state === "merged" || state.state === "closed";
+
   // Conflicts edge — independent of the state edge (a still-open PR can gain a
   // conflict). The guard is the PREVIOUS column value so a re-scan is
   // exactly-once.
-  if (state.hasConflicts === true) {
+  if (state.hasConflicts === true && !terminalPr) {
     changed = await conflictsEdge({ db, projectId, candidate });
-  } else if (state.hasConflicts === false) {
+  } else if (state.hasConflicts === false || terminalPr) {
     // Silent clear — no webhook.
     await db.execute(sql`
       UPDATE workspaces
@@ -276,7 +337,7 @@ async function applyStateEdges(args: {
       WHERE id = ${candidate.id}
     `);
   }
-  // hasConflicts === null → leave as-is.
+  // hasConflicts === null on a still-OPEN PR → leave as-is (unknown ≠ resolved).
 
   // State edge — merged / closed / open, mutually exclusive.
   if (state.state === "merged") {
