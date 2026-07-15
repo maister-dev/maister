@@ -163,6 +163,7 @@
 | [ADR-136](#adr-136-task-bound-human-ask-clarification-handoff) | Task-bound Human-ask clarification handoff | Implemented | 2026-07-13 |
 | [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
 | [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Implemented | 2026-07-14 |
+| [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Proposed | 2026-07-15 |
 
 ---
 
@@ -12033,6 +12034,87 @@ without changing the Flow's review decision.
   late ACP reply cannot be distinguished safely without durable lifecycle state.
 - _Remove confidence transport and column now_: rejected because it is a
   breaking external/API change unrelated to human UI ergonomics.
+
+---
+
+### ADR-139: Project Automations — one-time task-launch reservation and truthful agent-binding telemetry
+
+**Date:** 2026-07-15
+**Status:** Proposed
+
+**Context:** Existing M28 recurring task schedules deliberately accept a W1
+at-most-once loss window after their fire marker commits but before `launchRun`
+has inserted a Run. That model cannot safely power a user-authored one-time
+future launch: normal `launchRun` materializes Git worktree state before its
+Run transaction, so a unique Run foreign key alone cannot tell recovery whether
+it may retry or clean up. The project board also needs one coherent Automation
+view, but current project-agent PATCH replaces bindings wholesale and event
+deduplication is keyed only by `(agent_id, trigger_event_id)`, making per-binding
+telemetry ambiguous.
+
+**Decision:**
+
+- Add a distinct one-time intent (`scheduled_task_launches`) plus append-only
+  events and a durable `scheduled_task_launch_attempts` reservation. A due tick
+  or Run now claim commits a fixed Run ID, task attempt number, branch,
+  worktree path, request hash, and fence before any Git side effect.
+- Keep the normal `launchRun` service as the only Run creation seam. It accepts
+  the server-owned reservation and persists the unique
+  `runs.scheduled_launch_id` in its ordinary transaction. The scheduler does
+  not insert Runs or call the supervisor directly.
+- Recover stale claims by resolving the Run link first. A matching managed
+  worktree/provenance may be removed only when it proves reservation ownership
+  and a safe branch state; an absent worktree re-enters with the same
+  reservation; any mismatched or unverifiable resource terminalizes safely
+  without deletion.
+- Reuse the one seeded M24 `run_schedule.dispatcher` and its bounded job
+  budget. Do not add another clock, per-intent scheduler jobs, a new supervisor
+  database dependency, or a generic automation engine. Existing recurring W1
+  and W2 semantics remain unchanged.
+- Make creation idempotent by actor/project-scoped opaque `Idempotency-Key` and
+  canonical normalized request hash. Make every one-time mutation revision-CAS
+  with a quoted ETag/`If-Match`. The aggregate reader uses a versioned stable
+  cursor and type-specific detail DTOs.
+- Preserve `run_schedules` and `agent_schedules` ownership. Project-agent PATCH
+  remains the sole agent-binding editor but reconciles stable schedule IDs under
+  a revision fence. Cron telemetry identifies its binding; a multi-match event
+  selects the lowest enabled binding ID as deterministic owner of the existing
+  Run dedup backstop, while other matches record an honest suppressed outcome.
+- Store local time, IANA zone, explicit fall-back disambiguation, and resolved
+  UTC instant. Reject nonexistent and ambiguous-without-choice wall times;
+  overdue intents launch once on the next clock tick and record lateness.
+
+**Consequences:**
+
+- The new additive migration namespace is `0103_*` at proposal time. It adds
+  intent/reservation/event tables, safe snapshots, Run source/link fields, and
+  agent-binding identity/telemetry fields; it does not rename or consolidate
+  existing schedule tables.
+- Project members gain a unified Automations tab, but recurring controls and
+  agent binding configuration keep their existing authoritative APIs. Admin
+  Scheduler gains read-only diagnostics and project links only.
+- Retries are bounded to three per `armed_at` with 1/5/15-minute backoff and
+  only temporary supervisor/runner/network classes retry. Eligibility,
+  configuration, compatibility, and Git preflight refusal are terminal safe
+  outcomes requiring a human repair.
+- The feature adds no environment variable, listening port, sidecar, or
+  deployment mount. The supervisor remains DB-free. Routes, database docs,
+  ERDs, telemetry labels, EN/RU UI, and tests must move with the implementation.
+
+**Alternatives Considered:**
+
+- _Pre-create a Pending Run when a member schedules_: rejected because it
+  consumes Run semantics and capacity before due time and complicates stale
+  intent cancellation.
+- _Use a unique `runs.scheduled_launch_id` without reservation_: rejected
+  because Git materialization precedes Run insert and leaves a crash window.
+- _Reuse `run_schedules`_: rejected because recurring overlap/catch-up and W1
+  semantics are intentionally different from recoverable one-time intent.
+- _Add a scheduler job per intent or a second timer_: rejected because M24
+  already owns durable clock/lease behavior and would introduce competing
+  dispatch paths.
+- _Delete and reinsert agent bindings on each save_: rejected because it loses
+  identity and telemetry and lets a stale full replacement erase unseen work.
 
 ---
 

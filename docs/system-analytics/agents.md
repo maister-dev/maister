@@ -96,6 +96,14 @@ not contain the package-root `maister-agents/`).
   `schedules` patch (delete-all-then-reinsert), seeded in the UI from
   `recommended`. (Implemented — ADR-106) An agent disable cascades `enabled=false`
   onto these rows.
+
+  **Project Automations extension (Designed):** the existing project-agent PATCH
+  remains the only binding editor but will reconcile stable binding IDs under a
+  schedules revision instead of deleting unchanged rows. It will retain
+  telemetry (`last_attempt_at`, fence, safe outcome/code/message, and
+  `last_run_id`) for unchanged bindings. `runs.agent_schedule_id` will identify
+  the producing binding. A stale full-replacement PATCH is `CONFLICT`; no
+  Automations route mutates agent schedules.
 - **Per-agent runner policy** (Implemented — ADR-106) — `recommended.executionPolicy:
   { autoApply?: 'off'|'permissions'|'full'; onBudgetBreach?:
   'escalate'|'terminate'|'terminate_restorable' }` SEEDS the defaults; the
@@ -290,6 +298,16 @@ flowchart TD
     INS -- conflict --> DUP[duplicate redelivery — exactly-one converges]
     INS -- inserted --> LB[tryStartRun trigger_source=domain_event]
 ```
+
+**Binding telemetry and event ownership (Designed).** Cron dispatch will pass
+its `agentScheduleId` through the launch service and fence telemetry writes by
+the attempt marker. An event may match several bindings for one agent. The
+deterministic owner is the first enabled binding ordered by
+`agent_schedule_id ASC`; only that owner claims the existing
+`(agent_id, trigger_event_id)` run backstop. Every remaining match records a
+safe suppressed/deduplicated outcome instead of falsely reporting a separate
+Run. The project Automations aggregate is read-only for these rows and links to
+the single Settings editor.
 
 ### (e) Triage Q&A loop (Implemented)
 

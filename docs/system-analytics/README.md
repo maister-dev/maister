@@ -27,6 +27,7 @@ Every file in this folder follows the structure defined in
 | Consensus node | [`consensus.md`](consensus.md) | First-class `consensus` graph node: read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, HITL resolution, and synthesized plan artifact output. |
 | Capabilities | [`capabilities.md`](capabilities.md) | Capability registry refs, agent-aware mappings, and runner-owned materialization. |
 | Tasks | [`tasks.md`](tasks.md) | Board lifecycle (Backlog ↔ InFlight ↔ Done ↔ Abandoned), 1:N task ↔ run, retry loop. |
+| Project automations | [`project-automations.md`](project-automations.md) | Designed one-time task launches, aggregate project view, durable reservation/recovery, and agent-binding telemetry boundaries. |
 | Social board | [`social-board.md`](social-board.md) | `KEY-N` comments with mention expansion, domain-written activity, subscriptions, per-recipient inbox, polymorphic actor pair (ADR-083). |
 | Runs | [`runs.md`](runs.md) | Run state machine, ACP keep-alive + checkpoint/resume, crash recovery. |
 | Scratch runs | [`scratch-runs.md`](scratch-runs.md) | Manual coding-agent dialog workspaces outside the task board, visible in active workspaces. |

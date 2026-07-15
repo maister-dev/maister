@@ -296,6 +296,23 @@ ADR changes branch identity. The launch dialog displays the branch name and
 base branch before POST. Every displayed override is marked as a deviation from
 the default.
 
+### Scheduled one-time launch handoff (Designed)
+
+A one-time automation reaches this same `launchRun` seam only after its
+dispatcher has committed a server-owned reservation. The reservation supplies
+the preallocated Run ID, task attempt number, branch, worktree path, request
+hash, and fence; `launchRun` must not silently allocate alternates. Its ordinary
+Run transaction writes the unique `runs.scheduled_launch_id` and retains the
+same runner/capability/policy/workspace snapshots and compensation as a manual
+launch. The scheduler does not call the supervisor or insert Runs directly.
+
+If a process dies before that transaction, recovery uses the reservation and
+verified worktree provenance to converge to that one Run or a safe terminal
+outcome. An unverifiable path or branch is never removed. `trigger_source`
+therefore gains `scheduled` as a first-class source in all read models; it is
+not equivalent to the existing recurring `cron` source. See
+[project-automations.md](project-automations.md).
+
 #### Atomic attempt-number allocation + concurrent runs per task (Implemented, ADR-119)
 
 The force-relaunch entry point (see `tasks.md`) allows **>1 non-terminal run per

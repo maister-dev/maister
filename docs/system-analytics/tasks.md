@@ -188,6 +188,22 @@ sequenceDiagram
     UI-->>U: card moves to In Flight column
 ```
 
+### One-time scheduled launch (Designed)
+
+A future task launch is not a task state transition and does not create a Run
+or consume a Flow slot when a member creates it. The intent stores a validated
+normal launch selection and, at the due claim, reuses `launchRun` through a
+durable reservation. Its unattended classifier is intentionally stricter than
+manual retry: `Review`, `HumanWorking`, `NeedsInput`, `Crashed`, `flagged`,
+blocked, unconfigured, Done, and Abandoned targets terminalize with an
+actionable safe refusal instead of forcing a concurrent attempt. A full global
+cap is not a refusal: normal launch creates the linked `Pending` Run.
+
+The intent preserves a task key/number/title audit snapshot when task deletion
+sets its FK to null. It never changes existing recurring schedule overlap
+semantics. Full state, recovery, and retry details live in
+[project-automations.md](project-automations.md).
+
 ### Failure retry eligibility
 
 ```mermaid

@@ -641,6 +641,15 @@
   / Run Doctor so a failed prerequisite is actionable before launch. Telemetry
   MUST NOT persist private source, prompts, diffs, secrets, or artifact bodies.
 
+  **Project Automations support (Designed, ADR-139).** A project member may
+  create a recoverable one-time task launch for a qualified task and inspect it
+  alongside recurring schedules and agent bindings. The M24 dispatcher remains
+  the only clock; before any Git side effect it persists a durable reservation
+  that converges crash recovery to one Run or one safe terminal outcome. This
+  is additive to M28 recurrence and M34 agent triggers, not a new qualification
+  metric or an Observatory write path. Plan:
+  `.ai-factory/plans/feature-project-automations-scheduled-launches.md`.
+
 ## Completed
 
 | Milestone                                                                    | Date       |

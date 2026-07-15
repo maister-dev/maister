@@ -85,6 +85,14 @@ without turning recovery sweeps into live-path polling.
   see [`run-schedules.md`](run-schedules.md). `createSchedulerJobSchema`
   deliberately rejects this kind (the seeded singleton is the only instance;
   disabling it on `/admin/scheduler` is the global kill switch).
+- **One-time task launch dispatch** (Designed) — the same seeded
+  `run_schedule.dispatcher` will also scan due `scheduled_task_launches` under
+  its existing bounded job budget. Each intent claims and persists a durable
+  pre-Git reservation before it enters `launchRun`; this is not a new clock,
+  job kind, per-intent job, supervisor concern, or direct `runs` insert. Job
+  summaries will separately report claimed, launched, retried, failed, late,
+  and truncated one-time-intent counts. See
+  [`project-automations.md`](project-automations.md).
 - **Target payloads** (`scheduler_jobs.target`, Implemented, M24/M28) —
   per-kind JSON payload persisted for engine handlers. `command`
   targets are either `http_ping` (`url`, optional `timeoutMs`) or
@@ -202,6 +210,11 @@ every no-event terminal.
 
 The admin screen is an operator cockpit over two related but distinct stores:
 fixed-interval engine jobs and user-facing cron schedules.
+
+With Project Automations, it also exposes read-only one-time intent diagnostics
+and links to the owning project's Automations tab. It never becomes a member
+automation editor and does not expose reservation paths, branch names, or raw
+launch payloads.
 
 ```mermaid
 flowchart TD

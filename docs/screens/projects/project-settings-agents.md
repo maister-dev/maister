@@ -76,6 +76,10 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   - **Enabled** toggle (disabling cascades to the agent's triggers — see States).
   - **Triggers** — add/remove cron rows (`cronExpr` + IANA `timezone`) and event
     rows (kind multiselect over the ADR-086 taxonomy). Full-replacement on save.
+    The planned Project Automations aggregate links here to manage a binding; it
+    does not add another editor or a synthetic agent Run now action. The planned
+    stable IDs and schedules revision make an unseen concurrent binding change a
+    visible conflict rather than a delete-and-reinsert loss.
   - **Runner override** — select from the enabled runner catalog (or "use
     default").
   - **Branch base** — text (default = the project main branch).
@@ -132,6 +136,10 @@ runner policy, read-only runner compatibility, and package-skill materialization
 lives in
 [`../../system-analytics/agents.md`](../../system-analytics/agents.md) — not
 restated here (R7).
+
+Project Automations may display effective binding timing and safe latest outcome
+telemetry, but this modal remains the sole mutation owner. The aggregation never
+shows an agent trigger-now control in its first phase.
 
 Read-only standalone validation is runner-family based, not claude-name based.
 If a `workspace: none | repo_read` launch selects a non-proven adapter, the UI

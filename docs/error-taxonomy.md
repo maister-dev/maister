@@ -60,6 +60,33 @@ union in `web/lib/errors-core.ts` (re-exported by `web/lib/errors.ts`).
 | `EMBEDDING_UNAVAILABLE` | **(ADR-122 — Implemented.)** A transient embedding-provider outage after bounded retry (timeout / 429 / 5xx / network / malformed response); a deterministic provider 4xx (400/401/403/404/422 — everything except 408/429) maps to `CONFIG` instead. The ONLY new code for the Project Brain; all Brain validation reuses `CONFIG` (bad settings / dimension mismatch / brain-not-enabled / deterministic provider 4xx), `PRECONDITION` (Brain migration lineage not provisioned), and `CONFLICT` (exact-dup race). Maps to **HTTP 503** (retryable). On the harvest path it is treated as **transient** — the consumer throws so the `domain_events` cursor holds and the window redelivers; no event is lost. Secrets are NEVER in the message or logs. | `web/lib/brain/openai-compatible.ts` (`embed`/`complete` after retries exhausted); surfaced by the recall/retain ext routes + `memory_recall`/`memory_retain` MCP tools via the new `httpStatusForExtCode` `EMBEDDING_UNAVAILABLE → 503` arm; the `memory_harvest` consumer (throw-and-hold). | "Embedding provider unavailable — retry, or check the platform embedding-provider configuration." Recall/retain stay retryable; the harvest cursor holds and retries next tick. |
 | `BUDGET_EXCEEDED` | **(ADR-101 — Implemented.)** The execution-policy `budget` axis hard-cap was breached: a run's token spend reached `hardMaxTokens` (= `maxTokens × MAISTER_BUDGET_HARD_MULTIPLIER` when unset) at `run`/`task` scope, or a `tree`-scope token/wall-clock breach cascade-terminated the run-tree. The budget watchdog calls `deleteSession`, then marks the run terminal `Failed` with this code — NEVER before the session is confirmed stopped/absent (a kill that returns `EXECUTOR_UNAVAILABLE` leaves the run live to retry next tick; a `404` proceeds). Not a thrown 4xx from a route — it is recorded as the run's terminal `errorCode`. | The budget watchdog pass in `web/lib/runs/keepalive-sweeper.ts` (per `runs.run_kind`: flow `markNodeFailed` → `Failed`, agent `finalizeAgentRun` → `Failed`, scratch `markScratchCrashed(terminal:"failed")` → run `Failed` (+ `scratch_runs.dialog_status=Crashed`, the scratch dialog FSM has no `Failed` state)); a `tree` breach goes through `cascadeAbandonRunTree` first. | Run is terminal `Failed` (NON-recoverable — Recover gates on `Crashed`) with `errorCode = BUDGET_EXCEEDED` — same Failed-run remediation surface. The task auto-returns to `Backlog` and the Launch button reappears; the operator may Raise the ceiling at the `budget_breach` escalate HITL (before hard-cap) or relaunch. |
 
+> **ADR-139 Project Automations adds NO new `MaisterError` code** (Designed).
+> It reuses the existing closed union with these exact route and dispatcher
+> meanings:
+>
+> - **`CONFIG` → HTTP 400:** malformed one-time body or `If-Match`, invalid
+>   IANA timezone/local time, nonexistent spring-forward wall time,
+>   ambiguous fall-back wall time without `earlier`/`later`, invalid opaque
+>   cursor, or a stored launch request which can no longer be normalized.
+> - **`PRECONDITION` → HTTP 409:** archived project, deleted/terminal/busy/
+>   flagged/blocked/unconfigured task, package/Flow/runner incompatibility,
+>   or repository/branch/worktree preflight refusal at due dispatch. These are
+>   terminal intent outcomes; the dispatch may return its safe DTO instead of
+>   treating the completed decision as a transport failure.
+> - **`CONFLICT` → HTTP 409:** same idempotency key with a different canonical
+>   request, stale/missing/malformed ETag revision, cancel/edit after claim,
+>   tick-versus-Run-now winner loss, or stale agent-schedules revision. UI
+>   refreshes the safe DTO; it never string-matches the stored message.
+> - **`EXECUTOR_UNAVAILABLE` → HTTP 503:** temporary runner, supervisor, or
+>   network failure after claim. The intent moves to bounded `RetryWaiting`
+>   (1/5/15 minutes, three attempts per `armed_at`) unless the caller retries
+>   Run now. Raw upstream text, paths, and credentials are never stored or
+>   returned.
+>
+> A scheduler item refusal records code-level outcome on its own durable intent
+> while the shared dispatcher attempt can still succeed. No new code, status,
+> or raw error serialization is introduced.
+
 > **M12 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). Beyond the `CONFIG` / `PRECONDITION` reuses above, two M12 outcomes have **no thrown code at all**: an unsatisfied `artifact_required` gate records `gate_results.status = "failed"` (the gate-result lifecycle, not an exception); a `human_review` refusal driven by a failed blocking gate is a blocking gate failure (no HTTP code). Neither maps to an HTTP status.
 
 > **ADR-093 (project onboarding) adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)

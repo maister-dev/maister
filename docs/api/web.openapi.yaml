@@ -11298,6 +11298,300 @@ paths:
             is fresher than the 300s attempt timeout. Project not
             found/archived is `PRECONDITION`.
 
+  # ── ADR-139 Project Automations — one-time task launch intents ─────────────
+
+  /api/projects/{slug}/scheduled-launches:
+    post:
+      tags: [project-automations]
+      summary: (ADR-139, Designed) Create or replay a one-time task launch intent
+      description: |
+        Requires `manageSchedules` and `launchRun`, plus `launchUnattended`
+        when the normalized execution policy requires it. The route authenticates
+        and authorizes against the URL-derived project before parsing the body or
+        resolving a task. `Idempotency-Key` is required, opaque, and scoped to
+        `(project, actor)`: the same key plus the same canonical normalized
+        request returns the original intent (200); the same key with a different
+        request returns `409 CONFLICT`.
+
+        This creates only a durable intent. It never creates a Run, reserves a
+        scheduler slot, creates a Git worktree, or contacts the supervisor.
+      operationId: createProjectScheduledLaunch
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateScheduledLaunchBody" }
+            examples:
+              future-maintenance:
+                value:
+                  taskId: "task-uuid"
+                  scheduledLocalTime: "2026-11-01T01:30"
+                  timezone: "America/New_York"
+                  disambiguation: later
+                  launchRequest:
+                    flowId: dependency-audit
+                    runnerId: "runner-uuid"
+                    baseBranch: main
+                    targetBranch: main
+                    autoPromote: false
+      responses:
+        "201":
+          description: Intent created. The ETag is the quoted revision required by mutations.
+          headers:
+            ETag:
+              schema: { type: string, example: '"1"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledLaunchResponse" }
+        "200":
+          description: Idempotent replay of an identical request.
+          headers:
+            ETag:
+              schema: { type: string, example: '"1"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledLaunchResponse" }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/scheduled-launches/{launchId}:
+    get:
+      tags: [project-automations]
+      summary: (ADR-139, Designed) Read a one-time task launch intent
+      description: |
+        Requires `readBoard`. The project is resolved from `slug` before the
+        intent lookup; a missing or foreign intent returns 404 without revealing
+        whether it belongs to another project. The response is an explicit safe
+        DTO and the quoted revision is returned as ETag.
+      operationId: getProjectScheduledLaunch
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: launchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: One-time launch intent and safe audit ledger.
+          headers:
+            ETag:
+              schema: { type: string, example: '"3"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledLaunchResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [project-automations]
+      summary: (ADR-139, Designed) Edit or re-arm a pending one-time intent
+      description: |
+        Requires `manageSchedules`, `launchRun`, and applicable
+        `launchUnattended`. Authenticate and authorize before parsing the body
+        or lookup. Only `Scheduled` and `RetryWaiting` rows are mutable. The
+        exact quoted ETag must be supplied as `If-Match`; a stale, missing,
+        malformed, or already-claimed revision is `409 CONFLICT`. A successful
+        edit increments revision, stamps a new `armedAt`, and resets the
+        intent-scoped retry budget.
+      operationId: patchProjectScheduledLaunch
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: launchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchScheduledLaunchBody" }
+      responses:
+        "200":
+          description: Updated and re-armed intent.
+          headers:
+            ETag:
+              schema: { type: string, example: '"4"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledLaunchResponse" }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/scheduled-launches/{launchId}/cancel:
+    post:
+      tags: [project-automations]
+      summary: (ADR-139, Designed) Cancel a pending one-time task launch intent
+      description: |
+        Requires `manageSchedules` and `launchRun`. The exact `If-Match`
+        revision is required. Cancellation wins only before the dispatcher claim;
+        a claimed or terminal intent is `409 CONFLICT`, never a destructive
+        delete.
+      operationId: cancelProjectScheduledLaunch
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: launchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      responses:
+        "200":
+          description: Cancelled intent.
+          headers:
+            ETag:
+              schema: { type: string, example: '"4"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledLaunchResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/scheduled-launches/{launchId}/run-now:
+    post:
+      tags: [project-automations]
+      summary: (ADR-139, Designed) Claim a pending one-time intent immediately
+      description: |
+        Requires `manageSchedules`, `launchRun`, and applicable
+        `launchUnattended`. Tick and Run now share the same revision-CAS claim,
+        durable reservation, normal `launchRun` handoff, retry classification,
+        and finalization. It never bypasses eligibility or capacity. A loser
+        receives `409 CONFLICT` or refreshes the resulting safe intent DTO.
+      operationId: runProjectScheduledLaunchNow
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: launchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      responses:
+        "200":
+          description: Claimed intent after normal launch admission or recorded refusal.
+          headers:
+            ETag:
+              schema: { type: string, example: '"4"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledLaunchResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "503":
+          description: Temporary runner, supervisor, or network failure (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/automations:
+    get:
+      tags: [project-automations]
+      summary: (ADR-139, Designed) List project automation rows
+      description: |
+        Requires `readBoard`. Returns a bounded discriminated union of one-time
+        task launches, recurring task schedules, agent cron bindings, and agent
+        event bindings. It is an aggregate read model only: recurring mutations
+        stay under `/schedules`; agent mutations stay under the project-agent
+        PATCH. The opaque versioned cursor encodes the full stable tuple:
+        active rows by `nextActionAt`, kind rank, and id; then terminal/no-next
+        rows by `updatedAt`, kind rank, and id.
+      operationId: listProjectAutomations
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 512 }
+      responses:
+        "200":
+          description: Stable page of automation rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutomationListResponse" }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{slug}/automations/{kind}/{automationId}:
+    get:
+      tags: [project-automations]
+      summary: (ADR-139, Designed) Read a type-specific automation detail
+      description: |
+        Requires `readBoard`. `kind` is one of the aggregate discriminants;
+        mismatched, missing, or foreign records return a project-scoped 404. The
+        endpoint is read-only and preserves the row owner's model instead of
+        exposing unified mutation.
+      operationId: getProjectAutomationDetail
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [one_time_task_launch, recurring_task_schedule, agent_cron, agent_event]
+        - name: automationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Safe type-specific automation DTO.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutomationDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   # ── ADR-077 Outbound webhooks — platform-admin subscriptions ────────────────
 
   /api/admin/webhooks:
@@ -14235,6 +14529,7 @@ components:
         - skipped_cap
         - skipped_target_terminal
         - skipped_crashed
+        - skipped_flagged
         - skipped_blocked
         - skipped_unconfigured
         - launch_failed
@@ -14296,6 +14591,7 @@ components:
             - skipped_cap
             - skipped_target_terminal
             - skipped_crashed
+            - skipped_flagged
             - skipped_blocked
             - skipped_unconfigured
             - launch_failed
@@ -14383,6 +14679,312 @@ components:
           type: string
           nullable: true
           description: "`MaisterError` code recorded for a `launch_failed` or `incompatible_disabled` outcome."
+    ScheduledLaunchState:
+      type: string
+      enum: [Scheduled, Dispatching, RetryWaiting, Launched, Failed, Cancelled]
+      description: |
+        (ADR-139, Designed.) `Scheduled` and `RetryWaiting` are the only
+        mutable states. `Dispatching` owns a fenced durable reservation before
+        any Git side effect. Terminal states are immutable.
+    ScheduledLaunchOutcome:
+      type: string
+      nullable: true
+      enum:
+        [created, rearmed, claimed, retry_scheduled, cancelled, launched, failed, null]
+    ScheduledLaunchDisambiguation:
+      type: string
+      nullable: true
+      enum: [earlier, later, null]
+      description: Required by the server only for an ambiguous fall-back local time.
+    ScheduledLaunchRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Safe public subset of a normal `POST /api/runs` request persisted after
+        server validation. Internal agent, trigger, queue, experiment, and
+        `allowConcurrent` fields are not accepted; scheduled launch always has
+        `allowConcurrent=false`.
+      properties:
+        flowId: { type: string, minLength: 1 }
+        runnerId: { type: string, minLength: 1 }
+        baseBranch: { type: string, minLength: 1 }
+        baseCommit: { type: string, minLength: 7 }
+        targetBranch: { type: string, minLength: 1 }
+        deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
+        executionPolicy: { $ref: "#/components/schemas/ExecutionPolicy" }
+        packageVersions:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [keep, adopt, cut_and_adopt, try_once]
+        brainContext: { type: boolean, nullable: true }
+        autoPromote: { type: boolean, default: true }
+    CreateScheduledLaunchBody:
+      type: object
+      additionalProperties: false
+      required: [taskId, scheduledLocalTime, timezone, launchRequest]
+      properties:
+        taskId: { type: string, minLength: 1 }
+        scheduledLocalTime:
+          type: string
+          minLength: 16
+          maxLength: 40
+          description: Local ISO wall time without an offset, e.g. `2026-11-01T01:30`.
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: IANA timezone name, validated by the server Temporal conversion.
+        disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
+        launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
+    PatchScheduledLaunchBody:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        scheduledLocalTime:
+          type: string
+          minLength: 16
+          maxLength: 40
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 128
+        disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
+        launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
+    ScheduledLaunchTaskSnapshot:
+      type: object
+      required: [id, key, number, title, deleted]
+      properties:
+        id: { type: string, nullable: true }
+        key: { type: string, minLength: 1 }
+        number: { type: integer, minimum: 1 }
+        title: { type: string }
+        deleted:
+          type: boolean
+          description: True when the live task FK was set null while audit snapshots remain.
+    ScheduledLaunchResultRun:
+      type: object
+      nullable: true
+      required: [id, status, queuePosition]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Done, Abandoned, Crashed, Failed]
+        queuePosition: { type: integer, minimum: 1, nullable: true }
+    ScheduledLaunchEvent:
+      type: object
+      required: [id, kind, at, actorType, actorId, errorCode]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [created, edited_rearmed, claimed, retry_scheduled, cancelled, launched, failed]
+        at: { type: string, format: date-time }
+        actorType: { type: string, enum: [user, system] }
+        actorId: { type: string, nullable: true }
+        errorCode: { type: string, nullable: true }
+        message:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: Sanitized, bounded remediation only; never raw provider or path text.
+    ScheduledLaunchDTO:
+      type: object
+      required:
+        - kind
+        - id
+        - task
+        - scheduledLocalTime
+        - timezone
+        - disambiguation
+        - scheduledForAt
+        - state
+        - revision
+        - armedAt
+        - nextAttemptAt
+        - attemptCount
+        - maxAttempts
+        - latestOutcome
+        - errorCode
+        - errorMessage
+        - lateByMs
+        - launchRequest
+        - resultRun
+        - createdAt
+        - updatedAt
+        - events
+      properties:
+        kind: { type: string, enum: [one_time_task_launch] }
+        id: { type: string, format: uuid }
+        task: { $ref: "#/components/schemas/ScheduledLaunchTaskSnapshot" }
+        scheduledLocalTime: { type: string }
+        timezone: { type: string }
+        disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
+        scheduledForAt: { type: string, format: date-time }
+        state: { $ref: "#/components/schemas/ScheduledLaunchState" }
+        revision: { type: integer, minimum: 1 }
+        armedAt: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time, nullable: true }
+        attemptCount: { type: integer, minimum: 0, maximum: 3 }
+        maxAttempts: { type: integer, enum: [3] }
+        latestOutcome: { $ref: "#/components/schemas/ScheduledLaunchOutcome" }
+        errorCode: { type: string, nullable: true }
+        errorMessage:
+          type: string
+          nullable: true
+          maxLength: 500
+        lateByMs:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+        launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
+        resultRun: { $ref: "#/components/schemas/ScheduledLaunchResultRun" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/ScheduledLaunchEvent" }
+    ScheduledLaunchResponse:
+      type: object
+      required: [intent]
+      properties:
+        intent: { $ref: "#/components/schemas/ScheduledLaunchDTO" }
+    AutomationRunLink:
+      type: object
+      nullable: true
+      required: [id, status]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Done, Abandoned, Crashed, Failed]
+    OneTimeTaskLaunchAutomationRow:
+      type: object
+      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      properties:
+        kind: { type: string, enum: [one_time_task_launch] }
+        id: { type: string, format: uuid }
+        name: { type: string }
+        target: { type: string }
+        state: { $ref: "#/components/schemas/ScheduledLaunchState" }
+        nextActionAt: { type: string, format: date-time, nullable: true }
+        latestOutcome: { $ref: "#/components/schemas/ScheduledLaunchOutcome" }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true, maxLength: 500 }
+        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        detailHref: { type: string }
+        updatedAt: { type: string, format: date-time }
+    RecurringTaskScheduleAutomationRow:
+      type: object
+      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      properties:
+        kind: { type: string, enum: [recurring_task_schedule] }
+        id: { type: string, format: uuid }
+        name: { type: string }
+        target: { type: string }
+        state: { type: string, enum: [Active, Paused] }
+        timezone: { type: string }
+        trigger: { type: string, description: 5-field cron expression. }
+        nextActionAt: { type: string, format: date-time, nullable: true }
+        latestOutcome: { $ref: "#/components/schemas/ScheduleFireOutcome" }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true, maxLength: 500 }
+        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        detailHref: { type: string }
+        updatedAt: { type: string, format: date-time }
+    AgentCronAutomationRow:
+      type: object
+      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      properties:
+        kind: { type: string, enum: [agent_cron] }
+        id: { type: string, format: uuid }
+        name: { type: string }
+        target: { type: string }
+        state: { type: string, enum: [Enabled, Disabled] }
+        timezone: { type: string }
+        trigger: { type: string, description: 5-field cron expression. }
+        nextActionAt: { type: string, format: date-time, nullable: true }
+        latestOutcome: { type: string, nullable: true }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true, maxLength: 500 }
+        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        detailHref: { type: string }
+        updatedAt: { type: string, format: date-time }
+    AgentEventAutomationRow:
+      type: object
+      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      properties:
+        kind: { type: string, enum: [agent_event] }
+        id: { type: string, format: uuid }
+        name: { type: string }
+        target: { type: string }
+        state: { type: string, enum: [Enabled, Disabled] }
+        trigger: { type: string, description: Effective subscribed domain-event kinds. }
+        nextActionAt: { type: string, format: date-time, nullable: true }
+        latestOutcome: { type: string, nullable: true }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true, maxLength: 500 }
+        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        detailHref: { type: string }
+        updatedAt: { type: string, format: date-time }
+    AutomationRow:
+      oneOf:
+        - { $ref: "#/components/schemas/OneTimeTaskLaunchAutomationRow" }
+        - { $ref: "#/components/schemas/RecurringTaskScheduleAutomationRow" }
+        - { $ref: "#/components/schemas/AgentCronAutomationRow" }
+        - { $ref: "#/components/schemas/AgentEventAutomationRow" }
+      discriminator:
+        propertyName: kind
+        mapping:
+          one_time_task_launch: "#/components/schemas/OneTimeTaskLaunchAutomationRow"
+          recurring_task_schedule: "#/components/schemas/RecurringTaskScheduleAutomationRow"
+          agent_cron: "#/components/schemas/AgentCronAutomationRow"
+          agent_event: "#/components/schemas/AgentEventAutomationRow"
+    AutomationListResponse:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AutomationRow" }
+        nextCursor:
+          type: string
+          nullable: true
+          description: Opaque versioned cursor; do not parse in clients.
+    RecurringTaskScheduleAutomationDetail:
+      type: object
+      required: [kind, schedule]
+      properties:
+        kind: { type: string, enum: [recurring_task_schedule] }
+        schedule: { $ref: "#/components/schemas/ScheduleDTO" }
+    AgentCronAutomationDetail:
+      type: object
+      required: [kind, automation]
+      properties:
+        kind: { type: string, enum: [agent_cron] }
+        automation: { $ref: "#/components/schemas/AgentCronAutomationRow" }
+    AgentEventAutomationDetail:
+      type: object
+      required: [kind, automation]
+      properties:
+        kind: { type: string, enum: [agent_event] }
+        automation: { $ref: "#/components/schemas/AgentEventAutomationRow" }
+    AutomationDetail:
+      oneOf:
+        - { $ref: "#/components/schemas/ScheduledLaunchDTO" }
+        - { $ref: "#/components/schemas/RecurringTaskScheduleAutomationDetail" }
+        - { $ref: "#/components/schemas/AgentCronAutomationDetail" }
+        - { $ref: "#/components/schemas/AgentEventAutomationDetail" }
+      discriminator:
+        propertyName: kind
+        mapping:
+          one_time_task_launch: "#/components/schemas/ScheduledLaunchDTO"
+          recurring_task_schedule: "#/components/schemas/RecurringTaskScheduleAutomationDetail"
+          agent_cron: "#/components/schemas/AgentCronAutomationDetail"
+          agent_event: "#/components/schemas/AgentEventAutomationDetail"
     AuthoredCapabilityKind:
       type: string
       enum: [rule, skill, flow]

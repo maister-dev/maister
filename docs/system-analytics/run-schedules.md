@@ -32,7 +32,8 @@ incompatible_disabled | dispatching`,
   plus `skipped_blocked` (Implemented, ADR-078 — task has open relation
   blockers) and `skipped_unconfigured` (M34 — Implemented, ADR-089 — the task
   has no flow yet; simple-intent tasks await a triage verdict or a human
-  filling the launch fields).
+  filling the launch fields), and `skipped_flagged` (Implemented, ADR-112 — a
+  triage-held task is not eligible for unattended execution).
 - **Launchability classifier** (`classifyTaskLaunchability`, Implemented, M28) —
   shared single source of truth for "can this task launch", encoding the
   board retry rule (latest run `Failed | Abandoned` → launchable, attempt
@@ -74,6 +75,7 @@ order) is the DQ7 matrix:
 | `target_terminal` (task or latest run Done, task Abandoned)    | `skipped_target_terminal` | `skipped_target_terminal` (no flag)                                 | `skipped_target_terminal`                                                                                                          |
 | `crashed` (latest run Crashed — owes recover/discard)          | `skipped_crashed`         | `skipped_crashed` (no flag)                                         | `skipped_crashed`                                                                                                                  |
 | `busy` (active run on the task)                                | `skipped_task_busy`       | flag + `catchup_queued`                                             | `skipped_task_busy` — a second concurrent run per task is structurally impossible; `start_anyway` overrides only the CAP dimension |
+| `flagged` (triage-held task)                                   | `skipped_flagged`         | `skipped_flagged` (existing flag kept)                              | `skipped_flagged` — a human must clear the hold first                                                                              |
 | `blocked` (Implemented, ADR-078 — open relation blockers)      | `skipped_blocked`         | `skipped_blocked` (existing flag kept — fires once unblocked)       | `skipped_blocked` — relations gate launching under every policy                                                                    |
 | `unconfigured` (M34 — Implemented, ADR-089 — task has no flow) | `skipped_unconfigured`    | `skipped_unconfigured` (existing flag kept — fires once configured) | `skipped_unconfigured` — a flowless task cannot launch under any policy                                                            |
 | cap full (task launchable)                                     | `skipped_cap`             | flag + `catchup_queued`                                             | `launchRun` → run lands `Pending` + queue position (`queued_pending`)                                                              |
@@ -100,6 +102,20 @@ schedule-facing API must expose the schedule intent explicitly so future manual
 states cannot silently change the overlap matrix.
 
 ## Process flows
+
+## Project Automations compatibility (Designed)
+
+The future one-time task-launch intent is a distinct
+`scheduled_task_launches` domain shown with recurring rows in the project
+Automations aggregate. It reuses this dispatcher's seeded clock but has a
+durable pre-Git reservation and recovery matrix. It does **not** change this
+domain's recurring overlap policies, row ownership, catch-up behavior, or W1
+and W2 crash semantics. See
+[project-automations.md](project-automations.md) for the one-time contract.
+
+The visible project tab will be renamed from **Schedules** to **Automations**.
+`?tab=schedules` remains a compatibility alias while newly rendered links use
+`?tab=automations`; recurring mutations remain the `/schedules` API family.
 
 ### Dispatcher tick (single-claim due-OR-catchup)
 

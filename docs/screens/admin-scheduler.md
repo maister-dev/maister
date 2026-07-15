@@ -33,7 +33,7 @@ The hidden nav item is convenience only. The route and
 - **Within:** Engine job filters stay URL-synchronized; "New job" and per-row
   edit open the scheduler job modal.
 - **Exit:** Task schedule rows link to the owning project schedule tab
-  (`/projects/{slug}?tab=schedules`) for project-scoped edits.
+  (`/projects/{slug}?tab=automations`) for project-scoped edits.
 
 ```mermaid
 flowchart TD
@@ -43,7 +43,7 @@ flowchart TD
     Engine --> Modal["Scheduler job modal"]
     Modal --> Save["POST/PATCH /api/admin/scheduler-jobs"]
     Modal --> Delete["DELETE /api/admin/scheduler-jobs/{jobId}<br/>custom jobs only in UI"]
-    Schedules --> Project["/projects/{slug}?tab=schedules"]
+    Schedules --> Project["/projects/{slug}?tab=automations"]
 ```
 
 ## Layout & regions
@@ -64,6 +64,12 @@ flowchart TD
   name, project link, task number/title, enabled state, cron/timezone, next
   fire, catch-up flag, last outcome/error, and last run status/link when
   available. It does not create global schedule CRUD.
+- **One-time launch diagnostics** (Designed) — a read-only table over pending,
+  dispatching, retrying, and terminal scheduled task-launch intents. It shows
+  project/task snapshot, requested/resolved time, state, safe outcome, attempt
+  count, lateness, and resulting Run link. It links to Project Automations for
+  member actions and never exposes reservation paths, branches, raw request
+  data, or global mutation controls.
 
 ## States
 
@@ -99,6 +105,8 @@ stateDiagram-v2
   in [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 - Task schedules overview: read-only query over `run_schedules` joined to
   `projects`, `tasks`, and `runs`. Edits stay in the project schedule surface.
+- One-time diagnostics (Designed): read-only project-scoped intent projection;
+  edits, cancel, and Run now stay in Project Automations.
 - Behavior lives in
   [`../system-analytics/scheduler.md`](../system-analytics/scheduler.md) and
   [`../system-analytics/run-schedules.md`](../system-analytics/run-schedules.md).
@@ -114,7 +122,8 @@ stateDiagram-v2
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 - Behavior:
   [`../system-analytics/scheduler.md`](../system-analytics/scheduler.md),
-  [`../system-analytics/run-schedules.md`](../system-analytics/run-schedules.md).
+  [`../system-analytics/run-schedules.md`](../system-analytics/run-schedules.md),
+  [`../system-analytics/project-automations.md`](../system-analytics/project-automations.md).
 - DB: [`../database-schema.md`](../database-schema.md),
   [`../db/scheduler-domain.md`](../db/scheduler-domain.md).
 - ADR: [ADR-060](../decisions.md#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets),

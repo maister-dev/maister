@@ -41,8 +41,9 @@ launch capability gates.
 - **Entry:** portfolio project card, active workspace group, runs ledger,
   launch dialog return path.
 - **Exit:** task detail, flow run detail, project settings tabs, the project
-  per-flow viewer (`/projects/{slug}/packages/{flowRefId}`), and Flow Studio
-  package / flow detail links from the Packages tab.
+  per-flow viewer (`/projects/{slug}/packages/{flowRefId}`), Project
+  Automations (`?tab=automations`), and Flow Studio package / flow detail links
+  from the Packages tab.
 
 ```mermaid
 flowchart TD
@@ -50,6 +51,7 @@ flowchart TD
     Board --> Task["Task detail /projects/{slug}/tasks/{number}"]
     Board --> Run["Flow run /runs/{runId}"]
     Board --> Settings["Project settings tabs"]
+    Board --> Automations["Project Automations ?tab=automations"]
     Board --> FlowView["Per-flow viewer /projects/{slug}/packages/{flowRefId}"]
     Board --> Studio["Flow Studio package / flow detail"]
     FlowView --> Studio
@@ -125,6 +127,13 @@ The board is a horizontally scrollable set of columns:
   path (never an opaque DB error). There is no auto-rename and no
   attachment-level aliasing — the per-project name unique stays
   authoritative.
+- **Automations tab** (`?tab=automations`, Designed) replaces the visible
+  Schedules tab. It aggregates one-time task launch intents, existing recurring
+  task schedules, and effective agent bindings without merging their mutation
+  owners. The launch popover offers a Schedule run mode which stores an intent,
+  not a Run. `?tab=schedules` remains a compatibility alias; new links use
+  `automations`. Details are in
+  [`project-automations.md`](project-automations.md).
 
 ### UI completion contract (Implemented)
 
@@ -173,6 +182,9 @@ to server-stored mode. The board never renders a stale question as answerable.
 - Launch options for flow/runner/branch/policy selects:
   `GET /api/runs/launch-options?taskId=...`.
 - Launch run: `POST /api/runs`.
+- Project Automations (Designed): `GET /api/projects/{slug}/automations` and
+  the planned project-scoped scheduled-launch routes; recurring APIs and the
+  Project Settings → Agents PATCH remain authoritative for their row types.
 - Project Integrations tokens: `GET/POST /api/projects/{slug}/tokens` and
   `DELETE /api/projects/{slug}/tokens/{tokenId}`. These routes remain scoped to
   `project_id = current project`; personal global tokens use
@@ -188,8 +200,8 @@ External token behavior lives in
 
 ## i18n
 
-Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, and
-`tokens` namespaces from `web/messages/{locale}.json`.
+Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, `tokens`,
+and planned `automations` namespaces from `web/messages/{locale}.json`.
 
 ## Linked Artifacts
 
