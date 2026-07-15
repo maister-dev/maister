@@ -547,13 +547,19 @@ describe("syncRunTarget — conflict handling", () => {
     expect((await attemptRows(runId))[0].phase).toBe("aborted");
   });
 
-  it("agent=true is the Task 10 seam — for now behaves like agent=false", async () => {
+  it("agent=true with no resolver runner configured → EXECUTOR_UNAVAILABLE, clean abort", async () => {
+    // Task 10: agent=true launches the AI resolver, which refuses BEFORE spawning
+    // a session when no sync runner resolves (this seed has no default/sync
+    // runner). The conflicted rebase is aborted and the attempt marked aborted.
     const { runId, wt, before } = await seedConflict("sync/seam");
 
-    const out = await syncRunTarget({ runId, actor: actor(), agent: true, db });
+    await expect(
+      syncRunTarget({ runId, actor: actor(), agent: true, db }),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
 
-    expect(out.outcome).toBe("conflict");
     expect(await headSha(wt)).toBe(before);
+    expect(await syncOperationInProgress(wt)).toBe(false);
+    expect((await attemptRows(runId))[0].phase).toBe("aborted");
   });
 });
 

@@ -15,7 +15,10 @@ export type RunnerResolutionTier =
   | "platformDefault"
   // M34 (ADR-089): standalone agent chain tiers.
   | "agentLinkOverride"
-  | "agentDefault";
+  | "agentDefault"
+  // ADR-138: the branch-sync AI-resolver's dedicated project default
+  // (projects.sync_runner_id).
+  | "syncDefault";
 
 export type RunnerCatalogEntry = {
   readonly id: string;
@@ -254,6 +257,54 @@ export function resolveAgentRunner(
   throw new MaisterError(
     "EXECUTOR_UNAVAILABLE",
     `no ACP runner resolved for agent (${candidates.map(formatCandidate).join(", ")})`,
+  );
+}
+
+export type SyncRunnerResolutionInput = {
+  readonly launchOverrideRunnerId?: string | null;
+  readonly project: {
+    readonly syncRunnerId?: string | null;
+    readonly defaultRunnerId?: string | null;
+  };
+  readonly platform: { readonly defaultRunnerId?: string | null };
+  readonly runners: readonly RunnerCatalogEntry[];
+};
+
+// ADR-138: the branch-sync AI-resolver runner chain. Flow tiers do NOT
+// participate — the resolver session is a sync-lifecycle artifact, not a flow
+// node. `sync_runner_id` is the project's dedicated resolver default (tier
+// `syncDefault`), distinct from the general `projects.default_runner_id`.
+export function resolveSyncRunner(
+  input: SyncRunnerResolutionInput,
+): RunnerResolution {
+  const candidates: readonly Candidate[] = [
+    { tier: "launchOverride", runnerId: input.launchOverrideRunnerId },
+    { tier: "syncDefault", runnerId: input.project.syncRunnerId },
+    { tier: "projectDefault", runnerId: input.project.defaultRunnerId },
+    { tier: "platformDefault", runnerId: input.platform.defaultRunnerId },
+  ];
+  const runnerById = new Map(
+    input.runners.map((runner) => [runner.id, runner]),
+  );
+
+  for (const candidate of candidates) {
+    if (!candidate.runnerId) continue;
+    const runner = assertLaunchableRunner(
+      candidate,
+      runnerById.get(candidate.runnerId),
+    );
+
+    return {
+      runnerId: runner.id,
+      runnerResolutionTier: candidate.tier,
+      capabilityAgent: runner.capabilityAgent,
+      runnerSnapshot: snapshotRunner(runner),
+    };
+  }
+
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    `no ACP runner resolved for sync (${candidates.map(formatCandidate).join(", ")})`,
   );
 }
 

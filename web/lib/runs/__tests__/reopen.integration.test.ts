@@ -1,0 +1,739 @@
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+import { eq } from "drizzle-orm";
+import { type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import * as fullSchema from "@/lib/db/schema";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { BUILT_IN_LANES } from "@/lib/auto-promotion/config";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
+
+const execFileAsync = promisify(execFile);
+
+let db: NodePgDatabase;
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+// Keep the worktree revival helpers REAL (addWorktreeForBranch / localBranchHead
+// / fetchRemote / remoteTrackingBranchHead / createLocalBranchAt run against the
+// per-test git fixtures); stub only the promote/auto-promote git side-effects so
+// the re-promote + auto-promote-prefilter assertions never touch a real gh CLI or
+// push a real branch.
+vi.mock("@/lib/worktree", async (orig) => {
+  const actual = await orig<typeof import("@/lib/worktree")>();
+
+  return {
+    ...actual,
+    pushBranch: vi.fn(async () => undefined),
+    headCommit: vi.fn(async () => "source-head-000"),
+    resolveBaseCommit: vi.fn(async () => "tip00000"),
+    squashRunBranch: vi.fn(async () => ({ squashed: false, collapsed: 0 })),
+    diffChangeStats: vi.fn(async () => []),
+  };
+});
+
+// The PR provider seam. `createOrUpdatePr` models the real adapter: it lists open
+// PRs and REUSES an existing (source→target) PR, only minting a new number when
+// none exists — so `prCreateCount` staying 0 proves reuse-not-create on re-promote.
+const prBook = new Map<string, { url: string; number: number }>();
+let prCreateCount = 0;
+const createOrUpdatePr = vi.fn(
+  async (args: { sourceBranch: string; targetBranch: string }) => {
+    const key = `${args.sourceBranch}=>${args.targetBranch}`;
+    const found = prBook.get(key);
+
+    if (found) return found;
+    prCreateCount += 1;
+    const pr = {
+      url: `https://github.com/org/repo/pull/${900 + prCreateCount}`,
+      number: 900 + prCreateCount,
+    };
+
+    prBook.set(key, pr);
+
+    return pr;
+  },
+);
+const preflight = vi.fn(async () => undefined);
+
+vi.mock("@/lib/runs/pr-adapter", () => ({
+  selectPrAdapter: vi.fn(() => ({ preflight, createOrUpdatePr })),
+}));
+
+vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
+  assertEvidenceReady: vi.fn(async () => ({ ready: true, reasons: [] })),
+}));
+
+vi.mock("@/lib/flows/graph/artifact-store", () => ({
+  recordArtifact: vi.fn(async () => undefined),
+}));
+
+const { addWorktree, removeWorktree, localBranchHead } = await import(
+  "@/lib/worktree"
+);
+const { reopenRun, assertReopenEligible } = await import("@/lib/runs/reopen");
+const { promoteRun } = await import("@/lib/runs/promote");
+const { runAutoPromoteJob } = await import(
+  "@/lib/scheduler/handlers/auto-promote"
+);
+const { deriveStage } = await import("@/lib/board");
+const { getOpenRelationBlockers } = await import("@/lib/social/relations");
+
+const schema = fullSchema as unknown as Record<string, any>;
+const { runs, workspaces, tasks, taskRelations, webhookEvents } = schema;
+
+let testDatabase: StartedPostgresTestDb;
+let pool: Pool;
+let root: string;
+
+beforeAll(async () => {
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "maister_test",
+  });
+  pool = testDatabase.pool;
+  db = testDatabase.db;
+}, 180_000);
+
+afterAll(async () => {
+  await testDatabase?.stop();
+});
+
+beforeEach(async () => {
+  for (const t of [
+    "webhook_events",
+    "task_relations",
+    "run_sync_attempts",
+    "workspaces",
+    "runs",
+    "tasks",
+    "flows",
+    "platform_acp_runners",
+    "projects",
+    "users",
+  ]) {
+    await pool.query(`DELETE FROM "${t}"`);
+  }
+  root = await mkdtemp(join(tmpdir(), `reopen-${randomUUID()}-`));
+  prBook.clear();
+  prCreateCount = 0;
+  createOrUpdatePr.mockClear();
+  preflight.mockClear();
+});
+
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true });
+});
+
+// ---- git helpers ----------------------------------------------------------
+
+async function git(
+  cwd: string,
+  args: readonly string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync("git", args, { cwd });
+}
+
+async function identity(repo: string): Promise<void> {
+  await git(repo, ["config", "user.email", "test@example.test"]);
+  await git(repo, ["config", "user.name", "Test User"]);
+}
+
+// A bare remote + a working parent clone with `base` committed and pushed.
+async function initRepoWithRemote(): Promise<{
+  remote: string;
+  parent: string;
+}> {
+  const remote = join(root, `remote-${randomUUID()}.git`);
+  const parent = join(root, `parent-${randomUUID()}`);
+
+  await git(root, ["init", "--bare", "-b", "main", remote]);
+  await git(root, ["clone", remote, parent]);
+  await identity(parent);
+  await writeFile(join(parent, "base.txt"), "base\n");
+  await git(parent, ["add", "base.txt"]);
+  await git(parent, ["commit", "-m", "base"]);
+  await git(parent, ["push", "-u", "origin", "main"]);
+
+  return { remote, parent };
+}
+
+async function addRunWorktree(parent: string, branch: string): Promise<string> {
+  const wt = join(root, `wt-${randomUUID()}`);
+
+  await addWorktree({
+    projectRepoPath: parent,
+    branch,
+    worktreePath: wt,
+    startPoint: "main",
+  });
+  await writeFile(join(wt, "feature.txt"), "feature\n");
+  await git(wt, ["add", "feature.txt"]);
+  await git(wt, ["commit", "-m", "feature commit"]);
+
+  return wt;
+}
+
+// ---- seed helpers ---------------------------------------------------------
+
+async function seedGraph(repoPath: string): Promise<{
+  projectId: string;
+  flowId: string;
+}> {
+  const projectId = randomUUID();
+  const runnerId = randomUUID();
+  const flowId = randomUUID();
+
+  await db.insert(schema.projects).values({
+    id: projectId,
+    slug: `p-${projectId.slice(0, 8)}`,
+    name: "P",
+    repoPath,
+    mainBranch: "main",
+    maisterYamlPath: "/tmp/m.yaml",
+    provider: "github",
+    repoUrl: "https://github.com/org/repo.git",
+    autoPromotion: { enabled: true, lanes: BUILT_IN_LANES },
+    taskKey: `T${projectId
+      .replace(/[^0-9A-Za-z]/g, "")
+      .slice(0, 7)
+      .toUpperCase()}`,
+  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(runnerId, "claude"));
+  await db.insert(schema.flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "g",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/g",
+    manifest: {},
+    schemaVersion: 1,
+  });
+
+  return { projectId, flowId };
+}
+
+type SeedRunOpts = {
+  projectId: string;
+  flowId: string;
+  worktreePath: string;
+  branch: string;
+  parentRepoPath: string;
+  status?: string;
+  runKind?: "flow" | "agent" | "scratch";
+  workspaceMode?: "own" | "shared" | null;
+  parentRunId?: string | null;
+  taskStatus?: string;
+  launchMode?: "auto" | "manual" | null;
+  prState?: "open" | "merged" | "closed" | null;
+  prHasConflicts?: boolean | null;
+  prUrl?: string | null;
+  prNumber?: number | null;
+  promotionState?: string;
+  removedAt?: Date | null;
+  archivedAt?: Date | null;
+  archivedBranch?: string | null;
+  scheduledRemovalAt?: Date | null;
+};
+
+async function seedRun(opts: SeedRunOpts): Promise<{
+  runId: string;
+  taskId: string;
+  workspaceId: string;
+}> {
+  const runId = randomUUID();
+  const taskId = randomUUID();
+  const workspaceId = randomUUID();
+  const isDone = (opts.status ?? "Done") === "Done";
+
+  await db.insert(tasks).values({
+    id: taskId,
+    projectId: opts.projectId,
+    number: Math.trunc(Math.random() * 1e9) + 1,
+    title: "t",
+    prompt: "p",
+    status: opts.taskStatus ?? "InFlight",
+    launchMode: opts.launchMode ?? null,
+  });
+  await db.insert(runs).values({
+    id: runId,
+    projectId: opts.projectId,
+    taskId,
+    flowId: opts.flowId,
+    flowVersion: "v1.0.0",
+    status: opts.status ?? "Done",
+    runKind: opts.runKind ?? "flow",
+    workspaceMode: opts.workspaceMode ?? null,
+    parentRunId: opts.parentRunId ?? null,
+    endedAt: isDone ? new Date() : null,
+  });
+  await db.insert(workspaces).values({
+    id: workspaceId,
+    runId,
+    projectId: opts.projectId,
+    branch: opts.branch,
+    worktreePath: opts.worktreePath,
+    parentRepoPath: opts.parentRepoPath,
+    baseBranch: "main",
+    baseCommit: "base0000",
+    targetBranch: "main",
+    promotionMode: "pull_request",
+    prState: opts.prState ?? null,
+    prHasConflicts: opts.prHasConflicts ?? null,
+    prUrl: opts.prUrl ?? null,
+    prNumber: opts.prNumber ?? null,
+    promotionState: opts.promotionState ?? "done",
+    removedAt: opts.removedAt ?? null,
+    archivedAt: opts.archivedAt ?? null,
+    archivedBranch: opts.archivedBranch ?? null,
+    scheduledRemovalAt:
+      opts.scheduledRemovalAt === undefined
+        ? new Date(Date.now() + 7 * 86_400_000)
+        : opts.scheduledRemovalAt,
+  });
+
+  return { runId, taskId, workspaceId };
+}
+
+function actor(): { type: "user"; id: string } {
+  return { type: "user", id: "user-1" };
+}
+
+async function readRun(runId: string): Promise<any> {
+  const [row] = await db.select().from(runs).where(eq(runs.id, runId));
+
+  return row;
+}
+
+async function readWorkspace(runId: string): Promise<any> {
+  const [row] = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.runId, runId));
+
+  return row;
+}
+
+async function readTask(taskId: string): Promise<any> {
+  const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+
+  return row;
+}
+
+// ===========================================================================
+// assertReopenEligible — refusal matrix (pure)
+// ===========================================================================
+
+describe("assertReopenEligible", () => {
+  const ws = { prState: "open", prHasConflicts: null } as any;
+  const base = {
+    status: "Done",
+    runKind: "flow",
+    parentRunId: null,
+    workspaceMode: null,
+  };
+
+  it("passes an eligible top-level Done flow/agent run with an open PR", () => {
+    expect(() => assertReopenEligible({ ...base }, ws)).not.toThrow();
+    expect(() =>
+      assertReopenEligible({ ...base, runKind: "agent" }, ws),
+    ).not.toThrow();
+  });
+
+  it("passes a Done run whose PR is conflicted (pr_has_conflicts=true)", () => {
+    expect(() =>
+      assertReopenEligible({ ...base }, {
+        prState: "closed",
+        prHasConflicts: true,
+      } as any),
+    ).not.toThrow();
+  });
+
+  it("refuses already-Review, child, shared, scratch, and non-PR runs with PRECONDITION", () => {
+    const bads: Array<[any, any]> = [
+      [{ ...base, status: "Review" }, ws],
+      [{ ...base, status: "Running" }, ws],
+      [{ ...base, parentRunId: "parent-1" }, ws],
+      [{ ...base, workspaceMode: "shared" }, ws],
+      [{ ...base, runKind: "scratch" }, ws],
+      [{ ...base }, { prState: null, prHasConflicts: null }],
+      [{ ...base }, { prState: "merged", prHasConflicts: false }],
+      [{ ...base }, { prState: "closed", prHasConflicts: false }],
+    ];
+
+    for (const [run, workspace] of bads) {
+      expect(() => assertReopenEligible(run, workspace)).toThrowError(
+        expect.objectContaining({ code: "PRECONDITION" }),
+      );
+    }
+  });
+});
+
+// ===========================================================================
+// deriveStage — a reopened run (Review) derives back to OnReview (pure)
+// ===========================================================================
+
+describe("deriveStage — reopened run", () => {
+  it("returns OnReview for a Review run regardless of worktree presence", () => {
+    expect(
+      deriveStage({
+        taskStatus: "InFlight",
+        taskStage: "Backlog",
+        runStatus: "Review",
+        workspaceRemoved: false,
+      }),
+    ).toBe("OnReview");
+    expect(
+      deriveStage({
+        taskStatus: "InFlight",
+        taskStage: "Backlog",
+        runStatus: "Review",
+        workspaceRemoved: true,
+      }),
+    ).toBe("OnReview");
+  });
+});
+
+// ===========================================================================
+// reopenRun — eligible round-trip + same-PR re-promote (integration)
+// ===========================================================================
+
+describe("reopenRun — round-trip", () => {
+  it("flips Done→Review, sets promotion_state=reopened, clears removal, stamps review_entered_at, emits run.review; re-promote REUSES the same PR", async () => {
+    const { projectId, flowId } = await seedGraph("/repos/demo");
+    const branch = "maister/task-1/attempt-1";
+    const { runId, taskId, workspaceId } = await seedRun({
+      projectId,
+      flowId,
+      branch,
+      worktreePath: "/wt/reopen-1",
+      parentRepoPath: "/repos/demo",
+      status: "Done",
+      taskStatus: "Done",
+      prState: "open",
+      prUrl: "https://github.com/org/repo/pull/42",
+      prNumber: 42,
+      promotionState: "done",
+    });
+
+    // The provider already has this open PR (source→target) — the adapter reuses it.
+    prBook.set(`${branch}=>main`, {
+      url: "https://github.com/org/repo/pull/42",
+      number: 42,
+    });
+
+    const out = await reopenRun({ runId, actor: actor() });
+
+    expect(out).toEqual({ status: "Review", worktreeRevived: false });
+
+    const run = await readRun(runId);
+
+    expect(run.status).toBe("Review");
+    expect(run.endedAt).toBeNull();
+    expect(run.reviewEnteredAt).not.toBeNull();
+
+    const ws = await readWorkspace(runId);
+
+    expect(ws.promotionState).toBe("reopened");
+    expect(ws.scheduledRemovalAt).toBeNull();
+
+    expect((await readTask(taskId)).status).toBe("InFlight");
+
+    const events = await db
+      .select()
+      .from(webhookEvents)
+      .where(eq(webhookEvents.runId, runId));
+
+    expect(events.filter((e: any) => e.type === "run.review")).toHaveLength(1);
+
+    // Re-promote in pull_request mode — canReclaim must admit 'reopened', and the
+    // adapter must REUSE the same PR (no new number minted).
+    await db
+      .insert(fullSchema.users)
+      .values({ id: "user-1", email: "reopen-user-1@test.test" })
+      .onConflictDoNothing();
+    const promoted = (await promoteRun(
+      runId,
+      { mode: "pull_request", reviewedTargetCommit: "tip00000" },
+      {
+        sessionUser: { id: "user-1", name: "U", email: "u@test.test" },
+        authorize: async () => undefined,
+      },
+    )) as { ok: boolean; prNumber?: number | null };
+
+    expect(promoted.ok).toBe(true);
+    expect(promoted.prNumber).toBe(42);
+    expect(createOrUpdatePr).toHaveBeenCalledTimes(1);
+    expect(createOrUpdatePr).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceBranch: branch, targetBranch: "main" }),
+    );
+    // Reuse-not-create: the mock never minted a new PR number.
+    expect(prCreateCount).toBe(0);
+
+    const wsAfter = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId));
+
+    expect(wsAfter[0].prNumber).toBe(42);
+    expect((await readRun(runId)).status).toBe("Done");
+  });
+});
+
+// ===========================================================================
+// reopenRun — GC'd-workspace revival (integration, real git)
+// ===========================================================================
+
+describe("reopenRun — GC'd revival", () => {
+  it("re-attaches the worktree from the existing branch, clears removed_at, returns worktreeRevived:true", async () => {
+    const { parent } = await initRepoWithRemote();
+    const { projectId, flowId } = await seedGraph(parent);
+    const branch = "maister/task-gc/attempt-1";
+    const wt = await addRunWorktree(parent, branch);
+
+    // Simulate GC: unregister + remove the worktree dir, but keep the branch.
+    await removeWorktree({
+      projectRepoPath: parent,
+      worktreePath: wt,
+      force: true,
+    });
+    expect(
+      await localBranchHead({ projectRepoPath: parent, branch }),
+    ).not.toBeNull();
+
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      branch,
+      worktreePath: wt,
+      parentRepoPath: parent,
+      status: "Done",
+      taskStatus: "Done",
+      prState: "open",
+      prUrl: "https://github.com/org/repo/pull/7",
+      prNumber: 7,
+      promotionState: "done",
+      removedAt: new Date(),
+      scheduledRemovalAt: new Date(Date.now() + 86_400_000),
+    });
+
+    const out = await reopenRun({ runId, actor: actor() });
+
+    expect(out).toEqual({ status: "Review", worktreeRevived: true });
+
+    const ws = await readWorkspace(runId);
+
+    expect(ws.removedAt).toBeNull();
+    expect(ws.promotionState).toBe("reopened");
+    expect(ws.scheduledRemovalAt).toBeNull();
+    expect((await readRun(runId)).status).toBe("Review");
+
+    // The worktree is really registered again at the branch head.
+    const listed = await git(parent, ["worktree", "list", "--porcelain"]);
+
+    expect(listed.stdout).toContain(wt);
+  });
+});
+
+// ===========================================================================
+// reopenRun — service-level refusals (integration)
+// ===========================================================================
+
+describe("reopenRun — refusals", () => {
+  it("refuses a non-PR Done run, a child run, a shared-tree run, and an already-Review run", async () => {
+    const { projectId, flowId } = await seedGraph("/repos/demo");
+
+    const noPr = await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/no-pr",
+      worktreePath: "/wt/no-pr",
+      parentRepoPath: "/repos/demo",
+      status: "Done",
+      prState: null,
+      prHasConflicts: null,
+    });
+
+    await expect(
+      reopenRun({ runId: noPr.runId, actor: actor() }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const parent = await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/parent",
+      worktreePath: "/wt/parent",
+      parentRepoPath: "/repos/demo",
+      status: "Done",
+      prState: "open",
+    });
+    const child = await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/child",
+      worktreePath: "/wt/child",
+      parentRepoPath: "/repos/demo",
+      status: "Done",
+      prState: "open",
+      parentRunId: parent.runId,
+    });
+
+    await expect(
+      reopenRun({ runId: child.runId, actor: actor() }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const shared = await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/shared",
+      worktreePath: "/wt/shared",
+      parentRepoPath: "/repos/demo",
+      status: "Done",
+      prState: "open",
+      workspaceMode: "shared",
+    });
+
+    await expect(
+      reopenRun({ runId: shared.runId, actor: actor() }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const review = await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/review",
+      worktreePath: "/wt/review",
+      parentRepoPath: "/repos/demo",
+      status: "Review",
+      prState: "open",
+    });
+
+    await expect(
+      reopenRun({ runId: review.runId, actor: actor() }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+});
+
+// ===========================================================================
+// auto-promote — a reopened run is excluded from the lane prefilter
+// ===========================================================================
+
+describe("auto-promote prefilter — reopened exclusion", () => {
+  it("excludes a promotion_state='reopened' Review flow run from the candidate set", async () => {
+    const { projectId, flowId } = await seedGraph("/repos/demo");
+
+    await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/reopened",
+      worktreePath: "/wt/reopened",
+      parentRepoPath: "/repos/demo",
+      status: "Review",
+      prState: "open",
+      promotionState: "reopened",
+    });
+
+    const promote = vi.fn(async () => ({}) as never);
+    const summary = await runAutoPromoteJob({ db, promote });
+
+    expect(summary.candidates).toBe(0);
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it("includes an equivalent non-reopened Review flow run (control proving the exclusion)", async () => {
+    const { projectId, flowId } = await seedGraph("/repos/demo");
+
+    await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/none",
+      worktreePath: "/wt/none",
+      parentRepoPath: "/repos/demo",
+      status: "Review",
+      prState: "open",
+      promotionState: "none",
+    });
+
+    const promote = vi.fn(async () => ({}) as never);
+    const summary = await runAutoPromoteJob({ db, promote });
+
+    expect(summary.candidates).toBe(1);
+  });
+});
+
+// ===========================================================================
+// relations re-gate — a dependent blocked-released on Done re-gates on reopen
+// ===========================================================================
+
+describe("reopenRun — relations re-gate", () => {
+  it("returns the reopened task to InFlight so getOpenRelationBlockers re-blocks its dependents", async () => {
+    const { projectId, flowId } = await seedGraph("/repos/demo");
+
+    // Blocker T (the reopened run's task) currently Done → releases dependents.
+    const blocker = await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/blocker",
+      worktreePath: "/wt/blocker",
+      parentRepoPath: "/repos/demo",
+      status: "Done",
+      taskStatus: "Done",
+      prState: "open",
+    });
+
+    // Dependent D is a Backlog task blocked by T (T blocks D).
+    const dependentTaskId = randomUUID();
+
+    await db.insert(tasks).values({
+      id: dependentTaskId,
+      projectId,
+      number: Math.trunc(Math.random() * 1e9) + 1,
+      title: "d",
+      prompt: "p",
+      status: "Backlog",
+    });
+    await db.insert(taskRelations).values({
+      id: randomUUID(),
+      projectId,
+      fromTaskId: blocker.taskId,
+      kind: "blocks",
+      toTaskId: dependentTaskId,
+      actorType: "system",
+      actorId: null,
+    });
+
+    // Before reopen: T is Done → D has no open blockers.
+    const before = await getOpenRelationBlockers([dependentTaskId], db);
+
+    expect(before.get(dependentTaskId) ?? []).toHaveLength(0);
+
+    await reopenRun({ runId: blocker.runId, actor: actor() });
+
+    expect((await readTask(blocker.taskId)).status).toBe("InFlight");
+
+    // After reopen: T is InFlight → D re-gates (T is an open blocker again).
+    const after = await getOpenRelationBlockers([dependentTaskId], db);
+
+    expect(after.get(dependentTaskId) ?? []).toHaveLength(1);
+  });
+});

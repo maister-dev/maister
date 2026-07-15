@@ -6,7 +6,17 @@ import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  notExists,
+  notInArray,
+} from "drizzle-orm";
 import pino from "pino";
 
 import { markCheckpointed } from "./state-transitions";
@@ -61,8 +71,27 @@ import {
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, nodeAttempts, projects, runs } =
+const { hitlRequests, nodeAttempts, projects, runs, runSyncAttempts } =
   schemaModule as unknown as Record<string, any>;
+
+// ADR-138 (Task 11): a `Running` run with a non-terminal `run_sync_attempts`
+// row is owned by the branch-sync recovery path — it must NEVER be killed by
+// the keepalive Running-status watchdogs (time-limit / budget). This correlated
+// `NOT EXISTS` excludes such runs from those sweeps (Pass1/Pass2 select
+// NeedsInput/NeedsInputIdle only, so a mid-sync Running run is invisible there).
+function excludeActiveSyncAttempt(db: Db) {
+  return notExists(
+    db
+      .select({ id: runSyncAttempts.id })
+      .from(runSyncAttempts)
+      .where(
+        and(
+          eq(runSyncAttempts.runId, runs.id),
+          notInArray(runSyncAttempts.phase, ["succeeded", "failed", "aborted"]),
+        ),
+      ),
+  );
+}
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -459,6 +488,7 @@ async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
         eq(runs.status, "Running"),
         eq(runs.runKind, "flow"),
         isNotNull(runs.currentStepId),
+        excludeActiveSyncAttempt(db),
       ),
     )
     // No acp_session_id filter: a capped node that hangs before reporting a
@@ -803,7 +833,12 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
       projectId: runs.projectId,
     })
     .from(runs)
-    .where(inArray(runs.status, ["Running", "WaitingOnChildren"]))
+    .where(
+      and(
+        inArray(runs.status, ["Running", "WaitingOnChildren"]),
+        excludeActiveSyncAttempt(db),
+      ),
+    )
     .orderBy(asc(runs.startedAt))
     .limit(PER_TICK_LIMIT);
 

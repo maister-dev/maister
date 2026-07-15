@@ -3439,6 +3439,22 @@ export async function abortSyncOperation(worktree: string): Promise<void> {
   if (mergeHead) await abortMerge(wt);
 }
 
+// ADR-138 sync AI-resolver failure restore: abort any in-progress rebase/merge,
+// then hard-reset the worktree branch to `sha` with a clean tree. Covers both a
+// mid-flight conflicted rebase (abort restores HEAD) AND a resolver that already
+// completed the rebase (HEAD moved) but failed verification — the hard reset
+// returns the run branch to its exact pre-sync HEAD.
+export async function restoreWorktreeToCommit(
+  worktree: string,
+  sha: string,
+): Promise<void> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+  const commit = validate(gitCommitSchema, sha, "sha");
+
+  await abortSyncOperation(wt);
+  await runGit(wt, ["reset", "--hard", "--end-of-options", commit]);
+}
+
 // True when `git diff --check` finds leftover conflict markers anywhere in the
 // worktree. `--check` also flags whitespace errors and exits non-zero for both,
 // so the report (forced to a stable C locale) is scanned to single out conflict
@@ -3571,6 +3587,20 @@ export async function forceWithLeasePush(args: {
 // branch. Refuses (PRECONDITION) when the branch is missing (the caller decides
 // whether to fetch + recreate — this never fetches) or already checked out in
 // another worktree (git refuses; surfaced typed).
+// ADR-138 (Task 12): create a local branch at a start-point. Used by reopen's
+// GC'd-worktree revival when the local branch was pruned but the remote-tracking
+// ref survived a fetch — recreate it, then `addWorktreeForBranch` can attach.
+export async function createLocalBranchAt(
+  repo: string,
+  branch: string,
+  startPoint: string,
+): Promise<void> {
+  const repoPath = validate(absolutePathSchema, repo, "repo");
+  const br = validate(branchNameSchema, branch, "branch");
+
+  await runGit(repoPath, ["branch", "--", br, startPoint]);
+}
+
 export async function addWorktreeForBranch(
   repo: string,
   worktreePath: string,

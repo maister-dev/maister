@@ -1,0 +1,284 @@
+import "server-only";
+
+import { randomUUID } from "node:crypto";
+
+import { and, eq } from "drizzle-orm";
+import pino from "pino";
+
+import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
+import {
+  registerSyncDriver,
+  unregisterSyncDriver,
+} from "@/lib/runs/sync-driver-registry";
+import {
+  createSession,
+  deleteSession,
+  sendPrompt,
+  streamSession,
+  type CreateSessionInput,
+  type PromptResult,
+  type PromptStopReason,
+  type SupervisorEvent,
+} from "@/lib/supervisor-client";
+
+// FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
+const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
+
+// FIXME(any): the injected db seam is a Drizzle client OR a Testcontainers pg
+// client; both expose select/insert/update/transaction.
+type Db = any;
+
+const log = pino({
+  name: "sync-resolver",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+// The step id the resolver session (and its HITL rows) are stamped with.
+export const SYNC_STEP_ID = "sync";
+
+// The supervisor boundary the resolver drives — injectable for tests (no live
+// agent). Every other supervisor export stays real.
+export type SyncResolverSupervisorApi = {
+  createSession: typeof createSession;
+  deleteSession: typeof deleteSession;
+  sendPrompt: typeof sendPrompt;
+  streamSession: typeof streamSession;
+};
+
+const defaultSyncResolverApi: SyncResolverSupervisorApi = {
+  createSession,
+  deleteSession,
+  sendPrompt,
+  streamSession,
+};
+
+// The fixed English resolver instruction (decision 5). Carries the target ref,
+// strategy, the `git diff --name-only --diff-filter=U` conflicted-file list, and
+// the task intent (NULL-SAFE for a taskless agent run). NEVER logged (may echo
+// task content). Explicit prohibitions bound the resolver's blast radius; the
+// no-push instruction is prompt-level (the enforced safety net is the web-side
+// verification gate + explicit-SHA force-with-lease, per ADR-138).
+export function buildResolverPrompt(args: {
+  targetRef: string;
+  strategy: "rebase" | "merge";
+  conflictedFiles: readonly string[];
+  task: { title: string | null; prompt: string | null } | null;
+}): string {
+  const files =
+    args.conflictedFiles.length > 0
+      ? args.conflictedFiles.map((file) => `- ${file}`).join("\n")
+      : "- (none reported)";
+  const intent =
+    args.task && (args.task.title || args.task.prompt)
+      ? [
+          "",
+          "The change under review (preserve its intent when resolving):",
+          `Title: ${args.task.title ?? "(untitled)"}`,
+          `Description: ${args.task.prompt ?? "(none)"}`,
+        ].join("\n")
+      : "";
+
+  return [
+    `A git ${args.strategy} of this run's branch onto "${args.targetRef}" hit conflicts and is paused in this worktree.`,
+    "",
+    "Conflicted files:",
+    files,
+    intent,
+    "",
+    "Your job:",
+    `- Resolve every conflict, preserving BOTH sides' intent (the change under review AND the incoming changes from ${args.targetRef}).`,
+    `- Complete the ${args.strategy} (stage the resolved files and continue it) so no ${args.strategy} is left in progress.`,
+    "- Leave a clean working tree: no staged or unstaged changes and no leftover conflict markers.",
+    "- Do NOT push. Do NOT touch files unrelated to the conflict.",
+    "When the tree is clean and the operation is complete, stop.",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+async function persistResolverPermission(args: {
+  db: Db;
+  runId: string;
+  sessionId: string;
+  event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
+}): Promise<void> {
+  const toolCall = (args.event.toolCall ?? {}) as { title?: unknown };
+  const prompt =
+    typeof toolCall.title === "string"
+      ? `Approve ${toolCall.title}?`
+      : "Approve tool call?";
+
+  await args.db.transaction(async (tx: Db) => {
+    await tx.insert(hitlRequests).values({
+      id: randomUUID(),
+      runId: args.runId,
+      stepId: SYNC_STEP_ID,
+      kind: "permission",
+      schema: {
+        requestId: args.event.requestId,
+        options: args.event.options,
+        toolCall: args.event.toolCall,
+        supervisorSessionId: args.sessionId,
+      },
+      prompt,
+    });
+    // Running → NeedsInput only. The respond route owns NeedsInput → Running.
+    await tx
+      .update(runs)
+      .set({ status: "NeedsInput", keepaliveUntil: nextKeepaliveAt() })
+      .where(and(eq(runs.id, args.runId), eq(runs.status, "Running")));
+  });
+}
+
+type ResolverConsumer = {
+  abort: AbortController;
+  done: Promise<void>;
+  permissionPersistFailure: () => { reason: string } | null;
+};
+
+// The resolver SSE consumer (scratch-shaped, minimal): a `permission_request`
+// persists a `hitl_requests` row and parks the run in `NeedsInput`; a persistence
+// failure is surfaced (never swallowed) so the driver tears the session down. It
+// projects NO transcript. Breaks on session exit/crash or abort.
+function startResolverConsumer(args: {
+  db: Db;
+  runId: string;
+  sessionId: string;
+  api: SyncResolverSupervisorApi;
+}): ResolverConsumer {
+  const abort = new AbortController();
+  let permissionPersistFailure: { reason: string } | null = null;
+
+  const done = (async () => {
+    try {
+      for await (const event of args.api.streamSession(args.sessionId, {
+        signal: abort.signal,
+      })) {
+        if (event.type === "session.permission_request") {
+          try {
+            await persistResolverPermission({
+              db: args.db,
+              runId: args.runId,
+              sessionId: args.sessionId,
+              event,
+            });
+          } catch (err) {
+            if (!permissionPersistFailure) {
+              permissionPersistFailure = {
+                reason: err instanceof Error ? err.message : String(err),
+              };
+            }
+          }
+          continue;
+        }
+
+        if (
+          event.type === "session.exited" ||
+          event.type === "session.crashed"
+        ) {
+          break;
+        }
+      }
+    } catch (err) {
+      if (abort.signal.aborted) return;
+      log.warn(
+        {
+          runId: args.runId,
+          sessionId: args.sessionId,
+          err: (err as Error).message,
+        },
+        "sync resolver event consumer error",
+      );
+    }
+  })();
+
+  return {
+    abort,
+    done,
+    permissionPersistFailure: () => permissionPersistFailure,
+  };
+}
+
+// Spawn a FRESH resolver ACP session in the run worktree, drive one blocking
+// prompt turn, and return the terminal stop reason. Deferred-release is MANDATORY
+// (ADR-138): every path AFTER a successful `createSession` — a sendPrompt throw or
+// a surfaced HITL persistence failure — tears the session down before rethrowing.
+// The happy path leaves the session LIVE for the caller to verify+push then
+// delete. NEVER logs prompt/output content.
+export async function runResolverSession(args: {
+  db: Db;
+  runId: string;
+  input: CreateSessionInput;
+  prompt: string;
+  runnerTier: string;
+  api?: SyncResolverSupervisorApi;
+}): Promise<{ sessionId: string; stopReason: PromptStopReason }> {
+  const api = args.api ?? defaultSyncResolverApi;
+
+  const created = await api.createSession(args.input);
+  const sessionId = created.sessionId;
+
+  // ADR-138 (Task 11): mark this run as owned by a LIVE in-process resolver
+  // driver — the skip-vs-abort discriminant for the periodic reconcile sweep.
+  // Registration spans the whole blocking turn (incl. HITL pauses); a web
+  // restart clears this in-memory registry, so a post-restart sync session is
+  // treated as orphaned → W2 abort.
+  registerSyncDriver(args.runId);
+
+  try {
+    log.info(
+      {
+        runId: args.runId,
+        sessionId,
+        sessionName: args.input.sessionName,
+        runnerTier: args.runnerTier,
+      },
+      "sync resolver session spawned",
+    );
+
+    const consumer = startResolverConsumer({
+      db: args.db,
+      runId: args.runId,
+      sessionId,
+      api,
+    });
+
+    let promptResult: PromptResult;
+
+    try {
+      promptResult = await api.sendPrompt(sessionId, {
+        stepId: SYNC_STEP_ID,
+        prompt: args.prompt,
+      });
+    } catch (err) {
+      consumer.abort.abort();
+      await consumer.done.catch(() => undefined);
+      await api.deleteSession(sessionId).catch(() => undefined);
+      throw err;
+    }
+
+    consumer.abort.abort();
+    await consumer.done;
+
+    const persistFailure = consumer.permissionPersistFailure();
+
+    if (persistFailure) {
+      await api.deleteSession(sessionId).catch(() => undefined);
+      throw new MaisterError(
+        "CRASH",
+        `sync resolver HITL persistence failed: ${persistFailure.reason}`,
+      );
+    }
+
+    log.info(
+      { runId: args.runId, sessionId, stopReason: promptResult.stopReason },
+      "sync resolver session ended",
+    );
+
+    return { sessionId, stopReason: promptResult.stopReason };
+  } finally {
+    unregisterSyncDriver(args.runId);
+  }
+}

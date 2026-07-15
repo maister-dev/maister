@@ -14,6 +14,7 @@ import {
   domainEvents as domainEventsTable,
   projects as projectsTable,
   runs as runsTable,
+  runSyncAttempts as runSyncAttemptsTable,
   scratchRuns as scratchRunsTable,
   webhookEvents as webhookEventsTable,
 } from "@/lib/db/schema";
@@ -34,6 +35,7 @@ type Row = Record<string, unknown>;
 type Tables = {
   runs: Row[];
   hitl_requests: Row[];
+  run_sync_attempts: Row[];
   projects: Row[];
   scratch_runs: Row[];
   assignments: Row[];
@@ -52,6 +54,7 @@ const dbState: {
   tables: {
     runs: [],
     hitl_requests: [],
+    run_sync_attempts: [],
     projects: [],
     scratch_runs: [],
     assignments: [],
@@ -68,6 +71,7 @@ const dbState: {
 function tableOf(t: unknown): keyof Tables {
   if (t === runsTable) return "runs";
   if (t === hitlRequestsTable) return "hitl_requests";
+  if (t === runSyncAttemptsTable) return "run_sync_attempts";
   if (t === projectsTable) return "projects";
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === assignmentsTable) return "assignments";
@@ -244,6 +248,7 @@ beforeEach(async () => {
   dbState.tables = {
     runs: [],
     hitl_requests: [],
+    run_sync_attempts: [],
     projects: [],
     scratch_runs: [],
     assignments: [],

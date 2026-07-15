@@ -880,7 +880,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
   **Logging:** INFO per phase transition with runId/attempt/SHAs; WARN refusals
   with code; no diff content.
 
-- [ ] **Task 10: Agent resolver path.**
+- [x] **Task 10: Agent resolver path.**
 
   `markSyncFromReview` in `state-transitions.ts` (bare `Review→Running` CAS,
   mirroring `markReworkFromReview`) **behind a new caller-side FOR-UPDATE fence
@@ -913,7 +913,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
   verification verdict; ERROR classified supervisor failures; never
   prompt/output content.
 
-- [ ] **Task 11: Recovery fanout (reconcile, sweeps, watchdog, keepalive).**
+- [x] **Task 11: Recovery fanout (reconcile, sweeps, watchdog, keepalive).**
 
   Reconcile (`web/lib/reconcile.ts`): add `activeSyncAttempt` to `ReconcileInput`
   + the candidate `select`; new arms BEFORE the reattach/redispatch arms —
@@ -946,7 +946,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 5: reopen + ai_rebase_merge
 
-- [ ] **Task 12: Reopen service + route + re-promote.**
+- [x] **Task 12: Reopen service + route + re-promote.**
 
   Service per decision 14: single tx — new exact-`Done`-allow-list CAS in
   `state-transitions.ts` (`Done` is terminal today, no such edge exists);

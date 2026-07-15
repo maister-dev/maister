@@ -312,6 +312,109 @@ export async function markReworkFromReview(
   return { ok: true };
 }
 
+// ADR-138: Review → Running. The branch-sync AI resolver opens a Review run for
+// a conflicted rebase/merge. Bare status-guarded CAS (mirrors
+// markReworkFromReview): a concurrent promote (Review → Done) or another sync
+// converges to ONE winner (loser → CONFLICT at the caller). Touches NO runs
+// session column (M42 dropped it); the caller wraps this in the FOR-UPDATE
+// promotion fence + cap gate. Clears keepalive/checkpoint so the run reads live.
+export async function markSyncFromReview(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Running", checkpointAt: null, keepaliveUntil: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Review")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "Review", to: "Running" },
+      "markSyncFromReview: status-guard mismatch — concurrent promote/sync won",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "Review", to: "Running" },
+    "run-state transition — sync AI resolver opened the run",
+  );
+
+  return { ok: true };
+}
+
+// ADR-138: Running → Review. The branch-sync AI resolver finalizes (success or
+// failure) by returning the run to the status the sync started from. Status-
+// guarded on Running (the markSyncFromReview flip); clears keepalive/checkpoint.
+// Does NOT touch review_entered_at — the success finalize resets it only when
+// HEAD moved (decision 13), the failure restore leaves it untouched.
+export async function markSyncReviewFromRunning(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Review", keepaliveUntil: null, checkpointAt: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "Running", to: "Review" },
+      "markSyncReviewFromRunning: status-guard mismatch",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "Running", to: "Review" },
+    "run-state transition — sync AI resolver returned the run to Review",
+  );
+
+  return { ok: true };
+}
+
+// ADR-138 (decision 14): Done → Review. `reopen` pulls a finished run back to
+// Review when its PR is still open or has fallen into conflict, so the branch can
+// be synced and re-promoted against the moved target. `Done` is otherwise
+// TERMINAL — this is the sole exact-allow-list CAS off it. Status-guarded on
+// `Done` so a concurrent reopen (or any late terminal write) converges to ONE
+// winner (loser → CONFLICT at the caller). Clears `ended_at`: a reopened run is
+// live again, not terminal. The caller (reopenRun) stamps review_entered_at and
+// flips promotion_state='reopened' in the SAME transaction.
+export async function markReopenFromDone(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Review", endedAt: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Done")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "Done", to: "Review" },
+      "markReopenFromDone: status-guard mismatch — run is no longer Done",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "Done", to: "Review" },
+    "run-state transition — reopened for branch sync / re-promotion",
+  );
+
+  return { ok: true };
+}
+
 // M8 T7: activity ping extends the keep-alive window without changing
 // status. Status guard: only Running and NeedsInput rows accept a bump.
 // NeedsInputIdle rows do NOT accept bumps — the activity route returns

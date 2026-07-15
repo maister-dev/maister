@@ -103,6 +103,7 @@ const {
   hitlRequests,
   projects,
   runs,
+  runSyncAttempts,
   scratchRuns,
   taskClarifications,
   tasks,
@@ -669,6 +670,35 @@ async function markScratchPermissionDelivered(
   await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
 }
 
+// ADR-138: a branch-sync AI-resolver run parks in NeedsInput on a resolver
+// permission_request; the respond path (NOT the driver) owns NeedsInput → Running
+// and re-stamps `agent_running_since` so the Task-11 active-time cap measures only
+// continuous Running time. Guarded on an active `agent_running` sync attempt, so it
+// is a no-op for every non-resolver run.
+async function markSyncResolverPermissionDelivered(
+  db: any,
+  runId: string,
+): Promise<void> {
+  const now = new Date();
+  const stamped = await db
+    .update(runSyncAttempts)
+    .set({ agentRunningSince: now, updatedAt: now })
+    .where(
+      and(
+        eq(runSyncAttempts.runId, runId),
+        eq(runSyncAttempts.phase, "agent_running"),
+      ),
+    )
+    .returning({ id: runSyncAttempts.id });
+
+  if (stamped.length === 0) return;
+
+  await db
+    .update(runs)
+    .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
+}
+
 async function markScratchPermissionTimedOut(
   db: any,
   runRow: any,
@@ -831,6 +861,7 @@ async function handlePermissionResponse(
     // flow runs and for an already-Running scratch run.
     await db.transaction(async (tx: any) => {
       await markScratchPermissionDelivered(tx, runRow, runId);
+      await markSyncResolverPermissionDelivered(tx, runId);
       await completeResponseAssignment(tx, assignmentClaim, { optionId });
       await args.recordSuccessAudit?.(tx, 200);
     });
@@ -1156,6 +1187,7 @@ async function handlePermissionResponse(
         .returning({ id: hitlRequests.id });
 
       await markScratchPermissionDelivered(tx, runRow, runId);
+      await markSyncResolverPermissionDelivered(tx, runId);
       await completeResponseAssignment(tx, assignmentClaim, { optionId });
       await args.recordSuccessAudit?.(tx, 200);
 

@@ -38,6 +38,7 @@ import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
+import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import { promoteNextPending } from "@/lib/scheduler";
 import { deleteSession, listSessions } from "@/lib/supervisor-client";
 import { listWorktrees } from "@/lib/worktree";
@@ -49,6 +50,7 @@ const {
   nodeAttempts,
   projects,
   runs,
+  runSyncAttempts,
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
@@ -72,7 +74,15 @@ function runStepKey(runId: string, stepId: string | null): string {
 
 // --- T2.1: pure classifier ------------------------------------------------
 
-export type ReconcileAction = "skip" | "reattach" | "redispatch" | "crash";
+export type ReconcileAction =
+  | "skip"
+  | "reattach"
+  | "redispatch"
+  | "crash"
+  // ADR-138 (Task 11): a `Running` run with a non-terminal `run_sync_attempts`
+  // row is routed to the branch-sync recovery executor, NEVER the flow
+  // reattach/redispatch arms.
+  | "sync-recover";
 
 export type ReconcileReason =
   | "not-running"
@@ -84,6 +94,10 @@ export type ReconcileReason =
   | "cli-not-retry-safe"
   | "grace-window"
   | "agent-session-gone"
+  // ADR-138 (Task 11) branch-sync recovery discriminants.
+  | "sync-driver-live"
+  | "sync-orphaned-live"
+  | "sync-orphaned-idle"
   // M36 (ADR-095) T7.1: a Running child whose coordinator parent is gone
   // (Crashed/Abandoned/missing) can no longer be coordinated → crash it.
   | "orphaned-child"
@@ -134,6 +148,16 @@ export interface ReconcileInput {
   // when the parked orchestrator still has at least one non-terminal child, so
   // it must stay parked (a later child-terminal event wakes it). Default false.
   hasPendingChildren?: boolean;
+  // ADR-138 (Task 11): true when this run has a non-terminal `run_sync_attempts`
+  // row (an in-flight branch sync). Routes the run to branch-sync recovery BEFORE
+  // the flow reattach/redispatch arms so a sync row is never mis-driven as a
+  // graph session. Default false.
+  activeSyncAttempt?: boolean;
+  // ADR-138 (Task 11): true when an in-process sync driver owns this run in THIS
+  // process (registry membership). The skip-vs-abort discriminant for a live
+  // resolver session: WITH a driver → healthy (skip); WITHOUT one (post-restart)
+  // → orphaned (W2 recover). Default false.
+  syncDriverActive?: boolean;
 }
 
 export interface ReconcileDecision {
@@ -209,6 +233,30 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
       input.parentStatus === "Abandoned")
   ) {
     return { action: "crash", reason: "orphaned-child" };
+  }
+
+  // 2.75. ADR-138 (Task 11): a `Running` run with an in-flight branch sync
+  //       (a non-terminal `run_sync_attempts` row). This is the AGENT resolver
+  //       path (mechanical sync never leaves `Review`). It is checked BEFORE the
+  //       live-session/node-kind arms so a sync row NEVER enters
+  //       `runResumedSession`/`redispatch` — those would mis-drive it as a graph
+  //       session. The skip-vs-abort discriminant is the in-proc driver registry:
+  //         - live session WITH a driver → healthy, skip (a periodic sweep during
+  //           an active in-process resolver);
+  //         - live session WITHOUT a driver → orphaned session (post-restart, when
+  //           the registry is empty) → W2 recover (tear down + abort);
+  //         - no live session → W2/W3 recover (idempotent re-verify → finalize or
+  //           abort).
+  if (input.activeSyncAttempt) {
+    if (input.liveSession) {
+      if (input.syncDriverActive) {
+        return { action: "skip", reason: "sync-driver-live" };
+      }
+
+      return { action: "sync-recover", reason: "sync-orphaned-live" };
+    }
+
+    return { action: "sync-recover", reason: "sync-orphaned-idle" };
   }
 
   // 3. live agent session with no attached runner → re-attach.
@@ -311,6 +359,10 @@ export interface ReconcileSweepSummary {
   // run minted, past the grace window — a crash between claim and launchRun) cleared
   // this tick so the task becomes re-eligible.
   staleClaimsCleared: number;
+  // ADR-138 (Task 11): `Running` runs with an in-flight branch sync recovered this
+  // tick via the branch-sync recovery executor (W2/W3). A driver-owned live sync is
+  // counted in `skipped`, not here.
+  syncRecovered: number;
 }
 
 const ZERO_SUMMARY: ReconcileSweepSummary = {
@@ -321,6 +373,7 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   skipped: 0,
   cutoverSessionsStopped: 0,
   staleClaimsCleared: 0,
+  syncRecovered: 0,
 };
 
 // ADR-121 (T15): a C2 admission claim (tasks.queue_claimed_at) is held only across
@@ -374,6 +427,8 @@ type CandidateRow = {
   // run has no parent repo, so there is no worktree to lose either.
   projectId: string | null;
   repoPath: string | null;
+  // ADR-138 (Task 11): the run has a non-terminal `run_sync_attempts` row.
+  activeSyncAttempt: boolean;
 };
 
 async function runWithConcurrency<T>(
@@ -590,6 +645,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         acpSessionId: activeByRun.get(row.runId)?.acpSessionId ?? null,
         projectId: project.id,
         repoPath: project.repoPath,
+        activeSyncAttempt: false,
       });
     }
   }
@@ -651,10 +707,43 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       acpSessionId: activeProjectless.get(row.runId)?.acpSessionId ?? null,
       projectId: null,
       repoPath: null,
+      activeSyncAttempt: false,
     });
   }
 
+  // ADR-138 (Task 11): mark candidates carrying a non-terminal `run_sync_attempts`
+  // row so the classifier routes them to branch-sync recovery (never the flow
+  // reattach/redispatch arms). One batched query over all candidate run ids.
+  const syncActive = await loadActiveSyncAttemptRunIds(
+    db,
+    all.map((c) => c.runId),
+  );
+
+  for (const cand of all) {
+    if (syncActive.has(cand.runId)) cand.activeSyncAttempt = true;
+  }
+
   return all;
+}
+
+// ADR-138 (Task 11): the set of run ids with a non-terminal `run_sync_attempts`
+// row (phase not in succeeded/failed/aborted) — an in-flight branch sync.
+async function loadActiveSyncAttemptRunIds(
+  db: Db,
+  runIds: string[],
+): Promise<Set<string>> {
+  if (runIds.length === 0) return new Set();
+  const rows: Array<{ runId: string }> = await db
+    .selectDistinct({ runId: runSyncAttempts.runId })
+    .from(runSyncAttempts)
+    .where(
+      and(
+        inArray(runSyncAttempts.runId, runIds),
+        notInArray(runSyncAttempts.phase, ["succeeded", "failed", "aborted"]),
+      ),
+    );
+
+  return new Set(rows.map((r) => r.runId));
 }
 
 async function closeTerminalRunAssignments(db: Db): Promise<number> {
@@ -991,6 +1080,7 @@ export async function runReconcileSweep(
   let redispatched = 0;
   let reattached = 0;
   let skipped = 0;
+  let syncRecovered = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
     // M34: a null worktreePath is the no-workspace agent shape (none/
@@ -1061,6 +1151,10 @@ export async function runReconcileSweep(
         parentRunId: cand.parentRunId,
         parentStatus,
         hasPendingChildren: pendingChildren,
+        activeSyncAttempt: cand.activeSyncAttempt,
+        syncDriverActive: cand.activeSyncAttempt
+          ? hasSyncDriver(cand.runId)
+          : false,
       },
       cand.runId,
     );
@@ -1222,6 +1316,40 @@ export async function runReconcileSweep(
 
         return;
       }
+      case "sync-recover": {
+        // ADR-138 (Task 11): a Running run with an in-flight branch sync whose
+        // in-proc driver is gone. `live` present ⇒ W2 (orphaned live resolver
+        // session to tear down); absent ⇒ W2/W3 (idempotent re-verify → finalize
+        // or abort). A concurrent in-process finalize that already terminalized
+        // the attempt returns `noop`.
+        const { recoverSyncAttemptOnReconcile } = await import(
+          "@/lib/runs/sync-recovery"
+        );
+        const result = await recoverSyncAttemptOnReconcile({
+          db,
+          runId: cand.runId,
+          liveSessionId: live?.sessionId ?? null,
+          deleteSession: stopSession,
+          now,
+        });
+
+        if (result.outcome === "noop") {
+          skipped += 1;
+        } else {
+          syncRecovered += 1;
+        }
+        log.info(
+          {
+            runId: cand.runId,
+            reason,
+            window: result.window,
+            outcome: result.outcome,
+          },
+          "reconcile: sync recovery",
+        );
+
+        return;
+      }
       case "skip": {
         skipped += 1;
         log.debug({ runId: cand.runId, reason }, "reconcile: skipped");
@@ -1239,6 +1367,7 @@ export async function runReconcileSweep(
     skipped,
     cutoverSessionsStopped,
     staleClaimsCleared,
+    syncRecovered,
   };
 
   log.info(summary, "reconcile sweep complete");

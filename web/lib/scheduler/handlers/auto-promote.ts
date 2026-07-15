@@ -120,6 +120,9 @@ export async function runAutoPromoteJob(
         isNotNull(runs.taskId),
         isNull(runs.parentRunId),
         ne(workspaces.promotionState, "done"),
+        // ADR-138 (Task 12): a reopened Done run must be re-promoted MANUALLY —
+        // never auto-promoted by a lane the instant it returns to Review.
+        ne(workspaces.promotionState, "reopened"),
         isNull(runs.promotionHold),
         // Master toggle pushed into SQL so a configured-but-disabled project never
         // occupies a candidate slot (evaluateAutoPromotion still re-checks it).

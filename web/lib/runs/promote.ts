@@ -122,7 +122,9 @@ export type PromoteRunResult = {
 // Workspace states that may be (re)claimed by a fresh promote attempt. A
 // `claiming` state is reclaimable only once its claim has gone stale (handled
 // separately, see canReclaim).
-const RECLAIMABLE_STATES = new Set(["none", "failed"]);
+// ADR-138 (Task 12): a reopened Done run (promotion_state='reopened') is
+// re-promotable — its claim is reclaimable just like a fresh/failed one.
+const RECLAIMABLE_STATES = new Set(["none", "failed", "reopened"]);
 
 function canReclaim(workspace: {
   promotionState?: string | null;

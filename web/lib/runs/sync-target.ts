@@ -5,10 +5,38 @@ import { randomUUID } from "node:crypto";
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
+import { resolveSyncRunner } from "@/lib/acp-runners/resolve";
+import {
+  runnerExecutorInput,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
+import {
+  markSyncFromReview,
+  markSyncReviewFromRunning,
+} from "@/lib/runs/state-transitions";
+import {
+  buildResolverPrompt,
+  runResolverSession,
+  SYNC_STEP_ID,
+} from "@/lib/runs/sync-resolver";
+import {
+  capForPool,
+  countLiveRuns,
+  poolForRunKind,
+  promoteNextPending,
+  takeSchedulerLock,
+  type SchedulerPool,
+} from "@/lib/scheduler";
+import {
+  deleteSession,
+  type CreateSessionInput,
+  type PromptStopReason,
+} from "@/lib/supervisor-client";
 import {
   aheadBehindCounts,
   branchHasUpstream,
@@ -24,13 +52,21 @@ import {
   rebaseOntoRef,
   remoteBranchHead,
   remoteTrackingBranchHead,
+  restoreWorktreeToCommit,
   statusPorcelain,
   syncOperationInProgress,
 } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror promote.ts's bridge.
-const { runs, workspaces, projects, runSyncAttempts } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  runs,
+  workspaces,
+  projects,
+  tasks,
+  runSyncAttempts,
+  runSessions,
+  platformRuntimeSettings,
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): the injected db seam is a Drizzle client OR a Testcontainers pg
 // client; both expose select/insert/update/transaction.
@@ -60,9 +96,11 @@ export type SyncRunOutcome = {
 export type SyncRunInput = {
   runId: string;
   strategy?: SyncStrategy;
-  // The AI-resolver seam (Task 10). Undefined defaults to the plan's agent-on
-  // behavior, but until Task 10 lands a conflict with `agent` truthy behaves like
-  // `agent:false` (clean abort, `outcome:"conflict"`) so no stuck state exists.
+  // ADR-138: on a conflict the AI resolver launches by DEFAULT
+  // (`outcome:"agent_launched"`) — the contract default is agent-on (matches
+  // the OpenAPI `agent` "(default)" and the UI "resolve with AI" checkbox
+  // default ON). ONLY an explicit `agent:false` keeps the mechanical behavior:
+  // a clean abort restoring the pre-sync SHA (`outcome:"conflict"`).
   agent?: boolean;
   push?: boolean;
   runnerId?: string;
@@ -537,13 +575,36 @@ export async function syncRunTarget(
         ? await mergeFromRef(worktree, targetBranch)
         : await rebaseOntoRef(worktree, targetBranch);
 
-    // 8. Conflict — abort cleanly (rebase/merge --abort restores the pre-sync
-    //    HEAD) and return `conflict`. The `agent` branch is the Task 10 seam.
+    // 8. Conflict. The AI resolver launches by DEFAULT against the LEFT-in-place
+    //    conflicted rebase (contract default agent-on); ONLY explicit
+    //    `agent:false` aborts cleanly (rebase/merge --abort restores the
+    //    pre-sync HEAD) and returns `conflict`.
     if (!applied.ok) {
-      // TODO(Task 10): when `input.agent` is truthy, launch the AI resolver here
-      // (markSyncFromReview + resolver driver) → phase 'agent_running' →
-      // outcome "agent_launched"; do NOT abort. Until then it behaves like
-      // agent=false so no stuck state exists between commits.
+      if (input.agent !== false) {
+        return await runSyncResolver({
+          db,
+          now,
+          claim,
+          runId,
+          runKind: run.runKind as string,
+          taskId: (run.taskId as string | null) ?? null,
+          project,
+          worktree,
+          repo,
+          branch,
+          targetBranch,
+          strategy,
+          behind,
+          conflictedFiles: applied.conflictedFiles,
+          headShaBefore,
+          published,
+          remoteShaBefore,
+          remoteShaIndeterminate,
+          push: input.push,
+          runnerId: input.runnerId,
+        });
+      }
+
       await abortSyncOperation(worktree);
       await abortAttempt(db, claim, {
         conflictedFiles: applied.conflictedFiles,
@@ -554,7 +615,7 @@ export async function syncRunTarget(
           attemptId: claim.attemptId,
           conflicted: applied.conflictedFiles.length,
         },
-        "sync conflict — aborted (agent seam behaves as agent=false in Task 9)",
+        "sync conflict — aborted (agent=false)",
       );
 
       return {
@@ -647,5 +708,412 @@ export async function syncRunTarget(
     await abortSyncOperation(worktree).catch(() => undefined);
     await terminalizeSafetyNet(db, claim, err);
     throw err;
+  }
+}
+
+async function loadTask(
+  db: Db,
+  taskId: string,
+): Promise<{ title: string | null; prompt: string | null } | null> {
+  const rows = await db
+    .select({ title: tasks.title, prompt: tasks.prompt })
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+
+  return rows[0]
+    ? { title: rows[0].title ?? null, prompt: rows[0].prompt ?? null }
+    : null;
+}
+
+async function platformDefaultRunnerId(db: Db): Promise<string | null> {
+  const rows = await db
+    .select({ defaultRunnerId: platformRuntimeSettings.defaultRunnerId })
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"));
+
+  return rows[0]?.defaultRunnerId ?? null;
+}
+
+// The resolver failure restore (crash / non-`end_turn` / verify-fail / lease-fail
+// / push-refused): restore the pre-sync HEAD, mark the attempt `failed` + release
+// the claim, CAS the run back to Review, and free the pool slot. The caller has
+// already torn the supervisor session down (deferred-release).
+async function failResolver(args: {
+  db: Db;
+  claim: Claim;
+  runId: string;
+  worktree: string;
+  headShaBefore: string;
+  pool: SchedulerPool;
+  errorCode: string;
+  errorMessage: string;
+}): Promise<void> {
+  // Classified failure only (code + message) — NEVER prompt/output content.
+  log.error(
+    {
+      runId: args.runId,
+      attemptId: args.claim.attemptId,
+      errorCode: args.errorCode,
+      errorMessage: args.errorMessage,
+    },
+    "sync resolver failed — restoring pre-sync HEAD, returning run to Review",
+  );
+  await restoreWorktreeToCommit(args.worktree, args.headShaBefore).catch(
+    (err: unknown) => {
+      log.error(
+        {
+          runId: args.runId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "sync resolver restore-to-pre-sync-HEAD failed",
+      );
+    },
+  );
+  await failAttempt(args.db, args.claim, args.errorCode, args.errorMessage);
+  await markSyncReviewFromRunning(args.runId, { db: args.db });
+  await promoteNextPending({ db: args.db, pool: args.pool });
+}
+
+type SyncResolverArgs = {
+  db: Db;
+  now: () => Date;
+  claim: Claim;
+  runId: string;
+  runKind: string;
+  taskId: string | null;
+  project: any;
+  worktree: string;
+  repo: string;
+  branch: string;
+  targetBranch: string;
+  strategy: SyncStrategy;
+  behind: number;
+  conflictedFiles: string[];
+  headShaBefore: string;
+  published: boolean;
+  remoteShaBefore: string | null;
+  remoteShaIndeterminate: boolean;
+  push?: boolean;
+  runnerId?: string;
+};
+
+/**
+ * The AI conflict resolver (ADR-138, Task 10). Called from `syncRunTarget`'s
+ * conflict branch with `agent:true` and the LEFT-in-place conflicted rebase. It
+ * cap-gates + fences + flips `Review→Running` (one locked tx), spawns a FRESH
+ * resolver session in the worktree (mocked at the supervisor boundary in tests),
+ * drives one blocking turn, then applies the SAME Task-9 verify gate + push policy
+ * before finalizing back to `Review`. Every path after a spawned session tears it
+ * down (deferred-release). Slots are released via `promoteNextPending` on finalize.
+ */
+async function runSyncResolver(
+  args: SyncResolverArgs,
+): Promise<SyncRunOutcome> {
+  const {
+    db,
+    now,
+    claim,
+    runId,
+    worktree,
+    repo,
+    branch,
+    targetBranch,
+    strategy,
+    behind,
+    conflictedFiles,
+    headShaBefore,
+  } = args;
+  const pool = poolForRunKind(args.runKind);
+
+  // --- Pre-session: cap gate + runner resolution + Review→Running (one tx) ---
+  // Everything that can throw runs BEFORE the run is live (or inside the CAS tx),
+  // so a pre-session failure is always a clean abort — nothing strands `Running`.
+  let sessionInput: CreateSessionInput;
+  let runnerTier: string;
+  let prompt: string;
+
+  try {
+    // (1) Fail-fast cap check (decision 15) — refuse CONFLICT at cap, no queue.
+    await assertPoolCapacity(db, pool);
+
+    // (2) Resolve the sync runner: launch override → sync default → project →
+    //     platform (flow tiers do not participate).
+    if (!args.project) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `run ${runId} has no project — cannot resolve a sync runner`,
+      );
+    }
+    const runners = await loadRunnerCatalog(db);
+    const resolution = resolveSyncRunner({
+      launchOverrideRunnerId: args.runnerId ?? null,
+      project: {
+        syncRunnerId: args.project.syncRunnerId ?? null,
+        defaultRunnerId: args.project.defaultRunnerId ?? null,
+      },
+      platform: { defaultRunnerId: await platformDefaultRunnerId(db) },
+      runners,
+    });
+
+    runnerTier = resolution.runnerResolutionTier;
+    const sessionName = `sync-${claim.attempt}`;
+    const snapshot = resolution.runnerSnapshot;
+
+    // Build the resolver prompt BEFORE the CAS (the only remaining DB read is the
+    // task load) so a read failure aborts cleanly instead of stranding Running.
+    const task = args.taskId ? await loadTask(db, args.taskId) : null;
+
+    prompt = buildResolverPrompt({
+      targetRef: targetBranch,
+      strategy,
+      conflictedFiles,
+      task,
+    });
+
+    // (3) One locked FOR-UPDATE tx: definitive cap re-check + promotion fence +
+    //     Review→Running CAS + run_sessions row + attempt → `agent_running`.
+    await db.transaction(async (tx: Db) => {
+      await takeSchedulerLock(tx);
+
+      if ((await countLiveRuns(tx, pool)) >= capForPool(pool)) {
+        throw new MaisterError(
+          "CONFLICT",
+          `sync resolver refused — ${pool} pool at capacity`,
+        );
+      }
+
+      const ws = await loadWorkspaceForUpdate(tx, runId);
+
+      if (ws.promotionState === "claiming" || ws.promotionState === "done") {
+        throw new MaisterError(
+          "CONFLICT",
+          `a promotion is ${ws.promotionState} for run ${runId} — cannot sync`,
+        );
+      }
+
+      const flip = await markSyncFromReview(runId, { db: tx });
+
+      if (!flip.ok) {
+        throw new MaisterError(
+          "CONFLICT",
+          `run ${runId} left Review concurrently — cannot sync`,
+        );
+      }
+
+      await tx.insert(runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName,
+        runnerId: resolution.runnerId,
+        runnerResolutionTier: resolution.runnerResolutionTier,
+        capabilityAgent: resolution.capabilityAgent,
+        runnerSnapshot: snapshot,
+        acpSessionId: null,
+        resolutionSource: resolution.runnerResolutionTier,
+      });
+
+      await tx
+        .update(runSyncAttempts)
+        .set({
+          mode: "agent",
+          phase: "agent_running",
+          runnerId: resolution.runnerId,
+          sessionName,
+          agentRunningSince: now(),
+          updatedAt: new Date(),
+        })
+        .where(eq(runSyncAttempts.id, claim.attemptId));
+    });
+
+    sessionInput = {
+      runId,
+      projectSlug: args.project.slug,
+      worktreePath: worktree,
+      repoPath: repo,
+      stepId: SYNC_STEP_ID,
+      sessionName,
+      executor: runnerExecutorInput(snapshot),
+      runner: runnerSupervisorInput({ snapshot }),
+    };
+  } catch (err) {
+    // Pre-session refusal (cap / runner / fence / CAS): abort the conflicted
+    // rebase, mark the attempt `aborted`, release the claim. No session spawned.
+    await abortSyncOperation(worktree).catch(() => undefined);
+    await abortAttempt(db, claim, { conflictedFiles });
+    throw err;
+  }
+
+  // --- Session: drive the resolver, then verify + push + finalize ---
+  let session: { sessionId: string; stopReason: PromptStopReason };
+
+  try {
+    session = await runResolverSession({
+      db,
+      runId,
+      input: sessionInput,
+      prompt,
+      runnerTier,
+    });
+  } catch (err) {
+    // runResolverSession already tore the session down (or none was created).
+    await failResolver({
+      db,
+      claim,
+      runId,
+      worktree,
+      headShaBefore,
+      pool,
+      errorCode: isMaisterError(err) ? err.code : "CRASH",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
+  const { sessionId, stopReason } = session;
+
+  if (stopReason !== "end_turn") {
+    await deleteSession(sessionId).catch(() => undefined);
+    await failResolver({
+      db,
+      claim,
+      runId,
+      worktree,
+      headShaBefore,
+      pool,
+      errorCode: "CRASH",
+      errorMessage: `resolver stopped with ${stopReason}`,
+    });
+    throw new MaisterError(
+      "CRASH",
+      `sync resolver did not finish cleanly (stopReason=${stopReason})`,
+    );
+  }
+
+  // Verify gate (REUSE Task 9).
+  await setAttemptPhase(db, claim.attemptId, "verifying");
+  const targetSha = await localBranchHead({
+    projectRepoPath: repo,
+    branch: targetBranch,
+  });
+  const gate = await verifySyncGate(worktree, targetSha ?? targetBranch);
+
+  log.info(
+    {
+      runId,
+      attemptId: claim.attemptId,
+      verifyOk: gate.ok,
+      reason: gate.ok ? undefined : gate.reason,
+    },
+    "sync resolver verify gate verdict",
+  );
+
+  if (!gate.ok) {
+    await deleteSession(sessionId).catch(() => undefined);
+    await failResolver({
+      db,
+      claim,
+      runId,
+      worktree,
+      headShaBefore,
+      pool,
+      errorCode: "PRECONDITION",
+      errorMessage: `verify gate failed: ${gate.reason}`,
+    });
+    throw new MaisterError(
+      "PRECONDITION",
+      `sync verification failed: ${gate.reason}`,
+    );
+  }
+
+  // Push policy (REUSE Task 9): explicit-SHA force-with-lease iff published.
+  const headShaAfter = await headCommit({ worktreePath: worktree });
+  const shouldPush = args.push ?? args.published;
+  let pushed = false;
+
+  if (shouldPush) {
+    if (args.published && args.remoteShaIndeterminate) {
+      await deleteSession(sessionId).catch(() => undefined);
+      await failResolver({
+        db,
+        claim,
+        runId,
+        worktree,
+        headShaBefore,
+        pool,
+        errorCode: "CONFLICT",
+        errorMessage: `could not determine origin/${branch} before fetch — push refused`,
+      });
+      throw new MaisterError(
+        "CONFLICT",
+        `could not determine the remote head of ${branch} — push refused; retry the sync`,
+      );
+    }
+
+    await setAttemptPhase(db, claim.attemptId, "pushing");
+    const push = await pushWithLease(worktree, branch, args.remoteShaBefore);
+
+    if (!push.pushed) {
+      await deleteSession(sessionId).catch(() => undefined);
+      await failResolver({
+        db,
+        claim,
+        runId,
+        worktree,
+        headShaBefore,
+        pool,
+        errorCode: "CONFLICT",
+        errorMessage: `force-with-lease rejected — ${branch} moved on origin`,
+      });
+      throw new MaisterError(
+        "CONFLICT",
+        `force-with-lease push rejected — ${branch} moved on origin; retry the sync`,
+      );
+    }
+    pushed = true;
+  }
+
+  // Success finalize: tear the session down, record `succeeded`, restart the
+  // auto-promotion grace window (HEAD moved), CAS Running→Review, release the
+  // claim, and free the pool slot.
+  await deleteSession(sessionId).catch(() => undefined);
+  await setAttemptPhase(db, claim.attemptId, "succeeded", {
+    headShaAfter,
+    pushed,
+  });
+  await db
+    .update(runs)
+    .set({ reviewEnteredAt: now() })
+    .where(eq(runs.id, runId));
+  await markSyncReviewFromRunning(runId, { db });
+  await releaseSyncClaim(db, claim.workspaceId);
+  await promoteNextPending({ db, pool });
+
+  log.info(
+    { runId, attemptId: claim.attemptId, behind, pushed },
+    "sync resolver finalized — agent_launched",
+  );
+
+  return {
+    attemptId: claim.attemptId,
+    outcome: "agent_launched",
+    behind,
+    pushed,
+  };
+}
+
+// Fail-fast pool-capacity gate under the scheduler lock (decision 15). At cap →
+// CONFLICT with no queue; the caller aborts the conflicted rebase.
+async function assertPoolCapacity(db: Db, pool: SchedulerPool): Promise<void> {
+  const live = await db.transaction(async (tx: Db) => {
+    await takeSchedulerLock(tx);
+
+    return countLiveRuns(tx, pool);
+  });
+
+  if (live >= capForPool(pool)) {
+    throw new MaisterError(
+      "CONFLICT",
+      `sync resolver refused — ${pool} pool at capacity (${live}/${capForPool(pool)})`,
+    );
   }
 }

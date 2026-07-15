@@ -2080,6 +2080,8 @@ export const runSessions = pgTable(
         // M34 (ADR-089) standalone agent chain tiers.
         "agentLinkOverride",
         "agentDefault",
+        // ADR-138: branch-sync AI-resolver default (projects.sync_runner_id).
+        "syncDefault",
       ],
     }),
     capabilityAgent: text("capability_agent", { enum: ADAPTER_IDS }),

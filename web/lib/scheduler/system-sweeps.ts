@@ -17,6 +17,7 @@ import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
+import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -28,6 +29,10 @@ export type GcCompatibilitySummary = {
 export type SystemSweepSummary = GcCompatibilitySummary & {
   keepalive: Awaited<ReturnType<typeof runSweepTick>> | null;
   reconcile: Awaited<ReturnType<typeof runReconcileSweep>> | null;
+  // ADR-138 (Task 11): branch-sync recovery sweep — W1/W4 orphan-operation
+  // recovery + the W5 active-time duration cap. null when it threw before
+  // returning a summary.
+  syncRecovery: Awaited<ReturnType<typeof runSyncRecoverySweep>> | null;
   cost: Awaited<ReturnType<typeof reconcileTerminalCostRollups>> | null;
   workspace: WorkspaceGcSummary | null;
   revision: RevisionGcSummary | null;
@@ -136,6 +141,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   const errors: string[] = [];
   let keepalive: SystemSweepSummary["keepalive"] = null;
   let reconcile: SystemSweepSummary["reconcile"] = null;
+  let syncRecovery: SystemSweepSummary["syncRecovery"] = null;
   let cost: SystemSweepSummary["cost"] = null;
 
   try {
@@ -154,6 +160,15 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
 
     errors.push(`reconcile sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep reconcile threw");
+  }
+
+  try {
+    syncRecovery = await runSyncRecoverySweep();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`sync recovery sweep failed: ${message}`);
+    log.error({ err: message }, "system_sweep sync recovery threw");
   }
 
   try {
@@ -196,6 +211,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   const summary = {
     keepalive,
     reconcile,
+    syncRecovery,
     cost,
     brain,
     brainReindex,
