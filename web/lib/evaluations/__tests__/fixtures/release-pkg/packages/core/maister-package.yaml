@@ -1,0 +1,11 @@
+schemaVersion: 1
+name: core
+metadata:
+  title: "MAIster Core (test fixture)"
+  summary: "Fixture package exercising the Evaluation Method release gate."
+flows: []
+capabilities: []
+mcps: []
+evaluationMethods:
+  - id: sdd-quality
+    path: evaluation-methods/sdd-quality

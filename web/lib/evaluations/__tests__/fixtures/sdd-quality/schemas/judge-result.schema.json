@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["criteria"],
+  "properties": {
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterionId", "state"],
+        "properties": {
+          "criterionId": { "type": "string" },
+          "state": {
+            "enum": ["scored", "insufficient_evidence", "not_applicable"]
+          },
+          "score": { "type": ["number", "null"] },
+          "rationale": { "type": "string" },
+          "confidence": { "type": ["number", "null"] }
+        }
+      }
+    }
+  }
+}

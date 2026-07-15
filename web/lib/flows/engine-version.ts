@@ -47,7 +47,13 @@ const log = pino({
 // manifests are refused and `nodes[]` is the only executable Flow shape.
 // Bumped 3.0.0 -> 3.1.0 for strict typed Plan-review artifacts and the
 // declarative `settings.plan_review` graph capability (ADR-137).
-export const MAISTER_ENGINE_VERSION = "3.1.0";
+// Bumped 3.1.0 -> 3.2.0 for package-sourced Evaluation Methods (M46,
+// ADR-140): `maister-package.yaml` may declare `evaluationMethods[]` and a
+// method's `evaluation-method.yaml` declares `compat.engine_min/engine_max`.
+// A package declaring `evaluationMethods` MUST `compat`-target an engine that
+// knows the entity; an engine below a method's `engine_min` refuses enablement
+// loudly (EVAL_METHOD_ENGINE_MIN, see lib/evaluations/method.ts).
+export const MAISTER_ENGINE_VERSION = "3.2.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

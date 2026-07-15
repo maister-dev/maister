@@ -75,7 +75,7 @@ describe("graph-only manifest shape contract", () => {
     expect(result.reason.message).not.toBe(LEGACY_STEPS_REFUSAL_MESSAGE);
   });
 
-  it("keeps an engine range excluding 3.1.0 distinct from legacy shape", () => {
+  it("keeps an engine range excluding 3.2.0 distinct from legacy shape", () => {
     const value = {
       ...baseManifest,
       compat: { engine_min: "4.0.0" },
@@ -88,7 +88,7 @@ describe("graph-only manifest shape contract", () => {
       manifestShape: "graph",
       reason: {
         kind: "engine_incompatible",
-        message: "engine 3.1.0 < engine_min 4.0.0",
+        message: "engine 3.2.0 < engine_min 4.0.0",
       },
     });
     expect(isEngineCompatible(value.compat.engine_min)).toMatchObject({
@@ -115,11 +115,11 @@ describe("graph-only manifest shape contract", () => {
       expect(error).toMatchObject({
         code: "CONFIG",
         message:
-          "flow manifest in flow revision rev-engine-max is incompatible with this MAIster engine: engine 3.1.0 < engine_min 4.0.0",
+          "flow manifest in flow revision rev-engine-max is incompatible with this MAIster engine: engine 3.2.0 < engine_min 4.0.0",
       });
       expect(getFlowManifestIncompatibility(error)).toEqual({
         kind: "engine_incompatible",
-        message: "engine 3.1.0 < engine_min 4.0.0",
+        message: "engine 3.2.0 < engine_min 4.0.0",
       });
     }
   });
@@ -132,8 +132,8 @@ describe("graph-only manifest shape contract", () => {
     });
   });
 
-  it("publishes engine 3.1.0 as the typed Plan-review host contract", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.1.0");
+  it("publishes engine 3.2.0 as the Evaluation Method host contract", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.2.0");
   });
 
   it("lets the intake caller select FLOW_INSTALL without changing remediation", () => {

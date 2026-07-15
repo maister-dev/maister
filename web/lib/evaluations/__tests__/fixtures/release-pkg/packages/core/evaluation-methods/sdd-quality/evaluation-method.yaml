@@ -1,0 +1,68 @@
+schemaVersion: 1
+id: sdd-quality
+name: SDD Quality
+description: Operationalized spec-driven-development quality rubric.
+modes:
+  - absolute
+  - n_way
+groundTruth:
+  required: true
+  description: The task acceptance criteria and spec.
+evidence:
+  captureBudgetBytes: 2000000
+  requiredCoverage:
+    - source_manifest
+    - diff
+    - gates
+    - artifacts
+objectiveChecks:
+  - id: gates
+    provider: gate_result@1
+    policy: metric
+  - id: build
+    provider: trusted_host_check@1
+    policy: gate
+    hostCheckProfile: node-build
+criteria:
+  - id: correctness
+    name: Correctness
+    weight: 0.4
+    scale: { min: 0, max: 5 }
+    anchors:
+      - { score: 0, label: Does not work }
+      - { score: 3, label: Works with gaps }
+      - { score: 5, label: Fully correct }
+  - id: spec-fidelity
+    name: Spec fidelity
+    weight: 0.35
+    scale: { min: 0, max: 5 }
+    anchors:
+      - { score: 0, label: Ignores spec }
+      - { score: 5, label: Matches spec }
+  - id: maintainability
+    name: Maintainability
+    weight: 0.25
+    scale: { min: 0, max: 5 }
+    anchors:
+      - { score: 0, label: Unmaintainable }
+      - { score: 5, label: Clean and clear }
+judges:
+  roles:
+    - id: reviewer
+      name: Reviewer
+      count: 3
+      promptTemplate: prompts/judge.md
+  resultSchema: schemas/judge-result.schema.json
+aggregation:
+  algorithm: weighted_mean@1
+panelPolicy:
+  quorum: 2
+  timeoutSeconds: 600
+  maxRetries: 1
+  disagreement:
+    scoreSpreadThreshold: 1.5
+    escalateOnConflict: true
+report:
+  primaryView: scoreboard
+compat:
+  engine_min: 3.2.0

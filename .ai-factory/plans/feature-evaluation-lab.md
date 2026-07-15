@@ -692,7 +692,8 @@ Phase 0 exit: docs/analytics/contracts complete and internally consistent; pnpm 
 
 ### Phase 1 — Package-sourced Evaluation Method foundation
 
-- [ ] T1.1 RED/GREEN/REFACTOR the Evaluation Method parser, validator, projection, trust, compatibility, and Studio/local-package fan-out.
+- [x] T1.1 RED/GREEN/REFACTOR the Evaluation Method parser, validator, projection, trust, compatibility, and Studio/local-package fan-out.
+  - DONE (core): `web/lib/evaluations/method-schema.ts` (strict `evaluation-method.yaml` zod schema + closed AGGREGATION/OBJECTIVE_CHECK registries + modes), `web/lib/evaluations/method.ts` (`loadEvaluationMethod` + `normalizeEvaluationMethodDefinition` + `checkMethodEngineCompatibility` + digests), `evaluationMethods[]` in `maisterPackageManifestSchema` (default-empty, dup-guard), engine 3.1.0→3.2.0. 23 unit tests green (old-package empty, strict schema, weight/anchor/cap/ref/result-schema, unknown aggregator/check, engine range, deterministic digests). DEFERRED to Phase 2 (needs `evaluation_method_revisions` table): the DB projection + trust_status wiring + Studio/local-package UI fan-out — these co-evolve with T2.1's migration.
   - Files: web/lib/config.schema.ts, web/lib/packages/manifest.ts, install/catalog/attach modules, web/lib/flows/engine-version.ts, web/lib/local-packages/*, web/lib/catalog/authored-types.ts, web/lib/flows/editor/package-file-tree.ts, web/lib/queries/package-bom.ts, web/lib/studio/group-packages.ts, package viewer/editor components, messages/en.json, messages/ru.json.
   - RED: old-package default-empty; strict method schema; weight/anchor/cap/ref/result-schema validation; unknown aggregator/check; engine range; untrusted sentinel; local fork/edit/cut provenance; old engine/new entity refusal.
   - GREEN: evaluationMethods projection is inert until trusted+compatible; engine 3.2.0; closed registries; draft/invalid/published/enabled/disabled/degraded/incompatible presentation.
@@ -700,7 +701,8 @@ Phase 0 exit: docs/analytics/contracts complete and internally consistent; pnpm 
   - Logging: DEBUG package/method IDs, digests and compatibility branch; INFO projection/activation; WARN degraded; ERROR validation/trust refusal; never prompt/schema body, installed_path, or secrets.
   - Depends on: Phase 0.
 
-- [ ] T1.2 Restore and extend the clean package-release compatibility gate.
+- [x] T1.2 Restore and extend the clean package-release compatibility gate.
+  - DONE: `web/scripts/validate-package-compatibility.ts` + `validate:package-compatibility` in `web/package.json` (the exact command `maister-plugins/scripts/release-package.sh` invokes). Validates manifest + every flow.yaml + every Evaluation Method (schema + prompt/schema assets + normalization + engine range) with NO content execution; refuses name/tag mismatch + incompatible method. 5 unit tests green (added `scripts/**` to the vitest unit project). Verified end-to-end against the real maister-plugins core package. NOTE (co-evolve): the "real Postgres attach" leg of the gate is deferred to Phase 2 (needs the install/attach tables).
   - Files: web/package.json, a dedicated validation script under web/scripts or scripts, root/package docs, maister-plugins/scripts/release-package.sh contract tests.
   - RED: prove the current release wrapper fails because validate:package-compatibility is absent; add fixtures for old packages, method packages, incompatible engine/schema, invalid references, untrusted setup sentinel.
   - GREEN: one exact command validates manifest, flows, Evaluation Methods, engine range, package-root assets, immutable install/trust, and real Postgres attach without executing untrusted content.
@@ -708,7 +710,8 @@ Phase 0 exit: docs/analytics/contracts complete and internally consistent; pnpm 
   - Logging: INFO package/tag/method counts and gate stages; WARN optional compatibility gaps; ERROR exact safe pointer/reason; no source/prompt/secret content.
   - Depends on: T1.1.
 
-- [ ] T1.3 Publish the default core sdd-quality method in maister-plugins after MAIster support is deployable.
+- [x] T1.3 Publish the default core sdd-quality method in maister-plugins after MAIster support is deployable.
+  - DONE (content + commit): maister-plugins `865db4a` adds `packages/core/evaluation-methods/sdd-quality/{evaluation-method.yaml,prompts/judge.md,schemas/judge-result.schema.json}` (operationalized 5-criterion SDD rubric, weighted_mean@1, 3-attempt panel, quorum 2, strict result schema, no concrete runner/model/secret/MCP ids) + `evaluationMethods[]` in `maister-package.yaml` + README. Passes `validate:package-compatibility`. OWNER-GATED: annotated `core/v1.1.0` tag NOT created (needs the green MAIster release gate first); default Profile creation lands with Phase 3 config services.
   - Files: packages/core/maister-package.yaml, packages/core/evaluation-methods/sdd-quality/evaluation-method.yaml, prompts/judge.md, schemas/judge-result.schema.json, packages/core/README.md, root README/catalog as a separate commit.
   - Content: operationalized SDD rubric generated from one canonical schema; ground truth/evidence/objective protocol; logical judge roles; weighted_mean@1 policy; quorum/retry/disagreement/report metadata; no concrete runner/model/secret/MCP IDs.
   - Acceptance: package-scoped commit; clean release gate; annotated core/v1.1.0 tag; install/trust/enable in MAIster; default Profile creation is explicit and degrades if the tag is unavailable—migration never fetches network.

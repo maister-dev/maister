@@ -79,6 +79,7 @@ export async function loadMaisterPackageManifest(
       capabilities: parsed.data.capabilities.length,
       mcps: parsed.data.mcps.length,
       restrictions: parsed.data.restrictions.length,
+      evaluationMethods: parsed.data.evaluationMethods.length,
     },
     "maister-package.yaml loaded",
   );

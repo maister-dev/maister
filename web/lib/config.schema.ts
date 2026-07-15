@@ -1493,6 +1493,12 @@ export const maisterPackageManifestSchema = z
     capabilities: z.array(packageManifestEntrySchema).default([]),
     mcps: z.array(packageManifestMcpSchema).default([]),
     restrictions: z.array(packageManifestRestrictionSchema).default([]),
+    // Package-sourced Evaluation Methods (M46, ADR-140). Optional and
+    // default-empty: a package that predates the entity parses unchanged, and an
+    // engine that knows the entity treats older packages as `evaluationMethods:
+    // []`. Each entry points at `<path>/evaluation-method.yaml` + referenced
+    // prompt/schema assets; content is INERT until trusted + compatible.
+    evaluationMethods: z.array(packageManifestEntrySchema).default([]),
   })
   .strict()
   .superRefine((manifest, ctx) => {
@@ -1500,6 +1506,7 @@ export const maisterPackageManifestSchema = z
     addDuplicateIdIssues(ctx, "capabilities", manifest.capabilities);
     addDuplicateIdIssues(ctx, "mcps", manifest.mcps);
     addDuplicateIdIssues(ctx, "restrictions", manifest.restrictions);
+    addDuplicateIdIssues(ctx, "evaluationMethods", manifest.evaluationMethods);
 
     const flowIds = new Set(manifest.flows.map((f) => f.id));
 
