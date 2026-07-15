@@ -1,6 +1,11 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The runId-scoped chip mounts the client reopen button, which reads the router.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 import {
   PrStateChip,
@@ -67,11 +72,33 @@ describe("PrStateChip", () => {
     expect(html).toContain('data-pr-conflicts="true"');
     expect(html).toContain("Conflicts");
     expect(html).toContain("text-amber");
-    // Reopen is present but disabled (Task 12 wires the action).
+    // No runId scopes this chip (read-only surface) → the affordance stays the
+    // disabled placeholder; the live action needs a run to act on (ADR-138 T17).
     expect(html).toContain('data-testid="pr-reopen"');
-    expect(html).toContain("disabled");
+    expect(html).toContain('disabled=""');
     expect(html).toContain('aria-label="Reopen PR"');
     // Conflicts win over the state chip — no plain open chip alongside.
     expect(html).not.toContain('data-pr-state="open"');
+  });
+
+  it("renders a LIVE reopen action when the chip is run-scoped (ADR-138 Task 17)", () => {
+    const html = render({
+      prState: "open",
+      prHasConflicts: true,
+      runId: "run-1",
+    });
+
+    expect(html).toContain('data-testid="pr-reopen"');
+    expect(html).toContain('aria-label="Reopen PR"');
+    // The wired button is NOT the disabled placeholder. Assert the rendered
+    // ATTRIBUTE (`disabled=""`), not the substring — the live button's Tailwind
+    // classes legitimately carry `disabled:` busy-state variants.
+    const idx = html.indexOf('data-testid="pr-reopen"');
+    const el = html.slice(
+      html.lastIndexOf("<button", idx),
+      html.indexOf(">", idx),
+    );
+
+    expect(el).not.toContain('disabled=""');
   });
 });

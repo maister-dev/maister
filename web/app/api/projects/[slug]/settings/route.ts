@@ -55,6 +55,11 @@ const patchBodySchema = z
     // ADR-126: auto-promotion lane config. `null` clears to shipped defaults +
     // master OFF. `.strict()` rejects unknown keys → 422.
     autoPromotion: autoPromotionConfigSchema.nullable().optional(),
+    // ADR-138: branch-sync defaults. `syncStrategyDefault` is non-nullable
+    // (clear = back to "rebase"); `syncRunnerId` null clears the resolver-runner
+    // override (launch-time resolver chain applies).
+    syncStrategyDefault: z.enum(["rebase", "merge"]).optional(),
+    syncRunnerId: z.string().min(1).nullable().optional(),
     homeResolution: z
       .object({
         decision: z.enum(["owned", "indexed"]).optional(),
@@ -143,31 +148,41 @@ export async function PATCH(
       );
     }
 
-    if (body.runnerId !== undefined && body.runnerId !== null) {
+    async function assertRunnerUsable(runnerId: string): Promise<void> {
       const runnerRows = await db
         .select()
         .from(platformAcpRunners)
-        .where(eq(platformAcpRunners.id, body.runnerId));
+        .where(eq(platformAcpRunners.id, runnerId));
       const runner = runnerRows[0];
 
       if (!runner) {
         throw new MaisterError(
           "PRECONDITION",
-          `ACP runner not found: ${body.runnerId}`,
+          `ACP runner not found: ${runnerId}`,
         );
       }
       if (runner.enabled === false) {
         throw new MaisterError(
           "PRECONDITION",
-          `ACP runner is disabled: ${body.runnerId}`,
+          `ACP runner is disabled: ${runnerId}`,
         );
       }
       if (runner.readinessStatus !== "Ready") {
         throw new MaisterError(
           "PRECONDITION",
-          `ACP runner is not ready: ${body.runnerId}`,
+          `ACP runner is not ready: ${runnerId}`,
         );
       }
+    }
+
+    if (body.runnerId !== undefined && body.runnerId !== null) {
+      await assertRunnerUsable(body.runnerId);
+    }
+
+    // ADR-138: the resolver-runner override must clear the same catalog gate as
+    // the default runner (null clears the override, no gate).
+    if (body.syncRunnerId !== undefined && body.syncRunnerId !== null) {
+      await assertRunnerUsable(body.syncRunnerId);
     }
 
     // ADR-122 enable-gate: a project can never be enabled into an
@@ -214,6 +229,12 @@ export async function PATCH(
     // SET/CLEAR symmetry: null clears to defaults+OFF, a config sets it.
     if (body.autoPromotion !== undefined) {
       update.autoPromotion = body.autoPromotion;
+    }
+    if (body.syncStrategyDefault !== undefined) {
+      update.syncStrategyDefault = body.syncStrategyDefault;
+    }
+    if (body.syncRunnerId !== undefined) {
+      update.syncRunnerId = body.syncRunnerId;
     }
 
     if (
@@ -341,6 +362,14 @@ export async function PATCH(
         body.autoPromotion === undefined
           ? project.autoPromotion
           : body.autoPromotion,
+      syncStrategyDefault:
+        body.syncStrategyDefault === undefined
+          ? project.syncStrategyDefault
+          : body.syncStrategyDefault,
+      syncRunnerId:
+        body.syncRunnerId === undefined
+          ? project.syncRunnerId
+          : body.syncRunnerId,
       homeResolution: body.homeResolution,
       brainIndexingProfile: body.brainIndexingProfile,
       projectionFlowId: body.projectionFlowId,

@@ -13,11 +13,20 @@ export interface RemoteItem {
   url: string;
 }
 
+export interface SyncRunnerOption {
+  id: string;
+  label: string;
+}
+
 export interface ProjectGitSettingsControlProps {
   projectSlug: string;
   mainBranch: string;
   remotes: RemoteItem[];
   needsPersist: boolean;
+  // ADR-138 (Task 17): branch-sync defaults + resolver-runner picker options.
+  syncStrategyDefault: "rebase" | "merge";
+  syncRunnerId: string | null;
+  syncRunnerOptions: SyncRunnerOption[];
 }
 
 type Modal = null | { mode: "add" } | { mode: "manage"; remote: RemoteItem };
@@ -40,7 +49,47 @@ export function ProjectGitSettingsControl(
   const [push, setPush] = useState(false);
   const [persistNote, setPersistNote] = useState<string | null>(null);
 
+  // ADR-138 (Task 17): branch-sync defaults form (own local state + save).
+  const [syncStrategy, setSyncStrategy] = useState<"rebase" | "merge">(
+    props.syncStrategyDefault,
+  );
+  const [syncRunner, setSyncRunner] = useState<string>(
+    props.syncRunnerId ?? "",
+  );
+  const [syncSaving, setSyncSaving] = useState(false);
+  const [syncSaved, setSyncSaved] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
   const firstFieldRef = useRef<HTMLInputElement>(null);
+
+  async function saveSync(): Promise<void> {
+    setSyncSaving(true);
+    setSyncSaved(false);
+    setSyncError(null);
+    try {
+      const res = await fetch(`/api/projects/${props.projectSlug}/settings`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          syncStrategyDefault: syncStrategy,
+          syncRunnerId: syncRunner === "" ? null : syncRunner,
+        }),
+      });
+
+      if (!res.ok) {
+        setSyncError(await readApiError(res, tErr));
+        setSyncSaving(false);
+
+        return;
+      }
+      setSyncSaved(true);
+      setSyncSaving(false);
+      refresh();
+    } catch {
+      setSyncError(t("git.error"));
+      setSyncSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (modal === null) return;
@@ -191,208 +240,285 @@ export function ProjectGitSettingsControl(
   }
 
   return (
-    <div className="mb-5 rounded-xl border border-line bg-paper p-[18px]">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <h3 className="m-0 text-[13px] font-semibold tracking-[-0.005em] text-ink">
-            {t("git.remotesTitle")}
-          </h3>
-          <p className="mt-[3px] font-mono text-[10.5px] tracking-[0.02em] text-mute">
-            {t("git.remotesDesc")}
-          </p>
+    <>
+      <div
+        className="mb-5 rounded-xl border border-line bg-paper p-[18px]"
+        data-testid="branch-sync-settings"
+      >
+        <h3 className="m-0 mb-1 text-[13px] font-semibold tracking-[-0.005em] text-ink">
+          {t("git.syncTitle")}
+        </h3>
+        <p className="mb-3 font-mono text-[10.5px] tracking-[0.02em] text-mute">
+          {t("git.syncDesc")}
+        </p>
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] text-ink-2">
+              {t("git.syncStrategyLabel")}
+            </span>
+            <select
+              className="rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
+              data-testid="branch-sync-strategy"
+              value={syncStrategy}
+              onChange={(e) =>
+                setSyncStrategy(e.target.value as "rebase" | "merge")
+              }
+            >
+              <option value="rebase">{t("git.syncStrategyRebase")}</option>
+              <option value="merge">{t("git.syncStrategyMerge")}</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] text-ink-2">
+              {t("git.syncRunnerLabel")}
+            </span>
+            <select
+              className="rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
+              data-testid="branch-sync-runner"
+              value={syncRunner}
+              onChange={(e) => setSyncRunner(e.target.value)}
+            >
+              <option value="">{t("git.syncRunnerDefault")}</option>
+              {props.syncRunnerOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="rounded-lg bg-amber px-3 py-2 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
+            disabled={syncSaving}
+            type="button"
+            onClick={() => void saveSync()}
+          >
+            {syncSaving ? t("git.pending") : t("git.save")}
+          </button>
+          {syncSaved ? (
+            <span
+              className="text-[16px] text-success"
+              data-testid="branch-sync-saved"
+              role="status"
+              title={t("git.syncSaved")}
+            >
+              ✓
+            </span>
+          ) : null}
         </div>
-        <button
-          className="rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2"
-          type="button"
-          onClick={openAdd}
-        >
-          {t("git.addRemote")}
-        </button>
+        {syncError ? (
+          <p className="mt-2 text-[12px] text-danger" role="alert">
+            {syncError}
+          </p>
+        ) : null}
       </div>
 
-      {props.needsPersist ? (
-        <div className="mb-3 rounded-lg border border-amber-line bg-amber-soft p-3 text-[12.5px] text-ink">
-          <div className="font-semibold">{t("git.persistTitle")}</div>
-          <p className="mt-1 text-mute">{t("git.persistDesc")}</p>
-          <label className="mt-2 flex items-center gap-2 text-ink-2">
-            <input
-              checked={push}
-              type="checkbox"
-              onChange={(e) => setPush(e.target.checked)}
-            />
-            {t("persistBanner.alsoPush")}
-          </label>
-          {persistNote ? (
-            <p className="mt-2 text-mute" role="status">
-              {persistNote}
+      <div className="mb-5 rounded-xl border border-line bg-paper p-[18px]">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+          <div>
+            <h3 className="m-0 text-[13px] font-semibold tracking-[-0.005em] text-ink">
+              {t("git.remotesTitle")}
+            </h3>
+            <p className="mt-[3px] font-mono text-[10.5px] tracking-[0.02em] text-mute">
+              {t("git.remotesDesc")}
             </p>
-          ) : null}
+          </div>
           <button
-            className="mt-2 rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
-            disabled={pending}
+            className="rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2"
             type="button"
-            onClick={() => void persist()}
+            onClick={openAdd}
           >
-            {pending ? t("persistBanner.pending") : t("git.persist")}
+            {t("git.addRemote")}
           </button>
         </div>
-      ) : null}
 
-      {props.remotes.length === 0 ? (
-        <p className="font-mono text-[11.5px] text-mute">{t("git.empty")}</p>
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-line">
-          <table className="w-full border-collapse text-[12.5px]">
-            <thead>
-              <tr className="bg-line/40 text-left text-mute">
-                <th className="px-3 py-2 font-semibold">{t("git.colName")}</th>
-                <th className="px-3 py-2 font-semibold">{t("git.colUrl")}</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {props.remotes.map((remote) => (
-                <tr key={remote.name} className="border-t border-line">
-                  <td className="px-3 py-2 font-mono font-semibold text-ink">
-                    {remote.name}
-                  </td>
-                  <td className="break-all px-3 py-2 font-mono text-ink-2">
-                    {remote.url}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      className="rounded-md border border-line px-2 py-1 text-[11.5px] font-medium text-ink-2 hover:bg-line/40"
-                      type="button"
-                      onClick={() => openManage(remote)}
-                    >
-                      {t("git.manage")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {modal !== null ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          {/* role="dialog" belongs on the panel, not the backdrop; close via
-              Escape (window listener) + Cancel — no backdrop-click handler so
-              the overlay stays a11y-clean (no listener on a non-interactive el). */}
-          <div
-            aria-labelledby="git-remote-modal-title"
-            aria-modal="true"
-            className="w-full max-w-[480px] rounded-xl border border-line bg-paper p-5 text-[13px] text-ink shadow-xl"
-            role="dialog"
-          >
-            <h4
-              className="m-0 mb-3 text-[14px] font-semibold"
-              id="git-remote-modal-title"
-            >
-              {modal.mode === "add" ? t("git.addTitle") : t("git.manageTitle")}
-            </h4>
-
-            {modal.mode === "add" ? (
-              <label className="mb-3 block">
-                <span className="mb-1 block text-[12px] text-ink-2">
-                  {t("git.nameLabel")}
-                </span>
-                <input
-                  ref={firstFieldRef}
-                  className="w-full rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
-                  placeholder="origin"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </label>
-            ) : (
-              <div className="mb-3 font-mono text-[12.5px] text-ink-2">
-                {modal.remote.name}
-              </div>
-            )}
-
-            <label className="mb-3 block">
-              <span className="mb-1 block text-[12px] text-ink-2">
-                {t("git.urlLabel")}
-              </span>
+        {props.needsPersist ? (
+          <div className="mb-3 rounded-lg border border-amber-line bg-amber-soft p-3 text-[12.5px] text-ink">
+            <div className="font-semibold">{t("git.persistTitle")}</div>
+            <p className="mt-1 text-mute">{t("git.persistDesc")}</p>
+            <label className="mt-2 flex items-center gap-2 text-ink-2">
               <input
-                ref={modal.mode === "add" ? undefined : firstFieldRef}
-                className="w-full rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
-                placeholder="git@github.com:org/app.git"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                checked={push}
+                type="checkbox"
+                onChange={(e) => setPush(e.target.checked)}
               />
+              {t("persistBanner.alsoPush")}
             </label>
-
-            {error ? (
-              <p className="mb-3 text-[12px] text-danger" role="alert">
-                {error}
+            {persistNote ? (
+              <p className="mt-2 text-mute" role="status">
+                {persistNote}
               </p>
             ) : null}
+            <button
+              className="mt-2 rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
+              disabled={pending}
+              type="button"
+              onClick={() => void persist()}
+            >
+              {pending ? t("persistBanner.pending") : t("git.persist")}
+            </button>
+          </div>
+        ) : null}
 
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex gap-2">
-                {modal.mode === "add" ? (
-                  <button
-                    className="rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
-                    disabled={pending}
-                    type="button"
-                    onClick={() => void submitAdd()}
-                  >
-                    {pending ? t("git.pending") : t("git.addRemote")}
-                  </button>
-                ) : (
-                  <button
-                    className="rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
-                    disabled={pending}
-                    type="button"
-                    onClick={() => void submitSetUrl(modal.remote)}
-                  >
-                    {pending ? t("git.pending") : t("git.save")}
-                  </button>
-                )}
-                <button
-                  className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-medium text-ink-2 hover:bg-line/40"
-                  type="button"
-                  onClick={() => setModal(null)}
-                >
-                  {t("git.cancel")}
-                </button>
-              </div>
+        {props.remotes.length === 0 ? (
+          <p className="font-mono text-[11.5px] text-mute">{t("git.empty")}</p>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-line">
+            <table className="w-full border-collapse text-[12.5px]">
+              <thead>
+                <tr className="bg-line/40 text-left text-mute">
+                  <th className="px-3 py-2 font-semibold">
+                    {t("git.colName")}
+                  </th>
+                  <th className="px-3 py-2 font-semibold">{t("git.colUrl")}</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {props.remotes.map((remote) => (
+                  <tr key={remote.name} className="border-t border-line">
+                    <td className="px-3 py-2 font-mono font-semibold text-ink">
+                      {remote.name}
+                    </td>
+                    <td className="break-all px-3 py-2 font-mono text-ink-2">
+                      {remote.url}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        className="rounded-md border border-line px-2 py-1 text-[11.5px] font-medium text-ink-2 hover:bg-line/40"
+                        type="button"
+                        onClick={() => openManage(remote)}
+                      >
+                        {t("git.manage")}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-              {modal.mode === "manage" ? (
+        {modal !== null ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            {/* role="dialog" belongs on the panel, not the backdrop; close via
+              Escape (window listener) + Cancel — no backdrop-click handler so
+              the overlay stays a11y-clean (no listener on a non-interactive el). */}
+            <div
+              aria-labelledby="git-remote-modal-title"
+              aria-modal="true"
+              className="w-full max-w-[480px] rounded-xl border border-line bg-paper p-5 text-[13px] text-ink shadow-xl"
+              role="dialog"
+            >
+              <h4
+                className="m-0 mb-3 text-[14px] font-semibold"
+                id="git-remote-modal-title"
+              >
+                {modal.mode === "add"
+                  ? t("git.addTitle")
+                  : t("git.manageTitle")}
+              </h4>
+
+              {modal.mode === "add" ? (
+                <label className="mb-3 block">
+                  <span className="mb-1 block text-[12px] text-ink-2">
+                    {t("git.nameLabel")}
+                  </span>
+                  <input
+                    ref={firstFieldRef}
+                    className="w-full rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
+                    placeholder="origin"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </label>
+              ) : (
+                <div className="mb-3 font-mono text-[12.5px] text-ink-2">
+                  {modal.remote.name}
+                </div>
+              )}
+
+              <label className="mb-3 block">
+                <span className="mb-1 block text-[12px] text-ink-2">
+                  {t("git.urlLabel")}
+                </span>
+                <input
+                  ref={modal.mode === "add" ? undefined : firstFieldRef}
+                  className="w-full rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
+                  placeholder="git@github.com:org/app.git"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                />
+              </label>
+
+              {error ? (
+                <p className="mb-3 text-[12px] text-danger" role="alert">
+                  {error}
+                </p>
+              ) : null}
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex gap-2">
+                  {modal.mode === "add" ? (
+                    <button
+                      className="rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
+                      disabled={pending}
+                      type="button"
+                      onClick={() => void submitAdd()}
+                    >
+                      {pending ? t("git.pending") : t("git.addRemote")}
+                    </button>
+                  ) : (
+                    <button
+                      className="rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
+                      disabled={pending}
+                      type="button"
+                      onClick={() => void submitSetUrl(modal.remote)}
+                    >
+                      {pending ? t("git.pending") : t("git.save")}
+                    </button>
+                  )}
                   <button
-                    className="rounded-lg border border-line px-2.5 py-1.5 text-[12px] font-medium text-ink-2 hover:bg-line/40 disabled:opacity-60"
-                    disabled={pending}
+                    className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-medium text-ink-2 hover:bg-line/40"
                     type="button"
-                    onClick={() => void action(modal.remote, "fetch")}
+                    onClick={() => setModal(null)}
                   >
-                    {t("git.fetch")}
-                  </button>
-                  <button
-                    className="rounded-lg border border-line px-2.5 py-1.5 text-[12px] font-medium text-ink-2 hover:bg-line/40 disabled:opacity-60"
-                    disabled={pending}
-                    type="button"
-                    onClick={() => void action(modal.remote, "push")}
-                  >
-                    {t("git.push")}
-                  </button>
-                  <button
-                    className="rounded-lg border border-danger/40 px-2.5 py-1.5 text-[12px] font-medium text-danger hover:bg-danger/10 disabled:opacity-60"
-                    disabled={pending}
-                    type="button"
-                    onClick={() => void removeRemote(modal.remote)}
-                  >
-                    {t("git.remove")}
+                    {t("git.cancel")}
                   </button>
                 </div>
-              ) : null}
+
+                {modal.mode === "manage" ? (
+                  <div className="flex gap-2">
+                    <button
+                      className="rounded-lg border border-line px-2.5 py-1.5 text-[12px] font-medium text-ink-2 hover:bg-line/40 disabled:opacity-60"
+                      disabled={pending}
+                      type="button"
+                      onClick={() => void action(modal.remote, "fetch")}
+                    >
+                      {t("git.fetch")}
+                    </button>
+                    <button
+                      className="rounded-lg border border-line px-2.5 py-1.5 text-[12px] font-medium text-ink-2 hover:bg-line/40 disabled:opacity-60"
+                      disabled={pending}
+                      type="button"
+                      onClick={() => void action(modal.remote, "push")}
+                    >
+                      {t("git.push")}
+                    </button>
+                    <button
+                      className="rounded-lg border border-danger/40 px-2.5 py-1.5 text-[12px] font-medium text-danger hover:bg-danger/10 disabled:opacity-60"
+                      disabled={pending}
+                      type="button"
+                      onClick={() => void removeRemote(modal.remote)}
+                    >
+                      {t("git.remove")}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </>
   );
 }

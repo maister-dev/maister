@@ -1070,7 +1070,16 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
   **Logging:** client-side none; server actions reuse Task 9/10 logs.
 
-- [ ] **Task 17: Project settings + remaining chips.**
+- [x] **Task 17: Project settings + remaining chips.**
+
+  IMPLEMENTATION NOTE (2026-07-15): the board PR chips were already wired to
+  live data by Task 7 (`flight-card.tsx` → `PrStateChip`); Task 17 added the
+  `runId` scope that turns the Task-7 **disabled** reopen placeholder into the
+  LIVE action (new `components/pr-reopen-button.tsx` client component; the chip
+  stays presentational and keeps the disabled placeholder on any surface with no
+  run scope — e.g. `run-header.tsx`, which has no runId prop). Branch-sync
+  defaults ride the EXISTING aggregate `PATCH /api/projects/[slug]/settings`
+  (house rule: one transactional endpoint, no per-field routes).
 
   `project-settings-git` panel: sync strategy default (rebase|merge) and
   resolver runner picker (platform runner catalog, nullable) with the aggregate

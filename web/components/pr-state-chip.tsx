@@ -9,6 +9,8 @@ import {
   XCircleIcon,
 } from "@heroicons/react/24/outline";
 
+import { PrReopenButton } from "@/components/pr-reopen-button";
+
 export type PrState = "open" | "merged" | "closed";
 
 export interface PrStateChipLabels {
@@ -23,6 +25,10 @@ export interface PrStateChipProps {
   prState: PrState | null;
   prHasConflicts: boolean | null;
   labels: PrStateChipLabels;
+  // ADR-138 (Task 17): when present, the conflicts variant carries a LIVE reopen
+  // action for this run. Omitted → the affordance stays disabled (read-only
+  // surfaces with no run scope).
+  runId?: string;
 }
 
 const CHIP =
@@ -46,12 +52,13 @@ const STATE_TONE: Record<PrState, string> = {
 
 // Shared PR-lifecycle chip (ADR-137). Self-hiding: renders nothing until a scan
 // records a PR state or a conflict. Conflicts take visual precedence — an
-// unmergeable PR is the operator's most urgent signal — and carry the (disabled)
-// reopen affordance until Task 12 wires the action.
+// unmergeable PR is the operator's most urgent signal — and carry the reopen
+// affordance (live when a `runId` scopes the chip, ADR-138 Task 17).
 export function PrStateChip({
   prState,
   prHasConflicts,
   labels,
+  runId,
 }: PrStateChipProps): ReactElement | null {
   if (prHasConflicts === true) {
     return (
@@ -62,17 +69,20 @@ export function PrStateChip({
       >
         <ExclamationTriangleIcon aria-hidden="true" className="h-3.5 w-3.5" />
         {labels.conflicts}
-        {/* wired by Task 12 (reopen) */}
-        <button
-          disabled
-          aria-label={labels.reopen}
-          className="ml-0.5 inline-flex cursor-not-allowed items-center opacity-50"
-          data-testid="pr-reopen"
-          title={labels.reopen}
-          type="button"
-        >
-          <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
-        </button>
+        {runId ? (
+          <PrReopenButton label={labels.reopen} runId={runId} />
+        ) : (
+          <button
+            disabled
+            aria-label={labels.reopen}
+            className="ml-0.5 inline-flex cursor-not-allowed items-center opacity-50"
+            data-testid="pr-reopen"
+            title={labels.reopen}
+            type="button"
+          >
+            <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        )}
       </span>
     );
   }

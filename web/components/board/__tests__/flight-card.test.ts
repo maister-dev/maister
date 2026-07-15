@@ -525,13 +525,22 @@ describe("FlightCard — PR-state chip (ADR-137)", () => {
     expect(html).toContain("PR merged");
   });
 
-  it("renders the conflicts variant with a disabled reopen when prHasConflicts", () => {
+  it("renders the conflicts variant with a LIVE reopen action when prHasConflicts (ADR-138 Task 17)", () => {
     const html = render(baseCard({ prState: "open", prHasConflicts: true }));
 
     expect(html).toContain('data-pr-conflicts="true"');
     expect(html).toContain("Conflicts");
     expect(html).toContain('data-testid="pr-reopen"');
-    expect(html).toContain("disabled");
+    // The card scopes the chip with its runId, so the affordance is WIRED —
+    // span the button's own tag and prove the rendered `disabled` ATTRIBUTE is
+    // absent (its Tailwind classes carry `disabled:` busy-state variants).
+    const idx = html.indexOf('data-testid="pr-reopen"');
+    const el = html.slice(
+      html.lastIndexOf("<button", idx),
+      html.indexOf(">", idx),
+    );
+
+    expect(el).not.toContain('disabled=""');
   });
 
   it("omits the PR chip when there is no PR state and no conflict", () => {

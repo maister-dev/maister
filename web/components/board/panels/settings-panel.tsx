@@ -182,6 +182,13 @@ export async function SettingsPanel({
           needsPersist={project.maisterYamlPath === null}
           projectSlug={project.slug}
           remotes={gitRemotes}
+          syncRunnerId={project.syncRunnerId ?? null}
+          syncRunnerOptions={runners
+            .filter(
+              (runner) => runner.enabled && runner.readinessStatus === "Ready",
+            )
+            .map((runner) => ({ id: runner.id, label: runner.label }))}
+          syncStrategyDefault={project.syncStrategyDefault ?? "rebase"}
         />
       ) : null}
       {isAdmin ? (

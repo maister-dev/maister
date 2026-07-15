@@ -27,6 +27,11 @@ function render(over: Partial<ProjectGitSettingsControlProps> = {}): string {
     mainBranch: "main",
     remotes: [{ name: "origin", url: "https://github.com/o/r.git" }],
     needsPersist: false,
+    syncStrategyDefault: "rebase",
+    syncRunnerId: null,
+    syncRunnerOptions: [
+      { id: "runner-1", label: "runner-1 · claude · sonnet" },
+    ],
     ...over,
   };
 
@@ -60,5 +65,21 @@ describe("ProjectGitSettingsControl", () => {
     expect(render({ needsPersist: false })).not.toContain(
       "projects.git.persistTitle",
     );
+  });
+
+  it("renders the branch-sync defaults block with strategy + resolver-runner pickers", () => {
+    const html = render({
+      syncStrategyDefault: "merge",
+      syncRunnerId: "runner-1",
+    });
+
+    expect(html).toContain('data-testid="branch-sync-settings"');
+    expect(html).toContain('data-testid="branch-sync-strategy"');
+    expect(html).toContain('data-testid="branch-sync-runner"');
+    expect(html).toContain("projects.git.syncTitle");
+    // The resolver-runner option label from the catalog is offered.
+    expect(html).toContain("runner-1 · claude · sonnet");
+    // The "project default" (null) option is always present.
+    expect(html).toContain("projects.git.syncRunnerDefault");
   });
 });

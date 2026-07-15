@@ -348,6 +348,7 @@ export function FlightCard({
           labels={labels.prChip}
           prHasConflicts={card.prHasConflicts}
           prState={card.prState}
+          runId={card.runId}
         />
         {card.runCount > 0 ? (
           <span
