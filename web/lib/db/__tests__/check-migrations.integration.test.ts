@@ -68,4 +68,46 @@ describe("findPendingMigrations", () => {
 
     expect(pending).toContain(newest.tag);
   });
+
+  it("applies the project automation storage contract to a fully migrated database", async () => {
+    const tables = await db.execute<{ table_name: string }>(sql`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN (
+          'scheduled_task_launches',
+          'scheduled_task_launch_attempts',
+          'scheduled_task_launch_events'
+        )
+      ORDER BY table_name
+    `);
+    const constraints = await db.execute<{ conname: string }>(sql`
+      SELECT conname
+      FROM pg_constraint
+      WHERE conname IN (
+        'scheduled_task_launches_state_shape_check',
+        'runs_scheduled_launch_id_unique'
+      )
+      ORDER BY conname
+    `);
+    const indexes = await db.execute<{ indexname: string }>(sql`
+      SELECT indexname
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname = 'scheduled_task_launch_attempts_launch_live_uq'
+    `);
+
+    expect(tables.rows.map((row) => row.table_name)).toEqual([
+      'scheduled_task_launch_attempts',
+      'scheduled_task_launch_events',
+      'scheduled_task_launches',
+    ]);
+    expect(constraints.rows.map((row) => row.conname)).toEqual([
+      'runs_scheduled_launch_id_unique',
+      'scheduled_task_launches_state_shape_check',
+    ]);
+    expect(indexes.rows.map((row) => row.indexname)).toEqual([
+      'scheduled_task_launch_attempts_launch_live_uq',
+    ]);
+  });
 });

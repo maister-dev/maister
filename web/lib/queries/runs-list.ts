@@ -130,6 +130,7 @@ type RawRunsListRow = {
     | "domain_event"
     | "webhook"
     | "flow"
+    | "scheduled"
     | null;
   cutover_failed_at: Date | string | null;
 };
@@ -219,7 +220,7 @@ function visibleProjectsPredicate(user: RunsListUser): SQL {
 
 function sourcePredicate(source: RunsListSource): SQL {
   if (source === "scheduled") {
-    return sql`(rs.id IS NOT NULL OR r.trigger_source = 'cron')`;
+    return sql`(rs.id IS NOT NULL OR r.trigger_source IN ('cron', 'scheduled'))`;
   }
 
   if (source === "manual") {
@@ -407,7 +408,13 @@ function tokensTotal(row: RawRunsListRow): number | null {
 }
 
 function sourceKind(row: RawRunsListRow): RunsListSource {
-  if (row.schedule_id || row.trigger_source === "cron") return "scheduled";
+  if (
+    row.schedule_id ||
+    row.trigger_source === "cron" ||
+    row.trigger_source === "scheduled"
+  ) {
+    return "scheduled";
+  }
   if (row.run_kind === "scratch") return "scratch";
   if (
     row.trigger_source === "domain_event" ||
@@ -423,6 +430,7 @@ function sourceKind(row: RawRunsListRow): RunsListSource {
 function sourceLabel(row: RawRunsListRow): string | null {
   if (row.schedule_name) return row.schedule_name;
   if (row.trigger_source === "cron") return "cron";
+  if (row.trigger_source === "scheduled") return "scheduled task launch";
 
   return null;
 }

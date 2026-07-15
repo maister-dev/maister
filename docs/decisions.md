@@ -12086,7 +12086,7 @@ telemetry ambiguous.
 
 **Consequences:**
 
-- The new additive migration namespace is `0103_*` at proposal time. It adds
+- The new additive migration namespace is `0104_*` after the rebase reservation. It adds
   intent/reservation/event tables, safe snapshots, Run source/link fields, and
   agent-binding identity/telemetry fields; it does not rename or consolidate
   existing schedule tables.

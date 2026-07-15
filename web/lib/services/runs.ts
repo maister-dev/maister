@@ -2,6 +2,7 @@ import "server-only";
 
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
+import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -296,9 +297,23 @@ export type LaunchRunInput = {
   // runs(trigger_source, trigger_event_id, trigger_payload) so the partial unique
   // (agent_id, trigger_event_id) claim dedups an at-least-once redelivery.
   // null/absent for a normal board launch (carries no trigger event).
-  triggerSource?: "manual" | "cron" | "domain_event" | "webhook" | "flow";
+  triggerSource?:
+    | "manual"
+    | "cron"
+    | "domain_event"
+    | "webhook"
+    | "flow"
+    | "scheduled";
   triggerEventId?: number | null;
   triggerPayload?: Record<string, unknown> | null;
+  // Owner binding for an agent cron/domain-event launch. This is server-owned
+  // trigger provenance, never a browser field.
+  agentScheduleId?: string | null;
+  // ADR-139: server-only durable identity allocated by the scheduled-launch
+  // claim transaction. Routes never accept this shape; retaining it through the
+  // ordinary launch path closes the pre-Run Git crash window without a second
+  // side-channel Run insert.
+  scheduledReservation?: ScheduledLaunchReservation;
   // M39 Stream B (ADR-107): per-package version-adopt choice for the project's
   // attached centralized packages (key = the attached package_install id).
   // Applied BEFORE the enablement check so adopt/cut_and_adopt take effect for
@@ -630,11 +645,13 @@ export async function* launchRunStaged(
     inheritedExperimentMembership?.launchReason === "budget_restart";
   const forceByDirectExperimentMembership =
     input.experimentMembership !== undefined;
-  const allowConcurrentForLaunch = Boolean(
-    input.allowConcurrent ||
-      forceByBudgetMembership ||
-      forceByDirectExperimentMembership,
-  );
+  const allowConcurrentForLaunch = input.scheduledReservation
+    ? false
+    : Boolean(
+        input.allowConcurrent ||
+          forceByBudgetMembership ||
+          forceByDirectExperimentMembership,
+      );
 
   if (inheritedExperimentMembership) {
     log.info(
@@ -777,7 +794,8 @@ export async function* launchRunStaged(
 
   // Hoisted above the outer try so the post-compensation tryStartRun / return
   // block can still read it (the try opens right after the adopt).
-  const runId = randomUUID();
+  const scheduledReservation = input.scheduledReservation;
+  const runId = scheduledReservation?.runId ?? randomUUID();
   let runnerResolutionWarnings: RunnerResolutionWarningRecord[] = [];
 
   // ADR-107: adopt advanced the SHARED project pin. Everything below, up to the
@@ -1271,7 +1289,20 @@ export async function* launchRunStaged(
     }
 
     const worktreeRoot = worktreesRoot();
-    const worktreePath = path.join(worktreeRoot, project.slug, runId);
+    const worktreePath =
+      scheduledReservation?.worktreePath ??
+      path.join(worktreeRoot, project.slug, runId);
+
+    if (
+      scheduledReservation &&
+      scheduledReservation.worktreePath !==
+        path.join(worktreeRoot, project.slug, scheduledReservation.runId)
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "scheduled launch reservation has an invalid worktree identity",
+      );
+    }
 
     // M18 §3.1: branch targeting. Saved task defaults sit between launch input
     // and project defaults; target defaults to the resolved base. Both resolved
@@ -1368,13 +1399,40 @@ export async function* launchRunStaged(
     // validation refusal NEVER burns a number — the only remaining gap is the
     // irreducible addWorktree/tx window below (a genuine git/db failure), where a
     // burned number is an acceptable monotonic-counter gap.
-    const [allocated] = await _db
-      .update(tasks)
-      .set({ attemptNumber: sql`${tasks.attemptNumber} + 1` })
-      .where(eq(tasks.id, task.id))
-      .returning({ attemptNumber: tasks.attemptNumber });
-    const newAttempt = allocated.attemptNumber as number;
-    const branch = `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
+    const allocatedAttempt = scheduledReservation
+      ? null
+      : await _db
+          .update(tasks)
+          .set({ attemptNumber: sql`${tasks.attemptNumber} + 1` })
+          .where(eq(tasks.id, task.id))
+          .returning({ attemptNumber: tasks.attemptNumber });
+    const newAttempt = scheduledReservation
+      ? scheduledReservation.taskAttemptNumber
+      : (allocatedAttempt?.[0]?.attemptNumber as number | undefined);
+
+    if (newAttempt === undefined || newAttempt < 1) {
+      throw new MaisterError("PRECONDITION", "run attempt allocation failed");
+    }
+    if (scheduledReservation && scheduledReservation.taskId !== task.id) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "scheduled launch reservation belongs to a different task",
+      );
+    }
+
+    const branch =
+      scheduledReservation?.branch ??
+      `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
+
+    if (
+      scheduledReservation &&
+      branch !== `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "scheduled launch reservation has an invalid branch identity",
+      );
+    }
 
     log.debug(
       { runId, taskId: task.id, attempt: newAttempt, branch },
@@ -1528,9 +1586,13 @@ export async function* launchRunStaged(
             // launchAgentRun's pre-check); onConflictDoNothing turns the loser into a
             // clean CONFLICT (the catch below compensates the worktree) instead of a
             // raw 23505. A board launch carries no trigger_event_id ⇒ never conflicts.
-            triggerSource: input.triggerSource ?? null,
+            triggerSource: scheduledReservation
+              ? "scheduled"
+              : (input.triggerSource ?? null),
             triggerEventId: input.triggerEventId ?? null,
             triggerPayload: input.triggerPayload ?? null,
+            scheduledLaunchId: scheduledReservation?.scheduledLaunchId ?? null,
+            agentScheduleId: input.agentScheduleId ?? null,
             createdByUserId: ctx.actorUserId,
             // ADR-121 (INV-9): auto-drain origin marker, set ONLY for runs minted
             // by the unified admission funnel.
@@ -1555,6 +1617,13 @@ export async function* launchRunStaged(
         // run already exists. Surface a typed CONFLICT (the catch compensates the
         // worktree); never a raw 23505 → 500. Board launches never reach here.
         if (insertedRun.length === 0) {
+          if (scheduledReservation) {
+            throw new MaisterError(
+              "CONFLICT",
+              "scheduled launch already has a linked Run",
+            );
+          }
+
           throw new MaisterError(
             "CONFLICT",
             `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,

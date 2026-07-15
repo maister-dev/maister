@@ -165,7 +165,7 @@ All route errors use the existing `MaisterError` taxonomy and current project-ro
 | --- | --- |
 | HTTP paths/DTOs/status/error examples | `docs/api/web.openapi.yaml`, route Zod schemas/tests |
 | State/dispatch/recovery/time semantics | new `docs/system-analytics/project-automations.md`; update `scheduler.md`, `run-schedules.md`, `tasks.md`, `runs.md`, and `agents.md`. Define state/attempt counters, lateness, retry-exhaustion, and the boundary between operational audit and Observatory’s read-only ledgers. |
-| New DB tables/columns/indexes | Drizzle schema + `0103_*` migration triple, `docs/database-schema.md`, `docs/db/scheduler-domain.md`, `docs/db/erd.md`, and relevant runs/agents domain docs. Both ERDs show intent → attempt → Run and agent binding → Run cardinalities. |
+| New DB tables/columns/indexes | Drizzle schema + `0104_*` migration triple, `docs/database-schema.md`, `docs/db/scheduler-domain.md`, `docs/db/erd.md`, and relevant runs/agents domain docs. Both ERDs show intent → attempt → Run and agent binding → Run cardinalities. |
 | Project/admin screen IA | new `docs/screens/projects/project-automations.md`, update screen index, project-board and admin-scheduler docs |
 | Durable architectural decision | `docs/decisions.md` candidate ADR-139, `.ai-factory/ROADMAP.md`, aligned product/architecture description only where wording changes |
 | Error and authorization semantics | `docs/error-taxonomy.md`, OpenAPI, `web/lib/authz.ts` action tests |
@@ -195,13 +195,13 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
   - **Acceptance:** no state, crash window, destructive cleanup condition, race winner, retry class, telemetry owner, or agent mutation owner remains implicit.
 
 - [x] **Task 2: Reserve shared namespaces and freeze external contracts.**
-  - **Files:** `docs/decisions.md` (candidate ADR-139), `.ai-factory/ROADMAP.md`, `docs/api/web.openapi.yaml`, `docs/error-taxonomy.md`; recheck `main` before editing; migration target `web/lib/db/migrations/0103_*` is provisional.
-  - **Deliverable:** reserve the actual next ADR/migration numbers from `main` (currently ADR-139 and migration 0103 candidates), write the ADR header before links, add complete routes/schemas/enums/examples, `Idempotency-Key` replay/mismatch, `If-Match`/ETag, cursor encoding/order, the type-specific automation detail route, and the identifier table. Label Designed vs Implemented honestly.
+  - **Files:** `docs/decisions.md` (candidate ADR-139), `.ai-factory/ROADMAP.md`, `docs/api/web.openapi.yaml`, `docs/error-taxonomy.md`; recheck `main` before editing; migration target `web/lib/db/migrations/0104_*` is provisional.
+  - **Deliverable:** reserve the actual next ADR/migration numbers from `main` (currently ADR-139 and migration 0104 candidates), write the ADR header before links, add complete routes/schemas/enums/examples, `Idempotency-Key` replay/mismatch, `If-Match`/ETag, cursor encoding/order, the type-specific automation detail route, and the identifier table. Label Designed vs Implemented honestly.
   - **Dependencies:** Task 1. **Logging:** contract does not expose sensitive diagnostics; error examples use safe code/message forms.
   - **Tests/evidence:** `pnpm validate:docs`; run `pnpm validate:docs:adr:all`; record the current journal/snapshot check. Budget a post-rebase renumber pass, including prose grep for superseded numbers.
   - **Acceptance:** API, decision, roadmap, and system analytics use one terminology and one enum set.
 
-- [ ] **Task 3 (RED): Add executable specification tests before schema/service code.**
+- [x] **Task 3 (RED): Add executable specification tests before schema/service code.**
   - **Files:** create `web/lib/scheduled-launches/__tests__/{time.test.ts,decision.test.ts,dispatch.integration.test.ts,service.integration.test.ts}`; extend `web/lib/db/__tests__/{check-migrations.integration.test.ts,migration-journal-integrity.test.ts}` and selected launch/agent regression fixtures.
   - **Deliverable:** write the smallest failing Phase-1 tests for Temporal conversion/DST, static state legality, canonical request hashing, whitelisted launch-request normalization, task deletion/archive representation, schema checks, and migration integrity. Do not pre-write dispatcher, reservation, route, cursor, or agent-binding tests here: their dedicated RED checkpoints are Tasks 5, 8, and 11. Use unit tests only for pure time/hash/decision helpers; use real Postgres for migration and constraint coverage. Assert files match `web/vitest.workspace.ts` unit/integration globs with `vitest --project unit --list` and `vitest --project integration --list`.
   - **Dependencies:** Tasks 1–2. **Logging:** assertions verify only safe structured fields are emitted; no raw request/error serialization.
@@ -210,28 +210,28 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
 
 ### Phase 1 — Durable model and launch idempotency
 
-- [ ] **Task 4 (GREEN): Add the migration, Drizzle model, and safe typed domain primitives.**
-  - **Files:** `web/lib/db/schema.ts`, new generated `web/lib/db/migrations/0103_*` SQL, `meta/_journal.json`, matching snapshot; create `web/lib/scheduled-launches/{types,time,service,queries}.ts`; add `@js-temporal/polyfill` and `pnpm-lock.yaml`.
+- [x] **Task 4 (GREEN): Add the migration, Drizzle model, and safe typed domain primitives.**
+  - **Files:** `web/lib/db/schema.ts`, new generated `web/lib/db/migrations/0104_*` SQL, `meta/_journal.json`, matching snapshot; create `web/lib/scheduled-launches/{types,time,service,queries}.ts`; add `@js-temporal/polyfill` and `pnpm-lock.yaml`.
   - **Deliverable:** implement intent, attempt-reservation, and append-only event tables; `runs.scheduled_launch_id`/`runs.agent_schedule_id`/`trigger_source='scheduled'`; due/list/unique/check constraints; safe audit snapshots; canonical request hashing; and Temporal conversion. Use `task_id SET NULL` plus display snapshot so task deletion cannot erase audit evidence. Add bounded telemetry and a schedules revision to existing agent structures, preserve rows, and never add a divergent reciprocal Run link.
   - **Dependencies:** Task 3. **Logging:** log migration/domain state changes with IDs/codes only; helper errors are typed `CONFIG`/`PRECONDITION`, not generic errors.
   - **Tests/evidence:** make Task 3 RED cases green; migration applies to an existing fixture DB, journal's newest entry has a snapshot, and existing schedule/agent trigger fixtures retain their data.
   - **Acceptance:** creating an intent creates neither a Run nor a reservation; an accepted due claim has exactly one durable reservation before Git; existing scheduling configuration survives migration unchanged except additive identity/telemetry fields.
 
-- [ ] **Task 5 (RED): Specify recoverable launch admission and race tests at the real launch seam.**
+- [x] **Task 5 (RED): Specify recoverable launch admission and race tests at the real launch seam.**
   - **Files:** extend `web/lib/services/__tests__/runs-launch-{gate,materialize,pin}.test.ts`; create/extend `web/lib/scheduled-launches/__tests__/launch-idempotency.integration.test.ts`, `dispatch.integration.test.ts`; inspect `web/lib/services/runs.ts` call graph.
   - **Deliverable:** failing real-Postgres/disposable-Git cases for crash before reservation, after reservation before `addWorktree`, after managed worktree/provenance before Run insert, after Run insert before intent finalization, and each safe recovery branch (absent, verified, and unverifiable/mismatched worktree). Also cover stale-claim reclamation, concurrent ticks, Run now/tick, cancel/tick, edit/tick, and idempotent re-entry finding the same Run. Cover Run snapshot/provenance equality with a manual run for the same stored request.
   - **Dependencies:** Task 4. **Logging:** expect claim/fence/recovery logs with no payload values.
   - **Tests/evidence:** run the new integration file through the real Testcontainers harness; failures must prove missing recovery/idempotency behavior, not fixture setup.
   - **Acceptance:** test design covers every crash window from claim through reservation, Git materialization, Run insertion, and intent finalization, including the rule that recovery never deletes an unverified path or branch.
 
-- [ ] **Task 6 (GREEN): Implement the one-time service, normal-launch handoff, and durable recovery.**
+- [x] **Task 6 (GREEN): Implement the one-time service, normal-launch handoff, and durable recovery.**
   - **Files:** `web/lib/scheduled-launches/{service,dispatch,queries,types}.ts`; `web/lib/services/runs.ts`; `web/lib/worktree.ts`, `web/lib/worktree-provenance.ts`; `web/lib/db/schema.ts`; targeted launch/query consumers of `triggerSource`.
   - **Deliverable:** implement create/edit/cancel/run-now, single-row state transitions, bounded retry/backoff, stale-claim recovery, reservation allocation, and the unique one-to-one Run handoff. Refactor `launchRun` only enough to accept a server-owned scheduled reservation, persist `scheduled_launch_id` in its ordinary Run transaction, and retain ordinary capability/runner/policy/workspace snapshot behavior. Add a guarded reservation cleanup helper that verifies managed provenance, expected branch/path, and safe branch state before it can remove anything; it must fail terminally rather than guess. The dispatcher never calls the supervisor or inserts Runs directly.
   - **Dependencies:** Task 5. **Logging:** DEBUG claim input/eligibility; INFO state transitions/run link; WARN stale/dropped claim, retry, and refusal; ERROR unexpected handler fault. Fields must be stable IDs, code, attempt and lateness only.
   - **Tests/evidence:** make Task 5 green; add real DB tests for task deletion, project archive, busy/Review/HumanWorking/Crashed, blockers/flagged/unconfigured/terminal, cap→Pending, incompatible Flow, unavailable runner, preflight refusal, retry exhaustion, exact reservation reuse, and exactly-one Run.
   - **Acceptance:** recovery of any reachable `Dispatching` state converges to one Run or one terminal/retry state; no intent consumes capacity before due, and no recovery can delete an unmanaged worktree or branch.
 
-- [ ] **Task 7 (refactor): Consolidate launchability and audit-safe outcome mapping.**
+- [x] **Task 7 (refactor): Consolidate launchability and audit-safe outcome mapping.**
   - **Files:** `web/lib/scheduled-launches/*`, `web/lib/runs/launchability.ts`, `web/lib/services/runs.ts`, `web/lib/queries/runs-list.ts`, related test fixtures.
   - **Deliverable:** factor small pure decision/mapping helpers; explicitly keep unattended one-time eligibility separate from permissive manual force-relaunch and recurring overlap policy. Grep every `triggerSource`, run-status and scheduler-cap consumer and update all allow-list predicates, including Runs-list scheduled filtering/classification/labeling for `trigger_source='scheduled'` as well as legacy recurring cron.
   - **Dependencies:** Task 6. **Logging:** retain event names/fields through refactor; no catch-all fallback.
@@ -339,7 +339,7 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
 - **Launch-request drift:** preserve the member's normalized, whitelisted requested choices and request hash, then revalidate mutable eligibility/snapshot at dispatch through `launchRun`; never fall back to an arbitrary mutable default silently.
 - **API concurrency risk:** a key without request hash or a mutable request without `If-Match` can create divergent intent state. Same-key/same-hash replay, mismatched-key conflict, ETag/CAS, and auth-before-body tests are mandatory.
 - **Agent telemetry gap:** aggregate rows cannot fabricate latest outcomes for cron/event bindings. Preserve binding IDs through revision-fenced reconciliation, choose a deterministic event owner, record suppressed matches honestly, and retain the existing event dedupe backstop.
-- **Migration collisions:** ADR-139/0103 are candidates only. Rebase/re-reserve from `main`, preserve the SQL+journal+snapshot triple, and repair all anchors before merge.
+- **Migration collisions:** ADR-139/0104 are candidates only. Rebase/re-reserve from `main`, preserve the SQL+journal+snapshot triple, and repair all anchors before merge.
 - **No deployment wiring expected:** this adds no env var, port, sidecar, mounted path, or background process. The only dependency is a web package; lockfile/build validation proves container compatibility. If implementation introduces runtime configuration, add the required `.env.example`/compose/docs task before code lands.
 
 Adversarial completion review must reject the change until it finds no missing state transition, crash-window recovery branch, unsafe orphan cleanup, undefined race winner, duplicate launch path/clock, lost overdue window, unbounded retry/poison row, stale authorisation, idempotency/ETag ambiguity, unstable union cursor, inconsistent API/DB enum, hidden agent-editor fork, ambiguous agent-event owner, untracked migration, UI action without server authority, server outcome without a user explanation, secret/path leak, or acceptance criterion without a test and contract source.

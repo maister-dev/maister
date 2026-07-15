@@ -17,6 +17,7 @@ import type {
   ExperimentVariant,
   ExperimentVerdictEnvelope,
 } from "@/lib/experiments/types";
+import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -927,6 +928,9 @@ export const agentProjectLinks = pgTable(
     // opens retain, the memory-poisoning guard). can_propose_brain = Sub-project C.
     canReadBrain: boolean("can_read_brain").notNull().default(false),
     canWriteBrain: boolean("can_write_brain").notNull().default(false),
+    // ADR-139: fences full-replacement binding saves so a stale editor cannot
+    // erase telemetry or bindings added after it loaded the attachment.
+    schedulesRevision: integer("schedules_revision").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -973,6 +977,26 @@ export const agentSchedules = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    lastAttemptAt: timestamp("last_attempt_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastAttemptFence: integer("last_attempt_fence"),
+    lastOutcome: text("last_outcome", {
+      enum: [
+        "launched",
+        "queued",
+        "refused",
+        "deduplicated",
+        "suppressed",
+        "failed",
+      ],
+    }),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    // The run link is intentionally an audit pointer. The owning Run keeps the
+    // actual nullable FK to this binding, avoiding a circular schema initializer.
+    lastRunId: text("last_run_id"),
     eventMatch: jsonb("event_match").$type<{ kinds: string[] }>(),
     enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -999,6 +1023,203 @@ export const agentSchedules = pgTable(
     eventShapeCheck: check(
       "agent_schedules_event_shape_check",
       sql`(${t.triggerType} <> 'event') OR (${t.eventMatch} IS NOT NULL)`,
+    ),
+  }),
+);
+
+export const scheduledTaskLaunches = pgTable(
+  "scheduled_task_launches",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, {
+      onDelete: "set null",
+    }),
+    taskKey: text("task_key").notNull(),
+    taskNumber: integer("task_number").notNull(),
+    taskTitle: text("task_title").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    lastActorUserId: text("last_actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    scheduledLocalTime: text("scheduled_local_time").notNull(),
+    timezone: text("timezone").notNull(),
+    disambiguation: text("disambiguation", {
+      enum: ["earlier", "later"],
+    }),
+    scheduledForAt: timestamp("scheduled_for_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    armedAt: timestamp("armed_at", { withTimezone: true, mode: "date" })
+      .notNull(),
+    launchRequest: jsonb("launch_request").$type<ScheduledLaunchRequest>().notNull(),
+    requestHash: text("request_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    state: text("state", {
+      enum: [
+        "Scheduled",
+        "Dispatching",
+        "RetryWaiting",
+        "Launched",
+        "Failed",
+        "Cancelled",
+      ],
+    })
+      .notNull()
+      .default("Scheduled"),
+    revision: integer("revision").notNull().default(1),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    claimId: text("claim_id"),
+    claimFence: integer("claim_fence"),
+    claimExpiresAt: timestamp("claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    claimOrigin: text("claim_origin", { enum: ["tick", "run_now"] }),
+    latestOutcome: text("latest_outcome", {
+      enum: [
+        "created",
+        "rearmed",
+        "claimed",
+        "retry_scheduled",
+        "cancelled",
+        "launched",
+        "failed",
+      ],
+    }),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    lateByMs: bigint("late_by_ms", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectCreatorIdempotency: unique(
+      "scheduled_task_launches_project_creator_idempotency_uq",
+    ).on(t.projectId, t.createdByUserId, t.idempotencyKey),
+    idxProject: index("scheduled_task_launches_project_idx").on(
+      t.projectId,
+      t.updatedAt,
+    ),
+    idxDue: index("scheduled_task_launches_due_idx")
+      .on(t.nextAttemptAt, t.id)
+      .where(sql`${t.state} IN ('Scheduled', 'RetryWaiting')`),
+    stateShapeCheck: check(
+      "scheduled_task_launches_state_shape_check",
+      sql`(
+        ${t.state} = 'Dispatching'
+        AND ${t.claimId} IS NOT NULL
+        AND ${t.claimFence} IS NOT NULL
+        AND ${t.claimExpiresAt} IS NOT NULL
+        AND ${t.claimOrigin} IS NOT NULL
+      ) OR (
+        ${t.state} <> 'Dispatching'
+        AND ${t.claimId} IS NULL
+        AND ${t.claimFence} IS NULL
+        AND ${t.claimExpiresAt} IS NULL
+        AND ${t.claimOrigin} IS NULL
+      )`,
+    ),
+    attemptsCheck: check(
+      "scheduled_task_launches_attempts_check",
+      sql`${t.attemptCount} >= 0 AND ${t.attemptCount} <= ${t.maxAttempts} AND ${t.maxAttempts} = 3`,
+    ),
+    revisionCheck: check(
+      "scheduled_task_launches_revision_check",
+      sql`${t.revision} >= 1`,
+    ),
+  }),
+);
+
+export const scheduledTaskLaunchAttempts = pgTable(
+  "scheduled_task_launch_attempts",
+  {
+    id: text("id").primaryKey(),
+    scheduledLaunchId: text("scheduled_launch_id")
+      .notNull()
+      .references(() => scheduledTaskLaunches.id, { onDelete: "cascade" }),
+    runId: text("run_id").notNull(),
+    taskAttemptNumber: integer("task_attempt_number").notNull(),
+    branch: text("branch").notNull(),
+    worktreePath: text("worktree_path").notNull(),
+    requestHash: text("request_hash").notNull(),
+    claimFence: integer("claim_fence").notNull(),
+    state: text("state", {
+      enum: ["Reserved", "Materialized", "RunLinked", "Cleaned", "Failed"],
+    })
+      .notNull()
+      .default("Reserved"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRun: unique("scheduled_task_launch_attempts_run_id_uq").on(t.runId),
+    uniqLiveLaunch: uniqueIndex(
+      "scheduled_task_launch_attempts_launch_live_uq",
+    )
+      .on(t.scheduledLaunchId)
+      .where(sql`${t.state} IN ('Reserved', 'Materialized')`),
+    idxLaunch: index("scheduled_task_launch_attempts_launch_idx").on(
+      t.scheduledLaunchId,
+      t.createdAt,
+    ),
+    taskAttemptCheck: check(
+      "scheduled_task_launch_attempts_task_attempt_check",
+      sql`${t.taskAttemptNumber} >= 1`,
+    ),
+  }),
+);
+
+export const scheduledTaskLaunchEvents = pgTable(
+  "scheduled_task_launch_events",
+  {
+    id: text("id").primaryKey(),
+    scheduledLaunchId: text("scheduled_launch_id")
+      .notNull()
+      .references(() => scheduledTaskLaunches.id, { onDelete: "cascade" }),
+    kind: text("kind", {
+      enum: [
+        "created",
+        "edited_rearmed",
+        "claimed",
+        "retry_scheduled",
+        "cancelled",
+        "launched",
+        "failed",
+      ],
+    }).notNull(),
+    actorType: text("actor_type", { enum: ["user", "system"] }).notNull(),
+    actorId: text("actor_id"),
+    claimFence: integer("claim_fence"),
+    errorCode: text("error_code"),
+    message: text("message"),
+    metadata: jsonb("metadata").$type<Record<string, string>>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxLaunchCreated: index("scheduled_task_launch_events_launch_created_idx").on(
+      t.scheduledLaunchId,
+      t.createdAt,
     ),
   }),
 );
@@ -1437,12 +1658,27 @@ export const runs = pgTable(
       onDelete: "set null",
     }),
     triggerSource: text("trigger_source", {
-      enum: ["manual", "cron", "domain_event", "webhook", "flow"],
+      enum: [
+        "manual",
+        "cron",
+        "domain_event",
+        "webhook",
+        "flow",
+        "scheduled",
+      ],
     }),
     // domain_events.id claim key — partial UNIQUE (agent_id, trigger_event_id)
     // makes at-least-once redelivery converge to exactly one run.
     triggerEventId: bigint("trigger_event_id", { mode: "number" }),
     triggerPayload: jsonb("trigger_payload").$type<Record<string, unknown>>(),
+    scheduledLaunchId: text("scheduled_launch_id").references(
+      () => scheduledTaskLaunches.id,
+      { onDelete: "set null" },
+    ),
+    agentScheduleId: text("agent_schedule_id").references(
+      () => agentSchedules.id,
+      { onDelete: "set null" },
+    ),
     // M34 (ADR-090): the workspace axis the run ACTUALLY launched with,
     // snapshotted from the project's pinned (effective) definition at insert.
     // Terminal L3 enforcement reads this, NOT the agents catalog index (which
@@ -1654,6 +1890,10 @@ export const runs = pgTable(
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
       .where(sql`${t.triggerEventId} IS NOT NULL`),
+    uniqScheduledLaunch: unique("runs_scheduled_launch_id_unique").on(
+      t.scheduledLaunchId,
+    ),
+    idxAgentSchedule: index("runs_agent_schedule_idx").on(t.agentScheduleId),
     // M37 Phase 8 (ADR-099): an addressable_key is unique within one
     // orchestrator tree among persistent children — the partial-index backstop
     // behind the launch.ts pre-insert check.

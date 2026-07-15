@@ -156,4 +156,15 @@ describe("main migration snapshot integrity", () => {
         "run pnpm --filter maister-web db:generate or restore the generated snapshot",
     ).toBe(true);
   });
+
+  it("reserves the project-automations migration as the next generated main lineage entry", () => {
+    const newest = journalEntries(MAIN_MIGRATIONS_DIR).at(-1);
+
+    expect(newest, "main migration journal must have entries").toBeDefined();
+    expect(newest?.tag).toMatch(/^0104_/);
+    expect(
+      newest && existsSync(join(MAIN_MIGRATIONS_DIR, `${newest.tag}.sql`)),
+      "0104 must register the project-automations SQL migration",
+    ).toBe(true);
+  });
 });

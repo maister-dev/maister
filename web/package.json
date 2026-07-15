@@ -51,6 +51,7 @@
     "@heroui/react": "3.0.4",
     "@heroui/styles": "3.0.4",
     "@lezer/highlight": "1.2.3",
+    "@js-temporal/polyfill": "0.5.1",
     "@tiptap/core": "^3.27.1",
     "@tiptap/extension-document": "^3.27.1",
     "@tiptap/extension-mention": "^3.27.1",
