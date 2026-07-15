@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { MaisterError } from "@/lib/errors-core";
 import {
   assertScheduledLaunchTransition,
+  hashScheduledLaunchCreateRequest,
   hashScheduledLaunchRequest,
   normalizeScheduledLaunchRequest,
 } from "@/lib/scheduled-launches/service";
@@ -55,6 +56,31 @@ describe("normalizeScheduledLaunchRequest", () => {
     expect(hashScheduledLaunchRequest(first)).toEqual(
       hashScheduledLaunchRequest(reordered),
     );
+  });
+
+  it("binds idempotency to the task and requested time as well as launch options", () => {
+    const request = normalizeScheduledLaunchRequest({ flowId: "maintenance" });
+    const first = hashScheduledLaunchCreateRequest({
+      taskId: "task-a",
+      scheduledLocalTime: "2026-11-01T10:00",
+      timezone: "UTC",
+      launchRequest: request,
+    });
+    const changedTask = hashScheduledLaunchCreateRequest({
+      taskId: "task-b",
+      scheduledLocalTime: "2026-11-01T10:00",
+      timezone: "UTC",
+      launchRequest: request,
+    });
+    const changedTime = hashScheduledLaunchCreateRequest({
+      taskId: "task-a",
+      scheduledLocalTime: "2026-11-01T10:01",
+      timezone: "UTC",
+      launchRequest: request,
+    });
+
+    expect(changedTask).not.toBe(first);
+    expect(changedTime).not.toBe(first);
   });
 
   it.each([

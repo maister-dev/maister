@@ -109,6 +109,26 @@ export function hashScheduledLaunchRequest(
   return createHash("sha256").update(stableJson(request)).digest("hex");
 }
 
+export function hashScheduledLaunchCreateRequest(input: {
+  taskId: string;
+  scheduledLocalTime: string;
+  timezone: string;
+  disambiguation?: "earlier" | "later";
+  launchRequest: ScheduledLaunchRequest;
+}): string {
+  return createHash("sha256")
+    .update(
+      stableJson({
+        taskId: input.taskId,
+        scheduledLocalTime: input.scheduledLocalTime,
+        timezone: input.timezone,
+        disambiguation: input.disambiguation ?? null,
+        launchRequest: input.launchRequest,
+      }),
+    )
+    .digest("hex");
+}
+
 export function assertScheduledLaunchTransition(
   from: ScheduledLaunchState,
   to: ScheduledLaunchState,
@@ -216,7 +236,13 @@ export async function createScheduledLaunch(input: {
   const db = input.db ?? (getDb() as ScheduledLaunchDb);
   const now = input.now ?? new Date();
   const request = normalizeScheduledLaunchRequest(input.launchRequest);
-  const requestHash = hashScheduledLaunchRequest(request);
+  const requestHash = hashScheduledLaunchCreateRequest({
+    taskId: input.taskId,
+    scheduledLocalTime: input.scheduledLocalTime,
+    timezone: input.timezone,
+    disambiguation: input.disambiguation,
+    launchRequest: request,
+  });
   const scheduledForAt = resolveScheduledLaunchTime({
     scheduledLocalTime: input.scheduledLocalTime,
     timezone: input.timezone,
@@ -348,6 +374,31 @@ export async function rearmScheduledLaunch(input: {
     throw new MaisterError("CONFIG", "scheduled time must be in the future");
   }
 
+  const currentRows = await db
+    .select({ taskId: scheduledTaskLaunches.taskId })
+    .from(scheduledTaskLaunches)
+    .where(
+      and(
+        eq(scheduledTaskLaunches.id, input.scheduledLaunchId),
+        eq(scheduledTaskLaunches.projectId, input.projectId),
+      ),
+    );
+  const taskId = currentRows[0]?.taskId;
+
+  if (!taskId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "scheduled launch target is no longer available",
+    );
+  }
+  const requestHash = hashScheduledLaunchCreateRequest({
+    taskId,
+    scheduledLocalTime: input.scheduledLocalTime,
+    timezone: input.timezone,
+    disambiguation: input.disambiguation,
+    launchRequest,
+  });
+
   return db.transaction(async (tx) => {
     const updated = await tx
       .update(scheduledTaskLaunches)
@@ -358,7 +409,7 @@ export async function rearmScheduledLaunch(input: {
         scheduledForAt,
         armedAt: now,
         launchRequest,
-        requestHash: hashScheduledLaunchRequest(launchRequest),
+        requestHash,
         state: "Scheduled",
         revision: sql`${scheduledTaskLaunches.revision} + 1`,
         nextAttemptAt: scheduledForAt,
@@ -537,7 +588,10 @@ export async function claimScheduledLaunch(input: {
       .select()
       .from(scheduledTaskLaunchAttempts)
       .where(
-        eq(scheduledTaskLaunchAttempts.scheduledLaunchId, launch.id),
+        and(
+          eq(scheduledTaskLaunchAttempts.scheduledLaunchId, launch.id),
+          eq(scheduledTaskLaunchAttempts.requestHash, launch.requestHash),
+        ),
       );
     const previousReservation = reservations[0];
     const claimFence = (launch.claimFence ?? 0) + 1;
