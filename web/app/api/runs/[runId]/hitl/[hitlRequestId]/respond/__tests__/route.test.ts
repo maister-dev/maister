@@ -16,6 +16,7 @@ import {
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
   runSessions as runSessionsTable,
+  runSyncAttempts as runSyncAttemptsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
   tasks as tasksTable,
@@ -63,6 +64,7 @@ type Tables = {
   gate_chat_turns: Row[];
   workspaces: Row[];
   run_sessions: Row[];
+  run_sync_attempts: Row[];
   tasks: Row[];
 };
 
@@ -84,6 +86,9 @@ const dbState: {
     gate_chat_turns: [],
     workspaces: [],
     run_sessions: [],
+    // ADR-140: the permission-respond path re-stamps an active branch-sync
+    // resolver attempt. Empty here → the guard no-ops for every non-resolver run.
+    run_sync_attempts: [],
     tasks: [],
   },
   updates: [],
@@ -103,6 +108,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === gateChatTurnsTable) return "gate_chat_turns";
   if (t === workspacesTable) return "workspaces";
   if (t === runSessionsTable) return "run_sessions";
+  if (t === runSyncAttemptsTable) return "run_sync_attempts";
   if (t === tasksTable) return "tasks";
   throw new Error("unknown table");
 }
@@ -341,6 +347,7 @@ beforeEach(async () => {
     gate_chat_turns: [],
     workspaces: [],
     run_sessions: [],
+    run_sync_attempts: [],
     tasks: [],
   };
   dbState.updates = [];
