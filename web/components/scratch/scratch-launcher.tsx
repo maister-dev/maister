@@ -103,11 +103,8 @@ export type ScratchLauncherProps = {
   embedded?: boolean;
 };
 
-const commandShell =
-  "overflow-hidden rounded-[18px] border border-line bg-paper shadow-[0_24px_70px_-48px_var(--ink)]";
 const commandBand = "bg-[color-mix(in_oklab,var(--ivory)_55%,var(--paper))]";
-const detailShell =
-  "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_34%,var(--paper))]";
+
 const iconButton =
   "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-ivory text-mute shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset] transition hover:border-amber hover:bg-paper hover:text-amber";
 const contextPill =
@@ -672,7 +669,13 @@ export function ScratchLauncher({
 
   return (
     <form ref={formRef} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-      <section className={embedded ? undefined : commandShell}>
+      <section
+        className={
+          embedded
+            ? undefined
+            : "overflow-hidden rounded-[18px] border border-line bg-paper"
+        }
+      >
         <div
           className={clsx(
             commandBand,
@@ -681,14 +684,14 @@ export function ScratchLauncher({
         >
           <input
             aria-label={t("workspaceName")}
-            className="min-w-0 flex-1 bg-transparent text-[24px] font-semibold leading-none text-ink outline-none placeholder:text-mute"
+            className="min-w-0 flex-1 bg-transparent text-lg font-medium leading-none text-ink-2 outline-none placeholder:text-mute"
             placeholder={t("workspaceNamePlaceholder")}
             value={workspaceName}
             onChange={(event) => setWorkspaceName(event.target.value)}
           />
           <input
             aria-label={t("branchName")}
-            className="min-w-0 bg-transparent font-mono text-[19px] leading-none text-ink outline-none placeholder:text-mute md:w-[280px] md:text-right"
+            className="min-w-0 bg-transparent font-mono text-base leading-none text-ink outline-none placeholder:text-mute md:w-[280px] md:text-right"
             placeholder={
               selectedProject ? t("branchNamePlaceholder") : t("optional")
             }
@@ -700,14 +703,14 @@ export function ScratchLauncher({
 
         <div
           className={clsx(
-            "mx-4 flex min-h-[280px] flex-col p-3",
+            "m-4 flex min-h-[280px] flex-col p-3",
             !embedded && "rounded-[18px] border border-line-soft bg-paper-warm",
           )}
         >
           {files.length > 0 ||
           attachments.length > 0 ||
           linkedIssueUrl.trim() ? (
-            <div className="mb-3 flex max-h-[118px] flex-col gap-2 overflow-y-auto pr-1">
+            <div className="mb-3 flex flex-col gap-2 overflow-y-auto pr-1">
               {files.length > 0 ? (
                 <div className="flex gap-2 overflow-x-auto pb-1">
                   {files.map((file, index) => {
@@ -834,7 +837,7 @@ export function ScratchLauncher({
             agent={composerAgent}
             ariaLabel={t("prompt")}
             catalog={capabilityCatalog}
-            className="min-h-[180px] flex-1 text-[20px] leading-[1.45] text-ink"
+            className="min-h-[180px] flex-1 text-[16px] leading-[1.45] text-ink"
             labels={{
               placeholder: t("promptPlaceholder"),
               unsupportedBadge: t("composerUnsupported"),
@@ -1026,7 +1029,7 @@ export function ScratchLauncher({
         </div>
       </section>
 
-      <details className={detailShell}>
+      <details className="rounded-lg border border-line bg-[color-mix(in_oklab,var(--ivory)_55%,var(--paper))]">
         <summary className={summaryButton}>
           <span>{t("capabilities")}</span>
           <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">

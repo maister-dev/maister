@@ -7,20 +7,17 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
 } from "react";
 
 type Theme = "light" | "dark";
 type ThemeChoice = Theme | "system";
-type ThemeAttribute = "class" | `data-${string}`;
 
 export type ThemeProviderProps = {
   children: ReactNode;
-  attribute?: ThemeAttribute;
-  defaultTheme?: ThemeChoice;
-  enableSystem?: boolean;
-  storageKey?: string;
+  initialTheme: Theme;
 };
 
 type ThemeContextValue = {
@@ -29,7 +26,7 @@ type ThemeContextValue = {
   theme: ThemeChoice;
 };
 
-const DEFAULT_STORAGE_KEY = "theme";
+export const THEME_STORAGE_KEY = "theme";
 const THEME_CLASS_NAMES = ["light", "dark"] as const;
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
@@ -41,95 +38,59 @@ function systemTheme(): Theme {
     : "light";
 }
 
-function storedTheme(storageKey: string): ThemeChoice | null {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const stored = window.localStorage.getItem(storageKey);
-
-    if (stored === "light" || stored === "dark" || stored === "system") {
-      return stored;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-function resolveTheme(theme: ThemeChoice, enableSystem: boolean): Theme {
-  if (theme === "system" && enableSystem) return systemTheme();
-  if (theme === "system") return "dark";
-
-  return theme;
-}
-
-function applyTheme(attribute: ThemeAttribute, theme: Theme): void {
+function applyTheme(theme: Theme): void {
   const root = document.documentElement;
 
-  if (attribute === "class") {
-    root.classList.remove(...THEME_CLASS_NAMES);
-    root.classList.add(theme);
-  } else {
-    root.setAttribute(attribute, theme);
-  }
+  root.classList.remove(...THEME_CLASS_NAMES);
+  root.classList.add(theme);
 
   root.style.colorScheme = theme;
 }
 
 export function ThemeProvider({
-  attribute = "class",
   children,
-  defaultTheme = "dark",
-  enableSystem = true,
-  storageKey = DEFAULT_STORAGE_KEY,
+  initialTheme,
 }: ThemeProviderProps): ReactElement {
-  const [theme, setThemeState] = useState<ThemeChoice>(defaultTheme);
-  const [resolvedTheme, setResolvedTheme] = useState<Theme>(() =>
-    resolveTheme(defaultTheme, enableSystem),
-  );
+  const [theme, setThemeState] = useState<ThemeChoice>(() => initialTheme);
+  const [resolvedTheme, setResolvedTheme] = useState<Theme>(() => initialTheme);
+
+  useLayoutEffect(() => {
+    applyTheme(resolvedTheme);
+  }, []);
 
   useEffect(() => {
-    const initialTheme = storedTheme(storageKey) ?? defaultTheme;
-    const resolved = resolveTheme(initialTheme, enableSystem);
-
-    setThemeState(initialTheme);
-    setResolvedTheme(resolved);
-    applyTheme(attribute, resolved);
-  }, [attribute, defaultTheme, enableSystem, storageKey]);
-
-  useEffect(() => {
-    if (!enableSystem || theme !== "system") return;
+    if (theme !== "system") return;
 
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = (): void => {
       const resolved = systemTheme();
 
       setResolvedTheme(resolved);
-      applyTheme(attribute, resolved);
+      applyTheme(resolved);
     };
 
     media.addEventListener("change", onChange);
 
     return () => media.removeEventListener("change", onChange);
-  }, [attribute, enableSystem, theme]);
+  }, [theme]);
 
-  const setTheme = useCallback(
-    (nextTheme: ThemeChoice): void => {
-      const resolved = resolveTheme(nextTheme, enableSystem);
+  const setTheme = useCallback(async (nextTheme: ThemeChoice) => {
+    const resolved = nextTheme === "system" ? systemTheme() : nextTheme;
 
-      setThemeState(nextTheme);
-      setResolvedTheme(resolved);
-      applyTheme(attribute, resolved);
+    setThemeState(nextTheme);
+    setResolvedTheme(resolved);
+    applyTheme(resolved);
 
-      try {
-        window.localStorage.setItem(storageKey, nextTheme);
-      } catch {
-        return;
-      }
-    },
-    [attribute, enableSystem, storageKey],
-  );
+    try {
+      window.cookieStore.set({
+        sameSite: "strict",
+        name: THEME_STORAGE_KEY,
+        value: nextTheme,
+      });
+    } catch {
+      return;
+    }
+  }, []);
 
   const value = useMemo(
     () => ({ resolvedTheme, setTheme, theme }),

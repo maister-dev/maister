@@ -3,6 +3,7 @@ import { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale } from "next-intl/server";
 import clsx from "clsx";
+import { cookies } from "next/headers";
 
 import { Providers } from "./providers";
 
@@ -33,25 +34,22 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const locale = await getLocale();
+  const cookieStore = await cookies();
+
+  const theme = cookieStore.get("theme")?.value === "dark" ? "dark" : "light";
 
   return (
     <html
       suppressHydrationWarning
-      className={clsx(fontSans.variable, fontMono.variable, "dark")}
+      className={clsx(fontSans.variable, fontMono.variable, theme)}
       lang={locale}
+      // @ts-ignore
+      style={{ "color-scheme": theme }}
     >
       <head />
       <body className="min-h-screen bg-paper-warm font-sans text-body antialiased">
         <NextIntlClientProvider>
-          <Providers
-            themeProps={{
-              attribute: "class",
-              defaultTheme: "dark",
-              enableSystem: true,
-            }}
-          >
-            {children}
-          </Providers>
+          <Providers initialTheme={theme}>{children}</Providers>
         </NextIntlClientProvider>
       </body>
     </html>

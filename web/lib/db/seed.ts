@@ -11,8 +11,9 @@ import pino from "pino";
 import * as schemaModule from "./schema";
 import { resolvePostgresDbUrl } from "./postgres-url";
 
-import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { routerSidecarPresetRows } from "@/lib/acp-runners/presets";
+import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
+import { deriveTaskKey } from "@/lib/social/task-key";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
 const { flows, platformRouterSidecars, projectMembers, projects, users } =
@@ -126,6 +127,7 @@ async function main(): Promise<void> {
       repoPath: seedConfig.project.repo_path,
       maisterYamlPath: "/repos/maister-dev/maister.yaml",
       defaultRunnerId: seedConfig.project.default_runner,
+      taskKey: deriveTaskKey(seedConfig.project.name, DEV_PROJECT_SLUG),
     });
     log.info(
       { table: "projects", id: projectId, slug: DEV_PROJECT_SLUG },

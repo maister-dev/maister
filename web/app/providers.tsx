@@ -1,7 +1,5 @@
 "use client";
 
-import type { ThemeProviderProps } from "@/lib/theme";
-
 import * as React from "react";
 
 import { FeedbackProvider } from "@/components/feedback/feedback-provider";
@@ -9,12 +7,12 @@ import { ThemeProvider } from "@/lib/theme";
 
 export interface ProvidersProps {
   children: React.ReactNode;
-  themeProps?: Omit<ThemeProviderProps, "children">;
+  initialTheme: "light" | "dark";
 }
 
-export function Providers({ children, themeProps }: ProvidersProps) {
+export function Providers({ children, initialTheme }: ProvidersProps) {
   return (
-    <ThemeProvider {...themeProps}>
+    <ThemeProvider initialTheme={initialTheme}>
       <FeedbackProvider>{children}</FeedbackProvider>
     </ThemeProvider>
   );
