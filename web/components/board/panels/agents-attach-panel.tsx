@@ -13,6 +13,7 @@ import {
 } from "@/components/board/panels/agents-attach-edit-modal";
 
 export type AttachScheduleView = {
+  id?: string;
   triggerType: "cron" | "event";
   cronExpr?: string;
   timezone?: string;
@@ -59,6 +60,7 @@ export type AttachedAgentRow = {
   // false.
   canReadBrain: boolean;
   canWriteBrain: boolean;
+  schedulesRevision: number;
   schedules: AttachScheduleView[];
   agent: {
     id: string;
@@ -398,6 +400,7 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
     config: null,
     canReadBrain: false,
     canWriteBrain: false,
+    schedulesRevision: 1,
     schedules: [
       ...(rec?.cron
         ? [

@@ -40,6 +40,75 @@ type LaunchFn = (
   input: Parameters<typeof launchAgentRun>[0],
 ) => Promise<LaunchAgentRunResult>;
 
+type AgentScheduleOutcome =
+  | "launched"
+  | "queued"
+  | "refused"
+  | "deduplicated"
+  | "suppressed"
+  | "failed";
+
+async function claimAgentScheduleTelemetry(input: {
+  db: Db;
+  scheduleId: string;
+  now: Date;
+}): Promise<number | null> {
+  const claimed = await input.db
+    .update(agentSchedules)
+    .set({
+      lastAttemptAt: input.now,
+      lastAttemptFence: sql`COALESCE(${agentSchedules.lastAttemptFence}, 0) + 1`,
+      updatedAt: input.now,
+    })
+    .where(eq(agentSchedules.id, input.scheduleId))
+    .returning({ fence: agentSchedules.lastAttemptFence });
+
+  return (claimed[0]?.fence as number | undefined) ?? null;
+}
+
+async function recordAgentScheduleOutcome(input: {
+  db: Db;
+  scheduleId: string;
+  fence: number | null;
+  outcome: AgentScheduleOutcome;
+  runId?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  now: Date;
+}): Promise<void> {
+  if (input.fence === null) return;
+
+  await input.db
+    .update(agentSchedules)
+    .set({
+      lastOutcome: input.outcome,
+      lastRunId: input.runId ?? null,
+      lastErrorCode: input.errorCode ?? null,
+      lastErrorMessage: input.errorMessage ?? null,
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(agentSchedules.id, input.scheduleId),
+        eq(agentSchedules.lastAttemptFence, input.fence),
+      ),
+    );
+}
+
+function outcomeForLaunch(result: LaunchAgentRunResult): {
+  outcome: AgentScheduleOutcome;
+  runId: string | null;
+} {
+  if ("deduped" in result) {
+    return { outcome: "deduplicated", runId: null };
+  }
+
+  return {
+    outcome: result.status === "Running" ? "launched" : "queued",
+    runId: result.runId,
+  };
+}
+
 // The agent_tick.dispatcher handler (ADR-089): claim due cron rows with the
 // M28-proven atomic UPDATE (one winner per row, one catch-up fire — the
 // claim advances next_fire_at from NOW, so missed windows never backfill),
@@ -104,7 +173,13 @@ export async function dispatchDueAgentSchedules(
 
     const claimed = await _db
       .update(agentSchedules)
-      .set({ nextFireAt: next, lastFiredAt: now, updatedAt: new Date() })
+      .set({
+        nextFireAt: next,
+        lastFiredAt: now,
+        lastAttemptAt: now,
+        lastAttemptFence: sql`COALESCE(${agentSchedules.lastAttemptFence}, 0) + 1`,
+        updatedAt: new Date(),
+      })
       .where(
         and(
           eq(agentSchedules.id, row.id),
@@ -112,17 +187,32 @@ export async function dispatchDueAgentSchedules(
           eq(agentSchedules.enabled, true),
         ),
       )
-      .returning({ id: agentSchedules.id });
+      .returning({
+        id: agentSchedules.id,
+        fence: agentSchedules.lastAttemptFence,
+      });
 
     if (claimed.length === 0) continue;
     summary.claimed += 1;
+    const fence = (claimed[0]?.fence as number | undefined) ?? null;
 
     try {
       const result = await launch({
         agentId: row.agentId,
         projectId: row.projectId,
         trigger: { source: "cron" },
+        agentScheduleId: row.id,
         db: _db,
+      });
+
+      const outcome = outcomeForLaunch(result);
+      await recordAgentScheduleOutcome({
+        db: _db,
+        scheduleId: row.id,
+        fence,
+        outcome: outcome.outcome,
+        runId: outcome.runId,
+        now,
       });
 
       if ("deduped" in result) {
@@ -136,6 +226,15 @@ export async function dispatchDueAgentSchedules(
       // A refusal (quarantined/disabled/runner unavailable) must not fail
       // the tick — the fire is recorded by the claim; the reason is logged.
       summary.refused += 1;
+      await recordAgentScheduleOutcome({
+        db: _db,
+        scheduleId: row.id,
+        fence,
+        outcome: isMaisterError(err) ? "refused" : "failed",
+        errorCode: isMaisterError(err) ? err.code : "CRASH",
+        errorMessage: "Agent schedule launch was refused",
+        now,
+      });
       log.warn(
         {
           scheduleId: row.id,
@@ -348,22 +447,50 @@ export function buildAgentTriggersConsumer(
             ),
           );
 
-        for (const row of rows) {
-          const kinds = row.eventMatch?.kinds ?? [];
+        const matchingRows = rows
+          .filter((row) => (row.eventMatch?.kinds ?? []).includes(event.kind))
+          .sort((left, right) => left.scheduleId.localeCompare(right.scheduleId));
+        let ownerRunId: string | null = null;
+        let ownerSelected = false;
 
-          if (!kinds.includes(event.kind)) continue;
+        for (const row of matchingRows) {
+          const fence = await claimAgentScheduleTelemetry({
+            db: _db,
+            scheduleId: row.scheduleId,
+            now: new Date(),
+          });
 
           // Self-exclusion (ADR-089): an event actored by the matched agent
           // never re-triggers it — structural loop termination for the
-          // triage Q&A loop.
+          // triage Q&A loop. Its telemetry still explains why no launch occurred.
           if (event.actorType === "agent" && event.actorId === row.agentId) {
-            log.debug(
-              { eventId: event.id, agentId: row.agentId },
-              "self-actored event skipped",
-            );
+            await recordAgentScheduleOutcome({
+              db: _db,
+              scheduleId: row.scheduleId,
+              fence,
+              outcome: "suppressed",
+              errorCode: "PRECONDITION",
+              errorMessage: "Self-actored event is not eligible for this binding",
+              now: new Date(),
+            });
             continue;
           }
 
+          if (ownerSelected) {
+            await recordAgentScheduleOutcome({
+              db: _db,
+              scheduleId: row.scheduleId,
+              fence,
+              outcome: "suppressed",
+              runId: ownerRunId,
+              errorCode: "CONFLICT",
+              errorMessage: "A lower-id matching binding owns this event",
+              now: new Date(),
+            });
+            continue;
+          }
+
+          ownerSelected = true;
           try {
             const result = await launch({
               agentId: row.agentId,
@@ -377,34 +504,44 @@ export function buildAgentTriggersConsumer(
                   payload: event.payload as Record<string, unknown>,
                 },
               },
+              agentScheduleId: row.scheduleId,
               db: _db,
             });
-
-            if ("deduped" in result) {
-              log.debug(
-                { eventId: event.id, agentId: row.agentId },
-                "event trigger already claimed — dedup",
-              );
-            } else {
-              log.info(
-                {
-                  eventId: event.id,
-                  agentId: row.agentId,
-                  runId: result.runId,
-                  status: result.status,
-                },
-                "event-triggered agent run",
-              );
-            }
+            const outcome = outcomeForLaunch(result);
+            ownerRunId = outcome.runId;
+            await recordAgentScheduleOutcome({
+              db: _db,
+              scheduleId: row.scheduleId,
+              fence,
+              outcome: outcome.outcome,
+              runId: outcome.runId,
+              now: new Date(),
+            });
+            log.info(
+              {
+                eventId: event.id,
+                agentId: row.agentId,
+                scheduleId: row.scheduleId,
+                outcome: outcome.outcome,
+              },
+              "event-triggered agent schedule settled",
+            );
           } catch (err) {
-            // Idempotent contract: refusals are logged, never thrown — a
-            // throw would redeliver the whole window forever.
+            await recordAgentScheduleOutcome({
+              db: _db,
+              scheduleId: row.scheduleId,
+              fence,
+              outcome: isMaisterError(err) ? "refused" : "failed",
+              errorCode: isMaisterError(err) ? err.code : "CRASH",
+              errorMessage: "Agent schedule launch was refused",
+              now: new Date(),
+            });
             log.warn(
               {
                 eventId: event.id,
                 agentId: row.agentId,
-                code: isMaisterError(err) ? err.code : "UNKNOWN",
-                err: err instanceof Error ? err.message : String(err),
+                scheduleId: row.scheduleId,
+                code: isMaisterError(err) ? err.code : "CRASH",
               },
               "event-triggered agent launch refused",
             );

@@ -17,6 +17,7 @@ const { projects } = schemaModule as unknown as Record<string, any>;
 
 const scheduleSchema = z
   .object({
+    id: z.string().uuid().optional(),
     triggerType: z.enum(["cron", "event"]),
     cronExpr: z.string().min(1).max(255).optional(),
     timezone: z.string().min(1).max(64).optional(),
@@ -54,11 +55,16 @@ const patchBodySchema = z
     canReadBrain: z.boolean().optional(),
     canWriteBrain: z.boolean().optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
+    schedulesRevision: z.number().int().min(1).optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
-  });
+  })
+  .refine(
+    (body) => body.schedules === undefined || body.schedulesRevision !== undefined,
+    { message: "schedulesRevision is required when schedules are replaced" },
+  );
 
 type RouteParams = { params: Promise<{ slug: string; agentId: string }> };
 

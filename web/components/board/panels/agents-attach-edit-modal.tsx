@@ -56,6 +56,7 @@ export async function sendJson(
 }
 
 type EditableSchedule = {
+  id?: string;
   triggerType: "cron" | "event";
   cronExpr: string;
   timezone: string;
@@ -65,6 +66,7 @@ type EditableSchedule = {
 
 function toEditable(s: AttachScheduleView): EditableSchedule {
   return {
+    id: s.id,
     triggerType: s.triggerType,
     cronExpr: s.cronExpr ?? "",
     timezone: s.timezone ?? "UTC",
@@ -244,15 +246,18 @@ export function AttachEditModal({
         // (ADR-111) Fold the per-instance config into the SAME aggregating
         // PATCH; omit the field entirely when nothing is declared.
         ...(configSchema.length > 0 ? { configValues } : {}),
+        schedulesRevision: row.schedulesRevision,
         schedules: schedules.map((s) =>
           s.triggerType === "cron"
             ? {
+                ...(s.id ? { id: s.id } : {}),
                 triggerType: "cron",
                 cronExpr: s.cronExpr.trim(),
                 timezone: s.timezone.trim(),
                 enabled: s.enabled,
               }
             : {
+                ...(s.id ? { id: s.id } : {}),
                 triggerType: "event",
                 eventKinds: s.eventKinds,
                 enabled: s.enabled,

@@ -418,15 +418,25 @@ describe("run_schedule dispatcher tick", () => {
     expect(attempts).toHaveLength(1);
     expect(attempts[0].status).toBe("Succeeded");
     expect(attempts[0].jobKind).toBe("run_schedule");
-    expect(attempts[0].summary.fired).toBeDefined();
     expect(attempts[0].summary).toMatchObject({
-      fired: 0,
-      skippedBusy: 0,
-      skippedCap: 0,
-      skippedTerminal: 0,
-      catchupQueued: 0,
-      launchFailed: 0,
-      truncated: false,
+      recurring: {
+        fired: 0,
+        skippedBusy: 0,
+        skippedCap: 0,
+        skippedTerminal: 0,
+        catchupQueued: 0,
+        launchFailed: 0,
+        truncated: false,
+      },
+      oneTime: {
+        claimed: 0,
+        failed: 0,
+        launched: 0,
+        recovered: 0,
+        retried: 0,
+        scanned: 0,
+        truncated: false,
+      },
     });
   });
 });

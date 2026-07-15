@@ -14,11 +14,16 @@ import {
   SchedulerRunSchedulesOverview,
   type SchedulerRunScheduleOverviewRow,
 } from "@/components/admin/scheduler-run-schedules-overview";
+import {
+  SchedulerScheduledLaunchesOverview,
+  type SchedulerScheduledLaunchOverviewView,
+} from "@/components/admin/scheduler-scheduled-launches-overview";
 import { requireGlobalRole } from "@/lib/authz";
 import {
   getSchedulerClockStatus,
   listBrainIndexQueueRows,
   listSchedulerRunScheduleOverviewRows,
+  listSchedulerScheduledLaunchOverviewRows,
   listSchedulerStatusRows,
 } from "@/lib/queries/scheduler";
 import { FILTERABLE_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
@@ -60,9 +65,10 @@ export default async function AdminSchedulerPage({
       : undefined;
 
   const clock = getSchedulerClockStatus();
-  const [all, schedules, brainQueue] = await Promise.all([
+  const [all, schedules, scheduledLaunches, brainQueue] = await Promise.all([
     listSchedulerStatusRows({ limit: 200 }),
     listSchedulerRunScheduleOverviewRows({ limit: 200 }),
+    listSchedulerScheduledLaunchOverviewRows({ limit: 200 }),
     listBrainIndexQueueRows({ limit: 50 }),
   ]);
   const filtered = all.filter((job) => {
@@ -135,6 +141,20 @@ export default async function AdminSchedulerPage({
     schemaApplied: brainQueue.schemaApplied,
     summary: brainQueue.summary,
   };
+  const scheduledLaunchRows: SchedulerScheduledLaunchOverviewView[] =
+    scheduledLaunches.map((launch) => ({
+      scheduledLaunchId: launch.scheduledLaunchId,
+      projectSlug: launch.projectSlug,
+      projectName: launch.projectName,
+      taskKey: launch.taskKey,
+      taskNumber: launch.taskNumber,
+      taskTitle: launch.taskTitle,
+      state: launch.state,
+      nextAttemptAt: launch.nextAttemptAt?.toISOString() ?? null,
+      attemptCount: launch.attemptCount,
+      latestOutcome: launch.latestOutcome,
+      errorCode: launch.errorCode,
+    }));
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -161,6 +181,15 @@ export default async function AdminSchedulerPage({
       />
       <SchedulerBrainIndexQueue clock={clock} queue={brainQueueRows} />
       <SchedulerRunSchedulesOverview schedules={scheduleRows} />
+      <SchedulerScheduledLaunchesOverview
+        labels={{
+          attempt: t("scheduledLaunches.attempt"),
+          empty: t("scheduledLaunches.empty"),
+          subtitle: t("scheduledLaunches.subtitle"),
+          title: t("scheduledLaunches.title"),
+        }}
+        launches={scheduledLaunchRows}
+      />
     </div>
   );
 }

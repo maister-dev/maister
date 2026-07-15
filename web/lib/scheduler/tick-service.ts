@@ -12,6 +12,7 @@ import {
   type SchedulerJobKind,
 } from "@/lib/scheduler/jobs";
 import { dispatchDueSchedules } from "@/lib/run-schedules/dispatch";
+import { dispatchDueScheduledLaunches } from "@/lib/scheduled-launches/dispatch";
 import { runAgentTickJob } from "@/lib/scheduler/handlers/agent-tick";
 import { runAutoLaunchTriagedJob } from "@/lib/scheduler/handlers/auto-launch-triaged";
 import { runAutoPromoteJob } from "@/lib/scheduler/handlers/auto-promote";
@@ -140,7 +141,11 @@ async function runClaimedJob(
 
         return succeeded(job);
       case "run_schedule": {
-        const dispatchSummary = await dispatchDueSchedules();
+        const [recurring, oneTime] = await Promise.all([
+          dispatchDueSchedules(),
+          dispatchDueScheduledLaunches(),
+        ]);
+        const dispatchSummary = { recurring, oneTime };
 
         await recordJobAttemptResult({
           jobId: job.id,

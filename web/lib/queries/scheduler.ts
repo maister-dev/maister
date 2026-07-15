@@ -42,6 +42,21 @@ export type SchedulerStatusRow = {
 export type SchedulerRunScheduleOverviewRow =
   SchedulerRunScheduleOverviewDataRow;
 
+export type SchedulerScheduledLaunchOverviewRow = {
+  scheduledLaunchId: string;
+  projectSlug: string;
+  projectName: string;
+  taskKey: string;
+  taskNumber: number;
+  taskTitle: string;
+  state: string;
+  nextAttemptAt: Date | null;
+  attemptCount: number;
+  latestOutcome: string | null;
+  errorCode: string | null;
+  updatedAt: Date;
+};
+
 export type BrainIndexQueueRow = BrainIndexQueueDataRow;
 
 type SchedulerQueryDb = {
@@ -89,6 +104,21 @@ type SchedulerRunScheduleOverviewDbRow = {
   last_fire_error: string | null;
   last_run_id: string | null;
   last_run_status: RunStatus | null;
+};
+
+type SchedulerScheduledLaunchOverviewDbRow = {
+  scheduled_launch_id: string;
+  project_slug: string;
+  project_name: string;
+  task_key: string;
+  task_number: number;
+  task_title: string;
+  state: string;
+  next_attempt_at: Date | string | null;
+  attempt_count: number;
+  latest_outcome: string | null;
+  error_code: string | null;
+  updated_at: Date | string;
 };
 
 type BrainIndexQueueDbRow = {
@@ -210,6 +240,59 @@ export async function listSchedulerRunScheduleOverviewRows(
   return (result.rows ?? []).map((row) =>
     toSchedulerRunScheduleOverviewRow(row as SchedulerRunScheduleOverviewDbRow),
   );
+}
+
+export async function listSchedulerScheduledLaunchOverviewRows(
+  args: {
+    limit?: number;
+    db?: SchedulerQueryDb;
+  } = {},
+): Promise<SchedulerScheduledLaunchOverviewRow[]> {
+  const db = args.db ?? (getDb() as unknown as SchedulerQueryDb);
+  const limit = args.limit ?? 100;
+  const result = await db.execute(sql`
+    SELECT
+      l.id AS scheduled_launch_id,
+      p.slug AS project_slug,
+      p.name AS project_name,
+      l.task_key,
+      l.task_number,
+      l.task_title,
+      l.state,
+      l.next_attempt_at,
+      l.attempt_count,
+      l.latest_outcome,
+      l.error_code,
+      l.updated_at
+    FROM scheduled_task_launches l
+    INNER JOIN projects p ON p.id = l.project_id
+    WHERE p.archived_at IS NULL
+    ORDER BY
+      (l.next_attempt_at IS NULL) ASC,
+      l.next_attempt_at ASC NULLS LAST,
+      l.updated_at DESC,
+      l.id ASC
+    LIMIT ${limit}
+  `);
+
+  return (result.rows ?? []).map((row) => {
+    const launch = row as SchedulerScheduledLaunchOverviewDbRow;
+
+    return {
+      scheduledLaunchId: launch.scheduled_launch_id,
+      projectSlug: launch.project_slug,
+      projectName: launch.project_name,
+      taskKey: launch.task_key,
+      taskNumber: launch.task_number,
+      taskTitle: launch.task_title,
+      state: launch.state,
+      nextAttemptAt: coerceNullableDate(launch.next_attempt_at),
+      attemptCount: launch.attempt_count,
+      latestOutcome: launch.latest_outcome,
+      errorCode: launch.error_code,
+      updatedAt: coerceDate(launch.updated_at),
+    };
+  });
 }
 
 export async function listBrainIndexQueueRows(

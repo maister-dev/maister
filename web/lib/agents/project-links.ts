@@ -35,6 +35,7 @@ const log = pino({
 });
 
 export type AgentScheduleInput = {
+  id?: string;
   triggerType: "cron" | "event";
   cronExpr?: string;
   timezone?: string;
@@ -59,7 +60,9 @@ export type AttachedAgentView = {
   // never grants write; memory-poisoning guard). Both default false.
   canReadBrain: boolean;
   canWriteBrain: boolean;
+  schedulesRevision: number;
   schedules: Array<{
+    id: string;
     triggerType: "cron" | "event";
     cronExpr?: string;
     timezone?: string;
@@ -141,6 +144,7 @@ function normalizeSchedule(
 }
 
 function scheduleToView(row: Record<string, any>): {
+  id: string;
   triggerType: "cron" | "event";
   cronExpr?: string;
   timezone?: string;
@@ -149,6 +153,7 @@ function scheduleToView(row: Record<string, any>): {
 } {
   if (row.triggerType === "cron") {
     return {
+      id: row.id as string,
       triggerType: "cron",
       cronExpr: row.cronExpr as string,
       timezone: row.timezone as string,
@@ -157,6 +162,7 @@ function scheduleToView(row: Record<string, any>): {
   }
 
   return {
+    id: row.id as string,
     triggerType: "event",
     eventKinds: (row.eventMatch?.kinds ?? []) as string[],
     enabled: row.enabled as boolean,
@@ -199,6 +205,7 @@ export async function getProjectAgentsView(
     config: (link.config ?? null) as Record<string, unknown> | null,
     canReadBrain: Boolean(link.canReadBrain),
     canWriteBrain: Boolean(link.canWriteBrain),
+    schedulesRevision: link.schedulesRevision as number,
     schedules: scheduleRows
       .filter((s) => s.agentId === agent.id)
       .map(scheduleToView),
@@ -304,6 +311,7 @@ export async function updateAgentLink(
       canReadBrain?: boolean;
       canWriteBrain?: boolean;
       schedules?: AgentScheduleInput[];
+      schedulesRevision?: number;
     };
   },
   db?: Db,
@@ -358,9 +366,20 @@ export async function updateAgentLink(
   }
 
   const now = new Date();
-  const normalizedSchedules = input.patch.schedules?.map((s) =>
-    normalizeSchedule(s, now),
-  );
+  const normalizedSchedules = input.patch.schedules?.map((schedule) => ({
+    id: schedule.id,
+    values: normalizeSchedule(schedule, now),
+  }));
+
+  if (
+    normalizedSchedules !== undefined &&
+    input.patch.schedulesRevision !== linkRows[0].schedulesRevision
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      "agent schedule bindings have changed; reload before saving",
+    );
+  }
 
   await (_db as any).transaction(async (tx: any) => {
     const set: Record<string, unknown> = { updatedAt: now };
@@ -391,11 +410,32 @@ export async function updateAgentLink(
     if (input.patch.canWriteBrain !== undefined) {
       set.canWriteBrain = input.patch.canWriteBrain;
     }
+    if (normalizedSchedules !== undefined) {
+      set.schedulesRevision = (linkRows[0].schedulesRevision as number) + 1;
+    }
 
-    await tx
+    const updatedLinks = await tx
       .update(agentProjectLinks)
       .set(set)
-      .where(eq(agentProjectLinks.id, linkRows[0].id));
+      .where(
+        normalizedSchedules === undefined
+          ? eq(agentProjectLinks.id, linkRows[0].id)
+          : and(
+              eq(agentProjectLinks.id, linkRows[0].id),
+              eq(
+                agentProjectLinks.schedulesRevision,
+                linkRows[0].schedulesRevision,
+              ),
+            ),
+      )
+      .returning({ id: agentProjectLinks.id });
+
+    if (normalizedSchedules !== undefined && updatedLinks.length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        "agent schedule bindings have changed; reload before saving",
+      );
+    }
 
     // ADR-089 rotation guarantee: disabling an attachment revokes its live
     // agent tokens in the same tx, not only detach — a disabled link blocks
@@ -410,20 +450,68 @@ export async function updateAgentLink(
 
     // Full replacement of this project's trigger bindings (spec contract).
     if (normalizedSchedules !== undefined) {
-      await tx
-        .delete(agentSchedules)
+      const existingSchedules = await tx
+        .select()
+        .from(agentSchedules)
         .where(
           and(
             eq(agentSchedules.agentId, input.agentId),
             eq(agentSchedules.projectId, input.projectId),
           ),
         );
+      const existingIds = new Set<string>(
+        existingSchedules.map((schedule: Record<string, unknown>) =>
+          schedule.id as string,
+        ),
+      );
+      const receivedIds = new Set<string>();
+      const enabledEventKinds = new Set<string>();
+
       for (const schedule of normalizedSchedules) {
-        await tx.insert(agentSchedules).values({
-          agentId: input.agentId,
-          projectId: input.projectId,
-          ...schedule,
-        });
+        if (schedule.id && !existingIds.has(schedule.id)) {
+          throw new MaisterError(
+            "CONFLICT",
+            "agent schedule does not belong to this project attachment",
+          );
+        }
+        if (schedule.id && receivedIds.has(schedule.id)) {
+          throw new MaisterError("CONFIG", "agent schedule id is duplicated");
+        }
+        if (schedule.id) receivedIds.add(schedule.id);
+
+        if (schedule.values.triggerType === "event" && schedule.values.enabled) {
+          const kinds = (schedule.values.eventMatch as { kinds: string[] }).kinds;
+
+          for (const kind of kinds) {
+            if (enabledEventKinds.has(kind)) {
+              throw new MaisterError(
+                "CONFIG",
+                "only one enabled event binding may own an event kind",
+              );
+            }
+            enabledEventKinds.add(kind);
+          }
+        }
+      }
+
+      for (const schedule of normalizedSchedules) {
+        if (schedule.id) {
+          await tx
+            .update(agentSchedules)
+            .set({ ...schedule.values, updatedAt: now })
+            .where(eq(agentSchedules.id, schedule.id));
+        } else {
+          await tx.insert(agentSchedules).values({
+            agentId: input.agentId,
+            projectId: input.projectId,
+            ...schedule.values,
+          });
+        }
+      }
+      const removedIds = [...existingIds].filter((id) => !receivedIds.has(id));
+
+      for (const id of removedIds) {
+        await tx.delete(agentSchedules).where(eq(agentSchedules.id, id));
       }
     }
 

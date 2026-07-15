@@ -68,6 +68,7 @@ function buildRow(over?: {
     config: over?.config ?? null,
     canReadBrain: over?.canReadBrain ?? false,
     canWriteBrain: over?.canWriteBrain ?? false,
+    schedulesRevision: 1,
     schedules: [],
     agent: {
       id: "core:triager",

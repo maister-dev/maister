@@ -32,6 +32,7 @@ let db: NodePgDatabase<typeof schema>;
 let tick: typeof import("@/lib/scheduler/tick-service");
 let dispatch: typeof import("@/lib/run-schedules/dispatch");
 let service: typeof import("@/lib/run-schedules/service");
+let scheduledLaunches: typeof import("@/lib/scheduled-launches/service");
 
 const DISPATCHER_ID = "run_schedule.dispatcher";
 const MIN = 60_000;
@@ -52,6 +53,7 @@ beforeAll(async () => {
   tick = await import("@/lib/scheduler/tick-service");
   dispatch = await import("@/lib/run-schedules/dispatch");
   service = await import("@/lib/run-schedules/service");
+  scheduledLaunches = await import("@/lib/scheduled-launches/service");
 }, 180_000);
 
 afterAll(async () => {
@@ -65,8 +67,11 @@ afterAll(async () => {
 
 beforeEach(async () => {
   mocks.launchRun.mockReset();
-  mocks.launchRun.mockImplementation(async (input: { taskId: string }) => {
-    const runId = randomUUID();
+  mocks.launchRun.mockImplementation(async (input: {
+    taskId: string;
+    scheduledReservation?: { runId: string; scheduledLaunchId: string };
+  }) => {
+    const runId = input.scheduledReservation?.runId ?? randomUUID();
     const taskRows = await db
       .select({
         projectId: schema.tasks.projectId,
@@ -83,6 +88,12 @@ beforeEach(async () => {
       flowId: task.flowId,
       status: "Review",
       flowVersion: "v1.0.0",
+      ...(input.scheduledReservation
+        ? {
+            scheduledLaunchId: input.scheduledReservation.scheduledLaunchId,
+            triggerSource: "scheduled" as const,
+          }
+        : {}),
     });
 
     return { runId, status: "Review" };
@@ -166,6 +177,22 @@ async function seedSchedule(
   return id;
 }
 
+async function seedOneTimeScheduledLaunch(seed: Seed): Promise<string> {
+  const created = await scheduledLaunches.createScheduledLaunch({
+    projectId: seed.projectId,
+    taskId: seed.taskId,
+    actorUserId: seed.userId,
+    idempotencyKey: randomUUID(),
+    scheduledLocalTime: "2026-06-01T10:15",
+    timezone: "UTC",
+    launchRequest: { flowId: seed.flowId },
+    now: new Date("2026-01-01T00:00:00.000Z"),
+    db,
+  });
+
+  return created.intent.id;
+}
+
 async function scheduleRow(id: string): Promise<schema.RunSchedule> {
   const rows = await db
     .select()
@@ -219,8 +246,37 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
     const attempt = await latestDispatcherAttempt();
 
     expect(attempt.status).toBe("Succeeded");
-    expect(attempt.summary.fired).toBe(1);
-    expect(attempt.summary.launchFailed).toBe(0);
+    expect((attempt.summary.recurring as { fired: number }).fired).toBe(1);
+    expect((attempt.summary.recurring as { launchFailed: number }).launchFailed).toBe(0);
+  });
+
+  it("dispatches a due one-time intent through the same claimed run_schedule job", async () => {
+    const seed = await seedBase();
+    const scheduledLaunchId = await seedOneTimeScheduledLaunch(seed);
+
+    const summary = await runTick();
+
+    expect(summary.claimedCount).toBe(1);
+    expect(summary.succeededCount).toBe(1);
+    expect(mocks.launchRun).toHaveBeenCalledTimes(1);
+
+    const intents = await db
+      .select({
+        state: schema.scheduledTaskLaunches.state,
+        latestOutcome: schema.scheduledTaskLaunches.latestOutcome,
+      })
+      .from(schema.scheduledTaskLaunches)
+      .where(eq(schema.scheduledTaskLaunches.id, scheduledLaunchId));
+
+    expect(intents).toEqual([{ state: "Launched", latestOutcome: "launched" }]);
+
+    const attempt = await latestDispatcherAttempt();
+
+    expect(attempt.status).toBe("Succeeded");
+    expect(attempt.summary).toMatchObject({
+      recurring: { fired: 0 },
+      oneTime: { claimed: 1, launched: 1, failed: 0 },
+    });
   });
 
   it("records the dispatcher attempt Succeeded even when a schedule's fire is launch_failed", async () => {
@@ -244,7 +300,7 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
     const attempt = await latestDispatcherAttempt();
 
     expect(attempt.status).toBe("Succeeded");
-    expect(attempt.summary.launchFailed).toBe(1);
+    expect((attempt.summary.recurring as { launchFailed: number }).launchFailed).toBe(1);
 
     const jobRows = await db
       .select({ failures: schema.schedulerJobs.consecutiveFailures })

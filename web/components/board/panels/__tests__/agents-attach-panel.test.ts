@@ -35,6 +35,7 @@ const ATTACHED: AttachedAgentRow = {
   config: null,
   canReadBrain: true,
   canWriteBrain: false,
+  schedulesRevision: 1,
   schedules: [
     {
       triggerType: "cron",

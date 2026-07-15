@@ -161,6 +161,9 @@ export type LaunchAgentRunInput = {
     eventId?: number | null;
     payload?: Record<string, unknown> | null;
   };
+  // The durable agent binding that owns this cron/event fire. Manual and
+  // delegated launches leave it null.
+  agentScheduleId?: string | null;
   // M37 (ADR-098): orchestrator run-tree linkage. Set when this run is a
   // delegated child — parentRunId is the delegator, rootRunId the tree root,
   // launchMode distinguishes auto-DAG launches from manual delegations.
@@ -878,6 +881,7 @@ async function launchAgentDrivenFlowRun(
       triggerSource: input.trigger.source,
       triggerEventId: input.trigger.eventId ?? null,
       triggerPayload: input.trigger.payload ?? null,
+      agentScheduleId: input.agentScheduleId ?? null,
       ...(declaredBranchBase ? { baseBranch: declaredBranchBase } : {}),
       ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
     },
@@ -1233,6 +1237,7 @@ export async function launchAgentRun(
     triggerSource: input.trigger.source,
     triggerEventId: input.trigger.eventId ?? null,
     triggerPayload: input.trigger.payload ?? null,
+    agentScheduleId: input.agentScheduleId ?? null,
     agentWorkspace: workspace,
     taskId: input.taskId ?? null,
     projectId: input.projectId,
