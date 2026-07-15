@@ -121,6 +121,7 @@ import {
   resolveBaseRef,
   statusPorcelain,
 } from "@/lib/worktree";
+import { buildRunSyncPanelData } from "@/lib/runs/sync-panel-data";
 import { deliveryPolicyFromLegacyPromotionMode } from "@/lib/runs/delivery-policy";
 import {
   computeDirtySummary,
@@ -701,6 +702,7 @@ export default async function RunDetailLayout({
   let reviewData: Awaited<ReturnType<typeof buildReviewPanelData>> | null =
     null;
   let reviewReadiness = null;
+  let syncPanel: Awaited<ReturnType<typeof buildRunSyncPanelData>> | null = null;
 
   if (showReview) {
     try {
@@ -734,6 +736,23 @@ export default async function RunDetailLayout({
     }
 
     reviewReadiness = await getRunReadiness(detail.runId, detail.projectId);
+
+    // ADR-138 (Task 16): behind/ahead + branch-sync dialog seed. Only when a
+    // real target + worktree are known (never for the legacy-relaunch fallback).
+    if (
+      reviewData &&
+      !reviewData.legacyNeedsRelaunch &&
+      reviewData.targetBranch
+    ) {
+      syncPanel = await buildRunSyncPanelData({
+        runId: detail.runId,
+        parentRepoPath: detail.parentRepoPath,
+        branch: detail.branch,
+        targetBranch: reviewData.targetBranch,
+        syncStrategyDefault: detail.syncStrategyDefault,
+        syncRunnerId: detail.syncRunnerId,
+      });
+    }
   }
 
   const reviewLabels: ReviewPanelLabels = {
@@ -750,6 +769,23 @@ export default async function RunDetailLayout({
     promotionRebaseMerge: t("promotionRebaseMerge"),
     promotionPullRequest: t("promotionPullRequest"),
     promotionAiRebaseMerge: t("promotionAiRebaseMerge"),
+    behindAhead: (behind: number, ahead: number) =>
+      t("behindAhead", { behind, ahead }),
+    syncBranch: t("syncBranch"),
+    syncTitle: t("syncTitle"),
+    syncStrategy: t("syncStrategy"),
+    syncStrategyRebase: t("syncStrategyRebase"),
+    syncStrategyMerge: t("syncStrategyMerge"),
+    syncRunner: t("syncRunner"),
+    syncRunnerDefault: t("syncRunnerDefault"),
+    syncPush: t("syncPush"),
+    syncResolveWithAgent: t("syncResolveWithAgent"),
+    syncStart: t("syncStart"),
+    syncCancel: t("syncCancel"),
+    syncInProgress: (phase: string) => t("syncInProgress", { phase }),
+    resolveWithAgent: t("resolveWithAgent"),
+    autoFinalize: t("autoFinalize"),
+    autoFinalizeHint: t("autoFinalizeHint"),
   };
 
   const timelineLabels: TimelineLabels = {
@@ -1845,6 +1881,7 @@ export default async function RunDetailLayout({
 
           {showReview && reviewData ? (
             <ReviewPanel
+              aheadBehind={syncPanel?.aheadBehind ?? null}
               baseBranch={reviewData.baseBranch}
               baseCommit={reviewData.baseCommit}
               canPromote={canAct}
@@ -1863,6 +1900,7 @@ export default async function RunDetailLayout({
               reviewedTargetCommit={reviewData.reviewedTargetCommit}
               runBranch={detail.branch}
               runId={detail.runId}
+              sync={syncPanel?.sync ?? null}
               targetBranch={reviewData.targetBranch}
             />
           ) : null}

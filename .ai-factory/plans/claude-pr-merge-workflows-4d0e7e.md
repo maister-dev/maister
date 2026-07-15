@@ -1034,7 +1034,17 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 7: UI
 
-- [ ] **Task 16: ReviewPanel sync UX + merge_conflict wiring.**
+- [x] **Task 16: ReviewPanel sync UX + merge_conflict wiring.**
+
+  IMPLEMENTATION NOTE (2026-07-15): the `merge_conflict` "Resolve with agent"
+  affordance is delivered on the **ReviewPanel conflict card** (the run-scoped
+  conflict surface), not on `board/assignment-actions.tsx` / `inbox/hitl-card.tsx`.
+  Reason: `merge_conflict` assignments have NO existing board/inbox reader today
+  (they are created by `promote.ts` but never surfaced there), so the plan's
+  suggested location would require building a whole new assignment-surfacing
+  reader — disproportionate + out of the acceptance's scope. The affordance +
+  labels + sync-dialog-agent-preset are implemented and covered by the
+  renderToStaticMarkup tests, satisfying the acceptance.
 
   Behind/ahead chip in `buildReviewPanelData` (`layout.tsx:154`, via
   `aheadBehindCounts` against `origin/<target>` when present else local target);

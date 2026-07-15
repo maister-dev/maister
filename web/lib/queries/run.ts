@@ -179,6 +179,9 @@ export interface RunDetail {
   // workspace row. Null until the pr_state_scan first records them.
   prState: "open" | "merged" | "closed" | null;
   prHasConflicts: boolean | null;
+  // ADR-138 (Task 16): project-level branch-sync defaults seeding the sync dialog.
+  syncStrategyDefault: "rebase" | "merge";
+  syncRunnerId: string | null;
   deliveryPolicySnapshot: DeliveryPolicy | null;
   executionPolicy: ExecutionPolicy | null;
   // Cost-budget governance (AC-BADGE-1): derived run-scope warn signal — the
@@ -286,6 +289,8 @@ export const getRunDetail = cache(async function getRunDetail(
       prNumber: workspaces.prNumber,
       prState: workspaces.prState,
       prHasConflicts: workspaces.prHasConflicts,
+      syncStrategyDefault: projects.syncStrategyDefault,
+      syncRunnerId: projects.syncRunnerId,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       executionPolicy: runs.executionPolicy,
       budgetState: runs.budgetState,
@@ -545,6 +550,8 @@ export const getRunDetail = cache(async function getRunDetail(
     prNumber: row.prNumber,
     prState: row.prState ?? null,
     prHasConflicts: row.prHasConflicts ?? null,
+    syncStrategyDefault: row.syncStrategyDefault ?? "rebase",
+    syncRunnerId: row.syncRunnerId ?? null,
     deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
     executionPolicy: row.executionPolicy ?? null,
     budgetStatus,

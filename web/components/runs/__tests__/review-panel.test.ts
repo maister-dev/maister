@@ -84,6 +84,31 @@ const LABELS = {
   promotionRebaseMerge: "run.promotionRebaseMerge",
   promotionPullRequest: "run.promotionPullRequest",
   promotionAiRebaseMerge: "run.promotionAiRebaseMerge",
+  behindAhead: (behind: number, ahead: number) =>
+    `run.behindAhead:${behind}:${ahead}`,
+  syncBranch: "run.syncBranch",
+  syncTitle: "run.syncTitle",
+  syncStrategy: "run.syncStrategy",
+  syncStrategyRebase: "run.syncStrategyRebase",
+  syncStrategyMerge: "run.syncStrategyMerge",
+  syncRunner: "run.syncRunner",
+  syncRunnerDefault: "run.syncRunnerDefault",
+  syncPush: "run.syncPush",
+  syncResolveWithAgent: "run.syncResolveWithAgent",
+  syncStart: "run.syncStart",
+  syncCancel: "run.syncCancel",
+  syncInProgress: (phase: string) => `run.syncInProgress:${phase}`,
+  resolveWithAgent: "run.resolveWithAgent",
+  autoFinalize: "run.autoFinalize",
+  autoFinalizeHint: "run.autoFinalizeHint",
+};
+
+const SYNC = {
+  strategyDefault: "rebase" as const,
+  runnerOptions: [{ id: "runner-1", label: "claude · sonnet" }],
+  defaultRunnerId: null,
+  published: false,
+  inProgress: null,
 };
 
 type ReviewPanelProps = Parameters<typeof ReviewPanel>[0];
@@ -257,5 +282,114 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     // No null/undefined branch ever leaks into the markup.
     expect(html).not.toContain("null");
     expect(html).not.toContain("undefined");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR-138 (Task 16): branch-sync UX — behind/ahead chip, sync dialog, drift +
+// conflict entry points, ai_rebase_merge auto-finalize checkbox, in-progress.
+// ---------------------------------------------------------------------------
+describe("ReviewPanel — branch sync (ADR-138)", () => {
+  it("renders the behind/ahead chip when the run branch is behind its target", () => {
+    const html = render({ sync: SYNC, aheadBehind: { ahead: 2, behind: 3 } });
+
+    expect(html).toContain('data-testid="review-ahead-behind"');
+    // The formatted count carries both numbers (behind:3, ahead:2).
+    expect(html).toContain("run.behindAhead:3:2");
+    // The chip exposes the Sync-branch entry point when a sync bundle is present.
+    expect(html).toContain('data-testid="review-sync-open"');
+    expect(html).toContain("run.syncBranch");
+  });
+
+  it("omits the behind/ahead chip when up to date (0 behind, 0 ahead)", () => {
+    const html = render({ sync: SYNC, aheadBehind: { ahead: 0, behind: 0 } });
+
+    expect(html).not.toContain('data-testid="review-ahead-behind"');
+  });
+
+  it("omits the chip entirely when the count could not be derived (null)", () => {
+    const html = render({ sync: SYNC, aheadBehind: null });
+
+    expect(html).not.toContain('data-testid="review-ahead-behind"');
+  });
+
+  it("renders the sync dialog form with strategy, runner, push, and AI-agent controls", () => {
+    const html = render({
+      sync: SYNC,
+      aheadBehind: { ahead: 0, behind: 1 },
+      syncDialogOpen: true,
+    } as Partial<ReviewPanelProps>);
+
+    expect(html).toContain('data-testid="review-sync-dialog"');
+    expect(html).toContain('data-testid="review-sync-strategy"');
+    expect(html).toContain('data-testid="review-sync-runner"');
+    expect(html).toContain('data-testid="review-sync-push"');
+    // "resolve with AI agent" checkbox is present and checked by default.
+    expect(html).toContain('data-testid="review-sync-agent"');
+    expect(html).toContain("run.syncResolveWithAgent");
+    expect(html).toContain('data-testid="review-sync-start"');
+  });
+
+  it("the AI-agent checkbox defaults to ON (checked)", () => {
+    const html = render({
+      sync: SYNC,
+      aheadBehind: { ahead: 0, behind: 1 },
+      syncDialogOpen: true,
+    } as Partial<ReviewPanelProps>);
+
+    // Isolate the agent checkbox's own <input> element and assert it is checked
+    // (attribute order under SSR is not guaranteed, so span the whole tag).
+    const marker = 'data-testid="review-sync-agent"';
+    const idx = html.indexOf(marker);
+    const el = html.slice(html.lastIndexOf("<input", idx), html.indexOf(">", idx));
+
+    expect(el).toContain("checked");
+  });
+
+  it("shows the in-progress status and freezes promote while a sync is claimed", () => {
+    const html = render({
+      sync: { ...SYNC, inProgress: { phase: "agent_running" } },
+      aheadBehind: { ahead: 0, behind: 1 },
+    });
+
+    expect(html).toContain('data-testid="review-sync-in-progress"');
+    expect(html).toContain("run.syncInProgress:agent_running");
+    // The Sync-branch entry point is suppressed while a claim is live.
+    expect(html).not.toContain('data-testid="review-sync-open"');
+  });
+
+  it("renders the auto-finalize checkbox (default OFF) only for ai_rebase_merge", () => {
+    const off = render({ promotionMode: "merge" });
+
+    expect(off).not.toContain('data-testid="review-auto-finalize"');
+
+    const on = render({ promotionMode: "ai_rebase_merge" });
+
+    expect(on).toContain('data-testid="review-auto-finalize"');
+    expect(on).toContain("run.autoFinalize");
+    // Default OFF: the checkbox input must not be pre-checked. React omits the
+    // `checked` attribute entirely for `checked={false}`, so span the input tag.
+    const marker = 'data-testid="review-auto-finalize"';
+    const idx = on.indexOf(marker);
+    const inputStart = on.indexOf("<input", idx);
+    const el = on.slice(inputStart, on.indexOf(">", inputStart));
+
+    expect(el).not.toContain("checked");
+  });
+
+  it("surfaces a Resolve-with-agent affordance on the merge-conflict card", () => {
+    const html = render({
+      sync: SYNC,
+      conflict: {
+        parentRepoPath: "/repos/app",
+        targetBranch: "release",
+        runBranch: "maister/feature-x",
+        command: "git merge --no-ff maister/feature-x",
+      },
+    });
+
+    expect(html).toContain('data-testid="review-conflict"');
+    expect(html).toContain('data-testid="review-conflict-resolve-agent"');
+    expect(html).toContain("run.resolveWithAgent");
   });
 });

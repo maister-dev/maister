@@ -21,6 +21,10 @@ export interface PromotionOperationInput {
   diffTruncated: boolean;
   legacyNeedsRelaunch: boolean;
   truncationAcknowledged?: boolean;
+  // ADR-138 (Task 13/16): opt-in one-click chaining for a resolver-backed
+  // ai_rebase_merge conflict. Only carried into the body when mode is
+  // `ai_rebase_merge` (ignored for every other mode). Default OFF.
+  autoFinalize?: boolean;
 }
 
 export type PromotionBlockReason =
@@ -36,6 +40,7 @@ export interface PromotionRequestBody {
   deliveryPolicyOverride: PromotionDeliveryPolicy;
   reviewedTargetCommit: string;
   allowTargetDrift?: true;
+  autoFinalize?: true;
 }
 
 export function promotionBlockReason(
@@ -69,6 +74,9 @@ export function buildPromotionRequestBody(
     },
     reviewedTargetCommit: input.reviewedTargetCommit as string,
     ...(allowTargetDrift ? { allowTargetDrift: true } : {}),
+    ...(input.mode === "ai_rebase_merge" && input.autoFinalize
+      ? { autoFinalize: true }
+      : {}),
   };
 }
 

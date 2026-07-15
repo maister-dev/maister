@@ -57,6 +57,35 @@ export type ReviewPanelLabels = {
   promotionRebaseMerge: string;
   promotionPullRequest: string;
   promotionAiRebaseMerge: string;
+  // ADR-138 (Task 16): branch-sync dialog + behind/ahead chip + resolver copy.
+  behindAhead: (behind: number, ahead: number) => string;
+  syncBranch: string;
+  syncTitle: string;
+  syncStrategy: string;
+  syncStrategyRebase: string;
+  syncStrategyMerge: string;
+  syncRunner: string;
+  syncRunnerDefault: string;
+  syncPush: string;
+  syncResolveWithAgent: string;
+  syncStart: string;
+  syncCancel: string;
+  syncInProgress: (phase: string) => string;
+  resolveWithAgent: string;
+  autoFinalize: string;
+  autoFinalizeHint: string;
+};
+
+// ADR-138 (Task 16): the branch-sync dialog seed data (project defaults + the
+// resolver runner chain) plus the live in-progress state off the latest attempt.
+export type ReviewPanelSync = {
+  strategyDefault: "rebase" | "merge";
+  runnerOptions: { id: string; label: string }[];
+  defaultRunnerId: string | null;
+  published: boolean;
+  // Non-null ⇒ a sync claim is live (phase from the latest attempt); the panel
+  // shows the phase and disables both promote and a second sync launch.
+  inProgress: { phase: string } | null;
 };
 
 export interface ReviewPanelProps {
@@ -91,6 +120,13 @@ export interface ReviewPanelProps {
   // gated. The server `requireProjectAction(…,"promoteRun")` is the real
   // boundary — this is UI consistency / defense-in-depth.
   canPromote?: boolean;
+  // ADR-138 (Task 16): behind/ahead of the run branch vs its target (null when
+  // the count could not be derived); branch-sync dialog seed + in-progress state.
+  aheadBehind?: { ahead: number; behind: number } | null;
+  sync?: ReviewPanelSync | null;
+  // Seeds the initial sync-dialog-open state (like `driftDetected`), so the
+  // dialog form renders deterministically under renderToStaticMarkup.
+  syncDialogOpen?: boolean;
 }
 
 const shell =
@@ -123,6 +159,9 @@ export function ReviewPanel({
   driftDetected = false,
   conflict,
   canPromote = true,
+  aheadBehind = null,
+  sync = null,
+  syncDialogOpen = false,
 }: ReviewPanelProps): ReactElement {
   const t = useTranslations("run");
   const tWorkbench = useTranslations("workbench");
@@ -132,6 +171,21 @@ export function ReviewPanel({
   const [error, setError] = useState<string | null>(null);
   const [drift, setDrift] = useState(driftDetected);
   const [truncationAck, setTruncationAck] = useState(false);
+  const [autoFinalize, setAutoFinalize] = useState(false);
+  // ADR-138 (Task 16): branch-sync dialog. Agent-on is the default (matches the
+  // syncRunTarget contract + the OpenAPI `agent` "(default)").
+  const [syncOpen, setSyncOpen] = useState(syncDialogOpen);
+  const [syncStrategy, setSyncStrategy] = useState<"rebase" | "merge">(
+    sync?.strategyDefault ?? "rebase",
+  );
+  const [syncRunnerId, setSyncRunnerId] = useState<string>(
+    sync?.defaultRunnerId ?? "",
+  );
+  const [syncPush, setSyncPush] = useState(sync?.published ?? false);
+  const [syncAgent, setSyncAgent] = useState(true);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncClaimed = sync?.inProgress != null;
   const [conflictState, setConflictState] =
     useState<ReviewPanelConflict | null>(
       conflict
@@ -154,8 +208,50 @@ export function ReviewPanel({
     diffTruncated: diff.truncated,
     legacyNeedsRelaunch,
     truncationAcknowledged: truncationAck,
+    autoFinalize,
   };
   const blockedPromotion = promotionBlockReason(promotionInput);
+
+  function openSyncDialog(agentPreset: boolean): void {
+    setSyncAgent(agentPreset);
+    setSyncError(null);
+    setSyncOpen(true);
+  }
+
+  async function startSync(): Promise<void> {
+    setSyncBusy(true);
+    setSyncError(null);
+
+    try {
+      const res = await fetch(`/api/runs/${runId}/sync`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          strategy: syncStrategy,
+          agent: syncAgent,
+          push: syncPush,
+          ...(syncRunnerId ? { runnerId: syncRunnerId } : {}),
+        }),
+      });
+
+      if (res.ok) {
+        setSyncOpen(false);
+        router.refresh();
+
+        return;
+      }
+
+      const data = (await res.json().catch(() => null)) as {
+        code?: string;
+      } | null;
+
+      setSyncError(t(resolveUiErrorMessageKey(data?.code)));
+    } catch {
+      setSyncError(t("error.generic"));
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   async function promote(allowTargetDrift: boolean): Promise<void> {
     const body = buildPromotionRequestBody(promotionInput, allowTargetDrift);
@@ -255,6 +351,139 @@ export function ReviewPanel({
         ) : null}
       </div>
 
+      {/* ADR-138: behind/ahead chip + branch-sync affordance */}
+      {aheadBehind && (aheadBehind.behind > 0 || aheadBehind.ahead > 0) ? (
+        <div
+          className="mb-4 flex flex-wrap items-center gap-2"
+          data-testid="review-ahead-behind"
+        >
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-line bg-amber-soft px-2.5 py-1 font-mono text-[10.5px] font-bold text-amber">
+            {labels.behindAhead(aheadBehind.behind, aheadBehind.ahead)}
+          </span>
+          {sync && !syncClaimed ? (
+            <Button
+              className="font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
+              data-testid="review-sync-open"
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => openSyncDialog(true)}
+            >
+              {labels.syncBranch}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ADR-138: a live sync claim — promote + a second sync launch are frozen */}
+      {syncClaimed ? (
+        <p
+          className="mb-4 rounded-[10px] border border-accent-4/40 bg-accent-4-soft p-3 font-mono text-[11px] text-accent-4"
+          data-testid="review-sync-in-progress"
+          role="status"
+        >
+          {labels.syncInProgress(sync?.inProgress?.phase ?? "")}
+        </p>
+      ) : null}
+
+      {/* ADR-138: branch-sync dialog (inline, deterministic for SSR tests) */}
+      {syncOpen && sync ? (
+        <div
+          className="mb-4 flex flex-col gap-3 rounded-[10px] border border-line bg-paper p-4"
+          data-testid="review-sync-dialog"
+        >
+          <p className="font-sans text-[12px] font-bold text-ink">
+            {labels.syncTitle}
+          </p>
+          <label className="flex flex-col gap-1">
+            <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+              {labels.syncStrategy}
+            </span>
+            <select
+              className="h-9 rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+              data-testid="review-sync-strategy"
+              value={syncStrategy}
+              onChange={(e) =>
+                setSyncStrategy(e.target.value as "rebase" | "merge")
+              }
+            >
+              <option value="rebase">{labels.syncStrategyRebase}</option>
+              <option value="merge">{labels.syncStrategyMerge}</option>
+            </select>
+          </label>
+          {sync.runnerOptions.length > 0 ? (
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                {labels.syncRunner}
+              </span>
+              <select
+                className="h-9 rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+                data-testid="review-sync-runner"
+                value={syncRunnerId}
+                onChange={(e) => setSyncRunnerId(e.target.value)}
+              >
+                <option value="">{labels.syncRunnerDefault}</option>
+                {sync.runnerOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
+            <input
+              checked={syncPush}
+              data-testid="review-sync-push"
+              type="checkbox"
+              onChange={(e) => setSyncPush(e.target.checked)}
+            />
+            {labels.syncPush}
+          </label>
+          <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
+            <input
+              checked={syncAgent}
+              data-testid="review-sync-agent"
+              type="checkbox"
+              onChange={(e) => setSyncAgent(e.target.checked)}
+            />
+            {labels.syncResolveWithAgent}
+          </label>
+          {syncError ? (
+            <p
+              aria-live="polite"
+              className="font-mono text-[10.5px] text-[#d9534f]"
+              role="alert"
+            >
+              {syncError}
+            </p>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Button
+              className="bg-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2"
+              data-testid="review-sync-start"
+              isDisabled={syncBusy}
+              size="sm"
+              type="button"
+              variant="primary"
+              onClick={() => void startSync()}
+            >
+              {labels.syncStart}
+            </Button>
+            <Button
+              className="font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
+              isDisabled={syncBusy}
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => setSyncOpen(false)}
+            >
+              {labels.syncCancel}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {/* readiness summary */}
       {readiness ? (
         <div className="mb-4" data-testid="review-readiness">
@@ -352,6 +581,18 @@ export function ReviewPanel({
               <dd className="inline font-bold">{conflictState.command}</dd>
             </div>
           </dl>
+          {sync && !syncClaimed ? (
+            <Button
+              className="mt-3 font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
+              data-testid="review-conflict-resolve-agent"
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => openSyncDialog(true)}
+            >
+              {labels.resolveWithAgent}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -431,6 +672,25 @@ export function ReviewPanel({
             </Select>
           </label>
 
+          {/* ADR-138 (decision 19): ai_rebase_merge one-click chaining — OFF by
+              default (two-step: the resolver returns the run to Review). */}
+          {mode === "ai_rebase_merge" ? (
+            <label
+              className="flex items-start gap-2 font-mono text-[11px] text-ink-2"
+              data-testid="review-auto-finalize"
+            >
+              <input
+                checked={autoFinalize}
+                type="checkbox"
+                onChange={(e) => setAutoFinalize(e.target.checked)}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span>{labels.autoFinalize}</span>
+                <span className="text-mute">{labels.autoFinalizeHint}</span>
+              </span>
+            </label>
+          ) : null}
+
           {drift ? (
             <div
               className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
@@ -440,19 +700,33 @@ export function ReviewPanel({
               <p className="mb-3 font-mono text-[11px] leading-[1.5] text-amber">
                 {labels.targetDrift}
               </p>
-              <Button
-                className={clsx(
-                  "border-amber bg-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
-                  busy && "opacity-60",
-                )}
-                isDisabled={busy}
-                size="sm"
-                type="button"
-                variant="outline"
-                onClick={() => void promote(true)}
-              >
-                {labels.promoteAnyway}
-              </Button>
+              <div className="flex items-center gap-2">
+                {sync && !syncClaimed ? (
+                  <Button
+                    className="border-amber bg-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2"
+                    data-testid="review-drift-sync"
+                    size="sm"
+                    type="button"
+                    variant="primary"
+                    onClick={() => openSyncDialog(true)}
+                  >
+                    {labels.syncBranch}
+                  </Button>
+                ) : null}
+                <Button
+                  className={clsx(
+                    "border-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em]",
+                    busy && "opacity-60",
+                  )}
+                  isDisabled={busy || syncClaimed}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => void promote(true)}
+                >
+                  {labels.promoteAnyway}
+                </Button>
+              </div>
             </div>
           ) : (
             <Button
@@ -460,7 +734,7 @@ export function ReviewPanel({
                 "w-max bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
                 busy && "opacity-60",
               )}
-              isDisabled={busy || !targetBranch}
+              isDisabled={busy || !targetBranch || syncClaimed}
               size="sm"
               type="button"
               variant="primary"

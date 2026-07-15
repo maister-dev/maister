@@ -49,4 +49,31 @@ describe("promotion operation", () => {
   ] as const)("refuses a %s promotion", (_name, override, reason) => {
     expect(promotionBlockReason({ ...input, ...override })).toBe(reason);
   });
+
+  it("carries autoFinalize only for ai_rebase_merge (ADR-138 decision 19)", () => {
+    const aiOn = buildPromotionRequestBody({
+      ...input,
+      mode: "ai_rebase_merge",
+      autoFinalize: true,
+    });
+
+    expect(aiOn?.autoFinalize).toBe(true);
+
+    // autoFinalize is a no-op for any other mode — never leaked into the body.
+    const rebaseWithFlag = buildPromotionRequestBody({
+      ...input,
+      mode: "rebase_merge",
+      autoFinalize: true,
+    });
+
+    expect(rebaseWithFlag).not.toHaveProperty("autoFinalize");
+
+    // ai_rebase_merge default (flag absent/false) → two-step, no autoFinalize.
+    const aiOff = buildPromotionRequestBody({
+      ...input,
+      mode: "ai_rebase_merge",
+    });
+
+    expect(aiOff).not.toHaveProperty("autoFinalize");
+  });
 });
