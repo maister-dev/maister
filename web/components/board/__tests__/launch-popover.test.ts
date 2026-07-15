@@ -30,6 +30,7 @@ import {
   LaunchPopover,
   deriveInitialDisclosureState,
   budgetTextHasInvalid,
+  buildScheduledLaunchBody,
   buildLaunchBody,
   effectiveLaunchVerdict,
   launchRunnerResolutionWarnings,
@@ -312,6 +313,38 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
         forceRelaunch: false,
       }),
     ).not.toHaveProperty("runnerId");
+  });
+
+  it("preserves the normal launch selection while removing force-relaunch control fields", () => {
+    expect(
+      buildScheduledLaunchBody({
+        ...base,
+        disambiguation: "later",
+        forceRelaunch: true,
+        scheduledLocalTime: "2026-12-01T10:00",
+        timezone: "America/New_York",
+      }),
+    ).toEqual({
+      taskId: "task-1",
+      scheduledLocalTime: "2026-12-01T10:00",
+      timezone: "America/New_York",
+      disambiguation: "later",
+      launchRequest: expect.objectContaining({
+        flowId: "flow-1",
+        runnerId: "runner-1",
+        baseBranch: "main",
+        targetBranch: "main",
+      }),
+    });
+    expect(
+      buildScheduledLaunchBody({
+        ...base,
+        disambiguation: "later",
+        forceRelaunch: true,
+        scheduledLocalTime: "2026-12-01T10:00",
+        timezone: "America/New_York",
+      }).launchRequest,
+    ).not.toHaveProperty("allowConcurrent");
   });
 });
 

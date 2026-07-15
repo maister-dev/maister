@@ -64,4 +64,14 @@ describe("ProjectTabs", () => {
     expect(html).not.toContain("nav.brain");
     expect(html).not.toContain("/projects/demo?tab=brain");
   });
+
+  it("renders Automations and only emits the canonical tab query", async () => {
+    const html = renderToStaticMarkup(
+      await ProjectTabs({ slug: "proj", active: "automations", boardCount: 7 }),
+    );
+
+    expect(html).toContain("nav.automations");
+    expect(html).toContain("/projects/proj?tab=automations");
+    expect(html).not.toContain("?tab=schedules");
+  });
 });

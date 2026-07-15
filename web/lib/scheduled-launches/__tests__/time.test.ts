@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { MaisterError } from "@/lib/errors-core";
-import { resolveScheduledLaunchTime } from "@/lib/scheduled-launches/time";
+import {
+  describeScheduledLaunchTime,
+  resolveScheduledLaunchTime,
+} from "@/lib/scheduled-launches/time";
 
 describe("resolveScheduledLaunchTime", () => {
   it("resolves an unambiguous local wall time in its submitted IANA zone", () => {
@@ -47,5 +50,20 @@ describe("resolveScheduledLaunchTime", () => {
     expect(
       resolveScheduledLaunchTime({ ...input, disambiguation: "later" }),
     ).toEqual(new Date("2026-11-01T06:30:00.000Z"));
+  });
+
+  it("returns both UTC previews for an ambiguous wall time without silently choosing one", () => {
+    expect(
+      describeScheduledLaunchTime({
+        scheduledLocalTime: "2026-11-01T01:30",
+        timezone: "America/New_York",
+        disambiguation: "later",
+      }),
+    ).toEqual({
+      earlierAt: "2026-11-01T05:30:00.000Z",
+      isAmbiguous: true,
+      laterAt: "2026-11-01T06:30:00.000Z",
+      resolvedAt: "2026-11-01T06:30:00.000Z",
+    });
   });
 });

@@ -29,6 +29,7 @@ import {
   type AgentRecommendedView,
 } from "@/components/board/panels/agents-attach-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
+import { AutomationsPanel } from "@/components/automations/automations-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import {
   getProjectRole,
@@ -70,6 +71,7 @@ import {
 import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
 import { listProjectSchedules } from "@/lib/run-schedules/queries";
+import { listProjectAutomations } from "@/lib/scheduled-launches/queries";
 import { listTaskDTOs } from "@/lib/services/tasks";
 import { getPlatformStatus } from "@/lib/supervisor-client";
 import { listTokenAudit, TOKEN_AUDIT_PAGE_SIZE } from "@/lib/tokens/audit-list";
@@ -84,7 +86,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "packages",
   "integrations",
   "mcps",
-  "schedules",
+  "automations",
   "agents",
   "members",
   "webhooks",
@@ -93,6 +95,8 @@ const VALID_TABS: readonly ProjectTab[] = [
 
 function parseTab(raw: string | string[] | undefined): ProjectTab {
   const value = Array.isArray(raw) ? raw[0] : raw;
+
+  if (value === "schedules") return "automations";
 
   return (VALID_TABS as readonly string[]).includes(value ?? "")
     ? (value as ProjectTab)
@@ -198,6 +202,7 @@ export default async function ProjectBoardPage({
   const tWorkbench = await getTranslations("workbench");
   const tLog = await getTranslations("projectLog");
   const tBrain = await getTranslations("brain");
+  const tAutomations = await getTranslations("automations");
   const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
 
   const filesLabels = {
@@ -675,17 +680,98 @@ export default async function ProjectBoardPage({
           tokens={integrationsTokens}
         />
       ) : null}
-      {tab === "schedules" ? (
-        <SchedulesPanel
+      {tab === "automations" ? (
+        <AutomationsPanel
           canManage={canAct}
-          schedules={await listProjectSchedules(project.id)}
+          initialRows={(
+            await listProjectAutomations({
+              projectId: project.id,
+              projectSlug: slug,
+              limit: 50,
+            })
+          ).rows}
+          labels={{
+            all: tAutomations("all"),
+            agent: tAutomations("agent"),
+            attention: tAutomations("attention"),
+            cancel: tAutomations("cancel"),
+            cancelConfirm: tAutomations("cancelConfirm"),
+            cancelEdit: tAutomations("cancelEdit"),
+            disambiguation: tAutomations("disambiguation"),
+            edit: tAutomations("edit"),
+            earlier: tAutomations("earlier"),
+            empty: tAutomations("empty"),
+            error: tAutomations("error"),
+            errorLabels: {
+              PRECONDITION: tAutomations("errors.PRECONDITION"),
+              CONFIG: tAutomations("errors.CONFIG"),
+              CONFLICT: tAutomations("errors.CONFLICT"),
+              EXECUTOR_UNAVAILABLE: tAutomations("errors.EXECUTOR_UNAVAILABLE"),
+              SPAWN: tAutomations("errors.SPAWN"),
+              CRASH: tAutomations("errors.CRASH"),
+            },
+            manageAgent: tAutomations("manageAgent"),
+            later: tAutomations("later"),
+            lateByOne: tAutomations("lateByOne"),
+            lateByOther: tAutomations("lateByOther"),
+            oneTime: tAutomations("oneTime"),
+            outcomeLabels: {
+              created: tAutomations("outcomes.created"),
+              rearmed: tAutomations("outcomes.rearmed"),
+              claimed: tAutomations("outcomes.claimed"),
+              retry_scheduled: tAutomations("outcomes.retry_scheduled"),
+              cancelled: tAutomations("outcomes.cancelled"),
+              launched: tAutomations("outcomes.launched"),
+              failed: tAutomations("outcomes.failed"),
+              queued: tAutomations("outcomes.queued"),
+              refused: tAutomations("outcomes.refused"),
+              deduplicated: tAutomations("outcomes.deduplicated"),
+              suppressed: tAutomations("outcomes.suppressed"),
+              dispatching: tAutomations("outcomes.dispatching"),
+              queued_pending: tAutomations("outcomes.queued_pending"),
+              catchup_queued: tAutomations("outcomes.catchup_queued"),
+              skipped_task_busy: tAutomations("outcomes.skipped_task_busy"),
+              skipped_cap: tAutomations("outcomes.skipped_cap"),
+              skipped_target_terminal: tAutomations("outcomes.skipped_target_terminal"),
+              skipped_crashed: tAutomations("outcomes.skipped_crashed"),
+              skipped_flagged: tAutomations("outcomes.skipped_flagged"),
+              skipped_blocked: tAutomations("outcomes.skipped_blocked"),
+              skipped_unconfigured: tAutomations("outcomes.skipped_unconfigured"),
+              launch_failed: tAutomations("outcomes.launch_failed"),
+              incompatible_disabled: tAutomations("outcomes.incompatible_disabled"),
+            },
+            recurring: tAutomations("recurring"),
+            runNow: tAutomations("runNow"),
+            save: tAutomations("save"),
+            saving: tAutomations("saving"),
+            scheduledLocalTime: tAutomations("scheduledLocalTime"),
+            stateLabels: {
+              Scheduled: tAutomations("states.Scheduled"),
+              Dispatching: tAutomations("states.Dispatching"),
+              RetryWaiting: tAutomations("states.RetryWaiting"),
+              Launched: tAutomations("states.Launched"),
+              Failed: tAutomations("states.Failed"),
+              Cancelled: tAutomations("states.Cancelled"),
+              Enabled: tAutomations("states.Enabled"),
+              Disabled: tAutomations("states.Disabled"),
+            },
+            timezone: tAutomations("timezone"),
+            title: tAutomations("title"),
+            viewRun: tAutomations("viewRun"),
+          }}
           slug={slug}
-          tasks={(await listTaskDTOs(project.id)).map((task) => ({
-            id: task.id,
-            title: task.title,
-            status: task.status,
-          }))}
-        />
+        >
+          <SchedulesPanel
+            canManage={canAct}
+            schedules={await listProjectSchedules(project.id)}
+            slug={slug}
+            tasks={(await listTaskDTOs(project.id)).map((task) => ({
+              id: task.id,
+              title: task.title,
+              status: task.status,
+            }))}
+          />
+        </AutomationsPanel>
       ) : null}
       {tab === "agents" ? (
         <AgentsAttachPanelLoader
@@ -786,6 +872,7 @@ async function AgentsAttachPanelLoader({
         config: row.config,
         canReadBrain: row.canReadBrain,
         canWriteBrain: row.canWriteBrain,
+        schedulesRevision: row.schedulesRevision,
         schedules: row.schedules,
         agent: {
           id: row.agent.id as string,

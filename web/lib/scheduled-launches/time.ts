@@ -21,9 +21,16 @@ function toZonedDateTime(
   );
 }
 
-export function resolveScheduledLaunchTime(
+export type ScheduledLaunchTimeDescription = {
+  earlierAt: string;
+  isAmbiguous: boolean;
+  laterAt: string;
+  resolvedAt: string;
+};
+
+export function describeScheduledLaunchTime(
   input: ResolveScheduledLaunchTimeInput,
-): Date {
+): ScheduledLaunchTimeDescription {
   try {
     const local = Temporal.PlainDateTime.from(input.scheduledLocalTime);
     const earlier = toZonedDateTime(
@@ -63,7 +70,12 @@ export function resolveScheduledLaunchTime(
           ? earlier
           : earlier;
 
-    return new Date(Number(resolved.epochMilliseconds));
+    return {
+      earlierAt: new Date(Number(earlier.epochMilliseconds)).toISOString(),
+      isAmbiguous,
+      laterAt: new Date(Number(later.epochMilliseconds)).toISOString(),
+      resolvedAt: new Date(Number(resolved.epochMilliseconds)).toISOString(),
+    };
   } catch (error) {
     if (error instanceof MaisterError) throw error;
 
@@ -73,4 +85,10 @@ export function resolveScheduledLaunchTime(
       { cause: error },
     );
   }
+}
+
+export function resolveScheduledLaunchTime(
+  input: ResolveScheduledLaunchTimeInput,
+): Date {
+  return new Date(describeScheduledLaunchTime(input).resolvedAt);
 }

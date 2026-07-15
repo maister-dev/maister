@@ -14,7 +14,7 @@ export type ProjectTab =
   | "packages"
   | "integrations"
   | "mcps"
-  | "schedules"
+  | "automations"
   | "agents"
   | "members"
   | "webhooks"
@@ -37,7 +37,7 @@ const TABS: readonly ProjectTab[] = [
   "packages",
   "integrations",
   "mcps",
-  "schedules",
+  "automations",
   "agents",
   "members",
   "webhooks",
@@ -62,7 +62,7 @@ export async function ProjectTabs({
     packages: t("packages"),
     integrations: t("integrations"),
     mcps: t("mcps"),
-    schedules: t("schedules"),
+    automations: t("automations"),
     agents: t("agents"),
     members: t("members"),
     webhooks: t("webhooks"),

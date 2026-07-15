@@ -28,6 +28,16 @@ function iso(value: DateValue): string | null {
   return value.toISOString();
 }
 
+function durationMs(value: unknown): number | null {
+  if (value === null) return null;
+
+  const parsed = typeof value === "number" ? value : Number(value);
+
+  if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed;
+
+  throw new MaisterError("PRECONDITION", "scheduled launch contains an invalid late duration");
+}
+
 export type ScheduledLaunchDTO = {
   id: string;
   type: "one_time_task_launch";
@@ -85,7 +95,7 @@ function toScheduledLaunchDto(row: ScheduledLaunchRow): ScheduledLaunchDTO {
     latestOutcome: launch.latestOutcome,
     errorCode: launch.errorCode,
     errorMessage: launch.errorMessage,
-    lateByMs: launch.lateByMs,
+    lateByMs: durationMs(launch.lateByMs),
     resultingRun:
       row.runId && row.runStatus
         ? { id: row.runId, status: row.runStatus }
@@ -208,6 +218,7 @@ export type AutomationRow = {
   latestOutcome: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  lateByMs: number | null;
   resultingRun: { id: string; status: string } | null;
   detailHref: string;
   updatedAt: string;
@@ -300,6 +311,7 @@ function isAfterCursor(row: AutomationRow, cursor: AutomationCursor): boolean {
     latestOutcome: null,
     errorCode: null,
     errorMessage: null,
+    lateByMs: null,
     resultingRun: null,
     detailHref: "",
     updatedAt: cursor.updatedAt,
@@ -385,6 +397,7 @@ async function listProjectAutomationRows(input: {
         latestOutcome: dto.latestOutcome,
         errorCode: dto.errorCode,
         errorMessage: dto.errorMessage,
+        lateByMs: dto.lateByMs,
         resultingRun: dto.resultingRun,
         detailHref: `/api/projects/${projectIdentifier}/automations/one_time_task_launch/${dto.id}`,
         updatedAt: dto.updatedAt,
@@ -402,6 +415,7 @@ async function listProjectAutomationRows(input: {
       latestOutcome: row.lastOutcome,
       errorCode: null,
       errorMessage: row.lastError,
+      lateByMs: null,
       resultingRun:
         row.runId && row.runStatus
           ? { id: row.runId, status: row.runStatus }
@@ -428,6 +442,7 @@ async function listProjectAutomationRows(input: {
       latestOutcome: row.lastOutcome,
       errorCode: row.lastErrorCode,
       errorMessage: row.lastErrorMessage,
+      lateByMs: null,
       resultingRun: row.lastRunId ? { id: row.lastRunId, status: "Unknown" } : null,
       detailHref: `/api/projects/${projectIdentifier}/automations/${row.triggerType === "cron" ? "agent_cron" : "agent_event"}/${row.id}`,
       updatedAt: iso(row.updatedAt)!,

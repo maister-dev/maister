@@ -107,7 +107,7 @@ function ScheduleRow({
   schedule: SchedulerRunScheduleOverviewRow;
 }): ReactElement {
   const t = useTranslations("adminScheduler");
-  const schedulesHref = `/projects/${schedule.projectSlug}?tab=schedules`;
+  const automationsHref = `/projects/${schedule.projectSlug}?tab=automations`;
   const lastRunHref = schedule.lastRunId
     ? `/runs/${encodeURIComponent(schedule.lastRunId)}`
     : null;
@@ -125,7 +125,7 @@ function ScheduleRow({
       <td className="px-4 py-3.5">
         <Link
           className="block max-w-[180px] truncate text-[12px] font-semibold text-ink-2 underline-offset-2 hover:underline"
-          href={schedulesHref}
+          href={automationsHref}
         >
           {schedule.projectName}
         </Link>
@@ -238,7 +238,7 @@ function ScheduleRow({
         <Link
           aria-label={`${t("schedules.openProjectSchedules")} · ${schedule.scheduleName}`}
           className="touch-manipulation rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10.5px] font-semibold tracking-[0.03em] text-ink-2 transition-colors hover:border-mute hover:text-ink"
-          href={schedulesHref}
+          href={automationsHref}
         >
           {t("schedules.openProjectSchedules")}
         </Link>

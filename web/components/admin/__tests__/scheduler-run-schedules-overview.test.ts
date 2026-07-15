@@ -52,6 +52,7 @@ describe("SchedulerRunSchedulesOverview", () => {
     expect(markup).toContain("Nightly bugfix sweep");
     expect(markup).toContain("Running");
     expect(markup).toContain('href="/runs/run-9"');
+    expect(markup).toContain('href="/projects/maister?tab=automations"');
   });
 
   it("keeps last-run status as plain text when the run id is absent", () => {

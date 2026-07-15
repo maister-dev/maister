@@ -38,6 +38,7 @@ import {
   blindShipLockedOptions,
   expandExecutionPolicy,
 } from "@/lib/runs/execution-policy";
+import { describeScheduledLaunchTime } from "@/lib/scheduled-launches/time";
 
 type DeliveryPolicyStrategy =
   | "merge"
@@ -239,6 +240,38 @@ export function buildLaunchBody(args: {
   if (args.targetBranch) body.targetBranch = args.targetBranch;
 
   return body;
+}
+
+export function buildScheduledLaunchBody(args: {
+  taskId: string;
+  flowId: string;
+  runnerId: string;
+  baseBranch: string;
+  targetBranch: string;
+  deliveryPolicy: DeliveryPolicy;
+  executionPolicy: ExecutionPolicy;
+  packageVersions?: Record<string, VersionChoice>;
+  forceRelaunch: boolean;
+  scheduledLocalTime: string;
+  timezone: string;
+  disambiguation: "earlier" | "later";
+}): {
+  taskId: string;
+  scheduledLocalTime: string;
+  timezone: string;
+  disambiguation: "earlier" | "later";
+  launchRequest: Record<string, unknown>;
+} {
+  const { allowConcurrent: _allowConcurrent, taskId: _taskId, ...launchRequest } =
+    buildLaunchBody({ ...args, forceRelaunch: false });
+
+  return {
+    taskId: args.taskId,
+    scheduledLocalTime: args.scheduledLocalTime,
+    timezone: args.timezone,
+    disambiguation: args.disambiguation,
+    launchRequest,
+  };
 }
 
 function branchFallback(options: LaunchOptions): string {
@@ -496,6 +529,27 @@ export function LaunchPopover({
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState(false);
+  const [scheduledLocalTime, setScheduledLocalTime] = useState("");
+  const [scheduleTimezone, setScheduleTimezone] = useState(() =>
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  );
+  const [scheduleDisambiguation, setScheduleDisambiguation] = useState<
+    "earlier" | "later"
+  >("later");
+  const schedulePreview = useMemo(() => {
+    if (!scheduledLocalTime || !scheduleTimezone) return null;
+
+    try {
+      return describeScheduledLaunchTime({
+        scheduledLocalTime,
+        timezone: scheduleTimezone,
+        disambiguation: scheduleDisambiguation,
+      });
+    } catch {
+      return null;
+    }
+  }, [scheduledLocalTime, scheduleDisambiguation, scheduleTimezone]);
   const [launchStage, setLaunchStage] = useState<LaunchStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<LaunchOptions | null>(null);
@@ -768,6 +822,60 @@ export function LaunchPopover({
     }
   }
 
+  async function scheduleLaunch(): Promise<void> {
+    if (!options || !scheduledLocalTime || !schedulePreview) return;
+    if (
+      !effectiveLaunchVerdict(options, forceRelaunch).launchable &&
+      !setUpReady
+    ) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const scheduledLaunchBody = buildScheduledLaunchBody({
+        taskId,
+        flowId,
+        runnerId,
+        baseBranch,
+        targetBranch,
+        deliveryPolicy: currentPolicy,
+        executionPolicy: currentExecutionPolicy,
+        packageVersions,
+        forceRelaunch: false,
+        scheduledLocalTime,
+        timezone: scheduleTimezone,
+        disambiguation: scheduleDisambiguation,
+      });
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(options.task.projectSlug)}/scheduled-launches`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+          body: JSON.stringify(scheduledLaunchBody),
+        },
+      );
+
+      if (!response.ok) {
+        setError(t("scheduleError"));
+
+        return;
+      }
+
+      setOpen(false);
+      startTransition(() => router.refresh());
+    } catch {
+      setError(t("scheduleError"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const fieldLabelClass =
     "font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute";
   const defaultPolicy = options?.deliveryPolicyDefault;
@@ -878,6 +986,7 @@ export function LaunchPopover({
     !flowId ||
     !baseBranch ||
     budgetInvalid;
+  const scheduleDisabled = createDisabled || schedulePreview === null;
   const budgetFieldLabels: Record<BudgetField, string> = {
     maxTokens: t("budgetMaxTokens"),
     hardMaxTokens: t("budgetHardMaxTokens"),
@@ -1373,7 +1482,94 @@ export function LaunchPopover({
                       </p>
                     ) : null}
 
+                    {scheduleMode ? (
+                      <div className="grid gap-3 rounded-[8px] border border-amber-line bg-amber-soft p-3 md:grid-cols-2">
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>{t("scheduleWhen")}</span>
+                          <input
+                            aria-label={t("scheduleWhen")}
+                            className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink"
+                            min={new Date().toISOString().slice(0, 16)}
+                            type="datetime-local"
+                            value={scheduledLocalTime}
+                            onChange={(event) => setScheduledLocalTime(event.target.value)}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>{t("scheduleTimezone")}</span>
+                          <input
+                            aria-label={t("scheduleTimezone")}
+                            className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink"
+                            value={scheduleTimezone}
+                            onChange={(event) => setScheduleTimezone(event.target.value)}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 md:col-span-2">
+                          <span className={fieldLabelClass}>{t("scheduleDst")}</span>
+                          <select
+                            aria-label={t("scheduleDst")}
+                            className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink"
+                            value={scheduleDisambiguation}
+                            onChange={(event) =>
+                              setScheduleDisambiguation(
+                                event.target.value as "earlier" | "later",
+                              )
+                            }
+                          >
+                            <option value="earlier">{t("scheduleEarlier")}</option>
+                            <option value="later">{t("scheduleLater")}</option>
+                          </select>
+                        </label>
+                        <p className="md:col-span-2 font-mono text-[10px] text-amber">
+                          {t("scheduleHint")}
+                        </p>
+                        {scheduledLocalTime && scheduleTimezone ? (
+                          schedulePreview ? (
+                            <p className="md:col-span-2 font-mono text-[10px] text-mute">
+                              {t("scheduleResolvedAt", {
+                                utc: schedulePreview.resolvedAt,
+                              })}
+                              {schedulePreview.isAmbiguous
+                                ? ` ${t("scheduleAmbiguousPreview", {
+                                    earlier: schedulePreview.earlierAt,
+                                    later: schedulePreview.laterAt,
+                                  })}`
+                                : ""}
+                            </p>
+                          ) : (
+                            <p className="md:col-span-2 font-mono text-[10px] text-red-700" role="alert">
+                              {t("schedulePreviewInvalid")}
+                            </p>
+                          )
+                        ) : null}
+                      </div>
+                    ) : null}
+
                     <div className="flex justify-end gap-2 border-t border-line-soft pt-3">
+                      <Button
+                        className="border border-amber-line bg-amber-soft font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-amber hover:bg-amber hover:text-white"
+                        isDisabled={
+                          busy ||
+                          pending ||
+                          (scheduleMode ? scheduleDisabled : createDisabled)
+                        }
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          if (scheduleMode) {
+                            void scheduleLaunch();
+                          } else {
+                            setScheduleMode(true);
+                          }
+                        }}
+                      >
+                        {busy && scheduleMode
+                          ? t("scheduling")
+                          : scheduleMode
+                            ? t("confirmSchedule")
+                            : t("scheduleRun")}
+                      </Button>
                       <Button
                         className={clsx(
                           "bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
