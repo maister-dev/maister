@@ -90,7 +90,11 @@ export async function POST(
     });
 
     return NextResponse.json(
-      { ok: true, status: result.status, worktreeRevived: result.worktreeRevived },
+      {
+        ok: true,
+        status: result.status,
+        worktreeRevived: result.worktreeRevived,
+      },
       { status: 200 },
     );
   } catch (err) {

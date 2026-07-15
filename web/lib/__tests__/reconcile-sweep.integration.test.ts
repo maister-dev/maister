@@ -890,6 +890,8 @@ describe("runReconcileSweep (integration)", () => {
       skipped: 0,
       cutoverSessionsStopped: 0,
       staleClaimsCleared: 0,
+      // ADR-140 (Task 11): the sweep also recovers orphaned branch-sync attempts.
+      syncRecovered: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);
