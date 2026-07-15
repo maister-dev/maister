@@ -18,6 +18,10 @@ import type {
   ExperimentVerdictEnvelope,
 } from "@/lib/experiments/types";
 import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
+import type {
+  EvaluationRecipeDefinition,
+  EvaluationRunIdentitySnapshot,
+} from "@/lib/evaluations/types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -2045,6 +2049,169 @@ export const experimentRuns = pgTable(
     replicatePositiveCheck: check(
       "experiment_runs_replicate_positive_check",
       sql`${t.replicateOrdinal} >= 1`,
+    ),
+  }),
+);
+
+// --- Evaluation Lab (M46, ADR-139..142) ------------------------------------
+// The neutral Study/participant/recipe model that supersedes the task-bound
+// Experiment coupling (ADR-124). Foundational tables only — the platform-config
+// (0105) and execution/evidence (0106) tables land in later migrations. A
+// migrated legacy Experiment keeps its id as the Study id and records
+// `legacy_experiment_id` (ADR-139 D1/D2).
+
+export const evaluationStudies = pgTable(
+  "evaluation_studies",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    // RESTRICT: a task cannot be deleted while a Study references it — the Study
+    // must be archived/deleted first (ADR-139 D2). Distinct from experiments,
+    // which cascade.
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    purpose: text("purpose"),
+    status: text("status", {
+      enum: ["draft", "open", "decided", "archived"],
+    })
+      .notNull()
+      .default("draft"),
+    // Optimistic-concurrency guard; PATCH/DELETE require If-Match on this.
+    version: integer("version").notNull().default(1),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // Set only for Studies migrated from a legacy Experiment; UNIQUE so the
+    // 0090->0104 backfill is one-to-one. Nullable columns allow many NULLs in a
+    // Postgres UNIQUE, so new Studies (NULL) never collide.
+    legacyExperimentId: text("legacy_experiment_id"),
+    archivedReason: text("archived_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }),
+    archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxProjectStatus: index("evaluation_studies_project_status_idx").on(
+      t.projectId,
+      t.status,
+    ),
+    idxTask: index("evaluation_studies_task_idx").on(t.taskId),
+    uniqLegacyExperiment: unique("evaluation_studies_legacy_experiment_uq").on(
+      t.legacyExperimentId,
+    ),
+    statusCheck: check(
+      "evaluation_studies_status_check",
+      sql`${t.status} in ('draft', 'open', 'decided', 'archived')`,
+    ),
+  }),
+);
+
+export const evaluationRecipes = pgTable(
+  "evaluation_recipes",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    // Immutable recipe definition. M46 carries legacy variant configs; the fully
+    // typed controlled recipe (slot bindings, execution policy) is M47 (ADR-143).
+    // Never rewritten after first launch — tombstone + add instead.
+    definition: jsonb("definition")
+      .$type<EvaluationRecipeDefinition>()
+      .notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    replicateGroup: text("replicate_group"),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    tombstonedAt: timestamp("tombstoned_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    uniqStudyKey: unique("evaluation_recipes_study_key_uq").on(
+      t.studyId,
+      t.key,
+    ),
+    idxStudy: index("evaluation_recipes_study_idx").on(t.studyId),
+  }),
+);
+
+export const evaluationParticipants = pgTable(
+  "evaluation_participants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    // SET NULL: a participant survives Run deletion via its copied
+    // `run_identity` snapshot; the live link just becomes unavailable (D3).
+    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
+    sourceType: text("source_type", {
+      enum: ["observed", "launched"],
+    }).notNull(),
+    // Only set for launched participants (the owning recipe lineage).
+    recipeId: text("recipe_id").references(() => evaluationRecipes.id, {
+      onDelete: "set null",
+    }),
+    label: text("label").notNull(),
+    displayOrder: integer("display_order").notNull().default(0),
+    replicateGroup: text("replicate_group"),
+    replicateOrdinal: integer("replicate_ordinal"),
+    launchReason: text("launch_reason", {
+      enum: ["initial", "manual_relaunch", "replicate"],
+    }),
+    // Copied provenance so history survives Run deletion. Bounded, opaque —
+    // never a private path, session id, adapter env, or credential.
+    runIdentity: jsonb("run_identity").$type<EvaluationRunIdentitySnapshot>(),
+    joinedAt: timestamp("joined_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    frozenAt: timestamp("frozen_at", { withTimezone: true, mode: "date" }),
+    // Tombstone: once referenced by a sealed evidence snapshot, removal keeps
+    // the row for queryable history (D3).
+    removedAt: timestamp("removed_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxStudy: index("evaluation_participants_study_idx").on(t.studyId),
+    idxRun: index("evaluation_participants_run_idx").on(t.runId),
+    // One live participant per (study, run): partial UNIQUE excludes tombstones
+    // so a removed Run can be re-added as a fresh participant.
+    uniqLiveStudyRun: uniqueIndex("evaluation_participants_live_run_uq")
+      .on(t.studyId, t.runId)
+      .where(sql`${t.runId} is not null and ${t.removedAt} is null`),
+    sourceTypeCheck: check(
+      "evaluation_participants_source_type_check",
+      sql`${t.sourceType} in ('observed', 'launched')`,
+    ),
+    // Observed participants never carry a recipe/launch lineage; launched ones
+    // must (the owning recipe is set at launch).
+    observedNoRecipeCheck: check(
+      "evaluation_participants_observed_no_recipe_check",
+      sql`(${t.sourceType} = 'launched') or (${t.recipeId} is null and ${t.launchReason} is null and ${t.replicateOrdinal} is null)`,
+    ),
+    replicatePositiveCheck: check(
+      "evaluation_participants_replicate_positive_check",
+      sql`${t.replicateOrdinal} is null or ${t.replicateOrdinal} >= 1`,
     ),
   }),
 );

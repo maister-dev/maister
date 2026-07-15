@@ -722,7 +722,9 @@ Phase 1 exit: package parser/local workflow/release gate suites green; old packa
 
 ### Phase 2 — Study schema, legacy migration, participants, and evidence
 
-- [ ] T2.1 RED/GREEN/REFACTOR migrations 0104–0106 and Drizzle schema.
+- [~] T2.1 RED/GREEN/REFACTOR migrations 0104–0106 and Drizzle schema.
+  - DONE (foundational slice, migration 0104): `evaluation_studies` / `evaluation_recipes` / `evaluation_participants` in `web/lib/db/schema.ts` + `web/lib/evaluations/types.ts`, generated `0104_wet_red_skull.sql` (purely additive; journal idx 104, snapshot written). Real-PG integration test `evaluation-schema.integration.test.ts` (7 tests green): status check, legacy_experiment_id UNIQUE + many-NULLs, task RESTRICT, run SET NULL identity-survival, observed-no-recipe check, partial-unique live-run + re-add after tombstone. migration-cli-contract green.
+  - REMAINING (subsequent commits): legacy Experiment backfill (0090→0104 parity — the risky data migration), platform-config tables (0105: method_revisions/panels/profiles/overrides), execution/evidence tables (0106). Deferred to keep each commit green and low-risk.
   - Files: web/lib/db/schema.ts, migrations SQL/journal/snapshots, migration integration tests, docs DB artifacts already frozen in Phase 0.
   - RED: migrate a realistic 0090 database containing every Experiment status, variants, members, failures, snapshots, advisories, human verdicts, missing historical provenance, and package pins; assert count/digest parity and constraints, the fixed status mapping (incl. archived_reason=legacy_abandoned), Partial legacy executions with reason legacy_advisory, and zero-citation verdicts for advisory-less conclusions.
   - GREEN: create all foundation tables/indexes/FKs/checks; lossless legacy backfill; loud abort on invalid/mismatched data; no destructive drop.
