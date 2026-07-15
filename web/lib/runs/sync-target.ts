@@ -104,6 +104,10 @@ export type SyncRunInput = {
   agent?: boolean;
   push?: boolean;
   runnerId?: string;
+  // ADR-138 (Task 13): set by the resolver-backed `ai_rebase_merge` promotion.
+  // Persisted on the attempt; on a verified agent resolution the resolver
+  // best-effort chains `promoteRun(rebase_merge)` to Done (default OFF).
+  autoFinalize?: boolean;
   actor: SyncActor;
   db?: Db;
   now?: () => Date;
@@ -492,6 +496,7 @@ export async function syncRunTarget(
       targetRef: targetBranch,
       remoteShaBefore,
       runnerId: input.runnerId ?? null,
+      autoFinalize: input.autoFinalize ?? false,
       actorType: input.actor.type,
       actorId: input.actor.id,
     });
@@ -602,6 +607,8 @@ export async function syncRunTarget(
           remoteShaIndeterminate,
           push: input.push,
           runnerId: input.runnerId,
+          autoFinalize: input.autoFinalize ?? false,
+          actor: input.actor,
         });
       }
 
@@ -795,6 +802,8 @@ type SyncResolverArgs = {
   remoteShaIndeterminate: boolean;
   push?: boolean;
   runnerId?: string;
+  autoFinalize?: boolean;
+  actor: SyncActor;
 };
 
 /**
@@ -1092,6 +1101,43 @@ async function runSyncResolver(
     { runId, attemptId: claim.attemptId, behind, pushed },
     "sync resolver finalized — agent_launched",
   );
+
+  // ADR-138 (Task 13): autoFinalize opt-in — the resolver resolved and the run
+  // is back in Review, cleanly rebased on the target. Best-effort chain
+  // promoteRun(rebase_merge) → Done. ANY failure degrades to the clean two-step
+  // Review state (benign W6 — no new stuck state / promotion crash window). The
+  // resolver ran under the SYNC claim, already released above.
+  if (args.autoFinalize && args.actor.id && targetSha) {
+    try {
+      const { promoteRun } = await import("@/lib/runs/promote");
+
+      await promoteRun(
+        runId,
+        {
+          mode: "rebase_merge",
+          targetBranch,
+          reviewedTargetCommit: targetSha,
+        },
+        {
+          sessionUser: { id: args.actor.id },
+          authorize: async () => undefined,
+        },
+        db,
+      );
+      log.info(
+        { runId, attemptId: claim.attemptId },
+        "ai_rebase_merge autoFinalize chained to Done",
+      );
+    } catch (chainErr) {
+      log.warn(
+        {
+          runId,
+          err: chainErr instanceof Error ? chainErr.message : String(chainErr),
+        },
+        "ai_rebase_merge autoFinalize chain failed — run left in clean Review (two-step)",
+      );
+    }
+  }
 
   return {
     attemptId: claim.attemptId,

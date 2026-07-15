@@ -79,6 +79,12 @@ export type PromoteRunInput = {
   reviewedTargetCommit?: string;
   allowTargetDrift?: boolean;
   autoOnReady?: boolean;
+  // ADR-138 (Task 13): `ai_rebase_merge` opt-in one-click chaining. Default OFF
+  // (two-step: on conflict the resolver returns the run to Review for a manual
+  // clean re-promote). When true, a verified resolver resolution best-effort
+  // chains `promoteRun(rebase_merge)` to Done (failure degrades to the clean
+  // two-step Review state — benign W6, no new stuck state / crash window).
+  autoFinalize?: boolean;
   // ADR-126 T11: auto-promotion attribution. When present, finalize writes
   // `workspaces.promotion_lane = laneClass` (the "auto" glyph datum). Omitted by
   // every human/scratch/child caller — no behavior change for them.
@@ -117,6 +123,11 @@ export type PromoteRunResult = {
   commit?: string;
   pullRequestUrl: string | null;
   prNumber?: number | null;
+  // ADR-138 (Task 13): set only for `ai_rebase_merge` when a rebase conflict was
+  // delegated to the AI resolver (the promotion is deferred — the run is now
+  // `Running` under the sync claim; UI surfaces "conflicts resolved — re-promote
+  // to finish", or auto-finalizes when `autoFinalize` was set).
+  resolverLaunched?: boolean;
 };
 
 // Workspace states that may be (re)claimed by a fresh promote attempt. A
@@ -874,19 +885,38 @@ async function promoteWorkspaceRun(
         });
   } catch (err) {
     if (isMaisterError(err) && err.code === "CONFLICT") {
+      // ADR-138 (Task 13): an `ai_rebase_merge` rebase conflict no longer
+      // dead-ends at a `merge_conflict` assignment. RELEASE the promotion claim
+      // (it is NEVER held across the resolver — no new promotion crash window),
+      // then delegate to the sync-resolver core, which re-rebases (LEAVING the
+      // conflict materialized, unlike the abort-on-conflict rebase_merge side
+      // effect) and launches the AI resolver under the SYNC lifecycle claim.
+      // `autoFinalize` (default OFF) rides the sync attempt: on verified
+      // resolution the resolver best-effort chains `promoteRun(rebase_merge)`.
       if (claim.resolvedMode === "ai_rebase_merge") {
-        log.warn(
-          {
-            runId,
-            projectId: claim.run.projectId,
-            attemptId: claim.attemptId,
-            targetBranch: claim.resolvedTarget,
-            sourceBranch: claim.workspace.branch,
-            parentRepoPath: claim.workspace.parentRepoPath,
-            command: `git rebase ${claim.resolvedTarget}`,
-          },
-          "ai_rebase_merge promotion conflict surfaced to assignment",
+        await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+
+        const { syncRunTarget } = await import("@/lib/runs/sync-target");
+        const sync = await syncRunTarget({
+          runId,
+          strategy: "rebase",
+          agent: true,
+          push: false,
+          autoFinalize: input.autoFinalize ?? false,
+          actor: { type: "user", id: ctx.sessionUser.id },
+        });
+
+        log.info(
+          { runId, attemptId: claim.attemptId, syncOutcome: sync.outcome },
+          "ai_rebase_merge conflict delegated to AI sync resolver",
         );
+
+        return {
+          ok: true,
+          mode: "ai_rebase_merge",
+          pullRequestUrl: null,
+          resolverLaunched: sync.outcome === "agent_launched",
+        };
       }
 
       await db.transaction(async (tx: Db) => {

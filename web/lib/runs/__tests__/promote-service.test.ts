@@ -163,6 +163,19 @@ vi.mock("@/lib/instance-config", () => ({
   worktreesRoot: () => "/tmp/maister/worktrees",
 }));
 
+// ADR-138 (Task 13): the ai_rebase_merge conflict branch dynamic-imports
+// syncRunTarget to delegate to the AI resolver.
+const syncTargetMock = vi.hoisted(() => ({
+  syncRunTarget: vi.fn(async () => ({
+    attemptId: "sync-att-1",
+    outcome: "agent_launched" as const,
+    behind: 1,
+    pushed: false,
+  })),
+}));
+
+vi.mock("@/lib/runs/sync-target", () => syncTargetMock);
+
 const sessionUser = {
   id: "user-1",
   name: "User One",
@@ -798,7 +811,7 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     });
   });
 
-  it("surfaces ai_rebase_merge conflicts through the standard merge-conflict assignment", async () => {
+  it("delegates an ai_rebase_merge conflict to the AI sync resolver (ADR-138 Task 13)", async () => {
     const runId = seedFlowRun({
       deliveryPolicySnapshot: {
         strategy: "ai_rebase_merge",
@@ -811,28 +824,26 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     vi.mocked(promoteRebaseMerge).mockRejectedValueOnce(
       new MaisterError("CONFLICT", "rebase conflict"),
     );
+    syncTargetMock.syncRunTarget.mockClear();
 
-    await expectMaisterCode(
-      callPromote(runId, {
-        reviewedTargetCommit: "tip00000",
-      }),
-      "CONFLICT",
-    );
+    const res = await callPromote(runId, {
+      reviewedTargetCommit: "tip00000",
+    });
 
-    expect(createAssignment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actionKind: "merge_conflict",
-        runId,
-        branch: "maister/flow-1",
-        ref: "main",
-      }),
+    // The conflict is delegated to the resolver, NOT a merge-conflict assignment.
+    expect(res).toMatchObject({
+      ok: true,
+      mode: "ai_rebase_merge",
+      resolverLaunched: true,
+    });
+    expect(syncTargetMock.syncRunTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, strategy: "rebase", agent: true }),
     );
-    expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(createAssignment).not.toHaveBeenCalled();
+    // The promotion claim is released before the resolver runs (no crash window).
     expect(dbState.tables.workspaces[0]).toMatchObject({
-      promotionMode: "rebase_merge",
       promotionState: "failed",
     });
-    expect(emitWebhookEventMock).not.toHaveBeenCalled();
   });
 
   it("promotes a Review flow run through rebase_merge", async () => {
