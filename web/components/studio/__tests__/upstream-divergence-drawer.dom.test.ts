@@ -8,18 +8,31 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The translator identity MUST be stable per namespace, exactly as the real hook
+// is: use-intl's `useTranslationsImpl` returns it from a `useMemo`.
+//
+// The naive `(ns) => (key) => ...` mock every other component test uses is fine
+// there — those render ONCE via renderToStaticMarkup, so identity never matters.
+// It is fatal here. This drawer keeps `tApiErrors` in a `useCallback` dep array
+// (upstream-divergence-drawer.tsx:123) behind `useEffect(() => void load(),
+// [load])`. A fresh function per render ⇒ new `load` every render ⇒ the effect
+// refires ⇒ `setState({kind:"loading"})` ⇒ render ⇒ … an unbounded render loop
+// that exhausted the heap before a single assertion ran (the whole file OOM'd,
+// failing `test:unit` even though its 4 tests never executed).
+//
+// The cache lives INSIDE the factory because `vi.mock` is hoisted above any
+// module-scope declaration it might otherwise close over.
 vi.mock("next-intl", () => {
-  // Match use-intl's memoized translator identity across rerenders.
   const translators = new Map<string, (key: string) => string>();
 
   return {
     useTranslations: (namespace: string): ((key: string) => string) => {
-      const existing = translators.get(namespace);
+      let translate = translators.get(namespace);
 
-      if (existing) return existing;
-      const translate = (key: string): string => `${namespace}.${key}`;
-
-      translators.set(namespace, translate);
+      if (!translate) {
+        translate = (key: string): string => `${namespace}.${key}`;
+        translators.set(namespace, translate);
+      }
 
       return translate;
     },
