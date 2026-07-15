@@ -823,7 +823,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 3: git substrate
 
-- [ ] **Task 8: Worktree helpers (TDD on real tmp repos).**
+- [x] **Task 8: Worktree helpers (TDD on real tmp repos).**
 
   In `web/lib/worktree.ts` (none of these exist today; reuse the internal
   non-exported `abortMerge:1641`/`abortRebase:1650` where useful):
@@ -849,7 +849,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 4: sync core
 
-- [ ] **Task 9: Mechanical sync service + internal route (extract the shared core).**
+- [x] **Task 9: Mechanical sync service + internal route (extract the shared core).**
 
   `web/lib/runs/sync-target.ts`: eligibility allow-list (status `Review`,
   runKind `flow|agent`, `parent_run_id IS NULL`, `runs.workspace_mode <>

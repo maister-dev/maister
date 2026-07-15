@@ -2,6 +2,7 @@ import "server-only";
 
 import { execFile, spawn } from "node:child_process";
 import {
+  access as fsAccess,
   copyFile as fsCopyFile,
   mkdtemp as fsMkdtemp,
   rm as fsRm,
@@ -3157,4 +3158,478 @@ export async function readBlob(args: ReadBlobArgs): Promise<RepoBlobResult> {
   if (buf.includes(0)) return { kind: "binary" };
 
   return { kind: "text", content: buf.toString("utf8") };
+}
+
+// ---------------------------------------------------------------------------
+// Branch sync (ADR-138): rebase / merge / fast-forward helpers over the same
+// git-exec seam. Sync ops act on a run's worktree and its local branch; a
+// conflict is reported structurally and LEFT in place for the caller to resolve
+// or abort — never silently aborted mid-flight.
+// ---------------------------------------------------------------------------
+
+export type SyncApplyResult =
+  | { ok: true }
+  | { ok: false; conflict: true; conflictedFiles: string[] };
+
+// `git merge-base --is-ancestor a b`: is `a` reachable from `b`? Exit 0 = yes,
+// exit 1 = no; any other exit is a real git failure. Both inputs are resolved
+// SHAs, so no option-terminator is needed.
+async function isAncestor(
+  repo: string,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean> {
+  try {
+    await runGit(repo, ["merge-base", "--is-ancestor", ancestor, descendant]);
+
+    return true;
+  } catch (err) {
+    if ((err as { code?: unknown }).code === 1) return false;
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git merge-base --is-ancestor failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// The absolute per-worktree git dir. A linked worktree's `.git` is a FILE
+// pointing into the main repo's `.git/worktrees/<name>`, and the rebase/merge
+// state lives there — `--absolute-git-dir` resolves it regardless.
+async function resolveGitDir(worktree: string): Promise<string> {
+  const { stdout } = await runGit(worktree, [
+    "rev-parse",
+    "--absolute-git-dir",
+  ]);
+
+  return stdout.trim();
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fsAccess(target);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The unmerged (conflicted) paths in a worktree mid-rebase/merge. `--diff-filter=U`
+// is language-independent, unlike git's localized conflict hints, so it is the
+// reliable conflict signal.
+async function unmergedFiles(worktree: string): Promise<string[]> {
+  try {
+    const { stdout } = await runGit(worktree, [
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff --diff-filter=U failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// Symmetric-difference counts for a sync decision: how far `ref` is ahead of and
+// behind `base`. `git rev-list --left-right --count base...ref` prints
+// "<left>\t<right>" where left = commits in base not in ref (BEHIND) and right =
+// commits in ref not in base (AHEAD).
+export async function aheadBehindCounts(
+  repo: string,
+  base: string,
+  ref: string,
+): Promise<{ ahead: number; behind: number }> {
+  const repoPath = validate(absolutePathSchema, repo, "repo");
+  const baseRef = validate(gitRefSchema, base, "base");
+  const targetRef = validate(gitRefSchema, ref, "ref");
+
+  try {
+    const { stdout } = await runGit(repoPath, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "--end-of-options",
+      `${baseRef}...${targetRef}`,
+    ]);
+    const [left, right] = stdout.trim().split(/\s+/);
+    const behind = Number.parseInt(left ?? "", 10);
+    const ahead = Number.parseInt(right ?? "", 10);
+
+    if (!Number.isFinite(behind) || !Number.isFinite(ahead)) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git rev-list --left-right ${baseRef}...${targetRef} returned unparseable counts: ${JSON.stringify(stdout)}`,
+      );
+    }
+
+    return { ahead, behind };
+  } catch (err) {
+    if (err instanceof MaisterError) throw err;
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git rev-list --left-right ${baseRef}...${targetRef} failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// Fast-forward the local `branch` to `toSha`, refusing any non-fast-forward
+// divergence (PRECONDITION). When `branch` is the worktree's checked-out branch,
+// `git merge --ff-only` moves HEAD + working tree (requires a clean tree);
+// otherwise the ref is moved with `git branch -f`, but only after confirming the
+// current head is an ancestor of `toSha` (a true fast-forward).
+export async function ffUpdateLocalBranch(
+  repo: string,
+  branch: string,
+  toSha: string,
+): Promise<void> {
+  const repoPath = validate(absolutePathSchema, repo, "repo");
+  const br = validate(branchNameSchema, branch, "branch");
+  const target = validate(gitCommitSchema, toSha, "toSha");
+
+  const checkedOut = (await currentBranch(repoPath)) === br;
+
+  if (checkedOut) {
+    try {
+      await runGit(repoPath, ["merge", "--ff-only", "--", target]);
+
+      return;
+    } catch (err) {
+      // `--ff-only` refuses a non-fast-forward (divergence) — surface it typed.
+      throw new MaisterError(
+        "PRECONDITION",
+        `cannot fast-forward checked-out branch ${br} to ${target}: ${errorText(err) || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    }
+  }
+
+  const currentHead = await localBranchHead({
+    projectRepoPath: repoPath,
+    branch: br,
+  });
+
+  if (currentHead === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `local branch does not exist: ${br}`,
+    );
+  }
+
+  if (!(await isAncestor(repoPath, currentHead, target))) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `refusing non-fast-forward update of ${br}: ${currentHead} is not an ancestor of ${target}`,
+    );
+  }
+
+  try {
+    await runGit(repoPath, ["branch", "-f", "--", br, target]);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git branch -f ${br} failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// Rebase the worktree's current branch onto `ref`. A conflict is reported with
+// the conflicted paths and the rebase is LEFT in place (the caller resolves or
+// aborts); a non-conflict failure aborts and throws.
+export async function rebaseOntoRef(
+  worktree: string,
+  ref: string,
+): Promise<SyncApplyResult> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+  const target = validate(gitRefSchema, ref, "ref");
+
+  try {
+    await runGit(wt, ["rebase", "--", target]);
+
+    return { ok: true };
+  } catch (err) {
+    const conflictedFiles = await unmergedFiles(wt);
+
+    if (conflictedFiles.length > 0) {
+      return { ok: false, conflict: true, conflictedFiles };
+    }
+
+    await abortRebase(wt);
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git rebase ${target} failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// Merge `ref` into the worktree's current branch. Same result contract as
+// `rebaseOntoRef`: a conflict is reported with the conflicted paths and the
+// merge is LEFT in place; a non-conflict failure aborts and throws.
+export async function mergeFromRef(
+  worktree: string,
+  ref: string,
+): Promise<SyncApplyResult> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+  const target = validate(gitRefSchema, ref, "ref");
+
+  try {
+    await runGit(wt, ["merge", "--no-edit", "--", target]);
+
+    return { ok: true };
+  } catch (err) {
+    const conflictedFiles = await unmergedFiles(wt);
+
+    if (conflictedFiles.length > 0) {
+      return { ok: false, conflict: true, conflictedFiles };
+    }
+
+    await abortMerge(wt);
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git merge ${target} failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// True when a rebase or merge is mid-flight, detected via the per-worktree git
+// dir's `rebase-merge` / `rebase-apply` directories or `MERGE_HEAD`.
+export async function syncOperationInProgress(
+  worktree: string,
+): Promise<boolean> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+  const gitDir = await resolveGitDir(wt);
+
+  const [rebaseMerge, rebaseApply, mergeHead] = await Promise.all([
+    pathExists(path.join(gitDir, "rebase-merge")),
+    pathExists(path.join(gitDir, "rebase-apply")),
+    pathExists(path.join(gitDir, "MERGE_HEAD")),
+  ]);
+
+  return rebaseMerge || rebaseApply || mergeHead;
+}
+
+// Abort whichever sync op is in progress (rebase or merge); a no-op when none is.
+export async function abortSyncOperation(worktree: string): Promise<void> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+  const gitDir = await resolveGitDir(wt);
+
+  const [rebaseMerge, rebaseApply, mergeHead] = await Promise.all([
+    pathExists(path.join(gitDir, "rebase-merge")),
+    pathExists(path.join(gitDir, "rebase-apply")),
+    pathExists(path.join(gitDir, "MERGE_HEAD")),
+  ]);
+
+  if (rebaseMerge || rebaseApply) await abortRebase(wt);
+  if (mergeHead) await abortMerge(wt);
+}
+
+// True when `git diff --check` finds leftover conflict markers anywhere in the
+// worktree. `--check` also flags whitespace errors and exits non-zero for both,
+// so the report (forced to a stable C locale) is scanned to single out conflict
+// markers; a `fatal:` diagnostic is a real failure and is surfaced typed.
+export async function hasConflictMarkers(worktree: string): Promise<boolean> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+
+  try {
+    await execFileAsync("git", ["-C", wt, "diff", "--check"], {
+      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+      maxBuffer: EXEC_MAX_BUFFER,
+      env: { ...process.env, LC_ALL: "C" },
+    });
+
+    return false;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & {
+      stdout?: string;
+      stderr?: string;
+    };
+    const report = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+
+    if (/leftover conflict marker/i.test(report)) return true;
+
+    if (/^fatal:/im.test(e.stderr ?? "")) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git diff --check failed: ${(e.stderr ?? "").trim() || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    }
+
+    return false;
+  }
+}
+
+// Whether `branch` has a configured upstream (`branch@{upstream}` resolves).
+// `branchNameSchema` forbids `@{`, so the suffix cannot be spoofed by the input.
+export async function branchHasUpstream(
+  repo: string,
+  branch: string,
+): Promise<boolean> {
+  const repoPath = validate(absolutePathSchema, repo, "repo");
+  const br = validate(branchNameSchema, branch, "branch");
+
+  try {
+    await runGit(repoPath, ["rev-parse", "--abbrev-ref", `${br}@{upstream}`]);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type ForceWithLeaseResult =
+  | { pushed: true }
+  | { pushed: false; leaseFailed: true };
+
+// ADR-138 (branch sync): push `branch` from its worktree with an EXPLICIT-SHA
+// force-with-lease (`refs/heads/<branch>:<expectedSha>`), so the lease authority
+// is the SHA captured BEFORE any fetch — independent of a possibly-updated
+// remote-tracking ref (that is why the sync path can fetch all refs safely). A
+// lease rejection (the remote moved off `expectedSha`) resolves
+// `{ pushed:false, leaseFailed:true }` and is NOT thrown — the caller maps it to a
+// typed CONFLICT and keeps the local rebase result. Any other push failure stays a
+// transient EXECUTOR_UNAVAILABLE (redacted; URLs may carry creds). `expectedSha`
+// null pushes with an empty lease (`:`), i.e. "expect the remote ref to be absent".
+export async function forceWithLeasePush(args: {
+  worktreePath: string;
+  branch: string;
+  expectedSha: string | null;
+}): Promise<ForceWithLeaseResult> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+  const lease = `refs/heads/${branch}:${args.expectedSha ?? ""}`;
+
+  log.info(
+    { worktreePath: wt, branch, expectedSha: args.expectedSha },
+    "forceWithLeasePush",
+  );
+
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        wt,
+        "push",
+        `--force-with-lease=${lease}`,
+        "--end-of-options",
+        "origin",
+        branch,
+      ],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        env: NETWORK_GIT_ENV,
+      },
+    );
+
+    log.debug({ stdout, stderr }, "forceWithLeasePush done");
+
+    return { pushed: true };
+  } catch (err) {
+    const stderrText = errorText(err) || asError(err).message;
+    const redacted = redactUrl(stderrText);
+
+    // A lease rejection surfaces as a non-fast-forward / "stale info" rejection —
+    // the same signal pushBranch classifies. It is an expected outcome, not a
+    // transient failure, so it resolves structurally instead of throwing.
+    if (isNonFastForwardPush(stderrText)) {
+      log.info(
+        { worktreePath: wt, branch },
+        "forceWithLeasePush lease rejected (remote moved)",
+      );
+
+      return { pushed: false, leaseFailed: true };
+    }
+
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `git push --force-with-lease ${branch} failed: ${redacted}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// Attach an EXISTING local branch in a new worktree (`git worktree add <path>
+// <branch>`, no `-b`). The inverse of `addWorktree`, which always creates a new
+// branch. Refuses (PRECONDITION) when the branch is missing (the caller decides
+// whether to fetch + recreate — this never fetches) or already checked out in
+// another worktree (git refuses; surfaced typed).
+export async function addWorktreeForBranch(
+  repo: string,
+  worktreePath: string,
+  branch: string,
+): Promise<void> {
+  const repoPath = validate(absolutePathSchema, repo, "repo");
+  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+  const br = validate(branchNameSchema, branch, "branch");
+
+  log.info(
+    { projectRepoPath: repoPath, worktreePath: wt, branch: br },
+    "addWorktreeForBranch",
+  );
+
+  const head = await localBranchHead({ projectRepoPath: repoPath, branch: br });
+
+  if (head === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `local branch does not exist: ${br}`,
+    );
+  }
+
+  try {
+    const { stdout, stderr } = await runGit(repoPath, [
+      "worktree",
+      "add",
+      "--",
+      wt,
+      br,
+    ]);
+
+    log.debug({ stdout, stderr }, "addWorktreeForBranch done");
+  } catch (err) {
+    const stderrText = errorText(err);
+
+    if (
+      stderrText.includes("already used by worktree") ||
+      stderrText.includes("already checked out")
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `branch ${br} is already checked out in another worktree: ${stderrText.trim()}`,
+        { cause: asError(err) },
+      );
+    }
+
+    if (stderrText.includes("already exists")) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `worktree path already exists: ${stderrText.trim()}`,
+        { cause: asError(err) },
+      );
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git worktree add ${br} failed: ${stderrText || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
 }

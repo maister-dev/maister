@@ -730,6 +730,20 @@ async function promoteWorkspaceRun(
       );
     }
 
+    // ADR-138 reverse fence (the sync↔promotion double fence): refuse while a
+    // branch sync holds the shared workspace lifecycle slot. The forward fence
+    // lives in syncRunTarget (refuses when promotion_state is claiming/done), so
+    // the two are mutually exclusive under the same FOR UPDATE workspace lock.
+    if (
+      workspace.lifecycleOperationName === "sync" &&
+      workspace.lifecycleOperationState === "claiming"
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        "a branch sync is in progress for this run",
+      );
+    }
+
     if (!canReclaim(workspace)) {
       throw new MaisterError(
         "CONFLICT",

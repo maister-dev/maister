@@ -67,7 +67,10 @@ export type LifecycleOperationName =
   | "drop"
   | "exportBranch"
   | "snapshotCommit"
-  | "handoffBranch";
+  | "handoffBranch"
+  // ADR-138: branch sync claims the SAME workspace lifecycle slot, so it is
+  // mutually exclusive with the other five (and with a concurrent sync) for free.
+  | "sync";
 
 export type LifecycleOperationClaim = {
   attemptId: string;
