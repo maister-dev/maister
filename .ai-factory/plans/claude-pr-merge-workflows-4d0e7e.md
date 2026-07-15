@@ -1170,7 +1170,56 @@ the plan confirms the include glob matches (skill-context runnability rule).
   **Acceptance:** validators green; no `Designed` tag remains on shipped
   behavior; numbering verified against `main` HEAD.
 
-- [ ] **Task 20: Full verification gate.**
+- [x] **Task 20: Full verification gate.**
+
+  RESULTS (2026-07-15, recorded output):
+  | Suite | Result |
+  | --- | --- |
+  | `tsc --noEmit` | **0 errors** |
+  | `test:unit` | **669/670 files, 6625/6629 tests pass** — 1 PRE-EXISTING file OOMs (below) |
+  | `test:integration` | **ZERO REGRESSIONS** vs merge-base (below) |
+  | e2e `run-sync` + `pr-reopen` | **3 passed, `--retries=0`** (no retry masking) |
+  | `@maister/mcp test:unit` | **217 passed** (incl. `tool-contract` 145 bijection) + `build` OK |
+  | `eslint .` (check-only) | **0 errors** (112 pre-existing prettier warnings elsewhere; my files clean) |
+  | `pnpm validate:docs` | **60/60 mermaid, 360 ADR anchors** |
+
+  **Enumerated existing-test migrations — all confirmed landed and green:**
+  promote claim (`promote-service.test.ts` 26 — sync fence + `ai_rebase_merge`
+  resolver delegation) · reconcile classifier (`reconcile-classify.test.ts` 52 +
+  `reconcile-sweep.integration` 20 + `sync-recovery.integration` 7) · scheduler
+  (`job-catalog` 3 + `jobs` 12 + `i18n-scheduler-kind-keys` 24 — new
+  `pr_state_scan` kind) · workbench-lifecycle `policy` 11 (6th op) ·
+  `scope-contract` 5 · `tool-contract` 145 · `i18n-parity` 2 · board/portfolio
+  (`pr-state-dto.integration`).
+
+  **REGRESSIONS FOUND BY THIS GATE — both fixed:**
+  1. `hitl/[hitlRequestId]/respond/route.test.ts` (5 tests, 500 not 200) — my
+     `markSyncResolverPermissionDelivered` runs on the permission-respond path,
+     and the route test's FAKE db `tableOf()` threw `unknown table` for
+     `run_sync_attempts`. Fixed by registering the table in the mock (empty →
+     the guard no-ops for every non-resolver run, which is the designed
+     behavior).
+  2. `reconcile-sweep.integration.test.ts` (1 test) — the zeroed-tick assertion
+     deep-equals the WHOLE summary, which legitimately gained my `syncRecovered`
+     counter. Expectation updated.
+
+  **PRE-EXISTING FAILURES — proven, NOT introduced here, explicitly deferred:**
+  - **Integration (17 files / 38 tests).** Proven by checking out the merge-base
+    (`387d2e3d5`) and running the IDENTICAL failing-file set there: base = 17
+    files / 38 tests failing; this branch (after the 2 fixes above) = 16 / 37,
+    and `comm -23 mine base` is EMPTY — i.e. **no file fails here that passes at
+    base**. (The set is mildly flaky, hence 16 vs 17.) Areas: packages, agents,
+    capabilities, flows-runner, observatory, scratch-runs, project-registration
+    (`repoUrl scheme not allowed`), auto-promote-race.
+  - **Unit: `components/studio/__tests__/upstream-divergence-drawer.dom.test.ts`**
+    — V8 heap OOM ("Ineffective mark-compacts near heap limit"), its 4 tests
+    never run, which alone makes `test:unit` exit 1. Proven pre-existing: the
+    test file AND its component are byte-identical to the merge-base, my branch
+    changed ZERO files under `components/studio/`, and it reproduces in
+    ISOLATION — even with `--max-old-space-size=8192 --pool=forks` (so it is a
+    runaway allocation, not a heap-size limit). It is also the repo's only jsdom
+    `.dom.test.ts` against a `renderToStaticMarkup`-only convention. Spun off as
+    its own task rather than fixed here (out of scope, unrelated subsystem).
 
   Run the complete suites: `pnpm --filter maister-web test:unit`,
   `test:integration` (Testcontainers; `TESTCONTAINERS_RYUK_DISABLED=true` on
