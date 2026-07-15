@@ -136,7 +136,7 @@ export interface PortfolioWorkspace {
   // the sweep promotes (the run then leaves the active set), so this is null on
   // the typical active-workspace row — present for parity with the board card.
   autoPromotedLane: string | null;
-  // ADR-137 PR lifecycle: provider PR state + conflict flag from the workspace
+  // ADR-139 PR lifecycle: provider PR state + conflict flag from the workspace
   // row. Null until the pr_state_scan records them.
   prState: "open" | "merged" | "closed" | null;
   prHasConflicts: boolean | null;

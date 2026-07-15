@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // =============================================================================
-// ADR-137 (PR lifecycle tracking) Task 5 — provider PR-state reads.
+// ADR-139 (PR lifecycle tracking) Task 5 — provider PR-state reads.
 //
 // This is a UNIT test. The PROVIDER BOUNDARY is mocked, never invoked for real:
 //   * `gh` / `glab` are shelled via `promisify(execFile)` from

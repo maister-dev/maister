@@ -321,12 +321,12 @@ executor metadata. Note: structured agent/cli `vars` are not yet populated
 - **Scratch runs**: ad-hoc conversational ACP session in a managed worktree
   (`run_kind=scratch`), outside the task board, reusing the run/HITL/diff/
   promote substrate. → `docs/system-analytics/scratch-runs.md`.
-- **Branch sync + reopen** (ADR-138, Designed): a 6th lifecycle op `sync`
+- **Branch sync + reopen** (ADR-140, Implemented): a 6th lifecycle op `sync`
   rebases/merges a `Review` run's branch onto the moved target inside its
   worktree (mechanical, or an AI resolver ACP session on conflict), and
   `reopen` flips a `Done` run back to `Review` when its PR conflicts. PR
   lifecycle state (`open|merged|closed(+conflicts)`) is polled onto
-  `workspaces` by the `pr_state_scan` scheduler job (ADR-137). →
+  `workspaces` by the `pr_state_scan` scheduler job (ADR-139). →
   `docs/system-analytics/branch-sync.md`.
 
 ### 8. Promotion policy
@@ -343,11 +343,16 @@ config`) may auto-promote through the SAME `promoteRun` choke point when
 readiness is green, gated by a non-configurable hard deny-list. `docs/PRODUCT_VIEW.md`
 is canonical for the product framing; this note only mirrors it.
 
-The `ai_rebase_merge` mode is resolver-backed (ADR-138, Designed): a clean
+The `ai_rebase_merge` mode is resolver-backed (ADR-140, Implemented): a clean
 rebase finalizes to `Done` like `rebase_merge`; a conflict delegates to the
 branch-sync AI resolver (under the sync lifecycle claim, never the promotion
 claim), returning the run to `Review` (two-step default) or — with the opt-in
 `autoFinalize` flag — best-effort chaining the finalize to `Done`.
+
+PR lifecycle state is owned by `workspaces` (`pr_state`, `pr_has_conflicts`,
+`pr_merged_at`, `pr_merge_commit_sha`) and written ONLY by the `pr_state_scan`
+job (ADR-139) — never by the supervisor, and never onto `runs.merge_commit_sha`,
+which stays the local-promotion merge commit.
 
 ## Current Scope
 

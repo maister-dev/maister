@@ -175,11 +175,11 @@ export interface RunDetail {
   promotionMode: string | null;
   prUrl: string | null;
   prNumber: number | null;
-  // ADR-137 PR lifecycle: provider PR state + conflict flag from the run's
+  // ADR-139 PR lifecycle: provider PR state + conflict flag from the run's
   // workspace row. Null until the pr_state_scan first records them.
   prState: "open" | "merged" | "closed" | null;
   prHasConflicts: boolean | null;
-  // ADR-138 (Task 16): project-level branch-sync defaults seeding the sync dialog.
+  // ADR-140 (Task 16): project-level branch-sync defaults seeding the sync dialog.
   syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
   deliveryPolicySnapshot: DeliveryPolicy | null;

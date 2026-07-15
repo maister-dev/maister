@@ -59,7 +59,7 @@ export type PrStateScanSummary = {
   reason?: string;
 };
 
-// ADR-137: the per-project PR-state poll. A pure provider-read + DB job — it
+// ADR-139: the per-project PR-state poll. A pure provider-read + DB job — it
 // NEVER spawns a session, mutates git, or writes `runs.merge_commit_sha` (that
 // column stays owned by repo_delivery_scan). It stamps `pr_state_checked_at` on
 // every attempt and applies three edge-guarded, exactly-once state transitions.

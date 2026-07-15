@@ -440,9 +440,9 @@ flowchart TD
     Card --> Evidence[show current/stale<br/>evidence summary]
 ```
 
-### Reopen effect on board state and relations (Designed, ADR-138)
+### Reopen effect on board state and relations (Implemented, ADR-140)
 
-**Reopen** (ADR-138) pulls a top-level `flow`/`agent` run from `Done` back to
+**Reopen** (ADR-140) pulls a top-level `flow`/`agent` run from `Done` back to
 `Review` when its PR is still open or conflicted — the PR was in fact never
 merged (the run-level machine is owned by [`branch-sync.md`](branch-sync.md)).
 Its board-axis consequences:
@@ -630,7 +630,7 @@ observe a silent rewrite.
 
 - ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
   [ADR-083 Social board substrate](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
-  [ADR-138 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen)
+  [ADR-140 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
   (Designed — reopen board/relation effect).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),

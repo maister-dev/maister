@@ -48,7 +48,7 @@ export type ReopenActor = {
   id: string | null;
 };
 
-// Pure eligibility gate (ADR-138 decision 14): a top-level (`parent_run_id IS
+// Pure eligibility gate (ADR-140 decision 14): a top-level (`parent_run_id IS
 // NULL`) `flow|agent` run in `Done` on an own (non-shared) tree whose workspace
 // has an OPEN or CONFLICTED PR. Throws `PRECONDITION` naming the blocker.
 export function assertReopenEligible(
@@ -92,7 +92,7 @@ export function assertReopenEligible(
 }
 
 // Flip a top-level Done run back to Review so its stale/conflicted PR can be
-// re-synced and re-promoted (ADR-138). One transaction: `Done->Review` CAS +
+// re-synced and re-promoted (ADR-140). One transaction: `Done->Review` CAS +
 // `promotion_state='reopened'` + clear removal + stamp `review_entered_at` +
 // `run.review` webhook + task `Done->InFlight` (re-gates released relations).
 // A GC'd worktree is revived from the existing branch BEFORE the state flip.

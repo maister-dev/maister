@@ -738,7 +738,7 @@ export default async function RunDetailLayout({
 
     reviewReadiness = await getRunReadiness(detail.runId, detail.projectId);
 
-    // ADR-138 (Task 16): behind/ahead + branch-sync dialog seed. Only when a
+    // ADR-140 (Task 16): behind/ahead + branch-sync dialog seed. Only when a
     // real target + worktree are known (never for the legacy-relaunch fallback).
     if (
       reviewData &&

@@ -191,7 +191,7 @@ Consensus evidence uses the existing Evidence tab and artifact routes:
 
 The workbench's `web/components/workbench/lifecycle-actions.tsx` renders the
 run's lifecycle operations (surfaced in the inspector Actions tab —
-[`run-inspector.md`](run-inspector.md)). Branch sync (ADR-138) adds a **6th**
+[`run-inspector.md`](run-inspector.md)). Branch sync (ADR-140) adds a **6th**
 operation, `sync`, to the lifecycle-operation matrix. It claims the same single
 `workspaces.lifecycle_operation_name` slot, so it is **mutually exclusive** with
 `archive` / `drop` / `exportBranch` / `snapshotCommit` / `handoffBranch`, and it
@@ -250,7 +250,7 @@ recovery. A non-review or scratch URL state has an explicit unavailable state.
   [ADR-072](../../decisions.md#adr-072-pr-grade-review-comments-review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard),
   [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
   [ADR-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution),
-  [ADR-138](../../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen).
+  [ADR-140](../../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen).
 - Source: `web/components/workbench/workbench-panel.tsx`,
   `web/components/workbench/code-view.tsx`,
   `web/components/workbench/run-diff.tsx`,

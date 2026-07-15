@@ -79,7 +79,7 @@ export type PromoteRunInput = {
   reviewedTargetCommit?: string;
   allowTargetDrift?: boolean;
   autoOnReady?: boolean;
-  // ADR-138 (Task 13): `ai_rebase_merge` opt-in one-click chaining. Default OFF
+  // ADR-140 (Task 13): `ai_rebase_merge` opt-in one-click chaining. Default OFF
   // (two-step: on conflict the resolver returns the run to Review for a manual
   // clean re-promote). When true, a verified resolver resolution best-effort
   // chains `promoteRun(rebase_merge)` to Done (failure degrades to the clean
@@ -123,7 +123,7 @@ export type PromoteRunResult = {
   commit?: string;
   pullRequestUrl: string | null;
   prNumber?: number | null;
-  // ADR-138 (Task 13): set only for `ai_rebase_merge` when a rebase conflict was
+  // ADR-140 (Task 13): set only for `ai_rebase_merge` when a rebase conflict was
   // delegated to the AI resolver (the promotion is deferred — the run is now
   // `Running` under the sync claim; UI surfaces "conflicts resolved — re-promote
   // to finish", or auto-finalizes when `autoFinalize` was set).
@@ -133,7 +133,7 @@ export type PromoteRunResult = {
 // Workspace states that may be (re)claimed by a fresh promote attempt. A
 // `claiming` state is reclaimable only once its claim has gone stale (handled
 // separately, see canReclaim).
-// ADR-138 (Task 12): a reopened Done run (promotion_state='reopened') is
+// ADR-140 (Task 12): a reopened Done run (promotion_state='reopened') is
 // re-promotable — its claim is reclaimable just like a fresh/failed one.
 const RECLAIMABLE_STATES = new Set(["none", "failed", "reopened"]);
 
@@ -743,7 +743,7 @@ async function promoteWorkspaceRun(
       );
     }
 
-    // ADR-138 reverse fence (the sync↔promotion double fence): refuse while a
+    // ADR-140 reverse fence (the sync↔promotion double fence): refuse while a
     // branch sync holds the shared workspace lifecycle slot. The forward fence
     // lives in syncRunTarget (refuses when promotion_state is claiming/done), so
     // the two are mutually exclusive under the same FOR UPDATE workspace lock.
@@ -885,7 +885,7 @@ async function promoteWorkspaceRun(
         });
   } catch (err) {
     if (isMaisterError(err) && err.code === "CONFLICT") {
-      // ADR-138 (Task 13): an `ai_rebase_merge` rebase conflict no longer
+      // ADR-140 (Task 13): an `ai_rebase_merge` rebase conflict no longer
       // dead-ends at a `merge_conflict` assignment. RELEASE the promotion claim
       // (it is NEVER held across the resolver — no new promotion crash window),
       // then delegate to the sync-resolver core, which re-rebases (LEAVING the

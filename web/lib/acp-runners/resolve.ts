@@ -16,7 +16,7 @@ export type RunnerResolutionTier =
   // M34 (ADR-089): standalone agent chain tiers.
   | "agentLinkOverride"
   | "agentDefault"
-  // ADR-138: the branch-sync AI-resolver's dedicated project default
+  // ADR-140: the branch-sync AI-resolver's dedicated project default
   // (projects.sync_runner_id).
   | "syncDefault";
 
@@ -270,7 +270,7 @@ export type SyncRunnerResolutionInput = {
   readonly runners: readonly RunnerCatalogEntry[];
 };
 
-// ADR-138: the branch-sync AI-resolver runner chain. Flow tiers do NOT
+// ADR-140: the branch-sync AI-resolver runner chain. Flow tiers do NOT
 // participate — the resolver session is a sync-lifecycle artifact, not a flow
 // node. `sync_runner_id` is the project's dedicated resolver default (tier
 // `syncDefault`), distinct from the general `projects.default_runner_id`.

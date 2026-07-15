@@ -95,7 +95,7 @@ still a later responsive pass.
    own line, the executor, compact `+/-` change size, and a collapsible **Task**
    block rendering the task prompt (Markdown). This replaces the prior
    `"<KEY-N> <branch>"` heading so the page answers "what is this run about".
-   When branch sync and PR lifecycle tracking ship (Designed, ADR-137/138), the
+   When branch sync and PR lifecycle tracking ship (Implemented, ADR-139/140), the
    header also carries a **behind/ahead chip** summarizing the run branch's drift
    against its target and a **PR-state chip** (`open` / `merged` / `closed`); a
    conflicted PR renders a distinct conflicts affordance linking to Reopen. Both
@@ -207,7 +207,7 @@ The landing focus follows state:
   node result and inspector summaries.
 - `GET /api/runs/{runId}/stream` supplies the SSE change trigger.
 - Workbench routes are listed in [`workbench.md`](workbench.md).
-- Branch sync + PR lifecycle (Designed, ADR-137/138): `POST /api/runs/{runId}/sync`
+- Branch sync + PR lifecycle (Implemented, ADR-139/140): `POST /api/runs/{runId}/sync`
   and `POST /api/runs/{runId}/reopen` back the Sync branch and Reopen actions;
   `getRunDetail(runId)` additionally supplies the workspace PR facts (`prState`,
   `prHasConflicts`, `prMergedAt`, `prMergeCommitSha`) and the current
@@ -229,7 +229,7 @@ participant draft, verifier, target, round, agreement reached, no consensus,
 human resolution, consensus plan, debate log, and bounded excerpt labels. EN +
 RU parity is required.
 
-ADR-137/138 add branch-sync and PR-lifecycle labels under the existing `run`
+ADR-139/140 add branch-sync and PR-lifecycle labels under the existing `run`
 namespace: the behind/ahead and PR-state chips, the Sync branch dialog
 (strategy / runner / push / AI-resolver controls), the sync-in-progress phase
 labels and Stop, the drift-card Sync branch action, the Reopen action, and the
@@ -243,7 +243,7 @@ Inbox card and the run-detail panel.
 
 ## Branch sync & PR lifecycle (Designed)
 
-Branch sync (ADR-138) and PR lifecycle tracking (ADR-137) add run-finishing
+Branch sync (ADR-140) and PR lifecycle tracking (ADR-139) add run-finishing
 affordances for a `Review` run whose branch fell behind its target and for a
 `Done` run whose PR later conflicts. Eligibility, the mechanical-vs-agent-resolver
 paths, the verification gate, and reopen live in
@@ -320,8 +320,8 @@ base-to-run-to-target meaning. Both paths must state that distinction in EN/RU.
   [ADR-066](../../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror),
   [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
   [ADR-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution),
-  [ADR-137](../../decisions.md#adr-137-pr-lifecycle-tracking),
-  [ADR-138](../../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen).
+  [ADR-139](../../decisions.md#adr-139-pr-lifecycle-tracking),
+  [ADR-140](../../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen).
 - Source: `web/app/(app)/runs/[runId]/layout.tsx`,
   `web/components/board/flow-graph-view-section.tsx`,
   `web/components/board/run-timeline.tsx`,

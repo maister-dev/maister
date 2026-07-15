@@ -15,7 +15,7 @@ Created: 2026-07-14 · Refined: 2026-07-14 (SDD/TDD hardening + codebase re-veri
 ## SDD delivery rule
 
 This is a specification-driven delivery. Tasks 1–2 produce the authoritative
-delta before any production code: ADR-137/ADR-138 own the irreversible
+delta before any production code: ADR-139/ADR-140 own the irreversible
 choices; the OpenAPI/AsyncAPI files own the wire; the system-analytics, DB,
 and screens documents own lifecycle, invariants, persistence, and surface.
 No code task may start until its RED tests cite the corresponding contract
@@ -69,7 +69,7 @@ no-op. Ext API + MCP facade coverage ships in the same plan.
 ### Explicitly excluded from this plan
 
 - **Bitbucket (Cloud and Server/Data Center)** PR adapter — recorded as
-  deferred tech debt in ADR-137 with the agreed shape: one REST adapter
+  deferred tech debt in ADR-139 with the agreed shape: one REST adapter
   family with configurable API base to cover both editions.
 - PR auto-merge / "PR-automerger agent" (ADR-126 Phase-2 note stands), PR
   review-comment ingestion into rework, and any automatic (trigger-driven)
@@ -586,7 +586,7 @@ max_failures`). One bad row can never stall the per-project job
 
 ## Migration and ADR reservation
 
-Reserve **ADR-137** (PR lifecycle tracking) and **ADR-138** (branch sync,
+Reserve **ADR-139** (PR lifecycle tracking) and **ADR-140** (branch sync,
 resolver, reopen, resolver-backed `ai_rebase_merge`) and migrations
 **`0100_pr_state_tracking`** and **`0101_branch_sync`** from `main` (verified
 heads 2026-07-14: ADR-136, migration idx 99 `0099_agent_human_ask`, identical
@@ -625,17 +625,17 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 | Contract | Authoritative spec | GREEN owner (primary proof) |
 | --- | --- | --- |
-| S1 PR-state persistence | ADR-137; runs-domain ERD | Task 3 — migration 0100 integration test |
-| S2 provider PR-state reads | ADR-137; git-integration.md | Task 5 — pr-adapter unit tests (mocked exec/fetch) |
-| S3 scan job lifecycle | scheduler.md; ADR-137 | Task 6 — handler integration + `runSchedulerTick({jobKind:"pr_state_scan"})` wiring-seam test |
+| S1 PR-state persistence | ADR-139; runs-domain ERD | Task 3 — migration 0100 integration test |
+| S2 provider PR-state reads | ADR-139; git-integration.md | Task 5 — pr-adapter unit tests (mocked exec/fetch) |
+| S3 scan job lifecycle | scheduler.md; ADR-139 | Task 6 — handler integration + `runSchedulerTick({jobKind:"pr_state_scan"})` wiring-seam test |
 | S4 PR surfacing + events | outbound-webhooks.asyncapi; screens | Task 7 — query/emit/component tests |
 | S5 git sync helpers | branch-sync.md §git ops | Task 8 — real-git unit tests |
-| S6 sync ledger + attempts | ADR-138; branch-sync.md; sync ERD | Task 4 — migration 0101 integration test |
+| S6 sync ledger + attempts | ADR-140; branch-sync.md; sync ERD | Task 4 — migration 0101 integration test |
 | S7 mechanical sync + fences | branch-sync.md state machine | Task 9 — service/route integration incl. fence matrix |
-| S8 resolver session path | branch-sync.md; ADR-138 | Task 10 — driver integration (supervisor client mocked) |
+| S8 resolver session path | branch-sync.md; ADR-140 | Task 10 — driver integration (supervisor client mocked) |
 | S9 recovery + watchdogs | branch-sync.md crash windows | Task 11 — reconcile/sweep integration per window |
-| S10 reopen + re-promote | ADR-138; workspaces.md | Task 12 — reopen integration incl. same-PR re-promote |
-| S11 resolver-backed ai_rebase_merge | ADR-138; git-integration.md | Task 13 — promote-mode integration (clean + conflict-delegate) |
+| S10 reopen + re-promote | ADR-140; workspaces.md | Task 12 — reopen integration incl. same-PR re-promote |
+| S11 resolver-backed ai_rebase_merge | ADR-140; git-integration.md | Task 13 — promote-mode integration (clean + conflict-delegate) |
 | S12 ext + MCP contract | external operations.openapi | Tasks 14–15 — route integration + `tool-contract.test.ts` + `scope-contract.test.ts` |
 | S13 UI + composition | screens docs | Tasks 16–18 — component tests + 2 e2e specs |
 
@@ -645,10 +645,10 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 - [x] **Task 1: Freeze both feature contracts before code.**
 
-  Write `docs/decisions.md` ADR-137 (PR lifecycle tracking: workspace columns
+  Write `docs/decisions.md` ADR-139 (PR lifecycle tracking: workspace columns
   incl. the `pr_merge_commit_sha` provenance split from `runs.merge_commit_sha`,
   scan job, 4-provider reads + `generic`-unsupported, webhook/activity edge,
-  Bitbucket-deferred record) and ADR-138 (sync lifecycle op + double fence,
+  Bitbucket-deferred record) and ADR-140 (sync lifecycle op + double fence,
   pipeline, resolver session model incl. `run_sessions` `sync-<n>` identity and
   the caller-side FOR-UPDATE fence, target-scoped fetch + explicit-SHA lease,
   verification gate incl. `git diff --check`, attempt ledger + phase machine,
@@ -681,7 +681,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
   reopen action), `workbench.md` (op matrix), `docs/screens/projects/project-board.md`
   (PR chip on flight cards), `project-settings-git.md` (sync strategy + resolver
   runner fields). Root `CLAUDE.md` §7/§8 one-line touch-ups. Every new piece
-  tagged `Designed`. Note in ADR-138 the `ai_rebase_merge` disambiguation (the
+  tagged `Designed`. Note in ADR-140 the `ai_rebase_merge` disambiguation (the
   prior no-op mode is now the resolver).
 
   **Acceptance:** every refusal/precondition row states the exact allow-list the
@@ -1131,7 +1131,33 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 8: closure
 
-- [ ] **Task 19: As-built docs flip + renumber pass.**
+- [x] **Task 19: As-built docs flip + renumber pass.**
+
+  RENUMBER PERFORMED (2026-07-15) — siblings landed on `main` while this branch
+  was in flight (branch was 18 behind / 10 ahead at the time):
+  - **ADR-137 → ADR-139** (main took 137 = "Typed Plan-review artifacts");
+    **ADR-138 → ADR-140** (main took 138 = "Flow Review Workspace").
+  - **migration `0100_pr_state_tracking` → `0103_pr_state_tracking`**;
+    **`0101_branch_sync` → `0104_branch_sync`** (main took 0100/0101/0102).
+  - ★**`_journal.json` `when` ALSO bumped**, not just `idx`. Main's `0102` has
+    `when: 1784102993259`, LATER than both of my original entries — renumbering
+    the idx alone would have left the journal NON-MONOTONIC, and the high-water
+    migrator SILENTLY SKIPS in that state (the schema would never apply while
+    `db:migrate` reported success). New `when`s are `1784123792177/+1000`.
+    `migration-journal-integrity.test.ts` (15 tests) proves monotonicity.
+  - Renumber gotchas hit: (a) uppercase `ADR-137` sed does NOT cover lowercase
+    anchor links `#adr-137-…` — a SECOND pass was required (validate:docs caught
+    it); (b) it also does not cover combined prose `ADR-137/138` (the bare `/138`
+    survives → `ADR-139/138`) or link TEXT `[#adr-137]`; all swept.
+
+  ★OWNER NOTE — the drizzle SNAPSHOT chain (`meta/0103_snapshot.json`'s `prevId`)
+  still points at this branch's `0099`, not main's `0102`. That does NOT affect
+  `db:migrate` (the migrator reads `_journal.json` + the `.sql` files; snapshots
+  are only used by `drizzle-kit generate` to diff). After the rebase onto main,
+  the FIRST `drizzle-kit generate` should be re-based on main's `0102` snapshot.
+
+  Verified: `pnpm validate:docs` green (60/60 mermaid, 360 ADR anchors);
+  typecheck 0; migration + journal-integrity + scope-contract suites green (34).
 
   Flip Task-1 artifacts `Designed → Implemented` only where tests prove it; sync
   any drift discovered during implementation back into the analytics/OpenAPI/
@@ -1206,7 +1232,7 @@ _No open owner questions remain; the plan is ready for `/aif-implement`._
 
 ## Task-2 spec completeness gate — findings log (2026-07-14)
 
-An adversarial cross-check of the Phase-0 contracts (ADR-137/138, branch-sync.md,
+An adversarial cross-check of the Phase-0 contracts (ADR-139/140, branch-sync.md,
 the three API specs, ERDs, error-taxonomy, screens) against the FRs, verified
 against real code. Verdict was **NOT-READY** until the two blockers landed; all
 fixed inline in Task 2 (validators re-run green afterwards):
@@ -1224,11 +1250,11 @@ fixed inline in Task 2 (validators re-run green afterwards):
   **Fixed:** dropped `status`; `phase` (starting|rebasing|agent_running|verifying|
   pushing|succeeded|failed|aborted) is the single lifecycle column (ERD, db-schema,
   branch-sync.md, decision 12, Task 4 all updated).
-- **C3 — error-taxonomy:** added ADR-138 cell entries to `CONFLICT`,
+- **C3 — error-taxonomy:** added ADR-140 cell entries to `CONFLICT`,
   `EXECUTOR_UNAVAILABLE`, and `CRASH` (previously only `PRECONDITION`).
 - **C4 — workspaces.md** promotion-strategy table `ai_rebase_merge` row rewritten from
   the stale no-op to the resolver-backed behavior.
-- **C5 — resolver "cannot push"** was prompt-only, not enforced; ADR-138 + branch-sync.md
+- **C5 — resolver "cannot push"** was prompt-only, not enforced; ADR-140 + branch-sync.md
   now state it honestly (instructed-only; enforced net = web-side verification gate +
   explicit-SHA lease; bounded blast radius = own PR branch; seam enforcement = future).
 - **C6 — `extSyncRun`** gained the missing `503` (agent-path `EXECUTOR_UNAVAILABLE`).

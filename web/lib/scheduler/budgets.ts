@@ -50,7 +50,7 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     // ADR-134: project-scoped remote scans are network-bound and sequentially
     // bounded. This is deliberately not operator-configurable.
     repoDeliveryScan: 1,
-    // ADR-137: per-project PR-state poll — provider CLI/REST only, network-bound,
+    // ADR-139: per-project PR-state poll — provider CLI/REST only, network-bound,
     // sequentially bounded, not operator-configurable.
     prStateScan: 1,
   };

@@ -29,7 +29,7 @@ export const TOKEN_SCOPES = [
   "runs:cancel",
   // M37 (ADR-100): the orchestrator's promote-a-reviewed-child privilege.
   "runs:promote",
-  // ADR-138: branch sync + reopen (promote-class ops). Maps to the `promoteRun`
+  // ADR-140: branch sync + reopen (promote-class ops). Maps to the `promoteRun`
   // project action, NOT the `readBoard` fallback (see PROJECT_ACTION_BY_SCOPE).
   "runs:sync",
   // ADR-122 (Project Brain): recall / retain over the project-memory substrate.

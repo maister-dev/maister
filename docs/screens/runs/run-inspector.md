@@ -84,7 +84,7 @@ inspector must not repeat branch/worktree facts already visible there.
    action dialogs instead of being duplicated here; the scratch inspector keeps
    its branch/base/target facts and falls back to the scratch metadata when the
    workspace row's columns are null. When PR lifecycle tracking ships (Designed,
-   ADR-137), Overview also lists the run's PR facts as read-only facts —
+   ADR-139), Overview also lists the run's PR facts as read-only facts —
    `prState` (`open` / `merged` / `closed`), the `prHasConflicts` flag, the
    merged-at timestamp, and the provider merge-commit provenance
    (`workspaces.pr_merge_commit_sha`, deliberately distinct from the delivery
@@ -106,7 +106,7 @@ inspector must not repeat branch/worktree facts already visible there.
    composer's turn-interrupt Stop. The scratch promote shortcut exposes a
    merge-mode selector (`local_merge` / `rebase_merge` / `pull_request`). The
    inspector does not expose an arbitrary push-to-remote action in this slice.
-   Branch sync + reopen (Designed, ADR-138) add two delivery-adjacent shortcuts:
+   Branch sync + reopen (Implemented, ADR-140) add two delivery-adjacent shortcuts:
    **Sync branch** for an eligible `Review` run (opens the Sync branch dialog in
    [`flow-run.md`](flow-run.md)) and **Reopen** for a `Done` run whose workspace
    has an open or conflicted PR (`Done → Review`, reusing the SAME provider PR).
@@ -166,7 +166,7 @@ Disabled actions display one-line reasons:
   `POST /api/scratch-runs/{runId}/stop`,
   `POST /api/scratch-runs/{runId}/interrupt` (composer turn-interrupt, not an
   inspector action), and `POST /api/scratch-runs/{runId}/discard`.
-- Branch sync + PR lifecycle (Designed, ADR-137/138): `POST /api/runs/{runId}/reopen`
+- Branch sync + PR lifecycle (Implemented, ADR-139/140): `POST /api/runs/{runId}/reopen`
   backs the Reopen action and `POST /api/runs/{runId}/sync` backs Sync branch;
   the Overview PR facts (`prState`, `prHasConflicts`, `prMergedAt`,
   `prMergeCommitSha`) come from `getRunDetail` / workspace metadata. Behavior:
@@ -177,7 +177,7 @@ Disabled actions display one-line reasons:
 The inspector reuses the `run` namespace (status, branch/base/target/worktree
 facts, action labels, `inspectorStale`, `inspectorSession*`) plus `workbench`,
 `scratch`, `readiness`, and lifecycle action keys; no dedicated `runInspector`
-namespace was needed. ADR-137/138 add the PR facts (PR-state values, conflicts
+namespace was needed. ADR-139/140 add the PR facts (PR-state values, conflicts
 flag, merged-at, merge-commit provenance) and the Reopen / Sync branch action
 labels under the same `run` namespace; EN + RU parity required.
 
@@ -201,7 +201,7 @@ reviewable changes. Other scope controls remain forensic and explicitly named.
   [ADR-058](../../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve),
   [ADR-066](../../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror),
   [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
-  [ADR-137](../../decisions.md#adr-137-pr-lifecycle-tracking),
-  [ADR-138](../../decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen).
+  [ADR-139](../../decisions.md#adr-139-pr-lifecycle-tracking),
+  [ADR-140](../../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen).
 - Source: `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/workbench-lifecycle/policy.ts`, `web/lib/runs/promote.ts`.

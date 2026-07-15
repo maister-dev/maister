@@ -18,7 +18,7 @@ export const WEBHOOK_EVENT_TYPES = [
   "run.failed",
   "run.crashed",
   "run.abandoned",
-  // ADR-137: PR lifecycle edges, emitted by the pr_state_scan handler.
+  // ADR-139: PR lifecycle edges, emitted by the pr_state_scan handler.
   "run.pr_merged",
   "run.pr_closed",
   "run.pr_conflicts",

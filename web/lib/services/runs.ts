@@ -1848,7 +1848,7 @@ export async function launchRun(
   return step.value;
 }
 
-// ADR-138: the latest branch-sync attempt projection, matching the OpenAPI
+// ADR-140: the latest branch-sync attempt projection, matching the OpenAPI
 // `RunDTO.syncAttempt` wire schema (docs/api/external/operations.openapi.yaml).
 export type RunSyncAttemptDTO = {
   attempt: number;
@@ -1871,10 +1871,10 @@ export type RunDTO = {
   currentStepId: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
-  // ADR-137 PR lifecycle: provider PR state + conflict flag from the workspace.
+  // ADR-139 PR lifecycle: provider PR state + conflict flag from the workspace.
   prState: "open" | "merged" | "closed" | null;
   prHasConflicts: boolean | null;
-  // ADR-138: the latest branch-sync attempt (by `attempt` desc), null when none.
+  // ADR-140: the latest branch-sync attempt (by `attempt` desc), null when none.
   syncAttempt: RunSyncAttemptDTO | null;
 };
 

@@ -224,7 +224,7 @@ export type E2EFixtures = {
   byKey: {
     m11a: E2EProjectFixture;
     m11b: E2EProjectFixture;
-    // ADR-138: Review run behind its target / Done run with a conflicted PR.
+    // ADR-140: Review run behind its target / Done run with a conflicted PR.
     runSync: E2EProjectFixture;
     prReopen: E2EProjectFixture;
     board: E2EProjectFixture;

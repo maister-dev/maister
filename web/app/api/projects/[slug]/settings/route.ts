@@ -55,7 +55,7 @@ const patchBodySchema = z
     // ADR-126: auto-promotion lane config. `null` clears to shipped defaults +
     // master OFF. `.strict()` rejects unknown keys → 422.
     autoPromotion: autoPromotionConfigSchema.nullable().optional(),
-    // ADR-138: branch-sync defaults. `syncStrategyDefault` is non-nullable
+    // ADR-140: branch-sync defaults. `syncStrategyDefault` is non-nullable
     // (clear = back to "rebase"); `syncRunnerId` null clears the resolver-runner
     // override (launch-time resolver chain applies).
     syncStrategyDefault: z.enum(["rebase", "merge"]).optional(),
@@ -179,7 +179,7 @@ export async function PATCH(
       await assertRunnerUsable(body.runnerId);
     }
 
-    // ADR-138: the resolver-runner override must clear the same catalog gate as
+    // ADR-140: the resolver-runner override must clear the same catalog gate as
     // the default runner (null clears the override, no gate).
     if (body.syncRunnerId !== undefined && body.syncRunnerId !== null) {
       await assertRunnerUsable(body.syncRunnerId);

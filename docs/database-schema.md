@@ -251,10 +251,10 @@ as implicit `owner` of every project.
                                  //   ^[A-Z][A-Z0-9]{1,9}$, immutable in Stage 1
   nextTaskNumber,                // ADR-083 (Implemented, 0043): integer NOT NULL
                                  //   DEFAULT 1; allocation counter for tasks.number
-  syncStrategyDefault,           // ADR-138 (Designed, migration 0101): text NOT NULL
+  syncStrategyDefault,           // ADR-140 (Implemented, migration 0104): text NOT NULL
                                  //   DEFAULT 'rebase'; rebase | merge — branch-sync
                                  //   default strategy
-  syncRunnerId?,                 // ADR-138 (Designed, migration 0101): nullable text
+  syncRunnerId?,                 // ADR-140 (Implemented, migration 0104): nullable text
                                  //   FK -> platform_acp_runners.id ON DELETE SET NULL;
                                  //   resolver runner default (null = inherit)
   createdAt, archivedAt?
@@ -288,14 +288,14 @@ pull_request`, `push='never'`, `trigger='manual'`, `targetBranch =
 projects.mainBranch`. Project settings writes are aggregate PATCHes; a failed
 sub-section rejects the whole transaction.
 
-**(ADR-138 — Designed, migration `0101`.)** `syncStrategyDefault`
+**(ADR-140 — Implemented, migration `0104`.)** `syncStrategyDefault`
 (`text NOT NULL DEFAULT 'rebase'`, `rebase | merge`) and `syncRunnerId`
 (nullable `text` FK → `platform_acp_runners.id`, `ON DELETE SET NULL`) are the
 project defaults for the branch-sync AI conflict resolver: the resolver runner
 resolves through launch override → `syncRunnerId` → project default → platform
 default. Both are written through the aggregate project-settings PATCH; a failed
 sub-section rejects the whole transaction. See
-[ADR-138](decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen)
+[ADR-140](decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
 and [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md).
 
 ## Platform ACP runner tables
@@ -1653,20 +1653,20 @@ numerator.
   prUrl?,                        // M18 (text, migration 0021) populated on
                                  //   PR-mode promotion (Phase 3)
   prNumber?,                     // M18 (integer, migration 0021)
-  prState?,                      // ADR-137 (Designed, migration 0100) open |
+  prState?,                      // ADR-139 (Implemented, migration 0103) open |
                                  //   merged | closed; NULL = never scanned
-  prHasConflicts?,               // ADR-137 (Designed, migration 0100) boolean;
+  prHasConflicts?,               // ADR-139 (Implemented, migration 0103) boolean;
                                  //   NULL = unknown
-  prMergedAt?,                   // ADR-137 (Designed, migration 0100) timestamptz
-  prMergeCommitSha?,             // ADR-137 (Designed, migration 0100) PROVIDER
+  prMergedAt?,                   // ADR-139 (Implemented, migration 0103) timestamptz
+  prMergeCommitSha?,             // ADR-139 (Implemented, migration 0103) PROVIDER
                                  //   merge commit (provenance only; NOT the
                                  //   delivery scanner's runs.mergeCommitSha)
-  prStateCheckedAt?,             // ADR-137 (Designed, migration 0100) last scan
+  prStateCheckedAt?,             // ADR-139 (Implemented, migration 0103) last scan
                                  //   attempt, stamped on success or failure
   promotedAt?,                   // M18 (timestamptz, migration 0021)
   promotionState,                // M18 (text NOT NULL DEFAULT 'none', migration
                                  //   0021) none | claiming | done | failed;
-                                 //   + reopened (ADR-138, Designed; app-level, no CHECK)
+                                 //   + reopened (ADR-140, Implemented; app-level, no CHECK)
   promotionClaimedAt?,           // M18 (timestamptz, migration 0021)
                                  //   durable-claim timestamp
   promotionOwnerUserId?,         // M18 (text, migration 0021) FK -> users.id,
@@ -1681,7 +1681,7 @@ numerator.
   lifecycleOperationName?         // M27 (text, migration 0032)
                                  //   archive | drop | exportBranch |
                                  //   snapshotCommit | handoffBranch |
-                                 //   sync (ADR-138, Designed; TS-only 6th op)
+                                 //   sync (ADR-140, Implemented; TS-only 6th op)
 }
 ```
 
@@ -1719,7 +1719,7 @@ action for operator/debug visibility. Completed operations release the claim
 back to `none`, so lifecycle handoff/export state is not confused with
 promotion completion.
 
-**(ADR-137/138 — Designed, migrations `0100`/`0101`, additive.)** PR-lifecycle
+**(ADR-139/140 — Implemented, migrations `0103`/`0104`, additive.)** PR-lifecycle
 columns close the loop on MAIster-created PRs: `prState` (`open`/`merged`/
 `closed`, NULL until first scanned), `prHasConflicts` (NULL = unknown),
 `prMergedAt`, `prMergeCommitSha`, and `prStateCheckedAt` are stamped by the
@@ -1733,8 +1733,8 @@ with a 6th `lifecycleOperationName='sync'` value (TS-only, no CHECK) for mutual
 exclusion with the other five ops, plus an explicit double fence against
 promotion; reopen adds an app-level `promotionState='reopened'` value (no CHECK)
 that `canReclaim` admits and the auto-promote prefilter excludes. See
-[ADR-137](decisions.md#adr-137-pr-lifecycle-tracking),
-[ADR-138](decisions.md#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen),
+[ADR-139](decisions.md#adr-139-pr-lifecycle-tracking),
+[ADR-140](decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen),
 and [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md).
 
 **(M19 — Designed, migration `0015`, additive.)** Three nullable GC columns
@@ -1757,7 +1757,7 @@ Scratch-run v1 stores `baseBranch`, `baseCommit`, and `targetBranch` in
 `scratch_runs` because the branch semantics belong to the manual dialog
 workspace and are needed by diff, promote, discard, and recovery.
 
-## `run_sync_attempts` (Designed — ADR-138, migration `0101`)
+## `run_sync_attempts` (Implemented — ADR-140, migration `0104`)
 
 Append-only per-attempt ledger for the branch-sync / AI-conflict-resolver
 operation, shaped like [`node_attempts`](#node_attempts): a plain-`text` `phase`

@@ -21,7 +21,7 @@ export interface PromotionOperationInput {
   diffTruncated: boolean;
   legacyNeedsRelaunch: boolean;
   truncationAcknowledged?: boolean;
-  // ADR-138 (Task 13/16): opt-in one-click chaining for a resolver-backed
+  // ADR-140 (Task 13/16): opt-in one-click chaining for a resolver-backed
   // ai_rebase_merge conflict. Only carried into the body when mode is
   // `ai_rebase_merge` (ignored for every other mode). Default OFF.
   autoFinalize?: boolean;

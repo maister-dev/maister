@@ -164,8 +164,8 @@
 | [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
 | [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Implemented | 2026-07-14 |
 | [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Implemented | 2026-07-15 |
-| [ADR-137](#adr-137-pr-lifecycle-tracking) | PR lifecycle tracking | Designed | 2026-07-14 |
-| [ADR-138](#adr-138-branch-sync-with-ai-conflict-resolver-and-reopen) | Branch sync with AI conflict resolver and reopen | Designed | 2026-07-14 |
+| [ADR-139](#adr-139-pr-lifecycle-tracking) | PR lifecycle tracking | Implemented | 2026-07-14 |
+| [ADR-140](#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen) | Branch sync with AI conflict resolver and reopen | Implemented | 2026-07-14 |
 
 ---
 
@@ -12117,10 +12117,10 @@ telemetry ambiguous.
   dispatch paths.
 - _Delete and reinsert agent bindings on each save_: rejected because it loses
   identity and telemetry and lets a stale full replacement erase unseen work.
-### ADR-137: PR lifecycle tracking
+### ADR-139: PR lifecycle tracking
 
 **Date:** 2026-07-14
-**Status:** Designed
+**Status:** Implemented
 
 **Context:** MAIster opens PRs during `pull_request` promotion but never learns
 their fate. `workspaces.pr_url`/`pr_number` are recorded at open time and never
@@ -12161,10 +12161,10 @@ report merge state. This blocks the M20 "ship non-trivial PRs end-to-end" goal.
   `run.pr_closed`; **conflicts** sets `pr_has_conflicts` and emits `run.pr_conflicts`
   and raises the UI alarm surface. `task_activity` stays merged-only; closed and
   conflict surface via chip + webhook only. Conflict detection only raises the
-  alarm — it never launches a resolver (that is ADR-138 and always an explicit
+  alarm — it never launches a resolver (that is ADR-140 and always an explicit
   user action).
 - Surfaces: a PR-state chip on the run detail header/inspector and the task board
-  flight card, with a distinct conflicts affordance linking to reopen (ADR-138).
+  flight card, with a distinct conflicts affordance linking to reopen (ADR-140).
   Ext `run_get` exposes `prState`/`prHasConflicts`. EN + RU.
 - **Bitbucket (Cloud and Server/Data Center) is deferred tech debt.** The agreed
   shape when it lands: one REST adapter family with a configurable API base
@@ -12195,10 +12195,10 @@ report merge state. This blocks the M20 "ship non-trivial PRs end-to-end" goal.
 
 ---
 
-### ADR-138: Branch sync with AI conflict resolver and reopen
+### ADR-140: Branch sync with AI conflict resolver and reopen
 
 **Date:** 2026-07-14
-**Status:** Designed
+**Status:** Implemented
 
 **Context:** A `Review` run's branch goes stale when the target moves; today the
 only options are "promote anyway" (which fails on divergence) or manual local

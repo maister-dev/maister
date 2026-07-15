@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
-// ADR-138 (Task 18) — branch-sync composition proof against the seeded harness.
+// ADR-140 (Task 18) — branch-sync composition proof against the seeded harness.
 // The fixture's run branch is ahead 1 / behind 1 of `main`, so the behind chip
 // paints, the MECHANICAL rebase has real work, and the post-sync promote still
 // merges a real commit. No supervisor is involved: the rebase is clean, so the
@@ -12,7 +12,7 @@ import { loadFixtures } from "./_seed/fixtures";
 // COLD compile alone can outrun the 30s default when specs race it in parallel.
 test.describe.configure({ timeout: 90_000 });
 
-test.describe("branch sync (ADR-138)", () => {
+test.describe("branch sync (ADR-140)", () => {
   test("a Review run behind its target syncs mechanically, the chip clears, and promote succeeds", async ({
     page,
   }) => {

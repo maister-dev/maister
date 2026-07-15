@@ -1,10 +1,10 @@
-// ADR-138 migration 0101_branch_sync coverage (Task 4).
+// ADR-140 migration 0104_branch_sync coverage (Task 4).
 //
 // Asserts the run_sync_attempts ledger shape + constraints (UNIQUE (run_id,
 // attempt); the plain-text `phase` column has NO DB CHECK — node_attempts
 // convention; auto_finalize/pushed default false), and the two projects
 // columns (sync_strategy_default default 'rebase'; sync_runner_id FK SET NULL
-// on runner delete), plus the 0101 journal/snapshot pair.
+// on runner delete), plus the 0104 journal/snapshot pair.
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -102,7 +102,7 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("0101 run_sync_attempts ledger", () => {
+describe("0104 run_sync_attempts ledger", () => {
   it("creates the table with the key ledger columns", async () => {
     const cols = await pool.query(
       `select column_name from information_schema.columns
@@ -174,7 +174,7 @@ describe("0101 run_sync_attempts ledger", () => {
   });
 });
 
-describe("0101 projects sync columns", () => {
+describe("0104 projects sync columns", () => {
   it("defaults sync_strategy_default to 'rebase'", async () => {
     const { projectId } = await seedRunWorkspace("strat");
     const row = await pool.query(
@@ -215,13 +215,13 @@ describe("0101 projects sync columns", () => {
   });
 });
 
-describe("0101 journal + snapshot", () => {
-  it("has a 0101 journal entry with a matching snapshot file", () => {
+describe("0104 journal + snapshot", () => {
+  it("has a 0104 journal entry with a matching snapshot file", () => {
     const journal = JSON.parse(
       readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
     ) as { entries: Array<{ idx: number; tag: string }> };
 
-    const entry = journal.entries.find((e) => e.tag.startsWith("0101"));
+    const entry = journal.entries.find((e) => e.tag.startsWith("0104"));
 
     expect(entry).toBeDefined();
     const snapshotName = `${entry!.tag.slice(0, 4)}_snapshot.json`;

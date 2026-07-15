@@ -1,6 +1,6 @@
 import "server-only";
 
-// ADR-138 (Task 11) — the in-process sync-driver registry.
+// ADR-140 (Task 11) — the in-process sync-driver registry.
 //
 // `syncRunTarget` (mechanical + agent conflict resolver) runs the WHOLE branch
 // sync in-process. While that call is on the stack the run has a live in-process

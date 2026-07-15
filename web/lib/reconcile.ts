@@ -79,7 +79,7 @@ export type ReconcileAction =
   | "reattach"
   | "redispatch"
   | "crash"
-  // ADR-138 (Task 11): a `Running` run with a non-terminal `run_sync_attempts`
+  // ADR-140 (Task 11): a `Running` run with a non-terminal `run_sync_attempts`
   // row is routed to the branch-sync recovery executor, NEVER the flow
   // reattach/redispatch arms.
   | "sync-recover";
@@ -94,7 +94,7 @@ export type ReconcileReason =
   | "cli-not-retry-safe"
   | "grace-window"
   | "agent-session-gone"
-  // ADR-138 (Task 11) branch-sync recovery discriminants.
+  // ADR-140 (Task 11) branch-sync recovery discriminants.
   | "sync-driver-live"
   | "sync-orphaned-live"
   | "sync-orphaned-idle"
@@ -148,12 +148,12 @@ export interface ReconcileInput {
   // when the parked orchestrator still has at least one non-terminal child, so
   // it must stay parked (a later child-terminal event wakes it). Default false.
   hasPendingChildren?: boolean;
-  // ADR-138 (Task 11): true when this run has a non-terminal `run_sync_attempts`
+  // ADR-140 (Task 11): true when this run has a non-terminal `run_sync_attempts`
   // row (an in-flight branch sync). Routes the run to branch-sync recovery BEFORE
   // the flow reattach/redispatch arms so a sync row is never mis-driven as a
   // graph session. Default false.
   activeSyncAttempt?: boolean;
-  // ADR-138 (Task 11): true when an in-process sync driver owns this run in THIS
+  // ADR-140 (Task 11): true when an in-process sync driver owns this run in THIS
   // process (registry membership). The skip-vs-abort discriminant for a live
   // resolver session: WITH a driver → healthy (skip); WITHOUT one (post-restart)
   // → orphaned (W2 recover). Default false.
@@ -235,7 +235,7 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     return { action: "crash", reason: "orphaned-child" };
   }
 
-  // 2.75. ADR-138 (Task 11): a `Running` run with an in-flight branch sync
+  // 2.75. ADR-140 (Task 11): a `Running` run with an in-flight branch sync
   //       (a non-terminal `run_sync_attempts` row). This is the AGENT resolver
   //       path (mechanical sync never leaves `Review`). It is checked BEFORE the
   //       live-session/node-kind arms so a sync row NEVER enters
@@ -359,7 +359,7 @@ export interface ReconcileSweepSummary {
   // run minted, past the grace window — a crash between claim and launchRun) cleared
   // this tick so the task becomes re-eligible.
   staleClaimsCleared: number;
-  // ADR-138 (Task 11): `Running` runs with an in-flight branch sync recovered this
+  // ADR-140 (Task 11): `Running` runs with an in-flight branch sync recovered this
   // tick via the branch-sync recovery executor (W2/W3). A driver-owned live sync is
   // counted in `skipped`, not here.
   syncRecovered: number;
@@ -427,7 +427,7 @@ type CandidateRow = {
   // run has no parent repo, so there is no worktree to lose either.
   projectId: string | null;
   repoPath: string | null;
-  // ADR-138 (Task 11): the run has a non-terminal `run_sync_attempts` row.
+  // ADR-140 (Task 11): the run has a non-terminal `run_sync_attempts` row.
   activeSyncAttempt: boolean;
 };
 
@@ -711,7 +711,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     });
   }
 
-  // ADR-138 (Task 11): mark candidates carrying a non-terminal `run_sync_attempts`
+  // ADR-140 (Task 11): mark candidates carrying a non-terminal `run_sync_attempts`
   // row so the classifier routes them to branch-sync recovery (never the flow
   // reattach/redispatch arms). One batched query over all candidate run ids.
   const syncActive = await loadActiveSyncAttemptRunIds(
@@ -726,7 +726,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
   return all;
 }
 
-// ADR-138 (Task 11): the set of run ids with a non-terminal `run_sync_attempts`
+// ADR-140 (Task 11): the set of run ids with a non-terminal `run_sync_attempts`
 // row (phase not in succeeded/failed/aborted) — an in-flight branch sync.
 async function loadActiveSyncAttemptRunIds(
   db: Db,
@@ -1317,7 +1317,7 @@ export async function runReconcileSweep(
         return;
       }
       case "sync-recover": {
-        // ADR-138 (Task 11): a Running run with an in-flight branch sync whose
+        // ADR-140 (Task 11): a Running run with an in-flight branch sync whose
         // in-proc driver is gone. `live` present ⇒ W2 (orphaned live resolver
         // session to tear down); absent ⇒ W2/W3 (idempotent re-verify → finalize
         // or abort). A concurrent in-process finalize that already terminalized

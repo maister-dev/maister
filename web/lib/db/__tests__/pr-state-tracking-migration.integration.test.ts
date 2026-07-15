@@ -1,11 +1,11 @@
-// ADR-137 migration 0100_pr_state_tracking coverage (Task 3).
+// ADR-139 migration 0103_pr_state_tracking coverage (Task 3).
 //
 // The shared harness applies every migration ALL-AT-ONCE in beforeAll, so a
-// fresh DB carries 0100. We assert: the five workspaces PR columns exist, the
+// fresh DB carries 0103. We assert: the five workspaces PR columns exist, the
 // workspaces_pr_state CHECK accepts open/merged/closed/NULL and rejects an
 // illegal value, BOTH event_kind CHECKs (task_activity + inbox_items) accept
 // the new run_pr_merged kind, pre-existing-shape rows keep NULL PR state, the
-// partial scan index exists, and the newest journal entry (0100) has a
+// partial scan index exists, and the newest journal entry (0103) has a
 // matching snapshot file.
 
 import { randomUUID } from "node:crypto";
@@ -88,7 +88,7 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("0100 pr_state_tracking schema shape", () => {
+describe("0103 pr_state_tracking schema shape", () => {
   it("adds the five workspaces PR columns, all nullable", async () => {
     const cols = await pool.query(
       `select column_name, is_nullable from information_schema.columns
@@ -150,7 +150,7 @@ describe("0100 pr_state_tracking schema shape", () => {
   });
 });
 
-describe("0100 run_pr_merged event kind", () => {
+describe("0103 run_pr_merged event kind", () => {
   it("both event_kind CHECKs accept run_pr_merged", async () => {
     const { projectId, taskId } = await seedRunWorkspace("evt");
     const activityId = newId();
@@ -187,13 +187,13 @@ describe("0100 run_pr_merged event kind", () => {
   });
 });
 
-describe("0100 journal + snapshot", () => {
-  it("has a 0100 journal entry with a matching snapshot file", () => {
+describe("0103 journal + snapshot", () => {
+  it("has a 0103 journal entry with a matching snapshot file", () => {
     const journal = JSON.parse(
       readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
     ) as { entries: Array<{ idx: number; tag: string }> };
 
-    const entry = journal.entries.find((e) => e.tag.startsWith("0100"));
+    const entry = journal.entries.find((e) => e.tag.startsWith("0103"));
 
     expect(entry).toBeDefined();
     // Snapshot files use the zero-padded 4-digit tag prefix, not the raw idx.

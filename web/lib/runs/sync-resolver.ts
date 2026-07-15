@@ -59,7 +59,7 @@ const defaultSyncResolverApi: SyncResolverSupervisorApi = {
 // the task intent (NULL-SAFE for a taskless agent run). NEVER logged (may echo
 // task content). Explicit prohibitions bound the resolver's blast radius; the
 // no-push instruction is prompt-level (the enforced safety net is the web-side
-// verification gate + explicit-SHA force-with-lease, per ADR-138).
+// verification gate + explicit-SHA force-with-lease, per ADR-140).
 export function buildResolverPrompt(args: {
   targetRef: string;
   strategy: "rebase" | "merge";
@@ -203,7 +203,7 @@ function startResolverConsumer(args: {
 
 // Spawn a FRESH resolver ACP session in the run worktree, drive one blocking
 // prompt turn, and return the terminal stop reason. Deferred-release is MANDATORY
-// (ADR-138): every path AFTER a successful `createSession` — a sendPrompt throw or
+// (ADR-140): every path AFTER a successful `createSession` — a sendPrompt throw or
 // a surfaced HITL persistence failure — tears the session down before rethrowing.
 // The happy path leaves the session LIVE for the caller to verify+push then
 // delete. NEVER logs prompt/output content.
@@ -220,7 +220,7 @@ export async function runResolverSession(args: {
   const created = await api.createSession(args.input);
   const sessionId = created.sessionId;
 
-  // ADR-138 (Task 11): mark this run as owned by a LIVE in-process resolver
+  // ADR-140 (Task 11): mark this run as owned by a LIVE in-process resolver
   // driver — the skip-vs-abort discriminant for the periodic reconcile sweep.
   // Registration spans the whole blocking turn (incl. HITL pauses); a web
   // restart clears this in-memory registry, so a post-restart sync session is

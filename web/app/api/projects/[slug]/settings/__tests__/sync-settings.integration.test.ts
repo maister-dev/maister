@@ -12,7 +12,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-138 (Task 17) — branch-sync project settings round-trip through the
+// ADR-140 (Task 17) — branch-sync project settings round-trip through the
 // AGGREGATE settings PATCH (one transactional endpoint, per the house rule).
 // Config-state symmetry: SET and CLEAR are BOTH asserted, plus an idempotent
 // re-SET, so a half-implemented clear can never pass.
@@ -108,7 +108,7 @@ afterAll(async () => {
   await started?.stop();
 });
 
-describe("project settings — branch-sync defaults (ADR-138)", () => {
+describe("project settings — branch-sync defaults (ADR-140)", () => {
   it("ships the migration default (rebase, no resolver override)", async () => {
     const row = await projectRow();
 

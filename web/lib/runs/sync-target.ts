@@ -96,7 +96,7 @@ export type SyncRunOutcome = {
 export type SyncRunInput = {
   runId: string;
   strategy?: SyncStrategy;
-  // ADR-138: on a conflict the AI resolver launches by DEFAULT
+  // ADR-140: on a conflict the AI resolver launches by DEFAULT
   // (`outcome:"agent_launched"`) — the contract default is agent-on (matches
   // the OpenAPI `agent` "(default)" and the UI "resolve with AI" checkbox
   // default ON). ONLY an explicit `agent:false` keeps the mechanical behavior:
@@ -104,7 +104,7 @@ export type SyncRunInput = {
   agent?: boolean;
   push?: boolean;
   runnerId?: string;
-  // ADR-138 (Task 13): set by the resolver-backed `ai_rebase_merge` promotion.
+  // ADR-140 (Task 13): set by the resolver-backed `ai_rebase_merge` promotion.
   // Persisted on the attempt; on a verified agent resolution the resolver
   // best-effort chains `promoteRun(rebase_merge)` to Done (default OFF).
   autoFinalize?: boolean;
@@ -383,7 +383,7 @@ async function terminalizeSafetyNet(
 }
 
 /**
- * The MECHANICAL branch-sync service (ADR-138, Task 9) — and the reusable shared
+ * The MECHANICAL branch-sync service (ADR-140, Task 9) — and the reusable shared
  * core (`assertSyncEligible` / `verifySyncGate` / `pushWithLease`) Tasks 10/13
  * build on. Rebases (or merges) a Review run's branch onto its promotion target
  * inside the run's worktree, fast-forwarding the local target from origin first,
@@ -807,7 +807,7 @@ type SyncResolverArgs = {
 };
 
 /**
- * The AI conflict resolver (ADR-138, Task 10). Called from `syncRunTarget`'s
+ * The AI conflict resolver (ADR-140, Task 10). Called from `syncRunTarget`'s
  * conflict branch with `agent:true` and the LEFT-in-place conflicted rebase. It
  * cap-gates + fences + flips `Review→Running` (one locked tx), spawns a FRESH
  * resolver session in the worktree (mocked at the supervisor boundary in tests),
@@ -1102,7 +1102,7 @@ async function runSyncResolver(
     "sync resolver finalized — agent_launched",
   );
 
-  // ADR-138 (Task 13): autoFinalize opt-in — the resolver resolved and the run
+  // ADR-140 (Task 13): autoFinalize opt-in — the resolver resolved and the run
   // is back in Review, cleanly rebased on the target. Best-effort chain
   // promoteRun(rebase_merge) → Done. ANY failure degrades to the clean two-step
   // Review state (benign W6 — no new stuck state / promotion crash window). The

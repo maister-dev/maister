@@ -226,7 +226,7 @@ export type ReconcileSyncOutcome = {
 };
 
 /**
- * ADR-138 (Task 11) — the reconcile-side branch-sync recovery executor for the
+ * ADR-140 (Task 11) — the reconcile-side branch-sync recovery executor for the
  * AGENT resolver path (the run is `Running`). Invoked by `runReconcileSweep` only
  * after the classifier routes a `Running + activeSyncAttempt` candidate to
  * `sync-recover` (never the flow reattach/redispatch arms):
@@ -468,7 +468,7 @@ function liveSyncSessionFor(
 }
 
 /**
- * ADR-138 (Task 11) — the system-sweep branch-sync recovery pass, run from
+ * ADR-140 (Task 11) — the system-sweep branch-sync recovery pass, run from
  * `runSystemSweep` on the polymorphic scheduler clock. It owns the crash windows
  * reconcile cannot see (the MECHANICAL sync never leaves `Review`, so it is not a
  * `Running` reconcile candidate) plus the active-time runaway:

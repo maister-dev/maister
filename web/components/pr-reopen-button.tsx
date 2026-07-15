@@ -11,7 +11,7 @@ export interface PrReopenButtonProps {
   label: string;
 }
 
-// ADR-138 (Task 17): the conflicted-PR reopen action. POSTs the run-scoped
+// ADR-140 (Task 17): the conflicted-PR reopen action. POSTs the run-scoped
 // reopen route (server enforces Done + open/conflicted-PR eligibility → 409 on
 // mismatch); refreshes the surface on success. Non-eligible clicks fail closed
 // at the server, so the button stays visible whenever a conflict chip shows.

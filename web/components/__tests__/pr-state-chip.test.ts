@@ -73,7 +73,7 @@ describe("PrStateChip", () => {
     expect(html).toContain("Conflicts");
     expect(html).toContain("text-amber");
     // No runId scopes this chip (read-only surface) → the affordance stays the
-    // disabled placeholder; the live action needs a run to act on (ADR-138 T17).
+    // disabled placeholder; the live action needs a run to act on (ADR-140 T17).
     expect(html).toContain('data-testid="pr-reopen"');
     expect(html).toContain('disabled=""');
     expect(html).toContain('aria-label="Reopen PR"');
@@ -81,7 +81,7 @@ describe("PrStateChip", () => {
     expect(html).not.toContain('data-pr-state="open"');
   });
 
-  it("renders a LIVE reopen action when the chip is run-scoped (ADR-138 Task 17)", () => {
+  it("renders a LIVE reopen action when the chip is run-scoped (ADR-140 Task 17)", () => {
     const html = render({
       prState: "open",
       prHasConflicts: true,

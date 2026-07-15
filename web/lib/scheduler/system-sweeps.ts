@@ -29,7 +29,7 @@ export type GcCompatibilitySummary = {
 export type SystemSweepSummary = GcCompatibilitySummary & {
   keepalive: Awaited<ReturnType<typeof runSweepTick>> | null;
   reconcile: Awaited<ReturnType<typeof runReconcileSweep>> | null;
-  // ADR-138 (Task 11): branch-sync recovery sweep — W1/W4 orphan-operation
+  // ADR-140 (Task 11): branch-sync recovery sweep — W1/W4 orphan-operation
   // recovery + the W5 active-time duration cap. null when it threw before
   // returning a summary.
   syncRecovery: Awaited<ReturnType<typeof runSyncRecoverySweep>> | null;

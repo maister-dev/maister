@@ -128,7 +128,7 @@ export const DEFAULT_AUTO_PROMOTE_JOB_ID = "auto_promote.default";
 const DEFAULT_AUTO_PROMOTE_CADENCE_SECONDS = 60;
 
 export const REPO_DELIVERY_SCAN_CADENCE_SECONDS = 60 * 60;
-// ADR-137: PR-state poll cadence. A code constant — no env var (owner decision).
+// ADR-139: PR-state poll cadence. A code constant — no env var (owner decision).
 export const PR_STATE_SCAN_CADENCE_SECONDS = 300;
 
 export function isSchedulerJobKind(value: string): value is SchedulerJobKind {

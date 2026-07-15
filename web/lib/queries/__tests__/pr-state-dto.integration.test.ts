@@ -1,4 +1,4 @@
-// Task 7 (ADR-137/138): integration coverage for the PR-lifecycle DTO fields.
+// Task 7 (ADR-139/140): integration coverage for the PR-lifecycle DTO fields.
 // getRunDetail + getBoardData (FlightCard) surface workspaces.pr_state /
 // pr_has_conflicts; the ext getRunDTO additionally projects the LATEST
 // run_sync_attempts row (by attempt desc) into `syncAttempt`.
@@ -168,7 +168,7 @@ async function anyFlightCard(projectId: string, runId: string) {
   return undefined;
 }
 
-describe("PR-lifecycle DTO fields (ADR-137/138)", () => {
+describe("PR-lifecycle DTO fields (ADR-139/140)", () => {
   it("getRunDetail surfaces pr_state + pr_has_conflicts from the workspace", async () => {
     const { projectId, runId } = await seedRun({
       runStatus: "Review",

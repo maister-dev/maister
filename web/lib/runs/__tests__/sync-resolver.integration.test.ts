@@ -456,7 +456,7 @@ async function waitFor(
 
 // ---------------------------------------------------------------------------
 
-describe("syncRunTarget — agent resolver (ADR-138 Task 10)", () => {
+describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
   it("conflict + agent=true → resolver session launched, run Running, agent_launched", async () => {
     const { parent, wt } = await seedConflictWorktree("sync/agent-a", {
       publish: true,

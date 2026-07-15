@@ -40,7 +40,7 @@ export interface RunHeaderLabels {
   promote?: string;
   promotionStarted?: string;
   targetDrift?: string;
-  // ADR-137 PR-state chip labels. Optional so non-run-detail consumers (no PR
+  // ADR-139 PR-state chip labels. Optional so non-run-detail consumers (no PR
   // signal) keep compiling; the chip renders only when present.
   prChip?: PrStateChipLabels;
 }
@@ -60,7 +60,7 @@ export interface RunHeaderProps {
   status: string;
   branch?: string | null;
   targetBranch?: string | null;
-  // ADR-137 PR lifecycle: provider PR state + conflict flag for the header chip.
+  // ADR-139 PR lifecycle: provider PR state + conflict flag for the header chip.
   prState?: PrState | null;
   prHasConflicts?: boolean | null;
   changeSummary?: RunHeaderChangeSummary | null;

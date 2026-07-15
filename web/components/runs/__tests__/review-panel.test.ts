@@ -287,10 +287,10 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// ADR-138 (Task 16): branch-sync UX — behind/ahead chip, sync dialog, drift +
+// ADR-140 (Task 16): branch-sync UX — behind/ahead chip, sync dialog, drift +
 // conflict entry points, ai_rebase_merge auto-finalize checkbox, in-progress.
 // ---------------------------------------------------------------------------
-describe("ReviewPanel — branch sync (ADR-138)", () => {
+describe("ReviewPanel — branch sync (ADR-140)", () => {
   it("renders the behind/ahead chip when the run branch is behind its target", () => {
     const html = render({ sync: SYNC, aheadBehind: { ahead: 2, behind: 3 } });
 
