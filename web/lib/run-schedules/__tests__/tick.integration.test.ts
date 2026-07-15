@@ -275,7 +275,7 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
     expect(attempt.status).toBe("Succeeded");
     expect(attempt.summary).toMatchObject({
       recurring: { fired: 0 },
-      oneTime: { claimed: 1, launched: 1, failed: 0 },
+      oneTime: { claimed: 1, launched: 1, failed: 0, late: 1 },
     });
   });
 
@@ -337,7 +337,10 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
     const attempt = await latestDispatcherAttempt();
 
     expect(attempt.status).toBe("Succeeded");
-    expect(attempt.summary.incompatibleDisabled).toBe(1);
+    expect(
+      (attempt.summary.recurring as { incompatibleDisabled: number })
+        .incompatibleDisabled,
+    ).toBe(1);
 
     const jobRows = await db
       .select({ failures: schema.schedulerJobs.consecutiveFailures })

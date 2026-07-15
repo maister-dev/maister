@@ -25,6 +25,9 @@ the **M27 Flow Studio (Implemented, migrations `0033+`)** schema deltas:
 `AUTHORED_CAPABILITIES.source_flow_ref_id`, `RUNS.resolved_capability_set`, and
 the new `PLATFORM_MCP_SERVERS` table, the **M28 (Implemented, migration
 `0038`)** `RUN_SCHEDULES` table for user-facing cron schedules, the
+**ADR-139 (Implemented, migration `0103`)** `SCHEDULED_TASK_LAUNCHES`,
+`SCHEDULED_TASK_LAUNCH_ATTEMPTS`, and `SCHEDULED_TASK_LAUNCH_EVENTS` ledger
+for recoverable one-time task launches plus nullable Run provenance links, the
 **ADR-072 (Implemented, migration `0039`)** `REVIEW_COMMENTS`
 review-thread table, the **(Implemented, migration `0040`)**
 outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
@@ -79,6 +82,7 @@ erDiagram
     AGENTS ||--o{ RUNS : "agent runs (M34, SET NULL)"
     AGENTS ||--o{ PROJECT_TOKENS : "ephemeral agent tokens (M34)"
     PROJECTS ||--o{ RUN_SCHEDULES : "run schedules (M28)"
+    PROJECTS ||--o{ SCHEDULED_TASK_LAUNCHES : "one-time intent ledger (ADR-139)"
     PROJECTS ||--o{ PROJECT_FLOW_ROLES : "flow routing labels"
     PROJECTS ||--o{ ACTOR_IDENTITIES : "actor attribution"
     PROJECTS ||--o{ TASKS : has
@@ -156,9 +160,15 @@ erDiagram
     AUTHORED_CAPABILITIES ||--o{ AUTHORED_CAPABILITY_REVISIONS : "revision history"
     SCHEDULER_JOBS ||--o{ SCHEDULER_JOB_RUNS : "attempt ledger"
     TASKS ||--o{ RUN_SCHEDULES : "target task (M28)"
+    TASKS ||--o{ SCHEDULED_TASK_LAUNCHES : "target snapshot survives SET NULL (ADR-139)"
     RUNS ||--o{ RUN_SCHEDULES : "last run SET NULL (M28)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SCHEDULES : "runner override SET NULL (M28)"
     USERS ||--o{ RUN_SCHEDULES : "created_by SET NULL (M28)"
+    USERS ||--o{ SCHEDULED_TASK_LAUNCHES : "creator/actor SET NULL (ADR-139)"
+    SCHEDULED_TASK_LAUNCHES ||--o{ SCHEDULED_TASK_LAUNCH_ATTEMPTS : "durable reservation attempts (ADR-139)"
+    SCHEDULED_TASK_LAUNCHES ||--o{ SCHEDULED_TASK_LAUNCH_EVENTS : "safe audit events (ADR-139)"
+    SCHEDULED_TASK_LAUNCHES ||--o| RUNS : "one ordinary Run, unique provenance (ADR-139)"
+    AGENT_SCHEDULES ||--o{ RUNS : "agent binding provenance SET NULL (ADR-139)"
 
     PROJECTS ||--o{ WEBHOOK_SUBSCRIPTIONS : "project-scoped (nullable)"
     PROJECTS ||--o{ WEBHOOK_EVENTS : "emitted per project"
@@ -593,6 +603,67 @@ erDiagram
         timestamp updated_at
     }
 
+    SCHEDULED_TASK_LAUNCHES {
+        text id PK
+        text project_id FK "projects(id) CASCADE"
+        text task_id FK "tasks(id) SET NULL"
+        text task_key "durable task display snapshot"
+        integer task_number "durable task display snapshot"
+        text task_title "durable task display snapshot"
+        text created_by_user_id FK "users(id) SET NULL"
+        text last_actor_user_id FK "users(id) SET NULL"
+        text scheduled_local_time "requested wall time"
+        text timezone "IANA"
+        text disambiguation "earlier|later nullable"
+        timestamp scheduled_for_at "resolved UTC instant"
+        timestamp armed_at "last create/edit arm"
+        jsonb launch_request "normalized safe public subset"
+        text request_hash "task/time/request canonical hash"
+        text idempotency_key "project+creator replay key"
+        text state "Scheduled|Dispatching|RetryWaiting|Launched|Failed|Cancelled"
+        integer revision "optimistic ETag fence"
+        timestamp next_attempt_at "partial due scan, null terminal"
+        integer attempt_count "0..3"
+        integer max_attempts "3"
+        text claim_id "Dispatching only"
+        integer claim_fence "Dispatching only"
+        timestamp claim_expires_at "stale-claim lease"
+        text claim_origin "tick|run_now"
+        text latest_outcome
+        text error_code
+        text error_message "sanitized remediation"
+        bigint late_by_ms "null until launch/recovery result"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    SCHEDULED_TASK_LAUNCH_ATTEMPTS {
+        text id PK
+        text scheduled_launch_id FK "scheduled_task_launches(id) CASCADE"
+        text run_id UK "preallocated Run identity"
+        integer task_attempt_number
+        text branch
+        text worktree_path "managed path verified before cleanup"
+        text request_hash
+        integer claim_fence
+        text state "Reserved|Materialized|RunLinked|Cleaned|Failed"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    SCHEDULED_TASK_LAUNCH_EVENTS {
+        text id PK
+        text scheduled_launch_id FK "scheduled_task_launches(id) CASCADE"
+        text kind "created|edited_rearmed|claimed|retry_scheduled|cancelled|launched|failed"
+        text actor_type "user|system"
+        text actor_id "nullable users.id snapshot"
+        integer claim_fence
+        text error_code
+        text message "sanitized remediation"
+        jsonb metadata "safe ids/codes only"
+        timestamp created_at
+    }
+
     TASKS {
         text id PK
         text project_id FK
@@ -715,9 +786,11 @@ erDiagram
         text id PK
         text run_kind "flow|scratch|agent (DEFAULT flow; agent M34)"
         text agent_id FK "M34: agents(id) SET NULL, kind=agent only"
-        text trigger_source "M34: manual|cron|domain_event|webhook|flow"
+        text trigger_source "M34/ADR-139: manual|cron|domain_event|webhook|flow|scheduled"
         bigint trigger_event_id "M34: domain_events.id claim key"
         jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
+        text scheduled_launch_id FK "ADR-139: scheduled_task_launches(id) SET NULL, UNIQUE when set"
+        text agent_schedule_id FK "ADR-139: agent_schedules(id) SET NULL"
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"

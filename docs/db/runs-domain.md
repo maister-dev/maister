@@ -24,6 +24,12 @@ M41 adds the designed `consensus_round_verdicts` ledger for consensus-node
 cross-verification; behavior lives in
 [`../system-analytics/consensus.md`](../system-analytics/consensus.md).
 
+**ADR-139 (Implemented, migration `0103`)** adds nullable Run provenance for
+recoverable one-time task launches (`scheduled_launch_id`, unique when set) and
+agent schedule bindings (`agent_schedule_id`, `ON DELETE SET NULL`). The
+scheduled dispatcher remains outside the Run table: it first reserves identity
+in its own ledger, then the ordinary launch transaction writes this sole link.
+
 ```mermaid
 erDiagram
     PROJECTS ||--o{ TASKS : "owns"
@@ -32,6 +38,8 @@ erDiagram
     FLOWS ||--o{ TASKS : "selected at create"
     FLOWS ||--o{ RUNS : "selected at launch"
     PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
+    SCHEDULED_TASK_LAUNCHES ||--o| RUNS : "one scheduled Run (ADR-139)"
+    AGENT_SCHEDULES ||--o{ RUNS : "agent binding provenance (ADR-139)"
     TASKS ||--o{ RUNS : "1:N retry loop"
     RUNS }o--o| WORKSPACES : "own or shared worktree"
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
@@ -87,9 +95,11 @@ erDiagram
         text id PK
         text run_kind "flow|scratch|agent (DEFAULT flow; agent M34)"
         text agent_id FK "M34: agents(id) SET NULL — kind=agent only"
-        text trigger_source "M34: manual|cron|domain_event|webhook|flow"
+        text trigger_source "M34/ADR-139: manual|cron|domain_event|webhook|flow|scheduled"
         bigint trigger_event_id "M34: domain_events.id claim key"
         jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
+        text scheduled_launch_id FK "ADR-139: scheduled_task_launches(id) SET NULL, UNIQUE when set"
+        text agent_schedule_id FK "ADR-139: agent_schedules(id) SET NULL"
         text agent_workspace "M34: none|repo_read|worktree (migration 0052) effective-axis snapshot"
         text task_id FK "nullable for scratch"
         text project_id FK "NULLABLE (M36 0059): NULL for the project-less local-package assistant run"

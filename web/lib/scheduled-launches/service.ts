@@ -156,11 +156,20 @@ type ClaimableScheduledLaunchRow = {
   projectTaskKey: string;
   requestHash: string;
   revision: number;
+  scheduledForAt: Date | string;
   taskId: string | null;
 };
 
 function rowsOf<T>(result: { rows: unknown[] }): T[] {
   return result.rows as T[];
+}
+
+function parseScheduledTimestamp(value: Date | string): Date {
+  const parsed = value instanceof Date ? value : new Date(value);
+
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  throw new MaisterError("PRECONDITION", "scheduled launch contains an invalid timestamp");
 }
 
 async function recordScheduledLaunchEvent(
@@ -520,6 +529,7 @@ export async function claimScheduledLaunch(input: {
   claimId: string;
   claimFence: number;
   reservation: ScheduledLaunchReservation;
+  scheduledForAt: Date;
 }> {
   const db = input.db ?? (getDb() as ScheduledLaunchDb);
   const now = input.now ?? new Date();
@@ -528,12 +538,12 @@ export async function claimScheduledLaunch(input: {
   return db.transaction(async (tx) => {
     const duePredicate =
       input.source === "tick"
-        ? sql`${scheduledTaskLaunches.nextAttemptAt} <= ${now}`
+        ? sql`l.next_attempt_at <= ${now}`
         : sql`true`;
     const revisionPredicate =
       input.expectedRevision === undefined
         ? sql`true`
-        : sql`${scheduledTaskLaunches.revision} = ${input.expectedRevision}`;
+        : sql`l.revision = ${input.expectedRevision}`;
     const result = await tx.execute<ClaimableScheduledLaunchRow>(sql`
       SELECT
         l.id,
@@ -543,6 +553,7 @@ export async function claimScheduledLaunch(input: {
         l.claim_fence AS "claimFence",
         l.request_hash AS "requestHash",
         l.revision,
+        l.scheduled_for_at AS "scheduledForAt",
         p.slug AS "projectSlug",
         p.branch_prefix AS "projectBranchPrefix",
         p.task_key AS "projectTaskKey",
@@ -594,7 +605,8 @@ export async function claimScheduledLaunch(input: {
         ),
       );
     const previousReservation = reservations[0];
-    const claimFence = (launch.claimFence ?? 0) + 1;
+    const claimFence =
+      Math.max(launch.claimFence ?? 0, previousReservation?.claimFence ?? 0) + 1;
     const reservation = previousReservation
       ? {
           id: previousReservation.id,
@@ -650,7 +662,12 @@ export async function claimScheduledLaunch(input: {
       now,
     });
 
-    return { claimId, claimFence, reservation };
+    return {
+      claimId,
+      claimFence,
+      reservation,
+      scheduledForAt: parseScheduledTimestamp(launch.scheduledForAt),
+    };
   });
 }
 
@@ -713,7 +730,9 @@ function isRetryableScheduledLaunchError(error: unknown): boolean {
 }
 
 function retryAt(attemptCount: number, now: Date): Date {
-  const delaysMs = [60_000, 5 * 60_000, 15 * 60_000] as const;
+  // An armed intent has three total claims, so only the first two failures
+  // schedule a later claim. The third failure is terminal.
+  const delaysMs = [60_000, 5 * 60_000] as const;
   const delayMs = delaysMs[attemptCount - 1] ?? delaysMs.at(-1)!;
 
   return new Date(now.getTime() + delayMs);

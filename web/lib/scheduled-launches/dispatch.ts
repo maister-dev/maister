@@ -61,6 +61,7 @@ type StaleDispatch = {
 type DispatchSummary = {
   claimed: number;
   failed: number;
+  late: number;
   launched: number;
   recovered: number;
   retried: number;
@@ -72,6 +73,7 @@ function initialSummary(): DispatchSummary {
   return {
     claimed: 0,
     failed: 0,
+    late: 0,
     launched: 0,
     recovered: 0,
     retried: 0,
@@ -128,7 +130,7 @@ async function reclaimOneStaleDispatch(input: {
       projectId: string;
       projectRepoPath: string;
       projectSlug: string;
-      scheduledForAt: Date;
+      scheduledForAt: Date | string;
     }>(sql`
       SELECT
         l.id,
@@ -150,6 +152,14 @@ async function reclaimOneStaleDispatch(input: {
     const row = claimed.rows[0];
 
     if (!row) return null;
+
+    const scheduledForAt =
+      row.scheduledForAt instanceof Date
+        ? row.scheduledForAt
+        : new Date(row.scheduledForAt);
+    if (Number.isNaN(scheduledForAt.getTime())) {
+      throw new MaisterError("PRECONDITION", "scheduled launch contains an invalid timestamp");
+    }
 
     const linkedRuns = await tx
       .select({ id: runs.id })
@@ -176,7 +186,7 @@ async function reclaimOneStaleDispatch(input: {
           latestOutcome: "launched",
           errorCode: null,
           errorMessage: null,
-          lateByMs: Math.max(0, input.now.getTime() - row.scheduledForAt.getTime()),
+          lateByMs: Math.max(0, input.now.getTime() - scheduledForAt.getTime()),
           updatedAt: input.now,
         })
         .where(eq(scheduledTaskLaunches.id, row.id));
@@ -246,7 +256,7 @@ async function reclaimOneStaleDispatch(input: {
       projectSlug: row.projectSlug,
       claimId,
       claimFence,
-      scheduledForAt: row.scheduledForAt,
+      scheduledForAt,
       launchRequest: row.launchRequest,
       reservation: {
         id: storedReservation.id,
@@ -459,6 +469,9 @@ export async function dispatchDueScheduledLaunches(input?: {
     summary.recovered += 1;
     const state = await dispatchRecoveredStale({ db, stale, now });
     if (state === "Launched") summary.launched += 1;
+    if (state === "Launched" && now.getTime() > stale.scheduledForAt.getTime()) {
+      summary.late += 1;
+    }
     if (state === "RetryWaiting") summary.retried += 1;
     if (state === "Failed") summary.failed += 1;
   }
@@ -487,6 +500,12 @@ export async function dispatchDueScheduledLaunches(input?: {
       });
 
       if (result.state === "Launched") summary.launched += 1;
+      if (
+        result.state === "Launched" &&
+        now.getTime() > claim.scheduledForAt.getTime()
+      ) {
+        summary.late += 1;
+      }
       if (result.state === "RetryWaiting") summary.retried += 1;
       if (result.state === "Failed") summary.failed += 1;
     } catch (error) {
@@ -494,7 +513,7 @@ export async function dispatchDueScheduledLaunches(input?: {
 
       summary.failed += 1;
       log.warn(
-        { scheduledLaunchId: candidate.id, projectId: candidate.projectId },
+        { err: error, scheduledLaunchId: candidate.id, projectId: candidate.projectId },
         "scheduled launch dispatch failed",
       );
     }

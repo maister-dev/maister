@@ -138,7 +138,7 @@ flowchart TD
     Account --> Password["Account password /account/password"]
 
     Portfolio --> Board["projects/project-board /projects/SLUG"]
-    Board --> Automations["projects/project-automations /projects/SLUG?tab=automations — Designed"]
+    Board --> Automations["projects/project-automations /projects/SLUG?tab=automations — Implemented (ADR-139)"]
     Portfolio --> AddProject["projects/add-project /projects/new — admin"]
     Board --> Experiments["projects/project-experiments /projects/SLUG/experiments"]
     Board --> SettingsGit["projects/project-settings-git /projects/SLUG?tab=settings — admin/owner"]
@@ -176,7 +176,7 @@ flowchart TD
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
-| [`projects/project-automations.md`](projects/project-automations.md) | Project Automations (one-time task launches, recurring schedules, agent binding links) | `/projects/{slug}?tab=automations` | Designed |
+| [`projects/project-automations.md`](projects/project-automations.md) | Project Automations (one-time task launches, recurring schedules, agent binding links) | `/projects/{slug}?tab=automations` | Implemented (ADR-139) |
 | [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (M27 list + ADR-129 hub) |
 | [`projects/project-experiments.md`](projects/project-experiments.md) | Experiment Comparison Studio (list, create flow, lab) | `/projects/{slug}/experiments` and `/projects/{slug}/experiments/{experimentId}` | Implemented (ADR-124) |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (modes, prefill, bootstrap, classified clone errors) | `/projects/new` | Implemented |

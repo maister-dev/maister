@@ -81,8 +81,11 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions. **(ADR-134 — Implemented, migration `0098`)** adds the system-managed per-project `repo_delivery_scan` kind. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
-| `agent_schedules`             | **(M24 table, reworked M34 — Implemented, migration `0049`)** Per-agent cron/event trigger bindings. The dead M24 `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows) and `event_match` jsonb (event rows). Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer.                                                                                                                                                             | `projects.id`, `agents.id`                                         |
+| `agent_schedules`             | **(M24 table, reworked M34 — Implemented, migration `0049`; ADR-139 telemetry, `0103`)** Per-agent cron/event trigger bindings. The dead M24 `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows), `event_match` jsonb (event rows), and fenced safe latest-attempt telemetry. Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer. | `projects.id`, `agents.id`, optional `runs.id`                    |
 | `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
+| `scheduled_task_launches`     | **(ADR-139 — Implemented, migration `0103`)** Recoverable one-time task-launch intent with immutable task display snapshot, local-time/UTC contract, revision fence, safe outcome, and retry/claim state. It is driven by the existing `run_schedule.dispatcher`, never by the supervisor. | `projects.id`, optional `tasks.id`, optional `users.id` |
+| `scheduled_task_launch_attempts` | **(ADR-139 — Implemented, migration `0103`)** Durable pre-Git reservation: fixed Run identity, task attempt number, managed branch/path, request hash, and claim fence. | `scheduled_task_launches.id` |
+| `scheduled_task_launch_events` | **(ADR-139 — Implemented, migration `0103`)** Append-only safe audit ledger for intent creation, claim, retry, cancellation, launch, and terminal failure. | `scheduled_task_launches.id` |
 | `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`.                                                                                                                                                         | `projects.id`                                                              |
 | `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
 | `webhook_subscriptions`       | **(Implemented, ADR-077, migration `0041`)** Operator-configured delivery endpoints. `project_id = NULL` = platform scope; non-null = project scope. Secrets stored as `env:NAME` refs only. Usage-guarded DELETE.                                                                                                                              | optional `projects.id`                                                     |
@@ -747,6 +750,8 @@ agent_schedules {                  // M34 rework (migration 0049) —
   eventMatch?,                     // event rows: { kinds: string[] } subset of
                                    //   the ADR-086 taxonomy, NOT NULL
   enabled,
+  lastAttemptAt?, lastAttemptFence?, // ADR-139 fenced safe telemetry write
+  lastOutcome?, lastErrorCode?, lastErrorMessage?, lastRunId?,
   createdAt, updatedAt
 }
 ```
@@ -802,6 +807,60 @@ subsequent explicit `enabled:true` update re-arms the cron schedule.
 `run_schedules` is indexed on `(project_id)`, `(task_id)`,
 `(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
 (FK SET NULL + the read-time `lastRunStatus` join).
+
+## One-time scheduled task launch tables (Implemented, ADR-139, migration `0103`)
+
+These tables are the recoverable write-side ledger for a future task launch.
+They do not replace `run_schedules`: recurring cron semantics and overlap
+policy stay in that table. The seeded `run_schedule.dispatcher` claims this
+ledger under its existing budget and records aggregate counters in the durable
+`scheduler_job_runs.summary`; the supervisor stays DB-free.
+
+```ts
+scheduled_task_launches {
+  id, projectId,                  // project FK CASCADE
+  taskId?,                        // task FK SET NULL; display snapshot survives deletion
+  taskKey, taskNumber, taskTitle,
+  createdByUserId?, lastActorUserId?, // users FK SET NULL
+  scheduledLocalTime, timezone,
+  disambiguation?: 'earlier' | 'later',
+  scheduledForAt, armedAt,        // resolved UTC instant and most recent arm time
+  launchRequest, requestHash, idempotencyKey,
+  state: 'Scheduled' | 'Dispatching' | 'RetryWaiting' | 'Launched' | 'Failed' | 'Cancelled',
+  revision,                       // ETag / If-Match mutation fence
+  nextAttemptAt?, attemptCount, maxAttempts, // maxAttempts is 3
+  claimId?, claimFence?, claimExpiresAt?, claimOrigin?: 'tick' | 'run_now',
+  latestOutcome?, errorCode?, errorMessage?, lateByMs?,
+  createdAt, updatedAt
+}
+
+scheduled_task_launch_attempts {
+  id, scheduledLaunchId,          // launch FK CASCADE
+  runId, taskAttemptNumber, branch, worktreePath, requestHash, claimFence,
+  state: 'Reserved' | 'Materialized' | 'RunLinked' | 'Cleaned' | 'Failed',
+  createdAt, updatedAt
+}
+
+scheduled_task_launch_events {
+  id, scheduledLaunchId,          // launch FK CASCADE
+  kind: 'created' | 'edited_rearmed' | 'claimed' | 'retry_scheduled'
+      | 'cancelled' | 'launched' | 'failed',
+  actorType: 'user' | 'system', actorId?, claimFence?,
+  errorCode?, message?, metadata?, createdAt
+}
+```
+
+`scheduled_task_launches` has a unique `(project_id, created_by_user_id,
+idempotency_key)` replay boundary, a project listing index, and a partial due
+index `(next_attempt_at, id)` for `Scheduled`/`RetryWaiting`. The state-shape
+CHECK permits claim metadata only in `Dispatching`; the attempt CHECK permits
+only `0..3`. `scheduled_task_launch_attempts` has one unique Run identity and a
+partial one-live-reservation-per-launch constraint for `Reserved`/
+`Materialized`; its branch/path fields are audited and never used to delete an
+unverified worktree. Events are append-only and indexed by launch/creation
+time. See [`db/scheduler-domain.md`](db/scheduler-domain.md) for the ERD and
+[`system-analytics/project-automations.md`](system-analytics/project-automations.md)
+for state, recovery, and privacy rules.
 
 ## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`; M39 package re-key Implemented — ADR-106, migration `0068`)
 
@@ -1122,11 +1181,17 @@ unread badge and inbox panel.
                                  //   set iff runKind='agent'
   triggerSource?,                // M34: 'manual' | 'cron'
                                  //   | 'domain_event' | 'webhook' | 'flow'
+                                 //   | 'scheduled' (ADR-139)
   triggerEventId?,               // M34: bigint domain_events.id —
                                  //   partial-UNIQUE claim key (agent_id,
                                  //   trigger_event_id) for outbox no-dup
   triggerPayload?,               // M34: jsonb webhook/event context,
                                  //   bounded <= 32 KB at the boundary
+  scheduledLaunchId?,            // ADR-139 (0103): FK -> scheduled_task_launches.id
+                                 //   SET NULL; UNIQUE when set, so one intent
+                                 //   can link exactly one normal Run
+  agentScheduleId?,              // ADR-139 (0103): FK -> agent_schedules.id
+                                 //   SET NULL; agent binding provenance
   agentWorkspace?,               // M34 (migration 0052): 'none' | 'repo_read'
                                  //   | 'worktree' — snapshot of the run's
                                  //   effective workspace axis at spawn;
@@ -1273,6 +1338,15 @@ feature explicitly creates a board task.
 `runKind = 'scratch'` rows may have `taskId`, `flowId`, and `flowRevisionId`
 set to `NULL`. They still keep non-null legacy display fields by writing
 `flowVersion = 'scratch'` and `flowRevision = 'manual'`.
+
+**ADR-139 (Implemented, migration `0103`).** A one-time launch is not a
+pre-created Run. The scheduler claims a durable `scheduled_task_launches` row,
+then reserves a Run identity in `scheduled_task_launch_attempts`; only the
+ordinary `launchRun` transaction writes `runs.scheduled_launch_id`. The partial
+unique index on that column is the final one-intent/one-Run backstop. Agent
+execution similarly writes `runs.agent_schedule_id` for truthful binding
+telemetry. Both links use `ON DELETE SET NULL`, preserving Run history if their
+source configuration is removed.
 
 `currentStepId` is set by the Flow runner before each step starts and cleared
 on terminal transitions (`Review` / `Failed`). Scratch dialog state is stored in

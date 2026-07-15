@@ -12,6 +12,10 @@ job lifecycle, tick route, and catch-up policy.
 > job — see [`../system-analytics/run-schedules.md`](../system-analytics/run-schedules.md)
 > and [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 > Cron expressions live ONLY here; `scheduler_jobs` stays fixed-interval.
+>
+> **Project Automations: Implemented (ADR-139, migration `0103`).** One-time
+> task launches use their own intent/reservation/event ledger, but are driven
+> only by the existing seeded `run_schedule.dispatcher` job.
 
 ```mermaid
 erDiagram
@@ -24,6 +28,12 @@ erDiagram
     RUNS ||--o{ RUN_SCHEDULES : "last launched run (nullable)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SCHEDULES : "optional runner override"
     USERS ||--o{ RUN_SCHEDULES : "created by (nullable)"
+    PROJECTS ||--o{ SCHEDULED_TASK_LAUNCHES : "one-time intents (ADR-139)"
+    TASKS ||--o{ SCHEDULED_TASK_LAUNCHES : "target (SET NULL)"
+    USERS ||--o{ SCHEDULED_TASK_LAUNCHES : "creator/last actor (SET NULL)"
+    SCHEDULED_TASK_LAUNCHES ||--o{ SCHEDULED_TASK_LAUNCH_ATTEMPTS : "durable reservations"
+    SCHEDULED_TASK_LAUNCHES ||--o{ SCHEDULED_TASK_LAUNCH_EVENTS : "safe audit"
+    SCHEDULED_TASK_LAUNCHES ||--o| RUNS : "unique scheduled_launch_id"
 
     SCHEDULER_JOBS {
         text id PK
@@ -93,6 +103,59 @@ erDiagram
         timestamp created_at
         timestamp updated_at
     }
+
+    SCHEDULED_TASK_LAUNCHES {
+        text id PK
+        text project_id FK "NOT NULL -> projects(id) CASCADE"
+        text task_id FK "NULL -> tasks(id) SET NULL"
+        text state "Scheduled|Dispatching|RetryWaiting|Launched|Failed|Cancelled"
+        integer revision "optimistic mutation fence"
+        timestamp armed_at "latest create/edit arm time"
+        text scheduled_local_time "requested wall time"
+        text timezone "IANA timezone"
+        text disambiguation "earlier|later nullable"
+        timestamp scheduled_for_at "resolved UTC instant"
+        timestamp next_attempt_at "due/retry key, nullable terminal"
+        integer attempt_count "0..3 per arming"
+        integer max_attempts "always 3"
+        text request_hash "normalized public request + task/time hash"
+        text idempotency_key "unique per project/creator"
+        text claim_id "Dispatching only"
+        integer claim_fence "Dispatching only"
+        timestamp claim_expires_at "stale recovery lease"
+        text claim_origin "tick|run_now"
+        text latest_outcome
+        text error_code
+        text error_message "sanitized bounded remediation"
+        bigint late_by_ms "null until an overdue launch/recovery outcome"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    SCHEDULED_TASK_LAUNCH_ATTEMPTS {
+        text id PK
+        text scheduled_launch_id FK "NOT NULL -> scheduled_task_launches(id) CASCADE"
+        text run_id "preallocated durable Run identity"
+        integer task_attempt_number
+        text branch
+        text worktree_path "verified managed path only"
+        text request_hash
+        integer claim_fence
+        text state "Reserved|Materialized|RunLinked|Cleaned|Failed"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    SCHEDULED_TASK_LAUNCH_EVENTS {
+        text id PK
+        text scheduled_launch_id FK "NOT NULL -> scheduled_task_launches(id) CASCADE"
+        text kind "created|edited_rearmed|claimed|retry_scheduled|cancelled|launched|failed"
+        text actor_type "user|system"
+        integer claim_fence
+        text error_code
+        text message "sanitized bounded remediation"
+        timestamp created_at
+    }
 ```
 
 ## Indexes
@@ -112,6 +175,13 @@ erDiagram
 | `run_schedules_task_idx` (M28)      | `(task_id)`                  | Per-task schedule lookup               |
 | `run_schedules_due_idx` (M28)       | `(enabled, next_fire_at)`    | Dispatcher due-scan                    |
 | `run_schedules_last_run_idx` (M28)  | `(last_run_id)`              | FK SET NULL + last-run status join     |
+| `scheduled_task_launches_project_idx` (ADR-139) | `(project_id, updated_at)` | Bounded project listing |
+| `scheduled_task_launches_due_idx` (ADR-139) | `(next_attempt_at, id)` partial for `Scheduled`/`RetryWaiting` | Bounded one-time due scan |
+| `scheduled_task_launches_creator_key_uq` (ADR-139) | `(project_id, created_by_user_id, idempotency_key)` UNIQUE | Same-key replay/conflict boundary |
+| `scheduled_task_launch_attempts_run_id_uq` (ADR-139) | `(run_id)` UNIQUE | One reservation identity per Run |
+| `scheduled_task_launch_attempts_launch_live_uq` (ADR-139) | `(scheduled_launch_id)` partial for `Reserved`/`Materialized` | One in-flight reservation per intent |
+| `scheduled_task_launch_attempts_launch_idx` (ADR-139) | `(scheduled_launch_id, created_at)` | Recovery and audit lookup |
+| `scheduled_task_launch_events_launch_created_idx` (ADR-139) | `(scheduled_launch_id, created_at)` | Ordered safe audit trail |
 
 ## Linked artifacts
 
@@ -120,5 +190,6 @@ erDiagram
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - ADR: [ADR-060](../decisions.md#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets),
   [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock),
-  [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).
+  [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
+  [ADR-139](../decisions.md#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry).
 - Implemented: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance).

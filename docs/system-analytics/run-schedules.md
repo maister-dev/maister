@@ -38,14 +38,16 @@ incompatible_disabled | dispatching`,
   shared single source of truth for "can this task launch", encoding the
   board retry rule (latest run `Failed | Abandoned` → launchable, attempt
   N+1). Used by `launchRun` itself and by the dispatcher's policy decision.
-- **Schedules tab** (project board `?tab=schedules`, Implemented, M28) —
-  view for `readBoard`, mutate affordances for `manageSchedules` (member).
+- **Automations tab** (project board `?tab=automations`, Implemented, ADR-139) —
+  the aggregate view for `readBoard`, including the existing recurring
+  `manageSchedules` affordances (member). `?tab=schedules` remains a
+  compatibility alias.
 - **Task schedules overview** (`/admin/scheduler`, Implemented, M28) — read-only
   global-admin overview of `run_schedules` joined to owning project, target
   task, and last run. It links to `/runs/{lastRunId}` when a last run exists,
-  and to `/projects/{slug}?tab=schedules` for edits instead of creating global
+  and to `/projects/{slug}?tab=automations` for edits instead of creating global
   schedule CRUD.
-- **Schedule presets** (project board `?tab=schedules`, Implemented, M28) — UI
+- **Schedule presets** (project Automations tab, Implemented, M28) — UI
   affordance for common 5-field cron expressions (hourly, daily, weekdays,
   weekly, custom). Presets write the same `cron_expr` string as manual input
   and do not change dispatch semantics.
@@ -103,9 +105,9 @@ states cannot silently change the overlap matrix.
 
 ## Process flows
 
-## Project Automations compatibility (Designed)
+## Project Automations compatibility (Implemented)
 
-The future one-time task-launch intent is a distinct
+The one-time task-launch intent is a distinct
 `scheduled_task_launches` domain shown with recurring rows in the project
 Automations aggregate. It reuses this dispatcher's seeded clock but has a
 durable pre-Git reservation and recovery matrix. It does **not** change this
@@ -113,7 +115,7 @@ domain's recurring overlap policies, row ownership, catch-up behavior, or W1
 and W2 crash semantics. See
 [project-automations.md](project-automations.md) for the one-time contract.
 
-The visible project tab will be renamed from **Schedules** to **Automations**.
+The visible project tab is renamed from **Schedules** to **Automations**.
 `?tab=schedules` remains a compatibility alias while newly rendered links use
 `?tab=automations`; recurring mutations remain the `/schedules` API family.
 
@@ -191,8 +193,8 @@ catch-up.
 ```mermaid
 flowchart TD
     Admin["Global admin opens /admin/scheduler"] --> Overview["Task schedules overview<br/>project + task + cron + next fire + last outcome"]
-    Overview --> ProjectLink["Open project schedules tab"]
-    ProjectLink --> ProjectSchedules["/projects/{slug}?tab=schedules"]
+    Overview --> ProjectLink["Open project Automations tab"]
+    ProjectLink --> ProjectSchedules["/projects/{slug}?tab=automations"]
     ProjectSchedules --> Edit["Create/edit schedule modal"]
     Edit --> Preset{"Preset"}
     Preset -- hourly/daily/weekdays/weekly --> Cron["Write 5-field cronExpr"]
@@ -243,7 +245,7 @@ flowchart TD
   clicking user's id.
 - The admin Task schedules overview is read-only. It MUST NOT add a global
   schedule mutation route or bypass the project `manageSchedules` permission
-  model; it links operators to the existing project schedules tab.
+  model; it links operators to the existing project Automations tab.
 - Overview rows SHOULD include schedule name, project link, task number/title,
   enabled state, cron/timezone, next fire, queued catch-up state, last
   outcome/error, and last run status/link when available.

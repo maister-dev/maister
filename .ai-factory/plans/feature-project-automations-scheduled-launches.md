@@ -240,21 +240,21 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
 
 ### Phase 2 — M24 dispatcher, agent telemetry, API, and aggregate read model
 
-- [ ] **Task 8 (RED): Add tick wiring and automation-read contract tests.**
+- [x] **Task 8 (RED): Add tick wiring and automation-read contract tests.**
   - **Files:** extend `web/lib/run-schedules/__tests__/tick.integration.test.ts`, `web/lib/scheduler/__tests__/jobs.integration.test.ts`, `web/app/api/projects/[slug]/schedules/__tests__/routes.test.ts`; create `web/app/api/projects/[slug]/{automations,scheduled-launches}/__tests__/*`; extend agent trigger/project-link integration fixtures.
   - **Deliverable:** first fail through real `runSchedulerTick({ jobKind: 'run_schedule' })`, then assert one-time due/recovery processing, project isolation, cursor bounds and stable tuple, union/detail discriminants, permission matrix, auth-before-body/no-probe behavior, `Idempotency-Key` same/mismatch replay, `If-Match` conflicts, and typed error status mapping. Add agent cron/event cases that prove ID-preserving reconciliation, stale schedules revision rejection, deterministic event owner, and fenced telemetry writes.
   - **Dependencies:** Task 7. **Logging:** tests assert job summary includes counts/partial failures without raw intent/error data.
   - **Tests/evidence:** verify the scheduler test uses the actual dispatch arm, not a directly invoked handler; recurrence and agent baseline suites stay green.
   - **Acceptance:** a missing tick registration would make this phase red.
 
-- [ ] **Task 9 (GREEN): Wire the existing dispatcher and project Automation read service.**
+- [x] **Task 9 (GREEN): Wire the existing dispatcher and project Automation read service.**
   - **Files:** `web/lib/scheduler/tick-service.ts`, `web/lib/run-schedules/dispatch.ts` or focused dispatcher composition module, `web/lib/scheduled-launches/queries.ts`, `web/lib/queries/scheduler.ts`, `web/types/scheduler.ts`; `web/lib/agents/{triggers,project-links,launch}.ts` and schema/query types for telemetry.
   - **Deliverable:** invoke the one-time dispatcher under the seeded `run_schedule.dispatcher` and its existing budget; individual intent failures must settle the item while the shared job succeeds. Build the bounded discriminated aggregate query over one-time, recurrence, and effective attached agent bindings with the frozen cursor tuple and type-specific detail readers. Extend agent trigger execution to pass `agentScheduleId`, reconcile IDs/revisions in the sole project-agent PATCH owner, choose a deterministic event owner, and record fenced safe outcome/error/run linkage for every affected binding without breaking the `(agent_id, trigger_event_id)` backstop.
   - **Dependencies:** Task 8. **Logging:** one scheduler summary combines recurrence and one-time counters; agent telemetry logs schedule id/agent id/outcome only.
   - **Tests/evidence:** green real-tick test, agent cron/event regression including deduped event behavior, list order/cursor tests, and admin read-only query tests.
   - **Acceptance:** all rows tell the truth about latest outcome and ownership; no duplicate/masked event binding claims to have launched a separate Run, and no agent row pretends it can Run now in Phase 1.
 
-- [ ] **Task 10 (GREEN): Implement project-scoped route handlers and OpenAPI parity.**
+- [x] **Task 10 (GREEN): Implement project-scoped route handlers and OpenAPI parity.**
   - **Files:** create `web/app/api/projects/[slug]/scheduled-launches/{route.ts,[launchId]/route.ts,[launchId]/cancel/route.ts,[launchId]/run-now/route.ts}` and `automations/{route.ts,[kind]/[automationId]/route.ts}`; update `docs/api/web.openapi.yaml` fixtures/examples.
   - **Deliverable:** authenticate and authorize before body parsing or lookup, derive project and identifiers server-side, apply `readBoard`/`manageSchedules`/`launchRun`/`launchUnattended` exactly, enforce canonical idempotency and ETag/`If-Match`, map typed errors, return safe type-specific DTOs, and leave existing recurring/agent mutation APIs authoritative. Do not add an agent trigger-now route in this phase.
   - **Dependencies:** Task 9. **Logging:** routes log operation, server-derived project/intent id, actor id and result code; no request body dump.
@@ -263,28 +263,28 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
 
 ### Phase 3 — Project Automations UX and localization
 
-- [ ] **Task 11 (RED): Add UI helper/component tests before rendering the new surface.**
+- [x] **Task 11 (RED): Add UI helper/component tests before rendering the new surface.**
   - **Files:** create `web/components/automations/__tests__/*`; extend `web/components/board/__tests__/{launch-popover,project-tabs}.test.ts`, `web/components/schedules/__tests__/*`, `web/components/board/panels/__tests__/agents-attach-*.test.ts`.
   - **Deliverable:** failing focused tests for Schedule-run launch request preservation, local/UTC/DST preview, ETag/idempotency error recovery, status/action mapping, unavailable actions, legacy `schedules` tab alias, one-time/recurring/agent list and detail discriminants, and agent Manage deep link. Agent rows must never render a Phase-1 Run-now control.
   - **Dependencies:** Task 10. **Logging:** client error view uses only safe API messages; tests assert no raw route/internal fields render.
   - **Tests/evidence:** unit runner includes each file; avoid snapshot-only markup assertions.
   - **Acceptance:** a task cannot be schedule-created with a launch request that the normal launch dialog would reject.
 
-- [ ] **Task 12 (GREEN): Add Schedule run and aggregate Automations components.**
+- [x] **Task 12 (GREEN): Add Schedule run and aggregate Automations components.**
   - **Files:** `web/components/board/launch-popover.tsx`; create `web/components/automations/{automations-panel,scheduled-launch-modal,automations-table,automation-detail}.tsx`; adapt `web/components/schedules/*`; `web/app/(app)/projects/[slug]/page.tsx`, `web/components/board/project-tabs.tsx`.
   - **Deliverable:** use the existing launch selection dialog as a sibling schedule submit mode, show explicit local time/zone/UTC preview and DST remediation, then post an intent only. Preserve returned revision/ETag and use it for all one-time mutations. Replace the visible Schedules tab with an Automations panel that groups/filters aggregate rows, follows type-specific detail links, provides safe one-time actions, delegates recurring controls to current APIs, and deep-links agent configuration to the authoritative editor. Show derived result Runs, readable attention/error states, and no fictitious agent Run-now control.
   - **Dependencies:** Task 11. **Logging:** client stores no sensitive payload; errors are surfaced immediately through `readApiError`/localized code mapping.
   - **Tests/evidence:** make Task 11 green; test keyboard/focus handling and disabled/busy states for race-sensitive controls.
   - **Acceptance:** project members understand automation language without seeing scheduler jobs, leases, raw targets, or engine terms.
 
-- [ ] **Task 13 (GREEN): Deliver EN/RU localization and accessible status/error affordances.**
+- [x] **Task 13 (GREEN): Deliver EN/RU localization and accessible status/error affordances.**
   - **Files:** `web/messages/{en,ru}.json`, `web/lib/__tests__/{i18n-parity.test.ts,i18n-scheduler-kind-keys.test.ts}`, automation component tests.
   - **Deliverable:** add matching `automations`/navigation/status/outcome/DST/retry/error keys; migrate schedule labels carefully so the admin remains infrastructure-oriented. Use icon+label actions, `aria-live` error/status feedback, clear resulting Run links, and no dead remediation CTA.
   - **Dependencies:** Task 12. **Logging:** localization does not interpolate unsafe error payloads.
   - **Tests/evidence:** EN/RU parity and focused render tests green.
   - **Acceptance:** every state and action in the API union has both EN and RU user-facing wording.
 
-- [ ] **Task 14 (refactor): Preserve the single agent-binding editor and clean component seams.**
+- [x] **Task 14 (refactor): Preserve the single agent-binding editor and clean component seams.**
   - **Files:** `web/components/automations/*`, `web/components/board/panels/{agents-attach-panel,agents-attach-edit-modal}.tsx`, `web/lib/agents/project-links.ts`, affected tests.
   - **Deliverable:** remove duplicated schedule-edit state if introduced, retain one aggregating project-agent PATCH owner with stable binding IDs and schedules revision, and preserve telemetry through unchanged reconciliation. Keep agent trigger-now out of Phase 1 rather than creating a second editor or action surface. Confirm legacy `?tab=schedules` compatibility has a documented retirement condition.
   - **Dependencies:** Task 13. **Logging:** retain audit fields and explicit conflict failures.
@@ -293,26 +293,30 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
 
 ### Phase 4 — End-to-end verification, docs as-built, and merge readiness
 
-- [ ] **Task 15: Add minimal real journeys and regression coverage.**
+- [x] **Task 15: Add minimal real journeys and regression coverage.**
   - **Files:** extend `web/e2e/run-schedules.spec.ts` or create `web/e2e/project-automations.spec.ts`; create or extend an opt-in live-supervisor spec/config; preserve `web/e2e/platform-agents-binding.spec.ts`; relevant Testcontainers fixtures.
   - **Deliverable:** in the default Playwright lane, exercise the member UI/API/DB journey through a deterministic no-side-effect outcome (for example an intentionally busy target), including create, inspect, cancel, Run now, overdue recovery display, and a visible terminal refusal. In the opt-in live-supervisor lane, execute one valid due/Run-now path through normal Run creation and follow its Run. Keep recurrence and agent-binding journeys intact.
   - **Dependencies:** Task 14. **Logging:** use fixture-safe codes/ids only.
   - **Tests/evidence:** run default `pnpm --filter maister-web test:e2e`; run the live configuration separately when its supervisor/runtime prerequisites are present; record a blocked live lane explicitly rather than silently skipping it.
   - **Acceptance:** the default lane proves the user contract without relying on session spawn, while the live lane proves the normal Run lifecycle across UI, API, DB, dispatcher, Git workspace, and supervisor.
 
-- [ ] **Task 16: Reconcile documentation, schema/ERD, contract, and implementation status.**
+  - **As-built verification:** the deterministic default Playwright journey passes. The opt-in live-supervisor journey remains explicitly blocked because this checkout has no configured real ACP runtime and Git workspace prerequisites; it is not silently skipped.
+
+- [x] **Task 16: Reconcile documentation, schema/ERD, contract, and implementation status.**
   - **Files:** all Phase-0 docs plus `docs/{database-schema.md,error-taxonomy.md,PRODUCT_VIEW.md,VISION.md,architecture.md}`, `docs/db/{scheduler-domain,erd,agents-domain,runs-domain}.md`, `docs/screens/README.md`, `.ai-factory/{DESCRIPTION.md,ARCHITECTURE.md,ROADMAP.md}` only where the shipped contract changes.
   - **Deliverable:** update Designed sections to Implemented only for landed code; add migration/ADR cross-links, database narrative and both Mermaid ERDs (intent → reservation attempt → Run; binding → Run), precise route/idempotency/ETag examples, scheduler/agent telemetry counters, and state that supervisor remains DB-free. Verify no docs claim recurrence gained recoverable one-time semantics or that Observatory owns write-side automation state.
   - **Dependencies:** Task 15. **Logging:** docs expose safe operational remediation only.
   - **Tests/evidence:** `pnpm validate:docs:all`; `pnpm validate:docs:adr:all`; manual API/DB/analytics terminology, state-enum, route/status, and Mermaid-cardinality grep.
   - **Acceptance:** docs, OpenAPI, ERD, screen reference, and source have identical states, permissions and time behavior.
 
-- [ ] **Task 17: Run quality gates, adversarial traceability review, and post-rebase namespace repair.**
+- [~] **Task 17: Run quality gates, adversarial traceability review, and post-rebase namespace repair.**
   - **Files:** changed feature files; migration journal/snapshot; ADR/plan references.
   - **Deliverable:** rebase on current `main`, reserve/renumber ADR/migration if needed, check all consumer fanout for `trigger_source='scheduled'` (including Runs-list scheduled filters/labels and analytics), re-run migration upgrade preservation, and conduct an adversarial review against the matrix below.
   - **Dependencies:** Task 16. **Logging:** verify no test/log fixture introduces sensitive values.
   - **Tests/evidence:** `pnpm --filter maister-web typecheck`; `pnpm --filter maister-web test:unit`; `pnpm --filter maister-web test:integration`; `pnpm --filter maister-web build`; `pnpm validate:docs:all`; migration integrity/check commands; E2E from Task 15; `git diff --check`.
   - **Acceptance:** every phase suite is green, migration triple is coherent, no new untracked state transition is possible, and no unrelated change is included.
+
+  - **As-built verification:** typecheck, focused unit (48), targeted real-Postgres integration (34), default Playwright acceptance, production build, documentation validation, and diff checks pass. The repository-wide unit command is blocked by a reproducible 4 GB Vitest worker OOM in the unrelated `components/studio/__tests__/upstream-divergence-drawer.dom.test.ts`; all Automations tests and the remaining isolated candidate DOM suites pass.
 
 ## Acceptance-Criteria Traceability
 

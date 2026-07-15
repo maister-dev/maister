@@ -34,6 +34,7 @@ async function seedFixture(): Promise<Fixture> {
   const flowId = randomUUID();
   const revisionId = randomUUID();
   const userId = randomUUID();
+  const flowRefId = `maintenance-${flowId}`;
 
   await db.insert(schema.users).values({
     id: userId,
@@ -49,7 +50,7 @@ async function seedFixture(): Promise<Fixture> {
   });
   await db.insert(schema.flowRevisions).values({
     id: revisionId,
-    flowRefId: "maintenance",
+    flowRefId,
     source: "github.com/test/maintenance",
     versionLabel: "v1.0.0",
     resolvedRevision: "a".repeat(40),
@@ -62,7 +63,7 @@ async function seedFixture(): Promise<Fixture> {
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
-    flowRefId: "maintenance",
+    flowRefId,
     source: "github.com/test/maintenance",
     version: "v1.0.0",
     installedPath: "/tmp/maintenance",

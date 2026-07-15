@@ -431,6 +431,7 @@ describe("run_schedule dispatcher tick", () => {
       oneTime: {
         claimed: 0,
         failed: 0,
+        late: 0,
         launched: 0,
         recovered: 0,
         retried: 0,

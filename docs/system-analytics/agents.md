@@ -97,11 +97,11 @@ not contain the package-root `maister-agents/`).
   `recommended`. (Implemented — ADR-106) An agent disable cascades `enabled=false`
   onto these rows.
 
-  **Project Automations extension (Designed):** the existing project-agent PATCH
-  remains the only binding editor but will reconcile stable binding IDs under a
-  schedules revision instead of deleting unchanged rows. It will retain
+  **Project Automations extension (Implemented, ADR-139):** the existing project-agent PATCH
+  remains the only binding editor and reconciles stable binding IDs under a
+  schedules revision instead of deleting unchanged rows. It retains
   telemetry (`last_attempt_at`, fence, safe outcome/code/message, and
-  `last_run_id`) for unchanged bindings. `runs.agent_schedule_id` will identify
+  `last_run_id`) for unchanged bindings. `runs.agent_schedule_id` identifies
   the producing binding. A stale full-replacement PATCH is `CONFLICT`; no
   Automations route mutates agent schedules.
 - **Per-agent runner policy** (Implemented — ADR-106) — `recommended.executionPolicy:

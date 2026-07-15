@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This domain is **Designed**. It specifies a member-facing project
+This domain is **Implemented** (ADR-139, migration 0103). It provides a member-facing project
 **Automations** surface and a durable, one-time future launch of an existing
 configured task. It extends the existing M24 `run_schedule.dispatcher` clock;
 it does not add a timer, a scheduler job per intent, supervisor database
@@ -13,7 +13,7 @@ The design keeps three records deliberately separate:
 - one-time task launches are owned by `scheduled_task_launches`;
 - recurring task schedules remain owned by `run_schedules`;
 - agent cron and event bindings remain owned by `agent_schedules` and are
-  edited only by Project Settings → Agents.
+  edited only by the project Agents tab.
 
 The aggregate reader joins these records for the project view but does not
 invent a generic automation editor. Observatory remains a read model over
@@ -37,9 +37,10 @@ capacity eligibility. Deleting or demoting the creator does not silently
 cancel an already-authorized intent.
 
 Public DTOs, audit events, UI copy, and logs may expose stable IDs, task
-`KEY-N`/title snapshots, state, outcome code, retry count, and timing. They
-must not expose repository or worktree paths, credentials, capability secrets,
-raw request payloads, or raw upstream errors.
+`KEY-N`/title snapshots, state, outcome code, retry count, timing, and the
+strict normalized public launch-request subset needed to re-arm an intent.
+They must not expose repository or worktree paths, credentials, capability
+secrets, browser-controlled internal launch fields, or raw upstream errors.
 
 ### Identifier and trust table
 
@@ -47,32 +48,32 @@ raw request payloads, or raw upstream errors.
 | --- | --- | --- |
 | Project slug and intent/detail ID | URL path | Resolve the project first, then project-scoped row joins; missing/foreign rows are 404. |
 | Actor | Auth context | Authenticate and authorize before JSON parsing, request validation, or resource lookup. |
-| Task and launch options | Request body | Strictly validate then resolve against the server-derived project; re-evaluate mutable eligibility at dispatch before filesystem work. |
+| Task and launch options | Request body | Strictly normalize the public subset and scope the task to the server-derived project; re-evaluate mutable eligibility at dispatch before filesystem work. |
 | `Idempotency-Key` and request hash | Header and server state | The client sends only a bounded opaque key; the server hashes canonical normalized request bytes and never trusts a client hash. |
 | Revision, claim/fence, reservation, and Run link | Header and server state | `If-Match` supplies only the quoted revision. Claim, fence, reservation, and Run identity are server-generated and protected by CAS/unique constraints. |
 
 ## Entities
 
-- **Scheduled task launch** (`scheduled_task_launches`, Designed) — one
+- **Scheduled task launch** (`scheduled_task_launches`, Implemented) — one
   authorized future launch intent. It persists its project, nullable task FK
   (`ON DELETE SET NULL`), task key/number/title snapshot, creator/last actor,
   requested local date-time, IANA timezone, DST disambiguation, resolved UTC
   instant, immutable normalized request, hash/key idempotency material,
   revision, retry state, and latest safe outcome.
-- **Launch reservation attempt** (`scheduled_task_launch_attempts`, Designed) —
+- **Launch reservation attempt** (`scheduled_task_launch_attempts`, Implemented) —
   a durable, pre-Git external-effect reservation. The successful claim gives
   it one `run_id`, task attempt number, branch, worktree path, request hash,
   and claim fence. A re-entry must reuse this identity, never allocate a
   replacement.
-- **Launch event** (`scheduled_task_launch_events`, Designed) — append-only
+- **Launch event** (`scheduled_task_launch_events`, Implemented) — append-only
   safe audit event: `created`, `edited_rearmed`, `claimed`, `retry_scheduled`,
   `cancelled`, `launched`, or `failed`, with user/system attribution and
   code-level metadata only.
-- **Resulting Run** (`runs.scheduled_launch_id`, Designed) — the sole durable
+- **Resulting Run** (`runs.scheduled_launch_id`, Implemented) — the sole durable
   intent-to-Run link, unique when present. `runs.trigger_source` gains
   `scheduled`. There is no mutable reciprocal `resulting_run_id` on the
   intent.
-- **Agent binding telemetry** (Designed) — `agent_schedules` gains stable
+- **Agent binding telemetry** (Implemented) — `agent_schedules` gains stable
   IDs, revision-fenced reconciliation, `last_attempt_at`, `last_attempt_fence`,
   `last_outcome`, safe code/message, and `last_run_id`; `runs.agent_schedule_id`
   records the binding which produced an agent Run.
@@ -159,7 +160,7 @@ semantics in [run-schedules.md](run-schedules.md).
 | Blocked, flagged, unconfigured, Done, or Abandoned task | Do not inherit manual permissive relaunch | Terminal `Failed` / `PRECONDITION` |
 | Archived project or deleted task | Terminalize without launch side effect | `Failed` with preserved target snapshot |
 | Invalid stored request, package/Flow/engine mismatch, removed runner, or Git preflight refusal | Repair requires a person | Terminal `Failed` / `CONFIG` or `PRECONDITION` |
-| Temporary supervisor/runner/network failure | Retry at 1, 5, then 15 minutes | `RetryWaiting`; terminal `Failed` on third attempt |
+| Temporary supervisor/runner/network failure | Retry after 1 then 5 minutes (three total claims per arming) | `RetryWaiting`; terminal `Failed` on third attempt |
 | Tick/Run now/cancel/edit race | CAS and row lock choose one winner | Loser receives `CONFLICT` or current safe DTO |
 
 The due scan orders by `(next_attempt_at, id)` and bounds its batch. Every
@@ -273,7 +274,7 @@ paths, branches, credentials, raw provider errors, or secret values.
   W1/W2 recurrence behavior are unchanged.
 - Existing `agent_schedules` remain the project-agent PATCH owner's data;
   additions are stable identity, revision, and truthful telemetry only.
-- The legacy board URL `?tab=schedules` resolves to `?tab=automations`; new
+- The legacy board URL `?tab=schedules` renders the Automations tab; new
   links use `automations`. The alias remains until a documented retirement
   release after external links have migrated.
 - The supervisor remains database-free. The Web scheduler owns all durable

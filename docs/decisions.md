@@ -163,7 +163,7 @@
 | [ADR-136](#adr-136-task-bound-human-ask-clarification-handoff) | Task-bound Human-ask clarification handoff | Implemented | 2026-07-13 |
 | [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
 | [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Implemented | 2026-07-14 |
-| [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Proposed | 2026-07-15 |
+| [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Implemented | 2026-07-15 |
 
 ---
 
@@ -12040,7 +12040,7 @@ without changing the Flow's review decision.
 ### ADR-139: Project Automations — one-time task-launch reservation and truthful agent-binding telemetry
 
 **Date:** 2026-07-15
-**Status:** Proposed
+**Status:** Implemented (migration 0103)
 
 **Context:** Existing M28 recurring task schedules deliberately accept a W1
 at-most-once loss window after their fire marker commits but before `launchRun`
@@ -12093,7 +12093,7 @@ telemetry ambiguous.
 - Project members gain a unified Automations tab, but recurring controls and
   agent binding configuration keep their existing authoritative APIs. Admin
   Scheduler gains read-only diagnostics and project links only.
-- Retries are bounded to three per `armed_at` with 1/5/15-minute backoff and
+- Retries are bounded to three total claims per `armed_at` with 1/5-minute backoff and
   only temporary supervisor/runner/network classes retry. Eligibility,
   configuration, compatibility, and Git preflight refusal are terminal safe
   outcomes requiring a human repair.

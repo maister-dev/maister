@@ -21,6 +21,11 @@ column-level narrative.
 > `agent_project_links.branch_base` + `agent_project_links.execution_policy_override`.
 > The ERD/tables below show the post-0068 shape; the M34 columns they replace are
 > noted inline.
+>
+> **(Implemented — ADR-139, migration `0103`)** stable agent schedule IDs are
+> reconciled under `agent_project_links.schedules_revision`; bindings retain
+> fenced latest-attempt telemetry and `runs.agent_schedule_id` records the
+> binding that launched an agent run.
 
 ```mermaid
 erDiagram
@@ -31,6 +36,7 @@ erDiagram
     AGENTS ||--o{ AGENT_SCHEDULES : "cron + event bindings"
     PROJECTS ||--o{ AGENT_SCHEDULES : "per-project bindings"
     AGENTS ||--o{ RUNS : "agent runs (SET NULL)"
+    AGENT_SCHEDULES ||--o{ RUNS : "trigger provenance (SET NULL, ADR-139)"
     AGENTS ||--o{ PROJECT_TOKENS : "ephemeral agent tokens (CASCADE)"
 
     AGENTS {
@@ -70,6 +76,7 @@ erDiagram
         jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Implemented ADR-111, 0071)"
         boolean can_read_brain "NOT NULL DEFAULT false — gates memory recall (ADR-122, 0088)"
         boolean can_write_brain "NOT NULL DEFAULT false — gates memory retain, separate write axis (ADR-122, 0088)"
+        integer schedules_revision "NOT NULL DEFAULT 1 — full-replacement CAS fence (ADR-139)"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -85,6 +92,12 @@ erDiagram
         timestamptz last_fired_at "NULL"
         jsonb event_match "event rows: NOT NULL — kinds subset of ADR-086 taxonomy"
         boolean enabled "NOT NULL DEFAULT true"
+        timestamptz last_attempt_at "ADR-139 telemetry"
+        integer last_attempt_fence "ADR-139 fenced telemetry write"
+        text last_outcome "ADR-139 safe outcome"
+        text last_error_code "ADR-139 safe error code"
+        text last_error_message "ADR-139 sanitized remediation"
+        text last_run_id "ADR-139 runs(id) SET NULL"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -99,7 +112,7 @@ future Mγ stage).
 
 | Table | Change |
 | ----- | ------ |
-| `runs` | `run_kind` gains `'agent'`; new `agent_id` (FK `agents` SET NULL), `trigger_source` (`manual\|cron\|domain_event\|webhook\|flow`, NULL), `trigger_event_id` (bigint, NULL), `trigger_payload` (jsonb, NULL), `agent_workspace` (`none\|repo_read\|worktree`, NULL; migration `0052`) — snapshot of the run's effective workspace axis at spawn; terminal L3 enforcement gates off this, not the mutable catalog index. |
+| `runs` | `run_kind` gains `'agent'`; new `agent_id` (FK `agents` SET NULL), `trigger_source` (`manual\|cron\|domain_event\|webhook\|flow\|scheduled`, NULL), `trigger_event_id` (bigint, NULL), `trigger_payload` (jsonb, NULL), `agent_workspace` (`none\|repo_read\|worktree`, NULL; migration `0052`) — snapshot of the run's effective workspace axis at spawn; terminal L3 enforcement gates off this, not the mutable catalog index. ADR-139 adds nullable `agent_schedule_id` (FK SET NULL) as binding provenance. |
 | `tasks` | `flow_id` → NULLABLE; new `triage_status` (`'triaged'` \| NULL), `runner_id` (FK SET NULL), `target_branch` (text NULL), `promotion_mode` (`local_merge\|pull_request`, NULL). |
 | `project_tokens` | `token_kind` gains `'agent'`; new `agent_id` (FK `agents` CASCADE, NULL; CHECK `token_kind='agent'` ⇔ `agent_id IS NOT NULL`). |
 

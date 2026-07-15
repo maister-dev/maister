@@ -11303,7 +11303,7 @@ paths:
   /api/projects/{slug}/scheduled-launches:
     post:
       tags: [project-automations]
-      summary: (ADR-139, Designed) Create or replay a one-time task launch intent
+      summary: (ADR-139, Implemented) Create or replay a one-time task launch intent
       description: |
         Requires `manageSchedules` and `launchRun`, plus `launchUnattended`
         when the normalized execution policy requires it. The route authenticates
@@ -11368,7 +11368,7 @@ paths:
   /api/projects/{slug}/scheduled-launches/{launchId}:
     get:
       tags: [project-automations]
-      summary: (ADR-139, Designed) Read a one-time task launch intent
+      summary: (ADR-139, Implemented) Read a one-time task launch intent
       description: |
         Requires `readBoard`. The project is resolved from `slug` before the
         intent lookup; a missing or foreign intent returns 404 without revealing
@@ -11392,13 +11392,13 @@ paths:
               schema: { type: string, example: '"3"' }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ScheduledLaunchResponse" }
+              schema: { $ref: "#/components/schemas/ScheduledLaunchDetailResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [project-automations]
-      summary: (ADR-139, Designed) Edit or re-arm a pending one-time intent
+      summary: (ADR-139, Implemented) Edit or re-arm a pending one-time intent
       description: |
         Requires `manageSchedules`, `launchRun`, and applicable
         `launchUnattended`. Authenticate and authorize before parsing the body
@@ -11444,7 +11444,7 @@ paths:
   /api/projects/{slug}/scheduled-launches/{launchId}/cancel:
     post:
       tags: [project-automations]
-      summary: (ADR-139, Designed) Cancel a pending one-time task launch intent
+      summary: (ADR-139, Implemented) Cancel a pending one-time task launch intent
       description: |
         Requires `manageSchedules` and `launchRun`. The exact `If-Match`
         revision is required. Cancellation wins only before the dispatcher claim;
@@ -11481,7 +11481,7 @@ paths:
   /api/projects/{slug}/scheduled-launches/{launchId}/run-now:
     post:
       tags: [project-automations]
-      summary: (ADR-139, Designed) Claim a pending one-time intent immediately
+      summary: (ADR-139, Implemented) Claim a pending one-time intent immediately
       description: |
         Requires `manageSchedules`, `launchRun`, and applicable
         `launchUnattended`. Tick and Run now share the same revision-CAS claim,
@@ -11524,7 +11524,7 @@ paths:
   /api/projects/{slug}/automations:
     get:
       tags: [project-automations]
-      summary: (ADR-139, Designed) List project automation rows
+      summary: (ADR-139, Implemented) List project automation rows
       description: |
         Requires `readBoard`. Returns a bounded discriminated union of one-time
         task launches, recurring task schedules, agent cron bindings, and agent
@@ -11560,7 +11560,7 @@ paths:
   /api/projects/{slug}/automations/{kind}/{automationId}:
     get:
       tags: [project-automations]
-      summary: (ADR-139, Designed) Read a type-specific automation detail
+      summary: (ADR-139, Implemented) Read a type-specific automation detail
       description: |
         Requires `readBoard`. `kind` is one of the aggregate discriminants;
         mismatched, missing, or foreign records return a project-scoped 404. The
@@ -11584,10 +11584,10 @@ paths:
           schema: { type: string, minLength: 1 }
       responses:
         "200":
-          description: Safe type-specific automation DTO.
+          description: Safe project-scoped automation row identified by its discriminant and id.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/AutomationDetail" }
+              schema: { $ref: "#/components/schemas/AutomationDetailResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -14683,7 +14683,7 @@ components:
       type: string
       enum: [Scheduled, Dispatching, RetryWaiting, Launched, Failed, Cancelled]
       description: |
-        (ADR-139, Designed.) `Scheduled` and `RetryWaiting` are the only
+        (ADR-139, Implemented.) `Scheduled` and `RetryWaiting` are the only
         mutable states. `Dispatching` owns a fenced durable reservation before
         any Git side effect. Terminal states are immutable.
     ScheduledLaunchOutcome:
@@ -14718,72 +14718,68 @@ components:
             type: string
             enum: [keep, adopt, cut_and_adopt, try_once]
         brainContext: { type: boolean, nullable: true }
-        autoPromote: { type: boolean, default: true }
+        autoPromote: { type: boolean }
     CreateScheduledLaunchBody:
       type: object
       additionalProperties: false
       required: [taskId, scheduledLocalTime, timezone, launchRequest]
       properties:
-        taskId: { type: string, minLength: 1 }
+        taskId: { type: string, format: uuid }
         scheduledLocalTime:
           type: string
           minLength: 16
-          maxLength: 40
+          maxLength: 64
           description: Local ISO wall time without an offset, e.g. `2026-11-01T01:30`.
         timezone:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 255
           description: IANA timezone name, validated by the server Temporal conversion.
         disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
         launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
     PatchScheduledLaunchBody:
       type: object
       additionalProperties: false
-      minProperties: 1
+      required: [scheduledLocalTime, timezone, launchRequest]
       properties:
         scheduledLocalTime:
           type: string
           minLength: 16
-          maxLength: 40
+          maxLength: 64
         timezone:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 255
         disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
         launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
     ScheduledLaunchTaskSnapshot:
       type: object
-      required: [id, key, number, title, deleted]
+      required: [id, key, number, title]
       properties:
         id: { type: string, nullable: true }
         key: { type: string, minLength: 1 }
         number: { type: integer, minimum: 1 }
         title: { type: string }
-        deleted:
-          type: boolean
-          description: True when the live task FK was set null while audit snapshots remain.
     ScheduledLaunchResultRun:
       type: object
       nullable: true
-      required: [id, status, queuePosition]
+      required: [id, status]
       properties:
         id: { type: string, format: uuid }
         status:
           type: string
           enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Done, Abandoned, Crashed, Failed]
-        queuePosition: { type: integer, minimum: 1, nullable: true }
     ScheduledLaunchEvent:
       type: object
-      required: [id, kind, at, actorType, actorId, errorCode]
+      required: [id, kind, actorType, claimFence, errorCode, message, createdAt]
       properties:
         id: { type: string, format: uuid }
         kind:
           type: string
           enum: [created, edited_rearmed, claimed, retry_scheduled, cancelled, launched, failed]
-        at: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
         actorType: { type: string, enum: [user, system] }
-        actorId: { type: string, nullable: true }
+        claimFence: { type: integer, nullable: true }
         errorCode: { type: string, nullable: true }
         message:
           type: string
@@ -14793,7 +14789,7 @@ components:
     ScheduledLaunchDTO:
       type: object
       required:
-        - kind
+        - type
         - id
         - task
         - scheduledLocalTime
@@ -14802,7 +14798,6 @@ components:
         - scheduledForAt
         - state
         - revision
-        - armedAt
         - nextAttemptAt
         - attemptCount
         - maxAttempts
@@ -14811,12 +14806,11 @@ components:
         - errorMessage
         - lateByMs
         - launchRequest
-        - resultRun
+        - resultingRun
         - createdAt
         - updatedAt
-        - events
       properties:
-        kind: { type: string, enum: [one_time_task_launch] }
+        type: { type: string, enum: [one_time_task_launch] }
         id: { type: string, format: uuid }
         task: { $ref: "#/components/schemas/ScheduledLaunchTaskSnapshot" }
         scheduledLocalTime: { type: string }
@@ -14825,7 +14819,6 @@ components:
         scheduledForAt: { type: string, format: date-time }
         state: { $ref: "#/components/schemas/ScheduledLaunchState" }
         revision: { type: integer, minimum: 1 }
-        armedAt: { type: string, format: date-time }
         nextAttemptAt: { type: string, format: date-time, nullable: true }
         attemptCount: { type: integer, minimum: 0, maximum: 3 }
         maxAttempts: { type: integer, enum: [3] }
@@ -14841,17 +14834,29 @@ components:
           minimum: 0
           nullable: true
         launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
-        resultRun: { $ref: "#/components/schemas/ScheduledLaunchResultRun" }
+        resultingRun: { $ref: "#/components/schemas/ScheduledLaunchResultRun" }
+        createdBy:
+          type: object
+          nullable: true
+          required: [id, email]
+          properties:
+            id: { type: string }
+            email: { type: string, format: email }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-        events:
-          type: array
-          items: { $ref: "#/components/schemas/ScheduledLaunchEvent" }
     ScheduledLaunchResponse:
       type: object
       required: [intent]
       properties:
         intent: { $ref: "#/components/schemas/ScheduledLaunchDTO" }
+    ScheduledLaunchDetailResponse:
+      type: object
+      required: [intent, events]
+      properties:
+        intent: { $ref: "#/components/schemas/ScheduledLaunchDTO" }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/ScheduledLaunchEvent" }
     AutomationRunLink:
       type: object
       nullable: true
@@ -14863,43 +14868,47 @@ components:
           enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Done, Abandoned, Crashed, Failed]
     OneTimeTaskLaunchAutomationRow:
       type: object
-      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
       properties:
-        kind: { type: string, enum: [one_time_task_launch] }
+        type: { type: string, enum: [one_time_task_launch] }
         id: { type: string, format: uuid }
         name: { type: string }
         target: { type: string }
+        trigger: { type: string, description: Requested local date-time. }
+        timezone: { type: string }
         state: { $ref: "#/components/schemas/ScheduledLaunchState" }
         nextActionAt: { type: string, format: date-time, nullable: true }
         latestOutcome: { $ref: "#/components/schemas/ScheduledLaunchOutcome" }
         errorCode: { type: string, nullable: true }
         errorMessage: { type: string, nullable: true, maxLength: 500 }
-        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        lateByMs: { type: integer, format: int64, minimum: 0, nullable: true }
+        resultingRun: { $ref: "#/components/schemas/AutomationRunLink" }
         detailHref: { type: string }
         updatedAt: { type: string, format: date-time }
     RecurringTaskScheduleAutomationRow:
       type: object
-      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
       properties:
-        kind: { type: string, enum: [recurring_task_schedule] }
+        type: { type: string, enum: [recurring_task_schedule] }
         id: { type: string, format: uuid }
         name: { type: string }
         target: { type: string }
-        state: { type: string, enum: [Active, Paused] }
+        state: { type: string, enum: [Enabled, Disabled] }
         timezone: { type: string }
         trigger: { type: string, description: 5-field cron expression. }
         nextActionAt: { type: string, format: date-time, nullable: true }
         latestOutcome: { $ref: "#/components/schemas/ScheduleFireOutcome" }
         errorCode: { type: string, nullable: true }
         errorMessage: { type: string, nullable: true, maxLength: 500 }
-        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        lateByMs: { type: integer, format: int64, minimum: 0, nullable: true }
+        resultingRun: { $ref: "#/components/schemas/AutomationRunLink" }
         detailHref: { type: string }
         updatedAt: { type: string, format: date-time }
     AgentCronAutomationRow:
       type: object
-      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
       properties:
-        kind: { type: string, enum: [agent_cron] }
+        type: { type: string, enum: [agent_cron] }
         id: { type: string, format: uuid }
         name: { type: string }
         target: { type: string }
@@ -14910,24 +14919,27 @@ components:
         latestOutcome: { type: string, nullable: true }
         errorCode: { type: string, nullable: true }
         errorMessage: { type: string, nullable: true, maxLength: 500 }
-        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        lateByMs: { type: integer, format: int64, minimum: 0, nullable: true }
+        resultingRun: { $ref: "#/components/schemas/AutomationRunLink" }
         detailHref: { type: string }
         updatedAt: { type: string, format: date-time }
     AgentEventAutomationRow:
       type: object
-      required: [kind, id, name, target, state, nextActionAt, latestOutcome, resultRun, detailHref, updatedAt]
+      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
       properties:
-        kind: { type: string, enum: [agent_event] }
+        type: { type: string, enum: [agent_event] }
         id: { type: string, format: uuid }
         name: { type: string }
         target: { type: string }
         state: { type: string, enum: [Enabled, Disabled] }
         trigger: { type: string, description: Effective subscribed domain-event kinds. }
+        timezone: { type: string, nullable: true }
         nextActionAt: { type: string, format: date-time, nullable: true }
         latestOutcome: { type: string, nullable: true }
         errorCode: { type: string, nullable: true }
         errorMessage: { type: string, nullable: true, maxLength: 500 }
-        resultRun: { $ref: "#/components/schemas/AutomationRunLink" }
+        lateByMs: { type: integer, format: int64, minimum: 0, nullable: true }
+        resultingRun: { $ref: "#/components/schemas/AutomationRunLink" }
         detailHref: { type: string }
         updatedAt: { type: string, format: date-time }
     AutomationRow:
@@ -14937,7 +14949,7 @@ components:
         - { $ref: "#/components/schemas/AgentCronAutomationRow" }
         - { $ref: "#/components/schemas/AgentEventAutomationRow" }
       discriminator:
-        propertyName: kind
+        propertyName: type
         mapping:
           one_time_task_launch: "#/components/schemas/OneTimeTaskLaunchAutomationRow"
           recurring_task_schedule: "#/components/schemas/RecurringTaskScheduleAutomationRow"
@@ -14945,46 +14957,20 @@ components:
           agent_event: "#/components/schemas/AgentEventAutomationRow"
     AutomationListResponse:
       type: object
-      required: [items, nextCursor]
+      required: [rows, nextCursor]
       properties:
-        items:
+        rows:
           type: array
           items: { $ref: "#/components/schemas/AutomationRow" }
         nextCursor:
           type: string
           nullable: true
           description: Opaque versioned cursor; do not parse in clients.
-    RecurringTaskScheduleAutomationDetail:
+    AutomationDetailResponse:
       type: object
-      required: [kind, schedule]
+      required: [automation]
       properties:
-        kind: { type: string, enum: [recurring_task_schedule] }
-        schedule: { $ref: "#/components/schemas/ScheduleDTO" }
-    AgentCronAutomationDetail:
-      type: object
-      required: [kind, automation]
-      properties:
-        kind: { type: string, enum: [agent_cron] }
-        automation: { $ref: "#/components/schemas/AgentCronAutomationRow" }
-    AgentEventAutomationDetail:
-      type: object
-      required: [kind, automation]
-      properties:
-        kind: { type: string, enum: [agent_event] }
-        automation: { $ref: "#/components/schemas/AgentEventAutomationRow" }
-    AutomationDetail:
-      oneOf:
-        - { $ref: "#/components/schemas/ScheduledLaunchDTO" }
-        - { $ref: "#/components/schemas/RecurringTaskScheduleAutomationDetail" }
-        - { $ref: "#/components/schemas/AgentCronAutomationDetail" }
-        - { $ref: "#/components/schemas/AgentEventAutomationDetail" }
-      discriminator:
-        propertyName: kind
-        mapping:
-          one_time_task_launch: "#/components/schemas/ScheduledLaunchDTO"
-          recurring_task_schedule: "#/components/schemas/RecurringTaskScheduleAutomationDetail"
-          agent_cron: "#/components/schemas/AgentCronAutomationDetail"
-          agent_event: "#/components/schemas/AgentEventAutomationDetail"
+        automation: { $ref: "#/components/schemas/AutomationRow" }
     AuthoredCapabilityKind:
       type: string
       enum: [rule, skill, flow]

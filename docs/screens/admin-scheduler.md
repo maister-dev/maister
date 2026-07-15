@@ -3,7 +3,7 @@
 - **Type:** screen (admin).
 - **Route:** `/admin/scheduler` (global admin only).
 - **Status:** Implemented (M24 scheduler admin; M28 cockpit, typed target
-  editor, and Task schedules overview).
+  editor, task schedules overview, and ADR-139 one-time diagnostics).
 - **Source:** `web/app/(app)/admin/scheduler/page.tsx`,
   `web/components/admin/scheduler-jobs-table.tsx`,
   `web/components/admin/scheduler-job-edit-modal.tsx`,
@@ -64,12 +64,11 @@ flowchart TD
   name, project link, task number/title, enabled state, cron/timezone, next
   fire, catch-up flag, last outcome/error, and last run status/link when
   available. It does not create global schedule CRUD.
-- **One-time launch diagnostics** (Designed) — a read-only table over pending,
+- **One-time launch diagnostics** — a read-only bounded list over pending,
   dispatching, retrying, and terminal scheduled task-launch intents. It shows
-  project/task snapshot, requested/resolved time, state, safe outcome, attempt
-  count, lateness, and resulting Run link. It links to Project Automations for
-  member actions and never exposes reservation paths, branches, raw request
-  data, or global mutation controls.
+  project/task snapshot, state, safe outcome/error code, and attempt count. It
+  links to Project Automations for member actions and never exposes reservation
+  paths, branches, raw request data, or global mutation controls.
 
 ## States
 
@@ -105,7 +104,7 @@ stateDiagram-v2
   in [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 - Task schedules overview: read-only query over `run_schedules` joined to
   `projects`, `tasks`, and `runs`. Edits stay in the project schedule surface.
-- One-time diagnostics (Designed): read-only project-scoped intent projection;
+- One-time diagnostics: read-only project-scoped intent projection;
   edits, cancel, and Run now stay in Project Automations.
 - Behavior lives in
   [`../system-analytics/scheduler.md`](../system-analytics/scheduler.md) and

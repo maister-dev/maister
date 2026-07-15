@@ -216,6 +216,7 @@ describe("project agent links (attach panel service)", () => {
         projectId: fx.projectId,
         agentId: fx.agentId,
         patch: {
+          schedulesRevision: 1,
           schedules: [
             { triggerType: "cron", cronExpr: "*/15 * * * *", timezone: "UTC" },
             { triggerType: "event", eventKinds: ["task.created"] },
@@ -235,6 +236,7 @@ describe("project agent links (attach panel service)", () => {
         projectId: fx.projectId,
         agentId: fx.agentId,
         patch: {
+          schedulesRevision: 2,
           schedules: [
             { triggerType: "event", eventKinds: ["task.comment_added"] },
           ],
@@ -244,13 +246,12 @@ describe("project agent links (attach panel service)", () => {
     );
 
     view = await getProjectAgentsView(fx.projectId, db);
-    expect(view.attached[0].schedules).toEqual([
-      {
-        triggerType: "event",
-        eventKinds: ["task.comment_added"],
-        enabled: true,
-      },
-    ]);
+    expect(view.attached[0].schedules).toHaveLength(1);
+    expect(view.attached[0].schedules[0]).toMatchObject({
+      triggerType: "event",
+      eventKinds: ["task.comment_added"],
+      enabled: true,
+    });
 
     await expect(
       updateAgentLink(
@@ -258,6 +259,7 @@ describe("project agent links (attach panel service)", () => {
           projectId: fx.projectId,
           agentId: fx.agentId,
           patch: {
+            schedulesRevision: 3,
             schedules: [
               { triggerType: "cron", cronExpr: "not a cron", timezone: "UTC" },
             ],
@@ -273,6 +275,7 @@ describe("project agent links (attach panel service)", () => {
           projectId: fx.projectId,
           agentId: fx.agentId,
           patch: {
+            schedulesRevision: 3,
             schedules: [{ triggerType: "event", eventKinds: ["not.a.kind"] }],
           },
         },
@@ -335,6 +338,7 @@ describe("project agent links (attach panel service)", () => {
         projectId: fx.projectId,
         agentId: fx.agentId,
         patch: {
+          schedulesRevision: 1,
           schedules: [
             { triggerType: "cron", cronExpr: "*/15 * * * *", timezone: "UTC" },
             { triggerType: "event", eventKinds: ["task.created"] },
