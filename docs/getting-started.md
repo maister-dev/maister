@@ -575,7 +575,7 @@ mAIster/
   each one fires
 - [Configuration](configuration.md) — `maister.yaml` v2 + `flow.yaml`
   v1 + every env var
-- [Vision](VISION.md) — product spine and MVP goal
+- [Vision](VISION.md) — product spine and validation goal
 - [Architecture](architecture.md) — folder structure,
   dependency rules, code examples
 - [Agent Map](../AGENTS.md) — structural map for AI agents

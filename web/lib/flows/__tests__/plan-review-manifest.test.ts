@@ -1,3 +1,5 @@
+import type { FlowYamlV1 } from "@/lib/config.schema";
+
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 
 import { loadFlowManifest } from "@/lib/config";
-import type { FlowYamlV1 } from "@/lib/config.schema";
 import { isMaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { planReviewCaptureTargetForProducer } from "@/lib/flows/graph/runner-graph";
@@ -30,7 +31,10 @@ function manifest(engineMin = "3.1.0"): Record<string, unknown> {
       {
         id: "plan",
         type: "ai_coding",
-        action: { prompt: "Produce a plan and strict review JSON." },
+        action: {
+          prompt:
+            "Produce a plan and strict review JSON. {{ plan_review_comments ?? '' }}",
+        },
         output: {
           produces: [
             {

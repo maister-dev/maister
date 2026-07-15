@@ -75,7 +75,9 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   (\`settings.model\` was REMOVED — judge is runner-bearing).
 - **human**: \`roles\`, \`assignees\`, \`decisions\`, \`allowFurtherTracks\`,
   \`allowTakeover\`, \`slaHours\`, \`stalenessHint\`, \`returnRequires\`,
-  \`criticality\`.
+  \`criticality\`, and optional \`plan_review\` (engine_min >= 3.1.0):
+  \`{ plan_document_artifact, plan_review_artifact, comments_var, answers_var,
+  rework_transition, max_decision_reworks }\`.
 - **form**: \`form_schema\`, \`roles\`, \`criticality\`.
 - **cli / check**: \`command\`, \`timeoutMs\`, \`environmentPolicy\`,
   \`inputArtifacts\`, \`outputArtifacts\`, \`failureClass\`.
@@ -95,6 +97,16 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
 - consensus \`on_no_consensus\`: escalate
 - \`enforcement\` per-class mode: strict | instruct | off
 - \`session_policy\`: resume | new_session
+
+## Typed Plan review (engine_min >= 3.1.0)
+
+A \`human\` node may declare \`settings.plan_review\` to bind immutable plan
+evidence to a bounded decision/rework lifecycle. Both artifact ids MUST name
+artifacts required by the review node, \`comments_var\` MUST match the node's
+rework feedback variable, \`answers_var\` receives the accepted defaults or
+explicit answers, \`rework_transition\` MUST name the declared rework outcome,
+and \`max_decision_reworks\` MUST be positive. The parent human outcomes are
+exactly \`approve | rework\`; manual takeover is not part of this boundary.
 
 ## Consensus workspace shape
 

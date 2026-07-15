@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.0.0 for the graph-only cut-over", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.0.0");
+  it("is 3.1.0 for typed Plan-review manifests", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.1.0");
   });
 });
 
@@ -19,7 +19,7 @@ describe("isEngineCompatible", () => {
   });
 
   it("is compatible when engine is within [min, max]", () => {
-    expect(isEngineCompatible("0.1.0", "3.0.0").compatible).toBe(true);
+    expect(isEngineCompatible("0.1.0", "3.1.0").compatible).toBe(true);
     expect(
       isEngineCompatible(MAISTER_ENGINE_VERSION, MAISTER_ENGINE_VERSION)
         .compatible,
@@ -27,7 +27,7 @@ describe("isEngineCompatible", () => {
   });
 
   it("is incompatible when engine is below engine_min", () => {
-    const r = isEngineCompatible("3.1.0");
+    const r = isEngineCompatible("3.2.0");
 
     expect(r.compatible).toBe(false);
     expect(r.reason).toContain("engine_min");

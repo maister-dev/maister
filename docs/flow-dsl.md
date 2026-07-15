@@ -41,12 +41,13 @@ The reserved ids `__proto__`, `constructor`, and `prototype` are invalid.
 > lifecycle state machine, traversal, staleness, and rework loop are drawn in
 > [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
-Engine 3.0.0 accepts only graph manifests with a non-empty top-level `nodes[]`.
-The parser and compiler reject any manifest containing `steps[]` with the
-locked migration message: `legacy steps[] flows are not supported since engine
-3.0.0; republish the package with nodes[]`. Existing graph packages remain
-compatible when their declared `compat` range includes host engine `3.0.0`;
-they do not need to raise an open-ended historical `engine_min`.
+The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
+top-level `nodes[]`. The parser and compiler reject any manifest containing
+`steps[]` with the locked migration message: `legacy steps[] flows are not
+supported since engine 3.0.0; republish the package with nodes[]`. The current
+host engine is `3.1.0`; graph packages remain compatible when their declared
+`compat` range includes that version. They do not need to raise an open-ended
+historical `engine_min`.
 
 ```yaml
 nodes:

@@ -2,23 +2,25 @@
 
 ## Overview
 
-**MAIster is the control plane for AI-powered software delivery.** It turns
-backlog tasks into supervised agentic delivery Flows: workspace creation,
-ACP-driven agent execution, structured HITL, diff review, and merge.
+**MAIster is the self-hosted execution and governance layer for reproducible
+AI-powered SDLC processes over private code.** It turns backlog tasks into
+supervised agentic delivery Flows: package-pinned process execution, workspace
+creation, ACP-driven agents, structured HITL, evidence review, and promotion.
 
-Current wedge: a **Web shell + ACP supervisor daemon + Flow plugin engine**
-spanning multi-project portfolio + platform ACP runners
-(`claude`, `codex`, readiness-gated `gemini`, readiness-gated `opencode`,
-readiness-gated `mimo`) +
-multi-workspace + manual scratch workspaces + hybrid HITL + per-project task
-board. MAIster orchestrates agents through the Zed-standard Agent Client
-Protocol (ACP); Flow plugins shipped as git-tagged bundles compose CLI tools,
-agent skills, and YAML-DSL steps. It does **not** build a new agent runtime —
-external ACP adapters are the runtimes; MAIster is the control plane around
-them.
+Current validation wedge: repeatable processes from **core packages** running
+against internal/private projects through a **Web shell, ACP supervisor daemon,
+and graph-only Flow engine**. The control plane spans a multi-project portfolio,
+platform ACP runners (`claude`, `codex`, and readiness-gated `gemini`,
+`opencode`, and `mimo`), multiple workspaces, manual scratch workspaces, hybrid
+HITL, and a per-project task board. MAIster orchestrates agents through the
+Zed-standard Agent Client Protocol (ACP); Flow packages shipped as git-tagged
+bundles compose graph nodes, CLI tools, agent skills, subagents, and platform
+agents. External ACP adapters remain the runtimes; MAIster provides the
+execution and governance layer around them.
 
-Audience: solo-technical CEO / CIO / staff-eng running multiple repos and AI
-coding agents in parallel and tired of babysitting consoles.
+Audience: a technical owner or small engineering team running multiple private
+repositories and AI coding agents in parallel and tired of babysitting
+consoles.
 
 For the full vision, product model, architecture, and roadmap see
 `docs/VISION.md`, `docs/PRODUCT_VIEW.md`, `docs/architecture.md`, and
@@ -188,14 +190,12 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 6. **Atomic writes** to `.maister/`: tmp + rename via `atomicWriteJson`.
    Never partial-write a JSON the Flow / agent will read.
 
-Phase 2 candidates: Flow designer UI · background agents · Telegram ·
-A/B parallel runs · durable orchestration · auth / multi-user / RBAC ·
-AI-Judge · full Kanban · event log table · test-run UI button · GitHub
-Actions CI/CD · syntax highlighting in diff view · project archival UI ·
-cross-project task moves · GitHub issue / Linear / YouGile sync · project
-lesson capture · custom ACP extensions · cost / time / regex guard
-enforcement · plugin trust UI / sandboxing · HITL as separate swimlane
-cards · Cursor / opencode / Aider executors.
+Current productization gaps: core-process qualification · end-to-end preflight
+and Run Doctor · visual/browser evidence · strong process/container isolation ·
+OIDC/SSO/MFA and organization administration · notification routing · automated
+backup/restore drills · provider-specific issue/CI intake. Public marketplace,
+full Kanban, cross-project task moves, and Temporal-class durable orchestration
+stay later.
 
 ## Non-Functional Requirements
 
@@ -239,12 +239,17 @@ badge → retry loop works (Failed/Abandoned run → task back to Backlog →
 Launch again → attempt N+1) → per-step executor override verified on at
 least one Flow.
 
-**Dogfood (T+5 to T+6w):** register MAIster repo in itself, run a Flow
-against its own backlog, ship ≥1 non-trivial PR.
+**Dogfood and external-adoption signal:** confirmed by the owner on 2026-07-15.
+Repository state does not reconstruct the original installation count or
+shipped-change metrics.
 
-**External validation (T+8w):** 3 installations on external repos, ≥1 PR
-shipped end-to-end through maister on each. 0/3 → thesis not validated,
-reassess wedge.
+**Current qualification target:** run at least three representative processes
+from core packages across at least three internal/private repositories, with
+three consecutive runs per process/project profile. Record package/engine/
+runner provenance, prerequisites, expected evidence, failure class,
+time-to-first-success, review reach, human-attention time, promotion outcome,
+and recovery guidance without retaining private source, prompts, diffs,
+secrets, or artifact bodies.
 
 ## Authoritative Sources
 
@@ -252,8 +257,9 @@ When `.ai-factory/DESCRIPTION.md` (this file) disagrees with `docs/` or
 `CLAUDE.md`, the project documentation in `docs/` and the root `CLAUDE.md`
 win — update this file.
 
-- `docs/VISION.md` — product spine, principles, MVP goal.
-- `docs/PRODUCT_VIEW.md` — Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later.
+- `docs/VISION.md` — product spine, principles, validation goal.
+- `docs/PRODUCT_VIEW.md` — Lean Canvas, JTBD, gaps, current scope / Phase 2 /
+  Later.
 - `docs/architecture.md` — current system architecture and diagrams.
 - `docs/decisions.md` — ADRs and locked technical choices.
 - `docs/api/` — OpenAPI and AsyncAPI contracts.

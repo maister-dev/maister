@@ -1,16 +1,21 @@
 # Product View
 
+**MAIster is the self-hosted execution and governance layer for reproducible
+AI-powered SDLC processes over private code.**
+
 ## Target User
 
-MAIster serves a solo technical owner who runs several software projects and
-already uses coding agents. The user wants one control plane for project state,
-Flow launches, manual scratch workspaces, HITL, reviews, and promotions instead
-of many terminals.
+MAIster serves a technical owner or small engineering team that runs several
+software projects, keeps source private, and already uses coding agents. They
+want one control plane for repeatable process packages, project state, Flow
+launches, manual scratch workspaces, HITL, reviews, and promotions instead of
+many terminals.
 
 The current target includes credentials auth, admin-approved account
-activation, global roles, and project membership checks. Phase 2 can add
-small-team collaboration workflows. Enterprise governance and large
-organization rollout stay outside the current target.
+activation, global roles, project membership, action-level authorization,
+assignments, comments, subscriptions, and a shared inbox. Enterprise identity
+(OIDC/SSO/MFA), organization administration, strong workload isolation, and
+large-organization rollout stay outside the current target.
 
 ## Product Model
 
@@ -25,9 +30,10 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
 - **Flow package** — a managed plugin bundle with source, version label,
   resolved immutable revision, manifest digest, compatibility, trust, setup,
   enablement, upgrade, rollback, and deprecation state.
-- **Flow** — the enabled package revision a project uses for a task. It ships
-  `flow.yaml` v1 steps today; planned graph Flows model typed nodes with
-  lifecycle sections and transitions.
+- **Flow** — the enabled package revision a project uses for a task. Engine
+  `3.1.0` executes only graph manifests with typed `nodes[]`, lifecycle
+  sections, named transitions, gates, bounded rework, and typed settings;
+  legacy top-level `steps[]` manifests are refused.
 - **Flow node** — one executable unit such as AI coding, CLI, check, judge,
   human review, human edit, or merge.
 - **Node settings** — typed per-node capability and policy controls: allowed
@@ -38,8 +44,10 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
   for one AI session scope. A one-node session can have a one-node profile; a
   long-living session uses one profile for every AI node inside it.
 - **Executor** — configured ACP runner profile `{agent, model, env?, router?}`;
-  claude and codex adapters are current, and multiple profiles may share the
-  same adapter with different model/router/env settings.
+  claude and codex are ready defaults; gemini, opencode, and mimo are
+  code-owned adapter families whose launch readiness is diagnostics- and
+  smoke-gated. Multiple profiles may share an adapter with different
+  model/router/env settings.
 - **Task** — backlog intent. One task may spawn many Flow runs.
 - **Experiment** — task-bound comparison container that pins a base commit,
   launches several ordinary runs as variants/replicates, compares their diff,
@@ -72,9 +80,10 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
   artifact, or human review.
 - **Readiness** — summarized gate state: ready, blocked, stale, failed,
   waiting, or overridden.
-- **Role** — project/Flow routing label such as owner, reviewer, maintainer,
-  qa, or release-owner. Roles are visible ownership signals before they are
-  permission boundaries; any project teammate can act for now.
+- **Role** — global/project authorization and Flow ownership label such as
+  owner, reviewer, maintainer, qa, or release-owner. Project actions are
+  permission-gated; Flow roles and assignments additionally explain who owns
+  the next human action.
 - **Assignment** — claimable human work item for a permission, form, review,
   manual takeover, conflict resolution, or later external wait.
 - **Workspace** — one git worktree per run.
@@ -85,7 +94,7 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
   merge or pull request. Manual by default; lane-bounded diff classes
   (docs/tests/deps/config) may auto-promote through the same choke point when
   readiness is green ([ADR-126](decisions.md#adr-126-auto-promotion-lanes),
-  Designed). Deploy/release management is out of scope.
+  Implemented). Deploy/release management is out of scope.
 
 ## Jobs To Be Done
 
@@ -115,10 +124,11 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
 
 - Multi-project registry using `maister.yaml` v2.
 - Project-scoped executors and Flow plugin installs.
-- Flow package lifecycle is required before richer graph distribution: package
-  revisions must be visible, immutable, trust-reviewed, compatible with the
-  MAIster engine, enabled per project, safely upgradeable/rollbackable, and
-  preserved for in-flight runs.
+- Flow package lifecycle is implemented: package revisions are visible,
+  immutable, trust-reviewed, engine-compatible, enabled per project, safely
+  upgradeable/rollbackable, and preserved for in-flight runs. Current
+  validation qualifies the processes shipped by core packages across
+  internal/private projects.
 - Portfolio home and left rail with project-grouped active workspaces, HITL
   count, status labels, launched-by display, and a per-project scratch `+`.
 - Per-project board with `Backlog | In Flight`.
@@ -137,17 +147,17 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
 - Durable run SSE via `run.events.jsonl`.
 - HITL response route with row-level claim, atomic artifacts, permission
   delivery, and runner-owned resume.
-- Flow graph maturity is the next required product foundation before richer
-  HITL: node lifecycle, typed settings, review-driven rework, manual takeover,
-  run ledger, stale-gate reruns, orchestrator delegation, and M41-designed
-  consensus nodes for unanimous read-only plan verification.
+- The graph-only engine implements node lifecycle, typed settings,
+  review-driven rework, manual takeover, the append-only run ledger,
+  stale-gate reruns, orchestrator delegation, and the first-class M41 consensus
+  node for unanimous read-only plan verification.
 - Typed Flow artifacts and an evidence graph are required for review: payloads
   stay in the run directory/worktree/git, while MAIster stores queryable
   artifact metadata, validity, and dependency edges.
-- Role-owned assignments are required for the board and inbox: human work must
-  show role, assignee/unclaimed state, elapsed time, action kind, branch/ref,
-  and stale-evidence summary. Roles never block actions in the current target;
-  they explain ownership and audit, not authorization.
+- Role-owned assignments show role, assignee/unclaimed state, elapsed time,
+  action kind, branch/ref, and stale-evidence summary. Global/project RBAC
+  blocks unauthorized actions; assignment roles additionally explain ownership
+  and audit.
 - Scoped capability materialization is required for AI-node safety: node/session
   settings reference named MCPs, tools, skills, agent settings, env profiles,
   and restrictions; the runner materializes only those capabilities for the
@@ -177,16 +187,19 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
 
 ## Phase 2
 
-> **Sequencing & delivery waves:** see
-> [`pv/improvement-roadmap.md`](pv/improvement-roadmap.md) — it places every
-> pillar below into parallel delivery waves, records the foundational primitives
-> they share, and maps each pillar to a wave. This section stays the canonical
-> Phase-2 **scope** (the *what*); the roadmap owns **sequencing** (the *when/how*).
+> **Sequencing:** [`.ai-factory/ROADMAP.md`](../.ai-factory/ROADMAP.md) owns the
+> current milestone order. [`pv/improvement-roadmap.md`](pv/improvement-roadmap.md)
+> is retained as the historical backlog/wave rationale from before dogfood.
 
 Phase 2 matures the operating harness after the current package/graph/gate
-foundation exists. The goal is not "more integrations" first. The goal is to
-let one owner or a small team run more parallel agent work without babysitting
-terminals, leaking secrets, drowning in logs, or paying for tool noise.
+foundation. It lets one owner or a small team run more parallel agent work
+without babysitting terminals, leaking secrets, drowning in logs, or paying for
+tool noise.
+
+The knowledge, automation, observability, economics, experiments, consensus,
+and guardrail foundations below now exist. The open productization gaps are
+core-process qualification, end-to-end preflight/Run Doctor, visual evidence,
+strong workload isolation, attention routing, and enterprise identity.
 
 1. **Visual validation layer**
    - Workspace preview URLs and port mapping.
@@ -197,39 +210,40 @@ terminals, leaking secrets, drowning in logs, or paying for tool noise.
      product fit, and acceptance.
 
 2. **Curated project knowledge**
-   - Managed local references for dependency APIs, architecture decisions,
-     project conventions, and Flow docs.
+   - Build on Project Brain managed sources, owned lessons, proposals, and
+     recall for dependency APIs, architecture decisions, project conventions,
+     and Flow docs.
    - Proposed lesson -> accepted rule workflow with a source trace to the run,
      review, incident, bug, or manual decision that produced it.
    - Rule freshness and cleanup so project memory does not become stale noise.
 
 3. **Narrow tools and permissioned hands**
-   - Tool-count budgets and capability labels on top of scoped capability
-     materialization.
+   - Build on scoped capability materialization, execution budgets, MCP trust,
+     and ACP-seam guardrails.
    - Preference for small task-shaped MCP servers, scripts, checks, and skills
      over broad bundles.
-   - Sandbox profiles for tools that touch files, terminals, network, secrets,
-     browsers, or external systems.
-   - Warn-first policy for risky operations before any stricter enforcement.
+   - Add strong sandbox/isolation and egress/secret profiles for tools that
+     touch files, terminals, network, secrets, browsers, or external systems.
 
 4. **Automation as product surface**
-   - Reusable hooks, skills, slash commands, Flow snippets, and recurring
-     routines visible in Project Settings.
+   - Build on implemented hooks, skills, packages, platform agents, schedules,
+     domain events, and webhook routines visible in the control plane.
    - Standard automation for formatting, linting, review checks, status pings,
      dependency watches, and rule freshness checks.
    - Lightweight specialist checks for search, routine QA, architecture review,
      and docs review without polluting the main run context.
 
 5. **Observability and attention routing**
-   - Run summaries that answer: what changed, what passed, what failed, what
-     is stale, and what needs a human.
+   - Turn existing Observatory/run evidence into one summary that answers: what
+     changed, what passed, what failed, what is stale, and what needs a human.
    - Recovery events, checkpoint/resume history, gate rerun history, and
      package/capability profile changes visible in the run ledger.
    - Web UI notifications first; Telegram or other channels later.
    - Project/team inbox expansion after assignment semantics are proven.
 
 6. **Cost and resource economics**
-   - Token and context cost by run, node, executor, gate, and tool surface.
+   - Build on token/cost rollups and execution budgets by run, node, runner,
+     gate, and tool surface.
    - Noisy-command compaction for tests, git output, linters, builds, and logs.
    - Cache-resume cost tracking for checkpointed sessions.
    - Browser/process memory visibility for parallel runs on small hosts.
@@ -242,8 +256,8 @@ terminals, leaking secrets, drowning in logs, or paying for tool noise.
      and release-note preparation.
    - Flow designer UI on top of the graph/runtime foundation, without turning
      MAIster into a generic workflow builder.
-   - Writable competing-code consensus drafts after the read-only M41 consensus
-     node proves draft, verification, HITL, and artifact ergonomics.
+   - Writable competing-code consensus drafts only after the implemented
+     read-only M41 consensus proves demand in qualified core processes.
    - Deeper Gemini/OpenCode/MiMo ACP proof for permissions, MCP, model switching,
      and resume semantics beyond the first adapter-family support.
    - CI/log intake, external board sync, and background project agents only
@@ -263,9 +277,8 @@ spends attention on decisions rather than terminal babysitting.
 - Rich preview hosting or sandboxing.
 - Cross-run artifact reuse.
 - Full payload-schema validation for every artifact kind.
-- RBAC, permission-bound project membership, role-based action blocking,
-  escalation calendars, external board sync, notifications, and
-  organization/team administration.
+- OIDC/SSO/MFA, session revocation, escalation calendars, external board sync,
+  notification channels, and organization/team administration.
 - Public marketplace, remote reputation/rating, automated malicious-code
   scanning, signed packages, automatic update rollout, package dependency
   solving, container sandboxing, organization-wide capability policies, and
@@ -273,31 +286,26 @@ spends attention on decisions rather than terminal babysitting.
 - Complex gate policy language, org-wide gate templates, deploy-environment
   gates, flaky-test intelligence, judge calibration lab, provider-specific CI
   apps, and CI ingestion beyond the generic external gate report contract.
-- OAuth apps, user impersonation, generic outbound webhooks, provider-specific
-  GitHub/GitLab/Jenkins apps, external board sync, and public-internet webhook
-  hardening beyond token/HMAC.
+- OAuth apps, user impersonation, provider-specific GitHub/GitLab/Jenkins apps,
+  external board sync, and public-internet webhook hardening beyond the
+  implemented generic token/HMAC outbound-webhook contract.
 - Deploy management, release trains, rollback automation, semantic version
   inference, approval chains, and production environment control.
 
 ## Success Criteria
 
-The current target succeeds when MAIster can register at least two real
-projects, install their Flows, launch queued runs through claude or codex,
-stream durable events, manage at least one Flow package upgrade and rollback
-without mutating an in-flight run, handle at least one permission HITL and one
-structured form HITL, recover cleanly from ordinary failures, complete one
-review-driven rework loop with stale checks/judges/user-review rerun, accept
-one manual takeover return with visible diff and audit trail, inspect the
-artifact graph that explains current vs stale readiness evidence, see every
-human-owned pause as an assignment with owner/elapsed/action context, inspect
-the resolved capability profile used by AI nodes, see a readiness summary that
-explains every blocking/stale/overridden gate, create at least one backlog task
-and report at least one external check through token-authenticated operations,
-use the thin MCP facade for the same task/readiness surface from an agent, and
-promote a clean run branch to the selected target branch. It should also start
-at least one scratch workspace outside the task board, show it in the active
-workspace list, preserve its dialog/capability snapshot, and discard or promote
-its branch through the same workspace review path.
+The current target succeeds when representative processes from core packages
+complete repeated runs on several internal/private projects with pinned
+package/engine/runner provenance and expected artifacts/gates. Before launch,
+preflight must identify missing runner credentials, package incompatibility,
+MCP/env requirements, repository/worktree problems, and unavailable commands
+with an actionable remediation. Every run must classify platform, package,
+environment, model/runner, project-specific, and human-decision failures.
+
+Pilot telemetry must measure time-to-first-success, review reach,
+human-attention time, rework/retry pressure, promotion outcome, cost per
+accepted change, and second/third-run retention. It must not retain private
+source, prompts, diffs, secrets, or artifact bodies.
 
 ## Typed Plan review (Implemented — ADR-137)
 

@@ -2,16 +2,18 @@
 
 ## What this is
 
-**MAIster is the control plane for AI-powered software delivery.**
+**MAIster is the self-hosted execution and governance layer for reproducible
+AI-powered SDLC processes over private code.**
 
 What it does, the challenges it answers, and the core functions are the
 canonical short description in [README](README.md) (section "What MAIster
-does"). The product spine, principles, and MVP goal live in
+does"). The product spine, principles, and validation goal live in
 [`docs/VISION.md`](docs/VISION.md); the detailed product model and JTBD in
 [`docs/PRODUCT_VIEW.md`](docs/PRODUCT_VIEW.md). What follows here is the
 agent-facing operating contract — locked decisions and current scope.
 
-Audience: solo-technical CEO/CIO/staff-eng
+Audience: a technical owner or small engineering team operating multiple
+private repositories and coding agents.
 
 ## Repo state right now
 
@@ -99,7 +101,7 @@ These were earned in two review passes. Reopen them only with new evidence.
 
 ### 1. ACP-driven execution with hybrid HITL
 
-A Flow = a typed-node **graph** (`nodes[]`, engine 3.0.0) — node
+A Flow = a typed-node **graph** (`nodes[]`, current engine 3.1.0) — node
 types `ai_coding | judge | cli | check | human | form | orchestrator`
 and `consensus`, wired by named `transitions` with bounded `rework` loops.
 Manifests with a top-level `steps` key are incompatible and must be
@@ -262,7 +264,8 @@ nodes:
       commentsVar: review_comments
 ```
 
-**The only runtime DSL is the typed-node graph (engine `3.0.0`).** Flows use
+**The only runtime DSL is the typed-node graph (current engine `3.1.0`; the
+graph-only cut-over began at `3.0.0`).** Flows use
 `nodes:` with named
 `transitions`, bounded `rework`, typed `input.requires`/`output.produces`
 artifacts (kind-matched, presence-enforced → `PRECONDITION`), six gate kinds
@@ -451,9 +454,10 @@ Current Scope, these are **Implemented** today:
   emitter; package upgrade preview with agent break-impact warnings.
   → `agents.md`
 
-Product backlog/vision (not built): `docs/pv/improvement-roadmap.md` —
-self-improvement loop, benchmarking, project memory; agents-as-actors
-Stage 3 shipped as M34 (continuous Mγ + enforcement flip remain).
+Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.
+Current sequencing lives in `.ai-factory/ROADMAP.md`; M45 qualifies
+core-package processes on private projects. Many original backlog foundations
+(Observatory, Project Brain, experiments, agents-as-actors) are implemented.
 
 ## Phase 2 Candidates
 
@@ -563,18 +567,18 @@ queues with position badge → retry loop works (Failed/Abandoned run → task
 back to Backlog → Launch again → attempt N+1) → per-step executor override
 verified on at least one Flow.
 
-Dogfood (T+5 to T+6w): register MAIster repo in itself, run a Flow against
-its own backlog, ship ≥1 non-trivial PR.
-
-External validation (T+8w): 3 installations on external repos, ≥1 PR
-shipped end-to-end through MAIster on each. 0/3 → thesis not validated,
-reassess wedge.
+Dogfood and installations by other users are confirmed. Current validation is
+repeatable execution of representative core-package processes across
+internal/private projects, with package/engine/runner provenance, actionable
+preflight, expected evidence, classified failures, human-attention and
+promotion outcomes, and no private source or artifact bodies in telemetry.
 
 ## Where to read next
 
 - `web/CLAUDE.md` — Web UI slice: stack details, scripts, structure, conventions.
-- `docs/VISION.md` — one-liner, principles, MVP goal.
-- `docs/PRODUCT_VIEW.md` — Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later.
+- `docs/VISION.md` — one-liner, principles, validation goal.
+- `docs/PRODUCT_VIEW.md` — Lean Canvas, JTBD, gaps, current scope / Phase 2 /
+  Later.
 - `docs/architecture.md` — current system shape and data flows.
 - `docs/decisions.md` — ADRs and locked technical choices.
 - `docs/api/` — OpenAPI and AsyncAPI contracts.

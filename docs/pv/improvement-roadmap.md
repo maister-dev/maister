@@ -1,15 +1,18 @@
 # MAIster improvement roadmap — priorities & delivery waves
 
-> **Status:** Product backlog / vision. Not a committed plan, changes no ADR,
-> supersedes nothing. Captures prioritized improvement work and a parallelizable
-> delivery shape. Proposes future ADRs only when an item is pulled into delivery.
-> Lives in `docs/pv/` (product vision/backlog), beside
+> **Status:** Historical product backlog / wave rationale from before dogfood.
+> Dogfood and installations by other users are now confirmed; current
+> sequencing lives in [`.ai-factory/ROADMAP.md`](../../.ai-factory/ROADMAP.md),
+> starting with M45 core-package process qualification on private projects.
+> Pre-/post-M20 wording below is preserved as historical decision context, not
+> current status. This document changes no ADR and supersedes nothing. It lives
+> in `docs/pv/`, beside
 > [`agents-as-environment-actors.md`](agents-as-environment-actors.md).
 
 ## Guiding principle
 
-**Deepen the wedge before widening the surface.** For a single-operator product
-that has not yet dogfooded (M20 open), the leverage order is:
+**Deepen the wedge before widening the surface.** At the time this backlog was
+written, MAIster had not yet completed M20. The leverage order was:
 
 1. **Make the tool usable enough to generate run volume** — workbench
    visibility (graph, files, diff). This is the real gate to dogfooding.
@@ -22,6 +25,16 @@ that has not yet dogfooded (M20 open), the leverage order is:
 
 Moat work (learning loop, benchmarking, project memory) **deepens** flow→PR.
 Background actors / integrations / multi-user **widen** it. Deepen first.
+
+After dogfood, the current leverage order is:
+
+1. Qualify representative core-package processes across different private
+   repository profiles.
+2. Make prerequisites and failures actionable through end-to-end preflight and
+   Run Doctor diagnostics.
+3. Measure repeatability, human attention, promotion outcomes, and repeat use.
+4. Pull forward visual evidence, strong isolation, identity, or integrations
+   only when pilot failure data demonstrates the need.
 
 **North star — one place to run people *and* agents.** Solo-operator is the
 *first approximation*, not the destination: the concept moves toward **teams and
@@ -39,6 +52,9 @@ in parallel.
 ---
 
 ## Delivery waves
+
+The waves below record the earlier sequencing model. Shipped status and current
+next work are authoritative only in `.ai-factory/ROADMAP.md`.
 
 Each wave lists **parallel tracks** that share no hard dependency and can be
 staffed concurrently. A later wave consumes an earlier wave's output.

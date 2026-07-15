@@ -34,6 +34,7 @@ import {
   prepareDiff,
   prepareDiffSummary,
 } from "@/lib/diff/prepare";
+import { isReviewableChangeEntry } from "@/lib/runs/reviewable-changes";
 
 // A realistic 2-file unified diff:
 //   src/a.ts — modified: 2 additions, 1 deletion
@@ -129,9 +130,8 @@ describe("filterDiffByPath — reviewable section filtering", () => {
       "rename to src/new.ts",
     ].join("\n");
 
-    const filtered = filterDiffByPath(
-      crossingDiff,
-      (path) => !path.startsWith(".claude/"),
+    const filtered = filterDiffByPath(crossingDiff, (path, oldPath) =>
+      isReviewableChangeEntry({ path, oldPath }),
     );
 
     expect(filtered).toContain("diff --git a/src/old.ts b/src/new.ts");

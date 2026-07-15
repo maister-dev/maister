@@ -2,7 +2,8 @@
 
 ## One-liner
 
-**MAIster is the control plane for AI-powered software delivery.**
+**MAIster is the self-hosted execution and governance layer for reproducible
+AI-powered SDLC processes over private code.**
 
 It turns backlog tasks into supervised delivery Flows and supports manual
 scratch workspaces for direct coding-agent dialog. The challenges it answers
@@ -14,6 +15,18 @@ and its core functions are the canonical short description in
 MAIster should remove the need to babysit coding-agent consoles. The human
 should manage work at the level of projects, tasks, Flows, scratch workspaces,
 reviews and decisions.
+
+## Current validation focus
+
+The product spine has been dogfooded and MAIster has installations by other
+users. Current validation tests whether versioned processes from core packages
+run repeatably across different internal/private projects, reach review with
+trustworthy evidence, and require less human attention than ad-hoc agent
+operation.
+
+This stage prioritizes process qualification, launch preflight, actionable
+diagnostics, private-project safety, and outcome telemetry over adding more
+agent adapters or generic workflow surface.
 
 ## Core product spine
 
@@ -51,9 +64,9 @@ Project -> Flow package -> Task / Scratch run -> Run -> Workspace -> Headless Ag
 7. **Start personal, not enterprise**
    Optimize for one owner and small teams first: low ops, fast iteration, single host. Enterprise governance later if needed.
 
-## MVP goal
+## Product validation goal
 
-Prove the spine on **several real projects in parallel**:
+Keep the implemented spine reliable on **several real projects in parallel**:
 
 1. Register multiple projects via per-project `maister.yaml` (each with its own
    list of Flows).
@@ -80,10 +93,18 @@ Prove the spine on **several real projects in parallel**:
 11. Run up to 3 Flow sessions concurrently across projects; scratch v1 shares
     the same live-session cap and rejects when full rather than queueing.
 
+Qualification succeeds when a core process records its prerequisites, exact
+package and engine compatibility, expected artifacts/gates, failure taxonomy,
+and recovery guidance, then completes repeated runs on more than one private
+project. Product telemetry should measure time-to-first-success, review reach,
+human-attention time, promotion outcome, and repeat usage without retaining
+private source, prompts, diffs, secrets, or artifact bodies.
+
 ## Current product target
 
-The immediate product target is no longer just "launch a Flow and show logs".
-It must make AI delivery controlled enough for daily work:
+The immediate product target is to qualify core-package processes for daily
+work on private projects. The implemented runtime substrate must remain
+reliable while this validation proceeds:
 
 - Flow package lifecycle: install, trust, enable, upgrade, rollback, disable and
   keep active runs pinned to their original package revision.
@@ -151,21 +172,18 @@ notifications, economics and intake only after the current package/graph/gate
 foundation exists. Background agents and external board sync stay behind noise
 controls: draft/publish, dedup, severity, cooldowns and human feedback.
 
-## Not MVP
+## Later / outside current validation
 
-- ~~autonomous task pulling~~ — **promoted to MVP** (ADR-121: priority-ordered dependency-draining task queue);
-- background project agents;
-- A/B experiments;
 - Telegram approvals;
-- heavy analytics;
-- platform-level cross-project skills;
-- enterprise RBAC/compliance;
+- managed preview hosting and strong container/VM sandboxing;
+- enterprise SSO, organization administration and compliance reporting;
 - Temporal-class durable orchestration;
 - judge calibration lab;
 - automatic project lesson promotion;
 - full Kanban (Done as drag-target / WIP limits / swim-lanes);
 - cross-project task moves;
-- GitHub issue / Linear / YouGile sync.
+- GitHub issue / Linear / YouGile sync;
+- public package marketplace and remote reputation.
 
 ## Typed Plan review (Implemented — ADR-137)
 

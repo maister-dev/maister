@@ -1,14 +1,15 @@
 # MAIster
 
-> The control plane for AI-powered software delivery.
+> Self-hosted execution and governance layer for reproducible AI-powered SDLC
+> processes over private code.
 
 ## What MAIster does
 
-Running several coding agents by hand is operational noise: many terminals,
-lost context, unclear progress, scattered artifacts, weak review, and the same
-project mistakes repeated. MAIster is the control plane that turns that into
-supervised delivery — it wraps existing coding agents (Claude Code, Codex, …)
-and Flow plugins rather than replacing them.
+Running several coding agents by hand creates operational noise: many
+terminals, lost context, unclear progress, scattered artifacts, weak review,
+and repeated project mistakes. Claude Code, Codex, and other coding agents
+execute the work; MAIster adds governed execution through versioned process
+packages.
 
 **Challenges it answers**
 
@@ -39,7 +40,7 @@ promote to the target branch.
 ## Quick Start
 
 ```bash
-git clone <repo-url> mAIster
+git clone https://github.com/kanischev/mAIster.git
 cd mAIster
 pre-commit install                                # writes .git/hooks/pre-commit
 pnpm install --frozen-lockfile                    # monorepo root install
@@ -47,11 +48,10 @@ cp .env.example .env                              # then fill in DB_URL etc.
 
 docker compose up -d                              # Postgres only (pgvector/pgvector:pg16)
 cp ./web/.env.sample ./web/.env.local
-cp ./supervisor/.env.sample ./supervisor/.env.local
+cp ./supervisor/.env.sample ./supervisor/.env
 
-update env AUTH_SECRET in ./supervisor/.env.local (any string)
-`openssl rand -base64 33`
-`AUTH_SECRET=your-generated-secret-here`
+# Generate a secret, then paste it as AUTH_SECRET=... in web/.env.local
+openssl rand -base64 33
 
 pnpm --filter maister-web db:migrate              # main migration lineage
 pnpm --filter maister-web db:migrate:brain        # Project-Brain lineage (ADR-122)
@@ -88,11 +88,11 @@ project:
   default_branch: main
   branch_prefix: maister/
   default_runner: claude-code
-flows:
-  - id: bugfix
-    source: github.com/org/maister-flow-bugfix
-    version: v1.2.3
-    runner: claude-code
+packages:
+  - id: core
+    source: https://github.com/org/maister-plugins
+    version: core/v1.2.3
+    path: packages/core
 EOF
 
 # Launch the services, register the project, create a task on the board
@@ -119,7 +119,7 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | [AIF Flow Plugin](docs/flow-aif-plugin.md) | Bundled `aif` Flow plugin walkthrough |
 | [Flow Studio](docs/system-analytics/flow-studio.md) | In-app flow authoring + visual graph editor |
 | [Observatory](docs/system-analytics/observatory.md) | Autonomy Score, correction-rate, signal clusters |
-| [Vision](docs/VISION.md) | One-liner, product spine, principles, MVP goal |
+| [Vision](docs/VISION.md) | One-liner, product spine, principles, validation goal |
 | [Product View](docs/PRODUCT_VIEW.md) | Target user, JTBD, current scope, Phase 2 |
 | [Architecture](docs/architecture.md) | C4 views, component map, data flows |
 | [Decisions](docs/decisions.md) | ADRs and locked technical choices |

@@ -105,7 +105,11 @@ const REWORK_WIRINGS: ReworkWiring[] = [
 // referencing their var stays renderable even though no rework ever injects it.
 const EXPECTED_SEEDS: Record<AifFlow, Record<string, string>> = {
   bugfix: { review_comments: "" },
-  dev: { plan_review_comments: "", review_comments: "" },
+  dev: {
+    plan_review_answers: "",
+    plan_review_comments: "",
+    review_comments: "",
+  },
   evolve: { review_comments: "" },
   init: { review_comments: "" },
   roadmap: { review_comments: "" },

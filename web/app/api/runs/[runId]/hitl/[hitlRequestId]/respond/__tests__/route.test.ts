@@ -12,6 +12,7 @@ import {
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
   experimentRuns as experimentRunsTable,
+  gateChatTurns as gateChatTurnsTable,
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
   runSessions as runSessionsTable,
@@ -34,6 +35,19 @@ vi.mock("@/lib/experiments/status-sync", () => ({
   syncExperimentStatusForRun: vi.fn(async () => null),
 }));
 
+vi.mock("@/lib/review-comments/feedback-packet", () => ({
+  assertReviewFeedbackPresent: vi.fn(),
+  buildReviewFeedbackPreview: vi.fn(async () => ({
+    reviewSource: { fingerprint: `sha256:${"a".repeat(64)}` },
+    feedback: {
+      fingerprint: `sha256:${"b".repeat(64)}`,
+      target: { nodeId: "review" },
+      openThreadIds: [],
+      gateChatMessageCount: 0,
+    },
+  })),
+}));
+
 type Row = Record<string, unknown>;
 type Tables = {
   runs: Row[];
@@ -46,6 +60,7 @@ type Tables = {
   webhook_events: Row[];
   domain_events: Row[];
   experiment_runs: Row[];
+  gate_chat_turns: Row[];
   workspaces: Row[];
   run_sessions: Row[];
   tasks: Row[];
@@ -66,6 +81,7 @@ const dbState: {
     webhook_events: [],
     domain_events: [],
     experiment_runs: [],
+    gate_chat_turns: [],
     workspaces: [],
     run_sessions: [],
     tasks: [],
@@ -84,6 +100,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === webhookEventsTable) return "webhook_events";
   if (t === domainEventsTable) return "domain_events";
   if (t === experimentRunsTable) return "experiment_runs";
+  if (t === gateChatTurnsTable) return "gate_chat_turns";
   if (t === workspacesTable) return "workspaces";
   if (t === runSessionsTable) return "run_sessions";
   if (t === tasksTable) return "tasks";
@@ -232,13 +249,18 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 vi.mock("@/lib/supervisor-client", () => ({
+  cancelPrompt: vi.fn(),
   checkpointSession: vi.fn(async (sessionId: string) => ({
     alreadyCheckpointed: false,
     sessionId,
     monotonicId: 1,
   })),
+  createSession: vi.fn(),
   deliverPermission: (sessionId: string, requestId: string, optionId: string) =>
     deliverPermissionSpy(sessionId, requestId, optionId),
+  listSessions: vi.fn(async () => []),
+  sendPrompt: vi.fn(),
+  streamSession: vi.fn(),
 }));
 
 vi.mock("@/lib/flows/runner", () => ({
@@ -316,6 +338,7 @@ beforeEach(async () => {
     webhook_events: [],
     domain_events: [],
     experiment_runs: [],
+    gate_chat_turns: [],
     workspaces: [],
     run_sessions: [],
     tasks: [],
@@ -1078,6 +1101,8 @@ describe("HITL respond route — graph review decision (M11a)", () => {
         comments: "tighten errors",
         workspacePolicy: "keep",
       },
+      reviewSourceFingerprint: `sha256:${"a".repeat(64)}`,
+      reviewFeedbackFingerprint: `sha256:${"b".repeat(64)}`,
     });
 
     expect(res.status).toBe(200);

@@ -24,7 +24,7 @@ truth). The fix is to update docs in the same PR.
 
 | File | What it answers |
 | ---- | ---------------- |
-| [`VISION.md`](VISION.md) | Product one-liner, principles, MVP goal. |
+| [`VISION.md`](VISION.md) | Product one-liner, principles, validation goal. |
 | [`PRODUCT_VIEW.md`](PRODUCT_VIEW.md) | Target user, product model, JTBD, current scope, Phase 2. |
 | [`getting-started.md`](getting-started.md) | Local setup, scripts, prerequisites. |
 

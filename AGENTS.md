@@ -8,10 +8,12 @@
 
 ## Project Overview
 
-**MAIster is the control plane for AI-powered software delivery.** Current
-wedge: Web control plane + ACP supervisor + Flow plugin engine with
-multi-project portfolio, multi-workspace execution, HITL, and a per-project
-task board (Backlog | In Flight). Wraps existing agents and Flow frameworks.
+**MAIster is the self-hosted execution and governance layer for reproducible
+AI-powered SDLC processes over private code.** Current validation wedge:
+processes from core packages running across internal/private projects through
+the Web control plane, ACP supervisor, graph-only Flow engine, multi-workspace
+execution, HITL, evidence, review, and promotion. External ACP adapters remain
+the agent runtimes.
 
 Full description: `.ai-factory/DESCRIPTION.md`.
 
@@ -146,7 +148,7 @@ on a different host than the web tier.
 | Database Schema | `docs/database-schema.md` | 8 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
-| Vision | `docs/VISION.md` | One-liner, product spine, principles, MVP goal |
+| Vision | `docs/VISION.md` | One-liner, product spine, principles, validation goal |
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
