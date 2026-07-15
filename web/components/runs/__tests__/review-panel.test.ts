@@ -84,8 +84,9 @@ const LABELS = {
   promotionRebaseMerge: "run.promotionRebaseMerge",
   promotionPullRequest: "run.promotionPullRequest",
   promotionAiRebaseMerge: "run.promotionAiRebaseMerge",
-  behindAhead: (behind: number, ahead: number) =>
-    `run.behindAhead:${behind}:${ahead}`,
+  // Pre-resolved server-side (RSC cannot pass a function to this client
+  // component) — the test supplies the already-composed string.
+  behindAhead: "run.behindAhead:3:2",
   syncBranch: "run.syncBranch",
   syncTitle: "run.syncTitle",
   syncStrategy: "run.syncStrategy",
@@ -97,7 +98,7 @@ const LABELS = {
   syncResolveWithAgent: "run.syncResolveWithAgent",
   syncStart: "run.syncStart",
   syncCancel: "run.syncCancel",
-  syncInProgress: (phase: string) => `run.syncInProgress:${phase}`,
+  syncInProgress: "run.syncInProgress:agent_running",
   resolveWithAgent: "run.resolveWithAgent",
   autoFinalize: "run.autoFinalize",
   autoFinalizeHint: "run.autoFinalizeHint",
@@ -341,7 +342,10 @@ describe("ReviewPanel — branch sync (ADR-138)", () => {
     // (attribute order under SSR is not guaranteed, so span the whole tag).
     const marker = 'data-testid="review-sync-agent"';
     const idx = html.indexOf(marker);
-    const el = html.slice(html.lastIndexOf("<input", idx), html.indexOf(">", idx));
+    const el = html.slice(
+      html.lastIndexOf("<input", idx),
+      html.indexOf(">", idx),
+    );
 
     expect(el).toContain("checked");
   });

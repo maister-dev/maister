@@ -1092,7 +1092,29 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
   **Logging:** settings change INFO with project id + field names.
 
-- [ ] **Task 18: E2E composition proofs.**
+- [x] **Task 18: E2E composition proofs.**
+
+  RESULT (2026-07-15): both specs green with `--retries=0` (run-sync 4.4s,
+  pr-reopen 3.4s). The e2e caught TWO REAL BUGS that every unit test missed —
+  both now fixed:
+  1. **RSC boundary violation.** `behindAhead`/`syncInProgress` were FUNCTION
+     labels passed from the server layout into `ReviewPanel` (`"use client"`) →
+     "Functions cannot be passed directly to Client Components" → the whole run
+     page 500'd to the error boundary. `renderToStaticMarkup` never crosses that
+     boundary, so the 20 unit tests passed. Fixed by pre-resolving both to plain
+     strings server-side (every other label in the type was already a string).
+  2. **Unclickable reopen button.** The board flight-card lays a stretched
+     `<a class="absolute inset-0 z-0">` over the whole card; interactive children
+     must carry `relative z-10` (documented at `flight-card.tsx:173`). The new
+     `PrReopenButton` lacked it → the link intercepted every pointer event, so
+     the button was unclickable for REAL USERS, not just Playwright. Fixed.
+
+  Spec-side corrections made while proving: (a) after a rebase the branch is 0
+  behind / still 1 ahead, so the chip correctly REMAINS (reading "0 behind") —
+  the assertion now proves the DRIFT cleared rather than the chip vanishing;
+  (b) `page.goto` immediately after the reopen click aborted the in-flight POST,
+  so the spec now awaits the response (a Playwright retry re-runs the whole test
+  and was masking this as a flake).
 
   Two Playwright specs on the stub-supervisor seeded harness (explicit file
   paths when running): (1) `e2e/run-sync.spec.ts` — seeded Review run behind

@@ -332,6 +332,17 @@ const M12_MANIFEST = {
   ],
 };
 
+// --- ADR-138 fixtures: branch sync + PR reopen -------------------------------
+// syncBehind: a Review run whose branch is BOTH ahead 1 (its own commit) and
+// behind 1 (target moved) — the mechanical rebase has real work to do and the
+// post-sync promote has a real commit to merge.
+// prReopen: a Done run whose PR is open + unmergeable, the reopen entry state.
+
+const SYNC_SLUG = "e2e-run-sync";
+const SYNC_BRANCH = "maister/e2e-sync";
+const REOPEN_SLUG = "e2e-pr-reopen";
+const REOPEN_BRANCH = "maister/e2e-reopen";
+
 // --- M11b fixture: graph run paused at a takeover-capable review node --------
 
 const M11B_SLUG = "e2e-m11b";
@@ -1611,6 +1622,246 @@ async function provisionWorktree(
     branch,
     worktreePath,
   ]);
+}
+
+// ADR-138 (Task 18): provision a run branch that is ahead 1 AND behind 1 of its
+// target, so `aheadBehindCounts` reports a real drift, the mechanical rebase has
+// work, and the post-sync promote still merges a real commit. Returns the base
+// commit the worktree branched from.
+async function provisionDivergedWorktree(
+  repoPath: string,
+  worktreePath: string,
+  branch: string,
+): Promise<string> {
+  await provisionWorktree(repoPath, worktreePath, branch);
+
+  // The run branch gets its OWN commit (ahead 1).
+  writeFileSync(path.join(worktreePath, "feature.txt"), "run work\n");
+  await execFileAsync("git", ["-C", worktreePath, "add", "."]);
+  await execFileAsync("git", ["-C", worktreePath, "commit", "-m", "feature"]);
+
+  const base = (
+    await execFileAsync("git", ["-C", repoPath, "rev-parse", "HEAD"])
+  ).stdout.trim();
+
+  // The TARGET moves on (behind 1). A different file → the rebase is clean.
+  writeFileSync(path.join(repoPath, "target-moved.txt"), "target work\n");
+  await execFileAsync("git", ["-C", repoPath, "add", "."]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "-m", "target moves"]);
+
+  return base;
+}
+
+// ADR-138 (Task 18) — Review run behind its target, ready to Sync then Promote.
+async function seedSyncFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    member: randomUUID(),
+  };
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-sync`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [SYNC_SLUG]);
+
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  const baseCommit = await provisionDivergedWorktree(
+    repoPath,
+    worktreePath,
+    SYNC_BRANCH,
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      ids.project,
+      SYNC_SLUG,
+      "MAIster E2E Branch Sync",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `${RUNTIME_ROOT}/flows/aif-sync@v0.0.1`,
+      JSON.stringify(M11A_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, ids.project, "E2E branch sync", "sync the branch", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, flow_version, started_at, review_entered_at)
+     VALUES ($1, $2, $3, $4, 'Review', 'v0.0.1', now(), now())`,
+    [ids.run, ids.task, ids.project, ids.flow],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
+  await pool.query(
+    `INSERT INTO workspaces
+       (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+        base_branch, base_commit, target_branch, promotion_mode)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main', 'local_merge')`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      SYNC_BRANCH,
+      worktreePath,
+      repoPath,
+      baseCommit,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    runId: ids.run,
+    hitlRequestId: "",
+    projectSlug: SYNC_SLUG,
+    branch: SYNC_BRANCH,
+    worktreePath,
+  };
+}
+
+// ADR-138 (Task 18) — Done run whose PR is open + unmergeable (reopen entry).
+async function seedReopenFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    member: randomUUID(),
+  };
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-reopen`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [REOPEN_SLUG]);
+
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  const baseCommit = await provisionDivergedWorktree(
+    repoPath,
+    worktreePath,
+    REOPEN_BRANCH,
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      ids.project,
+      REOPEN_SLUG,
+      "MAIster E2E PR Reopen",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `${RUNTIME_ROOT}/flows/aif-reopen@v0.0.1`,
+      JSON.stringify(M11A_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'Done', 'Done')`,
+    [ids.task, ids.project, "E2E PR reopen", "reopen the run", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'Done', 'v0.0.1', now(), now())`,
+    [ids.run, ids.task, ids.project, ids.flow],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
+  // The PR is open and unmergeable — exactly what pr_state_scan records and what
+  // makes the run reopen-eligible.
+  await pool.query(
+    `INSERT INTO workspaces
+       (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+        base_branch, base_commit, target_branch, promotion_mode,
+        promotion_state, pr_url, pr_number, pr_state, pr_has_conflicts,
+        pr_state_checked_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main', 'pull_request',
+        'done', $8, 42, 'open', true, now())`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      REOPEN_BRANCH,
+      worktreePath,
+      repoPath,
+      baseCommit,
+      "https://github.com/maister/e2e/pull/42",
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    runId: ids.run,
+    hitlRequestId: "",
+    projectSlug: REOPEN_SLUG,
+    branch: REOPEN_BRANCH,
+    worktreePath,
+  };
 }
 
 async function seedM11aFixture(
@@ -6834,6 +7085,8 @@ async function main(): Promise<void> {
 
     const m11a = await seedM11aFixture(pool, admin.id);
     const m11b = await seedM11bFixture(pool, admin.id);
+    const runSync = await seedSyncFixture(pool, admin.id);
+    const prReopen = await seedReopenFixture(pool, admin.id);
     const m12 = await seedM12EvidenceFixture(pool, admin.id);
     const board = await seedLaunchableProjectFixture(pool, {
       slug: BOARD_SLUG,
@@ -6956,6 +7209,8 @@ async function main(): Promise<void> {
       byKey: {
         m11a,
         m11b,
+        runSync,
+        prReopen,
         m12,
         board,
         humanAsk,

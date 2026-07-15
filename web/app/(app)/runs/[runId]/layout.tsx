@@ -702,7 +702,8 @@ export default async function RunDetailLayout({
   let reviewData: Awaited<ReturnType<typeof buildReviewPanelData>> | null =
     null;
   let reviewReadiness = null;
-  let syncPanel: Awaited<ReturnType<typeof buildRunSyncPanelData>> | null = null;
+  let syncPanel: Awaited<ReturnType<typeof buildRunSyncPanelData>> | null =
+    null;
 
   if (showReview) {
     try {
@@ -769,8 +770,14 @@ export default async function RunDetailLayout({
     promotionRebaseMerge: t("promotionRebaseMerge"),
     promotionPullRequest: t("promotionPullRequest"),
     promotionAiRebaseMerge: t("promotionAiRebaseMerge"),
-    behindAhead: (behind: number, ahead: number) =>
-      t("behindAhead", { behind, ahead }),
+    // Pre-resolved server-side: ReviewPanel is a client component, and RSC
+    // cannot serialize a function across the boundary.
+    behindAhead: syncPanel?.aheadBehind
+      ? t("behindAhead", {
+          behind: syncPanel.aheadBehind.behind,
+          ahead: syncPanel.aheadBehind.ahead,
+        })
+      : "",
     syncBranch: t("syncBranch"),
     syncTitle: t("syncTitle"),
     syncStrategy: t("syncStrategy"),
@@ -782,7 +789,9 @@ export default async function RunDetailLayout({
     syncResolveWithAgent: t("syncResolveWithAgent"),
     syncStart: t("syncStart"),
     syncCancel: t("syncCancel"),
-    syncInProgress: (phase: string) => t("syncInProgress", { phase }),
+    syncInProgress: syncPanel?.sync.inProgress
+      ? t("syncInProgress", { phase: syncPanel.sync.inProgress.phase })
+      : "",
     resolveWithAgent: t("resolveWithAgent"),
     autoFinalize: t("autoFinalize"),
     autoFinalizeHint: t("autoFinalizeHint"),

@@ -47,7 +47,10 @@ export function PrReopenButton({
   return (
     <button
       aria-label={label}
-      className="ml-0.5 inline-flex items-center hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+      // `relative z-10` is REQUIRED: on a board flight-card a stretched
+      // `absolute inset-0 z-0` link covers the whole card, and every interactive
+      // child must sit above it (card convention) or it can never be clicked.
+      className="relative z-10 ml-0.5 inline-flex items-center hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
       data-testid="pr-reopen"
       disabled={busy}
       title={failed ? `${label} ✗` : label}

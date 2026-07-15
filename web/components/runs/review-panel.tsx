@@ -58,7 +58,10 @@ export type ReviewPanelLabels = {
   promotionPullRequest: string;
   promotionAiRebaseMerge: string;
   // ADR-138 (Task 16): branch-sync dialog + behind/ahead chip + resolver copy.
-  behindAhead: (behind: number, ahead: number) => string;
+  // `behindAhead` / `syncInProgress` are PRE-RESOLVED server-side (their values
+  // are known there): this is a client component, and RSC cannot serialize a
+  // function across the boundary — every label here must stay a plain string.
+  behindAhead: string;
   syncBranch: string;
   syncTitle: string;
   syncStrategy: string;
@@ -70,7 +73,7 @@ export type ReviewPanelLabels = {
   syncResolveWithAgent: string;
   syncStart: string;
   syncCancel: string;
-  syncInProgress: (phase: string) => string;
+  syncInProgress: string;
   resolveWithAgent: string;
   autoFinalize: string;
   autoFinalizeHint: string;
@@ -358,7 +361,7 @@ export function ReviewPanel({
           data-testid="review-ahead-behind"
         >
           <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-line bg-amber-soft px-2.5 py-1 font-mono text-[10.5px] font-bold text-amber">
-            {labels.behindAhead(aheadBehind.behind, aheadBehind.ahead)}
+            {labels.behindAhead}
           </span>
           {sync && !syncClaimed ? (
             <Button
@@ -382,7 +385,7 @@ export function ReviewPanel({
           data-testid="review-sync-in-progress"
           role="status"
         >
-          {labels.syncInProgress(sync?.inProgress?.phase ?? "")}
+          {labels.syncInProgress}
         </p>
       ) : null}
 
@@ -675,20 +678,19 @@ export function ReviewPanel({
           {/* ADR-138 (decision 19): ai_rebase_merge one-click chaining — OFF by
               default (two-step: the resolver returns the run to Review). */}
           {mode === "ai_rebase_merge" ? (
-            <label
-              className="flex items-start gap-2 font-mono text-[11px] text-ink-2"
-              data-testid="review-auto-finalize"
-            >
-              <input
-                checked={autoFinalize}
-                type="checkbox"
-                onChange={(e) => setAutoFinalize(e.target.checked)}
-              />
-              <span className="flex flex-col gap-0.5">
-                <span>{labels.autoFinalize}</span>
-                <span className="text-mute">{labels.autoFinalizeHint}</span>
-              </span>
-            </label>
+            <div data-testid="review-auto-finalize">
+              <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
+                <input
+                  checked={autoFinalize}
+                  type="checkbox"
+                  onChange={(e) => setAutoFinalize(e.target.checked)}
+                />
+                {labels.autoFinalize}
+              </label>
+              <p className="ml-6 mt-0.5 font-mono text-[10.5px] text-mute">
+                {labels.autoFinalizeHint}
+              </p>
+            </div>
           ) : null}
 
           {drift ? (
@@ -734,6 +736,7 @@ export function ReviewPanel({
                 "w-max bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
                 busy && "opacity-60",
               )}
+              data-testid="review-promote"
               isDisabled={busy || !targetBranch || syncClaimed}
               size="sm"
               type="button"
