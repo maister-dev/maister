@@ -88,6 +88,12 @@ describe("OverviewCards", () => {
     expect(html).toContain("/studio/packages");
     expect(html).toContain("/studio/local");
     expect(html).toContain("/studio/sources");
+    expect(html.indexOf("/studio/sources")).toBeLessThan(
+      html.indexOf("/studio/packages"),
+    );
+    expect(html.indexOf("/studio/packages")).toBeLessThan(
+      html.indexOf("/studio/local"),
+    );
   });
 
   it("hides the Sources card for non-admins", () => {

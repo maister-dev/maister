@@ -68,7 +68,35 @@ export function OverviewCards({
   );
   const needsAttention = groups.filter((group) => group.needsTrust);
 
+  const sourceArea: AreaCard | null =
+    isAdmin && sourceSummary
+      ? {
+          href: "/studio/sources",
+          title: t("sourcesTitle"),
+          sub: t("sourcesSub"),
+          metrics: [
+            {
+              label: t("overviewSourcesMetric"),
+              value: sourceSummary.sourceCount,
+            },
+            {
+              label: t("overviewEnabledMetric"),
+              value: sourceSummary.enabledSourceCount,
+            },
+            {
+              label: t("overviewAvailableMetric"),
+              value: sourceSummary.discoveredPackageCount,
+            },
+            {
+              label: t("overviewTagsMetric"),
+              value: sourceSummary.discoveredTagCount,
+            },
+          ],
+        }
+      : null;
+
   const areas: AreaCard[] = [
+    ...(sourceArea ? [sourceArea] : []),
     {
       href: "/studio/packages",
       title: t("packagesTitle"),
@@ -99,29 +127,6 @@ export function OverviewCards({
       ],
     },
   ];
-
-  if (isAdmin && sourceSummary) {
-    areas.push({
-      href: "/studio/sources",
-      title: t("sourcesTitle"),
-      sub: t("sourcesSub"),
-      metrics: [
-        { label: t("overviewSourcesMetric"), value: sourceSummary.sourceCount },
-        {
-          label: t("overviewEnabledMetric"),
-          value: sourceSummary.enabledSourceCount,
-        },
-        {
-          label: t("overviewAvailableMetric"),
-          value: sourceSummary.discoveredPackageCount,
-        },
-        {
-          label: t("overviewTagsMetric"),
-          value: sourceSummary.discoveredTagCount,
-        },
-      ],
-    });
-  }
 
   const attentionItems: AttentionItem[] = [
     {

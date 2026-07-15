@@ -149,8 +149,9 @@ palette (muted, not rainbow); these are roles, not hex.
   admin sees the Sources entry.
 - **Layout:** an eyebrow + title; an at-a-glance strip (sources · packages ·
   local artifacts · projects using them); a **needs-attention** list (untrusted
-  installs, drafts with validation errors, available upgrades); cards linking
-  into Sources / Packages / Local. No two-column flow dump.
+  installs, drafts with validation errors, available upgrades); desktop cards
+  run left-to-right as **Sources → Packages → Local**. Sources is omitted for
+  non-admins, so their cards begin with Packages. No two-column flow dump.
 - **Data:** read of `package_sources`, `package_installs`,
   `project_package_attachments`, local packages, authored drafts.
 
