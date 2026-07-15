@@ -178,7 +178,8 @@ function planReviewParentFromSchema(
       };
     })
     .filter(
-      (assumption): assumption is PlanReviewAssumptionView => assumption !== null,
+      (assumption): assumption is PlanReviewAssumptionView =>
+        assumption !== null,
     );
 
   return assumptions.length === value.assumptions.length
@@ -1066,10 +1067,12 @@ export function HitlDecisionControls({
                 <div key={assumption.id} className="text-[11.5px] text-ink-2">
                   <p>{assumption.statement}</p>
                   <p className="mt-1 text-mute">
-                    {labels.planReviewAssumptionDefault ?? "Default"}: {assumption.defaultLabel}
+                    {labels.planReviewAssumptionDefault ?? "Default"}:{" "}
+                    {assumption.defaultLabel}
                   </p>
                   <p className="mt-1 text-mute">
-                    {labels.planReviewAssumptionImpact ?? "Impact"}: {assumption.impact}
+                    {labels.planReviewAssumptionImpact ?? "Impact"}:{" "}
+                    {assumption.impact}
                   </p>
                 </div>
               ))}

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, lt, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
@@ -58,6 +58,12 @@ const GIT_TIMEOUT_MS = 60_000;
 // enough recovery room for the post-prompt transcript write. It is deliberately
 // server-owned: clients cannot extend an in-flight turn by retrying requests.
 export const GATE_CHAT_TURN_LEASE_MS = 180_000;
+
+// Recovery runs outside the request that owned the prompt. Its lease prevents a
+// second web process from restoring the same workspace while the first recovery
+// is still bounded by supervisor cancellation and the L3 git probe.
+const GATE_CHAT_RECOVERY_LEASE_MS = 15 * 60_000;
+const GATE_CHAT_RECOVERY_BATCH_SIZE = 50;
 
 type GateChatTurnState = "pending" | "completed" | "failed" | "aborted";
 
@@ -147,6 +153,10 @@ function turnLeaseExpiresAt(now: Date): Date {
   return new Date(now.getTime() + GATE_CHAT_TURN_LEASE_MS);
 }
 
+function recoveryLeaseExpiresAt(now: Date): Date {
+  return new Date(now.getTime() + GATE_CHAT_RECOVERY_LEASE_MS);
+}
+
 function armGateChatTurnDeadline(args: {
   api: GateChatSupervisorApi;
   hitlRequestId: string;
@@ -195,7 +205,9 @@ function armGateChatTurnDeadline(args: {
 // This helper is intentionally called while the HITL row is already locked.
 // Both response claim and chat admission take locks hitl_request → turn, which
 // keeps a response fenced from the ACP prompt without retaining a transaction
-// across the prompt or its mandatory L3 restore.
+// across the prompt or its mandatory L3 restore. Expired rows stay fenced until
+// reconcile owns their cancellation and restore; lease expiry is never a claim
+// permission by itself.
 export async function requireNoLiveGateChatTurn(
   tx: Db,
   hitlRequestId: string,
@@ -305,6 +317,260 @@ const defaultApi: GateChatSupervisorApi = {
   createSession: defaultCreateSession,
   streamSession: defaultStreamSession,
 };
+
+type ExpiredGateChatCandidate = {
+  id: string;
+  runId: string;
+  hitlRequestId: string;
+};
+
+type ClaimedGateChatRecovery = ExpiredGateChatCandidate & {
+  worktreePath: string;
+  baselineRef: string;
+  recoveryLeaseExpiresAt: Date;
+};
+
+async function claimExpiredGateChatRecovery(args: {
+  db: Db;
+  candidate: ExpiredGateChatCandidate;
+  now: Date;
+}): Promise<ClaimedGateChatRecovery | null> {
+  return await args.db.transaction(async (tx: Db) => {
+    // Keep the lock order identical to response claim and chat admission.
+    const hitlRows = await tx
+      .select({ id: hitlRequests.id })
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, args.candidate.hitlRequestId))
+      .for("update");
+
+    if (!hitlRows[0]) return null;
+
+    const turnRows = await tx
+      .select({
+        id: gateChatTurns.id,
+        state: gateChatTurns.state,
+        leaseExpiresAt: gateChatTurns.leaseExpiresAt,
+      })
+      .from(gateChatTurns)
+      .where(eq(gateChatTurns.id, args.candidate.id))
+      .for("update");
+    const turn = turnRows[0] as GateChatTurnRow | undefined;
+
+    if (
+      !turn ||
+      turn.state !== "pending" ||
+      turn.leaseExpiresAt === null ||
+      turn.leaseExpiresAt.getTime() >= args.now.getTime()
+    ) {
+      return null;
+    }
+
+    const workspaceRows = await tx
+      .select({
+        worktreePath: workspaces.worktreePath,
+        removedAt: workspaces.removedAt,
+      })
+      .from(workspaces)
+      .where(eq(workspaces.runId, args.candidate.runId))
+      .limit(1);
+    const workspace = workspaceRows[0];
+
+    if (!workspace || workspace.removedAt !== null) {
+      throw new MaisterError(
+        "CHECKPOINT",
+        `gate-chat recovery cannot restore workspace for run ${args.candidate.runId}`,
+      );
+    }
+
+    const recoveryLease = recoveryLeaseExpiresAt(args.now);
+
+    await tx
+      .update(gateChatTurns)
+      .set({ leaseExpiresAt: recoveryLease })
+      .where(
+        and(
+          eq(gateChatTurns.id, turn.id),
+          eq(gateChatTurns.state, "pending"),
+          eq(gateChatTurns.leaseExpiresAt, turn.leaseExpiresAt),
+        ),
+      );
+
+    return {
+      ...args.candidate,
+      worktreePath: workspace.worktreePath,
+      baselineRef: checkpointRefName(
+        "chat-checkpoints",
+        args.candidate.runId,
+        args.candidate.hitlRequestId,
+      ),
+      recoveryLeaseExpiresAt: recoveryLease,
+    };
+  });
+}
+
+async function completeExpiredGateChatRecovery(args: {
+  db: Db;
+  recovery: ClaimedGateChatRecovery;
+}): Promise<boolean> {
+  return await args.db.transaction(async (tx: Db) => {
+    // The response path locks this row first. Retain that order before taking
+    // the turn lock so recovery never deadlocks with a concurrent claim.
+    const hitlRows = await tx
+      .select({ id: hitlRequests.id })
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, args.recovery.hitlRequestId))
+      .for("update");
+
+    if (!hitlRows[0]) return false;
+
+    const turnRows = await tx
+      .select({
+        id: gateChatTurns.id,
+        state: gateChatTurns.state,
+        leaseExpiresAt: gateChatTurns.leaseExpiresAt,
+      })
+      .from(gateChatTurns)
+      .where(eq(gateChatTurns.id, args.recovery.id))
+      .for("update");
+    const turn = turnRows[0] as GateChatTurnRow | undefined;
+
+    if (
+      !turn ||
+      turn.state !== "pending" ||
+      turn.leaseExpiresAt?.getTime() !==
+        args.recovery.recoveryLeaseExpiresAt.getTime()
+    ) {
+      return false;
+    }
+
+    await tx
+      .update(gateChatTurns)
+      .set({
+        state: "aborted",
+        leaseExpiresAt: null,
+        completedAt: new Date(),
+        errorCode: "LEASE_EXPIRED",
+      })
+      .where(eq(gateChatTurns.id, turn.id));
+
+    return true;
+  });
+}
+
+// Process death clears the in-memory deadline, not the database coordinator.
+// Reconcile owns this durable recovery: claim the expired turn by extending its
+// fence, cancel any still-live supervisor prompt, run L3 restore, and only then
+// release response admission by terminalizing it. A failed cancellation or
+// restore intentionally leaves the turn pending for the next recovery lease.
+export async function recoverExpiredGateChatTurns(args: {
+  db?: Db;
+  sessions: Awaited<ReturnType<GateChatSupervisorApi["listSessions"]>>;
+  api?: Pick<GateChatSupervisorApi, "cancelPrompt">;
+  now?: () => Date;
+}): Promise<number> {
+  const d = args.db ?? getDb();
+  const api = args.api ?? defaultApi;
+  const now = args.now ?? (() => new Date());
+  const observedAt = now();
+  const candidates = (await d
+    .select({
+      id: gateChatTurns.id,
+      runId: gateChatTurns.runId,
+      hitlRequestId: gateChatTurns.hitlRequestId,
+    })
+    .from(gateChatTurns)
+    .where(
+      and(
+        eq(gateChatTurns.state, "pending"),
+        lt(gateChatTurns.leaseExpiresAt, observedAt),
+      ),
+    )
+    .orderBy(asc(gateChatTurns.leaseExpiresAt))
+    .limit(GATE_CHAT_RECOVERY_BATCH_SIZE)) as ExpiredGateChatCandidate[];
+  let recovered = 0;
+
+  for (const candidate of candidates) {
+    let claim: ClaimedGateChatRecovery | null;
+
+    try {
+      claim = await claimExpiredGateChatRecovery({
+        db: d,
+        candidate,
+        // Claim time, not scan time: a bounded batch is processed serially,
+        // so a later turn must receive a full recovery lease of its own.
+        now: now(),
+      });
+    } catch (err) {
+      log.error(
+        {
+          runId: candidate.runId,
+          hitlRequestId: candidate.hitlRequestId,
+          turnId: candidate.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[FIX:gate-chat-recovery] could not claim expired turn; response remains fenced",
+      );
+      continue;
+    }
+
+    if (!claim) continue;
+
+    const liveSession = args.sessions.find(
+      (session) => session.runId === claim.runId && session.status === "live",
+    );
+
+    try {
+      const cancellation = liveSession
+        ? await api.cancelPrompt(liveSession.sessionId)
+        : null;
+      const sensed = await senseAndRestore({
+        worktreePath: claim.worktreePath,
+        baselineRef: claim.baselineRef,
+      });
+      const terminalized = await completeExpiredGateChatRecovery({
+        db: d,
+        recovery: claim,
+      });
+
+      if (!terminalized) {
+        log.warn(
+          {
+            runId: claim.runId,
+            hitlRequestId: claim.hitlRequestId,
+            turnId: claim.id,
+          },
+          "[FIX:gate-chat-recovery] expired turn changed while restoring; fence remains owned elsewhere",
+        );
+        continue;
+      }
+
+      recovered += 1;
+      log.warn(
+        {
+          runId: claim.runId,
+          hitlRequestId: claim.hitlRequestId,
+          turnId: claim.id,
+          sessionId: liveSession?.sessionId ?? null,
+          cancelled: cancellation?.cancelled ?? false,
+          reverted: sensed.reverted,
+        },
+        "[FIX:gate-chat-recovery] expired turn cancelled, restored, and terminalized",
+      );
+    } catch (err) {
+      log.error(
+        {
+          runId: claim.runId,
+          hitlRequestId: claim.hitlRequestId,
+          turnId: claim.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[FIX:gate-chat-recovery] cancellation or restore failed; response remains fenced",
+      );
+    }
+  }
+
+  return recovered;
+}
 
 export interface GateChatMessageView {
   id: string;

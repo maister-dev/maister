@@ -55,10 +55,7 @@ export interface ReviewFeedbackPacket {
 }
 
 export interface ReviewFeedbackPreview {
-  reviewSource: Pick<
-    ReviewSource,
-    "scope" | "baseCommit" | "fingerprint"
-  >;
+  reviewSource: Pick<ReviewSource, "scope" | "baseCommit" | "fingerprint">;
   feedback: ReviewFeedbackPacket;
 }
 
@@ -121,8 +118,12 @@ function deriveReviewResponseInput(
     );
   }
 
-  const responseRecord = asRecord(response, "review response must be a JSON object");
-  const candidate = responseRecord[commentsVar] ?? responseRecord.comments ?? "";
+  const responseRecord = asRecord(
+    response,
+    "review response must be a JSON object",
+  );
+  const candidate =
+    responseRecord[commentsVar] ?? responseRecord.comments ?? "";
 
   if (typeof candidate !== "string") {
     throw new MaisterError(
@@ -206,10 +207,7 @@ async function loadCompletedGateChatMessages(
     .where(
       and(
         eq(gateChatMessages.hitlRequestId, hitlRequestId),
-        or(
-          isNull(gateChatTurns.id),
-          eq(gateChatTurns.state, "completed"),
-        ),
+        or(isNull(gateChatTurns.id), eq(gateChatTurns.state, "completed")),
       ),
     )
     .orderBy(gateChatMessages.seq)) as ComposeChatMessage[];
@@ -282,7 +280,10 @@ async function readCurrentReviewSource(
   const project = projectRows[0];
 
   if (!project) {
-    throw new MaisterError("PRECONDITION", `project not found for run ${runId}`);
+    throw new MaisterError(
+      "PRECONDITION",
+      `project not found for run ${runId}`,
+    );
   }
 
   const baseCommit =
@@ -360,7 +361,10 @@ export function assertReviewFeedbackPresent(input: {
   schema: unknown;
   response: unknown;
 }): void {
-  const reviewResponse = deriveReviewResponseInput(input.schema, input.response);
+  const reviewResponse = deriveReviewResponseInput(
+    input.schema,
+    input.response,
+  );
 
   if (
     reviewResponse.summary.trim().length > 0 ||

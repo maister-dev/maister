@@ -130,13 +130,13 @@ diff.
 
 For legacy/non-review Flow responses, the existing respond two-phase commit,
 idempotency CAS, and pristine `response`/`input-<stepId>.json` payloads stay
-unchanged. Verified review rework adds the ADR-137 preview fingerprints and
+unchanged. Verified review rework adds the ADR-138 preview fingerprints and
 pending-chat fence before the same runner-side compose at rework consumption.
 
 ```mermaid
 sequenceDiagram
     actor U as Reviewer
-    participant W as Respond route (ADR-137 verified review claim)
+    participant W as Respond route (ADR-138 verified review claim)
     participant R as Graph runner
     participant DB as Postgres
 
@@ -400,6 +400,10 @@ sequenceDiagram
 - Renames/copies crossing a materialized `.claude/*` path are excluded when
   either side is non-reviewable. Older anchors that no longer match are returned
   as `outdated`, never as a failing history read.
+- A process restart cannot strand review behind an expired chat lease:
+  reconciliation claims the still-pending coordinator, requests cancellation of
+  a live prompt, restores L3, and only then writes terminal `aborted`. Preview
+  and rework claim continue to reject that row until this sequence succeeds.
 
 ### Edge cases
 

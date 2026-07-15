@@ -288,7 +288,12 @@ describe("runGraph — artifact enforcement (T3.2, engine_min 1.2.0)", () => {
         {
           id: "review",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+          finish: {
+            human: {
+              decisions: ["approve", "rework"],
+              commentsVar: "review_comments",
+            },
+          },
           transitions: { approve: "done", rework: "work" },
           rework: {
             allowedTargets: ["work"],

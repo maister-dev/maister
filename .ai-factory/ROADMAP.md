@@ -604,15 +604,15 @@
   Run-level history remains. See ADR-129 and
   `.ai-factory/specs/feature-postgres-graph-only-cutover.md`.
 
-- [x] **M44. Flow Review Workspace** — ADR-137 unifies the Inbox handoff and
+- [x] **M44. Flow Review Workspace** — ADR-138 unifies the Inbox handoff and
   review run into one authenticated code-review workspace: Flow `scope=review`
   includes the complete base-to-working-tree source, review comments and
   completed gate-chat context compose into verified rework feedback, and the
-  browser confirms opaque source/packet fingerprints at claim. Migration `0100`
+  browser confirms opaque source/packet fingerprints at claim. Migration `0101`
   adds `gate_chat_turns`, a fail-closed durable ACP-turn fence; a lease requests
   cancellation but never permits rework before the owner's L3 restore finishes.
   The confidence field is removed from human review UI while compatible
-  transport/history remains. See ADR-137 and
+  transport/history remains. See ADR-138 and
   `.ai-factory/plans/feature-flow-review-workspace.md`.
 
 ## Completed

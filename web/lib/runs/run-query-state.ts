@@ -1,7 +1,4 @@
-import {
-  RUN_DIFF_SCOPES,
-  type RunDiffScope,
-} from "@/lib/runs/diff-scopes";
+import { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
 
 export { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
 

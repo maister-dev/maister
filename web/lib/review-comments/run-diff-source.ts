@@ -278,6 +278,7 @@ export function summarizeReviewThreads(
 export async function getReviewGateThreadCounts(
   runId: string,
   projectId: string,
+  scope: ReviewCommentScope = "run",
 ): Promise<ReviewThreadCounts> {
   const dbh = db();
   const threads = await listThreads(dbh, runId);
@@ -289,7 +290,7 @@ export async function getReviewGateThreadCounts(
   let prepared: DiffPrepResult | null = null;
 
   try {
-    prepared = await computeRunDiff(dbh, { id: runId, projectId });
+    prepared = await computeReviewDiff(dbh, { id: runId, projectId }, scope);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 

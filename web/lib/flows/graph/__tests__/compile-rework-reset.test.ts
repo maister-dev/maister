@@ -118,7 +118,9 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
+          finish: {
+            human: { decisions: ["approve", "rework"], commentsVar: "c" },
+          },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],
@@ -139,7 +141,9 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
+          finish: {
+            human: { decisions: ["approve", "rework"], commentsVar: "c" },
+          },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],
@@ -168,7 +172,9 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
+          finish: {
+            human: { decisions: ["approve", "rework"], commentsVar: "c" },
+          },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],
@@ -201,7 +207,9 @@ describe("compile-time rework resetTargets verification (ADR-118)", () => {
         {
           id: "human",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"], commentsVar: "c" } },
+          finish: {
+            human: { decisions: ["approve", "rework"], commentsVar: "c" },
+          },
           transitions: { approve: "done", rework: "loop" },
           rework: {
             allowedTargets: ["loop"],

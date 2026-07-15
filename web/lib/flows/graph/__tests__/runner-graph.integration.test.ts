@@ -193,7 +193,12 @@ const reviewFlow = {
     {
       id: "review",
       type: "human",
-      finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+      finish: {
+        human: {
+          decisions: ["approve", "rework"],
+          commentsVar: "review_comments",
+        },
+      },
       transitions: { approve: "done", rework: "work" },
       rework: {
         allowedTargets: ["work"],
@@ -220,7 +225,12 @@ const tightLoopFlow = {
     {
       id: "review",
       type: "human",
-      finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+      finish: {
+        human: {
+          decisions: ["approve", "rework"],
+          commentsVar: "review_comments",
+        },
+      },
       transitions: { approve: "done", rework: "work" },
       rework: {
         allowedTargets: ["work"],
@@ -503,7 +513,9 @@ const noForwardFlow = {
     {
       id: "review",
       type: "human",
-      finish: { human: { decisions: ["redo"], commentsVar: "review_comments" } },
+      finish: {
+        human: { decisions: ["redo"], commentsVar: "review_comments" },
+      },
       transitions: { redo: "work", approve: "done" },
       rework: {
         allowedTargets: ["work"],

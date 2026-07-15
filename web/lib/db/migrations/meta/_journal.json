@@ -687,6 +687,13 @@
       "when": 1784062285289,
       "tag": "0101_gate_chat_turns",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1784102993259,
+      "tag": "0102_perfect_sumo",
+      "breakpoints": true
     }
   ]
 }

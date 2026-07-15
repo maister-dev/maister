@@ -36,9 +36,7 @@ export function isReviewableChangePath(path: string): boolean {
   return !isMaterializedReviewChangePath(path);
 }
 
-export function isReviewableChangeEntry(
-  entry: ReviewableChangeEntry,
-): boolean {
+export function isReviewableChangeEntry(entry: ReviewableChangeEntry): boolean {
   return (
     isReviewableChangePath(entry.path) &&
     (entry.oldPath === undefined || isReviewableChangePath(entry.oldPath))

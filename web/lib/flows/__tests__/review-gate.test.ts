@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isHumanReviewGate } from "@/lib/flows/review-gate";
+import { isFlowReviewGate, isHumanReviewGate } from "@/lib/flows/review-gate";
 
 describe("isHumanReviewGate", () => {
   it("is true for a human gate whose schema declares review", () => {
@@ -40,5 +40,20 @@ describe("isHumanReviewGate", () => {
 
   it("is false for a non-object schema", () => {
     expect(isHumanReviewGate({ kind: "human", schema: null })).toBe(false);
+  });
+
+  it("uses the persisted Flow gate contract without requiring a current manifest", () => {
+    expect(
+      isFlowReviewGate("flow", {
+        kind: "human",
+        schema: { review: true },
+      }),
+    ).toBe(true);
+    expect(
+      isFlowReviewGate("scratch", {
+        kind: "human",
+        schema: { review: true },
+      }),
+    ).toBe(false);
   });
 });

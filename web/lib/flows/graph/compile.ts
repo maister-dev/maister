@@ -318,7 +318,9 @@ function templateReadsTopLevelVar(template: string, variable: string): boolean {
   return false;
 }
 
-function rendererTemplate(node: NodeDef): { field: string; value: string } | null {
+function rendererTemplate(
+  node: NodeDef,
+): { field: string; value: string } | null {
   switch (node.type) {
     case "ai_coding":
     case "judge":
@@ -347,7 +349,8 @@ function verifyHumanReviewFeedbackConsumers(
 
   if (reworkDecisionTargets.length === 0) return;
 
-  const commentsVar = node.rework.commentsVar ?? node.finish?.human?.commentsVar;
+  const commentsVar =
+    node.rework.commentsVar ?? node.finish?.human?.commentsVar;
 
   if (
     typeof commentsVar !== "string" ||

@@ -92,7 +92,7 @@ import {
 } from "@/lib/project-path-display";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
-import { isHumanReviewGate } from "@/lib/flows/review-gate";
+import { isFlowReviewGate } from "@/lib/flows/review-gate";
 import {
   getReviewGateThreadCounts,
   type ReviewThreadCounts,
@@ -632,8 +632,7 @@ export default async function RunDetailLayout({
   // review context. Computed ONLY when the pending gate is a human review
   // gate (one threads query + at most one diff prep, per the D5 perf rule);
   // every other run pays nothing.
-  const hasReviewGate =
-    flowGraphData !== null && isHumanReviewGate(detail.pendingHitl);
+  const hasReviewGate = isFlowReviewGate(detail.runKind, detail.pendingHitl);
   let reviewGateCounts: ReviewThreadCounts | null = null;
   let gateDiffReview: RunDiffReviewContext | undefined;
   const flowResultDegradations: FlowResultDegradationCode[] = [];
@@ -664,6 +663,7 @@ export default async function RunDetailLayout({
     reviewGateCounts = await getReviewGateThreadCounts(
       detail.runId,
       detail.projectId,
+      "review",
     );
 
     gateDiffReview = {

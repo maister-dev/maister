@@ -367,6 +367,24 @@ describe("getReviewGateThreadCounts", () => {
     expect(resolveBaseRef).not.toHaveBeenCalled();
   });
 
+  it("uses the review source for Flow review-gate placement counts", async () => {
+    vi.mocked(listThreads).mockResolvedValue([
+      thread(
+        rootRow({
+          filePath: "docs/new.md",
+          line: 1,
+          lineContent: "# Draft",
+        }),
+      ),
+    ]);
+
+    const counts = await getReviewGateThreadCounts("run-1", "p-1", "review");
+
+    expect(counts).toEqual({ openCount: 1, outdatedCount: 0 });
+    expect(diffWorkingTree).toHaveBeenCalledWith("/tmp/wt", "abc123");
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
+
   it("degrades every open root to outdated when the diff source fails", async () => {
     vi.mocked(listThreads).mockResolvedValue([
       thread(rootRow()),

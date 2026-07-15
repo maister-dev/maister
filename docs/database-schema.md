@@ -2335,8 +2335,8 @@ A chat turn NEVER touches `runs.status` (no `→Running`) and NEVER writes
 ## `gate_chat_turns` (Implemented — ADR-138, migration `0101`)
 
 The durable coordinator for one in-flight ACP gate-chat prompt. It supplements
-the append-only transcript; it is not a feedback-packet store. This migration
-is the sole schema change in the Flow Review Workspace delivery.
+the append-only transcript; it is not a feedback-packet store. Migration `0101`
+creates it and migration `0102` enforces its complete terminal outcomes.
 
 ```ts
 {
@@ -2357,18 +2357,22 @@ is the sole schema change in the Flow Review Workspace delivery.
 the user transcript row plus `pending` coordinator row. The ACP prompt happens
 outside that transaction. A second transaction writes the agent message and
 marks the same turn `completed`, or marks it `failed`/`aborted`. On lease
-expiry the owning handler asks the supervisor to cancel, waits for the prompt
-to settle, runs L3 restore, and only then marks the turn `aborted`. A lease
-never terminalizes a coordinator by itself: a pending row remains a fail-closed
-fence until its owner has settled L3. A late reply for a terminal row is
-dropped. Rework claim and packet composition include only `completed` turns.
+expiry a reconcile worker first claims the still-pending row, asks the
+supervisor to cancel, waits for the prompt to settle, runs L3 restore, and only
+then marks the turn `aborted`. A lease never terminalizes a coordinator by
+itself: a pending row remains a fail-closed fence until its owner has settled
+L3. A late reply for a terminal row is dropped. Rework claim and packet
+composition include only `completed` turns.
 
 **Indexes and integrity.** The generated migration adds a lookup index on
 `(hitl_request_id, state)` and a partial unique index allowing at most one
 `pending` row for each HITL request. The `state` and pending-lease checks make a
 pending row carry a lease and no terminal timestamp/reason; terminal rows clear
-the lease. The response claim uses the lookup to reject every pending row with
-`409 PRECONDITION`; it does not hold a DB lock while calling ACP.
+the lease. Migration `0102` also requires `completed` to reference an agent
+message and terminal timestamp without an error, while `failed`/`aborted`
+require timestamp plus error and no agent message. The response claim uses the
+lookup to reject every pending row with `409 PRECONDITION`; it does not hold a
+DB lock while calling ACP.
 
 ## `review_comments`
 

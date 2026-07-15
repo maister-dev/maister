@@ -17,3 +17,13 @@ export function isHumanReviewGate(
     (schema as { review?: unknown }).review === true
   );
 }
+
+// The persisted gate schema is the delivery contract. A missing or malformed
+// current manifest must not replace the authenticated review workspace with a
+// blind generic response form.
+export function isFlowReviewGate(
+  runKind: string,
+  pendingHitl: Pick<RunPendingHitl, "kind" | "schema"> | null,
+): boolean {
+  return runKind === "flow" && isHumanReviewGate(pendingHitl);
+}

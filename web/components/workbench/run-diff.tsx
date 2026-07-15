@@ -538,11 +538,11 @@ export default function RunDiff({
       ? (scopeSwitcher?.run ?? s)
       : s === "review"
         ? (scopeSwitcher?.review ?? s)
-      : s === "since-last-review"
-        ? (scopeSwitcher?.sinceLastReview ?? s)
-        : s === "last-node"
-          ? (scopeSwitcher?.lastNode ?? s)
-          : (scopeSwitcher?.uncommitted ?? s);
+        : s === "since-last-review"
+          ? (scopeSwitcher?.sinceLastReview ?? s)
+          : s === "last-node"
+            ? (scopeSwitcher?.lastNode ?? s)
+            : (scopeSwitcher?.uncommitted ?? s);
 
   return (
     <div data-testid="run-diff">

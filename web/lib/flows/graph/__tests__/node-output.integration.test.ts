@@ -493,7 +493,12 @@ describe("runGraph — M26 structured node output (P1)", () => {
         {
           id: "review",
           type: "human",
-          finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+          finish: {
+            human: {
+              decisions: ["approve", "rework"],
+              commentsVar: "review_comments",
+            },
+          },
           transitions: { approve: "done", rework: "work" },
           rework: {
             allowedTargets: ["work"],

@@ -39,6 +39,10 @@ import { buildContext } from "../context";
 import { hookEnvDefaults, resolveHooksConfig } from "../hooks-config";
 import { runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
+import {
+  parsePlanReviewContract,
+  type PlanReviewV1,
+} from "../plan-review-contract";
 
 import {
   asError,
@@ -103,11 +107,6 @@ import {
   planReviewStagingPaths,
   type PlanReviewStagingPaths,
 } from "./plan-review-artifact";
-import { isReviewSchema } from "@/lib/flows/hitl-validate";
-import {
-  parsePlanReviewContract,
-  type PlanReviewV1,
-} from "../plan-review-contract";
 import { createPlanReviewDecisionRequests } from "./plan-review-decisions";
 import { recordDefaultArtifacts } from "./default-artifacts";
 import { assertEvidenceReady } from "./evidence-readiness";
@@ -118,6 +117,7 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import {
   clearWorktreeProvenanceNode,
   hasManagedWorktreeProvenance,
@@ -309,6 +309,7 @@ export function planReviewCaptureTargetForProducer(
   producerNodeId: string,
 ): PlanReviewCaptureTarget | undefined {
   const producerNode = graph.nodes.get(producerNodeId);
+
   if (!producerNode) {
     return undefined;
   }
@@ -1848,6 +1849,7 @@ async function findLatestRespondedHitl(
     )
     .orderBy(desc(hitlRequests.createdAt))
     .limit(1)) as RespondedHitl[];
+
   return rows[0] ?? null;
 }
 

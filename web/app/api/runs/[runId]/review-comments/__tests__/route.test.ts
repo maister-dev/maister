@@ -239,7 +239,11 @@ async function invokeGet(runId: string, query = "") {
   return GET(req, { params: Promise.resolve({ runId }) });
 }
 
-async function invokePost(runId: string, body: unknown, query = "scope=review") {
+async function invokePost(
+  runId: string,
+  body: unknown,
+  query = "scope=review",
+) {
   const { POST } = await import("../route");
   const req = new NextRequest(
     new Request(reviewCommentsUrl(runId, query), {
@@ -575,7 +579,11 @@ describe("POST /api/runs/[runId]/review-comments — root comments", () => {
       "project-1",
       "answerHitl",
     );
-    expect(diffRunWorkspace).toHaveBeenCalledTimes(1);
+    expect(diffWorkingTree).toHaveBeenCalledWith(
+      "/repos/demo/.maister/wt-1",
+      "feedbeef",
+    );
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
     expect(createRoot).toHaveBeenCalledTimes(1);
 
     const [, actor, calledRunId, input] = vi.mocked(createRoot).mock.calls[0];
@@ -720,9 +728,10 @@ describe("POST /api/runs/[runId]/review-comments — root comments", () => {
 
   it("409 PRECONDITION when the diff is truncated — anchors cannot be validated", async () => {
     seedRun();
-    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
       text: FIXTURE_DIFF,
       truncated: true,
+      nameStatus: [],
     });
 
     const res = await invokePost(RUN_ID, rootBody);

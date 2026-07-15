@@ -53,7 +53,9 @@ function baseGraphManifest(): GraphManifest {
       {
         id: "implement",
         type: "ai_coding",
-        action: { prompt: "/aif-implement {{ task.prompt }}\n\n{{ review_comments }}" },
+        action: {
+          prompt: "/aif-implement {{ task.prompt }}\n\n{{ review_comments }}",
+        },
         transitions: { success: "checks" },
       },
       {
@@ -65,7 +67,12 @@ function baseGraphManifest(): GraphManifest {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+        finish: {
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "review_comments",
+          },
+        },
         transitions: { approve: "done", rework: "implement" },
         rework: {
           allowedTargets: ["implement"],

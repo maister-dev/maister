@@ -136,7 +136,12 @@ function reworkManifest(
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+        finish: {
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "review_comments",
+          },
+        },
         transitions: { approve: "done", rework: "implement" },
         rework: {
           allowedTargets: ["implement"],

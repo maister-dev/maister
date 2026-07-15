@@ -918,6 +918,28 @@ export async function runReconcileSweep(
       deleteSession: stopSession,
     });
 
+    try {
+      const { recoverExpiredGateChatTurns } = await import(
+        "@/lib/services/gate-chat"
+      );
+      const recovered = await recoverExpiredGateChatTurns({
+        db,
+        sessions: records,
+      });
+
+      if (recovered > 0) {
+        log.warn(
+          { recovered },
+          "[FIX:gate-chat-recovery] reconcile restored expired gate-chat turns",
+        );
+      }
+    } catch (err) {
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "[FIX:gate-chat-recovery] reconcile could not recover expired turns; continuing sweep",
+      );
+    }
+
     cutoverSessionsStopped = await stopGraphOnlyCutoverSessions({
       db,
       records,

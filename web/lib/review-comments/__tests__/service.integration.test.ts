@@ -27,6 +27,11 @@ let db: NodePgDatabase<typeof schema>;
 // Mock those boundaries exactly like hitl.integration.test.ts does.
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/supervisor-client", () => ({
+  listSessions: vi.fn(async () => []),
+  cancelPrompt: vi.fn(async () => ({ cancelled: false })),
+  sendPrompt: vi.fn(),
+  createSession: vi.fn(),
+  streamSession: vi.fn(),
   deliverPermission: vi.fn(async () => ({ ok: true })),
   cancelPermission: vi.fn(async () => ({ ok: true })),
 }));

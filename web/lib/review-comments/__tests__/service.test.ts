@@ -10,6 +10,11 @@ import {
 // Mock those boundaries so the pure comparators are testable in the unit env.
 vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
 vi.mock("@/lib/supervisor-client", () => ({
+  listSessions: vi.fn(),
+  cancelPrompt: vi.fn(),
+  sendPrompt: vi.fn(),
+  createSession: vi.fn(),
+  streamSession: vi.fn(),
   deliverPermission: vi.fn(),
   cancelPermission: vi.fn(),
 }));

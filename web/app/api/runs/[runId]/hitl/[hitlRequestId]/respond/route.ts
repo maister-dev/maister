@@ -14,28 +14,30 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const bodySchema = z.object({
-  optionId: z.string().min(1).optional(),
-  response: z.unknown().optional(),
-  // M17 ADR-054: responder self-reported confidence in [0,1].
-  // Validation happens in the service layer (resolveConfidence → 422 NEEDS_INPUT).
-  confidence: z.unknown().optional(),
-  // Cost-budget governance (ADR-101): raised token ceiling for a budget_breach
-  // "raise" decision. Transport-only — re-validated fail-closed (positive int >
-  // breached limit) in handleBudgetBreachResponse. Omitting it here lets
-  // z.object() strip the client's field, so the service sees undefined and every
-  // Raise fails PRECONDITION. (budget_breach is human-actor-only, so the ext
-  // route never reaches this branch and needs no equivalent field.)
-  raiseTo: z.number().int().positive().optional(),
-  // ADR-125 budget discard/drop compatibility alias. The service canonicalizes
-  // this with response.dropWorkspace after deriving the HITL kind from DB state.
-  dropWorkspace: z.boolean().optional(),
-  // ADR-138: opaque values from the side-effect-free review preview. The
-  // service accepts them only for a first review-rework claim and rejects any
-  // other review-rework transport fields after it knows the stored gate kind.
-  reviewSourceFingerprint: z.string().optional(),
-  reviewFeedbackFingerprint: z.string().optional(),
-}).passthrough();
+const bodySchema = z
+  .object({
+    optionId: z.string().min(1).optional(),
+    response: z.unknown().optional(),
+    // M17 ADR-054: responder self-reported confidence in [0,1].
+    // Validation happens in the service layer (resolveConfidence → 422 NEEDS_INPUT).
+    confidence: z.unknown().optional(),
+    // Cost-budget governance (ADR-101): raised token ceiling for a budget_breach
+    // "raise" decision. Transport-only — re-validated fail-closed (positive int >
+    // breached limit) in handleBudgetBreachResponse. Omitting it here lets
+    // z.object() strip the client's field, so the service sees undefined and every
+    // Raise fails PRECONDITION. (budget_breach is human-actor-only, so the ext
+    // route never reaches this branch and needs no equivalent field.)
+    raiseTo: z.number().int().positive().optional(),
+    // ADR-125 budget discard/drop compatibility alias. The service canonicalizes
+    // this with response.dropWorkspace after deriving the HITL kind from DB state.
+    dropWorkspace: z.boolean().optional(),
+    // ADR-138: opaque values from the side-effect-free review preview. The
+    // service accepts them only for a first review-rework claim and rejects any
+    // other review-rework transport fields after it knows the stored gate kind.
+    reviewSourceFingerprint: z.string().optional(),
+    reviewFeedbackFingerprint: z.string().optional(),
+  })
+  .passthrough();
 
 function errorResponse(
   err: unknown,

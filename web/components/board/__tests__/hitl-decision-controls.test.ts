@@ -340,7 +340,6 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("Allow this request");
       expect(html).toContain("Deny");
     });
-
   });
 
   describe("form/human branch (structured form)", () => {
@@ -466,7 +465,6 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain('value="yes"');
     });
 
-
     it("renders the submit button for an options form", () => {
       const html = render({ kind: "form", schema: intakeSchema });
 
@@ -557,7 +555,6 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("status");
       expect(html).toContain("approved");
     });
-
   });
 
   describe("disabled state", () => {
@@ -1186,7 +1183,6 @@ describe("HitlDecisionControls — consensus resolution card (M41)", () => {
     expect(html).toContain("Draft 1");
     expect(html).not.toContain("runner-secret-id");
   });
-
 });
 
 describe("consensusHitlFromSchema — pure schema narrowing", () => {

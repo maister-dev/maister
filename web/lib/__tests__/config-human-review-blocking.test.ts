@@ -60,7 +60,10 @@ function baseGraphManifest(): GraphManifest {
         id: "review",
         type: "human",
         finish: {
-          human: { decisions: ["approve", "rework"], commentsVar: "review_comments" },
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "review_comments",
+          },
         },
         transitions: { approve: "done", rework: "implement" },
         rework: {

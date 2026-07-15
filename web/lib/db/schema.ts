@@ -3345,8 +3345,9 @@ export const gateChatTurns = pgTable(
       t.hitlRequestId,
       t.state,
     ),
-    // PostgreSQL is the final concurrency backstop. The service also locks the
-    // HITL row so it can reap an expired row before accepting the next turn.
+    // PostgreSQL is the final concurrency backstop. Reconciliation owns an
+    // expired row until cancellation and L3 restore finish, so expiry alone
+    // never reopens chat admission or response claim.
     uniqPendingHitl: uniqueIndex("gate_chat_turns_pending_hitl_uq")
       .on(t.hitlRequestId)
       .where(sql`${t.state} = 'pending'`),
@@ -3357,6 +3358,10 @@ export const gateChatTurns = pgTable(
     pendingLeaseCheck: check(
       "gate_chat_turns_pending_lease_check",
       sql`(${t.state} = 'pending' and ${t.leaseExpiresAt} is not null and ${t.completedAt} is null and ${t.errorCode} is null) or (${t.state} <> 'pending' and ${t.leaseExpiresAt} is null)`,
+    ),
+    terminalStateCheck: check(
+      "gate_chat_turns_terminal_state_check",
+      sql`(${t.state} = 'pending' and ${t.agentMessageId} is null) or (${t.state} = 'completed' and ${t.agentMessageId} is not null and ${t.completedAt} is not null and ${t.errorCode} is null) or (${t.state} in ('failed', 'aborted') and ${t.agentMessageId} is null and ${t.completedAt} is not null and ${t.errorCode} is not null)`,
     ),
   }),
 );

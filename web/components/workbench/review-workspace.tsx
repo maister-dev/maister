@@ -34,9 +34,9 @@ export function ReviewWorkspaceUnavailable({
 
   return (
     <p
+      aria-live="polite"
       className="rounded-[14px] border border-dashed border-line bg-ivory/50 p-4 font-mono text-[12px] text-mute"
       data-testid="review-workspace-unavailable"
-      aria-live="polite"
       role="status"
     >
       {message}

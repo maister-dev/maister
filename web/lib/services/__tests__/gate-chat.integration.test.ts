@@ -37,10 +37,12 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
+import { captureCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
 import { resolveDirtyWorktree } from "@/lib/runs/dirty-resolution";
 import {
   GATE_CHAT_TURN_LEASE_MS,
   GATE_CHAT_READONLY_PREAMBLE,
+  recoverExpiredGateChatTurns,
   requireNoLiveGateChatTurn,
   sendGateChatTurn,
 } from "@/lib/services/gate-chat";
@@ -658,6 +660,117 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
 
     expect(status).not.toContain("wip.txt");
   }, 60_000);
+});
+
+describe("recoverExpiredGateChatTurns — process-restart fence", () => {
+  it("cancels a persisted expired prompt, restores L3, then releases the response fence", async () => {
+    const { runId, hitlId, worktree } = await seedChatPause();
+
+    await captureCheckpoint({
+      worktreePath: worktree,
+      namespace: "chat-checkpoints",
+      runId,
+      id: hitlId,
+    });
+    await writeFile(join(worktree, "rogue-after-crash.txt"), "rogue\n");
+
+    const userRows = await db
+      .insert(schema.gateChatMessages)
+      .values({
+        runId,
+        hitlRequestId: hitlId,
+        nodeId: "review",
+        gateAttempt: 1,
+        role: "user",
+        authorUserId: null,
+        authorLabel: "Reviewer",
+        body: "Why did the process stop?",
+        acpSessionId: "acp-1",
+        seq: 1,
+      })
+      .returning({ id: schema.gateChatMessages.id });
+    const user = userRows[0];
+
+    if (!user) throw new Error("test user message was not written");
+
+    await db.insert(schema.gateChatTurns).values({
+      runId,
+      hitlRequestId: hitlId,
+      userMessageId: user.id,
+      state: "pending",
+      leaseExpiresAt: new Date(Date.now() - 1_000),
+    });
+
+    const cancelPrompt = vi.fn(async () => ({ cancelled: true }));
+    const recovered = await recoverExpiredGateChatTurns({
+      db,
+      api: { cancelPrompt },
+      sessions: [
+        {
+          sessionId: "sup-live",
+          runId,
+          projectSlug: "x",
+          stepId: "review",
+          status: "live",
+          pid: 1,
+          startedAt: new Date().toISOString(),
+          logPath: "/tmp/x.log",
+          monotonicId: 1,
+          acpSessionId: "acp-1",
+        },
+      ],
+    });
+
+    expect(recovered).toBe(1);
+    expect(cancelPrompt).toHaveBeenCalledWith("sup-live");
+    await expect(
+      readFile(join(worktree, "rogue-after-crash.txt")),
+    ).rejects.toThrow();
+    expect(await chatTurnRows(hitlId)).toEqual([
+      expect.objectContaining({
+        state: "aborted",
+        lease_expires_at: null,
+        agent_message_id: null,
+        error_code: "LEASE_EXPIRED",
+      }),
+    ]);
+    await expect(
+      db.transaction((tx: NodePgDatabase) =>
+        requireNoLiveGateChatTurn(tx, hitlId),
+      ),
+    ).resolves.toBeUndefined();
+  }, 60_000);
+
+  it("rejects a terminal coordinator that cannot identify a complete outcome", async () => {
+    const { runId, hitlId } = await seedChatPause();
+    const userRows = await db
+      .insert(schema.gateChatMessages)
+      .values({
+        runId,
+        hitlRequestId: hitlId,
+        nodeId: "review",
+        gateAttempt: 1,
+        role: "user",
+        authorUserId: null,
+        authorLabel: "Reviewer",
+        body: "Question with an invalid terminal outcome",
+        acpSessionId: "acp-1",
+        seq: 1,
+      })
+      .returning({ id: schema.gateChatMessages.id });
+    const user = userRows[0];
+
+    if (!user) throw new Error("test user message was not written");
+
+    await expect(
+      db.insert(schema.gateChatTurns).values({
+        runId,
+        hitlRequestId: hitlId,
+        userMessageId: user.id,
+        state: "completed",
+      }),
+    ).rejects.toThrow();
+  });
 });
 
 describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {

@@ -189,7 +189,12 @@ function onExhaustionFlow() {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+        finish: {
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "review_comments",
+          },
+        },
         transitions: {
           approve: "done",
           rework: "work",
@@ -230,7 +235,12 @@ function noOnExhaustionFlow() {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+        finish: {
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "review_comments",
+          },
+        },
         transitions: { approve: "done", rework: "work" },
         rework: {
           allowedTargets: ["work"],
@@ -328,7 +338,12 @@ function resetLoopFlow(withReset: boolean) {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"], commentsVar: "human_notes" } },
+        finish: {
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "human_notes",
+          },
+        },
         transitions: {
           approve: "done",
           rework: "implement",
@@ -481,7 +496,12 @@ function onExhaustionTerminalFlow() {
       {
         id: "review",
         type: "human",
-        finish: { human: { decisions: ["approve", "rework"], commentsVar: "review_comments" } },
+        finish: {
+          human: {
+            decisions: ["approve", "rework"],
+            commentsVar: "review_comments",
+          },
+        },
         transitions: { approve: "done", rework: "work", exhausted: "done" },
         rework: {
           allowedTargets: ["work"],
