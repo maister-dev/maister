@@ -365,6 +365,32 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["childRunId", "prompt"],
     },
   },
+  run_sync: {
+    description:
+      "Sync a Review run's branch onto its promotion target (rebase by default, or merge), force-with-lease pushing when the branch is published. On conflict with agent=true (the default) an AI resolver session is launched; with agent=false the conflicted state is aborted. Returns { runId, attemptId, outcome, behind, pushed } where outcome is noop | synced | conflict | agent_launched.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+        strategy: { type: "string", enum: ["rebase", "merge"] },
+        agent: { type: "boolean" },
+        push: { type: "boolean" },
+        runnerId: { type: "string" },
+      },
+      required: ["runId"],
+    },
+  },
+  run_reopen: {
+    description:
+      "Reopen a Done run whose PR is still open or has conflicts — flips it back to Review, re-arming review and auto-promotion exclusion and reviving a garbage-collected worktree if needed. Re-promotion in pull_request mode reuses the same provider PR. Returns { runId, status }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+      },
+      required: ["runId"],
+    },
+  },
   readiness_get: {
     description: "Get the readiness status of a run",
     inputSchema: {
@@ -940,6 +966,32 @@ function resolveRouting(
         method: "POST",
         path: `/api/v1/ext/runs/rework`,
         body: { childRunId, prompt },
+      };
+    }
+    case "run_sync": {
+      const { runId, strategy, agent, push, runnerId } = args as {
+        runId: string;
+        strategy?: string;
+        agent?: boolean;
+        push?: boolean;
+        runnerId?: string;
+      };
+      const body: Record<string, unknown> = { runId };
+
+      if (strategy !== undefined) body.strategy = strategy;
+      if (agent !== undefined) body.agent = agent;
+      if (push !== undefined) body.push = push;
+      if (runnerId !== undefined) body.runnerId = runnerId;
+
+      return { method: "POST", path: `/api/v1/ext/runs/sync`, body };
+    }
+    case "run_reopen": {
+      const { runId } = args as { runId: string };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/reopen`,
+        body: { runId },
       };
     }
     case "readiness_get": {

@@ -95,6 +95,9 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "runners:read": "readBoard",
   "runs:launch": "launchRun",
   "runs:read": "readBoard",
+  // ADR-138: sync + reopen are promote-class — a user token acting cross-project
+  // must clear the SAME bar as internal promote, never the `readBoard` fallback.
+  "runs:sync": "promoteRun",
   "readiness:read": "readBoard",
   "gates:report": "launchRun",
   "hitl:read": "readBoard",

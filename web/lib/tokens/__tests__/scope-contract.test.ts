@@ -32,4 +32,13 @@ describe("external token scope contract", () => {
     expect(AGENT_TOKEN_SCOPES).toContain("hitl:request");
     expect(PROJECT_ACTION_BY_SCOPE["hitl:request"]).toBe("answerHitl");
   });
+
+  it("maps runs:sync to promoteRun so ext == internal authz (never readBoard)", () => {
+    expect(TOKEN_SCOPES).toContain("runs:sync");
+    // ADR-138 blocker B1: runs:sync must NOT fall through to the readBoard
+    // default — a user token acting cross-project clears the promote bar.
+    expect(PROJECT_ACTION_BY_SCOPE["runs:sync"]).toBe("promoteRun");
+    // NOT an ephemeral-agent capability — sync/reopen are human/project-token ops.
+    expect(AGENT_TOKEN_SCOPES).not.toContain("runs:sync");
+  });
 });

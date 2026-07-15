@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 33 external tools (incl. task-bound human ask + personal HITL inbox + discovery + memory + experiments)", () => {
+  it("registers all 35 external tools (incl. task-bound human ask + personal HITL inbox + discovery + memory + experiments + branch sync/reopen)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "ask_human",
@@ -80,7 +80,9 @@ describe("TOOL_SPECS registry", () => {
         "run_message",
         "run_plan",
         "run_promote",
+        "run_reopen",
         "run_rework",
+        "run_sync",
         "runner_list",
         "task_create",
         "task_get",

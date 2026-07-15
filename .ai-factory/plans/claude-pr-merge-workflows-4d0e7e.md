@@ -968,7 +968,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
   **Logging:** INFO reopen with runId/pr number/revival flag; WARN refusals.
 
-- [ ] **Task 13: Resolver-backed `ai_rebase_merge` promotion (decision 19).**
+- [x] **Task 13: Resolver-backed `ai_rebase_merge` promotion (decision 19).**
 
   In `promote.ts`, replace the `ai_rebase_merge` no-op (currently collapses to
   `rebase_merge`) with the `autoFinalize`-flagged form (decision 19) reusing the
@@ -998,7 +998,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
 ### Phase 6: ext API + MCP
 
-- [ ] **Task 14: Ext routes + scope.**
+- [x] **Task 14: Ext routes + scope.**
 
   `runs:sync` in `web/types/token-scopes.ts` (NOT in `AGENT_TOKEN_SCOPES` there,
   NOT in `ORCHESTRATOR_TOKEN_SCOPES` at `web/lib/agents/tokens.ts:35`) + token
@@ -1018,7 +1018,7 @@ the plan confirms the include glob matches (skill-context runnability rule).
 
   **Logging:** standard ext audit rows.
 
-- [ ] **Task 15: MCP facade tools.**
+- [x] **Task 15: MCP facade tools.**
 
   `run_sync` + `run_reopen` — 4-way coupled: `TOOL_SPECS` + `resolveRouting`
   cases (`mcp/src/tools.ts`, numeric-coercion friendliness via

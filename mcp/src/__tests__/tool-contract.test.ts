@@ -113,6 +113,8 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   run_message: { method: "post", path: "/api/v1/ext/runs/message" },
   run_promote: { method: "post", path: "/api/v1/ext/runs/promote" },
   run_rework: { method: "post", path: "/api/v1/ext/runs/rework" },
+  run_sync: { method: "post", path: "/api/v1/ext/runs/sync" },
+  run_reopen: { method: "post", path: "/api/v1/ext/runs/reopen" },
   readiness_get: {
     method: "get",
     path: "/api/v1/ext/runs/{runId}/readiness",

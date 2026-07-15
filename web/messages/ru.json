@@ -2765,6 +2765,7 @@
         "runsCollect": "Сбор дочерних прогонов",
         "runsCancel": "Отмена дочерних прогонов",
         "runsPromote": "Промоут дочерних прогонов",
+        "runsSync": "Синхронизация и переоткрытие прогонов",
         "experimentsRead": "Чтение экспериментов",
         "experimentsAdvise": "Рекомендации по экспериментам"
       }
@@ -3270,6 +3271,7 @@
     "scopeRunsCollect": "Сбор дочерних запусков",
     "scopeRunsCancel": "Отмена дочерних запусков",
     "scopeRunsPromote": "Продвижение дочерних запусков",
+    "scopeRunsSync": "Синхронизация и переоткрытие прогонов",
     "scopeMemoryRead": "Чтение памяти проекта",
     "scopeMemoryWrite": "Запись в память проекта",
     "scopeExperimentsRead": "Чтение экспериментов",

@@ -105,6 +105,7 @@ const labels: TokenLabels = {
   scopeRunsCollect: "Collect child runs",
   scopeRunsCancel: "Cancel child runs",
   scopeRunsPromote: "Promote child runs",
+  scopeRunsSync: "Sync & reopen runs",
   scopeMemoryRead: "Read project memory",
   scopeMemoryWrite: "Write project memory",
   scopeExperimentsRead: "Read experiments",

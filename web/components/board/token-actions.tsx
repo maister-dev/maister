@@ -298,6 +298,8 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeRunsCancel;
     case "runs:promote":
       return labels.scopeRunsPromote;
+    case "runs:sync":
+      return labels.scopeRunsSync;
     case "memory:read":
       return labels.scopeMemoryRead;
     case "memory:write":
