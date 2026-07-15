@@ -10,7 +10,12 @@ import { ProjectTabs } from "@/components/board/project-tabs";
 describe("ProjectTabs", () => {
   it("includes Project Brain as a first-class project tab", async () => {
     const html = renderToStaticMarkup(
-      await ProjectTabs({ slug: "demo", active: "brain", boardCount: 7 }),
+      await ProjectTabs({
+        slug: "demo",
+        active: "brain",
+        boardCount: 7,
+        showBrain: true,
+      }),
     );
 
     expect(html).toContain("nav.brain");
@@ -19,7 +24,12 @@ describe("ProjectTabs", () => {
 
   it("renders a nested experiments tab with active state", async () => {
     const html = renderToStaticMarkup(
-      await ProjectTabs({ slug: "proj", active: "experiments", boardCount: 7 }),
+      await ProjectTabs({
+        slug: "proj",
+        active: "experiments",
+        boardCount: 7,
+        showBrain: true,
+      }),
     );
 
     expect(html).toContain("nav.experiments");
@@ -30,9 +40,28 @@ describe("ProjectTabs", () => {
 
   it("does not render the retired pull-request tab", async () => {
     const html = renderToStaticMarkup(
-      await ProjectTabs({ slug: "proj", active: "board", boardCount: 7 }),
+      await ProjectTabs({
+        slug: "proj",
+        active: "board",
+        boardCount: 7,
+        showBrain: true,
+      }),
     );
 
     expect(html).not.toContain("nav.prs");
+  });
+
+  it("hides Project Brain when indexing is unavailable", async () => {
+    const html = renderToStaticMarkup(
+      await ProjectTabs({
+        slug: "demo",
+        active: "board",
+        boardCount: 7,
+        showBrain: false,
+      }),
+    );
+
+    expect(html).not.toContain("nav.brain");
+    expect(html).not.toContain("/projects/demo?tab=brain");
   });
 });

@@ -24,13 +24,14 @@ embedding and distill settings; otherwise the route refuses `CONFIG`.
 
 ## Navigation
 
-Entry points: project settings tab, Project Brain empty/disabled state. Exits:
-Project Brain page, source list, platform Brain settings for global admins.
+Entry point: project settings tab. When enablement and the indexing prerequisites
+are ready, the Brain tab becomes available. Exits: the available Project Brain
+page, source list, platform Brain settings for global admins.
 
 ```mermaid
 flowchart TD
     Settings["Project settings"] --> BrainBlock["Brain block"]
-    BrainBlock --> BrainPage["Project Brain"]
+    BrainBlock --> BrainPage["Project Brain when indexing is ready"]
     BrainBlock --> Platform["Admin Brain settings"]
 ```
 

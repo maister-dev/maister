@@ -26,10 +26,16 @@ Brain improves the system without becoming a second authority.
 
 ## Navigation
 
-Entry points: project board Brain tab/link, project settings Brain block, proposal
-notifications. Exits: existing project file viewer for canonical pointers,
-Project Settings Brain, authored draft review, board task created from a docs
-projection.
+The Brain tab is visible only when the project has Brain enabled, the instance
+has the Brain migration lineage, and the platform embedding base URL, model,
+and dimensions are configured. When any prerequisite is absent, the tab is
+omitted and a direct `?tab=brain` URL falls back to the project board.
+
+Entry points: the available project-board Brain tab, project settings Brain
+block after enablement, proposal notifications. Exits: existing project file
+viewer for canonical pointers, Project Settings Brain, authored draft review,
+board task created from a docs projection. Project and platform settings remain
+the configuration path before the tab becomes available.
 
 ```mermaid
 flowchart TD
@@ -46,7 +52,9 @@ The page uses the existing app shell and project chrome. Primary regions:
 
 - Memory search: compact search input. Until the user enters a query, the
   region shows an instruction empty-state instead of recent/default recall
-  results. Query results show tier badges (`owned` / `indexed`), confidence,
+  results. Submission uses client-side URL navigation, so results update without
+  a document reload or scroll reset; the normal GET form remains the no-JavaScript
+  fallback. Query results show tier badges (`owned` / `indexed`), confidence,
   preview, and canonical pointer link.
 - Index status: compact inventory cards for indexed file count, chunk count,
   source enablement, failed sources, queued/running jobs, and latest successful
@@ -77,8 +85,9 @@ viewer and therefore reuse its member gate and `readRepoFiles` checks.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Loading
-    Loading --> Disabled: Brain off or schema PRECONDITION
+    [*] --> Availability
+    Availability --> Board: Brain off, schema missing, or embeddings unconfigured
+    Availability --> Loading: tab available and selected
     Loading --> Empty: enabled but no memories/sources/proposals
     Loading --> Ready
     Ready --> SourceError: source has last_error

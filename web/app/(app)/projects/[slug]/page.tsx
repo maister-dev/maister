@@ -36,6 +36,7 @@ import {
   requireProjectAction,
 } from "@/lib/authz";
 import { isBrainSchemaApplied } from "@/lib/brain/guard";
+import { isProjectBrainIndexingAvailable } from "@/lib/brain/availability";
 import {
   loadProjectBrainPanelData,
   type BrainUiDb,
@@ -139,7 +140,7 @@ export default async function ProjectBoardPage({
     audit_page: rawAuditPage,
     brain_query: rawBrainQuery,
   } = await searchParams;
-  const tab = parseTab(rawTab);
+  const requestedTab = parseTab(rawTab);
   const one = (v: string | string[] | undefined): string | undefined =>
     typeof v === "string" && v.length > 0 ? v : undefined;
   const logFilters = {
@@ -171,6 +172,12 @@ export default async function ProjectBoardPage({
     user.role === "admin" ? "owner" : await getProjectRole(user.id, project.id);
 
   if (role === null) notFound();
+
+  const brainIndexingAvailable = await isProjectBrainIndexingAvailable(project);
+  const tab =
+    requestedTab === "brain" && !brainIndexingAvailable
+      ? "board"
+      : requestedTab;
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   const isAdmin = role === "owner" || role === "admin";
@@ -425,7 +432,12 @@ export default async function ProjectBoardPage({
         }
       />
 
-      <ProjectTabs active={tab} boardCount={board.totalTasks} slug={slug} />
+      <ProjectTabs
+        active={tab}
+        boardCount={board.totalTasks}
+        showBrain={brainIndexingAvailable}
+        slug={slug}
+      />
 
       {tab === "board" ? (
         <section>

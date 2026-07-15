@@ -24,6 +24,7 @@ export interface ProjectTabsProps {
   slug: string;
   active: ProjectTab;
   boardCount: number;
+  showBrain: boolean;
 }
 
 const TABS: readonly ProjectTab[] = [
@@ -47,6 +48,7 @@ export async function ProjectTabs({
   slug,
   active,
   boardCount,
+  showBrain,
 }: ProjectTabsProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
 
@@ -76,7 +78,9 @@ export async function ProjectTabs({
           ? `/projects/${slug}/experiments`
           : `/projects/${slug}?tab=${tab}`;
 
-  const items: TabItem[] = TABS.map((tab) => ({
+  const items: TabItem[] = TABS.filter(
+    (tab) => showBrain || tab !== "brain",
+  ).map((tab) => ({
     key: tab,
     label: label[tab],
     href: hrefFor(tab),

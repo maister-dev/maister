@@ -11,6 +11,7 @@ import {
   type ExperimentListLabels,
 } from "@/components/experiments/experiment-list";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
+import { isProjectBrainIndexingAvailable } from "@/lib/brain/availability";
 import { getBoardData } from "@/lib/queries/board";
 import { getProjectBySlug } from "@/lib/queries/project";
 import { listTaskDTOs } from "@/lib/services/tasks";
@@ -45,13 +46,15 @@ export default async function ProjectExperimentsPage({
 
   if (role === null) notFound();
 
-  const [t, board, experiments, tasks, flows] = await Promise.all([
-    getTranslations("experiments"),
-    getBoardData(project.id),
-    listProjectExperiments(project.id),
-    listTaskDTOs(project.id),
-    listProjectExperimentFlows(project.id),
-  ]);
+  const [t, board, experiments, tasks, flows, brainIndexingAvailable] =
+    await Promise.all([
+      getTranslations("experiments"),
+      getBoardData(project.id),
+      listProjectExperiments(project.id),
+      listTaskDTOs(project.id),
+      listProjectExperimentFlows(project.id),
+      isProjectBrainIndexingAvailable(project),
+    ]);
   const listLabels: ExperimentListLabels = {
     title: t("list.title"),
     subtitle: t("list.subtitle"),
@@ -130,6 +133,7 @@ export default async function ProjectExperimentsPage({
       <ProjectTabs
         active="experiments"
         boardCount={board.totalTasks}
+        showBrain={brainIndexingAvailable}
         slug={slug}
       />
       <ExperimentList

@@ -21,6 +21,7 @@ import {
   FlowLedgerScope,
 } from "@/components/observatory/flow-ledger-scope";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
+import { isProjectBrainIndexingAvailable } from "@/lib/brain/availability";
 import { parseObservatorySearchParams } from "@/lib/observatory/filters";
 import { isFlowLedgerApplicable } from "@/lib/observatory/run-kind";
 import { reposRoot } from "@/lib/instance-config";
@@ -69,9 +70,10 @@ export default async function ProjectObservatoryPage({
   const labels = labelsFromTranslations(t);
   const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
   const { filters, current } = parseObservatorySearchParams(await searchParams);
-  const [observatory, board] = await Promise.all([
+  const [observatory, board, brainIndexingAvailable] = await Promise.all([
     getProjectObservatory(project.id, filters),
     getBoardData(project.id),
+    isProjectBrainIndexingAvailable(project),
   ]);
   const nodeDetail = current.nodeId
     ? isFlowLedgerApplicable(current.runKind)
@@ -96,6 +98,7 @@ export default async function ProjectObservatoryPage({
       <ProjectTabs
         active="observatory"
         boardCount={board.totalTasks}
+        showBrain={brainIndexingAvailable}
         slug={slug}
       />
       <ObservatoryFilters current={current} labels={labels} />

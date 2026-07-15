@@ -15,6 +15,7 @@ import { notFound } from "next/navigation";
 import { ProjectTabs } from "@/components/board/project-tabs";
 import { ExperimentLab } from "@/components/experiments/experiment-lab";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
+import { isProjectBrainIndexingAvailable } from "@/lib/brain/availability";
 import { prepareDiff, type DiffPrepResult } from "@/lib/diff/prepare";
 import { getExperimentComparison } from "@/lib/experiments/comparison";
 import { selectComparisonDiffRunsForPreparation } from "@/lib/experiments/comparison-selection";
@@ -119,10 +120,11 @@ export default async function ProjectExperimentLabPage({
 
   if (role === null) notFound();
 
-  const [t, board, agents] = await Promise.all([
+  const [t, board, agents, brainIndexingAvailable] = await Promise.all([
     getTranslations("experiments"),
     getBoardData(project.id),
     getProjectAgentsView(project.id),
+    isProjectBrainIndexingAvailable(project),
   ]);
   let comparison: Awaited<ReturnType<typeof getExperimentComparison>>;
 
@@ -165,6 +167,7 @@ export default async function ProjectExperimentLabPage({
       <ProjectTabs
         active="experiments"
         boardCount={board.totalTasks}
+        showBrain={brainIndexingAvailable}
         slug={slug}
       />
       <ExperimentLab

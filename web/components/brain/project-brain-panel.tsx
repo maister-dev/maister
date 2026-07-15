@@ -11,7 +11,6 @@ import type {
   BrainIndexJobStatus,
 } from "@/types/scheduler";
 
-import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 
 import {
@@ -19,6 +18,7 @@ import {
   BrainSourceReindexAction,
   BrainSourceReindexAllAction,
 } from "@/components/brain/project-brain-actions";
+import { BrainMemorySearch } from "@/components/brain/brain-memory-search";
 
 export interface ProjectBrainPanelLabels {
   title: string;
@@ -101,8 +101,6 @@ const tableHeadClass =
 const tableCellClass = "border-b border-line px-3 py-3 align-top text-[12px]";
 const badgeClass =
   "inline-flex rounded-full border border-line bg-canvas px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2";
-const searchButtonClass =
-  "inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-amber bg-amber px-3 font-mono text-[10.5px] font-bold uppercase leading-none tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] transition-colors hover:bg-amber-2 focus-visible:outline-none focus-visible:shadow-[0_0_0_3px_var(--amber-soft)]";
 
 function formatPercent(value: number): string {
   return `${Math.round(Math.max(0, Math.min(value, 1)) * 100)}%`;
@@ -257,24 +255,12 @@ function MemorySection({
     <section className={sectionClass}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <h2 className={headingClass}>{labels.memoryTitle}</h2>
-        <form
-          action={`/projects/${encodeURIComponent(slug)}`}
-          className="flex min-w-[260px] flex-1 justify-end gap-2"
-          data-testid="brain-memory-search"
-          method="get"
-        >
-          <input name="tab" type="hidden" value="brain" />
-          <input
-            className="h-9 min-w-0 flex-1 rounded-md border border-line bg-canvas px-3 text-[12px] text-ink outline-none md:max-w-[360px]"
-            defaultValue={query}
-            name="brain_query"
-            placeholder={labels.searchPlaceholder}
-          />
-          <button className={searchButtonClass} type="submit">
-            <MagnifyingGlassIcon aria-hidden="true" className="h-3.5 w-3.5" />
-            {labels.searchAction}
-          </button>
-        </form>
+        <BrainMemorySearch
+          action={labels.searchAction}
+          placeholder={labels.searchPlaceholder}
+          query={query}
+          slug={slug}
+        />
       </div>
       {!hasQuery || memory.length === 0 ? (
         <div className="px-4 py-6 font-mono text-[12px] text-mute">
