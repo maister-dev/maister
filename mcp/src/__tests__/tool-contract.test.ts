@@ -104,6 +104,26 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/projects/{slug}/experiments/{experimentId}/advisory",
   },
+  evaluation_context_get: {
+    method: "get",
+    path: "/api/v1/ext/evaluations/context",
+  },
+  evaluation_evidence_list: {
+    method: "get",
+    path: "/api/v1/ext/evaluations/evidence",
+  },
+  evaluation_evidence_read: {
+    method: "get",
+    path: "/api/v1/ext/evaluations/evidence/{itemId}",
+  },
+  evaluation_objective_results: {
+    method: "get",
+    path: "/api/v1/ext/evaluations/objective-results",
+  },
+  evaluation_result_submit: {
+    method: "post",
+    path: "/api/v1/ext/evaluations/result",
+  },
   run_launch: { method: "post", path: "/api/v1/ext/runs" },
   run_get: { method: "get", path: "/api/v1/ext/runs/{runId}" },
   run_delegate: { method: "post", path: "/api/v1/ext/runs/delegate" },

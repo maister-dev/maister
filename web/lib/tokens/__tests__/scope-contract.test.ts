@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 
+import { EVALUATION_JUDGE_TOKEN_SCOPES } from "@/lib/agents/tokens";
 import { PROJECT_ACTION_MIN } from "@/lib/authz";
 import { PROJECT_ACTION_BY_SCOPE } from "@/lib/tokens/ext-handler";
 import { ORCHESTRATOR_TOKEN_SCOPES } from "@/lib/agents/tokens";
@@ -48,5 +49,34 @@ describe("external token scope contract", () => {
     // ADR-141's manual-only stance reserves for a deliberate human click.
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:sync");
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:reopen");
+  });
+
+  // ADR-142 (Evaluation Lab) D10/D12: the attempt-bound evaluator judge scopes.
+  it("registers the four attempt-bound evaluator judge scopes", () => {
+    expect(TOKEN_SCOPES).toContain("evaluations:context:read");
+    expect(TOKEN_SCOPES).toContain("evaluations:evidence:read");
+    expect(TOKEN_SCOPES).toContain("evaluations:objective:read");
+    expect(TOKEN_SCOPES).toContain("evaluations:result:submit");
+  });
+
+  it("keeps evaluator judge scopes OUT of the general agent-token set (no browse, no task/comment mutation)", () => {
+    for (const scope of EVALUATION_JUDGE_TOKEN_SCOPES) {
+      expect(AGENT_TOKEN_SCOPES).not.toContain(scope);
+    }
+  });
+
+  it("scopes a judge attempt token to exactly the four evaluator scopes, disjoint from agent mutation scopes", () => {
+    expect([...EVALUATION_JUDGE_TOKEN_SCOPES].sort()).toEqual(
+      [
+        "evaluations:context:read",
+        "evaluations:evidence:read",
+        "evaluations:objective:read",
+        "evaluations:result:submit",
+      ].sort(),
+    );
+    // A judge can read its bound snapshot and submit one result — nothing else.
+    expect(EVALUATION_JUDGE_TOKEN_SCOPES).not.toContain("tasks:read");
+    expect(EVALUATION_JUDGE_TOKEN_SCOPES).not.toContain("comments:create");
+    expect(EVALUATION_JUDGE_TOKEN_SCOPES).not.toContain("runs:launch");
   });
 });

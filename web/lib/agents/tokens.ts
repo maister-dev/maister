@@ -41,6 +41,20 @@ export const ORCHESTRATOR_TOKEN_SCOPES = [
   "runs:promote",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
+// ADR-142 (Evaluation Lab) D10/D12: a judge attempt's ephemeral token carries
+// ONLY the four attempt-bound evaluator scopes — it does NOT spread
+// AGENT_TOKEN_SCOPES. A judge reads its token-bound evidence snapshot and submits
+// exactly one result; it cannot browse a project/worktree, read/mutate tasks,
+// comment, or launch anything. The execution/attempt binding lives in
+// `evaluation_judge_attempts.token_id` (resolved server-side), so no evaluator
+// tool ever accepts a study/run/snapshot id from the client.
+export const EVALUATION_JUDGE_TOKEN_SCOPES = [
+  "evaluations:context:read",
+  "evaluations:evidence:read",
+  "evaluations:objective:read",
+  "evaluations:result:submit",
+] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
+
 export type IssuedAgentToken = {
   tokenId: string;
   secret: string;
@@ -72,6 +86,43 @@ export async function issueAgentRunToken(args: {
   log.info(
     { agentId: args.agentId, runId: args.runId, tokenId },
     "ephemeral agent token issued",
+  );
+
+  return { tokenId, secret };
+}
+
+// ADR-142 (Evaluation Lab) D12: a judge attempt runs as a dedicated agent Run
+// (workspace:none). Its ephemeral token carries ONLY EVALUATION_JUDGE_TOKEN_SCOPES
+// and rides the same deterministic `agent-run:<runId>` name so the standard
+// terminal revoke (revokeAgentRunTokensForRun) fires when the attempt's agent Run
+// ends; the sealing service ALSO revokes it explicitly the moment a result is
+// sealed. The execution/attempt binding is stored on the attempt row, not the
+// token — the evaluator facade resolves it server-side.
+export async function issueJudgeAttemptToken(args: {
+  agentId: string;
+  projectId: string;
+  runId: string;
+  db?: Db;
+}): Promise<IssuedAgentToken> {
+  const _db = args.db ?? getDb();
+  const { secret, prefix, hash } = generateToken();
+  const tokenId = randomUUID();
+
+  await _db.insert(projectTokens).values({
+    id: tokenId,
+    project_id: args.projectId,
+    name: `agent-run:${args.runId}`,
+    token_kind: "agent",
+    agent_id: args.agentId,
+    prefix,
+    token_hash: hash,
+    scopes: [...EVALUATION_JUDGE_TOKEN_SCOPES],
+    expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
+  });
+
+  log.info(
+    { agentId: args.agentId, runId: args.runId, tokenId },
+    "ephemeral judge attempt token issued",
   );
 
   return { tokenId, secret };

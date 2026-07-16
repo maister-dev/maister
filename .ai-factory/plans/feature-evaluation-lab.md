@@ -32,19 +32,22 @@ Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 - Phase 2 T2.1 **partial** `6f88dd5f2` — migration **0104** (studies/recipes/
   participants) + 7 real-PG integration tests green.
 
-**▶ NEXT (resume here): PHASE 3 COMPLETE + Phase 4 T4.2/T4.3/T4.1-pure DONE —
-next is the T4.1 AGENT-LAUNCH INTEGRATION SEAM, then Phase 5.** Order: **finish
-T4.1** (dedicated agent-Run-per-attempt launch: workspace:none + attempt-bound
-token + new `evaluations:{context,evidence,objective,result}:*` scopes; evaluator
-MCP facade `evaluation_{context_get,evidence_list,evidence_read,objective_results,
-result_submit}` mirrored in `mcp/src/tools.ts` TOOL_SPECS + ext routes +
-tool-contract test; run_sessions attribution; sealing into
-`evaluation_judge_attempts`/`criterion_results`; timeout-clock-at-Running;
-duplicate-launch adoption; bounded repair — this makes the FSM `judging` state
-live and feeds the built T4.2 aggregation adapter) → **Phase 5** (T5.1 admin UI,
-T5.2 creation + N-way Study Lab + wires the T3.3 scheduler arm + SSE route + T2.3
-capture + T2.2/T3.1 route surfaces, T5.3 E2E, T5.4 owner-gated deploy) →
-**Phase 6** (M47) → **Phase 7** (M48).
+**▶ NEXT (resume here): PHASE 3 + PHASE 4 COMPLETE — next is PHASE 5.** T4.1
+agent-launch integration seam DONE this session (token scopes + evaluator MCP
+facade + ext routes + OpenAPI + facade readers + seal + launch/provisioning +
+aggregation worker making FSM `judging→aggregating→terminal` LIVE; 7-test
+`judge-seam.integration.test.ts` green, full eval slice green). Order: **Phase 5**
+(T5.1 admin Evaluations settings UI over the built config services; T5.2 full-page
+creation + N-way Study Lab + wires the T3.3 `evaluation_dispatch` scheduler arm +
+`GET .../{studyId}/stream` SSE route + T2.3 capture pipeline + T2.2/T3.1/T4.3 route
+surfaces + production judge token→MCP materialization; T5.3 E2E; T5.4 owner-gated
+deploy — SKIP) → **Phase 6** (M47) → **Phase 7** (M48). CO-EVOLVE debts to land
+with Phase 5: T2.3 capture+routes+GC; T2.2 HTTP routes + legacy `/experiments`
+adapters; T3.1 OpenAPI+route-authz E2E; T3.2 live ObjectiveFactSource reader +
+distribution UI; T3.3 dispatcher arm (enum+budget+CTE+tick) + SSE route +
+poison/backoff; T4.3 human-session verdict/review routes; T4.1 supervisor MCP
+materialization of the judge token + real checking→judging dispatcher call to
+`launchJudgePanel` + bounded-repair child spawn.
 
 **DONE this session (all green, committed on feature/evaluation-lab):**
 Phase 2 COMPLETE — T2.1 `888835b7c`, T2.2 `1f6f5b7ac`+`c06895b59`, T2.3 `9ae4a0775`.
@@ -875,9 +878,10 @@ Phase 3 exit: unit/integration/contract green; dispatcher wiring and SSE replay 
 
 ### Phase 4 — Multi-judge execution, aggregation, review, and verdict
 
-- [~] T4.1 RED/GREEN/REFACTOR dedicated judge token, attempt launch, sealing, attribution, and bounded repair.
-  - DONE (pure cores, this session): `lib/evaluations/judges/result-validation.ts` — `validateJudgeResult` strict per-criterion validation against method criteria (fail-CLOSED: out-of-range score / scored-without-score / unknown criterion / out-of-[0,1] confidence / missing-required → terminal INVALID with violation list; absent non-required → insufficient_evidence NEVER zero). `lib/evaluations/judges/blinding.ts` — deterministic `seededShuffle` (mulberry32, no Math.random) + `assignBlindLabels` (snapshot-reproducible blind labels + presentation order, no participant identity leaked, seed-stable). 10 unit tests green.
-  - REMAINING (integration-heavy, next session): the dedicated agent-Run-per-attempt launch (workspace:none + attempt-bound token via `agents/tokens.ts` + `token-scopes.ts` new `evaluations:{context,evidence,objective,result}:*` scopes + `AGENT_TOKEN_SCOPES`), the evaluator MCP facade tools (`evaluation_context_get`/`evaluation_evidence_list`/`evaluation_evidence_read`/`evaluation_objective_results`/`evaluation_result_submit`) mirrored in `mcp/src/tools.ts` TOOL_SPECS + ext routes + tool-contract test, run_sessions attribution, sealing (`evaluation_judge_attempts`/`criterion_results`), timeout-clock-at-Running, duplicate-launch adoption, bounded repair lineage. This is the last integration seam that turns the FSM `judging` state live; it feeds the already-built T4.2 aggregation adapter.
+- [x] T4.1 RED/GREEN/REFACTOR dedicated judge token, attempt launch, sealing, attribution, and bounded repair.
+  - DONE (pure cores, prior session): `lib/evaluations/judges/result-validation.ts` — `validateJudgeResult` strict per-criterion validation against method criteria (fail-CLOSED: out-of-range score / scored-without-score / unknown criterion / out-of-[0,1] confidence / missing-required → terminal INVALID with violation list; absent non-required → insufficient_evidence NEVER zero). `lib/evaluations/judges/blinding.ts` — deterministic `seededShuffle` (mulberry32, no Math.random) + `assignBlindLabels`. 10 unit tests green.
+  - DONE (integration seam, this session): (1) `types/token-scopes.ts` new `evaluations:{context,evidence,objective,result}:{read|submit}` scopes (NOT in `AGENT_TOKEN_SCOPES`) + `EVALUATION_JUDGE_TOKEN_SCOPES` + `issueJudgeAttemptToken` in `lib/agents/tokens.ts`. (2) Evaluator MCP facade tools `evaluation_{context_get,evidence_list,evidence_read,objective_results,result_submit}` in `mcp/src/tools.ts` TOOL_SPECS + resolveRouting; token-bound ext routes under `app/api/v1/ext/evaluations/*`; OpenAPI ops+schemas (`evaluations` tag); tool-contract + tools + scope-contract tests green. (3) `lib/evaluations/judges/facade.ts` — `resolveBoundAttempt` (token→attempt, no client ids; UNAUTHORIZED/CONFLICT refusals) + `getEvaluatorContext`/`listBoundEvidence`/`readBoundEvidenceItem`/`getBoundObjectiveResults` (blind labels, no real participant ids). (4) `lib/evaluations/judges/seal.ts` — `submitBoundJudgeResult` seals valid → criterion rows + attempt completed + token revoke; invalid → terminal-invalid attempt; triggers panel completion. (5) `lib/evaluations/judges/launch.ts` — `provisionJudgeAttempts` (idempotent ON CONFLICT matrix) + `launchJudgePanel` (duplicate-launch adoption, timeout-clock-at-Running, injectable spawn seam; `defaultJudgeSpawn` wires `launchAgentRun` workspace:none). (6) `lib/evaluations/aggregation/worker.ts` — AttemptResult adapter + `evaluateAndAdvancePanel`/`runAggregationForExecution` making FSM `judging→aggregating→(completed|partial|review_required)` LIVE feeding T4.2 `computeAggregate`. 7-test `judge-seam.integration.test.ts` green (416 eval+token unit / 53 eval integ / 229 mcp / typecheck baseline-only / contracts green).
+  - CO-EVOLVE debt (Phase 5): production token→evaluator-facade MCP materialization (supervisor delivers the judge token to the agent MCP config) + the real dispatcher arm that transitions checking→judging then calls `launchJudgePanel`; bounded repair CHILD attempt spawn (invalid → repair) is a follow-up (seal marks invalid terminal; repair lineage columns exist).
   - Files: web/lib/evaluations/judges/*, web/lib/agents/tokens.ts, web/types/token-scopes.ts, external routes, mcp/src/tools.ts, agent launch trigger/idempotency.
   - RED: exact scopes, token-bound context, no peer result, blind/random order, dedicated agent Run per attempt, run_sessions attribution, invalid schema/ref/range, timeout/cancel/late submit, timeout clock anchored at session Running (cap-queued attempt never times out before start), duplicate launch adoption, token revocation.
   - GREEN: panel execution and normalized attempt/criterion writes; bounded repair lineage.
@@ -885,7 +889,7 @@ Phase 3 exit: unit/integration/contract green; dispatcher wiring and SSE replay 
   - Logging: DEBUG attempt/role/ordinal/digests; INFO launch/terminal; WARN repair/timeout/exclusion; ERROR invalid/poison; never rationale/result/evidence body.
   - Depends on: T3.3.
 
-- [~] T4.2 RED/GREEN/REFACTOR quorum, aggregation, disagreement, and partial-panel semantics.
+- [x] T4.2 RED/GREEN/REFACTOR quorum, aggregation, disagreement, and partial-panel semantics.
   - DONE (this session): `lib/evaluations/aggregation/algorithms.ts` — pure `computeAggregate` for weighted_mean@1/median@1/majority@1 (deterministic, unrounded internally + explicit display rounding, invalid-attempt exclusion w/ reason, quorum-vs-valid-count, missing criterion → insufficient_evidence with weight-renormalized total NEVER zero, item/total cap enforcement, majority ties→lowest deterministically). `disagreement.ts` — `classifyDisagreement` over score spread / confidence spread / insufficient-evidence asymmetry / objective contradiction / panel completeness with EXPLICIT inclusive thresholds; low disagreement never relabeled as confidence; incomplete panel is a signal, not agreement. `persist.ts` — `persistAggregate` append-only (digest-anchored to method definition+schema digests, revision-incrementing, exact included/excluded attempt ids, unrounded calc + display values, quorum decision, dispersion). 11 tests green (10 golden unit + 1 persist integration).
   - CO-EVOLVE (with T4.1): feeding real `evaluation_judge_attempts` → `criterion_results` into `computeAggregate` (the AttemptResult adapter) + the worker handler that runs aggregate→disagreement→review-or-complete on the T3.3 FSM. The math + persistence are verified now.
   - Files: web/lib/evaluations/aggregation/*, disagreement/*, worker handler.

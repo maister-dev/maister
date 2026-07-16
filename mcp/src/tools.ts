@@ -91,6 +91,57 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "experimentId", "scores", "summary"],
     },
   },
+  evaluation_context_get: {
+    description:
+      "Get the token-bound judge attempt context (ADR-142): attempt identity, method rubric, blind candidate order, and evidence/digest summary. Requires evaluations:context:read. The attempt is bound by the token — takes no ids and returns no real participant id, peer result, path, or session handle.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  evaluation_evidence_list: {
+    description:
+      "List the token-bound evidence snapshot's item metadata, cursor-paginated. Requires evaluations:evidence:read. Real participant ids are blinded to candidate labels; locators/host keys are never exposed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cursor: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+      },
+    },
+  },
+  evaluation_evidence_read: {
+    description:
+      "Read a server-capped window of one bound-snapshot evidence item. Requires evaluations:evidence:read. itemId must come from evaluation_evidence_list; offset/length are clamped and a capped read is flagged truncated.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        itemId: { type: "string" },
+        offset: { type: "integer", minimum: 0 },
+        length: { type: "integer", minimum: 1 },
+      },
+      required: ["itemId"],
+    },
+  },
+  evaluation_objective_results: {
+    description:
+      "Get structured objective check + metric facts for the token-bound execution (ADR-142). Requires evaluations:objective:read. Missing/absent statuses keep their reason; never infer PASS from source appearance.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  evaluation_result_submit: {
+    description:
+      "Submit a strict per-criterion judge result for the token-bound attempt (ADR-142). Requires evaluations:result:submit. Attribution is server-derived; the body carries only per-criterion scores and rejects extra keys. An invalid result seals a terminal-invalid attempt (valid:false, HTTP 200).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        criteria: { type: "array" },
+      },
+      required: ["criteria"],
+    },
+  },
   memory_recall: {
     description:
       "Recall relevant project-memory items (ADR-122) via hybrid vector + lexical ranking. No LLM at read. Requires the project's Brain to be enabled and (for agent tokens) can_read_brain.",
@@ -735,6 +786,54 @@ function resolveRouting(
         method: "POST",
         path: `/api/v1/ext/projects/${slug}/experiments/${experimentId}/advisory`,
         body,
+      };
+    }
+    case "evaluation_context_get":
+      return { method: "GET", path: `/api/v1/ext/evaluations/context` };
+    case "evaluation_evidence_list": {
+      const { cursor, limit } = args as { cursor?: string; limit?: number };
+      const sp = new URLSearchParams();
+
+      if (cursor !== undefined) sp.set("cursor", cursor);
+      if (limit !== undefined) sp.set("limit", String(limit));
+
+      const suffix = sp.size > 0 ? `?${sp.toString()}` : "";
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/evaluations/evidence${suffix}`,
+      };
+    }
+    case "evaluation_evidence_read": {
+      const { itemId, offset, length } = args as {
+        itemId: string;
+        offset?: number;
+        length?: number;
+      };
+      const sp = new URLSearchParams();
+
+      if (offset !== undefined) sp.set("offset", String(offset));
+      if (length !== undefined) sp.set("length", String(length));
+
+      const suffix = sp.size > 0 ? `?${sp.toString()}` : "";
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/evaluations/evidence/${itemId}${suffix}`,
+      };
+    }
+    case "evaluation_objective_results":
+      return {
+        method: "GET",
+        path: `/api/v1/ext/evaluations/objective-results`,
+      };
+    case "evaluation_result_submit": {
+      const { criteria } = args as { criteria: unknown };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/evaluations/result`,
+        body: { criteria },
       };
     }
     case "memory_recall": {

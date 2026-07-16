@@ -41,6 +41,17 @@ export const TOKEN_SCOPES = [
   // advise appends judge advisories only, never a human conclusion.
   "experiments:read",
   "experiments:advise",
+  // ADR-142 (Evaluation Lab) D10/D12: attempt-bound evaluator judge scopes. These
+  // are minted ONLY on a judge attempt's ephemeral agent token
+  // (EVALUATION_JUDGE_TOKEN_SCOPES in lib/agents/tokens.ts) — deliberately NOT in
+  // AGENT_TOKEN_SCOPES. A judge reads ONLY its token-bound evidence snapshot and
+  // submits exactly one result; it can browse nothing and mutate no task/comment/
+  // relation. The token binds the execution/attempt, so no tool accepts a study /
+  // run / snapshot / item-owning id from the client.
+  "evaluations:context:read",
+  "evaluations:evidence:read",
+  "evaluations:objective:read",
+  "evaluations:result:submit",
 ] as const;
 
 // M34 (ADR-089): the fixed scope set issued to per-launch ephemeral agent

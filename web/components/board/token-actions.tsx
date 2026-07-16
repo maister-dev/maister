@@ -308,6 +308,11 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeExperimentsRead;
     case "experiments:advise":
       return labels.scopeExperimentsAdvise;
+    // ADR-142: attempt-bound evaluator judge scopes are machine-minted for judge
+    // attempt tokens, not part of the labeled user-token vocabulary — render the
+    // raw id rather than carrying four unused i18n label keys.
+    default:
+      return scope;
   }
 }
 

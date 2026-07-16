@@ -102,6 +102,17 @@ tags:
       read experiment detail with `experiments:read` and append judge advisories
       with `experiments:advise`; agent tokens are limited to the experiment
       judge agent, and conclusions remain human/session-auth only.
+  - name: evaluations
+    description: |
+      (ADR-142, Implemented) Evaluation Lab evaluator facade. A judge attempt runs
+      as a dedicated workspace:none agent Run with an attempt-bound token carrying
+      only `evaluations:context:read` / `evaluations:evidence:read` /
+      `evaluations:objective:read` / `evaluations:result:submit`. Every route is
+      token-bound: the judge attempt, execution, evidence snapshot, and method are
+      derived server-side from the token, so the request carries no study/run/
+      snapshot/participant id and the response exposes no real participant id, peer
+      judge result, host path, or session handle (D10/D12). A judge can browse
+      nothing, mutate no task/comment, and submit exactly one result.
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -818,6 +829,177 @@ paths:
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/evaluations/context:
+    get:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Get the token-bound judge attempt context
+      description: |
+        Scope `evaluations:context:read`. Returns the server-derived judge
+        attempt context — attempt identity, the method rubric, the blind
+        candidate order, and evidence/digest summary. The judge attempt is bound
+        by the token; the request carries no ids and the response exposes no real
+        participant id, peer judge result, host path, or session handle (D10). A
+        token not bound to a live judge attempt returns 403 `UNAUTHORIZED`; a
+        terminal attempt returns 409.
+      operationId: extEvaluationContext
+      security:
+        - projectToken: ["evaluations:context:read"]
+      responses:
+        "200":
+          description: Judge attempt context.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtEvaluationContext" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/ext/evaluations/evidence:
+    get:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) List the bound snapshot's evidence metadata
+      description: |
+        Scope `evaluations:evidence:read`. Cursor-paginated metadata for the
+        token-bound evidence snapshot. Each item's real participant id is replaced
+        by its blind candidate label; the logical locator and host blob key are
+        never exposed (D10).
+      operationId: extEvaluationEvidenceList
+      security:
+        - projectToken: ["evaluations:evidence:read"]
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: A page of bound evidence metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtEvaluationEvidenceList" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/ext/evaluations/evidence/{itemId}:
+    get:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Read a bounded window of one evidence item
+      description: |
+        Scope `evaluations:evidence:read`. Reads a server-capped window of one
+        evidence item. The `itemId` MUST belong to the token-bound snapshot (an
+        item id from `evaluation_evidence_list`); `offset`/`length` are clamped and
+        a read that hits the cap is flagged `truncated` (D10).
+      operationId: extEvaluationEvidenceRead
+      security:
+        - projectToken: ["evaluations:evidence:read"]
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: length
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: A bounded window of the evidence item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtEvaluationEvidenceRead" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/ext/evaluations/objective-results:
+    get:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Get structured objective facts for the execution
+      description: |
+        Scope `evaluations:objective:read`. Structured objective check and metric
+        facts for the token-bound execution (D11). A judge may reference these but
+        never infer PASS from source appearance; a missing/absent status carries
+        its reason verbatim, never converted to a pass or a zero.
+      operationId: extEvaluationObjectiveResults
+      security:
+        - projectToken: ["evaluations:objective:read"]
+      responses:
+        "200":
+          description: Objective checks + metrics for the bound execution.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtEvaluationObjectiveResults" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/ext/evaluations/result:
+    post:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Submit a strict judge result for the bound attempt
+      description: |
+        Scope `evaluations:result:submit`. Seals a strict per-criterion result for
+        the token-bound judge attempt. Attribution (attempt/execution/judge/runner/
+        model/evidence) is entirely server-derived — the body carries only the
+        per-criterion scores and rejects any extra key (D12). Per-criterion
+        strictness (unknown/out-of-range/missing-required criterion) is enforced
+        against the snapshotted method: an invalid result seals a terminal `invalid`
+        attempt (returned as `valid:false`, HTTP 200 — a recorded outcome, never a
+        4xx). A malformed envelope returns 422. When the seal completes the panel
+        (quorum or terminal), the execution advances to aggregation.
+      operationId: extEvaluationResultSubmit
+      security:
+        - projectToken: ["evaluations:result:submit"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtEvaluationResultBody" }
+      responses:
+        "200":
+          description: Result sealed (valid or terminal-invalid).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtEvaluationResultResponse" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "409":
           $ref: "#/components/responses/Conflict"
         "422":
@@ -2394,6 +2576,147 @@ components:
         message:
           type: string
           description: Human-readable error message.
+
+    ExtEvaluationContext:
+      type: object
+      description: Server-derived judge attempt context (ADR-142 D10).
+      required: [attempt, method, candidates, evidence, digests]
+      properties:
+        attempt:
+          type: object
+          required: [id, role, ordinal]
+          properties:
+            id: { type: string }
+            role: { type: string }
+            ordinal: { type: integer }
+        method:
+          nullable: true
+          type: object
+          properties:
+            qualifiedId: { type: string }
+            criteria:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  weight: { type: number }
+                  scale:
+                    type: object
+                    properties:
+                      min: { type: integer }
+                      max: { type: integer }
+        candidates:
+          type: array
+          description: Blind candidate labels in deterministic presentation order.
+          items: { type: string }
+        evidence:
+          type: object
+          properties:
+            itemCount: { type: integer }
+            readMaxBytes: { type: integer }
+        digests:
+          type: object
+          properties:
+            prompt: { type: string, nullable: true }
+            schema: { type: string, nullable: true }
+
+    ExtEvaluationEvidenceItem:
+      type: object
+      required: [id, kind, digest, coverageClass]
+      properties:
+        id: { type: string }
+        candidate: { type: string, nullable: true }
+        kind: { type: string }
+        digest: { type: string }
+        bytes: { type: integer, nullable: true }
+        coverageClass: { type: string }
+
+    ExtEvaluationEvidenceList:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ExtEvaluationEvidenceItem" }
+        nextCursor: { type: string, nullable: true }
+
+    ExtEvaluationEvidenceRead:
+      type: object
+      required: [itemId, content, truncated, offset]
+      properties:
+        itemId: { type: string }
+        content: { type: string }
+        truncated: { type: boolean }
+        offset: { type: integer }
+
+    ExtEvaluationObjectiveResults:
+      type: object
+      required: [checks, metrics]
+      properties:
+        checks:
+          type: array
+          items:
+            type: object
+            properties:
+              candidate: { type: string, nullable: true }
+              checkId: { type: string }
+              checkVersion: { type: string }
+              status: { type: string }
+              reason: { type: string, nullable: true }
+        metrics:
+          type: array
+          items:
+            type: object
+            properties:
+              candidate: { type: string, nullable: true }
+              metricId: { type: string }
+              metricVersion: { type: string }
+              status: { type: string }
+              value: { type: object, nullable: true }
+              unit: { type: string, nullable: true }
+
+    ExtEvaluationResultBody:
+      type: object
+      required: [criteria]
+      additionalProperties: false
+      description: |
+        Strict per-criterion judge submission. Attribution is server-derived and
+        MUST NOT appear in the body (ADR-142 D12).
+      properties:
+        criteria:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [criterionId]
+            properties:
+              criterionId: { type: string }
+              state:
+                type: string
+                enum: [scored, insufficient_evidence, not_applicable]
+              score: { type: number, nullable: true }
+              rationale: { type: string, nullable: true }
+              confidence: { type: number, nullable: true }
+              evidenceRefs:
+                type: array
+                items: { type: string }
+              objectiveRefs:
+                type: array
+                items: { type: string }
+
+    ExtEvaluationResultResponse:
+      type: object
+      required: [valid, attemptId]
+      properties:
+        valid: { type: boolean }
+        attemptId: { type: string }
+        panelAdvanced: { type: boolean }
+        violations:
+          type: array
+          items: { type: string }
 
     ExtMemoryItem:
       oneOf:
