@@ -115,6 +115,10 @@ export async function sealEvidenceSnapshot(
     evidenceProtocolDigest: string;
     items: EvidenceItemInput[];
     preparedByUserId?: string | null;
+    // Bounded per-coverage-class counts + capture warnings (T2.3) — metadata
+    // only, never a private path or payload body.
+    coverageSummary?: Record<string, number> | null;
+    warnings?: string[] | null;
   },
   db?: Db,
 ): Promise<SealResult> {
@@ -169,6 +173,8 @@ export async function sealEvidenceSnapshot(
         status: "preparing",
         participantWatermarks: args.participantWatermarks,
         evidenceProtocolDigest: args.evidenceProtocolDigest,
+        coverageSummary: args.coverageSummary ?? null,
+        warnings: args.warnings ?? null,
         storageGeneration: written[0]?.blobKey.split("/")[0] ?? null,
         preparedByUserId: args.preparedByUserId ?? null,
       })

@@ -14,6 +14,10 @@ import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
+import {
+  sweepEvaluationEvidence,
+  type EvidenceSweepSummary,
+} from "@/lib/evaluations/evidence/gc";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
@@ -39,6 +43,9 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
   ephemeralAgent: EphemeralAgentGcSummary | null;
   agentMaterialization: AgentMaterializationGcSummary | null;
+  // T2.3 (ADR-139): the Evaluation evidence sweep — recovers crashed captures
+  // (orphan `preparing`) and finalizes unreferenced two-stage deletes.
+  evaluationEvidence: EvidenceSweepSummary | null;
   // ADR-122: the Project Brain decay sweep (self-throttled hourly; expires items
   // past expires_at). null when it never ran this process.
   brain: Awaited<ReturnType<typeof runBrainDecaySweep>> | null;
@@ -59,6 +66,7 @@ type GcBundleResult = {
   capabilities: SystemSweepSummary["capabilities"];
   ephemeralAgent: EphemeralAgentGcSummary | null;
   agentMaterialization: AgentMaterializationGcSummary | null;
+  evaluationEvidence: EvidenceSweepSummary | null;
   errors: string[];
 };
 
@@ -69,6 +77,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let capabilities: SystemSweepSummary["capabilities"] = null;
   let ephemeralAgent: EphemeralAgentGcSummary | null = null;
   let agentMaterialization: AgentMaterializationGcSummary | null = null;
+  let evaluationEvidence: EvidenceSweepSummary | null = null;
 
   try {
     workspace = await runWorkspaceGcSweep();
@@ -115,6 +124,15 @@ async function runGcBundle(): Promise<GcBundleResult> {
     log.error({ err: message }, "gc bundle agent materialization threw");
   }
 
+  try {
+    evaluationEvidence = await sweepEvaluationEvidence();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`evaluation evidence sweep failed: ${message}`);
+    log.error({ err: message }, "gc bundle evaluation evidence threw");
+  }
+
   errors.push(...gcFailureMessages(workspace, revision, capabilities));
   if (ephemeralAgent && ephemeralAgent.failed > 0) {
     errors.push(
@@ -133,6 +151,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     capabilities,
     ephemeralAgent,
     agentMaterialization,
+    evaluationEvidence,
     errors,
   };
 }
@@ -220,6 +239,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     capabilities: gc.capabilities,
     ephemeralAgent: gc.ephemeralAgent,
     agentMaterialization: gc.agentMaterialization,
+    evaluationEvidence: gc.evaluationEvidence,
     worktreesPreserved: gc.workspace?.preserved ?? 0,
     worktreesRemoved: gc.workspace?.pruned ?? 0,
     revisionsRemoved: gc.revision?.deleted ?? 0,

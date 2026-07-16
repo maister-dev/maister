@@ -11,6 +11,7 @@ const runAgentMaterializationCleanupSweepMock = vi.hoisted(() => vi.fn());
 const runSyncRecoverySweepMock = vi.hoisted(() => vi.fn());
 const runBrainDecaySweepMock = vi.hoisted(() => vi.fn());
 const runBrainReindexSweepMock = vi.hoisted(() => vi.fn());
+const sweepEvaluationEvidenceMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -51,6 +52,9 @@ vi.mock("@/lib/brain/decay", () => ({
 }));
 vi.mock("@/lib/brain/reindex", () => ({
   runBrainReindexSweep: runBrainReindexSweepMock,
+}));
+vi.mock("@/lib/evaluations/evidence/gc", () => ({
+  sweepEvaluationEvidence: sweepEvaluationEvidenceMock,
 }));
 
 const workspaceSummary = {
@@ -95,6 +99,9 @@ describe("scheduler system sweeps", () => {
     runAgentMaterializationCleanupSweepMock
       .mockReset()
       .mockResolvedValue({ scanned: 0, restored: 0, live: 0, failed: 0 });
+    sweepEvaluationEvidenceMock
+      .mockReset()
+      .mockResolvedValue({ orphansMarked: 0, deleted: 0 });
   });
 
   it("runGcCompatibilitySweep runs GC + capabilities but NOT keepalive/reconcile", async () => {
@@ -107,6 +114,7 @@ describe("scheduler system sweeps", () => {
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
+    expect(sweepEvaluationEvidenceMock).toHaveBeenCalledTimes(1);
     expect(runSweepTickMock).not.toHaveBeenCalled();
     expect(runReconcileSweepMock).not.toHaveBeenCalled();
     expect(summary).toEqual({
