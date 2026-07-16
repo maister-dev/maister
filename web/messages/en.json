@@ -1996,6 +1996,8 @@
     "lateBy": "Started {minutes, plural, one {# minute} other {# minutes}} late",
     "lateByOne": "Started __MINUTES__ minute late",
     "lateByOther": "Started __MINUTES__ minutes late",
+    "loadMore": "Load more",
+    "loadingMore": "Loading…",
     "save": "Save",
     "saving": "Saving…",
     "oneTime": "One-time launches",

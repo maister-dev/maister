@@ -19,6 +19,7 @@ import { worktreesRoot } from "@/lib/instance-config";
 import {
   claimScheduledLaunch,
   dispatchClaimedScheduledLaunch,
+  SCHEDULED_LAUNCH_CLAIM_LEASE_MS,
 } from "@/lib/scheduled-launches/service";
 import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
 import {
@@ -37,7 +38,6 @@ const log = pino({
 });
 
 const DEFAULT_BATCH_SIZE = 25;
-const CLAIM_LEASE_MS = 5 * 60_000;
 
 type ScheduledLaunchDb = NodePgDatabase<typeof schema>;
 
@@ -231,7 +231,9 @@ async function reclaimOneStaleDispatch(input: {
       .set({
         claimId,
         claimFence,
-        claimExpiresAt: new Date(input.now.getTime() + CLAIM_LEASE_MS),
+        claimExpiresAt: new Date(
+          input.now.getTime() + SCHEDULED_LAUNCH_CLAIM_LEASE_MS,
+        ),
         claimOrigin: "tick",
         latestOutcome: "claimed",
         errorCode: null,

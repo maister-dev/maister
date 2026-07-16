@@ -53,7 +53,9 @@ documented future retirement, not a second surface.
 - **Automation list** filters rows from the aggregate reader:
   one-time task launch, recurring task schedule, agent cron, and agent event.
   It shows only effective target, timing, state, safe latest outcome, and a
-  resulting Run link when present.
+  resulting Run link when present. The initial bounded page exposes **Load
+  more** while its opaque cursor has another page; a mutation refreshes the
+  first page and replaces that cursor.
 - **One-time detail/actions** retain the latest ETag/revision. Pending rows may
   edit, cancel, or Run now; claimed and terminal rows expose their outcome but
   no misleading action. Conflicts refresh the safe latest DTO.

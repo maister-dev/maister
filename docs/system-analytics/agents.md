@@ -299,8 +299,8 @@ flowchart TD
     INS -- inserted --> LB[tryStartRun trigger_source=domain_event]
 ```
 
-**Binding telemetry and event ownership (Designed).** Cron dispatch will pass
-its `agentScheduleId` through the launch service and fence telemetry writes by
+**Binding telemetry and event ownership (Implemented, ADR-139).** Cron dispatch
+passes its `agentScheduleId` through the launch service and fences telemetry writes by
 the attempt marker. An event may match several bindings for one agent. The
 deterministic owner is the first enabled binding ordered by
 `agent_schedule_id ASC`; only that owner claims the existing

@@ -85,12 +85,12 @@ without turning recovery sweeps into live-path polling.
   see [`run-schedules.md`](run-schedules.md). `createSchedulerJobSchema`
   deliberately rejects this kind (the seeded singleton is the only instance;
   disabling it on `/admin/scheduler` is the global kill switch).
-- **One-time task launch dispatch** (Designed) — the same seeded
-  `run_schedule.dispatcher` will also scan due `scheduled_task_launches` under
+- **One-time task launch dispatch** (Implemented, ADR-139) — the same seeded
+  `run_schedule.dispatcher` also scans due `scheduled_task_launches` under
   its existing bounded job budget. Each intent claims and persists a durable
   pre-Git reservation before it enters `launchRun`; this is not a new clock,
   job kind, per-intent job, supervisor concern, or direct `runs` insert. Job
-  summaries will separately report claimed, launched, retried, failed, late,
+  summaries separately report claimed, launched, retried, failed, late,
   and truncated one-time-intent counts. See
   [`project-automations.md`](project-automations.md).
 - **Target payloads** (`scheduler_jobs.target`, Implemented, M24/M28) —

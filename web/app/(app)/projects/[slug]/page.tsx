@@ -316,6 +316,14 @@ export default async function ProjectBoardPage({
           proposals: [],
           sources: [],
         };
+  const automationsPage =
+    tab === "automations"
+      ? await listProjectAutomations({
+          projectId: project.id,
+          projectSlug: slug,
+          limit: 50,
+        })
+      : null;
 
   return (
     <>
@@ -683,13 +691,8 @@ export default async function ProjectBoardPage({
       {tab === "automations" ? (
         <AutomationsPanel
           canManage={canAct}
-          initialRows={(
-            await listProjectAutomations({
-              projectId: project.id,
-              projectSlug: slug,
-              limit: 50,
-            })
-          ).rows}
+          initialNextCursor={automationsPage?.nextCursor ?? null}
+          initialRows={automationsPage?.rows ?? []}
           labels={{
             all: tAutomations("all"),
             agent: tAutomations("agent"),
@@ -714,6 +717,8 @@ export default async function ProjectBoardPage({
             later: tAutomations("later"),
             lateByOne: tAutomations("lateByOne"),
             lateByOther: tAutomations("lateByOther"),
+            loadMore: tAutomations("loadMore"),
+            loadingMore: tAutomations("loadingMore"),
             oneTime: tAutomations("oneTime"),
             outcomeLabels: {
               created: tAutomations("outcomes.created"),

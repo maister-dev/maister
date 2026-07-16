@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { and, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import pino from "pino";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
@@ -49,6 +50,14 @@ const scheduledLaunchRequestSchema = z
     autoPromote: z.boolean().optional(),
   })
   .strict();
+
+export const SCHEDULED_LAUNCH_CLAIM_LEASE_MS = 5 * 60_000;
+export const SCHEDULED_LAUNCH_CLAIM_HEARTBEAT_MS = 60_000;
+
+const log = pino({
+  name: "scheduled-launch-service",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 const stateTransitions: Readonly<
   Record<ScheduledLaunchState, readonly ScheduledLaunchState[]>
@@ -645,7 +654,9 @@ export async function claimScheduledLaunch(input: {
         attemptCount: launch.attemptCount + 1,
         claimId,
         claimFence,
-        claimExpiresAt: new Date(now.getTime() + 5 * 60_000),
+        claimExpiresAt: new Date(
+          now.getTime() + SCHEDULED_LAUNCH_CLAIM_LEASE_MS,
+        ),
         claimOrigin: input.source,
         latestOutcome: "claimed",
         errorCode: null,
@@ -744,9 +755,39 @@ async function assertScheduledClaimOwner(input: {
   claimId: string;
   claimFence: number;
 }): Promise<void> {
-  const rows = await input.db
-    .select({ id: scheduledTaskLaunches.id })
-    .from(scheduledTaskLaunches)
+  const result = await input.db.execute<{ id: string }>(sql`
+    SELECT l.id
+    FROM scheduled_task_launches l
+    WHERE l.id = ${input.scheduledLaunchId}
+      AND l.state = 'Dispatching'
+      AND l.claim_id = ${input.claimId}
+      AND l.claim_fence = ${input.claimFence}
+    FOR UPDATE
+  `);
+
+  if (result.rows.length > 0) return;
+
+  throw new MaisterError(
+    "CONFLICT",
+    "scheduled launch claim is no longer owned by this dispatcher",
+  );
+}
+
+export async function renewScheduledLaunchClaim(input: {
+  scheduledLaunchId: string;
+  claimId: string;
+  claimFence: number;
+  now?: Date;
+  db?: ScheduledLaunchDb;
+}): Promise<boolean> {
+  const db = input.db ?? (getDb() as ScheduledLaunchDb);
+  const now = input.now ?? new Date();
+  const renewed = await db
+    .update(scheduledTaskLaunches)
+    .set({
+      claimExpiresAt: new Date(now.getTime() + SCHEDULED_LAUNCH_CLAIM_LEASE_MS),
+      updatedAt: now,
+    })
     .where(
       and(
         eq(scheduledTaskLaunches.id, input.scheduledLaunchId),
@@ -754,14 +795,65 @@ async function assertScheduledClaimOwner(input: {
         eq(scheduledTaskLaunches.claimId, input.claimId),
         eq(scheduledTaskLaunches.claimFence, input.claimFence),
       ),
-    );
+    )
+    .returning({ id: scheduledTaskLaunches.id });
 
-  if (rows.length > 0) return;
+  return renewed.length > 0;
+}
 
-  throw new MaisterError(
-    "CONFLICT",
-    "scheduled launch claim is no longer owned by this dispatcher",
-  );
+function startScheduledLaunchClaimHeartbeat(input: {
+  scheduledLaunchId: string;
+  claimId: string;
+  claimFence: number;
+  db: ScheduledLaunchDb;
+}): () => void {
+  let stopped = false;
+  let renewalInFlight = false;
+
+  const renew = async (): Promise<void> => {
+    if (stopped || renewalInFlight) return;
+
+    renewalInFlight = true;
+    try {
+      const renewed = await renewScheduledLaunchClaim({
+        ...input,
+        now: new Date(),
+      });
+
+      if (!renewed && !stopped) {
+        log.warn(
+          {
+            claimFence: input.claimFence,
+            scheduledLaunchId: input.scheduledLaunchId,
+          },
+          "scheduled launch claim lease was no longer owned during renewal",
+        );
+      }
+    } catch (error) {
+      if (!stopped) {
+        log.warn(
+          {
+            claimFence: input.claimFence,
+            err: error,
+            scheduledLaunchId: input.scheduledLaunchId,
+          },
+          "scheduled launch claim lease renewal failed",
+        );
+      }
+    } finally {
+      renewalInFlight = false;
+    }
+  };
+  const timer = setInterval(() => {
+    void renew();
+  }, SCHEDULED_LAUNCH_CLAIM_HEARTBEAT_MS);
+
+  timer.unref();
+
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 async function loadClaimedLaunch(input: {
@@ -948,6 +1040,12 @@ export async function dispatchClaimedScheduledLaunch(input: {
 
   let claimed: Awaited<ReturnType<typeof loadClaimedLaunch>> | null = null;
   let scheduledReservation: ScheduledLaunchReservation | null = null;
+  const stopClaimHeartbeat = startScheduledLaunchClaimHeartbeat({
+    db,
+    claimFence: input.claimFence,
+    claimId: input.claimId,
+    scheduledLaunchId: input.reservation.scheduledLaunchId,
+  });
 
   try {
     claimed = await loadClaimedLaunch({
@@ -1002,6 +1100,13 @@ export async function dispatchClaimedScheduledLaunch(input: {
         authorize: async () =>
           assertScheduledClaimOwner({
             db,
+            scheduledLaunchId: input.reservation.scheduledLaunchId,
+            claimId: input.claimId,
+            claimFence: input.claimFence,
+          }),
+        assertLaunchOwnership: async (transactionDb) =>
+          assertScheduledClaimOwner({
+            db: transactionDb as ScheduledLaunchDb,
             scheduledLaunchId: input.reservation.scheduledLaunchId,
             claimId: input.claimId,
             claimFence: input.claimFence,
@@ -1111,6 +1216,8 @@ export async function dispatchClaimedScheduledLaunch(input: {
     });
 
     return { state };
+  } finally {
+    stopClaimHeartbeat();
   }
 }
 

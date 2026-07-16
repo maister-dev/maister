@@ -10,7 +10,9 @@ import {
   claimScheduledLaunch,
   createScheduledLaunch,
   dispatchClaimedScheduledLaunch,
+  renewScheduledLaunchClaim,
 } from "@/lib/scheduled-launches/service";
+import { dispatchDueScheduledLaunches } from "@/lib/scheduled-launches/dispatch";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -219,7 +221,7 @@ describe("scheduled task launch dispatcher", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
-  it("reuses a reservation after a bounded transient failure", async () => {
+  it("retries transient failures after one then five minutes before terminal failure", async () => {
     const fixture = await seedFixture();
     const created = await createDueIntent(fixture);
     const now = new Date("2026-06-01T10:15:00.000Z");
@@ -260,5 +262,107 @@ describe("scheduled task launch dispatcher", () => {
       worktreePath: first.reservation.worktreePath,
       claimFence: 2,
     });
+
+    await expect(
+      dispatchClaimedScheduledLaunch({
+        projectId: fixture.projectId,
+        claimId: second.claimId,
+        claimFence: second.claimFence,
+        reservation: second.reservation,
+        now: new Date("2026-06-01T10:16:00.000Z"),
+        db,
+        launch: async () => {
+          throw new MaisterError("SPAWN", "runner still offline");
+        },
+      }),
+    ).resolves.toEqual({ state: "RetryWaiting" });
+    await expect(
+      db
+        .select({ nextAttemptAt: schema.scheduledTaskLaunches.nextAttemptAt })
+        .from(schema.scheduledTaskLaunches)
+        .where(eq(schema.scheduledTaskLaunches.id, created.intent.id)),
+    ).resolves.toEqual([
+      { nextAttemptAt: new Date("2026-06-01T10:21:00.000Z") },
+    ]);
+
+    const third = await claimScheduledLaunch({
+      scheduledLaunchId: created.intent.id,
+      projectId: fixture.projectId,
+      source: "tick",
+      now: new Date("2026-06-01T10:21:00.000Z"),
+      db,
+    });
+
+    await expect(
+      dispatchClaimedScheduledLaunch({
+        projectId: fixture.projectId,
+        claimId: third.claimId,
+        claimFence: third.claimFence,
+        reservation: third.reservation,
+        now: new Date("2026-06-01T10:21:00.000Z"),
+        db,
+        launch: async () => {
+          throw new MaisterError("EXECUTOR_UNAVAILABLE", "runner unavailable");
+        },
+      }),
+    ).resolves.toEqual({ state: "Failed" });
+    await expect(
+      db
+        .select({
+          nextAttemptAt: schema.scheduledTaskLaunches.nextAttemptAt,
+          state: schema.scheduledTaskLaunches.state,
+        })
+        .from(schema.scheduledTaskLaunches)
+        .where(eq(schema.scheduledTaskLaunches.id, created.intent.id)),
+    ).resolves.toEqual([{ nextAttemptAt: null, state: "Failed" }]);
+  });
+
+  it("keeps a live dispatch owned while its lease is renewed", async () => {
+    const fixture = await seedFixture();
+    const created = await createDueIntent(fixture);
+    const claimedAt = new Date("2026-06-01T10:15:00.000Z");
+    const claim = await claimScheduledLaunch({
+      scheduledLaunchId: created.intent.id,
+      projectId: fixture.projectId,
+      source: "tick",
+      now: claimedAt,
+      db,
+    });
+    const renewedAt = new Date("2026-06-01T10:19:00.000Z");
+
+    await expect(
+      renewScheduledLaunchClaim({
+        scheduledLaunchId: created.intent.id,
+        claimId: claim.claimId,
+        claimFence: claim.claimFence,
+        now: renewedAt,
+        db,
+      }),
+    ).resolves.toBe(true);
+
+    await expect(
+      dispatchDueScheduledLaunches({
+        db,
+        now: new Date("2026-06-01T10:20:01.000Z"),
+      }),
+    ).resolves.toMatchObject({ recovered: 0 });
+    await expect(
+      db
+        .select({
+          claimExpiresAt: schema.scheduledTaskLaunches.claimExpiresAt,
+          claimFence: schema.scheduledTaskLaunches.claimFence,
+          claimId: schema.scheduledTaskLaunches.claimId,
+          state: schema.scheduledTaskLaunches.state,
+        })
+        .from(schema.scheduledTaskLaunches)
+        .where(eq(schema.scheduledTaskLaunches.id, created.intent.id)),
+    ).resolves.toEqual([
+      {
+        claimExpiresAt: new Date("2026-06-01T10:24:00.000Z"),
+        claimFence: claim.claimFence,
+        claimId: claim.claimId,
+        state: "Dispatching",
+      },
+    ]);
   });
 });

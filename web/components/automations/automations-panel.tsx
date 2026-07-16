@@ -5,6 +5,8 @@ import type { ReactElement, ReactNode } from "react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+
 type AutomationType =
   | "one_time_task_launch"
   | "recurring_task_schedule"
@@ -48,6 +50,8 @@ type Labels = {
   later: string;
   lateByOne: string;
   lateByOther: string;
+  loadMore: string;
+  loadingMore: string;
   oneTime: string;
   outcomeLabels: Record<string, string>;
   recurring: string;
@@ -109,15 +113,19 @@ function formatLateBy(input: {
 export function AutomationsPanel(props: {
   canManage: boolean;
   children?: ReactNode;
+  initialNextCursor: string | null;
   initialRows: AutomationPanelRow[];
   labels: Labels;
   slug: string;
 }): ReactElement {
   const [rows, setRows] = useState(props.initialRows);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<AutomationPanelRow | null>(null);
   const [editing, setEditing] = useState<ScheduledLaunchEdit | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<AutomationFilter>("all");
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState(props.initialNextCursor);
   const visibleRows = rows.filter(
     (row) =>
       filter === "all" ||
@@ -126,19 +134,60 @@ export function AutomationsPanel(props: {
         (row.type === "agent_cron" || row.type === "agent_event")),
   );
 
-  async function refresh(): Promise<void> {
+  async function fetchPage(cursor?: string): Promise<{
+    nextCursor: string | null;
+    rows: AutomationPanelRow[];
+  }> {
+    const query = new URLSearchParams({ limit: "50" });
+
+    if (cursor) query.set("cursor", cursor);
+
     const response = await fetch(
-      `/api/projects/${encodeURIComponent(props.slug)}/automations?limit=50`,
+      `/api/projects/${encodeURIComponent(props.slug)}/automations?${query.toString()}`,
     );
 
     if (!response.ok) throw new Error("automation refresh failed");
 
-    const body = (await response.json()) as { rows?: AutomationPanelRow[] };
+    const body = (await response.json()) as {
+      nextCursor?: string | null;
+      rows?: AutomationPanelRow[];
+    };
 
-    setRows(body.rows ?? []);
+    return {
+      nextCursor: body.nextCursor ?? null,
+      rows: body.rows ?? [],
+    };
   }
 
-  async function mutate(row: AutomationPanelRow, action: "cancel" | "run-now") {
+  async function refresh(): Promise<void> {
+    const page = await fetchPage();
+
+    setRows(page.rows);
+    setNextCursor(page.nextCursor);
+  }
+
+  async function loadMore(): Promise<void> {
+    if (!nextCursor || isLoadingMore) return;
+
+    setError(null);
+    setIsLoadingMore(true);
+
+    try {
+      const page = await fetchPage(nextCursor);
+
+      setRows((current) => [...current, ...page.rows]);
+      setNextCursor(page.nextCursor);
+    } catch {
+      setError(props.labels.error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
+
+  async function mutate(
+    row: AutomationPanelRow,
+    action: "cancel" | "run-now",
+  ): Promise<boolean> {
     setBusyId(row.id);
     setError(null);
 
@@ -148,7 +197,9 @@ export function AutomationsPanel(props: {
       );
       const etag = detail.headers.get("ETag");
 
-      if (!detail.ok || !etag) throw new Error("automation revision unavailable");
+      if (!detail.ok || !etag) {
+        throw new Error("automation revision unavailable");
+      }
 
       const response = await fetch(
         `/api/projects/${encodeURIComponent(props.slug)}/scheduled-launches/${encodeURIComponent(row.id)}/${action}`,
@@ -158,11 +209,30 @@ export function AutomationsPanel(props: {
       if (!response.ok) throw new Error("automation mutation failed");
 
       await refresh();
+
+      return true;
     } catch {
       setError(props.labels.error);
+
+      return false;
     } finally {
       setBusyId(null);
     }
+  }
+
+  async function confirmCancellation(): Promise<void> {
+    if (!cancelling) return;
+
+    const cancelled = await mutate(cancelling, "cancel");
+
+    if (cancelled) setCancelling(null);
+  }
+
+  function closeCancellation(): void {
+    if (busyId === cancelling?.id) return;
+
+    setCancelling(null);
+    setError(null);
   }
 
   async function beginEdit(row: AutomationPanelRow): Promise<void> {
@@ -252,7 +322,7 @@ export function AutomationsPanel(props: {
             </button>
           ))}
         </div>
-        {error ? (
+        {error && !cancelling ? (
           <p aria-live="polite" className="mb-3 rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700" role="alert">
             {error}
           </p>
@@ -270,7 +340,6 @@ export function AutomationsPanel(props: {
                 {props.labels.scheduledLocalTime}
               </span>
               <input
-                autoFocus
                 className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink"
                 type="datetime-local"
                 value={editing.scheduledLocalTime}
@@ -390,9 +459,8 @@ export function AutomationsPanel(props: {
                         disabled={busyId === row.id}
                         type="button"
                         onClick={() => {
-                          if (window.confirm(props.labels.cancelConfirm)) {
-                            void mutate(row, "cancel");
-                          }
+                          setError(null);
+                          setCancelling(row);
                         }}
                       >
                         {props.labels.cancel}
@@ -420,7 +488,59 @@ export function AutomationsPanel(props: {
             ))}
           </ul>
         )}
+        {nextCursor ? (
+          <div className="mt-4 flex justify-end">
+            <button
+              className="rounded border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase text-ink hover:border-amber"
+              disabled={isLoadingMore}
+              type="button"
+              onClick={() => void loadMore()}
+            >
+              {isLoadingMore ? props.labels.loadingMore : props.labels.loadMore}
+            </button>
+          </div>
+        ) : null}
       </div>
+      {cancelling ? (
+        <ConfirmDialog
+          body={props.labels.cancelConfirm}
+          busy={busyId === cancelling.id}
+          cancelLabel={props.labels.cancelEdit}
+          testId="automation-cancel-confirm"
+          title={props.labels.cancel}
+          titleId="automation-cancel-confirm-title"
+          onClose={closeCancellation}
+        >
+          {error ? (
+            <p
+              aria-live="assertive"
+              className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700"
+              role="alert"
+            >
+              {error}
+            </p>
+          ) : null}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="rounded border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase text-ink hover:border-amber"
+              disabled={busyId === cancelling.id}
+              type="button"
+              onClick={closeCancellation}
+            >
+              {props.labels.cancelEdit}
+            </button>
+            <button
+              className="rounded border border-red-500 px-2 py-1 font-mono text-[10px] font-bold uppercase text-red-700 hover:bg-red-50"
+              data-testid="automation-cancel-confirm-submit"
+              disabled={busyId === cancelling.id}
+              type="button"
+              onClick={() => void confirmCancellation()}
+            >
+              {props.labels.cancel}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
       {props.children}
     </section>
   );

@@ -21,6 +21,8 @@ const labels = {
   later: "Later offset",
   lateByOne: "Late by __MINUTES__ min",
   lateByOther: "Late by __MINUTES__ min",
+  loadMore: "Load more",
+  loadingMore: "Loading",
   runNow: "Run now",
   oneTime: "One-time launches",
   outcomeLabels: { created: "Created" },
@@ -41,6 +43,7 @@ describe("AutomationsPanel", () => {
         AutomationsPanel,
         {
           canManage: true,
+          initialNextCursor: null,
           initialRows: [
           {
             id: "intent-1",

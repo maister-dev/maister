@@ -374,4 +374,34 @@ describe("launchRun — capability-bundle materialization (T6 wiring)", () => {
 
     expect(order).toEqual(["addWorktree", "materialize"]);
   });
+
+  it("checks scheduled ownership before worktree creation and Run persistence", async () => {
+    const order: string[] = [];
+    const assertLaunchOwnership = vi.fn(async () => {
+      order.push("ownership");
+    });
+
+    mocks.addWorktree.mockImplementation(async () => {
+      order.push("addWorktree");
+    });
+    mocks.materializeProjectBundlesIntoWorktree.mockImplementation(async () => {
+      order.push("materialize");
+
+      return { bundles: 0 };
+    });
+
+    await launchRun(
+      { taskId: TASK_ID },
+      { ...ctx(), assertLaunchOwnership },
+      fakeDb,
+    );
+
+    expect(order).toEqual([
+      "ownership",
+      "addWorktree",
+      "materialize",
+      "ownership",
+    ]);
+    expect(assertLaunchOwnership).toHaveBeenCalledTimes(2);
+  });
 });

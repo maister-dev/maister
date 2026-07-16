@@ -14,6 +14,17 @@ import {
 
 type Theme = "light" | "dark";
 type ThemeChoice = Theme | "system";
+type ThemeCookieStore = {
+  set: (input: {
+    name: string;
+    sameSite: "strict";
+    value: string;
+  }) => Promise<void>;
+};
+type ThemeWindow = Window &
+  typeof globalThis & {
+    cookieStore?: ThemeCookieStore;
+  };
 
 export type ThemeProviderProps = {
   children: ReactNode;
@@ -82,7 +93,7 @@ export function ThemeProvider({
     applyTheme(resolved);
 
     try {
-      window.cookieStore.set({
+      await (window as ThemeWindow).cookieStore?.set({
         sameSite: "strict",
         name: THEME_STORAGE_KEY,
         value: nextTheme,

@@ -134,7 +134,11 @@ sequenceDiagram
     C->>DB: fenced Launched, RetryWaiting, or Failed outcome
 ```
 
-Claim expiry begins recovery rather than allowing an arbitrary second launch.
+An active dispatcher renews its fenced five-minute lease every minute. Claim
+expiry therefore begins recovery only after that liveness signal stops, rather
+than allowing an arbitrary second launch. `launchRun` rechecks claim ownership
+before worktree creation and locks the owned claim again inside its Run
+transaction.
 Recovery resolves the unique Run link first. If no Run exists, it uses this
 strict matrix:
 

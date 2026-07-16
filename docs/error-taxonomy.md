@@ -77,11 +77,13 @@ union in `web/lib/errors-core.ts` (re-exported by `web/lib/errors.ts`).
 >   request, stale/missing/malformed ETag revision, cancel/edit after claim,
 >   tick-versus-Run-now winner loss, or stale agent-schedules revision. UI
 >   refreshes the safe DTO; it never string-matches the stored message.
-> - **`EXECUTOR_UNAVAILABLE` → HTTP 503:** temporary runner, supervisor, or
->   network failure after claim. The intent moves to bounded `RetryWaiting`
->   (1/5/15 minutes, three attempts per `armed_at`) unless the caller retries
->   Run now. Raw upstream text, paths, and credentials are never stored or
->   returned.
+> - **`EXECUTOR_UNAVAILABLE` → HTTP 503 when unhandled:** a temporary runner,
+>   supervisor, or network failure after a scheduled claim is instead persisted
+>   as `RetryWaiting` after one minute, then five minutes (three total claims
+>   per `armed_at`). The create and Run-now routes return the resulting safe
+>   intent DTO with HTTP 200; the generic error mapping remains HTTP 503 when
+>   this error escapes another route. Raw upstream text, paths, and credentials
+>   are never stored or returned.
 >
 > A scheduler item refusal records code-level outcome on its own durable intent
 > while the shared dispatcher attempt can still succeed. No new code, status,

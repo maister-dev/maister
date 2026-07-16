@@ -188,7 +188,7 @@ sequenceDiagram
     UI-->>U: card moves to In Flight column
 ```
 
-### One-time scheduled launch (Designed)
+### One-time scheduled launch (Implemented, ADR-139)
 
 A future task launch is not a task state transition and does not create a Run
 or consume a Flow slot when a member creates it. The intent stores a validated

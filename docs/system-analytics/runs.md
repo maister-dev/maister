@@ -296,7 +296,7 @@ ADR changes branch identity. The launch dialog displays the branch name and
 base branch before POST. Every displayed override is marked as a deviation from
 the default.
 
-### Scheduled one-time launch handoff (Designed)
+### Scheduled one-time launch handoff (Implemented, ADR-139)
 
 A one-time automation reaches this same `launchRun` seam only after its
 dispatcher has committed a server-owned reservation. The reservation supplies
@@ -306,7 +306,10 @@ Run transaction writes the unique `runs.scheduled_launch_id` and retains the
 same runner/capability/policy/workspace snapshots and compensation as a manual
 launch. The scheduler does not call the supervisor or insert Runs directly.
 
-If a process dies before that transaction, recovery uses the reservation and
+An active dispatcher renews its fenced lease every minute while the handoff is
+in progress; `launchRun` rechecks that ownership before it creates the
+worktree and inside the Run transaction. If a process dies before that
+transaction, recovery uses the reservation and
 verified worktree provenance to converge to that one Run or a safe terminal
 outcome. An unverifiable path or branch is never removed. `trigger_source`
 therefore gains `scheduled` as a first-class source in all read models; it is

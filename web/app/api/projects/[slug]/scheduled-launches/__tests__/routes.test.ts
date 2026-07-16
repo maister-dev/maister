@@ -216,4 +216,24 @@ describe("one-time scheduled launch mutations", () => {
       expect.objectContaining({ expectedRevision: 2 }),
     );
   });
+
+  it("returns the durable retry outcome as a safe intent DTO", async () => {
+    mocks.runScheduledLaunchNow.mockResolvedValue({ state: "RetryWaiting" });
+    mocks.getScheduledLaunchDto.mockResolvedValue({
+      ...dto,
+      revision: 3,
+      state: "RetryWaiting",
+    });
+
+    const response = await runNow.POST(
+      jsonRequest("POST", undefined, { "If-Match": '"2"' }),
+      params({ launchId: "scheduled-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("ETag")).toBe('"3"');
+    await expect(response.json()).resolves.toEqual({
+      intent: expect.objectContaining({ state: "RetryWaiting" }),
+    });
+  });
 });

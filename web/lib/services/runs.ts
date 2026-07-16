@@ -528,6 +528,7 @@ function runnerCatalogEntry(
 export type LaunchRunContext = {
   actorUserId?: string | null;
   authorize: (projectId: string, action?: ProjectAction) => Promise<void>;
+  assertLaunchOwnership?: (db: Db) => Promise<void>;
   recordSuccessAudit?: (db: Db) => Promise<void>;
 };
 
@@ -1461,6 +1462,8 @@ export async function* launchRunStaged(
     // signal to start streaming (a throw above here is still a JSON error).
     yield launchProgress("precondition");
 
+    await ctx.assertLaunchOwnership?.(_db);
+
     // Create the worktree BEFORE the DB transaction so a git failure
     // (branch already exists, dirty parent repo, missing path) does
     // NOT leave the task stuck in InFlight with an orphan run/workspace
@@ -1553,6 +1556,8 @@ export async function* launchRunStaged(
       }
 
       await _db.transaction(async (tx: any) => {
+        await ctx.assertLaunchOwnership?.(tx);
+
         // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
         // so the workspace insert would violate it if it ran first.
         const insertedRun = await tx

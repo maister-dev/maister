@@ -127,7 +127,7 @@ The board is a horizontally scrollable set of columns:
   path (never an opaque DB error). There is no auto-rename and no
   attachment-level aliasing — the per-project name unique stays
   authoritative.
-- **Automations tab** (`?tab=automations`, Designed) replaces the visible
+- **Automations tab** (`?tab=automations`, Implemented, ADR-139) replaces the visible
   Schedules tab. It aggregates one-time task launch intents, existing recurring
   task schedules, and effective agent bindings without merging their mutation
   owners. The launch popover offers a Schedule run mode which stores an intent,
@@ -182,8 +182,8 @@ to server-stored mode. The board never renders a stale question as answerable.
 - Launch options for flow/runner/branch/policy selects:
   `GET /api/runs/launch-options?taskId=...`.
 - Launch run: `POST /api/runs`.
-- Project Automations (Designed): `GET /api/projects/{slug}/automations` and
-  the planned project-scoped scheduled-launch routes; recurring APIs and the
+- Project Automations (Implemented, ADR-139): `GET /api/projects/{slug}/automations`
+  and the project-scoped scheduled-launch routes; recurring APIs and the
   Project Settings → Agents PATCH remain authoritative for their row types.
 - Project Integrations tokens: `GET/POST /api/projects/{slug}/tokens` and
   `DELETE /api/projects/{slug}/tokens/{tokenId}`. These routes remain scoped to

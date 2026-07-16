@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
@@ -197,14 +197,11 @@ export async function listScheduledLaunchEvents(input: {
   return rows.map((row) => ({ ...row, createdAt: iso(row.createdAt)! }));
 }
 
-const automationKindSchema = z.enum([
-  "one_time_task_launch",
-  "recurring_task_schedule",
-  "agent_cron",
-  "agent_event",
-]);
-
-export type AutomationKind = z.infer<typeof automationKindSchema>;
+export type AutomationKind =
+  | "one_time_task_launch"
+  | "recurring_task_schedule"
+  | "agent_cron"
+  | "agent_event";
 
 export type AutomationRow = {
   id: string;
@@ -240,7 +237,7 @@ const automationCursorSchema = z.object({
   kindRank: z.number().int().min(0).max(3),
   id: z.string().min(1),
   updatedAt: z.string().datetime(),
-});
+}).refine((cursor) => cursor.active === (cursor.nextActionAt !== null));
 
 function kindRank(type: AutomationKind): number {
   return {
@@ -298,87 +295,197 @@ function compareAutomationRows(left: AutomationRow, right: AutomationRow): numbe
   return rank !== 0 ? rank : left.id.localeCompare(right.id);
 }
 
-function isAfterCursor(row: AutomationRow, cursor: AutomationCursor): boolean {
-  const boundary: AutomationRow = {
-    id: cursor.id,
-    type: automationKindSchema.options[cursor.kindRank]!,
-    name: "",
-    target: "",
-    trigger: "",
-    timezone: null,
-    nextActionAt: cursor.nextActionAt,
-    state: "",
-    latestOutcome: null,
-    errorCode: null,
-    errorMessage: null,
-    lateByMs: null,
-    resultingRun: null,
-    detailHref: "",
-    updatedAt: cursor.updatedAt,
-  };
+type AutomationSortColumns = {
+  active: SQL<boolean>;
+  id: SQL<string>;
+  kindRank: SQL<number>;
+  nextActionAt: SQL<Date | null>;
+  updatedAt: SQL<Date>;
+};
 
-  return compareAutomationRows(row, boundary) > 0;
+function automationRowsAfterCursor(input: {
+  cursor: AutomationCursor | null;
+  sort: AutomationSortColumns;
+}): SQL {
+  const { cursor, sort } = input;
+
+  if (!cursor) return sql`true`;
+
+  if (cursor.active) {
+    const nextActionAt = new Date(cursor.nextActionAt!);
+
+    return sql`
+      (${sort.active} = false)
+      OR (
+        ${sort.active} = true
+        AND (
+          ${sort.nextActionAt} > ${nextActionAt}
+          OR (
+            ${sort.nextActionAt} = ${nextActionAt}
+            AND (
+              ${sort.kindRank} > ${cursor.kindRank}
+              OR (
+                ${sort.kindRank} = ${cursor.kindRank}
+                AND ${sort.id} > ${cursor.id}
+              )
+            )
+          )
+        )
+      )
+    `;
+  }
+
+  const updatedAt = new Date(cursor.updatedAt);
+
+  return sql`
+    ${sort.active} = false
+    AND (
+      ${sort.updatedAt} < ${updatedAt}
+      OR (
+        ${sort.updatedAt} = ${updatedAt}
+        AND (
+          ${sort.kindRank} > ${cursor.kindRank}
+          OR (
+            ${sort.kindRank} = ${cursor.kindRank}
+            AND ${sort.id} > ${cursor.id}
+          )
+        )
+      )
+    )
+  `;
+}
+
+function automationSourceOrder(sort: AutomationSortColumns): SQL[] {
+  return [
+    desc(sort.active),
+    asc(sort.nextActionAt),
+    desc(sort.updatedAt),
+    asc(sort.kindRank),
+    asc(sort.id),
+  ];
 }
 
 async function listProjectAutomationRows(input: {
+  cursor?: AutomationCursor | null;
+  limit?: number;
   projectId: string;
   projectSlug?: string;
 }): Promise<AutomationRow[]> {
   const db = getDb();
+  const cursor = input.cursor ?? null;
+  const sourceLimit = input.limit === undefined ? undefined : input.limit + 1;
+  const oneTimeSort: AutomationSortColumns = {
+    active: sql<boolean>`${scheduledTaskLaunches.nextAttemptAt} IS NOT NULL`,
+    id: sql<string>`${scheduledTaskLaunches.id}`,
+    kindRank: sql<number>`0`,
+    nextActionAt: sql<Date | null>`${scheduledTaskLaunches.nextAttemptAt}`,
+    updatedAt: sql<Date>`${scheduledTaskLaunches.updatedAt}`,
+  };
+  const recurringNextActionAt = sql<Date | null>`CASE
+    WHEN ${runSchedules.enabled} THEN ${runSchedules.nextFireAt}
+    ELSE NULL
+  END`;
+  const recurringSort: AutomationSortColumns = {
+    active: sql<boolean>`${recurringNextActionAt} IS NOT NULL`,
+    id: sql<string>`${runSchedules.id}`,
+    kindRank: sql<number>`1`,
+    nextActionAt: recurringNextActionAt,
+    updatedAt: sql<Date>`${runSchedules.updatedAt}`,
+  };
+  const agentNextActionAt = sql<Date | null>`CASE
+    WHEN ${agentSchedules.triggerType} = 'cron' AND ${agentSchedules.enabled}
+      THEN ${agentSchedules.nextFireAt}
+    ELSE NULL
+  END`;
+  const agentSort: AutomationSortColumns = {
+    active: sql<boolean>`${agentNextActionAt} IS NOT NULL`,
+    id: sql<string>`${agentSchedules.id}`,
+    kindRank: sql<number>`CASE
+      WHEN ${agentSchedules.triggerType} = 'cron' THEN 2
+      ELSE 3
+    END`,
+    nextActionAt: agentNextActionAt,
+    updatedAt: sql<Date>`${agentSchedules.updatedAt}`,
+  };
+  const launchesQuery = db
+    .select(scheduledLaunchSelection)
+    .from(scheduledTaskLaunches)
+    .leftJoin(runs, eq(runs.scheduledLaunchId, scheduledTaskLaunches.id))
+    .leftJoin(users, eq(users.id, scheduledTaskLaunches.createdByUserId))
+    .where(
+      and(
+        eq(scheduledTaskLaunches.projectId, input.projectId),
+        automationRowsAfterCursor({ cursor, sort: oneTimeSort }),
+      ),
+    )
+    .orderBy(...automationSourceOrder(oneTimeSort));
+  const recurringQuery = db
+    .select({
+      id: runSchedules.id,
+      name: runSchedules.name,
+      taskTitle: tasks.title,
+      cronExpr: runSchedules.cronExpr,
+      timezone: runSchedules.timezone,
+      nextFireAt: runSchedules.nextFireAt,
+      enabled: runSchedules.enabled,
+      lastOutcome: runSchedules.lastFireOutcome,
+      lastError: runSchedules.lastFireError,
+      runId: runs.id,
+      runStatus: runs.status,
+      updatedAt: runSchedules.updatedAt,
+    })
+    .from(runSchedules)
+    .leftJoin(tasks, eq(tasks.id, runSchedules.taskId))
+    .leftJoin(runs, eq(runs.id, runSchedules.lastRunId))
+    .where(
+      and(
+        eq(runSchedules.projectId, input.projectId),
+        automationRowsAfterCursor({ cursor, sort: recurringSort }),
+      ),
+    )
+    .orderBy(...automationSourceOrder(recurringSort));
+  const agentQuery = db
+    .select({
+      id: agentSchedules.id,
+      triggerType: agentSchedules.triggerType,
+      cronExpr: agentSchedules.cronExpr,
+      timezone: agentSchedules.timezone,
+      nextFireAt: agentSchedules.nextFireAt,
+      eventMatch: agentSchedules.eventMatch,
+      enabled: agentSchedules.enabled,
+      lastOutcome: agentSchedules.lastOutcome,
+      lastErrorCode: agentSchedules.lastErrorCode,
+      lastErrorMessage: agentSchedules.lastErrorMessage,
+      lastRunId: agentSchedules.lastRunId,
+      updatedAt: agentSchedules.updatedAt,
+      agentId: agents.id,
+      agentName: agents.name,
+    })
+    .from(agentSchedules)
+    .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
+    .innerJoin(
+      agentProjectLinks,
+      and(
+        eq(agentProjectLinks.agentId, agentSchedules.agentId),
+        eq(agentProjectLinks.projectId, agentSchedules.projectId),
+        eq(agentProjectLinks.enabled, true),
+      ),
+    )
+    .where(
+      and(
+        eq(agentSchedules.projectId, input.projectId),
+        automationRowsAfterCursor({ cursor, sort: agentSort }),
+      ),
+    )
+    .orderBy(...automationSourceOrder(agentSort));
   const [launches, recurring, bindings] = await Promise.all([
-    db
-      .select(scheduledLaunchSelection)
-      .from(scheduledTaskLaunches)
-      .leftJoin(runs, eq(runs.scheduledLaunchId, scheduledTaskLaunches.id))
-      .leftJoin(users, eq(users.id, scheduledTaskLaunches.createdByUserId))
-      .where(eq(scheduledTaskLaunches.projectId, input.projectId)),
-    db
-      .select({
-        id: runSchedules.id,
-        name: runSchedules.name,
-        taskTitle: tasks.title,
-        cronExpr: runSchedules.cronExpr,
-        timezone: runSchedules.timezone,
-        nextFireAt: runSchedules.nextFireAt,
-        enabled: runSchedules.enabled,
-        lastOutcome: runSchedules.lastFireOutcome,
-        lastError: runSchedules.lastFireError,
-        runId: runs.id,
-        runStatus: runs.status,
-        updatedAt: runSchedules.updatedAt,
-      })
-      .from(runSchedules)
-      .leftJoin(tasks, eq(tasks.id, runSchedules.taskId))
-      .leftJoin(runs, eq(runs.id, runSchedules.lastRunId))
-      .where(eq(runSchedules.projectId, input.projectId)),
-    db
-      .select({
-        id: agentSchedules.id,
-        triggerType: agentSchedules.triggerType,
-        cronExpr: agentSchedules.cronExpr,
-        timezone: agentSchedules.timezone,
-        nextFireAt: agentSchedules.nextFireAt,
-        eventMatch: agentSchedules.eventMatch,
-        enabled: agentSchedules.enabled,
-        lastOutcome: agentSchedules.lastOutcome,
-        lastErrorCode: agentSchedules.lastErrorCode,
-        lastErrorMessage: agentSchedules.lastErrorMessage,
-        lastRunId: agentSchedules.lastRunId,
-        updatedAt: agentSchedules.updatedAt,
-        agentId: agents.id,
-        agentName: agents.name,
-      })
-      .from(agentSchedules)
-      .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
-      .innerJoin(
-        agentProjectLinks,
-        and(
-          eq(agentProjectLinks.agentId, agentSchedules.agentId),
-          eq(agentProjectLinks.projectId, agentSchedules.projectId),
-          eq(agentProjectLinks.enabled, true),
-        ),
-      )
-      .where(eq(agentSchedules.projectId, input.projectId)),
+    sourceLimit === undefined
+      ? launchesQuery
+      : launchesQuery.limit(sourceLimit),
+    sourceLimit === undefined
+      ? recurringQuery
+      : recurringQuery.limit(sourceLimit),
+    sourceLimit === undefined ? agentQuery : agentQuery.limit(sourceLimit),
   ]);
   const projectIdentifier = input.projectSlug ?? input.projectId;
   const rows: AutomationRow[] = [
@@ -448,6 +555,7 @@ async function listProjectAutomationRows(input: {
       updatedAt: iso(row.updatedAt)!,
     })),
   ];
+
   return rows.sort(compareAutomationRows);
 }
 
@@ -458,9 +566,11 @@ export async function listProjectAutomations(input: {
   cursor?: string;
 }): Promise<{ rows: AutomationRow[]; nextCursor: string | null }> {
   const cursor = decodeCursor(input.cursor);
-  const ordered = (await listProjectAutomationRows(input)).filter((row) =>
-    cursor ? isAfterCursor(row, cursor) : true,
-  );
+  const ordered = await listProjectAutomationRows({
+    ...input,
+    cursor,
+    limit: input.limit,
+  });
   const page = ordered.slice(0, input.limit);
   const finalRow = page.at(-1);
 

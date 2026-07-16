@@ -11504,7 +11504,7 @@ paths:
           schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
       responses:
         "200":
-          description: Claimed intent after normal launch admission or recorded refusal.
+          description: Claimed intent after normal launch admission, or a recorded retry or terminal outcome.
           headers:
             ETag:
               schema: { type: string, example: '"4"' }
@@ -11515,12 +11515,6 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Precondition" }
-        "503":
-          description: Temporary runner, supervisor, or network failure (`EXECUTOR_UNAVAILABLE`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-
   /api/projects/{slug}/automations:
     get:
       tags: [project-automations]

@@ -76,8 +76,8 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   - **Enabled** toggle (disabling cascades to the agent's triggers — see States).
   - **Triggers** — add/remove cron rows (`cronExpr` + IANA `timezone`) and event
     rows (kind multiselect over the ADR-086 taxonomy). Full-replacement on save.
-    The planned Project Automations aggregate links here to manage a binding; it
-    does not add another editor or a synthetic agent Run now action. The planned
+    The Project Automations aggregate links here to manage a binding; it
+    does not add another editor or a synthetic agent Run now action. The
     stable IDs and schedules revision make an unseen concurrent binding change a
     visible conflict rather than a delete-and-reinsert loss.
   - **Runner override** — select from the enabled runner catalog (or "use

@@ -67,7 +67,12 @@ describe("ProjectTabs", () => {
 
   it("renders Automations and only emits the canonical tab query", async () => {
     const html = renderToStaticMarkup(
-      await ProjectTabs({ slug: "proj", active: "automations", boardCount: 7 }),
+      await ProjectTabs({
+        slug: "proj",
+        active: "automations",
+        boardCount: 7,
+        showBrain: false,
+      }),
     );
 
     expect(html).toContain("nav.automations");
