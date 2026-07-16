@@ -1,7 +1,7 @@
 # Canonical Studio Create Flow Journey
 
-> **Status: Designed.** This specification becomes Implemented only after the
-> code, contract, documentation, and acceptance tests named below are green.
+> **Status: Implemented.** The code, API contract, migration, Studio journey,
+> and focused acceptance coverage below are the current product contract.
 
 ## Product contract
 

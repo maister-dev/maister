@@ -23,13 +23,13 @@ bridge; per-run workbench visualization remains in
 [`workbench.md`](workbench.md) and flow-graph execution semantics remain in
 [`flow-graph.md`](flow-graph.md).
 
-## Canonical local-package creation (Designed)
+## Canonical local-package creation (Implemented)
 
 New launchable/pinnable Flows are created in Studio local packages, not in the
 authored catalog. The canonical path creates a Git-backed package and Flow, or
 adds any additional Flow to an editable package, then uses the existing Commit
 -> content-addressed Cut -> Attach/Repoint -> launch lifecycle. See
-[`local-packages.md`](local-packages.md#canonical-create-flow-journey-designed).
+[`local-packages.md`](local-packages.md#canonical-create-flow-journey-implemented).
 
 The older `/flows/new` authored-capability entry is being retired to a Studio
 redirect. It is not a second launchable path. Current code proves a narrower

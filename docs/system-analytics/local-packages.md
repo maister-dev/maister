@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-116 — Implemented (web-only, no migration); the fork loop — `try_once` per-run pin, upstream divergence view, upstream sync, publish base branch + sync-first refusal — is ADR-132, Implemented (migration 0097). Canonical Create Flow is Designed; it adds a durable local-package operation claim and does not create a DB-authored Flow model.** Surface:
+> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-116 — Implemented (web-only, no migration); the fork loop — `try_once` per-run pin, upstream divergence view, upstream sync, publish base branch + sync-first refusal — is ADR-132, Implemented (migration 0097). Canonical Create Flow is Implemented; it adds a durable local-package operation claim and does not create a DB-authored Flow model.** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -214,9 +214,9 @@ optional message) clears the count; `POST .../discard` (lock-guarded; body
 `paths[]` confined BEFORE git, omitted → all) restores to `HEAD`. All three work
 with NO AI session present.
 
-## Canonical Create Flow journey (Designed)
+## Canonical Create Flow journey (Implemented)
 
-Studio Packages and Local Packages will expose **Create package and Flow**.
+Studio Packages and Local Packages expose **Create package and Flow**.
 One dialog collects package name, Flow ID, display title,
 `metadata.summary`, and `metadata.route_when`; labels, links, and sources are
 optional Flow metadata. Success creates `maister-package.yaml` membership and

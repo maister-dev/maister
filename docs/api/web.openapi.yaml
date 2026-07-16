@@ -9547,7 +9547,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
     post:
       tags: [flow-packages]
-      summary: (Canonical Create Flow — Designed) Create a local package and Flow
+      summary: (Canonical Create Flow — Implemented) Create a local package and Flow
       description: |
         Creates a ready `local_packages` row plus a graph-valid Flow in one
         operation. The body supplies only package name and Flow metadata; the
@@ -9634,7 +9634,7 @@ paths:
         description: Server-resolved `local_packages.id`; not duplicated in the body.
     post:
       tags: [flow-packages]
-      summary: (Canonical Create Flow — Designed) Add a Flow to an editable package
+      summary: (Canonical Create Flow — Implemented) Add a Flow to an editable package
       description: |
         Requires an active global member and a live `sessionId` edit lock for
         this exact URL package. The body supplies only `sessionId` and Flow
@@ -9668,7 +9668,7 @@ paths:
         description: Server-resolved `local_packages.id`; this route accepts no body.
     post:
       tags: [flow-packages]
-      summary: (Canonical Create Flow — Designed) Retry deterministic creation recovery
+      summary: (Canonical Create Flow — Implemented) Retry deterministic creation recovery
       description: |
         Requires an active global member. This body-less operation only performs
         hash-based reconciliation of the URL package's durable creation state;
