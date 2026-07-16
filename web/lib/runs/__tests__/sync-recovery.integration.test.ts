@@ -33,6 +33,25 @@ vi.mock("@/lib/scheduler", async (orig) => {
 
   return { ...actual, promoteNextPending: vi.fn(async () => undefined) };
 });
+// The git seam. Only the three calls the recovery arms make decisions on are
+// stubbed — `restoreWorktreeToCommit` is the DESTRUCTIVE one these tests must be
+// able to prove was NOT called, and headCommit/remoteBranchHead are the origin
+// question the `pushing` arm settles forward on. Everything else stays real.
+vi.mock("@/lib/worktree", async (orig) => {
+  const actual = await orig<typeof import("@/lib/worktree")>();
+
+  return {
+    ...actual,
+    headCommit: vi.fn(async () => {
+      throw new Error("no worktree");
+    }),
+    remoteBranchHead: vi.fn(async () => {
+      throw new Error("no remote");
+    }),
+    restoreWorktreeToCommit: vi.fn(async () => undefined),
+    abortSyncOperation: vi.fn(async () => undefined),
+  };
+});
 
 const {
   recoverSyncAttemptOnReconcile,
@@ -41,6 +60,9 @@ const {
 } = await import("@/lib/runs/sync-recovery");
 const { registerSyncDriver, unregisterSyncDriver, hasSyncDriver } =
   await import("@/lib/runs/sync-driver-registry");
+const { headCommit, remoteBranchHead, restoreWorktreeToCommit } = await import(
+  "@/lib/worktree"
+);
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -89,6 +111,7 @@ async function seedRunAttempt(opts: {
   mode: "mechanical" | "agent";
   phase: string;
   agentRunningSince?: Date | null;
+  headShaBefore?: string | null;
 }): Promise<{ runId: string; workspaceId: string; attemptId: string }> {
   const { projectId, taskId } = await seedGraph();
   const runId = newId();
@@ -107,7 +130,7 @@ async function seedRunAttempt(opts: {
   );
   await pool.query(
     `insert into run_sync_attempts (id, run_id, workspace_id, attempt, strategy, mode, phase, agent_running_since, head_sha_before)
-     values ($1, $2, $3, 1, 'rebase', $4, $5, $6, NULL)`,
+     values ($1, $2, $3, 1, 'rebase', $4, $5, $6, $7)`,
     [
       attemptId,
       runId,
@@ -115,6 +138,7 @@ async function seedRunAttempt(opts: {
       opts.mode,
       opts.phase,
       opts.agentRunningSince ?? null,
+      opts.headShaBefore ?? null,
     ],
   );
 
@@ -136,6 +160,41 @@ async function readAttemptPhase(id: string): Promise<string> {
   return r.rows[0].phase;
 }
 
+async function readAttempt(id: string): Promise<{
+  phase: string;
+  pushed: boolean | null;
+  headShaAfter: string | null;
+}> {
+  const r = await pool.query(
+    `select phase, pushed, head_sha_after from run_sync_attempts where id = $1`,
+    [id],
+  );
+
+  return {
+    phase: r.rows[0].phase,
+    pushed: r.rows[0].pushed,
+    headShaAfter: r.rows[0].head_sha_after,
+  };
+}
+
+// The lifecycle slot this sync attempt holds. Releasing it is the whole point of
+// the orphan arms: a stranded `claiming` refuses promote AND all six lifecycle
+// ops forever, with no exit but DB surgery.
+async function readClaim(
+  workspaceId: string,
+): Promise<{ state: string | null; name: string | null }> {
+  const r = await pool.query(
+    `select lifecycle_operation_state, lifecycle_operation_name
+       from workspaces where id = $1`,
+    [workspaceId],
+  );
+
+  return {
+    state: r.rows[0].lifecycle_operation_state,
+    name: r.rows[0].lifecycle_operation_name,
+  };
+}
+
 const noSessions = async (): Promise<SupervisorSessionRecord[]> => [];
 
 beforeAll(async () => {
@@ -152,6 +211,17 @@ afterAll(async () => {
 
 beforeEach(async () => {
   for (const id of [...hasSyncDriverIds()]) unregisterSyncDriver(id);
+  // `runSyncRecoverySweep` scans EVERY non-terminal attempt in the database, so
+  // a row seeded by a previous test is a candidate for the next test's sweep —
+  // and the driver clear above turns the skipped-because-driven row into an
+  // orphan. Without this the summary counters are shared state and each test's
+  // expectation silently depends on file order.
+  await pool.query(`delete from run_sync_attempts`);
+  vi.mocked(restoreWorktreeToCommit).mockClear();
+  vi.mocked(headCommit).mockReset().mockRejectedValue(new Error("no worktree"));
+  vi.mocked(remoteBranchHead)
+    .mockReset()
+    .mockRejectedValue(new Error("no remote"));
 });
 
 // Track registered ids so beforeEach can clear the module-level registry.
@@ -237,6 +307,50 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
     expect(summary.durationCapKilled).toBe(0);
     expect(await readRunStatus(runId)).toBe("NeedsInput");
   });
+
+  // W5 deliberately does not consult `hasSyncDriver` — the cap MUST be able to
+  // kill a live in-process resolver — so it genuinely races that resolver's own
+  // finalize off a lock-free pre-read. The race is driven for real here: the
+  // sweep reads its candidates BEFORE `listSessions()`, so advancing the row from
+  // that seam lands a concurrent write in the exact window, on a second
+  // connection. A single-threaded stub would not be evidence for this contract.
+  it("SKIPS the cap kill when the resolver advances past agent_running between the pre-read and the CAS", async () => {
+    const past = new Date(Date.now() - (SYNC_ATTEMPT_MAX_MINUTES + 1) * 60_000);
+    const { runId, workspaceId, attemptId } = await seedRunAttempt({
+      status: "Running",
+      mode: "agent",
+      phase: "agent_running",
+      agentRunningSince: past,
+      headShaBefore: "d".repeat(40),
+    });
+    const deleteSession = vi.fn(async () => undefined);
+
+    const summary = await runSyncRecoverySweep({
+      db,
+      deleteSession,
+      listSessions: async () => {
+        await pool.query(
+          `update run_sync_attempts set phase = 'pushing' where id = $1`,
+          [attemptId],
+        );
+
+        return [];
+      },
+    });
+
+    expect(summary.durationCapKilled).toBe(0);
+    // The CAS predicates on the EXACT observed phase, so it matches no row and
+    // NO side effect may run: tearing the session down mid-push, or restoring
+    // after the push LANDED, is precisely the divergence this guards.
+    expect(await readAttemptPhase(attemptId)).toBe("pushing");
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
+    expect(await readRunStatus(runId)).toBe("Running");
+    expect(await readClaim(workspaceId)).toEqual({
+      state: "claiming",
+      name: "sync",
+    });
+  });
 });
 
 describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", () => {
@@ -272,6 +386,92 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
 
     expect(summary.orphanOperationsAborted).toBe(0);
     expect(await readAttemptPhase(attemptId)).toBe("starting");
+  });
+
+  // The arm gated on starting|rebasing while the mechanical driver writes FOUR
+  // non-terminal phases. `verifying` and `pushing` therefore had no recovery arm
+  // at all: the claim below is the one that stranded forever.
+  it("recovers an orphaned mechanical attempt at `verifying` and RELEASES the lifecycle claim", async () => {
+    const { workspaceId, attemptId } = await seedRunAttempt({
+      status: "Review",
+      mode: "mechanical",
+      phase: "verifying",
+      headShaBefore: "a".repeat(40),
+    });
+
+    expect(await readClaim(workspaceId)).toEqual({
+      state: "claiming",
+      name: "sync",
+    });
+
+    const summary = await runSyncRecoverySweep({
+      db,
+      listSessions: noSessions,
+    });
+
+    expect(summary.orphanOperationsAborted).toBe(1);
+    expect(await readAttemptPhase(attemptId)).toBe("failed");
+    // The claim release is the fix — terminalizing the ledger alone would still
+    // leave promote and all six lifecycle ops refused forever.
+    expect(await readClaim(workspaceId)).toEqual({ state: "none", name: null });
+    // `verifying` is local-only (below the point of no return) → safe to restore.
+    expect(restoreWorktreeToCommit).toHaveBeenCalledWith(
+      expect.any(String),
+      "a".repeat(40),
+    );
+  });
+
+  it("fails an orphaned mechanical `pushing` attempt whose push did NOT land, and never restores it", async () => {
+    const { workspaceId, attemptId } = await seedRunAttempt({
+      status: "Review",
+      mode: "mechanical",
+      phase: "pushing",
+      headShaBefore: "b".repeat(40),
+    });
+
+    // Origin cannot be read (default mock rejects) — an UNPROVEN push. That is
+    // not proof the push missed, so the local rebase must be KEPT.
+    const summary = await runSyncRecoverySweep({
+      db,
+      listSessions: noSessions,
+    });
+
+    expect(summary.orphanOperationsAborted).toBe(1);
+    expect(await readAttemptPhase(attemptId)).toBe("failed");
+    expect(await readClaim(workspaceId)).toEqual({ state: "none", name: null });
+    // Restoring out of `pushing` would reintroduce the divergence the
+    // `pushCommitted` flag exists to forbid.
+    expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
+  });
+
+  it("settles an orphaned mechanical `pushing` attempt FORWARD when origin proves the push landed", async () => {
+    const landed = "c".repeat(40);
+    const { workspaceId, attemptId } = await seedRunAttempt({
+      status: "Review",
+      mode: "mechanical",
+      phase: "pushing",
+      headShaBefore: "b".repeat(40),
+    });
+
+    // origin/<branch> == worktree HEAD ⇒ the force-push LANDED before the crash.
+    vi.mocked(headCommit).mockResolvedValue(landed);
+    vi.mocked(remoteBranchHead).mockResolvedValue(landed.toUpperCase());
+
+    const summary = await runSyncRecoverySweep({
+      db,
+      listSessions: noSessions,
+    });
+
+    expect(summary.orphanOperationsAborted).toBe(1);
+    expect(await readAttempt(attemptId)).toEqual({
+      phase: "succeeded",
+      pushed: true,
+      headShaAfter: landed,
+    });
+    expect(await readClaim(workspaceId)).toEqual({ state: "none", name: null });
+    // A landed push is a point of no return: the remote and its PR already carry
+    // the rebased commit, so resetting the worktree would manufacture divergence.
+    expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
   });
 });
 
