@@ -3010,6 +3010,115 @@ export const evaluationEvents = pgTable(
   }),
 );
 
+// M47 (ADR-143 D17): a durable controlled-launch batch intent. Persisted BEFORE
+// any run-launch side effect so a crash mid-fan-out leaves a recoverable intent,
+// never a silent partial batch. An immediate in-process kick drives it; the
+// scheduler is the durable backstop (same handler). Idempotency-keyed so a
+// duplicate submit (double click) returns the original batch, never a second.
+export const evaluationLaunchBatches = pgTable(
+  "evaluation_launch_batches",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["queued", "launching", "completed", "partial", "failed"],
+    })
+      .notNull()
+      .default("queued"),
+    idempotencyKey: text("idempotency_key"),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // CAS guard for batch-level status transitions.
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    idxStudy: index("evaluation_launch_batches_study_idx").on(t.studyId),
+    // Nullable UNIQUE: many NULLs allowed, so only keyed submits dedup.
+    uniqIdempotency: unique("evaluation_launch_batches_idempotency_uq").on(
+      t.idempotencyKey,
+    ),
+    statusCheck: check(
+      "evaluation_launch_batches_status_check",
+      sql`${t.status} in ('queued', 'launching', 'completed', 'partial', 'failed')`,
+    ),
+  }),
+);
+
+// M47 (ADR-143 D17): one durable item per (recipe × replicate) in a batch. Its
+// per-item status FSM (queued → launching → launched | failed) with a CAS
+// `version` is the crash-recovery unit: a launched item records its owning
+// run + launched participant; a failed item records the reason and a bounded
+// attempt count for retry/adopt.
+export const evaluationLaunchBatchItems = pgTable(
+  "evaluation_launch_batch_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => evaluationLaunchBatches.id, { onDelete: "cascade" }),
+    recipeId: text("recipe_id")
+      .notNull()
+      .references(() => evaluationRecipes.id, { onDelete: "restrict" }),
+    replicateOrdinal: integer("replicate_ordinal").notNull(),
+    status: text("status", {
+      enum: ["queued", "launching", "launched", "failed"],
+    })
+      .notNull()
+      .default("queued"),
+    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
+    participantId: text("participant_id").references(
+      () => evaluationParticipants.id,
+      { onDelete: "set null" },
+    ),
+    attempt: integer("attempt").notNull().default(0),
+    errorReason: text("error_reason"),
+    // CAS guard: queued → launching is the claim; launching → launched|failed is
+    // the terminal write. A stale version loses the race (idempotent no-op).
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxBatch: index("evaluation_launch_batch_items_batch_idx").on(t.batchId),
+    idxStatus: index("evaluation_launch_batch_items_status_idx").on(t.status),
+    // One item per (batch, recipe, replicate) — the durable dedup unit.
+    uniqItem: unique("evaluation_launch_batch_items_item_uq").on(
+      t.batchId,
+      t.recipeId,
+      t.replicateOrdinal,
+    ),
+    statusCheck: check(
+      "evaluation_launch_batch_items_status_check",
+      sql`${t.status} in ('queued', 'launching', 'launched', 'failed')`,
+    ),
+    replicatePositiveCheck: check(
+      "evaluation_launch_batch_items_replicate_positive_check",
+      sql`${t.replicateOrdinal} >= 1`,
+    ),
+  }),
+);
+
 // M42 (ADR-114): per-(run, session) runner state — the SOLE source of truth for
 // a run's runner(s). One row per logical session (`default` / solo / named) for a
 // flow run; exactly one `default` row for a scratch/agent run. The run-level
