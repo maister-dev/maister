@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MaisterError } from "@/lib/errors-core";
+
 const mocks = vi.hoisted(() => ({
   requireGlobalRole: vi.fn(),
   getLocalPackage: vi.fn(),
@@ -60,7 +62,10 @@ beforeEach(() => {
 
 describe("POST /api/studio/local-packages/{id}/flows", () => {
   it("uses the URL package id and the lock token, never a body package id", async () => {
-    const res = await POST(req({ sessionId: "editor-session", flow: FLOW }), ctx());
+    const res = await POST(
+      req({ sessionId: "editor-session", flow: FLOW }),
+      ctx(),
+    );
 
     expect(res.status).toBe(201);
     expect(mocks.addFlowToLocalPackage).toHaveBeenCalledWith({
@@ -71,6 +76,51 @@ describe("POST /api/studio/local-packages/{id}/flows", () => {
     await expect(res.json()).resolves.toEqual({
       createdFlow: { id: "second", path: "flows/second/flow.yaml" },
     });
+  });
+
+  it("rejects redundant cross-resource identifiers before loading the package", async () => {
+    const res = await POST(
+      req({
+        sessionId: "editor-session",
+        flow: FLOW,
+        packageId: "another-package",
+        projectId: "another-project",
+      }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(422);
+    expect(mocks.getLocalPackage).not.toHaveBeenCalled();
+    expect(mocks.addFlowToLocalPackage).not.toHaveBeenCalled();
+  });
+
+  it("returns the RBAC refusal before reading package state", async () => {
+    mocks.requireGlobalRole.mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "member role required"),
+    );
+
+    const res = await POST(
+      req({ sessionId: "editor-session", flow: FLOW }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(403);
+    expect(mocks.getLocalPackage).not.toHaveBeenCalled();
+    expect(mocks.addFlowToLocalPackage).not.toHaveBeenCalled();
+  });
+
+  it("returns the edit-lock conflict without converting it to a route crash", async () => {
+    mocks.addFlowToLocalPackage.mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "editor lock is not held"),
+    );
+
+    const res = await POST(
+      req({ sessionId: "editor-session", flow: FLOW }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "CONFLICT" });
   });
 
   it("rejects an unsafe Flow ID before the edit-lock operation", async () => {

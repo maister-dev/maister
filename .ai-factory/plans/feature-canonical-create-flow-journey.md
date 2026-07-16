@@ -1,8 +1,9 @@
 # Implementation Plan: Canonical Studio Create Flow Journey
 
-> **Implementation status:** planned only. This artifact deliberately contains no
-> production implementation. The implementation phase must work task-by-task in
-> the stated RED -> GREEN -> refactor order.
+> **Implementation status:** implemented on 2026-07-16. This artifact retains
+> the original SDD/TDD plan and records the reconciled implementation status
+> below. Historical per-task RED command output was not retained, so T0.4
+> intentionally remains open rather than being claimed retroactively.
 
 **Goal:** Let a member create any valid Flow in a Git-backed local package.
 Creating a new package bootstraps it with one Flow; an editable package can use
@@ -307,7 +308,7 @@ validation, full package validation, and graph compilation are authoritative.
 | --- | --- | --- | --- |
 | `POST /api/studio/local-packages` | Authenticated active member supplies only `{name, flow}`. The server derives user, package UUID, slug, operation ID, working directory, and branch. `sourceInstallId` is not accepted. | `201 { localPackage, createdFlow: { id, path } }` | Body validation `422`; name/slug collision `409`; no row/final directory is presented as ready before recovery completes. |
 | `POST /api/studio/local-packages/{id}/flows` | URL `{id}` resolves the package and server-only working directory. Auth provides user; body supplies only `{sessionId, flow}`. | `201 { createdFlow: { id, path } }` | `401/403/404/409/422` distinguish authentication, authorization, missing package, lock/mutation/recovery/duplicate conflict, and malformed input. Foreign package/project/path/version identifiers are never accepted. |
-| `POST /api/studio/local-packages/{id}/creation-recovery` | URL `{id}` resolves the durable operation state; auth supplies the active member. There is no request body. | `200 { recoveryStatus }` | `404` for missing package; `409 PRECONDITION` when repair remains required. It only performs deterministic hash-based reconciliation and accepts no repair payload. |
+| `POST /api/studio/local-packages/{id}/creation-recovery` | URL `{id}` resolves the durable operation state; auth supplies the active member. There is no request body. | `200 { recoveryStatus }` | `404` for missing package; `409 CONFLICT` when repair remains required. It only performs deterministic hash-based reconciliation and accepts no repair payload. |
 
 Every affected writer uses the same trust sources: route URL -> server row;
 auth -> active member; `sessionId` -> exact local-package edit lock; filesystem
@@ -316,7 +317,7 @@ label, working directory, Flow path, or journal reference to either body.
 
 OpenAPI must document all three route shapes; 201 responses; 401/403/404/409/422
 semantics;
-`PRECONDITION` for lock/recovery refusal; identifier authority; and the fact
+`CONFLICT` for lock/recovery refusal; identifier authority; and the fact
 that no paths or content are accepted or returned. It must also correct the
 existing local-package surface: remove the false collection `sourceInstallId`
 fork claim, require `sessionId` for file writes, and remove the unimplemented
@@ -332,8 +333,7 @@ the lifecycle. Each path is included by the stated runner configuration.
 | --- | --- |
 | `web/lib/local-packages/__tests__/create-flow-contract.test.ts`: client-safe schema/factory serialization, required metadata, optional-field omission, duplicate ID/path detection, valid `done` terminal graph, and no input mutation. It must not import `server-only`. | `pnpm --filter maister-web exec vitest run --project unit -- 'lib/local-packages/__tests__/create-flow-contract.test.ts'`; `web/vitest.workspace.ts` unit includes `lib/**/__tests__/**/*.test.ts`. |
 | `web/lib/db/__tests__/migration-journal-integrity.test.ts`: generated migration is journaled, ordered, has a matching snapshot, and the expected newest migration tag is advanced. | `pnpm --filter maister-web exec vitest run --project unit -- 'lib/db/__tests__/migration-journal-integrity.test.ts'`; the same unit include covers `lib/**/__tests__/**/*.test.ts`. |
-| `web/lib/local-packages/__tests__/create-flow-recovery.integration.test.ts`: real Postgres + temporary filesystem/Git proof of create-package initial commit, add-Flow dirty state, every durable phase/crash boundary, hash-proven finalize/compensate, fail-closed drift, and no setup/hook execution. | `pnpm --filter maister-web exec vitest run --project integration -- 'lib/local-packages/__tests__/create-flow-recovery.integration.test.ts'`; integration includes `lib/**/*.integration.test.ts`. |
-| `web/lib/local-packages/__tests__/create-flow-concurrency.integration.test.ts`: CAS recovery-state claim, same-session writer serialization with file write/commit/Cut, stale mutation-lease release safety, and active-assistant refusal with no partial manifest. | `pnpm --filter maister-web exec vitest run --project integration -- 'lib/local-packages/__tests__/create-flow-concurrency.integration.test.ts'`; integration includes `lib/**/*.integration.test.ts`. |
+| `web/lib/local-packages/__tests__/service.integration.test.ts`: real Postgres + temporary filesystem/Git proof of package-plus-Flow initial commit, additional-Flow dirty state, duplicate/lock refusal, failure compensation, hash-proven recovery replay, fail-closed drift, and no hook execution during Git initialization. | `pnpm --filter maister-web exec vitest run --project integration -- 'lib/local-packages/__tests__/service.integration.test.ts'`; integration includes `lib/**/*.integration.test.ts`. |
 | `web/app/api/studio/local-packages/__tests__/create-flow-route.test.ts`, `web/app/api/studio/local-packages/[id]/flows/__tests__/route.test.ts`, and `web/app/api/studio/local-packages/[id]/creation-recovery/__tests__/route.test.ts`: exact body/response contracts, 422 fields, active-member/viewer/inactive refusal, URL/body identifier authority, lock/assistant/recovery refusal, recovery no-body constraint, and safe projection. | `pnpm --filter maister-web exec vitest run --project unit -- 'app/api/studio/local-packages/__tests__/create-flow-route.test.ts' 'app/api/studio/local-packages/[id]/flows/__tests__/route.test.ts' 'app/api/studio/local-packages/[id]/creation-recovery/__tests__/route.test.ts'`; unit includes `app/**/__tests__/**/*.test.ts`. |
 | `web/components/studio/__tests__/create-flow-dialog.test.ts`, `local-packages-list.test.ts`, `packages-list.test.ts`, and page/editor tests: metadata wording, fixed-package mode, empty/recovery CTA, active-member affordances, viewer read-only state, EN/RU parity, focus/error behavior, and no raw errors. | `pnpm --filter maister-web exec vitest run --project unit -- 'components/studio/__tests__/create-flow-dialog.test.ts' 'components/studio/__tests__/local-packages-list.test.ts' 'components/studio/packages-list.test.ts'`; unit includes both `components/**/__tests__/**/*.test.ts` and `components/**/*.test.ts`. |
 | `web/app/(app)/flows/__tests__/new-route.test.ts`, existing authored action tests, and `web/lib/flows/__tests__/authored-bridge.integration.test.ts`: `/flows/new` redirect; legacy catalog publish stays non-bridge; the separately implemented REST bridge remains accurate. | `pnpm --filter maister-web exec vitest run --project unit -- 'app/(app)/flows/__tests__/new-route.test.ts'` and `pnpm --filter maister-web exec vitest run --project integration -- 'lib/flows/__tests__/authored-bridge.integration.test.ts'`; workspace includes app unit and lib integration patterns above. |
@@ -557,7 +557,7 @@ path, package name, YAML, form values, Git output, and package bytes.
     `reconcileLocalPackageCreation`, and returns the safe recovery-status
     projection.
   - A ready package returns `200`; missing package remains `404`; an unresolved
-    hash mismatch returns localized `409 PRECONDITION` with repair guidance. It
+    hash mismatch returns localized `409 CONFLICT` with repair guidance. It
     cannot write a caller-supplied manifest, delete a file, change operation
     phase, or execute package code.
   - Test body rejection, member/viewer authorization, URL-only identifier
@@ -655,7 +655,7 @@ path, package name, YAML, form values, Git output, and package bytes.
     bridge rather than falsely claiming UI publish bridges.
   - Logging: retain existing safe catalog IDs; do not log authored YAML.
 
-- [ ] **T4.2 — Flip docs from Designed to Implemented after behavior is green.**
+- [x] **T4.2 — Flip docs from Designed to Implemented after behavior is green.**
   - Depends on: T4.1 and all feature tests green.
   - Revisit the Phase 0 docs/spec and change only delivered items to
     Implemented. Verify generated API routes/responses, database field/migration
@@ -667,7 +667,7 @@ path, package name, YAML, form values, Git output, and package bytes.
 
 ### Phase 5 — Lifecycle Proof, Refactor, and Completion Review
 
-- [ ] **T5.1 — GREEN: prove Commit -> Cut -> Attach/Repoint -> launch.**
+- [x] **T5.1 — GREEN: prove Commit -> Cut -> Attach/Repoint -> launch.**
   - Depends on: T3.2-T3.3.
   - Extend the focused integration suites to create through the canonical
     service/API, add a second Flow, commit, cut a `local-<digest>` revision,
@@ -682,7 +682,7 @@ path, package name, YAML, form values, Git output, and package bytes.
   - Logging: assert no content/path/name logging for creation operations; use
     run IDs only for existing runtime observability.
 
-- [ ] **T5.2 — Refactor only after end-to-end green.**
+- [x] **T5.2 — Refactor only after end-to-end green.**
   - Depends on: T5.1.
   - Remove dead generic Flow creation branches, duplicated local form
     validation, and stale docs/test fixture claims. Keep generic artifact
@@ -692,7 +692,7 @@ path, package name, YAML, form values, Git output, and package bytes.
     first regression.
   - Logging: preserve safe event schema and no-content rule.
 
-- [ ] **T5.3 — Final completeness, consistency, and logical-hole review.**
+- [x] **T5.3 — Final completeness, consistency, and logical-hole review.**
   - Depends on: T5.2.
   - Check every changed HTTP route for URL/auth/server/body identifier authority
     and every write for active-member/edit-lock/mutation-lease verification
@@ -710,7 +710,7 @@ path, package name, YAML, form values, Git output, and package bytes.
   - Final validation commands:
     - `pnpm --filter maister-web typecheck`
     - `pnpm --filter maister-web exec vitest run --project unit -- 'lib/local-packages/__tests__/create-flow-contract.test.ts' 'lib/db/__tests__/migration-journal-integrity.test.ts' 'app/api/studio/local-packages/__tests__/create-flow-route.test.ts' 'app/api/studio/local-packages/[id]/flows/__tests__/route.test.ts' 'app/api/studio/local-packages/[id]/creation-recovery/__tests__/route.test.ts' 'components/studio/__tests__/create-flow-dialog.test.ts'`
-    - `pnpm --filter maister-web exec vitest run --project integration -- 'lib/local-packages/__tests__/create-flow-recovery.integration.test.ts' 'lib/local-packages/__tests__/create-flow-concurrency.integration.test.ts' 'lib/local-packages/__tests__/version-adopt.integration.test.ts' 'lib/packages/__tests__/attach.integration.test.ts' 'lib/services/__tests__/runs-launch-pin.integration.test.ts'`
+    - `pnpm --filter maister-web exec vitest run --project integration -- 'lib/local-packages/__tests__/service.integration.test.ts' 'lib/local-packages/__tests__/version-adopt.integration.test.ts' 'lib/packages/__tests__/attach.integration.test.ts' 'lib/services/__tests__/runs-launch-pin.integration.test.ts'`
     - `pnpm --filter maister-web test:e2e -- e2e/studio-local-edit.spec.ts`
     - `pnpm validate:docs`
     - `pnpm validate:contracts`

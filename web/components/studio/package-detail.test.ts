@@ -2,11 +2,19 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+const translations = vi.hoisted(() =>
+  Object.assign(
+    vi.fn((key: string) => key),
+    {
+      raw: vi.fn((key: string) => key),
+    },
+  ),
+);
+
 vi.mock("next-intl", () => ({
   // Mirror next-intl's `t` shape: a callable with a `.raw` escape hatch
   // (PackageDetail fetches the showingCount template via `t.raw`).
-  useTranslations: () =>
-    Object.assign((key: string) => key, { raw: (key: string) => key }),
+  useTranslations: () => translations,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -126,5 +134,11 @@ describe("PackageDetail", () => {
     );
 
     expect(html).not.toMatch(/\bTrust\b/);
+  });
+
+  it("passes the pagination page template to PackageTabs without eager ICU formatting", () => {
+    renderToStaticMarkup(createElement(PackageDetail, base as never));
+
+    expect(translations.raw).toHaveBeenCalledWith("viewer.page");
   });
 });

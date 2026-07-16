@@ -31,6 +31,10 @@ adds any additional Flow to an editable package, then uses the existing Commit
 -> content-addressed Cut -> Attach/Repoint -> launch lifecycle. See
 [`local-packages.md`](local-packages.md#canonical-create-flow-journey-implemented).
 
+Pre-existing local packages with zero Flows remain supported for their other
+package artifacts. Studio makes their lack of a launchable Flow explicit and
+offers Add Flow; no Flow can be launched from that package until one is added.
+
 The older `/flows/new` authored-capability entry is being retired to a Studio
 redirect. It is not a second launchable path. Current code proves a narrower
 bridge than older documentation implied: `publishAuthoredFlowAction` performs

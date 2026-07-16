@@ -1,11 +1,9 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
 
-const getPlatformFlowsMock = vi.hoisted(() => vi.fn());
-const requireSessionMock = vi.hoisted(() => vi.fn());
+const requireActiveSessionMock = vi.hoisted(() => vi.fn());
 const redirectMock = vi.hoisted(() => vi.fn());
 
 vi.mock("next-intl/server", () => ({
@@ -19,34 +17,26 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/authz", () => ({
-  requireSession: requireSessionMock,
-}));
-
-vi.mock("@/lib/queries/platform-flows", () => ({
-  getPlatformFlows: getPlatformFlowsMock,
-  parsePlatformFlowSearchParams: () => ({ project: "all", status: "all" }),
+  requireActiveSession: requireActiveSessionMock,
 }));
 
 describe("platform Flows page contracts", () => {
   beforeEach(() => {
-    getPlatformFlowsMock.mockReset();
-    requireSessionMock.mockReset();
+    requireActiveSessionMock.mockReset();
     redirectMock.mockReset();
-    requireSessionMock.mockResolvedValue({
+    requireActiveSessionMock.mockResolvedValue({
       id: "user-1",
       role: "member",
     });
-    getPlatformFlowsMock.mockResolvedValue(platformFlowsView());
   });
 
-  it("allows a global member with project manageCatalog access to open the new page", async () => {
+  it("redirects authenticated users from the retired authored-draft route to the canonical Studio wizard", async () => {
     const { default: NewFlowPage } = await import("../new/page");
 
-    const html = renderToStaticMarkup(await NewFlowPage());
+    await NewFlowPage();
 
-    expect(redirectMock).not.toHaveBeenCalled();
-    expect(html).toContain("Demo Project");
-    expect(html).toContain("Create draft");
+    expect(requireActiveSessionMock).toHaveBeenCalledTimes(1);
+    expect(redirectMock).toHaveBeenCalledWith("/studio/packages?create=flow");
   });
 
   it("defines EN and RU labels for every visible Flow state enum", () => {
@@ -87,57 +77,6 @@ describe("platform Flows page contracts", () => {
     }
   });
 });
-
-function platformFlowsView(): unknown {
-  return {
-    projects: [
-      {
-        id: "project-1",
-        slug: "demo",
-        name: "Demo Project",
-        canManageCatalog: true,
-      },
-    ],
-    authored: [
-      {
-        id: "cap-1",
-        projectSlug: "demo",
-        projectName: "Demo Project",
-        slug: "release-review",
-        title: "Release review",
-        lifecycle: "DRAFT",
-        draftVersion: 1,
-        currentDraftRevisionId: "rev-draft",
-        currentPublishedRevisionId: null,
-        draftContentHash: "abcdef1234567890",
-        publishedContentHash: null,
-        updatedAt: new Date("2026-06-08T00:00:00.000Z"),
-      },
-    ],
-    installed: [
-      {
-        id: "flow-1",
-        projectSlug: "demo",
-        projectName: "Demo Project",
-        ref: "aif",
-        source: "file:///repo/plugins/aif",
-        version: "local-dev",
-        revision: "abc123",
-        enablementState: "Installed",
-        trustStatus: "trusted_by_policy",
-        enabledRevisionId: "flow-rev-1",
-        enabledVersionLabel: "local-dev",
-        enabledResolvedRevision: "abc123",
-        packageStatus: "Installing",
-        setupStatus: "done",
-      },
-    ],
-    filters: {
-      project: "all",
-      status: "all",
-    },
-  };
-}
 
 function translate(
   key: string,

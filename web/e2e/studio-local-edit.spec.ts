@@ -202,7 +202,8 @@ async function installPackageFromRepo(
   await page.getByRole("button", { name: "Add package source" }).click();
   const dialog = page.getByRole("dialog");
 
-  await dialog.getByLabel("Git monorepo URL").fill(repo);
+  await dialog.getByRole("radio", { name: "Local directory" }).click();
+  await dialog.getByLabel("Absolute directory path").fill(repo);
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText(repo)).toBeVisible();
   await page
@@ -259,7 +260,7 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
 
   expect(packageId).toBeTruthy();
   await page.goto(`/studio/edit/${packageId}`);
-  await expect(page.getByTestId("package-home")).toBeVisible();
+  await expect(page.getByTestId("package-composition")).toBeVisible();
   await page.getByTestId("composition-create-flow-open").click();
 
   const add = page.getByTestId("create-flow-dialog");
@@ -444,7 +445,7 @@ test("fork an installed package to local → land in the /studio/edit editor", a
 
   expect(editId).toBeTruthy();
   await page.goto(`/studio/edit/${editId}`);
-  await expect(page.getByTestId("package-home")).toBeVisible();
+  await expect(page.getByTestId("package-composition")).toBeVisible();
   await expect(page.getByTestId("package-manifest-form")).toBeVisible();
   await expect(page.getByTestId("flow-yaml-sync-error")).toHaveCount(0);
   await page.getByTestId("local-editor-end-edit").click();
@@ -515,7 +516,7 @@ test("local editor reference pickers save runner, agent, free-text agent, and sc
   await page.waitForLoadState("networkidle");
 
   await page.goto(`/studio/edit/${editId}`);
-  await expect(page.getByTestId("package-home")).toBeVisible();
+  await expect(page.getByTestId("package-composition")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "review-intake.json", exact: true }),
   ).toBeVisible();

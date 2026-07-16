@@ -69,7 +69,7 @@ reads the working tree.
 `POST /api/studio/local-packages/{id}/creation-recovery` has no body and only
 retries deterministic reconciliation. It does not accept a repair payload or
 cross-resource ID. A non-empty body is a 422. Hash drift remains a localized
-409 `PRECONDITION` with operator repair guidance.
+409 `CONFLICT` with operator repair guidance.
 
 Every writer uses this lock order: authorization/edit lock, mutation lease,
 reload package state, mutate/validate, release in `finally`. Add Flow refuses

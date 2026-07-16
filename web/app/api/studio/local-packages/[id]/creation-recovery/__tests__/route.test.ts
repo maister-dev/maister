@@ -72,12 +72,26 @@ describe("POST /api/studio/local-packages/{id}/creation-recovery", () => {
     await expect(res.json()).resolves.toEqual({ recoveryStatus: "ready" });
   });
 
+  it("returns the live-lock refusal without attempting recovery", async () => {
+    mocks.assertUserHoldsLock.mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "edit-lock not held"),
+    );
+
+    const res = await POST(req(), ctx());
+
+    expect(res.status).toBe(409);
+    expect(mocks.recoverLocalPackageCreation).not.toHaveBeenCalled();
+  });
+
   it("does not let another member recover a first-Flow operation", async () => {
     mocks.getLocalPackage.mockResolvedValueOnce({
       id: "lp1",
       status: "active",
       createdBy: "owner",
-      creationState: { kind: "create_package_with_flow", flow: { id: "first" } },
+      creationState: {
+        kind: "create_package_with_flow",
+        flow: { id: "first" },
+      },
     });
 
     const res = await POST(req(), ctx());

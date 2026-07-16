@@ -47,6 +47,7 @@ export function CreateFlowDialog({
   onSubmit: (value: CreateFlowDialogSubmit) => Promise<void>;
 }): ReactElement {
   const t = useTranslations("studio.local.createFlow");
+  const tLocal = useTranslations("studio.local");
   const [name, setName] = useState("");
   const [id, setId] = useState("");
   const [title, setTitle] = useState("");
@@ -127,7 +128,7 @@ export function CreateFlowDialog({
           type="button"
           onClick={onClose}
         >
-          {t("cancel")}
+          {tLocal("cancel")}
         </button>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
@@ -197,7 +198,7 @@ export function CreateFlowDialog({
             {t("links")}
             <textarea
               className="min-h-[88px] rounded-[8px] border border-line bg-paper px-2 py-1.5 font-mono text-[11px] text-ink"
-              placeholder={t("linksHint")}
+              placeholder={t.raw("linksHint")}
               value={links}
               onChange={(event) => setLinks(event.target.value)}
             />
@@ -206,7 +207,7 @@ export function CreateFlowDialog({
             {t("sources")}
             <textarea
               className="min-h-[88px] rounded-[8px] border border-line bg-paper px-2 py-1.5 font-mono text-[11px] text-ink"
-              placeholder={t("sourcesHint")}
+              placeholder={t.raw("sourcesHint")}
               value={sources}
               onChange={(event) => setSources(event.target.value)}
             />
@@ -226,7 +227,11 @@ export function CreateFlowDialog({
           type="button"
           onClick={() => void submit()}
         >
-          {busy ? t("creating") : mode === "new-package" ? t("createPackage") : t("createFlow")}
+          {busy
+            ? t("creating")
+            : mode === "new-package"
+              ? t("createPackage")
+              : t("createFlow")}
         </button>
       </div>
     </section>

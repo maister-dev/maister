@@ -241,7 +241,7 @@ export function PackageComposition({
         labels={{
           loadMore: t("viewer.loadMore"),
           next: t("viewer.pageNext"),
-          page: t("viewer.page"),
+          page: t.raw("viewer.page"),
           paginationLabel: t("viewer.paginationLabel"),
           previous: t("viewer.pagePrev"),
           showingCount: t.raw("viewer.showingCount"),

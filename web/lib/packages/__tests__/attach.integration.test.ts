@@ -214,10 +214,15 @@ describe("package attach lifecycle (integration)", () => {
           join(packageRoot, `flows/${flowId}/flow.yaml`),
           `schemaVersion: 1
 name: ${flowId}
-steps:
+compat:
+  engine_min: 3.0.0
+nodes:
   - id: collect
-    type: human
-    form_schema: ./schemas/review.json
+    type: form
+    settings:
+      form_schema: schemas/review.json
+    transitions:
+      success: done
 `,
         );
       }
@@ -305,7 +310,9 @@ steps:
   });
 
   it("preserves a member schema when its package has no root schema artifacts", async () => {
-    const packageRoot = await mkdtemp(join(tmpdir(), "attach-int-legacy-schema-"));
+    const packageRoot = await mkdtemp(
+      join(tmpdir(), "attach-int-legacy-schema-"),
+    );
 
     try {
       await buildPackage(packageRoot, ["legacy-schema"]);
@@ -394,10 +401,15 @@ nodes:
         join(packageRoot, "flows/nonroot-schema/flow.yaml"),
         `schemaVersion: 1
 name: nonroot-schema
-steps:
+compat:
+  engine_min: 3.0.0
+nodes:
   - id: collect
-    type: human
-    form_schema: README.json
+    type: form
+    settings:
+      form_schema: README.json
+    transitions:
+      success: done
 `,
       );
       await writeFile(

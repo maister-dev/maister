@@ -177,7 +177,8 @@ correctness and first-class kinds (behavior SSOT:
   Flow. Generic Add File remains for non-Flow artifacts.
 
   Existing zero-Flow packages show a localized **No Flow yet** explanation and
-  Add Flow CTA; they remain otherwise supported. Pending or recovery-required
+  Add Flow CTA; they remain otherwise supported for non-Flow artifacts, but no
+  Flow can launch from them until one is added. Pending or recovery-required
   create operations show localized read-only remediation and disable normal
   writers. Viewers, inactive users, and users who must change their password
   never receive an enabled creation/mutation action; routes remain authoritative.

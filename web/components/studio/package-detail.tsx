@@ -207,12 +207,12 @@ export function PackageDetail({
           labels={{
             loadMore: t("viewer.loadMore"),
             next: t("viewer.pageNext"),
-            page: t("viewer.page"),
+            page: t.raw("viewer.page"),
             paginationLabel: t("viewer.paginationLabel"),
             previous: t("viewer.pagePrev"),
             // `t.raw` returns the un-interpolated template; PackageTabs fills
-            // {shown}/{total} via formatTemplate. Plain `t()` would error on the
-            // unprovided ICU args and fall back to the raw key path.
+            // the page and shown/total values via formatTemplate. Plain `t()`
+            // would error on the unprovided ICU args and fall back to the raw key path.
             showingCount: t.raw("viewer.showingCount"),
             tabEmpty: t("viewer.tabEmpty"),
           }}

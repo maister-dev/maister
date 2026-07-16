@@ -1,6 +1,6 @@
-import type { LocalPackage } from "@/lib/db/schema";
+import type { LocalPackage, LocalPackageCreationState } from "@/lib/db/schema";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdtemp,
   readFile,
@@ -17,6 +17,10 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import {
+  readCreationJournal,
+  writeCreationJournal,
+} from "@/lib/local-packages/create-flow-operation";
 import { gitCommitWorkingDir } from "@/lib/local-packages/git";
 import {
   acquireLock,
@@ -38,6 +42,7 @@ import {
   listFiles,
   listLocalPackages,
   readFileContent,
+  recoverLocalPackageCreation,
   setLocalPackageStatus,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
@@ -56,6 +61,85 @@ let homeDir: string | undefined;
 let originalHome: string | undefined;
 let userId: string;
 let otherUserId: string;
+
+const SECOND_FLOW = {
+  id: "two",
+  metadata: {
+    title: "Two",
+    summary: "Second.",
+    route_when: "Second route.",
+  },
+};
+
+function textHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function prepareInterruptedAdditionalFlow(name: string): Promise<{
+  pkg: LocalPackage;
+  state: LocalPackageCreationState;
+  originalManifest: string;
+  finalManifest: string;
+  finalFlow: string;
+}> {
+  const { package: pkg } = await createLocalPackageWithFlow({
+    name,
+    createdBy: userId,
+    flow: {
+      id: "one",
+      metadata: {
+        title: "One",
+        summary: "First.",
+        route_when: "First route.",
+      },
+    },
+    db,
+  });
+  const manifestPath = join(pkg.workingDir, "maister-package.yaml");
+  const flowPath = join(pkg.workingDir, "flows", SECOND_FLOW.id, "flow.yaml");
+  const originalManifest = await readFile(manifestPath, "utf8");
+
+  await acquireLock(pkg.id, userId, "recovery-session", db);
+  await addFlowToLocalPackage({
+    packageId: pkg.id,
+    sessionId: "recovery-session",
+    flow: SECOND_FLOW,
+    db,
+  });
+
+  const [finalManifest, finalFlow] = await Promise.all([
+    readFile(manifestPath, "utf8"),
+    readFile(flowPath, "utf8"),
+  ]);
+  const state: LocalPackageCreationState = {
+    operationId: randomUUID(),
+    kind: "add_flow",
+    phase: "claimed",
+    flowId: SECOND_FLOW.id,
+    manifestHash: textHash(finalManifest),
+    flowHash: textHash(finalFlow),
+    originalManifestHash: textHash(originalManifest),
+    startedAt: new Date().toISOString(),
+  };
+
+  await Promise.all([
+    writeFile(manifestPath, originalManifest),
+    rm(join(pkg.workingDir, "flows", SECOND_FLOW.id), {
+      recursive: true,
+      force: true,
+    }),
+    writeCreationJournal(pkg.workingDir, state.operationId, {
+      flow: SECOND_FLOW,
+      originalManifest,
+    }),
+  ]);
+  await db
+    .update(schema.localPackages)
+    .set({ creationState: state })
+    .where(eq(schema.localPackages.id, pkg.id));
+
+  return { pkg, state, originalManifest, finalManifest, finalFlow };
+}
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -269,6 +353,88 @@ describe("local-packages substrate (integration)", () => {
     await expect(
       readFile(join(pkg.workingDir, "maister-package.yaml"), "utf8"),
     ).resolves.toBe(beforeDuplicate);
+  });
+
+  it("rejects adding a Flow without the package editor lock before touching files", async () => {
+    const { package: pkg } = await createLocalPackageWithFlow({
+      name: "Flow lock guard",
+      createdBy: userId,
+      flow: {
+        id: "one",
+        metadata: {
+          title: "One",
+          summary: "First.",
+          route_when: "First route.",
+        },
+      },
+      db,
+    });
+    const manifestPath = join(pkg.workingDir, "maister-package.yaml");
+    const before = await readFile(manifestPath, "utf8");
+
+    await expect(
+      addFlowToLocalPackage({
+        packageId: pkg.id,
+        sessionId: "missing-editor-lock",
+        flow: SECOND_FLOW,
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    await expect(readFile(manifestPath, "utf8")).resolves.toBe(before);
+    await expect(
+      readFile(
+        join(pkg.workingDir, "flows", SECOND_FLOW.id, "flow.yaml"),
+        "utf8",
+      ),
+    ).rejects.toBeTruthy();
+  });
+
+  it("recovers an interrupted additional Flow only from its journaled baseline and hashes", async () => {
+    const { pkg, state, finalManifest, finalFlow } =
+      await prepareInterruptedAdditionalFlow("Recover additional Flow");
+
+    const recovered = await recoverLocalPackageCreation(pkg.id, db);
+
+    expect(recovered).toMatchObject({
+      flowPath: "flows/two/flow.yaml",
+      recoveryStatus: "ready",
+    });
+    await expect(
+      readFile(join(pkg.workingDir, "maister-package.yaml"), "utf8"),
+    ).resolves.toBe(finalManifest);
+    await expect(
+      readFile(
+        join(pkg.workingDir, "flows", SECOND_FLOW.id, "flow.yaml"),
+        "utf8",
+      ),
+    ).resolves.toBe(finalFlow);
+    expect((await getLocalPackage(pkg.id, db))?.creationState).toBeNull();
+    await expect(
+      readCreationJournal(pkg.workingDir, state.operationId),
+    ).resolves.toBeNull();
+  });
+
+  it("marks a diverged interrupted additional Flow for recovery without overwriting it", async () => {
+    const { pkg } = await prepareInterruptedAdditionalFlow(
+      "Diverged additional Flow",
+    );
+    const manifestPath = join(pkg.workingDir, "maister-package.yaml");
+    const divergentManifest = "schemaVersion: 1\nname: divergent\nflows: []\n";
+
+    await writeFile(manifestPath, divergentManifest);
+
+    await expect(recoverLocalPackageCreation(pkg.id, db)).rejects.toMatchObject(
+      {
+        code: "CONFLICT",
+      },
+    );
+    await expect(readFile(manifestPath, "utf8")).resolves.toBe(
+      divergentManifest,
+    );
+    expect((await getLocalPackage(pkg.id, db))?.creationState?.phase).toBe(
+      "recovery_required",
+    );
   });
 
   it("reads the scaffolded manifest with a content hash", async () => {

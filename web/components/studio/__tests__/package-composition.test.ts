@@ -7,10 +7,17 @@ import { describe, expect, it, vi } from "vitest";
 import { packageFilesEditorLabels } from "@/lib/flows/editor/editor-labels";
 
 const nav = vi.hoisted(() => ({ search: "" }));
+const translations = vi.hoisted(() =>
+  Object.assign(
+    vi.fn((key: string) => key),
+    {
+      raw: vi.fn((key: string) => key),
+    },
+  ),
+);
 
 vi.mock("next-intl", () => ({
-  useTranslations: () =>
-    Object.assign((key: string) => key, { raw: (key: string) => key }),
+  useTranslations: () => translations,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -218,5 +225,11 @@ describe("PackageComposition (ADR-116 §P2/P3)", () => {
 
     expect(html).toContain('data-testid="package-tab-files"');
     expect(html).toContain('data-testid="files-slot-content"');
+  });
+
+  it("passes the pagination page template to PackageTabs without eager ICU formatting", () => {
+    render(bomOf({ flows: [flow] }));
+
+    expect(translations.raw).toHaveBeenCalledWith("viewer.page");
   });
 });

@@ -93,10 +93,10 @@ Create from scratch, or fork an installed package (two grains, M36):
 
 ```mermaid
 flowchart TD
-    A[New local package] --> B[insert local_packages row]
-    B --> C[scaffold working_dir + maister-package.yaml + kind dirs]
-    C --> D[git init + initial commit on branch_name]
-    D --> E[redirect to /studio/edit/:id/flow.yaml]
+    A[Create package and Flow] --> B[claim local_packages row + creation_state]
+    B --> C[scaffold working_dir, manifest membership, and flow.yaml]
+    C --> D[git init + initial commit --no-verify]
+    D --> E[open /studio/edit/:id/flows/:flow-id/flow.yaml]
 
     F["Fork PACKAGE to local (POST /api/studio/packages/:ref/fork)"] --> G1[resolve :ref → newest install server-side]
     G1 --> G2["clean-copy ALL install working files (exclude .git) → fresh working_dir"]
@@ -167,6 +167,7 @@ Cut a version and (optionally) attach to a project:
 sequenceDiagram
     participant U as Member (manageLocalPackages)
     participant C as cut-version route
+    participant V as cutLocalPackageVersion service
     participant I as installer
     participant A as attachPackage
     participant DB as local_packages
@@ -174,11 +175,12 @@ sequenceDiagram
     opt attachToProjectId supplied
         C->>C: requireProjectAction(attachToProjectId, manageLocalPackages) + resolve slug/repoPath
     end
-    C->>C: assertPackageCuttable(P): clean git state + full committed artifact/schema baseline
-    C->>C: clean export of working_dir to tmp (exclude .git)
-    C->>I: installPackageRevision(source=export, version=local)
-    I-->>C: package_installs (local-digest, trusted_by_policy)
-    C->>DB: stamp last_cut_install_id (AFTER-side marker)
+    C->>V: cutLocalPackageVersion(P)
+    V->>V: assertPackageCuttable(P): clean git state + full committed artifact/schema baseline
+    V->>V: clean export of working_dir to tmp (exclude .git)
+    V->>I: installPackageRevision(source=export, version=local)
+    I-->>V: package_installs (local-digest, trusted_by_policy)
+    V->>DB: stamp last_cut_install_id (AFTER-side marker)
     opt attachToProjectId supplied
         C->>A: attachPackage(projectId, packageInstallId)
         A-->>C: attached (setup.sh runs post-commit)
@@ -915,9 +917,10 @@ tab surfaces one shared **Import** button wired to the existing
   copy but before the insert leaves an orphan working dir (rolled back on a
   failed insert; otherwise cleaned manually like any orphan). The copy executes
   nothing, so there is no half-run side-effect.
-- A cut of a flow-less package (e.g. an element-fork default holding only a
-  skill) fails manifest validation at install (`flows` is `min(1)`) → `CONFIG`;
-  add a flow before cutting.
+- A cut of a flow-less package (for example, an element-fork default holding
+  only a skill) remains a valid immutable package revision, but it contains no
+  launchable Flow. It may still be attached for its non-Flow artifacts; add a
+  Flow before selecting that package for a Flow launch.
 - The lock holder's session dies → the lock simply expires at `lock_expires_at`;
   the next opener takes over lazily (no sweeper).
 - (ADR-132) Sync crash windows — only two exist, discriminated by
