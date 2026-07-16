@@ -5,6 +5,10 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  cleanupTestWorktrees: vi.fn(async () => undefined),
+  createTestWorktreesRoot: vi.fn(
+    () => "/tmp/maister-test-worktrees/e2e/invocation",
+  ),
   prepareE2eDatabase: vi.fn(),
   spawn: vi.fn(),
   startBarePostgresTestDb: vi.fn(),
@@ -18,6 +22,11 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 vi.mock("@/test-support/pg-container", () => ({
   startBarePostgresTestDb: mocks.startBarePostgresTestDb,
+}));
+
+vi.mock("@/test-support/worktree-test-root", () => ({
+  cleanupTestWorktrees: mocks.cleanupTestWorktrees,
+  createTestWorktreesRoot: mocks.createTestWorktreesRoot,
 }));
 
 vi.mock("../_seed/prepare-db", () => ({
@@ -99,6 +108,59 @@ describe("E2E wrapper environment", () => {
     expect(environment.NODE_ENV).toBeUndefined();
   });
 
+  it("replaces a caller worktree root with an invocation-scoped test root", () => {
+    const environment = buildE2ePlaywrightEnvironment(
+      {
+        DB_URL: "postgres://old",
+        MAISTER_WORKTREES_ROOT: "/operator/.maister/worktrees",
+        NODE_ENV: "production",
+      },
+      "postgres://test",
+    );
+
+    expect(environment.MAISTER_WORKTREES_ROOT).toMatch(
+      /maister-test-worktrees\/e2e\//,
+    );
+    expect(environment.MAISTER_WORKTREES_ROOT).not.toBe(
+      "/operator/.maister/worktrees",
+    );
+  });
+
+  it("cleans the invocation root after a successful Playwright completion", async () => {
+    configureTestDatabase();
+    const child = createChildProcess();
+
+    mocks.spawn.mockReturnValue(child);
+
+    const invocation = runE2eInvocation([]);
+
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
+    emitChildExit(child, 0, null);
+
+    await expect(invocation).resolves.toBe(0);
+    expect(mocks.cleanupTestWorktrees).toHaveBeenCalledWith(
+      "/tmp/maister-test-worktrees/e2e/invocation",
+    );
+  });
+
+  it("uses the separate live invocation root when the live Playwright config is selected", async () => {
+    configureTestDatabase();
+    const child = createChildProcess();
+
+    mocks.spawn.mockReturnValue(child);
+
+    const invocation = runE2eInvocation([
+      "--config",
+      "playwright.live.config.ts",
+    ]);
+
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
+    emitChildExit(child, 0, null);
+
+    await expect(invocation).resolves.toBe(0);
+    expect(mocks.createTestWorktreesRoot).toHaveBeenCalledWith("e2e-live");
+  });
+
   it("aborts the CLI controller when an E2E shutdown signal arrives", () => {
     const controller = new AbortController();
     const signalProcess = new EventEmitter() as EventEmitter &
@@ -151,6 +213,9 @@ describe("E2E wrapper environment", () => {
         `interrupted by ${shutdownSignal}`,
       );
       expect(stop).toHaveBeenCalledOnce();
+      expect(mocks.cleanupTestWorktrees).toHaveBeenCalledWith(
+        "/tmp/maister-test-worktrees/e2e/invocation",
+      );
     },
   );
 
@@ -187,5 +252,44 @@ describe("E2E wrapper environment", () => {
 
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(stop).toHaveBeenCalledOnce();
+    expect(mocks.cleanupTestWorktrees).toHaveBeenCalledWith(
+      "/tmp/maister-test-worktrees/e2e/invocation",
+    );
+  });
+
+  it("cleans the invocation root when database startup fails", async () => {
+    mocks.startBarePostgresTestDb.mockRejectedValue(
+      new Error("database startup failed"),
+    );
+
+    await expect(runE2eInvocation([])).rejects.toThrow("database startup failed");
+
+    expect(mocks.cleanupTestWorktrees).toHaveBeenCalledWith(
+      "/tmp/maister-test-worktrees/e2e/invocation",
+    );
+  });
+
+  it("retains the Playwright failure when cleanup also fails", async () => {
+    configureTestDatabase();
+    const child = createChildProcess();
+    mocks.spawn.mockReturnValue(child);
+    mocks.cleanupTestWorktrees.mockRejectedValueOnce(
+      new Error("worktree cleanup failed"),
+    );
+
+    const invocation = runE2eInvocation([]);
+
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
+    emitChildExit(child, null, "SIGTERM");
+
+    await expect(invocation).rejects.toSatisfy((error: unknown) => {
+      if (!(error instanceof AggregateError)) return false;
+
+      return error.errors.some(
+        (cause: unknown) =>
+          cause instanceof Error &&
+          cause.message === "Playwright exited from signal SIGTERM",
+      );
+    });
   });
 });

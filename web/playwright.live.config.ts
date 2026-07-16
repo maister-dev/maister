@@ -3,6 +3,7 @@ import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
+import { resolveTestWorktreesRoot } from "./test-support/worktree-test-root";
 
 const WEB_PORT = Number(process.env.E2E_LIVE_WEB_PORT ?? 3101);
 const SUPERVISOR_PORT = Number(process.env.MAISTER_SUPERVISOR_PORT ?? 7777);
@@ -12,6 +13,9 @@ const SUPERVISOR_URL = `http://127.0.0.1:${SUPERVISOR_PORT}`;
 const AUTH_SECRET =
   process.env.AUTH_SECRET ?? "e2e-insecure-test-secret-change-me";
 const databaseUrl = resolvePostgresDbUrl();
+const worktreesRoot = resolveTestWorktreesRoot("e2e-live", process.env);
+
+process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 const ccrEnv = {
   ...(process.env.MAISTER_CCR_CONFIG_PATH
     ? { MAISTER_CCR_CONFIG_PATH: process.env.MAISTER_CCR_CONFIG_PATH }
@@ -29,6 +33,7 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   globalSetup: "./e2e/global-setup.ts",
+  globalTeardown: "./e2e/global-teardown.ts",
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",
@@ -66,6 +71,7 @@ export default defineConfig({
         DB_URL: databaseUrl,
         AUTH_SECRET,
         MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-web"),
+        MAISTER_WORKTREES_ROOT: worktreesRoot,
         MAISTER_SUPERVISOR_URL: SUPERVISOR_URL,
       },
     },

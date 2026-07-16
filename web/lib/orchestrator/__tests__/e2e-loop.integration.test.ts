@@ -61,6 +61,10 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  cleanupTestWorktrees,
+  createTestWorktreesRoot,
+} from "@/test-support/worktree-test-root";
 
 const schema = fullSchema as unknown as Record<string, any>;
 const execFileAsync = promisify(execFile);
@@ -93,6 +97,8 @@ let dispatchDomainEvents: typeof import("@/lib/domain-events/dispatch").dispatch
 
 let supervisor: TestSupervisorHandle;
 let agentsRoot: string;
+let worktreesRoot: string;
+let originalWorktreesRoot: string | undefined;
 const createdPaths: string[] = [];
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -140,6 +146,9 @@ const directLaunchHook: DelegateHook = async (req) => {
 beforeAll(async () => {
   agentsRoot = await mkdtemp(join(tmpdir(), "maister-orc-loop-agents-"));
   createdPaths.push(agentsRoot);
+  worktreesRoot = createTestWorktreesRoot("vitest", randomUUID());
+  originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
+  process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_test_orc_loop",
@@ -167,12 +176,39 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await supervisor?.stop();
-  await testDatabase?.stop();
-  delete process.env.MAISTER_SUPERVISOR_URL;
-  delete process.env.MAISTER_TEST_CHILD_AGENT_ID;
-  for (const p of createdPaths.splice(0)) {
-    await rm(p, { recursive: true, force: true });
+  const cleanupResults = await Promise.allSettled([
+    supervisor?.stop(),
+    testDatabase?.stop(),
+    cleanupTestWorktrees(worktreesRoot),
+    ...createdPaths
+      .splice(0)
+      .map((createdPath) => rm(createdPath, { recursive: true, force: true })),
+  ]);
+
+  try {
+    const cleanupErrors = cleanupResults.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+
+    if (cleanupErrors.length === 1) {
+      throw cleanupErrors[0];
+    }
+
+    if (cleanupErrors.length > 1) {
+      throw new AggregateError(
+        cleanupErrors,
+        "orchestrator test cleanup failed",
+      );
+    }
+  } finally {
+    delete process.env.MAISTER_SUPERVISOR_URL;
+    delete process.env.MAISTER_TEST_CHILD_AGENT_ID;
+
+    if (originalWorktreesRoot === undefined) {
+      delete process.env.MAISTER_WORKTREES_ROOT;
+    } else {
+      process.env.MAISTER_WORKTREES_ROOT = originalWorktreesRoot;
+    }
   }
 }, 60_000);
 

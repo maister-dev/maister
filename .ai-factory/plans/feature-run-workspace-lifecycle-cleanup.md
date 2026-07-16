@@ -794,7 +794,7 @@ pnpm validate:docs:adr:all
 
 ### Phase 1 — Test-root isolation first
 
-- [ ] **Task 5: RED — prove every test lane refuses the user worktree root.**
+- [x] **Task 5: RED — prove every test lane refuses the user worktree root.**
   - **Files:** new/extended tests for `web/vitest.workspace.ts`,
     `web/playwright.config.ts`, `web/playwright.live.config.ts`,
     `web/e2e/run.ts`, and `web/lib/orchestrator/__tests__/e2e-loop.integration.test.ts`.
@@ -808,7 +808,7 @@ pnpm validate:docs:adr:all
   - **Acceptance:** failures reproduce the current live-Playwright and real
     agent integration leaks before production code/harness changes.
 
-- [ ] **Task 6: GREEN — centralize isolated root ownership and teardown.**
+- [x] **Task 6: GREEN — centralize isolated root ownership and teardown.**
   - **Files:** `web/vitest.workspace.ts`, a minimal test setup/global-setup
     helper under `web/test-support/`, `web/playwright.config.ts`,
     `web/playwright.live.config.ts`, `web/e2e/run.ts`, and affected harness
@@ -824,7 +824,7 @@ pnpm validate:docs:adr:all
   - **Acceptance:** test harness cleanup cannot target a user-configured/default
     root, and no test in this feature can create new debris there.
 
-- [ ] **Task 7: REFACTOR — reduce harness duplication without changing behavior.**
+- [x] **Task 7: REFACTOR — reduce harness duplication without changing behavior.**
   - **Files:** the Task 6 test-support helper, Vitest/Playwright config, and E2E
     wrapper.
   - **Change:** retain one pure root allocator/validator and one Git-aware

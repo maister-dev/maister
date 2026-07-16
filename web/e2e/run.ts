@@ -5,7 +5,15 @@ import pino from "pino";
 
 import { prepareE2eDatabase } from "./_seed/prepare-db";
 
-import { startBarePostgresTestDb } from "@/test-support/pg-container";
+import {
+  cleanupTestWorktrees,
+  createTestWorktreesRoot,
+  type TestWorktreeLane,
+} from "@/test-support/worktree-test-root";
+import {
+  startBarePostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const E2E_SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM"] as const;
 const PLAYWRIGHT_SHUTDOWN_GRACE_MS = 5_000;
@@ -132,12 +140,23 @@ export function buildE2eMigrationEnvironment(
 export function buildE2ePlaywrightEnvironment(
   environment: NodeJS.ProcessEnv,
   databaseUrl: string,
+  worktreesRoot = createTestWorktreesRoot("e2e"),
 ): NodeJS.ProcessEnv {
-  const childEnvironment = { ...environment, DB_URL: databaseUrl };
+  const childEnvironment = {
+    ...environment,
+    DB_URL: databaseUrl,
+    MAISTER_WORKTREES_ROOT: worktreesRoot,
+  };
 
   Reflect.deleteProperty(childEnvironment, "NODE_ENV");
 
   return childEnvironment;
+}
+
+function worktreeLaneForE2eArguments(
+  arguments_: readonly string[],
+): TestWorktreeLane {
+  return arguments_.includes("playwright.live.config.ts") ? "e2e-live" : "e2e";
 }
 
 function runPlaywright(
@@ -213,12 +232,17 @@ export async function runE2eInvocation(
   environment: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
 ): Promise<number> {
-  const testDatabase = await startBarePostgresTestDb({
-    databaseName: "maister_e2e",
-    lane: "e2e",
-  });
+  const worktreesRoot = createTestWorktreesRoot(
+    worktreeLaneForE2eArguments(arguments_),
+  );
+  let invocationError: unknown;
+  let testDatabase: StartedPostgresTestDb | undefined;
 
   try {
+    testDatabase = await startBarePostgresTestDb({
+      databaseName: "maister_e2e",
+      lane: "e2e",
+    });
     throwIfE2eInvocationInterrupted(signal);
 
     await prepareE2eDatabase(
@@ -229,11 +253,45 @@ export async function runE2eInvocation(
 
     return await runPlaywright(
       arguments_,
-      buildE2ePlaywrightEnvironment(environment, testDatabase.databaseUrl),
+      buildE2ePlaywrightEnvironment(
+        environment,
+        testDatabase.databaseUrl,
+        worktreesRoot,
+      ),
       signal,
     );
+  } catch (error) {
+    invocationError = error;
+
+    throw error;
   } finally {
-    await testDatabase.stop();
+    const cleanupOperations: Promise<unknown>[] = [
+      cleanupTestWorktrees(worktreesRoot),
+    ];
+
+    if (testDatabase !== undefined) {
+      cleanupOperations.push(testDatabase.stop());
+    }
+
+    const cleanupResults = await Promise.allSettled(cleanupOperations);
+    const cleanupErrors = cleanupResults.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+
+    if (cleanupErrors.length > 0) {
+      if (invocationError !== undefined) {
+        throw new AggregateError(
+          [invocationError, ...cleanupErrors],
+          "e2e invocation and cleanup failed",
+        );
+      }
+
+      if (cleanupErrors.length === 1) {
+        throw cleanupErrors[0];
+      }
+
+      throw new AggregateError(cleanupErrors, "e2e cleanup failed");
+    }
   }
 }
 

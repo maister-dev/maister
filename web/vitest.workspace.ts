@@ -1,9 +1,15 @@
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 
 import { defineWorkspace } from "vitest/config";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const testWorktreeInvocationId =
+  process.env.MAISTER_TEST_WORKTREE_INVOCATION_ID ?? randomUUID();
+const testEnvironment = {
+  MAISTER_TEST_WORKTREE_INVOCATION_ID: testWorktreeInvocationId,
+};
 
 const alias = {
   "@": resolve(__dirname, "."),
@@ -65,6 +71,8 @@ export default defineWorkspace([
         "e2e/**/*.integration.test.ts",
       ],
       environment: "node",
+      env: testEnvironment,
+      setupFiles: ["./test-support/vitest-worktree-root.setup.ts"],
     },
   },
   {
@@ -79,6 +87,8 @@ export default defineWorkspace([
         "e2e/**/*.integration.test.ts",
       ],
       environment: "node",
+      env: testEnvironment,
+      setupFiles: ["./test-support/vitest-worktree-root.setup.ts"],
       testTimeout: 60_000,
       hookTimeout: 60_000,
     },

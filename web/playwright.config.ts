@@ -4,6 +4,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 import { STUB_SUPERVISOR_URL } from "./e2e/_seed/stub-supervisor";
+import { resolveTestWorktreesRoot } from "./test-support/worktree-test-root";
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 const BASE_URL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
@@ -23,6 +24,9 @@ const MAISTER_CRON_TOKEN =
 const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const databaseUrl = resolvePostgresDbUrl();
+const worktreesRoot = resolveTestWorktreesRoot("e2e", process.env);
+
+process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 const AUTHED_SPEC =
   /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|project-automations|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|experiment-comparison|orchestrator-loop|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop|plan-review-decisions|run-sync|pr-reopen)\.spec\.ts$/;
 export default defineConfig({
@@ -39,6 +43,7 @@ export default defineConfig({
   workers: process.env.CI ? undefined : 4,
   reporter: "list",
   globalSetup: "./e2e/global-setup.ts",
+  globalTeardown: "./e2e/global-teardown.ts",
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",
@@ -76,7 +81,7 @@ export default defineConfig({
       DB_URL: databaseUrl,
       AUTH_SECRET,
       MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime"),
-      MAISTER_WORKTREES_ROOT: path.resolve("e2e/.runtime/worktrees"),
+      MAISTER_WORKTREES_ROOT: worktreesRoot,
       // Points at the e2e stub supervisor (global-setup), which answers ONLY
       // `GET /health` ready and implements NOTHING else. It is NOT a real
       // supervisor: no `/sessions`, no agent spawn. The m11a rework decision and
