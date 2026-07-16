@@ -93,7 +93,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_context_get: {
     description:
-      "Get the token-bound judge attempt context (ADR-142): attempt identity, method rubric, blind candidate order, and evidence/digest summary. Requires evaluations:context:read. The attempt is bound by the token — takes no ids and returns no real participant id, peer result, path, or session handle.",
+      "Get the token-bound judge attempt context (ADR-145): attempt identity, method rubric, blind candidate order, and evidence/digest summary. Requires evaluations:context:read. The attempt is bound by the token — takes no ids and returns no real participant id, peer result, path, or session handle.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -125,7 +125,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_objective_results: {
     description:
-      "Get structured objective check + metric facts for the token-bound execution (ADR-142). Requires evaluations:objective:read. Missing/absent statuses keep their reason; never infer PASS from source appearance.",
+      "Get structured objective check + metric facts for the token-bound execution (ADR-145). Requires evaluations:objective:read. Missing/absent statuses keep their reason; never infer PASS from source appearance.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -133,7 +133,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_result_submit: {
     description:
-      "Submit a strict per-criterion judge result for the token-bound attempt (ADR-142). Requires evaluations:result:submit. Attribution is server-derived; the body carries only per-criterion scores and rejects extra keys. An invalid result seals a terminal-invalid attempt (valid:false, HTTP 200).",
+      "Submit a strict per-criterion judge result for the token-bound attempt (ADR-145). Requires evaluations:result:submit. Attribution is server-derived; the body carries only per-criterion scores and rejects extra keys. An invalid result seals a terminal-invalid attempt (valid:false, HTTP 200).",
     inputSchema: {
       type: "object",
       properties: {

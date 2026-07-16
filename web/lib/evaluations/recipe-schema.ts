@@ -1,4 +1,4 @@
-// Typed controlled Evaluation Recipe contract (M47, ADR-143 D16). M46 stored a
+// Typed controlled Evaluation Recipe contract (M47, ADR-146 D16). M46 stored a
 // Study recipe as an opaque `EvaluationRecipeDefinition` (legacy variant configs
 // from the Experiment migration). M47 gives the CONTROLLED recipe a strict,
 // immutable, digest-addressed shape: it references an explicit Flow/package

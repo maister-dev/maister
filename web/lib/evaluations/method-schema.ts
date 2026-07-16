@@ -1,20 +1,20 @@
 import { z } from "zod";
 
-// Portable Evaluation Method content contract (M46, ADR-140). This module is
+// Portable Evaluation Method content contract (M46, ADR-143). This module is
 // the schema for `evaluation-method.yaml` shipped inside a package under
 // `evaluation-methods/<id>/`. It is INERT: parsing this file executes no
 // package content — capture, prompts, objective checks, and aggregation only
-// run for an enabled, trusted, compatible method (ADR-140 D7).
+// run for an enabled, trusted, compatible method (ADR-143 D7).
 //
 // Every aggregation algorithm and objective-check provider a method may name is
 // resolved through a CLOSED platform registry — a package can never introduce a
-// new executable aggregator or check command (ADR-140 D11/D13). New providers
+// new executable aggregator or check command (ADR-143 D11/D13). New providers
 // are host code changes, deliberately, so evaluation stays deterministic.
 
 export const EVALUATION_METHOD_FILENAME = "evaluation-method.yaml";
 
 // Closed aggregation registry. M46 shipped three scalar algorithms;
-// `pairwise_tournament@1` (M48, ADR-144) is a DISTINCT non-scalar aggregation —
+// `pairwise_tournament@1` (M48, ADR-147) is a DISTINCT non-scalar aggregation —
 // it consumes per-match A/B/tie verdicts and produces a ranking, never a
 // universal score (see lib/evaluations/aggregation/tournament.ts). A method
 // declaring it MUST use the `pairwise` mode.
@@ -36,7 +36,7 @@ export const SCALAR_AGGREGATION_ALGORITHMS = [
 export type ScalarAggregationAlgorithm =
   (typeof SCALAR_AGGREGATION_ALGORITHMS)[number];
 
-// Closed objective-check provider registry (M46, ADR-140 D11). All are
+// Closed objective-check provider registry (M46, ADR-143 D11). All are
 // non-executable from package content: recorded gate/artifact results,
 // schema/contract validation, source/diff manifest statistics, and
 // operator-configured trusted host check profiles. Build/test/lint runs only
@@ -53,7 +53,7 @@ export type ObjectiveCheckProvider = (typeof OBJECTIVE_CHECK_PROVIDERS)[number];
 
 // Evaluation modes. `absolute` scores each participant independently on the
 // rubric; `n_way` scores participants against each other on the same rubric;
-// `pairwise` (M48, ADR-144) compares participants two at a time and aggregates
+// `pairwise` (M48, ADR-147) compares participants two at a time and aggregates
 // the match verdicts into a tournament ranking. `n_way` remains the default
 // overview — `pairwise` is only intrinsic to methods that declare it.
 export const EVALUATION_METHOD_MODES = [
@@ -63,7 +63,7 @@ export const EVALUATION_METHOD_MODES = [
 ] as const;
 export type EvaluationMethodMode = (typeof EVALUATION_METHOD_MODES)[number];
 
-// How an objective check's result relates to the panel/criteria (ADR-140 D11).
+// How an objective check's result relates to the panel/criteria (ADR-143 D11).
 export const OBJECTIVE_CHECK_POLICIES = [
   "gate", // blocks judging when failed
   "metric", // supplies a metric, does not gate
@@ -73,7 +73,7 @@ export const OBJECTIVE_CHECK_POLICIES = [
 ] as const;
 export type ObjectiveCheckPolicy = (typeof OBJECTIVE_CHECK_POLICIES)[number];
 
-// How a missing/NA criterion is represented — never a numeric zero (ADR-142 D12).
+// How a missing/NA criterion is represented — never a numeric zero (ADR-145 D12).
 export const CRITERION_NA_POLICIES = [
   "insufficient_evidence",
   "not_applicable",
@@ -182,7 +182,7 @@ const judgeRoleSchema = z
   .object({
     id: refIdSchema,
     name: z.string().min(1),
-    // Independent attempt count requested for this role (ADR-142 D12).
+    // Independent attempt count requested for this role (ADR-145 D12).
     count: z.number().int().positive(),
     promptTemplate: methodAssetPathSchema,
     description: z.string().optional(),

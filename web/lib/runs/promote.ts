@@ -562,7 +562,7 @@ async function promoteWorkspaceRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
-  // ADR-132/139 (enforcing ADR-124): launched-lineage runs never auto-promote —
+  // ADR-132/142 (enforcing ADR-124): launched-lineage runs never auto-promote —
   // winner promotion is the explicit human path (a legacy Experiment member OR a
   // launched Evaluation participant; observed participants are excluded by
   // construction). The guard lives HERE, at the flow/task promotion apply site,

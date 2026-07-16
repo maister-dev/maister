@@ -71,7 +71,7 @@ export function parseValidatePackageArgs(
 
 // Static + engine-compatibility validation of one package's tagged bytes WITHOUT
 // executing any package content (no setup.sh, no prompt/check/aggregation run;
-// ADR-140 D7). Validates the manifest, every flow.yaml, and every Evaluation
+// ADR-143 D7). Validates the manifest, every flow.yaml, and every Evaluation
 // Method (schema + referenced prompt/schema assets + normalization + engine
 // range). Throws MaisterError on the first failure; returns counts on success.
 export async function validatePackageCompatibility(

@@ -657,7 +657,7 @@
   snapshots with bounded evaluator retrieval, objective checks kept separate from
   AI opinion, independent multi-judge panels with quorum/aggregation/
   disagreement, and an append-only human verdict. Engine 3.2.0; migrations
-  0104–0106; ADR-139..142; default `core:sdd-quality` method. No auto-promotion,
+  0107–0109; ADR-142..145; default `core:sdd-quality` method. No auto-promotion,
   no fabricated cost, no private bodies in telemetry.
   (see `.ai-factory/plans/feature-evaluation-lab.md`)
 

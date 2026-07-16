@@ -1,5 +1,5 @@
 // Client-safe (pure): the M46 aggregation registry — weighted_mean@1, median@1,
-// majority@1 (ADR-142 D13). Deterministic, unrounded internally with explicit
+// majority@1 (ADR-145 D13). Deterministic, unrounded internally with explicit
 // display rounding, missing NEVER becomes zero, and every number traces to the
 // exact included attempts. One method = one aggregation; incompatible methods are
 // never collapsed into a universal score.

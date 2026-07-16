@@ -112,7 +112,7 @@ export function buildAutoPromotionReaders(args: {
 
       return rows.length > 0;
     },
-    // ADR-132/139: launched-lineage membership (legacy Experiment member OR
+    // ADR-132/142: launched-lineage membership (legacy Experiment member OR
     // launched Evaluation participant) excludes the run from the ADR-126
     // auto-promotion sweep. The authoritative apply-site guard lives in
     // promoteWorkspaceRun; this shares the one canonical predicate so the two

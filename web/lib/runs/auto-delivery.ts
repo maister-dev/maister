@@ -89,7 +89,7 @@ export async function deliverRunIfAutoReady(
     return;
   }
 
-  // ADR-132/139: a launched-lineage run (legacy Experiment member OR launched
+  // ADR-132/142: a launched-lineage run (legacy Experiment member OR launched
   // Evaluation participant) never auto-delivers. The promote choke point is the
   // authoritative guard; this ordering short-circuit avoids a spurious
   // degrade-to-manual on the run's delivery policy.

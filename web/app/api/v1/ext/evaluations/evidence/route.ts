@@ -9,7 +9,7 @@ import { handleExt } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "GET /api/v1/ext/evaluations/evidence";
 
-// Cursor-paginated evidence metadata for the token-bound snapshot (ADR-142 D10).
+// Cursor-paginated evidence metadata for the token-bound snapshot (ADR-145 D10).
 // Requires evaluations:evidence:read. Real participant ids are blinded.
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const db = getDb();

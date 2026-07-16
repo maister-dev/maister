@@ -41,7 +41,7 @@ export const ORCHESTRATOR_TOKEN_SCOPES = [
   "runs:promote",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
-// ADR-142 (Evaluation Lab) D10/D12: a judge attempt's ephemeral token carries
+// ADR-145 (Evaluation Lab) D10/D12: a judge attempt's ephemeral token carries
 // ONLY the four attempt-bound evaluator scopes — it does NOT spread
 // AGENT_TOKEN_SCOPES. A judge reads its token-bound evidence snapshot and submits
 // exactly one result; it cannot browse a project/worktree, read/mutate tasks,
@@ -91,7 +91,7 @@ export async function issueAgentRunToken(args: {
   return { tokenId, secret };
 }
 
-// ADR-142 (Evaluation Lab) D12: a judge attempt runs as a dedicated agent Run
+// ADR-145 (Evaluation Lab) D12: a judge attempt runs as a dedicated agent Run
 // (workspace:none). Its ephemeral token carries ONLY EVALUATION_JUDGE_TOKEN_SCOPES
 // and rides the same deterministic `agent-run:<runId>` name so the standard
 // terminal revoke (revokeAgentRunTokensForRun) fires when the attempt's agent Run

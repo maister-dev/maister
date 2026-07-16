@@ -1,4 +1,4 @@
-// Controlled Evaluation Recipe parse + contract-digest helpers (M47, ADR-143
+// Controlled Evaluation Recipe parse + contract-digest helpers (M47, ADR-146
 // D16). The recipe's `flow.inputContractDigest` / `flow.artifactContractDigest`
 // are captured at recipe-freeze time from the selected Flow revision's contract.
 // Preflight (and launch) recompute the same digests from the LIVE revision and

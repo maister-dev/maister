@@ -51,7 +51,7 @@ describe("external token scope contract", () => {
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:reopen");
   });
 
-  // ADR-142 (Evaluation Lab) D10/D12: the attempt-bound evaluator judge scopes.
+  // ADR-145 (Evaluation Lab) D10/D12: the attempt-bound evaluator judge scopes.
   it("registers the four attempt-bound evaluator judge scopes", () => {
     expect(TOKEN_SCOPES).toContain("evaluations:context:read");
     expect(TOKEN_SCOPES).toContain("evaluations:evidence:read");

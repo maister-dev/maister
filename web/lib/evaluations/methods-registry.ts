@@ -128,7 +128,7 @@ async function loadInstall(
 
 // The synced (SET/CLEAR-symmetric) columns for one projected method revision.
 // Every column is written on every projection; `activation` is runtime state and
-// is NOT touched here (default `disabled` on first insert, ADR-140 D7 — a method
+// is NOT touched here (default `disabled` on first insert, ADR-143 D7 — a method
 // only becomes selectable after an explicit trusted+compatible activation).
 function methodRow(
   install: InstallRow,
@@ -185,7 +185,7 @@ function invalidPlaceholder(): {
 
 // Project every `evaluationMethods[]` entry shipped by an installed PACKAGE into
 // `evaluation_method_revisions`, keyed by (packageInstallId, methodId) so each
-// install revision carries its own immutable method revision (ADR-140 D6/D8).
+// install revision carries its own immutable method revision (ADR-143 D6/D8).
 // INERT: no package content executes; loadEvaluationMethod only parses/hashes.
 // Invalid methods are projected report-only (never selectable), never fail the
 // surrounding install.

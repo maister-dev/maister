@@ -41,7 +41,7 @@ export const TOKEN_SCOPES = [
   // advise appends judge advisories only, never a human conclusion.
   "experiments:read",
   "experiments:advise",
-  // ADR-142 (Evaluation Lab) D10/D12: attempt-bound evaluator judge scopes. These
+  // ADR-145 (Evaluation Lab) D10/D12: attempt-bound evaluator judge scopes. These
   // are minted ONLY on a judge attempt's ephemeral agent token
   // (EVALUATION_JUDGE_TOKEN_SCOPES in lib/agents/tokens.ts) — deliberately NOT in
   // AGENT_TOKEN_SCOPES. A judge reads ONLY its token-bound evidence snapshot and

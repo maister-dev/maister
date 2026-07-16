@@ -157,14 +157,14 @@ describe("main migration snapshot integrity", () => {
     ).toBe(true);
   });
 
-  it("reserves the project-automations migration as the next generated main lineage entry", () => {
+  it("keeps the Evaluation Lab standardized-recipes migration as the newest main lineage entry", () => {
     const newest = journalEntries(MAIN_MIGRATIONS_DIR).at(-1);
 
     expect(newest, "main migration journal must have entries").toBeDefined();
-    expect(newest?.tag).toMatch(/^0104_/);
+    expect(newest?.tag).toMatch(/^0114_/);
     expect(
       newest && existsSync(join(MAIN_MIGRATIONS_DIR, `${newest.tag}.sql`)),
-      "0104 must register the project-automations SQL migration",
+      "0114 must register the Evaluation Lab standardized-recipes SQL migration",
     ).toBe(true);
   });
 });

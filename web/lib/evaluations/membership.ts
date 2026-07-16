@@ -17,9 +17,9 @@ type Db = any;
 // A run is a launched evaluation participant iff a `launched`-source participant
 // references it. OBSERVED participants (`source_type = 'observed'`) are excluded
 // by construction — selecting an existing Run for comparison must NEVER change
-// its promotion/delivery/relaunch behavior (ADR-139 D3; AC-01, AC-14).
+// its promotion/delivery/relaunch behavior (ADR-142 D3; AC-01, AC-14).
 // Membership is immutable per run: a tombstoned launched participant still holds
-// its run (the forced evaluation promotion hold is immutable, ADR-143 D15), so
+// its run (the forced evaluation promotion hold is immutable, ADR-146 D15), so
 // `removed_at` is deliberately NOT filtered.
 export async function isLaunchedEvaluationRun(
   db: Db,

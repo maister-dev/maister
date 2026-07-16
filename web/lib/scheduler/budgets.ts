@@ -55,7 +55,7 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     // ADR-140: per-project PR-state poll — provider CLI/REST only, network-bound,
     // sequentially bounded, not operator-configurable.
     prStateScan: 1,
-    // T3.3 (ADR-139): the seeded singleton evaluation dispatcher — one attempt
+    // T3.3 (ADR-142): the seeded singleton evaluation dispatcher — one attempt
     // at a time (run_schedule precedent). The singleton lease serializes ticks;
     // per-execution CAS + bounded per-tick scan bound the work inside a tick.
     evaluationDispatch: 1,

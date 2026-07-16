@@ -2059,7 +2059,7 @@ export const experimentRuns = pgTable(
   }),
 );
 
-// --- Evaluation Lab (M46, ADR-139..142) ------------------------------------
+// --- Evaluation Lab (M46, ADR-142..145) ------------------------------------
 // The neutral Study/participant/recipe model that supersedes the task-bound
 // Experiment coupling (ADR-124). Foundational tables only — the platform-config
 // (0105) and execution/evidence (0106) tables land in later migrations. A
@@ -2227,7 +2227,7 @@ export const evaluationParticipants = pgTable(
   }),
 );
 
-// --- Evaluation platform configuration (M46, ADR-140/142; 0105) ------------
+// --- Evaluation platform configuration (M46, ADR-143/145; 0108) ------------
 // Immutable package-derived Method revisions + mutable admin Panels/Profiles
 // and project overrides (D6, D8). Package content NEVER contains credentials,
 // concrete runner ids, host model ids, or executable scripts (D7); portable
@@ -2404,7 +2404,7 @@ export const evaluationProjectProfileOverrides = pgTable(
   }),
 );
 
-// --- Evaluation execution + immutable evidence (M46, ADR-141/142; 0106) -----
+// --- Evaluation execution + immutable evidence (M46, ADR-144/145; 0109) -----
 // The runtime record of an Evaluation Execution over a sealed evidence
 // snapshot, its objective checks/metrics, multi-judge attempts, aggregation,
 // disagreement reviews, human verdicts, and the replayable Study event log.
@@ -3119,7 +3119,7 @@ export const evaluationLaunchBatchItems = pgTable(
   }),
 );
 
-// M48 (ADR-144 T7.2): a versioned Evaluation Suite — the benchmark/regression
+// M48 (ADR-147 T7.2): a versioned Evaluation Suite — the benchmark/regression
 // PARENT that sits OUTSIDE the one-task Study boundary. It names a task set +
 // profile; each scheduled scan generates ONE one-task Study per task (every
 // generated Study stays one project/task, D2). A `regression` suite is triggered
@@ -5739,7 +5739,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   // ADR-140 (migration 0105): PR merged onto target — merged-only board feed
   // (closed/conflict surface via chip + webhook, not task_activity).
   "run_pr_merged",
-  // M46 (ADR-139): a conclusive human Evaluation Study verdict was recorded.
+  // M46 (ADR-142): a conclusive human Evaluation Study verdict was recorded.
   "evaluation_decided",
 ] as const;
 

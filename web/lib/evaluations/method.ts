@@ -124,7 +124,7 @@ export function normalizeEvaluationMethodDefinition(
   }
 
   // M46 aggregation algorithms take no required params; reject unknown keys to
-  // keep the closed registry honest (ADR-140 D13).
+  // keep the closed registry honest (ADR-143 D13).
   const paramKeys = Object.keys(def.aggregation.params);
 
   if (paramKeys.length > 0) {
@@ -151,7 +151,7 @@ export interface EngineCompatibility {
 }
 
 // Whether the running engine satisfies the method's declared compat range
-// (ADR-140). A method that predates or postdates this engine is refused loudly.
+// (ADR-143). A method that predates or postdates this engine is refused loudly.
 export function checkMethodEngineCompatibility(
   def: EvaluationMethodDefinition,
 ): EngineCompatibility {
@@ -203,7 +203,7 @@ function assertLooksLikeJsonSchema(parsed: unknown, methodId: string): void {
 // prompt/schema assets. INERT: no package content executes. Every failure is
 // CONFIG so callers branch on one code. Returns a normalized method with
 // content digests (the method version is the package install versionLabel +
-// this contentDigest — never a method-local version field; ADR-140 D6).
+// this contentDigest — never a method-local version field; ADR-143 D6).
 export async function loadEvaluationMethod(
   methodRoot: string,
 ): Promise<NormalizedEvaluationMethod> {

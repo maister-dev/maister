@@ -1,4 +1,4 @@
--- M46 (ADR-139) legacy Experiment -> Evaluation Study backfill.
+-- M46 (ADR-142) legacy Experiment -> Evaluation Study backfill.
 --
 -- Lossless, idempotent, parity-asserting. Preserves every experiments /
 -- experiment_runs row or RAISEs (rolling back the whole migration) — no lossy

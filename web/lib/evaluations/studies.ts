@@ -313,7 +313,7 @@ export async function addObservedParticipants(
 }
 
 // Hard delete only when unreferenced by a sealed evidence item; otherwise
-// tombstone so citing evidence keeps a queryable participant (ADR-139 D3).
+// tombstone so citing evidence keeps a queryable participant (ADR-142 D3).
 export async function removeParticipant(
   args: { studyId: string; participantId: string },
   db?: Db,

@@ -58,7 +58,7 @@ export const PROJECT_ACTION_MIN = {
   readExperiments: "viewer",
   manageExperiments: "member",
   concludeExperiments: "member",
-  // Evaluation Lab (M46, ADR-139..142). Global `manageEvaluationConfig`
+  // Evaluation Lab (M46, ADR-142..145). Global `manageEvaluationConfig`
   // (Method activation, Panels, Profiles) is a global-admin action guarded by
   // requireGlobalRole in the admin routes, NOT a project action.
   readEvaluationStudies: "viewer",

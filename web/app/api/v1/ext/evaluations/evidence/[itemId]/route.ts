@@ -11,7 +11,7 @@ const ENDPOINT = "GET /api/v1/ext/evaluations/evidence/[itemId]";
 
 type RouteParams = { params: Promise<{ itemId: string }> };
 
-// Bounded read of one bound-snapshot evidence item (ADR-142 D10). The itemId is
+// Bounded read of one bound-snapshot evidence item (ADR-145 D10). The itemId is
 // validated to belong to the token-bound snapshot; offset/length are server-capped.
 // Requires evaluations:evidence:read.
 export async function GET(

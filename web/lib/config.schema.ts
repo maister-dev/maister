@@ -1493,7 +1493,7 @@ export const maisterPackageManifestSchema = z
     capabilities: z.array(packageManifestEntrySchema).default([]),
     mcps: z.array(packageManifestMcpSchema).default([]),
     restrictions: z.array(packageManifestRestrictionSchema).default([]),
-    // Package-sourced Evaluation Methods (M46, ADR-140). Optional and
+    // Package-sourced Evaluation Methods (M46, ADR-143). Optional and
     // default-empty: a package that predates the entity parses unchanged, and an
     // engine that knows the entity treats older packages as `evaluationMethods:
     // []`. Each entry points at `<path>/evaluation-method.yaml` + referenced

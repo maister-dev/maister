@@ -1,5 +1,5 @@
 // Client-safe (pure): deterministic blind labels + randomized presentation order
-// (ADR-142 D12). Both are SNAPSHOT fields — derived from the execution's
+// (ADR-145 D12). Both are SNAPSHOT fields — derived from the execution's
 // randomization seed so the exact blinding is reproducible and auditable. A judge
 // never sees real participant ids; the order is shuffled but stable for a seed.
 

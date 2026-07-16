@@ -48,7 +48,7 @@ const log = pino({
 // Bumped 3.0.0 -> 3.1.0 for strict typed Plan-review artifacts and the
 // declarative `settings.plan_review` graph capability (ADR-137).
 // Bumped 3.1.0 -> 3.2.0 for package-sourced Evaluation Methods (M46,
-// ADR-140): `maister-package.yaml` may declare `evaluationMethods[]` and a
+// ADR-143): `maister-package.yaml` may declare `evaluationMethods[]` and a
 // method's `evaluation-method.yaml` declares `compat.engine_min/engine_max`.
 // A package declaring `evaluationMethods` MUST `compat`-target an engine that
 // knows the entity; an engine below a method's `engine_min` refuses enablement

@@ -9,7 +9,7 @@ import { handleExt } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "GET /api/v1/ext/evaluations/context";
 
-// Token-bound evaluator context (ADR-142 D10): no slug, no ids — the judge
+// Token-bound evaluator context (ADR-145 D10): no slug, no ids — the judge
 // attempt is derived server-side from the token. Requires evaluations:context:read.
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const db = getDb();

@@ -40,7 +40,7 @@ function bodyError(message: string): NextResponse {
   return NextResponse.json({ code: "CONFIG", message }, { status: 422 });
 }
 
-// Submit a strict judge result for the token-bound attempt (ADR-142 D12).
+// Submit a strict judge result for the token-bound attempt (ADR-145 D12).
 // Attribution is entirely server-derived; the body carries only the per-criterion
 // scores. Requires evaluations:result:submit.
 export async function POST(req: NextRequest): Promise<NextResponse> {

@@ -9,7 +9,7 @@ import { handleExt } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "GET /api/v1/ext/evaluations/objective-results";
 
-// Structured objective facts for the token-bound execution (ADR-142 D11).
+// Structured objective facts for the token-bound execution (ADR-145 D11).
 // Requires evaluations:objective:read. Missing/absent statuses keep their reason.
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const db = getDb();

@@ -348,7 +348,7 @@ export async function installPackageRevision(opts: {
       );
     }
 
-    // ADR-140 D6/D7: project every `evaluationMethods[]` entry into
+    // ADR-143 D6/D7: project every `evaluationMethods[]` entry into
     // `evaluation_method_revisions` (INERT parse/hash, activation stays
     // disabled). Best-effort: an invalid method is projected report-only, never
     // fails the surrounding install.

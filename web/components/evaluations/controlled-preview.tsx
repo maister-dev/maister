@@ -9,7 +9,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useTranslations } from "next-intl";
 
-// T6.4 controlled-creation preview surfaces (ADR-143). Presentational: it renders
+// T6.4 controlled-creation preview surfaces (ADR-146). Presentational: it renders
 // SERVER-computed data (the T6.1 preflight result + the T6.2 materialization
 // snapshot) with NO raw IDs/JSON — a refusal/warning shows localized actionable
 // copy keyed by its stable code, a slot shows its human label + model +

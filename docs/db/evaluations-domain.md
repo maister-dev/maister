@@ -1,4 +1,4 @@
-# Evaluation Lab domain ERD (Implemented — ADR-139..142, migrations `0104`–`0107`)
+# Evaluation Lab domain ERD (Implemented — ADR-142..145, migrations `0107`–`0110`)
 
 The Evaluation Lab (M46) tables: the neutral Study/participant/recipe model,
 package-sourced Methodologies + admin Panels/Profiles, immutable evidence, and

@@ -1,4 +1,4 @@
-// Client-safe (pure): the closed objective-check provider adapters (ADR-140
+// Client-safe (pure): the closed objective-check provider adapters (ADR-143
 // D11). Providers are NON-EXECUTABLE from package content — each reads a
 // recorded/derived fact from an injected fact source; NONE runs a
 // package-supplied command. Build/test/lint runs only through a pre-registered

@@ -1,5 +1,5 @@
 // Client-safe (pure): the Evaluation Execution lifecycle allow-list + the event
-// emitted on each transition (ADR-142 D4/D17). The worker uses EXACT allow-list
+// emitted on each transition (ADR-145 D4/D17). The worker uses EXACT allow-list
 // transitions with CAS/version guards; a transition not in this table is a
 // CONFIG-shaped refusal, never a silent no-op.
 

@@ -1,4 +1,4 @@
-// Shared types for the Evaluation Lab domain (M46, ADR-139..142). Kept free of
+// Shared types for the Evaluation Lab domain (M46, ADR-142..145). Kept free of
 // `server-only` so both schema.ts (server) and client DTO mappers can import the
 // unions without pulling server modules into the client bundle.
 
@@ -44,10 +44,10 @@ export interface EvaluationRunIdentitySnapshot {
 
 // An immutable Evaluation Recipe definition. M46 stores legacy variant configs
 // (from the Experiment migration); the fully typed controlled recipe is M47
-// (ADR-143). Treated as opaque immutable JSON keyed by a content digest.
+// (ADR-146). Treated as opaque immutable JSON keyed by a content digest.
 export type EvaluationRecipeDefinition = Record<string, unknown>;
 
-// --- Platform configuration (D6, D8; 0105) ---------------------------------
+// --- Platform configuration (D6, D8; 0108) ---------------------------------
 
 // A package-derived Method revision's mutable activation state. Health
 // (ready | degraded | incompatible) is DERIVED from trust + engine compat at
@@ -96,7 +96,7 @@ export interface EvaluationPanelPolicy {
   poisonPolicy?: Record<string, unknown> | null;
 }
 
-// --- Evaluation Execution lifecycle (D4; 0106) -----------------------------
+// --- Evaluation Execution lifecycle (D4; 0109) -----------------------------
 
 // Persisted Evaluation Execution status. Exact allow-list transitions with
 // CAS/version guards (D4). Failed/Partial/Completed/Cancelled are terminal;

@@ -1,4 +1,4 @@
-// Client-safe (pure): disagreement classification (ADR-142 D13). Considers score
+// Client-safe (pure): disagreement classification (ADR-145 D13). Considers score
 // spread, confidence spread, insufficient-evidence asymmetry, objective
 // contradiction, and panel completeness. Low disagreement is NOT relabeled as
 // high confidence — incomplete evidence keeps its own signal. Thresholds use

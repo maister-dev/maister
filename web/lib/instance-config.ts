@@ -61,7 +61,7 @@ export function localPackagesRoot(): string {
   );
 }
 
-// (ADR-141, M46) Host root for the content-addressed immutable Evaluation
+// (ADR-144, M46) Host root for the content-addressed immutable Evaluation
 // evidence store. Blobs are written tmp+fsync+rename BEFORE the DB seal, so a
 // crash leaves an orphan blob (GC-eligible) but the DB never points at an absent
 // blob. Defaults under ~/.maister like the other host roots.

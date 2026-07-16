@@ -127,7 +127,7 @@ const DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS = 60;
 export const DEFAULT_AUTO_PROMOTE_JOB_ID = "auto_promote.default";
 const DEFAULT_AUTO_PROMOTE_CADENCE_SECONDS = 60;
 
-// T3.3 (ADR-139): the ONE seeded evaluation_dispatch tick — drives queued
+// T3.3 (ADR-142): the ONE seeded evaluation_dispatch tick — drives queued
 // Evaluation Executions through capture→check→judge→aggregate and reaps judge
 // timeouts (budget 1, singleton). The immediate in-process kick after start
 // short-circuits the 60s wait for interactive latency.

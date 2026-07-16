@@ -43,7 +43,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
   ephemeralAgent: EphemeralAgentGcSummary | null;
   agentMaterialization: AgentMaterializationGcSummary | null;
-  // T2.3 (ADR-139): the Evaluation evidence sweep — recovers crashed captures
+  // T2.3 (ADR-142): the Evaluation evidence sweep — recovers crashed captures
   // (orphan `preparing`) and finalizes unreferenced two-stage deletes.
   evaluationEvidence: EvidenceSweepSummary | null;
   // ADR-122: the Project Brain decay sweep (self-throttled hourly; expires items

@@ -1,4 +1,4 @@
-// Controlled Evaluation Recipe input-contract preflight (M47, ADR-143 D16). This
+// Controlled Evaluation Recipe input-contract preflight (M47, ADR-146 D16). This
 // is the PURE decision core: given a parsed recipe and the resolved live
 // contracts (Flow revision projection, selected Method evidence requirements,
 // runner catalog, capability-ref catalog), it returns every typed refusal and

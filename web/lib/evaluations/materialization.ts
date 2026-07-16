@@ -1,5 +1,5 @@
 // Slot-keyed runner resolution + immutable materialization snapshot for a
-// controlled Evaluation Recipe (M47, ADR-143 D16 §slotBindings + D8 snapshot).
+// controlled Evaluation Recipe (M47, ADR-146 D16 §slotBindings + D8 snapshot).
 //
 // This is the PURE resolution core. Given a recipe's slot bindings, the Flow's
 // DECLARED stable session/consensus slots, and the live runner catalog, it

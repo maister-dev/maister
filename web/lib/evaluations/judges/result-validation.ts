@@ -1,5 +1,5 @@
 // Client-safe (pure): strict validation of a submitted judge result against the
-// method criteria (ADR-142 D12). Invalid output produces a TERMINAL INVALID
+// method criteria (ADR-145 D12). Invalid output produces a TERMINAL INVALID
 // attempt (a distinct outcome) — never a partial row masquerading as valid, and
 // a missing criterion NEVER becomes numeric zero. Fail-closed: an out-of-range
 // score is invalid, not clamped (a range on the producer side does not hold for

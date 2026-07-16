@@ -166,12 +166,12 @@
 | [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Implemented | 2026-07-15 |
 | [ADR-140](#adr-140-pr-lifecycle-tracking) | PR lifecycle tracking | Implemented | 2026-07-14 |
 | [ADR-141](#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen) | Branch sync with AI conflict resolver and reopen | Implemented | 2026-07-14 |
-| [ADR-139](#adr-139-evaluation-study-domain-and-legacy-experiment-compatibility) | Evaluation Study domain and legacy Experiment compatibility | Accepted | 2026-07-16 |
-| [ADR-140](#adr-140-package-sourced-evaluation-methods-and-trust-compatibility) | Package-sourced Evaluation Methods and trust compatibility | Accepted | 2026-07-16 |
-| [ADR-141](#adr-141-immutable-private-evidence-and-bounded-evaluator-retrieval) | Immutable private evidence and bounded evaluator retrieval | Accepted | 2026-07-16 |
-| [ADR-142](#adr-142-multi-judge-execution-aggregation-disagreement-and-human-verdict) | Multi-judge execution aggregation disagreement and human verdict | Accepted | 2026-07-16 |
-| [ADR-143](#adr-143-controlled-evaluation-recipes-and-slot-keyed-execution-profiles) | Controlled Evaluation recipes and slot-keyed execution profiles | Accepted | 2026-07-16 |
-| [ADR-144](#adr-144-advanced-evaluation-suites-calibration-and-recipe-standardization) | Advanced evaluation suites calibration and recipe standardization | Accepted | 2026-07-16 |
+| [ADR-142](#adr-142-evaluation-study-domain-and-legacy-experiment-compatibility) | Evaluation Study domain and legacy Experiment compatibility | Accepted | 2026-07-16 |
+| [ADR-143](#adr-143-package-sourced-evaluation-methods-and-trust-compatibility) | Package-sourced Evaluation Methods and trust compatibility | Accepted | 2026-07-16 |
+| [ADR-144](#adr-144-immutable-private-evidence-and-bounded-evaluator-retrieval) | Immutable private evidence and bounded evaluator retrieval | Accepted | 2026-07-16 |
+| [ADR-145](#adr-145-multi-judge-execution-aggregation-disagreement-and-human-verdict) | Multi-judge execution aggregation disagreement and human verdict | Accepted | 2026-07-16 |
+| [ADR-146](#adr-146-controlled-evaluation-recipes-and-slot-keyed-execution-profiles) | Controlled Evaluation recipes and slot-keyed execution profiles | Accepted | 2026-07-16 |
+| [ADR-147](#adr-147-advanced-evaluation-suites-calibration-and-recipe-standardization) | Advanced evaluation suites calibration and recipe standardization | Accepted | 2026-07-16 |
 
 ---
 
@@ -12405,7 +12405,7 @@ bring a `Done` run whose PR now conflicts back into review.
   cross-process resume cost/semantics.
 - _Making `ai_rebase_merge` one-click async by default_: rejected — two-step is the
   safe default; one-click is an explicit opt-in that degrades benignly.
-### ADR-139: Evaluation Study domain and legacy Experiment compatibility
+### ADR-142: Evaluation Study domain and legacy Experiment compatibility
 
 **Date:** 2026-07-16
 **Status:** Accepted
@@ -12433,7 +12433,7 @@ opinions. This is the domain/lifecycle foundation for milestones M46–M48
   conclusive; judges never conclude, promote, abandon, relaunch, or overwrite
   it. A zero-citation verdict is allowed only with an explicit persisted
   no-evaluation-evidence acknowledgement.
-- Legacy Experiments migrate losslessly into Studies (see ADR-141 for the
+- Legacy Experiments migrate losslessly into Studies (see ADR-144 for the
   migration ledger); deep links `/projects/{slug}/experiments[...]` and the
   legacy `experiment_get`/`experiment_advise`/`conclude` adapters are retained;
   the canonical model uses `/evaluation-studies`.
@@ -12457,7 +12457,7 @@ opinions. This is the domain/lifecycle foundation for milestones M46–M48
 
 ---
 
-### ADR-140: Package-sourced Evaluation Methods and trust compatibility
+### ADR-143: Package-sourced Evaluation Methods and trust compatibility
 
 **Date:** 2026-07-16
 **Status:** Accepted
@@ -12507,7 +12507,7 @@ portable, versioned content — not hardcoded like the current
 
 ---
 
-### ADR-141: Immutable private evidence and bounded evaluator retrieval
+### ADR-144: Immutable private evidence and bounded evaluator retrieval
 
 **Date:** 2026-07-16
 **Status:** Accepted
@@ -12563,7 +12563,7 @@ legacy migration ledger.
 
 ---
 
-### ADR-142: Multi-judge execution aggregation disagreement and human verdict
+### ADR-145: Multi-judge execution aggregation disagreement and human verdict
 
 **Date:** 2026-07-16
 **Status:** Accepted
@@ -12617,7 +12617,7 @@ Foundation for M46 (D8, D12, D13, D14).
 
 ---
 
-### ADR-143: Controlled Evaluation recipes and slot-keyed execution profiles
+### ADR-146: Controlled Evaluation recipes and slot-keyed execution profiles
 
 **Date:** 2026-07-16
 **Status:** Accepted
@@ -12665,7 +12665,7 @@ locked now; implemented in M47 (D15, D16, D17).
 
 ---
 
-### ADR-144: Advanced evaluation suites calibration and recipe standardization
+### ADR-147: Advanced evaluation suites calibration and recipe standardization
 
 **Date:** 2026-07-16
 **Status:** Accepted

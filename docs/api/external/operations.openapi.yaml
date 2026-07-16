@@ -104,7 +104,7 @@ tags:
       judge agent, and conclusions remain human/session-auth only.
   - name: evaluations
     description: |
-      (ADR-142, Implemented) Evaluation Lab evaluator facade. A judge attempt runs
+      (ADR-145, Implemented) Evaluation Lab evaluator facade. A judge attempt runs
       as a dedicated workspace:none agent Run with an attempt-bound token carrying
       only `evaluations:context:read` / `evaluations:evidence:read` /
       `evaluations:objective:read` / `evaluations:result:submit`. Every route is

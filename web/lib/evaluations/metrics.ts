@@ -1,4 +1,4 @@
-// Client-safe (pure): replicate-distribution + timing metric formulas (ADR-142
+// Client-safe (pure): replicate-distribution + timing metric formulas (ADR-145
 // metrics contract). Every formula carries a version so a persisted aggregate is
 // reproducible. Missing is ALWAYS explicit (null + reason) — never converted to
 // numeric zero (D18), and the latest replicate is never the primary ranking.
@@ -117,7 +117,7 @@ export function costToSuccess(args: {
   };
 }
 
-// Process timing intervals for one participant Run (ADR-142 metrics). Each is
+// Process timing intervals for one participant Run (ADR-145 metrics). Each is
 // derived from recorded timestamps; a missing input yields null (explicit),
 // never a fabricated 0-duration.
 export interface RunTimings {

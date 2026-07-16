@@ -87,6 +87,10 @@ export const SCHEDULER_JOB_KIND_CATALOG: Record<
   // ADR-140: per-project PR-state poll. Not creatable, system-managed, and NOT
   // a seeded singleton (one job per project, seeded by ensurePrStateScanJobs).
   pr_state_scan: {
+    creatable: false,
+    filterable: true,
+    systemManaged: true,
+  },
   evaluation_dispatch: {
     creatable: false,
     filterable: true,
