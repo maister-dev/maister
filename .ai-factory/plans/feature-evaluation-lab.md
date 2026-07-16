@@ -32,11 +32,21 @@ Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 - Phase 2 T2.1 **partial** `6f88dd5f2` — migration **0104** (studies/recipes/
   participants) + 7 real-PG integration tests green.
 
-**▶ NEXT (resume here):** **T2.3** immutable evidence storage (content-addressed
-store under `MAISTER_EVALUATION_EVIDENCE_ROOT`, commit-anchored capture, coverage/
-redaction, seal + snapshot reuse-by-digest, bounded retrieval), then Phases 3–7.
-**T2.2 DONE** (predicate `1f6f5b7ac` + service `c06895b59`); routes co-evolve
-with Phase 5.
+**▶ NEXT (resume here):** finish **T3.1** — Methodology projection (package
+install `evaluationMethods[]` → `evaluation_method_revisions` via
+`loadEvaluationMethod` + trust/compat/activation) + effective-profile resolution
+precedence + admin/project HTTP routes + authz actions/token scopes — then
+**T3.2** (objective checks/metrics), **T3.3** (dispatcher + Study SSE on the M24
+clock), **Phase 4** (judges/aggregation/verdict), **Phase 5** (UI/E2E; T5.4
+owner-gated), **Phase 6** (M47), **Phase 7** (M48).
+
+**DONE this session (all green, committed on feature/evaluation-lab):**
+Phase 2 COMPLETE — T2.1 schema+backfill `888835b7c`, T2.2 launched-lineage
+predicate `1f6f5b7ac` + Study/participant/recipe service `c06895b59`, T2.3
+evidence-store core `9ae4a0775`. Phase 3 T3.1 config-CRUD `073f5a371`. Phase 2
+exit gate green (32 eval integration + 105 experiments unit). CO-EVOLVE debts:
+T2.3 capture pipeline + evidence routes + GC; T2.2 HTTP routes + legacy
+`/experiments` adapters (Phase 5).
 
 **T2.1 DONE (this session):** migrations `0105` (config: method_revisions /
 judge_panels / profiles / project_profile_overrides), `0106` (execution +
@@ -818,7 +828,9 @@ Phase 2 exit: unit + real Postgres integration green; migration parity green; fu
 
 ### Phase 3 — Platform configuration, objective facts, and durable orchestration
 
-- [ ] T3.1 RED/GREEN/REFACTOR Methodology, Judge Panel, Profile, and project-override services/APIs.
+- [~] T3.1 RED/GREEN/REFACTOR Methodology, Judge Panel, Profile, and project-override services/APIs.
+  - DONE (config CRUD, `073f5a371`): `lib/evaluations/config.ts` — createPanel/patchPanel(optimistic revision CAS)/deletePanel(usage-guarded by profile); createProfile(validates method+panel)/patchProfile(CAS)/deleteProfile(usage-guarded by override); putProjectOverride(upsert)/clearProjectOverride(delete) SET/CLEAR/re-set symmetry + idempotent clear; shared assertRevisionOrThrow (missing=PRECONDITION, stale=CONFLICT). 6-test integration green.
+  - REMAINING (subsequent commits): the Methodology PROJECTION — package install (`evaluationMethods[]` manifest + `loadEvaluationMethod`) → `evaluation_method_revisions` upsert with trust/compat/activation + validation_errors (this is the DB-projection deferred from T1.1); the effective-profile resolution precedence (method hard constraints → profile bounds → panel → project override → per-study) + start-time snapshot; admin/project HTTP API routes + `authz.ts` `manageEvaluationConfig`/`manageProjectEvaluationOverrides` actions + token scopes.
   - Files: web/lib/evaluations/config/*, admin/project API routes, web/lib/authz.ts, token/action contracts.
   - RED: global/project permissions, optimistic revisions, hard-bound/allowed-override precedence, SET/CLEAR/re-set, dependency degradation, usage-guarded delete, immutable method revisions, historical snapshot stability.
   - GREEN: typed services and explicit DTOs; no secret/concrete credential in portable method.
