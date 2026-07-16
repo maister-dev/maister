@@ -14,7 +14,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { isExperimentMemberRun } from "@/lib/experiments/membership";
+import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
@@ -562,22 +562,23 @@ async function promoteWorkspaceRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
-  // ADR-132 (enforcing ADR-124): experiment-member runs never auto-promote —
-  // winner promotion is the explicit human path. The guard lives HERE, at the
-  // flow/task promotion apply site, because auto delivery
-  // (deliverRunIfAutoReady) and the token/orchestrator auto-promoter (which set
-  // autoOnReady) reach promotion OUTSIDE the ADR-126 sweep, whose SQL prefilter
-  // alone cannot cover them. Only HUMAN promotes set neither flag, so they are
-  // allowed. (`promoteScratchRun` is the other apply site but needs no guard —
-  // `experiment_runs` rows are inserted only in launchRun, so a scratch run can
-  // never be a member.)
+  // ADR-132/139 (enforcing ADR-124): launched-lineage runs never auto-promote —
+  // winner promotion is the explicit human path (a legacy Experiment member OR a
+  // launched Evaluation participant; observed participants are excluded by
+  // construction). The guard lives HERE, at the flow/task promotion apply site,
+  // because auto delivery (deliverRunIfAutoReady) and the token/orchestrator
+  // auto-promoter (which set autoOnReady) reach promotion OUTSIDE the ADR-126
+  // sweep, whose SQL prefilter alone cannot cover them. Only HUMAN promotes set
+  // neither flag, so they are allowed. (`promoteScratchRun` is the other apply
+  // site but needs no guard — launched-lineage rows are inserted only in
+  // launchRun / evaluation recipe launch, so a scratch run can never be one.)
   if (
     isUnattendedPromotion(input) &&
-    (await isExperimentMemberRun(db, runId))
+    (await isLaunchedLineageRun(db, runId))
   ) {
     throw new MaisterError(
       "PRECONDITION",
-      "experiment-member run cannot auto-promote — conclude the experiment and promote the winner explicitly",
+      "launched-lineage run cannot auto-promote — conclude the experiment/study and promote the winner explicitly",
       { details: { experimentMember: true } },
     );
   }

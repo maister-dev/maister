@@ -12,7 +12,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { gateResults, hitlRequests } from "@/lib/db/schema";
-import { isExperimentMemberRun } from "@/lib/experiments/membership";
+import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { getNodeAttemptsForRun } from "@/lib/flows/graph/ledger";
@@ -112,12 +112,14 @@ export function buildAutoPromotionReaders(args: {
 
       return rows.length > 0;
     },
-    // ADR-132 (enforcing ADR-124): experiment membership excludes the run from
-    // the ADR-126 auto-promotion sweep. The authoritative apply-site guard lives
-    // in promoteWorkspaceRun; this shares the one canonical predicate so the two
-    // can never drift.
+    // ADR-132/139: launched-lineage membership (legacy Experiment member OR
+    // launched Evaluation participant) excludes the run from the ADR-126
+    // auto-promotion sweep. The authoritative apply-site guard lives in
+    // promoteWorkspaceRun; this shares the one canonical predicate so the two
+    // can never drift. Observed evaluation participants are excluded by
+    // construction.
     async isExperimentMember(): Promise<boolean> {
-      return isExperimentMemberRun(db, runId);
+      return isLaunchedLineageRun(db, runId);
     },
     async readinessGreen(): Promise<boolean> {
       try {

@@ -6,7 +6,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { isExperimentMemberRun } from "@/lib/experiments/membership";
+import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import {
   switchDeliveryPolicyToManual,
   type DeliveryPolicy,
@@ -89,10 +89,11 @@ export async function deliverRunIfAutoReady(
     return;
   }
 
-  // ADR-132: an experiment-member run never auto-delivers. The promote choke
-  // point is the authoritative guard; this ordering short-circuit avoids a
-  // spurious degrade-to-manual on the member's delivery policy.
-  if (await isExperimentMemberRun(db, runId)) {
+  // ADR-132/139: a launched-lineage run (legacy Experiment member OR launched
+  // Evaluation participant) never auto-delivers. The promote choke point is the
+  // authoritative guard; this ordering short-circuit avoids a spurious
+  // degrade-to-manual on the run's delivery policy.
+  if (await isLaunchedLineageRun(db, runId)) {
     return;
   }
 

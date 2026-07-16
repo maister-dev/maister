@@ -45,7 +45,7 @@ import {
 import { isPlanReviewDecisionRequestSchema } from "@/lib/flows/graph/plan-review-decisions";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
-import { isExperimentMemberRun } from "@/lib/experiments/membership";
+import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { runFlow } from "@/lib/flows/runner";
 import {
@@ -3600,12 +3600,16 @@ async function preflightBudgetRestartLaunchability(args: {
   }
 
   await requireProjectAction(task.projectId, "launchRun");
-  const experimentMemberRestart = await isExperimentMemberRun(
+  // ADR-132/139: a launched-lineage run (legacy Experiment member OR launched
+  // Evaluation participant) relaunches INDEPENDENTLY of its siblings — the
+  // study/experiment legitimately keeps other active member runs — so it skips
+  // the single-active-run precondition and uses force-relaunch classification.
+  const launchedLineageRestart = await isLaunchedLineageRun(
     args.db,
     args.runId,
   );
 
-  if (!experimentMemberRestart) {
+  if (!launchedLineageRestart) {
     const activeTaskRuns = await args.db
       .select({ id: runs.id, status: runs.status })
       .from(runs)
@@ -3644,7 +3648,7 @@ async function preflightBudgetRestartLaunchability(args: {
       : latestFlowRun;
   const openBlockers =
     (await getOpenRelationBlockers([taskId], args.db)).get(taskId) ?? [];
-  const launchability = experimentMemberRestart
+  const launchability = launchedLineageRestart
     ? classifyForceRelaunchLaunchability(task, latestForRestart, {
         openBlockers,
       })
