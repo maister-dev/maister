@@ -29,13 +29,24 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-// Wrap the network ls-remote helper in a spy (default = real) so the lease-fail
-// test can force a stale `remoteShaBefore` capture (simulating "the branch moved
-// remotely after we snapshotted its head"); every other test uses the real impl.
+// Two git helpers are wrapped as spies (default = real, so every other test runs
+// the real impl). Both double as deterministic seams for injecting a concurrent
+// abandon at an EXACT point in the sync — the only way to test the abandon↔sync
+// race without racing real threads and hoping for the interleave:
+//   - `remoteBranchHead` is the network ls-remote read at sync-target.ts:633,
+//     inside the window between the unlocked eligibility read and the claim tx.
+//     (It also lets the lease-fail test force a stale `remoteShaBefore` capture.)
+//   - `aheadBehindCounts` FIRST runs at sync-target.ts:760 — after the claim
+//     commits, before the rebase. Its other call site (:240, inside
+//     `verifySyncGate`) runs later, so a `...Once` impl always lands on :760.
 vi.mock("@/lib/worktree", async (orig) => {
   const actual = await orig<typeof import("@/lib/worktree")>();
 
-  return { ...actual, remoteBranchHead: vi.fn(actual.remoteBranchHead) };
+  return {
+    ...actual,
+    remoteBranchHead: vi.fn(actual.remoteBranchHead),
+    aheadBehindCounts: vi.fn(actual.aheadBehindCounts),
+  };
 });
 
 let db: NodePgDatabase;
@@ -48,6 +59,10 @@ const {
   remoteBranchHead,
   syncOperationInProgress,
 } = await import("@/lib/worktree");
+// The UNMOCKED module. An injected spy runs its side effect and then defers to the
+// real helper through this, so the abandon tests never fake git state.
+const actualWorktree =
+  await vi.importActual<typeof import("@/lib/worktree")>("@/lib/worktree");
 const {
   syncRunTarget,
   assertSyncEligible,
@@ -56,6 +71,7 @@ const {
   acquireSyncDriver,
 } = await import("@/lib/runs/sync-target");
 const { promoteRun } = await import("@/lib/runs/promote");
+const { markAbandoned } = await import("@/lib/runs/state-transitions");
 const { claimLifecycleOperation } = await import(
   "@/lib/workbench-lifecycle/service"
 );
@@ -97,6 +113,7 @@ beforeEach(async () => {
   }
   root = await mkdtemp(join(tmpdir(), `sync-target-${randomUUID()}-`));
   vi.mocked(remoteBranchHead).mockClear();
+  vi.mocked(aheadBehindCounts).mockClear();
 });
 
 afterEach(async () => {
@@ -901,6 +918,226 @@ describe("syncRunTarget — the double fence (both directions)", () => {
         release();
       }
     });
+  });
+});
+
+// The abandon↔sync race. `markAbandoned` CASes `runs.status` while the sync claim
+// locks `workspaces` — different rows, free to interleave — and abandon is an
+// ordinary button with no guard while a sync runs. Both orders below were
+// reachable and completely uncovered: a force-push could land on a run the user
+// had already abandoned.
+describe("syncRunTarget — abandon during sync", () => {
+  // ORDER A — abandon commits BEFORE the claim. The eligibility gate read `Review`
+  // from an UNLOCKED select, then a git exec and a network ls-remote ran before the
+  // claim tx, which never re-read `runs`. So the claim minted an attempt for an
+  // already-Abandoned run and the driver rebased and force-pushed it.
+  it("(order A) refuses, and mints NO attempt, when the run is abandoned before the claim", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/abandon-a");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/abandon-a",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      // published ⇒ the ls-remote seam runs, and a push would be attempted.
+      prUrl: "https://github.com/x/y/pull/1",
+    });
+
+    vi.mocked(remoteBranchHead).mockImplementationOnce(async () => {
+      await markAbandoned(runId, { db });
+
+      return null;
+    });
+
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    // No attempt row at all — the claim must refuse, not mint-then-fail.
+    expect(await attemptRows(runId)).toHaveLength(0);
+    expect((await readRun(runId)).reviewEnteredAt).toBeNull();
+  });
+
+  // ORDER B — abandon commits AFTER the claim, while the driver runs. `markAbandoned`
+  // → `releaseSyncClaimOnTerminal` stamps the attempt `failed` and frees the slot,
+  // but every phase write was unconditional by attempt id, so the driver rebased and
+  // force-pushed anyway and resurrected the ledger `failed → rebasing → … → succeeded`.
+  it("(order B) stops before the rebase and never resurrects the ledger when abandoned after the claim", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/abandon-b");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/abandon-b",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      prUrl: "https://github.com/x/y/pull/2",
+    });
+    const headBefore = await headSha(wt);
+    const originBefore = await headSha(parent, "origin/sync/abandon-b").catch(
+      () => null,
+    );
+
+    vi.mocked(aheadBehindCounts).mockImplementationOnce(async (...args) => {
+      await markAbandoned(runId, { db });
+
+      return actualWorktree.aheadBehindCounts(...args);
+    });
+
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    // The ledger keeps the terminal `failed` abandon wrote — never `succeeded`.
+    const [attempt] = await attemptRows(runId);
+
+    expect(attempt.phase).toBe("failed");
+    expect(attempt.pushed).toBe(false);
+
+    // The decisive assertion: the branch was never rebased and never pushed.
+    expect(await headSha(wt)).toBe(headBefore);
+    expect(
+      await headSha(parent, "origin/sync/abandon-b").catch(() => null),
+    ).toBe(originBefore);
+    expect((await readRun(runId)).status).toBe("Abandoned");
+  });
+
+  // `settleAttempt` stamped `runs.review_entered_at` unconditionally, so the no-op
+  // path (behind === 0) restarted the auto-promotion grace window on a run that had
+  // just been abandoned. Distinct path from order B: it never reaches a rebase.
+  it("never stamps review_entered_at on a run abandoned during a no-op sync", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/abandon-noop");
+
+    // No advanceOriginMain ⇒ behind === 0 ⇒ the settle-as-noop path.
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/abandon-noop",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+    });
+
+    vi.mocked(aheadBehindCounts).mockImplementationOnce(async (...args) => {
+      await markAbandoned(runId, { db });
+
+      return actualWorktree.aheadBehindCounts(...args);
+    });
+
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect((await readRun(runId)).reviewEnteredAt).toBeNull();
+    expect((await attemptRows(runId))[0].phase).toBe("failed");
+  });
+});
+
+// A sync that wrote its terminal phase and then died before releasing the claim
+// leaves the one shape no recovery arm can see: every sweep filters to NON-terminal
+// attempts. Promote and the workbench ops escape it via their staleness carve-outs;
+// sync's own forward fence had none, so the strand refused every FUTURE sync on the
+// workspace until some unrelated lifecycle op happened to steal the slot.
+describe("syncRunTarget — stranded lifecycle claims", () => {
+  async function seedClaimed(
+    label: string,
+    claim: {
+      lifecycleOperationName: string;
+      lifecycleOperationClaimedAt?: Date;
+    },
+  ): Promise<{ runId: string; workspaceId: string }> {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, `sync/${label}`);
+    const { projectId, flowId } = await seedGraph(parent);
+
+    return seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: `sync/${label}`,
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      lifecycleOperationState: "claiming",
+      ...claim,
+    });
+  }
+
+  // CONTROL. The carve-out below must not become "a sync can barge through any
+  // claim": a live lifecycle op still wins. Nothing covered this direction — the
+  // existing fence tests all prove the reverse (a claimed sync refuses archive/…).
+  it("still refuses a sync while a FRESH lifecycle claim is held", async () => {
+    const { runId } = await seedClaimed("fence-fresh", {
+      lifecycleOperationName: "archive",
+    });
+
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("lets a new sync steal a claim that has gone stale", async () => {
+    // Older than promotionClaimTimeoutSeconds() (300s) — the same threshold
+    // `canReclaimLifecycle` and promote's reverse fence already steal on, so the
+    // three now agree instead of sync alone holding out forever.
+    const { runId, workspaceId } = await seedClaimed("fence-stale", {
+      lifecycleOperationName: "sync",
+      lifecycleOperationClaimedAt: new Date(Date.now() - 3_600_000),
+    });
+
+    // behind === 0 ⇒ noop; reaching an outcome at all is the proof it got past the
+    // fence that used to refuse unconditionally.
+    const out = await syncRunTarget({ runId, actor: actor(), db });
+
+    expect(out.outcome).toBe("noop");
+
+    const [ws] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId));
+
+    expect(ws.lifecycleOperationState).toBe("none");
+  });
+
+  it("releases a claim held behind an ALREADY-terminal attempt when the run terminalizes", async () => {
+    const { runId, workspaceId } = await seedClaimed("strand-terminal", {
+      lifecycleOperationName: "sync",
+    });
+
+    // The precise crash shape: terminal attempt, claim still held.
+    await db.insert(runSyncAttempts).values({
+      id: randomUUID(),
+      runId,
+      workspaceId,
+      attempt: 1,
+      strategy: "rebase",
+      mode: "mechanical",
+      phase: "succeeded",
+      targetRef: "main",
+    });
+
+    await markAbandoned(runId, { db });
+
+    // `releaseSyncClaimOnTerminal` used to return early here — no non-terminal
+    // attempt matched, so it concluded there was no claim to free and left it held.
+    const [ws] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId));
+
+    expect(ws.lifecycleOperationState).toBe("none");
+    expect(ws.lifecycleOperationName).toBeNull();
+    expect(ws.lifecycleOperationAttemptId).toBeNull();
   });
 });
 

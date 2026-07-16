@@ -41,7 +41,8 @@ export type StateTransitionResult =
 //
 // `name='sync'` is a sufficient guard HERE (unlike in the recovery sweeps, which
 // must fence on the claim token): this runs inside the tx that just terminalized
-// the run's only non-terminal attempt, and a sync can only ever be claimed by a
+// the run's attempts, and — now that the claim tx re-validates the run as `Review`
+// under its own row lock — a sync can only ever be claimed by a
 // `Review` run — so no newer sync can hold this slot.
 async function releaseSyncClaimOnTerminal(
   tx: Db,
@@ -65,11 +66,24 @@ async function releaseSyncClaimOnTerminal(
         ),
       ),
     )
-    .returning({ workspaceId: runSyncAttempts.workspaceId });
+    .returning({
+      id: runSyncAttempts.id,
+      workspaceId: runSyncAttempts.workspaceId,
+    });
 
-  if (attempts.length === 0) return;
-
-  await tx
+  // Terminalizing an attempt and freeing the slot are SEPARATE facts, and this used
+  // to return early when no attempt was still non-terminal — on the assumption that
+  // "no active attempt" implies "no claim held". It does not: a sync that wrote its
+  // terminal phase and then died before releasing leaves exactly that shape, and it
+  // is the one shape no recovery arm can see (they all filter to non-terminal
+  // attempts). This is one of only three writers that reset the slot, so gating it
+  // on the attempt write made the strand permanent for sync.
+  //
+  // The release is therefore driven by the WORKSPACE's own sync claim, not by
+  // whether we won the attempt write. `name='sync'` remains a sufficient fence: the
+  // claim tx now re-validates the run as `Review` under its row lock, so no newer
+  // sync can hold this slot behind a run we are terminalizing right here.
+  const released = await tx
     .update(workspaces)
     .set({
       lifecycleOperationState: "none",
@@ -79,13 +93,24 @@ async function releaseSyncClaimOnTerminal(
     })
     .where(
       and(
-        eq(workspaces.id, attempts[0].workspaceId),
+        eq(workspaces.runId, runId),
         eq(workspaces.lifecycleOperationName, "sync"),
       ),
-    );
+    )
+    .returning({ workspaceId: workspaces.id });
+
+  if (attempts.length === 0 && released.length === 0) return;
 
   log.warn(
-    { runId, attemptId: attempts[0].workspaceId },
+    {
+      runId,
+      // Was logging `workspaceId` under the key `attemptId` — wrong value, wrong
+      // name, on the one line that reports this repair.
+      attemptId: attempts[0]?.id ?? null,
+      workspaceId: released[0]?.workspaceId ?? attempts[0]?.workspaceId ?? null,
+      terminalizedAttempt: attempts.length > 0,
+      releasedClaim: released.length > 0,
+    },
     "released a branch-sync claim stranded by a terminal run",
   );
 }

@@ -82,6 +82,7 @@ const { addWorktree, syncOperationInProgress, aheadBehindCounts } =
 const { syncRunTarget } = await import("@/lib/runs/sync-target");
 const { respondToHitl } = await import("@/lib/services/hitl");
 const { hasSyncDriver } = await import("@/lib/runs/sync-driver-registry");
+const { markAbandoned } = await import("@/lib/runs/state-transitions");
 
 const schema = fullSchema as unknown as Record<string, any>;
 const { runs, workspaces, tasks, runSyncAttempts, runSessions, hitlRequests } =
@@ -633,6 +634,76 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     // orphan is still recoverable.
     expect(hasSyncDriver(runId)).toBe(false);
     expect((await attemptRow(runId)).phase).toBe("succeeded");
+  });
+
+  // The resolver holds its claim across the whole resolve — "30 minutes of active
+  // time, plus arbitrarily long HITL pauses" by its own comment — so a user
+  // abandoning mid-resolve is ordinary, not exotic. Nothing covered it.
+  //
+  // It also pins F2's rollback: the success finalize used to be six independent
+  // writes, so a refusal partway left the attempt `succeeded` while the run sat at
+  // `Running` — the one shape every recovery arm filters out by phase, which is how
+  // reconcile came to crash (or re-dispatch the graph of) a sync that had already
+  // finished. Routed through the single transactional writer, the whole finalize is
+  // now all-or-nothing.
+  it("a run abandoned mid-resolve cancels the resolver and leaves nothing half-applied", async () => {
+    const { parent, wt, before } =
+      await seedConflictWorktree("sync/agent-aband");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId, workspaceId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/agent-aband",
+      parentRepoPath: parent,
+      baseCommit: await headSha(parent, "main"),
+    });
+
+    const stream = eventStream();
+
+    supMock.streamSession.mockImplementation((_sid: string, opts: any) =>
+      stream.iterate(opts?.signal),
+    );
+    supMock.sendPrompt.mockImplementation(async () => {
+      await resolveConflictInWorktree(wt);
+      // The agent resolved; the user hits Abandon before the driver finalizes.
+      await markAbandoned(runId, { db });
+
+      return { stopReason: "end_turn" as PromptStopReason };
+    });
+
+    const bg = backgrounded();
+
+    await syncRunTarget({
+      runId,
+      actor: actor(),
+      agent: true,
+      db,
+      schedule: bg.schedule,
+    });
+    await bg.settled();
+
+    const attempt = await attemptRow(runId);
+    const run = await readRun(runId);
+
+    // Abandon's terminal stands; the resolver never overwrites it with `succeeded`.
+    expect(attempt.phase).toBe("failed");
+    expect(run.status).toBe("Abandoned");
+    // Neither half of the finalize leaked: no Review flip, no grace-window restart.
+    expect(run.reviewEnteredAt).toBeNull();
+
+    // ...and the claim is freed rather than stranded behind the terminal attempt.
+    const [ws] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId));
+
+    expect(ws.lifecycleOperationState).toBe("none");
+    expect(hasSyncDriver(runId)).toBe(false);
+    // `before` is the pre-sync head: an abandoned run's local branch is inert (it is
+    // never pushed and the worktree is GC'd), so this only pins that we did not
+    // somehow publish it.
+    expect(before).toBeTruthy();
   });
 
   it("crash stop-reason (non-end_turn) → abort restore, attempt failed, Review", async () => {

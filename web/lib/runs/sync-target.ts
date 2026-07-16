@@ -18,6 +18,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { isBranchPublished } from "@/lib/runs/branch-published";
+import { lifecycleClaimIsStale } from "@/lib/runs/lifecycle-claim";
 import {
   markSyncFromReview,
   markSyncReviewFromRunning,
@@ -304,6 +305,23 @@ async function loadWorkspace(db: Db, runId: string): Promise<any> {
   return rows[0];
 }
 
+// The run under ITS OWN row lock, for the claim tx's re-validation. `loadRun`'s
+// lock-free read is fine for the early refusals (fail fast, cheap), but the claim
+// must decide on a row nobody can flip underneath it.
+async function loadRunForUpdate(tx: Db, runId: string): Promise<any> {
+  const rows = await tx
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("update");
+
+  if (rows.length === 0) {
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+
+  return rows[0];
+}
+
 async function loadWorkspaceForUpdate(tx: Db, runId: string): Promise<any> {
   const rows = await tx
     .select()
@@ -328,16 +346,67 @@ async function loadProject(db: Db, projectId: string | null): Promise<any> {
   return rows[0] ?? null;
 }
 
+// Advance this attempt's phase, but ONLY while it is still non-terminal, reporting
+// whether we won it.
+//
+// The CAS *is* the cancellation signal, which is why it lives at this choke point
+// rather than in one caller: `releaseSyncClaimOnTerminal` already stamps `failed` on
+// every non-terminal attempt of a run that goes terminal, so a lost CAS means
+// exactly "the run was abandoned/stopped under us". While this write was
+// unconditional the driver resurrected that ledger (`failed → rebasing → … →
+// succeeded`) and — far worse — carried on to `git rebase` and `git push
+// --force-with-lease` for a run the user had already abandoned.
+//
+// The guard is the terminal SET, not an exact expected phase, because this driver
+// OWNS the attempt: nobody else advances it, so the only thing it ever needs to
+// detect is that someone else ENDED it.
 async function setAttemptPhase(
   db: Db,
   attemptId: string,
   phase: RunSyncPhase,
   extra: Record<string, unknown> = {},
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(runSyncAttempts)
     .set({ phase, updatedAt: new Date(), ...extra })
-    .where(eq(runSyncAttempts.id, attemptId));
+    .where(
+      and(
+        eq(runSyncAttempts.id, attemptId),
+        notInArray(
+          runSyncAttempts.phase,
+          RUN_SYNC_TERMINAL_PHASES as unknown as string[],
+        ),
+      ),
+    )
+    .returning({ id: runSyncAttempts.id });
+
+  return rows.length > 0;
+}
+
+// The driver's own phase write: losing it cancels every git side effect below.
+// Throwing unwinds to `syncRunTarget`'s outer catch, whose `abortSyncOperation` +
+// `terminalizeSafetyNet` are already idempotent against an attempt someone else
+// terminalized — so no restore is needed here. The worktree of a terminalized run is
+// inert (nothing reads it, and it is GC'd), and the only irreversible act — the push
+// — is what this guard exists to prevent.
+//
+// The residual window is the gap between this CAS and the git call after it (~1ms).
+// Closing it entirely would mean holding a DB transaction open across git and
+// network I/O, which the claim deliberately refuses to do; `--force-with-lease`
+// bounds what a push landing in that window can do to the remote.
+async function advancePhaseOrCancel(
+  db: Db,
+  claim: Claim,
+  runId: string,
+  phase: RunSyncPhase,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  if (await setAttemptPhase(db, claim.attemptId, phase, extra)) return;
+
+  throw new MaisterError(
+    "CONFLICT",
+    `run ${runId} was terminalized while its branch sync was in flight — cancelled before ${phase}`,
+  );
 }
 
 // Free the shared lifecycle slot this attempt holds. Fenced on the slot's OWN
@@ -431,26 +500,47 @@ async function settleAttempt(
     headShaAfter?: string;
     pushed?: boolean;
     now: () => Date;
+    // The resolver path additionally owns the run's status: it flipped Review→Running
+    // to work, so its success must hand the run back. Kept as a flag on the ONE
+    // terminal-success writer rather than a second open-coded sequence — the
+    // divergent copy is exactly what drifted out of this transaction.
+    flipRunningToReview?: boolean;
   },
 ): Promise<void> {
   // ONE transaction — the terminal phase and the claim release may never
   // half-apply. Every recovery arm FILTERS OUT terminal phases, so a crash
-  // between the two writes leaves a claim that no sweep can ever see, and
-  // promote's reverse fence (unlike `canReclaimLifecycle`) has no staleness
-  // carve-out: promotion and all six other lifecycle ops are then refused
-  // permanently, with no exit but hand-written SQL.
+  // between the two writes leaves a claim that no sweep can ever see. Promote's
+  // reverse fence and `canReclaimLifecycle` both break such a claim once it goes
+  // stale, but sync's OWN forward fence keys on the slot alone, so a strand still
+  // refuses every future sync on the workspace until an unrelated lifecycle op
+  // steals it.
   await db.transaction(async (tx: Db) => {
-    await setAttemptPhase(tx, claim.attemptId, "succeeded", {
+    const won = await setAttemptPhase(tx, claim.attemptId, "succeeded", {
       ...(args.headShaAfter !== undefined
         ? { headShaAfter: args.headShaAfter }
         : {}),
       ...(args.pushed !== undefined ? { pushed: args.pushed } : {}),
     });
+
+    // Losing means the run went terminal under us. Recording `succeeded` would
+    // resurrect a ledger abandon deliberately closed, and stamping
+    // `review_entered_at` would restart the auto-promotion grace window on a run
+    // that is no longer in Review at all. Throwing rolls the whole tx back.
+    if (!won) {
+      throw new MaisterError(
+        "CONFLICT",
+        `run ${args.runId} was terminalized while its branch sync was in flight — refusing to record a sync that was cancelled`,
+      );
+    }
+
     if (args.headMoved) {
       await tx
         .update(runs)
         .set({ reviewEnteredAt: args.now() })
         .where(eq(runs.id, args.runId));
+    }
+    if (args.flipRunningToReview) {
+      await markSyncReviewFromRunning(args.runId, { db: tx });
     }
     await releaseSyncClaim(tx, claim);
   });
@@ -466,6 +556,12 @@ async function abortAttempt(
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   await db.transaction(async (tx: Db) => {
+    // A lost CAS (someone else terminalized this attempt — abandon, or the W5 cap
+    // sweep) is fine: their terminal stands and this caller throws its own typed
+    // error regardless. The release is deliberately NOT gated on winning it —
+    // `releaseSyncClaim` is fenced on our own claim token, so it is idempotent and
+    // can only ever free the slot we took; gating it on the phase write is exactly
+    // how a claim gets stranded past every recovery arm.
     await setAttemptPhase(tx, claim.attemptId, "aborted", extra);
     await releaseSyncClaim(tx, claim);
   });
@@ -481,6 +577,8 @@ async function failAttempt(
   errorMessage: string,
 ): Promise<void> {
   await db.transaction(async (tx: Db) => {
+    // Lost CAS → someone else's terminal stands; the release is unconditional for
+    // the same reason as in `abortAttempt`.
     await setAttemptPhase(tx, claim.attemptId, "failed", {
       errorCode,
       errorMessage,
@@ -505,21 +603,15 @@ async function failAttemptIfActive(
 ): Promise<boolean> {
   // ONE transaction — see `settleAttempt`.
   return db.transaction(async (tx: Db) => {
-    const rows = await tx
-      .update(runSyncAttempts)
-      .set({ phase: "failed", errorCode, errorMessage, updatedAt: new Date() })
-      .where(
-        and(
-          eq(runSyncAttempts.id, claim.attemptId),
-          notInArray(
-            runSyncAttempts.phase,
-            RUN_SYNC_TERMINAL_PHASES as unknown as string[],
-          ),
-        ),
-      )
-      .returning({ id: runSyncAttempts.id });
+    const won = await setAttemptPhase(tx, claim.attemptId, "failed", {
+      errorCode,
+      errorMessage,
+    });
 
-    if (rows.length === 0) return false;
+    // Losing means another owner terminalized AND released (every terminal writer
+    // releases unconditionally), so there is no claim left to free here — and the
+    // caller must skip the side effects that follow.
+    if (!won) return false;
 
     await releaseSyncClaim(tx, claim);
 
@@ -538,24 +630,19 @@ async function terminalizeSafetyNet(
   const message = err instanceof Error ? err.message : String(err);
   const code = isMaisterError(err) ? err.code : "CRASH";
 
-  await db
-    .update(runSyncAttempts)
-    .set({
-      phase: "failed",
+  // ONE transaction — see `settleAttempt`. As the LAST net, a half-apply here is
+  // the worst case of all: it is what runs when everything else already failed.
+  await db.transaction(async (tx: Db) => {
+    // The phase write is a no-op when an explicit terminal (`aborted`/`succeeded`/
+    // `failed`) already landed — never overwrite it. The release is unconditional:
+    // it is fenced on our own claim token, and this net exists precisely to leave
+    // no dangling `claiming` slot.
+    await setAttemptPhase(tx, claim.attemptId, "failed", {
       errorCode: code,
       errorMessage: message,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(runSyncAttempts.id, claim.attemptId),
-        notInArray(
-          runSyncAttempts.phase,
-          RUN_SYNC_TERMINAL_PHASES as unknown as string[],
-        ),
-      ),
-    );
-  await releaseSyncClaim(db, claim);
+    });
+    await releaseSyncClaim(tx, claim);
+  });
 }
 
 /**
@@ -644,6 +731,32 @@ export async function syncRunTarget(
   // 3. THE CLAIM (one FOR UPDATE tx): double fence + attempt allocation + slot.
   const claim: Claim = await db.transaction(async (tx: Db) => {
     const ws = await loadWorkspaceForUpdate(tx, runId);
+    // The run is re-read UNDER ITS OWN LOCK and re-validated here. The gate above
+    // ran on a lock-free select, and a git exec plus a network ls-remote have
+    // executed since — a window wide enough for the user to hit Abandon. `runs` is
+    // a different row from `workspaces`, and `markAbandoned` CASes it without ever
+    // taking the workspace lock, so the two are otherwise free to interleave: the
+    // claim would mint an attempt for an already-terminal run and the driver would
+    // rebase and force-push it.
+    //
+    // Locking `runs` also serializes the reverse order — an abandon arriving while
+    // this tx is open now waits for it, and then terminalizes the attempt this tx
+    // created, which the driver's phase CAS detects.
+    //
+    // This lock is what `releaseSyncClaimOnTerminal`'s "a sync can only ever be
+    // claimed by a `Review` run" actually rests on; until now nothing enforced it.
+    const lockedRun = await loadRunForUpdate(tx, runId);
+
+    assertSyncEligible(
+      {
+        status: lockedRun.status,
+        runKind: lockedRun.runKind,
+        parentRunId: lockedRun.parentRunId ?? null,
+        workspaceMode: lockedRun.workspaceMode ?? null,
+        isExperimentMember,
+      },
+      ws,
+    );
 
     // (a) promotion↔sync fence — a promotion in progress or already done blocks a
     // sync. `reopened` is neither, so a reopened run passes through.
@@ -653,8 +766,17 @@ export async function syncRunTarget(
         `a promotion is ${ws.promotionState} for run ${runId} — cannot sync`,
       );
     }
-    // (b) a competing active lifecycle claim (archive/drop/…/another sync).
-    if (ws.lifecycleOperationState === "claiming") {
+    // (b) a competing active lifecycle claim (archive/drop/…/another sync). The
+    // staleness carve-out mirrors promote's reverse fence and `canReclaimLifecycle`
+    // (one shared predicate, so the three can never disagree). Without it this was
+    // the only fence on the slot with no exit: a claim stranded by a crash between a
+    // terminal-phase write and its release refused EVERY future sync on this
+    // workspace forever, self-healing only if some unrelated lifecycle op happened
+    // to steal the slot first.
+    if (
+      ws.lifecycleOperationState === "claiming" &&
+      !lifecycleClaimIsStale(ws)
+    ) {
       throw new MaisterError(
         "CONFLICT",
         `a lifecycle operation is already in progress for run ${runId}`,
@@ -777,7 +899,7 @@ export async function syncRunTarget(
     // 6. Apply.
     const headShaBefore = await headCommit({ worktreePath: worktree });
 
-    await setAttemptPhase(db, claim.attemptId, "rebasing", { headShaBefore });
+    await advancePhaseOrCancel(db, claim, runId, "rebasing", { headShaBefore });
 
     const applied =
       strategy === "merge"
@@ -895,7 +1017,7 @@ export async function syncRunTarget(
     }
 
     // 7. Clean apply → verify gate → decide push → succeed.
-    await setAttemptPhase(db, claim.attemptId, "verifying");
+    await advancePhaseOrCancel(db, claim, runId, "verifying");
     const targetSha = await localBranchHead({
       projectRepoPath: repo,
       branch: targetBranch,
@@ -942,7 +1064,9 @@ export async function syncRunTarget(
         );
       }
 
-      await setAttemptPhase(db, claim.attemptId, "pushing");
+      // The LAST cancellation checkpoint before the only irreversible act in the
+      // whole sync.
+      await advancePhaseOrCancel(db, claim, runId, "pushing");
       const push = await pushWithLease(worktree, branch, remoteShaBefore);
 
       if (!push.pushed) {
@@ -1356,7 +1480,7 @@ async function driveSyncResolver(
 
   try {
     // Verify gate (REUSE Task 9).
-    await setAttemptPhase(db, claim.attemptId, "verifying");
+    await advancePhaseOrCancel(db, claim, runId, "verifying");
     targetSha = await localBranchHead({
       projectRepoPath: repo,
       branch: targetBranch,
@@ -1422,7 +1546,8 @@ async function driveSyncResolver(
         );
       }
 
-      await setAttemptPhase(db, claim.attemptId, "pushing");
+      // The last cancellation checkpoint before the irreversible push.
+      await advancePhaseOrCancel(db, claim, runId, "pushing");
       const push = await pushWithLease(worktree, branch, args.remoteShaBefore);
 
       if (!push.pushed) {
@@ -1448,20 +1573,30 @@ async function driveSyncResolver(
       pushCommitted = true;
     }
 
-    // Success finalize: tear the session down, record `succeeded`, restart the
-    // auto-promotion grace window (HEAD moved), CAS Running→Review, release the
-    // claim, and free the pool slot.
+    // Success finalize: tear the session down, then record `succeeded` + restart the
+    // auto-promotion grace window (HEAD moved) + CAS Running→Review + release the
+    // claim as ONE transaction, and free the pool slot.
+    //
+    // This was the only terminal path in this file open-coded as separate writes,
+    // while `settleAttempt`/`abortAttempt`/`failAttempt` all obeyed the one-tx rule.
+    // A crash between them left the attempt terminal but the run `Running`, which
+    // every recovery arm filters out by phase — so reconcile stopped seeing an
+    // active sync and pushed the run down the flow/agent arms it must never enter,
+    // crashing or re-dispatching a sync that had already force-pushed to origin.
+    //
+    // `deleteSession` stays outside (it cannot throw) and `promoteNextPending` stays
+    // outside because it is a scheduler side effect, not part of the terminal fact.
     await deleteSession(sessionId).catch(() => undefined);
-    await setAttemptPhase(db, claim.attemptId, "succeeded", {
+    await settleAttempt(db, claim, {
+      runId,
+      // The resolver only reaches here having resolved and committed, so HEAD moved
+      // by construction — the grace window must restart.
+      headMoved: true,
       headShaAfter,
       pushed,
+      now,
+      flipRunningToReview: true,
     });
-    await db
-      .update(runs)
-      .set({ reviewEnteredAt: now() })
-      .where(eq(runs.id, runId));
-    await markSyncReviewFromRunning(runId, { db });
-    await releaseSyncClaim(db, claim);
     await promoteNextPending({ db, pool });
 
     log.info(
@@ -1499,15 +1634,31 @@ async function driveSyncResolver(
           headShaAfter,
           err: err instanceof Error ? err.message : String(err),
         },
-        "[FIX:ADR-141] sync push LANDED but finalization failed — worktree and remote agree and were NOT rolled back; releasing the run best-effort, attempt ledger may lag",
+        "[FIX:ADR-141] sync push LANDED but finalization failed — worktree and remote agree and were NOT rolled back; re-recording the terminal best-effort",
       );
-      // The push landed and the tree matches it, so the run's work is done: free
-      // it and its slot best-effort rather than hold a sync claim that would
-      // deadlock promotion AND every future sync on this workspace forever. Each
-      // step is independent — a lagging attempt row is a reconcile concern, never
-      // a reason to strand the run.
-      await markSyncReviewFromRunning(runId, { db }).catch(() => undefined);
-      await releaseSyncClaim(db, claim).catch(() => undefined);
+      // The push landed and the tree matches it, so the run's work is done. Record
+      // that through the SAME atomic terminal the happy path uses, rather than
+      // free-hand writes: the run must never be freed while its attempt is left
+      // non-terminal, which is the strand this whole finalize was rewritten to
+      // prevent.
+      //
+      // Best-effort by design. If even this fails, the attempt stays non-terminal
+      // and the recovery sweep converges it: with no live session it re-runs the
+      // verify gate (which passes — the resolve is committed) and finalizes, and the
+      // explicit-SHA force-with-lease push is idempotent to the recorded remote SHA.
+      // A CONFLICT here means the run went terminal under us, and abandon's own
+      // terminal correctly stands.
+      await settleAttempt(db, claim, {
+        runId,
+        headMoved: true,
+        // `pushCommitted` implies the head was read before the push, but the
+        // declaration is nullable — leave the column untouched rather than write a
+        // null over it if that ever stops holding.
+        headShaAfter: headShaAfter ?? undefined,
+        pushed: true,
+        now,
+        flipRunningToReview: true,
+      }).catch(() => undefined);
       await promoteNextPending({ db, pool }).catch(() => undefined);
     }
 

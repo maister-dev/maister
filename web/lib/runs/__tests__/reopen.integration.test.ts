@@ -43,6 +43,9 @@ vi.mock("@/lib/worktree", async (orig) => {
 
   return {
     ...actual,
+    // Real, but wrapped: it is the git side effect that runs BEFORE the state
+    // transaction, so it is the seam for injecting the tx-fails-after-attach race.
+    addWorktreeForBranch: vi.fn(actual.addWorktreeForBranch),
     pushBranch: vi.fn(async () => undefined),
     headCommit: vi.fn(async () => "source-head-000"),
     resolveBaseCommit: vi.fn(async () => "tip00000"),
@@ -87,9 +90,10 @@ vi.mock("@/lib/flows/graph/artifact-store", () => ({
   recordArtifact: vi.fn(async () => undefined),
 }));
 
-const { addWorktree, removeWorktree, localBranchHead } = await import(
-  "@/lib/worktree"
-);
+const { addWorktree, addWorktreeForBranch, removeWorktree, localBranchHead } =
+  await import("@/lib/worktree");
+const actualWorktree =
+  await vi.importActual<typeof import("@/lib/worktree")>("@/lib/worktree");
 const { reopenRun, assertReopenEligible } = await import("@/lib/runs/reopen");
 const { promoteRun } = await import("@/lib/runs/promote");
 const { runAutoPromoteJob } = await import(
@@ -570,6 +574,78 @@ describe("reopenRun — GC'd revival", () => {
     const listed = await git(parent, ["worktree", "list", "--porcelain"]);
 
     expect(listed.stdout).toContain(wt);
+  });
+
+  // The revival attach is a git side effect that runs BEFORE the state transaction,
+  // and nothing rolled it back when that transaction threw. `removed_at` is cleared
+  // INSIDE the tx, so it rolls back too — leaving the workspace marked removed while
+  // its worktree is attached. No sweep converges that shape: the GC gates candidates
+  // on `removed_at IS NULL`, and reconcile skips settled (`Done`) runs. The retry
+  // then re-enters the same revival branch and `addWorktreeForBranch` refuses
+  // PRECONDITION, so the run was unreopenable without hand-run `git worktree remove`.
+  //
+  // The trigger modelled here is the most likely one in production and the sharpest
+  // irony: the merged-PR re-check that exists to close the duplicate-PR hole, whose
+  // own comment notes the window is wide *because* the attach ran inside it.
+  it("removes the revived worktree when the transaction fails, so a retry still works", async () => {
+    const { parent } = await initRepoWithRemote();
+    const { projectId, flowId } = await seedGraph(parent);
+    const branch = "maister/task-orphan/attempt-1";
+    const wt = await addRunWorktree(parent, branch);
+
+    await removeWorktree({
+      projectRepoPath: parent,
+      worktreePath: wt,
+      force: true,
+    });
+
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      branch,
+      worktreePath: wt,
+      parentRepoPath: parent,
+      status: "Done",
+      taskStatus: "Done",
+      prState: "open",
+      prUrl: "https://github.com/org/repo/pull/9",
+      prNumber: 9,
+      promotionState: "done",
+      removedAt: new Date(),
+    });
+
+    // The supported race: `pr_state_scan`'s merged edge lands in the window the
+    // attach itself opened, so the in-tx re-check refuses AFTER the git side effect.
+    vi.mocked(addWorktreeForBranch).mockImplementationOnce(async (...args) => {
+      await actualWorktree.addWorktreeForBranch(...args);
+      await db
+        .update(workspaces)
+        .set({ prState: "merged", prMergedAt: new Date() })
+        .where(eq(workspaces.runId, runId));
+    });
+
+    await expect(reopenRun({ runId, actor: actor() })).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+
+    // Compensated: the orphan is gone, and `removed_at` still describes reality.
+    const listed = await git(parent, ["worktree", "list", "--porcelain"]);
+
+    expect(listed.stdout).not.toContain(wt);
+    expect((await readWorkspace(runId)).removedAt).not.toBeNull();
+
+    // THE point of the fix: the run is still reopenable once the refusal is gone.
+    // Asserting only that compensation ran would pass even if retry stayed broken.
+    await db
+      .update(workspaces)
+      .set({ prState: "open", prMergedAt: null })
+      .where(eq(workspaces.runId, runId));
+
+    await expect(reopenRun({ runId, actor: actor() })).resolves.toEqual({
+      status: "Review",
+      worktreeRevived: true,
+    });
+    expect((await readWorkspace(runId)).removedAt).toBeNull();
   });
 });
 

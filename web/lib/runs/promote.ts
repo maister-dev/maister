@@ -19,6 +19,7 @@ import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
+import { lifecycleClaimIsStale } from "@/lib/runs/lifecycle-claim";
 import { type SyncActor } from "@/lib/runs/sync-target";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
@@ -172,23 +173,6 @@ export type PromoteRunResult = {
 // ADR-141: a reopened Done run (promotion_state='reopened') is
 // re-promotable — its claim is reclaimable just like a fresh/failed one.
 const RECLAIMABLE_STATES = new Set(["none", "failed", "reopened"]);
-
-// Whether a HELD lifecycle claim (sync/stop/archive/…) has gone stale — the same
-// timeout `canReclaimLifecycle` reclaims on, so the reverse fence below and the
-// lifecycle service can never disagree about who still owns the slot.
-function lifecycleClaimIsStale(workspace: {
-  lifecycleOperationClaimedAt?: Date | null;
-}): boolean {
-  const claimedAt = workspace.lifecycleOperationClaimedAt
-    ? new Date(workspace.lifecycleOperationClaimedAt)
-    : null;
-
-  if (!claimedAt) return true;
-
-  return (
-    claimedAt.getTime() < Date.now() - promotionClaimTimeoutSeconds() * 1000
-  );
-}
 
 function canReclaim(workspace: {
   promotionState?: string | null;

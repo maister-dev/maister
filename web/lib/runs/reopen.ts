@@ -14,6 +14,7 @@ import {
   fetchRemote,
   localBranchHead,
   remoteTrackingBranchHead,
+  removeWorktree,
 } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
@@ -188,73 +189,115 @@ export async function reopenRun(args: {
     worktreeRevived = true;
   }
 
-  await db.transaction(async (tx: Db) => {
-    // Re-assert the PR facts UNDER the workspace lock, on fresh data. The
-    // eligibility decision above was made on a lock-free read, and network I/O
-    // (fetchRemote + addWorktreeForBranch) has run since — a wide window in which
-    // `pr_state_scan`'s merged edge writes these very columns. `markReopenFromDone`
-    // re-asserts ONLY `status='Done'` and the workspace UPDATE below carries no PR
-    // predicate, so a PR that merged during that window was reopened onto anyway:
-    // re-promotion then opens a SECOND PR (`createOrUpdatePr` finds OPEN PRs only),
-    // which is exactly what the terminal-PR refusal above exists to prevent.
-    // Re-running the pure gate keeps ONE definition of "reusable PR" — a
-    // hand-written WHERE would have to re-encode it, and `pr_state` is nullable so
-    // an `eq()` predicate would silently never match on the conflicted-only case.
-    const [live] = await tx
-      .select({
-        prState: workspaces.prState,
-        prHasConflicts: workspaces.prHasConflicts,
-      })
-      .from(workspaces)
-      .where(eq(workspaces.id, ws.id))
-      .for("update");
+  try {
+    await db.transaction(async (tx: Db) => {
+      // Re-assert the PR facts UNDER the workspace lock, on fresh data. The
+      // eligibility decision above was made on a lock-free read, and network I/O
+      // (fetchRemote + addWorktreeForBranch) has run since — a wide window in which
+      // `pr_state_scan`'s merged edge writes these very columns. `markReopenFromDone`
+      // re-asserts ONLY `status='Done'` and the workspace UPDATE below carries no PR
+      // predicate, so a PR that merged during that window was reopened onto anyway:
+      // re-promotion then opens a SECOND PR (`createOrUpdatePr` finds OPEN PRs only),
+      // which is exactly what the terminal-PR refusal above exists to prevent.
+      // Re-running the pure gate keeps ONE definition of "reusable PR" — a
+      // hand-written WHERE would have to re-encode it, and `pr_state` is nullable so
+      // an `eq()` predicate would silently never match on the conflicted-only case.
+      const [live] = await tx
+        .select({
+          prState: workspaces.prState,
+          prHasConflicts: workspaces.prHasConflicts,
+        })
+        .from(workspaces)
+        .where(eq(workspaces.id, ws.id))
+        .for("update");
 
-    if (!live) {
-      throw new MaisterError("PRECONDITION", `run has no workspace: ${runId}`);
-    }
+      if (!live) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `run has no workspace: ${runId}`,
+        );
+      }
 
-    assertReopenEligible(run, live);
+      assertReopenEligible(run, live);
 
-    const cas = await markReopenFromDone(runId, { db: tx });
+      const cas = await markReopenFromDone(runId, { db: tx });
 
-    if (!cas.ok) {
-      throw new MaisterError(
-        "CONFLICT",
-        `run is no longer Done (concurrent transition): ${runId}`,
-      );
-    }
+      if (!cas.ok) {
+        throw new MaisterError(
+          "CONFLICT",
+          `run is no longer Done (concurrent transition): ${runId}`,
+        );
+      }
 
-    await tx
-      .update(runs)
-      .set({ reviewEnteredAt: new Date() })
-      .where(eq(runs.id, runId));
-
-    await tx
-      .update(workspaces)
-      .set({
-        promotionState: "reopened",
-        scheduledRemovalAt: null,
-        removedAt: null,
-        archivedAt: null,
-        archivedBranch: null,
-      })
-      .where(eq(workspaces.id, ws.id));
-
-    if (run.taskId) {
       await tx
-        .update(tasks)
-        .set({ status: "InFlight" })
-        .where(eq(tasks.id, run.taskId));
+        .update(runs)
+        .set({ reviewEnteredAt: new Date() })
+        .where(eq(runs.id, runId));
+
+      await tx
+        .update(workspaces)
+        .set({
+          promotionState: "reopened",
+          scheduledRemovalAt: null,
+          removedAt: null,
+          archivedAt: null,
+          archivedBranch: null,
+        })
+        .where(eq(workspaces.id, ws.id));
+
+      if (run.taskId) {
+        await tx
+          .update(tasks)
+          .set({ status: "InFlight" })
+          .where(eq(tasks.id, run.taskId));
+      }
+
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.review",
+        projectId: run.projectId,
+        runId,
+        data: { source: "workbench" },
+      });
+    });
+  } catch (err) {
+    // Compensate the revival: it is a git side effect that already happened, and
+    // every throw above is post-attach — the merged-PR re-check (the widest window,
+    // and one this very attach opened), the Done CAS, or any DB error.
+    //
+    // Without this the workspace keeps `removed_at` set — it is cleared INSIDE the
+    // tx, so it rolls back too — while its worktree stays attached. Nothing
+    // converges that shape: the GC only considers `removed_at IS NULL` workspaces
+    // (its mirror-image "pruned but not marked" recovery does not apply) and
+    // reconcile skips settled `Done` runs. The retry then re-enters this same
+    // revival branch and `addWorktreeForBranch` refuses PRECONDITION — leaving the
+    // run unreopenable short of a hand-run `git worktree remove`.
+    if (worktreeRevived) {
+      await removeWorktree({
+        projectRepoPath: ws.parentRepoPath,
+        worktreePath: ws.worktreePath,
+        force: true,
+      }).catch((cleanupErr: unknown) => {
+        // Best-effort, and it must NEVER mask the real refusal: the caller needs to
+        // know why the reopen was rejected, not that the tidy-up also failed. If it
+        // does fail the orphan survives, so say so loudly enough to act on.
+        log.warn(
+          {
+            runId,
+            worktreePath: ws.worktreePath,
+            branch: ws.branch,
+            err:
+              cleanupErr instanceof Error
+                ? cleanupErr.message
+                : String(cleanupErr),
+          },
+          "[FIX:ADR-141] reopen refused AND the revived worktree could not be removed — it is now orphaned (removed_at set, worktree attached); `git worktree remove` it to make the run reopenable again",
+        );
+      });
     }
 
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.review",
-      projectId: run.projectId,
-      runId,
-      data: { source: "workbench" },
-    });
-  });
+    throw err;
+  }
 
   log.info(
     { runId, worktreeRevived, actor: args.actor.type },
