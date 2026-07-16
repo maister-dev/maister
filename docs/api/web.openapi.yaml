@@ -418,7 +418,7 @@ paths:
   /api/admin/workspace-reconciliation-findings:
     get:
       tags: [admin]
-      summary: ADR-140 (Designed) — list workspace reconciliation findings
+      summary: Implemented (ADR-140) — list workspace reconciliation findings
       description: |
         Platform-admin-only, read-only operational projection. `state` is an
         allow-listed filter; `cursor` is opaque and `limit` is bounded to 100.
@@ -5153,7 +5153,7 @@ paths:
   /api/scratch-runs/{runId}/discard:
     post:
       tags: [scratch-runs]
-      summary: ADR-140 (Designed) — preserve then discard scratch workspace
+      summary: Implemented (ADR-140) — preserve then discard scratch workspace
       description: |
         Uses the common fenced lifecycle-removal protocol after any required
         supervisor stop. It preserves recoverable Git state, removes only an
@@ -7690,7 +7690,7 @@ paths:
   /api/runs/{runId}/discard:
     post:
       tags: [reconciliation-gc]
-      summary: ADR-140 (Designed) — preserve then discard a run workspace
+      summary: Implemented (ADR-140) — preserve then discard a run workspace
       description: |
         Uses the common renewable, fenced removal protocol: preserve, durably
         record the outcome, remove only an owned worktree, and then set a
@@ -7790,7 +7790,7 @@ paths:
   /api/runs/{runId}/stop-archive:
     post:
       tags: [runs]
-      summary: ADR-140 (Designed) — stop a live run, preserve, and remove its workspace
+      summary: Implemented (ADR-140) — stop a live run, preserve, and remove its workspace
       description: |
         Combined live action: stop the run (commits a parked status first —
         `Review` for flow/scratch), then uses the common preserve-first removal
@@ -7838,7 +7838,7 @@ paths:
   /api/runs/{runId}/stop-drop:
     post:
       tags: [runs]
-      summary: ADR-140 (Designed) — stop a live flow run, then discard its workspace
+      summary: Implemented (ADR-140) — stop a live flow run, then discard its workspace
       description: |
         Combined live action for flow runs: stop the run (commits `Review`
         first), then run `dropWorkbench` (preserve, remove the owned worktree,
@@ -7884,7 +7884,7 @@ paths:
   /api/runs/{runId}/archive:
     post:
       tags: [runs]
-      summary: ADR-140 (Designed) — preserve then remove a stopped or terminal workbench
+      summary: Implemented (ADR-140) — preserve then remove a stopped or terminal workbench
       description: |
         Requires `recoverRun` membership and an empty body. After actionable
         HITL/assignment/takeover and status preflight, it preserves recoverable
@@ -7920,7 +7920,7 @@ paths:
   /api/runs/{runId}/drop:
     post:
       tags: [runs]
-      summary: ADR-140 (Designed) — preserve then discard an owned worktree
+      summary: Implemented (ADR-140) — preserve then discard an owned worktree
       description: |
         Calls `preserveWorktree`, then removes the worktree through
         `removeOwnedWorktree({ allowedRoot: worktreesRoot(), force: true })`,
@@ -8904,15 +8904,16 @@ paths:
   /api/cron/gc:
     get:
       tags: [reconciliation-gc, scheduler]
-      summary: ADR-140 (Designed) — request the immediate system-sweep compatibility route
+      summary: Implemented (ADR-140) — request the canonical system sweep
       description: |
-        (Implemented, M19; compatibility wrapper Designed, M24 — ADR-060.)
+        (Implemented, ADR-140.)
 
         Token-guarded immediate request for the canonical `system_sweep.default`
         job. It does not call a GC bundle directly and does not own a second
-        timer/lease. The winner renews the canonical scheduler lease and returns
-        its persisted aggregate; a concurrent loser returns `alreadyRunning:true`
-        without duplicate cleanup. The bundle includes reconciliation, protected
+        timer/lease. The request only makes the enabled job due, then attempts
+        the canonical claim. A concurrent owner returns `202` with no duplicate
+        cleanup. The detailed system-sweep result is persisted in
+        `scheduler_job_runs.summary`. The bundle includes reconciliation, protected
         `{Done, Abandoned}` row-backed GC, disk-only findings, and
         reconstructible-agent cleanup.
         Auth is by the `X-Maister-Cron-Token` header, compared in constant time
@@ -8924,18 +8925,22 @@ paths:
         - cronToken: []
       responses:
         "200":
-          description: System sweep completed, or another unexpired owner is already running.
+          description: The system-sweep job was claimed and completed.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
+        "202":
+          description: Another unexpired scheduler claim owns the requested sweep.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
         "207":
           description: |
-            A sub-sweep (worktree GC or revision GC) partially failed; the
-            summary's `errors` array names what was skipped. Successful work was
-            still committed.
+            The scheduler job itself failed. Per-service cleanup failures are
+            isolated and persisted inside the successful job's detailed summary.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
         "401":
           description: |
             Missing or mismatched `X-Maister-Cron-Token` (`UNAUTHENTICATED`).
@@ -8951,7 +8956,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     post:
       tags: [reconciliation-gc, scheduler]
-      summary: ADR-140 (Designed) — request the immediate system-sweep compatibility route
+      summary: Implemented (ADR-140) — request the canonical system sweep
       description: |
         POST variant of `GET /api/cron/gc` with identical canonical-job
         contention and summary semantics. Auth is the same constant-time token
@@ -8961,17 +8966,22 @@ paths:
         - cronToken: []
       responses:
         "200":
-          description: System sweep completed, or another unexpired owner is already running.
+          description: The system-sweep job was claimed and completed.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
+        "202":
+          description: Another unexpired scheduler claim owns the requested sweep.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
         "207":
           description: |
-            A sub-sweep partially failed; the summary's `errors` array names what
-            was skipped. Successful work was still committed.
+            The scheduler job itself failed. Per-service cleanup failures are
+            persisted inside the successful job's detailed summary.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
         "401":
           description: |
             Missing or mismatched `X-Maister-Cron-Token` (`UNAUTHENTICATED`).
@@ -15593,10 +15603,9 @@ components:
     GcSweepSummary:
       type: object
       description: |
-        (Designed, M19) Result of one GC sweep — the same shape the background
-        sweeper logs and the cron route returns. Counts cover the worktree and
-        revision sub-sweeps. A non-empty `errors` array accompanies the 207
-        partial-failure response.
+        Legacy aggregate shape retained for historical scheduler summaries.
+        New cron requests return `SchedulerTickSummary`; detailed service
+        outcomes are persisted in the claimed job attempt summary.
       required: [worktreesPreserved, worktreesRemoved, revisionsRemoved, errors]
       properties:
         worktreesPreserved:
@@ -15615,16 +15624,6 @@ components:
           type: array
           description: Per-row skip reasons when a sub-sweep partially failed (207).
           items: { type: string }
-    SystemSweepCompatibilityResponse:
-      type: object
-      description: |
-        ADR-140 (Designed) immediate compatibility result. A loser reports only
-        `alreadyRunning:true`; it neither starts a duplicate bundle nor invents
-        another owner's summary.
-      required: [alreadyRunning]
-      properties:
-        alreadyRunning: { type: boolean }
-        summary: { $ref: "#/components/schemas/GcSweepSummary" }
     SchedulerCommandHttpPingTarget:
       type: object
       additionalProperties: false
@@ -15692,7 +15691,7 @@ components:
     WorkspaceLifecycleRemovalResponse:
       type: object
       description: |
-        ADR-140 (Designed) common success envelope for Archive, Drop, Discard,
+        Implemented (ADR-140) common success envelope for Archive, Drop, Discard,
         and their stopped variants. The run status is retained history; the
         workspace fact is represented independently by `workspaceRemoved`.
       required:
@@ -15711,16 +15710,16 @@ components:
     WorkspaceReconciliationFinding:
       type: object
       description: |
-        ADR-140 (Designed) redacted, read-only operational projection. Absolute
+        Implemented (ADR-140) redacted, read-only operational projection. Absolute
         paths, raw provenance, file contents, and mutation controls are absent.
-      required: [id, state, candidateKind, safeRelativePath, firstSeenAt, lastSeenAt]
+      required: [id, state, candidateKind, relativePath, firstSeenAt, lastSeenAt]
       properties:
         id: { type: string }
         state:
           type: string
           enum: [observed, held, retry_waiting, failed, quarantined, resolved]
-        candidateKind: { type: string, enum: [worktree, agent_workspace_none, agent_repo_read] }
-        safeRelativePath: { type: string }
+        candidateKind: { type: string, enum: [row_missing_path, row_removed_path, rowless_managed, untrusted] }
+        relativePath: { type: string }
         projectId: { type: string, nullable: true }
         runId: { type: string, format: uuid, nullable: true }
         workspaceId: { type: string, nullable: true }
@@ -15733,6 +15732,7 @@ components:
         rescueCommit: { type: string, nullable: true }
         resultCode: { type: string, nullable: true }
         lastErrorCode: { type: string, nullable: true }
+        lastErrorMessage: { type: string, nullable: true }
         resolvedAt: { type: string, format: date-time, nullable: true }
     WorkspaceReconciliationFindingPage:
       type: object

@@ -1835,11 +1835,12 @@ dangerous and is M18's job, not GC's.
 
 **Decision:** GC of terminal-run worktrees is **preserve-then-prune**. Age =
 `MAISTER_GC_AGE_DAYS` (default 14) with a `MAISTER_GC_WARNING_DAYS` (default 2)
-warning ramp surfaced as a TTL color ramp (green → amber → red). Delivery is
-**dual**: a background sweeper singleton (`MAISTER_GC_SWEEP_INTERVAL_SECONDS`,
-default 3600) AND a token-guarded HTTP cron route `GET`/`POST /api/cron/gc`
-(constant-time `X-Maister-Cron-Token` vs `MAISTER_CRON_TOKEN`; empty config →
-503 disabled, mismatch → 401). `MAISTER_CRON_TOKEN` is a **server-only secret**
+warning ramp surfaced as a TTL color ramp (green → amber → red). This
+historical dual-delivery wording is superseded by ADR-140: cleanup now runs only
+through the claimed `system_sweep.default` job, while `GET`/`POST /api/cron/gc`
+make that existing job due (constant-time `X-Maister-Cron-Token` vs
+`MAISTER_CRON_TOKEN`; empty config → 503 disabled, mismatch → 401).
+`MAISTER_CRON_TOKEN` is a **server-only secret**
 — never logged, never streamed.
 
 Candidate select = `workspaces.removed_at IS NULL` joined to
@@ -10610,7 +10611,7 @@ resume count were scattered across other surfaces.
 ### ADR-126: Auto-promotion lanes
 
 **Date:** 2026-07-03
-**Status:** Proposed
+**Status:** Accepted
 **Context:** Every flow promotion today ends in a human click on `promoteRun`
 even when readiness is green and the diff is three Markdown files. This is the
 delivery half of the VISION autonomy loop whose front half already ships
@@ -12747,6 +12748,10 @@ the user acts; runtime JSONL/evidence retention is deliberately out of scope.
 - Route timer, tick, and GC compatibility requests through one claimed
   `system_sweep` job. Persist its real bounded summary, retry/quarantine state,
   and expose platform-admin read-only findings with redacted relative paths.
+
+This decision supersedes the dual-timer delivery wording in ADR-035. The
+`system_sweep.default` scheduler job is now the sole periodic owner; the cron
+compatibility route merely makes that job due and attempts its existing claim.
 
 **Consequences:**
 

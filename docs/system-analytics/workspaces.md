@@ -401,7 +401,9 @@ Active workspace rows use `runs.status` for Flow rows and combine
 
 ### Garbage collection
 
-A cron route GCs worktrees older than 7d in terminal state.
+A scheduler-owned system sweep GCs only `Done`/`Abandoned` worktrees after the
+configured 14-day default; `Review`, `Crashed`, `Failed`, and all live/HITL
+states remain until an explicit lifecycle action.
 
 ```mermaid
 flowchart LR
@@ -411,12 +413,12 @@ flowchart LR
     Update --> Done([next row])
 ```
 
-### M19 preserve-then-prune GC (Designed)
+### Preserve-then-prune GC (Implemented)
 
 M19 ([ADR-035](../decisions.md#adr-035)) replaces the single-step removal above
-with a graceful, destructive-safe sweep delivered BOTH as a background
-`globalThis`-singleton sweeper (`MAISTER_GC_SWEEP_INTERVAL_SECONDS`, default
-3600) and the token-guarded cron route. The candidate select uses the
+with a graceful, destructive-safe sweep delivered by the claimed
+`system_sweep.default` scheduler job. The token-guarded cron route only makes
+that job due; it does not run a second cleanup implementation. The candidate select uses the
 **effective deadline** so pre-0015 terminal runs (null `scheduled_removal_at`)
 are still collected. Every removal is gated on preserve success; GC archives a
 branch, it NEVER merges to main/target.

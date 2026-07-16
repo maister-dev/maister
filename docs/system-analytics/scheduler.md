@@ -475,7 +475,7 @@ flowchart TD
   `web/lib/evaluations/suites.ts`; DB:
   [`../db/evaluations-domain.md`](../db/evaluations-domain.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
-  `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,
+  `web/lib/reconcile.ts`, `web/lib/scheduler/system-sweeps.ts`,
   `web/lib/runs/keepalive-sweeper.ts`,
   `web/lib/capabilities/cleanup.ts`, `web/lib/scheduler/job-admin.ts`,
   `web/lib/scheduler/job-admin-schema.ts`, and

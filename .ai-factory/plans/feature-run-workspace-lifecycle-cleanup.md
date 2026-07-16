@@ -1270,7 +1270,7 @@ pnpm validate:contracts
 
 ### Phase 7 — End-to-end proof and as-built reconciliation
 
-- [ ] **Task 30: VERIFY — prove the three user journeys and failure-safe harness.**
+- [x] **Task 30: VERIFY — prove the three user journeys and failure-safe harness.**
   - **Files:** the three Task 27 Playwright journeys, migrated relevant portions
     of `web/e2e/m19-reconcile-gc.spec.ts` and
     `web/e2e/m27-workbench-lifecycle.spec.ts`, `AUTHED_SPEC`, and E2E wrapper
@@ -1291,7 +1291,7 @@ pnpm validate:contracts
     disk, all prior RED suites remain green, and no test writes the default user
     root.
 
-- [ ] **Task 31: Reconcile specs to the implementation and run the renumber pass.**
+- [x] **Task 31: Reconcile specs to the implementation and run the renumber pass.**
   - **Files:** every document in the Contract Surface Map, `docs/decisions.md`,
     both migration triples, `.env.example`, `CLAUDE.md`, `web/CLAUDE.md`,
     `.ai-factory/DESCRIPTION.md`, `README.md`, `docs/architecture.md`, and

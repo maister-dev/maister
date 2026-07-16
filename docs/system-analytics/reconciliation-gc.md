@@ -399,7 +399,7 @@ flowchart TD
   0015; `runs.resume_target_step_id` — migration 0016).
 - Config reference: [`../configuration.md`](../configuration.md) —
   `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
-  `MAISTER_RECONCILE_GRACE_SECONDS`, `MAISTER_GC_SWEEP_INTERVAL_SECONDS`,
+  `MAISTER_RECONCILE_GRACE_SECONDS`,
   `MAISTER_GC_AGE_DAYS`, `MAISTER_GC_WARNING_DAYS`,
   `MAISTER_GC_ARCHIVE_PUSH`, `MAISTER_CRON_TOKEN`.
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
@@ -410,7 +410,7 @@ flowchart TD
   [`flow-packages.md`](flow-packages.md), [`flow-graph.md`](flow-graph.md).
 - Source (Designed, M19): `web/lib/reconcile.ts`, `web/lib/runs/recover.ts`,
   `web/lib/gc/preserve.ts`, `web/lib/gc/workspace-gc.ts`,
-  `web/lib/gc/revision-gc.ts`, `web/lib/gc/sweeper.ts`.
+  `web/lib/gc/revision-gc.ts`, `web/lib/scheduler/system-sweeps.ts`.
 
 ## Reconcile classification (ADR-033)
 

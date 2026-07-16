@@ -67,8 +67,9 @@ that stop the run and then run the worktree op, instead of forcing a stop, a
 wait for `Review`, then a separate second click. **(Implemented.)**
 
 When an operator archives or drops a workbench, MAIster must preserve recoverable
-work before any prune. Archive records the preserved ref and keeps the worktree;
-drop preserves first, then removes only an owned worktree.
+work before any prune. Archive records the preservation result, removes the
+owned worktree, and retains the run's historical status; Drop preserves first,
+then removes only an owned worktree and marks non-`Done` runs `Abandoned`.
 
 When an operator exports a branch, MAIster should push the existing run branch
 to the selected remote and provide checkout commands. Dirty work is committed
@@ -99,7 +100,7 @@ the run in its current review/terminal state.
   reuses the existing single-transaction `POST /api/scratch-runs/{runId}/discard`
   (stop session + remove worktree → `Abandoned`). **(Implemented.)**
 - **Archive** — call `preserveWorktree`, record `workspaces.archived_branch` and
-  `archived_at`, and leave the worktree on disk.
+  `archived_at`, remove the owned worktree, and retain run history.
 - **Drop** — call `preserveWorktree`, remove the owned worktree with
   `removeOwnedWorktree`, record `removed_at`, and mark non-`Done` runs
   `Abandoned`.
