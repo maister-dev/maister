@@ -60,6 +60,15 @@ export interface CreateLaunchBatchResult {
   itemCount: number;
 }
 
+// Rollout kill switch (M47 T6.5): controlled (launched) recipes can be disabled
+// platform-wide independently of observed Studies if a rollout degrades, without
+// touching M46 observed-comparison. Default ENABLED; ops sets
+// `MAISTER_CONTROLLED_RECIPES_ENABLED=false` to freeze new controlled launches.
+// Observed participants and existing launched runs are unaffected.
+export function controlledRecipesEnabled(): boolean {
+  return process.env.MAISTER_CONTROLLED_RECIPES_ENABLED !== "false";
+}
+
 // Persist a durable controlled-launch batch intent BEFORE any run-launch side
 // effect (D17). Idempotency-keyed: a duplicate submit returns the original batch.
 // Validates every recipe belongs to the study and is not tombstoned; a bad recipe
@@ -70,6 +79,12 @@ export async function createControlledLaunchBatch(
 ): Promise<CreateLaunchBatchResult> {
   const d = db ?? getDb();
 
+  if (!controlledRecipesEnabled()) {
+    throw new MaisterError(
+      "CONFIG",
+      "controlled evaluation recipes are disabled on this platform",
+    );
+  }
   if (args.items.length === 0) {
     throw new MaisterError(
       "CONFIG",
