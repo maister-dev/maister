@@ -67,13 +67,14 @@ export default async function AdminSchedulerPage({
       : undefined;
 
   const clock = getSchedulerClockStatus();
-  const [all, schedules, scheduledLaunches, brainQueue, reconciliation] = await Promise.all([
-    listSchedulerStatusRows({ limit: 200 }),
-    listSchedulerRunScheduleOverviewRows({ limit: 200 }),
-    listSchedulerScheduledLaunchOverviewRows({ limit: 200 }),
-    listBrainIndexQueueRows({ limit: 50 }),
-    listWorkspaceReconciliationFindings({ limit: 50 }),
-  ]);
+  const [all, schedules, scheduledLaunches, brainQueue, reconciliation] =
+    await Promise.all([
+      listSchedulerStatusRows({ limit: 200 }),
+      listSchedulerRunScheduleOverviewRows({ limit: 200 }),
+      listSchedulerScheduledLaunchOverviewRows({ limit: 200 }),
+      listBrainIndexQueueRows({ limit: 50 }),
+      listWorkspaceReconciliationFindings({ limit: 50 }),
+    ]);
   const filtered = all.filter((job) => {
     if (jobKind && job.jobKind !== jobKind) return false;
     if (state === "active" && job.disabledAt !== null) return false;

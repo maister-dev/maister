@@ -1,11 +1,14 @@
 import "server-only";
 
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
+import type { MaisterProvenance } from "@/lib/worktree-provenance-core";
+
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq } from "drizzle-orm";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -14,12 +17,15 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   claimReconciliationFinding,
   holdReconciliationFinding,
+  loadDueReconciliationFindings,
   observeReconciliationFinding,
   quarantineReconciliationFinding,
+  recordReconciliationRescueEvidence,
   renewReconciliationFindingClaim,
   resolveReconciliationFinding,
   retryReconciliationFinding,
   type ReconciliationFindingClaim,
+  type ReconciliationFinding,
   type ReconciliationObservation,
 } from "@/lib/gc/workspace-reconciliation-findings";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
@@ -32,8 +38,12 @@ import {
   removeOwnedWorktree,
   snapshotDirtyWorktree,
 } from "@/lib/worktree";
+import {
+  claimLifecycleOperation,
+  finalizeLifecycleOperation,
+  recordDrop,
+} from "@/lib/workbench-lifecycle/service";
 import { readWorktreeProvenanceMetadata } from "@/lib/worktree-provenance";
-import type { MaisterProvenance } from "@/lib/worktree-provenance-core";
 
 const { projects, runs, workspaces } = schema;
 
@@ -59,7 +69,31 @@ type ReconciliationCandidate = {
   worktreePath: string | null;
   provenance: Version2Provenance | null;
   reasonCode: string | null;
+  workspace: MissingWorkspaceCandidate | null;
 };
+
+type MissingWorkspaceCandidate = {
+  workspaceId: string;
+  runId: string;
+  projectId: string;
+  worktreePath: string;
+  parentRepoPath: string;
+  branch: string;
+  removedAt: Date | null;
+  archivedBranch: string | null;
+  archivedAt: Date | null;
+  archivedCommit: string | null;
+  preservationOutcome:
+    | "not_needed"
+    | "ref_created"
+    | "snapshot_created"
+    | "legacy_unknown"
+    | null;
+  runKind: "flow" | "scratch" | "agent";
+  runStatus: WorkbenchRunStatus;
+};
+
+type OwnedWorktreeRemover = typeof removeOwnedWorktree;
 
 export type WorkspaceReconciliationSummary = {
   scanned: number;
@@ -76,6 +110,8 @@ export type RunWorkspaceReconciliationSweepOptions = {
   database?: Database;
   root?: string;
   now?: () => Date;
+  removeOwnedWorktree?: OwnedWorktreeRemover;
+  afterOwnedWorktreeRemoval?: () => Promise<void>;
 };
 
 function isMissingPathError(error: unknown): boolean {
@@ -98,6 +134,17 @@ function isContainedPath(root: string, target: string): boolean {
   );
 }
 
+function isSafeWorkspaceRelativePath(relativePath: string): boolean {
+  const segments = relativePath.split(path.sep);
+
+  return (
+    segments.length === 2 &&
+    segments.every(
+      (segment) => segment.length > 0 && segment !== "." && segment !== "..",
+    )
+  );
+}
+
 function isVersion2Provenance(
   provenance: MaisterProvenance,
 ): provenance is Version2Provenance {
@@ -113,7 +160,9 @@ function isVersion2Provenance(
   );
 }
 
-function provenanceFingerprint(provenance: Version2Provenance | null): string | null {
+function provenanceFingerprint(
+  provenance: Version2Provenance | null,
+): string | null {
   if (provenance === null) return null;
 
   return createHash("sha256")
@@ -131,7 +180,25 @@ function provenanceFingerprint(provenance: Version2Provenance | null): string | 
     .digest("hex");
 }
 
-function candidateObservation(candidate: ReconciliationCandidate): ReconciliationObservation {
+function candidateObservation(
+  candidate: ReconciliationCandidate,
+): ReconciliationObservation {
+  if (candidate.workspace !== null) {
+    return {
+      candidateKind:
+        candidate.workspace.removedAt === null
+          ? "row_missing_path"
+          : "row_removed_path",
+      relativePath: candidate.relativePath,
+      provenanceVersion: null,
+      provenanceFingerprint: null,
+      provenanceRunId: candidate.workspace.runId,
+      projectId: candidate.workspace.projectId,
+      runId: candidate.workspace.runId,
+      workspaceId: candidate.workspace.workspaceId,
+    };
+  }
+
   return {
     candidateKind:
       candidate.provenance === null ? "untrusted" : "rowless_managed",
@@ -139,13 +206,18 @@ function candidateObservation(candidate: ReconciliationCandidate): Reconciliatio
     provenanceVersion: candidate.provenance?.version ?? null,
     provenanceFingerprint: provenanceFingerprint(candidate.provenance),
     provenanceRunId: candidate.provenance?.runId ?? null,
-    projectId: candidate.provenance?.projectId ?? null,
-    runId: candidate.provenance?.runId ?? null,
+    // Provenance is not yet authority at observation time. Keep correlation
+    // nullable until the trusted project/run checks have succeeded so a stale
+    // or deleted ID cannot make the durable observation itself fail its FK.
+    projectId: null,
+    runId: null,
     workspaceId: null,
   };
 }
 
-async function listCandidates(root: string): Promise<ReconciliationCandidate[]> {
+async function listCandidates(
+  root: string,
+): Promise<ReconciliationCandidate[]> {
   let resolvedRoot: string;
 
   try {
@@ -174,6 +246,7 @@ async function listCandidates(root: string): Promise<ReconciliationCandidate[]> 
           worktreePath: null,
           provenance: null,
           reasonCode: "symlink_escape",
+          workspace: null,
         });
         continue;
       }
@@ -192,6 +265,7 @@ async function listCandidates(root: string): Promise<ReconciliationCandidate[]> 
             worktreePath: null,
             provenance: null,
             reasonCode: "symlink_escape",
+            workspace: null,
           });
           continue;
         }
@@ -204,6 +278,7 @@ async function listCandidates(root: string): Promise<ReconciliationCandidate[]> 
             worktreePath: null,
             provenance: null,
             reasonCode: "outside_root",
+            workspace: null,
           });
           continue;
         }
@@ -218,6 +293,7 @@ async function listCandidates(root: string): Promise<ReconciliationCandidate[]> 
             reasonCode: isVersion2Provenance(provenance)
               ? null
               : "legacy_provenance",
+            workspace: null,
           });
         } catch {
           candidates.push({
@@ -225,6 +301,7 @@ async function listCandidates(root: string): Promise<ReconciliationCandidate[]> 
             worktreePath: resolvedPath,
             provenance: null,
             reasonCode: "invalid_provenance",
+            workspace: null,
           });
         }
       } catch (error) {
@@ -235,6 +312,7 @@ async function listCandidates(root: string): Promise<ReconciliationCandidate[]> 
           worktreePath: null,
           provenance: null,
           reasonCode: "filesystem_inspection_failed",
+          workspace: null,
         });
       }
     }
@@ -242,6 +320,83 @@ async function listCandidates(root: string): Promise<ReconciliationCandidate[]> 
 
   return candidates.sort((left, right) =>
     left.relativePath.localeCompare(right.relativePath),
+  );
+}
+
+async function listMissingWorkspaceCandidates(args: {
+  database: Database;
+  root: string;
+}): Promise<ReconciliationCandidate[]> {
+  try {
+    await realpath(args.root);
+  } catch (error) {
+    if (isMissingPathError(error)) return [];
+
+    throw error;
+  }
+
+  const configuredRoot = path.resolve(args.root);
+  const rows = await args.database
+    .select({
+      workspaceId: workspaces.id,
+      runId: workspaces.runId,
+      projectId: workspaces.projectId,
+      worktreePath: workspaces.worktreePath,
+      parentRepoPath: workspaces.parentRepoPath,
+      branch: workspaces.branch,
+      removedAt: workspaces.removedAt,
+      archivedBranch: workspaces.archivedBranch,
+      archivedAt: workspaces.archivedAt,
+      archivedCommit: workspaces.archivedCommit,
+      preservationOutcome: workspaces.preservationOutcome,
+      runKind: runs.runKind,
+      runStatus: runs.status,
+    })
+    .from(workspaces)
+    .innerJoin(runs, eq(workspaces.runId, runs.id));
+  const candidates: ReconciliationCandidate[] = [];
+
+  for (const row of rows) {
+    const worktreePath = path.resolve(row.worktreePath);
+
+    if (!isContainedPath(configuredRoot, worktreePath)) continue;
+
+    const relativePath = path.relative(configuredRoot, worktreePath);
+
+    if (!isSafeWorkspaceRelativePath(relativePath)) continue;
+
+    try {
+      await lstat(worktreePath);
+    } catch (error) {
+      if (!isMissingPathError(error)) continue;
+
+      candidates.push({
+        relativePath,
+        worktreePath: null,
+        provenance: null,
+        reasonCode: "workspace_path_missing",
+        workspace: {
+          ...row,
+          runStatus: row.runStatus as WorkbenchRunStatus,
+          runKind: row.runKind as "flow" | "scratch" | "agent",
+        },
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function hasRecordedPreservationOutcome(
+  value: MissingWorkspaceCandidate["preservationOutcome"],
+): value is Exclude<
+  MissingWorkspaceCandidate["preservationOutcome"],
+  null | "legacy_unknown"
+> {
+  return (
+    value === "not_needed" ||
+    value === "ref_created" ||
+    value === "snapshot_created"
   );
 }
 
@@ -281,6 +436,52 @@ async function loadTrustedProject(args: {
   return null;
 }
 
+type FinalOrphanRemovalCheck =
+  | "safe"
+  | "trust_lost"
+  | "ownership_reappeared"
+  | "live_session";
+
+async function checkFinalOrphanRemovalPreconditions(args: {
+  database: Database;
+  candidate: ReconciliationCandidate;
+}): Promise<FinalOrphanRemovalCheck> {
+  const provenance = args.candidate.provenance;
+
+  if (provenance === null) return "trust_lost";
+
+  const project = await loadTrustedProject(args);
+
+  if (project === null) return "trust_lost";
+
+  const [workspaceRows, runRows, liveSessions] = await Promise.all([
+    args.database
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.runId, provenance.runId)),
+    args.database
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, provenance.runId)),
+    listSessions(),
+  ]);
+
+  if (workspaceRows.length > 0 || runRows.length > 0) {
+    return "ownership_reappeared";
+  }
+
+  if (
+    liveSessions.some(
+      (session) =>
+        session.runId === provenance.runId && session.status === "live",
+    )
+  ) {
+    return "live_session";
+  }
+
+  return "safe";
+}
+
 async function processTrustedCandidate(args: {
   database: Database;
   root: string;
@@ -288,12 +489,17 @@ async function processTrustedCandidate(args: {
   claim: ReconciliationFindingClaim;
   now: Date;
   summary: WorkspaceReconciliationSummary;
+  remove: OwnedWorktreeRemover;
+  afterOwnedWorktreeRemoval?: () => Promise<void>;
 }): Promise<void> {
   const provenance = args.candidate.provenance;
   const worktreePath = args.candidate.worktreePath;
 
   if (provenance === null || worktreePath === null) {
-    throw new MaisterError("PRECONDITION", "candidate has no trusted provenance");
+    throw new MaisterError(
+      "PRECONDITION",
+      "candidate has no trusted provenance",
+    );
   }
 
   const project = await loadTrustedProject({
@@ -310,6 +516,7 @@ async function processTrustedCandidate(args: {
       now: args.now,
     });
     args.summary.quarantined += 1;
+
     return;
   }
 
@@ -331,7 +538,8 @@ async function processTrustedCandidate(args: {
     const matchesWorkspace =
       workspace.projectId === provenance.projectId &&
       workspace.branch === provenance.branch &&
-      path.resolve(workspace.parentRepoPath) === path.resolve(project.repoPath) &&
+      path.resolve(workspace.parentRepoPath) ===
+        path.resolve(project.repoPath) &&
       path.resolve(workspace.worktreePath) === worktreePath;
 
     if (!matchesWorkspace) {
@@ -343,6 +551,7 @@ async function processTrustedCandidate(args: {
         now: args.now,
       });
       args.summary.quarantined += 1;
+
       return;
     }
 
@@ -354,6 +563,7 @@ async function processTrustedCandidate(args: {
         now: args.now,
       });
       args.summary.resolved += 1;
+
       return;
     }
 
@@ -363,12 +573,13 @@ async function processTrustedCandidate(args: {
       now: args.now,
     });
 
-    await removeOwnedWorktree({
+    await args.remove({
       projectRepoPath: project.repoPath,
       worktreePath,
       allowedRoot: args.root,
       force: true,
     });
+    await args.afterOwnedWorktreeRemoval?.();
     await resolveReconciliationFinding({
       database: args.database,
       claim: renewedClaim,
@@ -377,6 +588,7 @@ async function processTrustedCandidate(args: {
     });
     args.summary.removed += 1;
     args.summary.resolved += 1;
+
     return;
   }
 
@@ -396,6 +608,7 @@ async function processTrustedCandidate(args: {
         now: args.now,
       });
       args.summary.quarantined += 1;
+
       return;
     }
 
@@ -415,12 +628,18 @@ async function processTrustedCandidate(args: {
     });
     args.summary.recovered += 1;
     args.summary.resolved += 1;
+
     return;
   }
 
   const liveSessions = await listSessions();
 
-  if (liveSessions.some((session) => session.runId === provenance.runId && session.status === "live")) {
+  if (
+    liveSessions.some(
+      (session) =>
+        session.runId === provenance.runId && session.status === "live",
+    )
+  ) {
     await holdReconciliationFinding({
       database: args.database,
       claim: args.claim,
@@ -428,6 +647,7 @@ async function processTrustedCandidate(args: {
       now: args.now,
     });
     args.summary.retained += 1;
+
     return;
   }
 
@@ -444,6 +664,7 @@ async function processTrustedCandidate(args: {
       retryAt: removalDueAt,
     });
     args.summary.retained += 1;
+
     return;
   }
 
@@ -470,30 +691,289 @@ async function processTrustedCandidate(args: {
       now: args.now,
     });
     args.summary.quarantined += 1;
+
     return;
   }
 
-  const renewedClaim = await renewReconciliationFindingClaim({
+  const claimWithRescueEvidence = await renewReconciliationFindingClaim({
     database: args.database,
     claim: args.claim,
     now: args.now,
   });
 
-  await removeOwnedWorktree({
+  await recordReconciliationRescueEvidence({
+    database: args.database,
+    claim: claimWithRescueEvidence,
+    rescue: { ref: rescueRef, commit: rescueCommit },
+    now: args.now,
+  });
+
+  const finalRemovalCheck = await checkFinalOrphanRemovalPreconditions({
+    database: args.database,
+    candidate: args.candidate,
+  });
+
+  if (finalRemovalCheck === "trust_lost") {
+    await quarantineReconciliationFinding({
+      database: args.database,
+      claim: claimWithRescueEvidence,
+      errorCode: "final_trust_check_failed",
+      errorMessage: "candidate failed the final Git and project verification",
+      now: args.now,
+    });
+    args.summary.quarantined += 1;
+
+    return;
+  }
+
+  if (finalRemovalCheck === "ownership_reappeared") {
+    await resolveReconciliationFinding({
+      database: args.database,
+      claim: claimWithRescueEvidence,
+      resultCode: "ownership_reappeared",
+      now: args.now,
+    });
+    args.summary.resolved += 1;
+
+    return;
+  }
+
+  if (finalRemovalCheck === "live_session") {
+    await holdReconciliationFinding({
+      database: args.database,
+      claim: claimWithRescueEvidence,
+      resultCode: "live_supervisor_session",
+      now: args.now,
+    });
+    args.summary.retained += 1;
+
+    return;
+  }
+
+  const renewedClaim = await renewReconciliationFindingClaim({
+    database: args.database,
+    claim: claimWithRescueEvidence,
+    now: args.now,
+  });
+
+  await args.remove({
     projectRepoPath: project.repoPath,
     worktreePath,
     allowedRoot: args.root,
     force: true,
   });
+  await args.afterOwnedWorktreeRemoval?.();
   await resolveReconciliationFinding({
     database: args.database,
     claim: renewedClaim,
     resultCode: "orphan_rescued_and_removed",
-    rescue: { ref: rescueRef, commit: rescueCommit },
     now: args.now,
   });
   args.summary.preserved += 1;
   args.summary.removed += 1;
+  args.summary.resolved += 1;
+}
+
+async function processMissingWorkspaceCandidate(args: {
+  database: Database;
+  candidate: ReconciliationCandidate;
+  claim: ReconciliationFindingClaim;
+  now: Date;
+  summary: WorkspaceReconciliationSummary;
+}): Promise<void> {
+  const workspace = args.candidate.workspace;
+
+  if (workspace === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "candidate has no missing-workspace evidence",
+    );
+  }
+
+  if (workspace.removedAt !== null) {
+    await resolveReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "removed_workspace_path_absent",
+      now: args.now,
+    });
+    args.summary.resolved += 1;
+
+    return;
+  }
+
+  const liveSessions = await listSessions();
+
+  if (
+    liveSessions.some(
+      (session) =>
+        session.runId === workspace.runId && session.status === "live",
+    )
+  ) {
+    await holdReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "live_supervisor_session",
+      now: args.now,
+    });
+    args.summary.retained += 1;
+
+    return;
+  }
+
+  if (!hasRecordedPreservationOutcome(workspace.preservationOutcome)) {
+    await quarantineReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      errorCode: "missing_workspace_preservation_evidence",
+      errorMessage:
+        "workspace path is absent without a durable preservation result",
+      now: args.now,
+    });
+    args.summary.quarantined += 1;
+
+    return;
+  }
+
+  let lifecycleAttemptId: string | null = null;
+
+  try {
+    const lifecycleClaim = await claimLifecycleOperation({
+      database: args.database,
+      runId: workspace.runId,
+      workspaceId: workspace.workspaceId,
+      operation: "reconciliation",
+      expectedRunStatus: workspace.runStatus,
+    });
+
+    lifecycleAttemptId = lifecycleClaim.attemptId;
+
+    await recordDrop({
+      database: args.database,
+      runId: workspace.runId,
+      runKind: workspace.runKind,
+      workspaceId: workspace.workspaceId,
+      removedAt: args.now,
+      expectedRunStatus: workspace.runStatus,
+      nextRunStatus: null,
+      archivedBranch: workspace.archivedBranch,
+      archivedAt: workspace.archivedAt,
+      archivedCommit: workspace.archivedCommit,
+      preservationOutcome: workspace.preservationOutcome,
+      removalKind: "reconciliation",
+      attemptId: lifecycleAttemptId,
+    });
+  } catch (error) {
+    if (lifecycleAttemptId !== null) {
+      try {
+        await finalizeLifecycleOperation({
+          database: args.database,
+          workspaceId: workspace.workspaceId,
+          attemptId: lifecycleAttemptId,
+          state: "failed",
+        });
+      } catch (finalizeError) {
+        log.warn(
+          {
+            findingId: args.claim.id,
+            errorType:
+              finalizeError instanceof Error ? finalizeError.name : "unknown",
+          },
+          "workspace reconciliation row recovery could not persist lifecycle retry state",
+        );
+      }
+    }
+
+    throw error;
+  }
+
+  await resolveReconciliationFinding({
+    database: args.database,
+    claim: args.claim,
+    resultCode: "missing_workspace_recovered",
+    now: args.now,
+  });
+  args.summary.removed += 1;
+  args.summary.resolved += 1;
+}
+
+async function processAbsentFinding(args: {
+  database: Database;
+  finding: ReconciliationFinding;
+  claim: ReconciliationFindingClaim;
+  candidateAtRelativePath: ReconciliationCandidate | null;
+  now: Date;
+  summary: WorkspaceReconciliationSummary;
+}): Promise<void> {
+  if (
+    args.finding.candidateKind === "row_missing_path" &&
+    args.candidateAtRelativePath?.workspace?.workspaceId ===
+      args.finding.workspaceId &&
+    args.candidateAtRelativePath.workspace.removedAt !== null
+  ) {
+    await resolveReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "workspace_marked_removed",
+      now: args.now,
+    });
+    args.summary.resolved += 1;
+
+    return;
+  }
+
+  if (args.candidateAtRelativePath !== null) {
+    await holdReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "candidate_identity_replaced",
+      now: args.now,
+    });
+    args.summary.retained += 1;
+
+    return;
+  }
+
+  if (
+    args.finding.candidateKind === "rowless_managed" &&
+    args.finding.rescueRef !== null &&
+    args.finding.rescueCommit !== null
+  ) {
+    await resolveReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "orphan_rescued_and_removed",
+      rescue: {
+        ref: args.finding.rescueRef,
+        commit: args.finding.rescueCommit,
+      },
+      now: args.now,
+    });
+    args.summary.resolved += 1;
+
+    return;
+  }
+
+  if (args.finding.candidateKind === "rowless_managed") {
+    await quarantineReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      errorCode: "missing_candidate_without_rescue_evidence",
+      errorMessage:
+        "managed orphan disappeared before durable rescue evidence was recorded",
+      now: args.now,
+    });
+    args.summary.quarantined += 1;
+
+    return;
+  }
+
+  await resolveReconciliationFinding({
+    database: args.database,
+    claim: args.claim,
+    resultCode: "candidate_absent",
+    now: args.now,
+  });
   args.summary.resolved += 1;
 }
 
@@ -513,24 +993,53 @@ export async function runWorkspaceReconciliationSweep(
     quarantined: 0,
     resolved: 0,
   };
-  const candidates = (await listCandidates(root)).slice(
-    0,
-    RECONCILIATION_BATCH_SIZE,
-  );
+  const [filesystemCandidates, missingWorkspaceCandidates] = await Promise.all([
+    listCandidates(root),
+    listMissingWorkspaceCandidates({ database, root }),
+  ]);
+  let removalRoot = root;
 
-  log.info({ scanned: candidates.length }, "workspace reconciliation sweep start");
+  try {
+    removalRoot = await realpath(root);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+  }
+  const candidates = [...filesystemCandidates, ...missingWorkspaceCandidates];
+  const candidatesByFindingId = new Map<string, ReconciliationCandidate>();
+  const candidatesByRelativePath = new Map<string, ReconciliationCandidate>();
 
   for (const candidate of candidates) {
-    summary.scanned += 1;
     const observation = candidateObservation(candidate);
     const findingId = await observeReconciliationFinding({
       database,
       observation,
       now,
     });
+
+    candidatesByFindingId.set(findingId, candidate);
+    candidatesByRelativePath.set(candidate.relativePath, candidate);
+  }
+
+  const dueFindings = await loadDueReconciliationFindings({
+    database,
+    now,
+    limit: RECONCILIATION_BATCH_SIZE,
+  });
+
+  log.info(
+    {
+      filesystemCandidates: filesystemCandidates.length,
+      missingWorkspaceCandidates: missingWorkspaceCandidates.length,
+      due: dueFindings.length,
+    },
+    "workspace reconciliation sweep start",
+  );
+
+  for (const finding of dueFindings) {
+    summary.scanned += 1;
     const claim = await claimReconciliationFinding({
       database,
-      findingId,
+      findingId: finding.id,
       now,
     });
 
@@ -539,26 +1048,54 @@ export async function runWorkspaceReconciliationSweep(
       continue;
     }
 
-    if (candidate.provenance === null) {
-      await quarantineReconciliationFinding({
-        database,
-        claim,
-        errorCode: candidate.reasonCode ?? "untrusted_candidate",
-        errorMessage: "candidate is not a trusted version 2 managed worktree",
-        now,
-      });
-      summary.quarantined += 1;
-      continue;
-    }
+    const candidate = candidatesByFindingId.get(finding.id) ?? null;
 
     try {
+      if (candidate === null) {
+        await processAbsentFinding({
+          database,
+          finding,
+          claim,
+          candidateAtRelativePath:
+            candidatesByRelativePath.get(finding.relativePath) ?? null,
+          now,
+          summary,
+        });
+        continue;
+      }
+
+      if (candidate.workspace !== null) {
+        await processMissingWorkspaceCandidate({
+          database,
+          candidate,
+          claim,
+          now,
+          summary,
+        });
+        continue;
+      }
+
+      if (candidate.provenance === null) {
+        await quarantineReconciliationFinding({
+          database,
+          claim,
+          errorCode: candidate.reasonCode ?? "untrusted_candidate",
+          errorMessage: "candidate is not a trusted version 2 managed worktree",
+          now,
+        });
+        summary.quarantined += 1;
+        continue;
+      }
+
       await processTrustedCandidate({
         database,
-        root,
+        root: removalRoot,
         candidate,
         claim,
         now,
         summary,
+        remove: options.removeOwnedWorktree ?? removeOwnedWorktree,
+        afterOwnedWorktreeRemoval: options.afterOwnedWorktreeRemoval,
       });
     } catch (error) {
       if (isMaisterError(error) && error.code === "PRECONDITION") {
@@ -575,7 +1112,8 @@ export async function runWorkspaceReconciliationSweep(
           database,
           claim,
           errorCode: "reconciliation_action_failed",
-          errorMessage: "reconciliation action failed before durable completion",
+          errorMessage:
+            "reconciliation action failed before durable completion",
           now,
         });
         summary.retryableFailed += 1;
@@ -583,8 +1121,8 @@ export async function runWorkspaceReconciliationSweep(
 
       log.warn(
         {
-          findingId,
-          relativePath: candidate.relativePath,
+          findingId: finding.id,
+          relativePath: finding.relativePath,
           errorType: error instanceof Error ? error.name : "unknown",
         },
         "workspace reconciliation candidate deferred",

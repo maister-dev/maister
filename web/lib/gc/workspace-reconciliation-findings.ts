@@ -1,16 +1,17 @@
 import "server-only";
 
-import { createHash, randomUUID } from "node:crypto";
-
-import { and, asc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-
-import { getDb } from "@/lib/db/client";
-import * as schema from "@/lib/db/schema";
 import type {
   WorkspaceReconciliationCandidateKind,
   WorkspaceReconciliationFindingState,
 } from "@/lib/db/schema";
+
+import { createHash, randomUUID } from "node:crypto";
+
+import { and, asc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
 
@@ -251,6 +252,50 @@ export async function renewReconciliationFindingClaim(args: {
   return { ...args.claim, leaseExpiresAt };
 }
 
+export async function recordReconciliationRescueEvidence(args: {
+  database?: Database;
+  claim: ReconciliationFindingClaim;
+  rescue: { ref: string; commit: string };
+  now?: Date;
+}): Promise<void> {
+  const client = database(args.database);
+  const now = args.now ?? new Date();
+  const rows = await client
+    .update(workspaceReconciliationFindings)
+    .set({
+      rescueRef: args.rescue.ref,
+      rescueCommit: args.rescue.commit,
+    })
+    .where(
+      and(
+        eq(workspaceReconciliationFindings.id, args.claim.id),
+        eq(workspaceReconciliationFindings.attemptId, args.claim.attemptId),
+        gt(workspaceReconciliationFindings.leaseExpiresAt, now),
+        or(
+          and(
+            isNull(workspaceReconciliationFindings.rescueRef),
+            isNull(workspaceReconciliationFindings.rescueCommit),
+          ),
+          and(
+            eq(workspaceReconciliationFindings.rescueRef, args.rescue.ref),
+            eq(
+              workspaceReconciliationFindings.rescueCommit,
+              args.rescue.commit,
+            ),
+          ),
+        ),
+      ),
+    )
+    .returning({ id: workspaceReconciliationFindings.id });
+
+  if (rows.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      "reconciliation finding claim was lost before rescue evidence recording",
+    );
+  }
+}
+
 export async function resolveReconciliationFinding(args: {
   database?: Database;
   claim: ReconciliationFindingClaim;
@@ -265,8 +310,12 @@ export async function resolveReconciliationFinding(args: {
     .set({
       state: "resolved",
       resultCode: args.resultCode,
-      rescueRef: args.rescue?.ref ?? null,
-      rescueCommit: args.rescue?.commit ?? null,
+      ...(args.rescue
+        ? {
+            rescueRef: args.rescue.ref,
+            rescueCommit: args.rescue.commit,
+          }
+        : {}),
       resolvedAt: now,
       nextRetryAt: null,
       leaseExpiresAt: null,
@@ -341,8 +390,7 @@ export async function holdReconciliationFinding(args: {
     .set({
       state: "held",
       resultCode: args.resultCode,
-      nextRetryAt:
-        args.retryAt ?? new Date(now.getTime() + RETRY_MAX_DELAY_MS),
+      nextRetryAt: args.retryAt ?? new Date(now.getTime() + RETRY_MAX_DELAY_MS),
       leaseExpiresAt: null,
       attemptId: null,
     })

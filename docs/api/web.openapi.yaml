@@ -418,7 +418,7 @@ paths:
   /api/admin/workspace-reconciliation-findings:
     get:
       tags: [admin]
-      summary: Implemented (ADR-140) — list workspace reconciliation findings
+      summary: Implemented (ADR-142) — list workspace reconciliation findings
       description: |
         Platform-admin-only, read-only operational projection. `state` is an
         allow-listed filter; `cursor` is opaque and `limit` is bounded to 100.
@@ -5153,7 +5153,7 @@ paths:
   /api/scratch-runs/{runId}/discard:
     post:
       tags: [scratch-runs]
-      summary: Implemented (ADR-140) — preserve then discard scratch workspace
+      summary: Implemented (ADR-142) — preserve then discard scratch workspace
       description: |
         Uses the common fenced lifecycle-removal protocol after any required
         supervisor stop. It preserves recoverable Git state, removes only an
@@ -7690,7 +7690,7 @@ paths:
   /api/runs/{runId}/discard:
     post:
       tags: [reconciliation-gc]
-      summary: Implemented (ADR-140) — preserve then discard a run workspace
+      summary: Implemented (ADR-142) — preserve then discard a run workspace
       description: |
         Uses the common renewable, fenced removal protocol: preserve, durably
         record the outcome, remove only an owned worktree, and then set a
@@ -7790,7 +7790,7 @@ paths:
   /api/runs/{runId}/stop-archive:
     post:
       tags: [runs]
-      summary: Implemented (ADR-140) — stop a live run, preserve, and remove its workspace
+      summary: Implemented (ADR-142) — stop a live run, preserve, and remove its workspace
       description: |
         Combined live action: stop the run (commits a parked status first —
         `Review` for flow/scratch), then uses the common preserve-first removal
@@ -7838,7 +7838,7 @@ paths:
   /api/runs/{runId}/stop-drop:
     post:
       tags: [runs]
-      summary: Implemented (ADR-140) — stop a live flow run, then discard its workspace
+      summary: Implemented (ADR-142) — stop a live flow run, then discard its workspace
       description: |
         Combined live action for flow runs: stop the run (commits `Review`
         first), then run `dropWorkbench` (preserve, remove the owned worktree,

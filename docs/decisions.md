@@ -12755,8 +12755,9 @@ compatibility route merely makes that job due and attempts its existing claim.
 
 **Consequences:**
 
-- Migration `0116` extends the workspace lifecycle claim/result and migration
-  `0117` adds reconciliation integrity checks. Existing removed rows are marked
+- Migration `0116_keen_talisman` extends the workspace lifecycle claim/result
+  and introduces reconciliation findings atomically. Migration `0117` adds
+  reconciliation integrity checks. Existing removed rows are marked
   `legacy`/`legacy_unknown`; no historical intent is invented.
 - Public lifecycle actions retain empty bodies and use `recoverRun` membership.
   Their common success response includes operation, retained run status,

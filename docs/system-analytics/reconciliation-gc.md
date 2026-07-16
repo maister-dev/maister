@@ -1,8 +1,8 @@
 # Reconciliation and GC domain
 
-## ADR-140 target contract (Designed)
+## ADR-142 workspace cleanup contract (Implemented)
 
-The M19 behavior below is the shipped baseline. ADR-140 changes only the
+The M19 behavior below is the shipped baseline. ADR-142 changes only the
 workspace cleanup boundary: automatic row-backed GC selects the disposable
 set `{Done, Abandoned}` and never selects `Review`, `Crashed`, or `Failed`.
 All row-backed removal paths use a renewable lifecycle claim that fences every
@@ -17,6 +17,15 @@ the configured grace, a lease-fenced final recheck, and a CAS-created rescue
 ref. V1, malformed, ambiguous, or foreign candidates are held/quarantined and
 reported, never removed. Findings retain bounded retry/backoff, sanitized error
 codes, rescue evidence, and resolved history.
+
+Each sweep observes the filesystem and missing owned paths first, then claims at
+most 100 due findings from the durable ledger ordered by retry time. A held or
+quarantined early path therefore cannot starve later work. Before orphan removal,
+the rescue ref/commit pair is persisted under the finding claim; a process death
+after deletion resolves that retained finding on the next due sweep without
+relying on a vanished path. A row whose owned path is already absent is marked
+removed only when it has a durable preservation result; otherwise it is
+quarantined for operator review.
 
 One claimed `system_sweep` composes reconcile, row-backed GC, orphan
 reconciliation, and reconstructible-agent cleanup. Timer, tick, and

@@ -34,7 +34,10 @@ function parseLimit(value: string | null): number {
   if (value === null) return 50;
 
   if (!/^\d+$/u.test(value)) {
-    throw new MaisterError("CONFIG", "limit must be an integer between 1 and 100");
+    throw new MaisterError(
+      "CONFIG",
+      "limit must be an integer between 1 and 100",
+    );
   }
 
   const limit = Number(value);
@@ -52,7 +55,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const state = request.nextUrl.searchParams.get("state");
 
     if (state !== null && !isWorkspaceReconciliationFindingState(state)) {
-      throw new MaisterError("CONFIG", "invalid workspace reconciliation state");
+      throw new MaisterError(
+        "CONFIG",
+        "invalid workspace reconciliation state",
+      );
     }
 
     const result = await listWorkspaceReconciliationFindings({
@@ -74,6 +80,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       { errorType: error instanceof Error ? error.name : "unknown" },
       "workspace reconciliation findings read failed",
     );
+
     return NextResponse.json(
       { code: "CRASH", message: "internal error" },
       { status: 500 },

@@ -1,6 +1,6 @@
 # Scratch runs domain
 
-## ADR-140 workspace removal (Designed)
+## ADR-142 workspace removal (Implemented)
 
 Scratch Discard joins the shared fenced preserve-first protocol and returns the
 common lifecycle-removal DTO. It removes an owned worktree only after durable

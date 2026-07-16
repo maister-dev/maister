@@ -7,9 +7,23 @@ import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import {
+  claimReconciliationFinding,
+  observeReconciliationFinding,
+  quarantineReconciliationFinding,
+} from "@/lib/gc/workspace-reconciliation-findings";
 import { runWorkspaceReconciliationSweep } from "@/lib/gc/workspace-reconciler";
 import { addWorktree } from "@/lib/worktree";
 import {
@@ -167,5 +181,173 @@ describe("runWorkspaceReconciliationSweep", () => {
       lastErrorCode: "legacy_provenance",
     });
     await expect(lstat(worktreePath)).resolves.toBeDefined();
+  });
+
+  it("processes a due candidate after more than one batch of quarantined paths", async () => {
+    const now = new Date("2026-07-16T12:00:00.000Z");
+    const blockedRoot = path.join(worktreesRoot, "blocked");
+
+    await mkdir(blockedRoot, { recursive: true });
+
+    for (let index = 0; index < 100; index += 1) {
+      const name = String(index).padStart(3, "0");
+      const relativePath = path.join("blocked", name);
+
+      await mkdir(path.join(blockedRoot, name));
+      const findingId = await observeReconciliationFinding({
+        database: db,
+        observation: {
+          candidateKind: "untrusted",
+          relativePath,
+          provenanceVersion: null,
+          provenanceFingerprint: null,
+          provenanceRunId: null,
+          projectId: null,
+          runId: null,
+          workspaceId: null,
+        },
+        now,
+      });
+      const claim = await claimReconciliationFinding({
+        database: db,
+        findingId,
+        now,
+      });
+
+      if (claim === null) throw new Error("expected finding claim");
+
+      await quarantineReconciliationFinding({
+        database: db,
+        claim,
+        errorCode: "seeded_quarantine",
+        errorMessage: "seeded test finding",
+        now,
+      });
+    }
+
+    const runId = randomUUID();
+    const worktreePath = path.join(worktreesRoot, "z", runId);
+
+    await seedRun(runId);
+    await addWorktree({
+      projectRepoPath: repoPath,
+      branch: `maister/${runId}`,
+      worktreePath,
+      startPoint: "main",
+      provenance: {
+        version: 2,
+        runId,
+        parentRepoPath: repoPath,
+        projectId,
+        branch: `maister/${runId}`,
+        workspaceKind: "flow",
+        createdAt: "2026-06-01T12:00:00.000Z",
+      },
+    });
+
+    const summary = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => now,
+    });
+
+    expect(summary).toMatchObject({ scanned: 1, recovered: 1, resolved: 1 });
+    await expect(
+      db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.runId, runId)),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("recovers a row whose worktree disappeared after preservation was recorded", async () => {
+    const runId = randomUUID();
+    const missingPath = path.join(worktreesRoot, projectSlug, runId);
+
+    await seedRun(runId);
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId,
+      branch: `maister/${runId}`,
+      worktreePath: missingPath,
+      parentRepoPath: repoPath,
+      preservationOutcome: "not_needed",
+    });
+
+    const summary = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
+    });
+    const workspace = (
+      await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.runId, runId))
+    )[0];
+
+    expect(summary).toMatchObject({ removed: 1, resolved: 1, quarantined: 0 });
+    expect(workspace).toMatchObject({ removalKind: "reconciliation" });
+    expect(workspace.removedAt).not.toBeNull();
+  });
+
+  it("retains rescue evidence across a crash after deletion and resolves it on retry", async () => {
+    const runId = randomUUID();
+    const worktreePath = path.join(worktreesRoot, projectSlug, runId);
+    const firstNow = new Date("2026-07-16T12:00:00.000Z");
+
+    await addWorktree({
+      projectRepoPath: repoPath,
+      branch: `maister/${runId}`,
+      worktreePath,
+      startPoint: "main",
+      provenance: {
+        version: 2,
+        runId,
+        parentRepoPath: repoPath,
+        projectId,
+        branch: `maister/${runId}`,
+        workspaceKind: "flow",
+        createdAt: "2026-06-01T12:00:00.000Z",
+      },
+    });
+
+    const failed = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => firstNow,
+      afterOwnedWorktreeRemoval: async () => {
+        throw new Error("simulated process crash");
+      },
+    });
+    const afterCrash = (
+      await db.select().from(schema.workspaceReconciliationFindings)
+    )[0];
+
+    expect(failed).toMatchObject({ removed: 0, retryableFailed: 1 });
+    expect(afterCrash).toMatchObject({
+      state: "retry_waiting",
+      rescueRef: expect.any(String),
+      rescueCommit: expect.any(String),
+    });
+    await expect(lstat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const recovered = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => new Date(firstNow.getTime() + 6 * 60_000),
+    });
+    const finding = (
+      await db.select().from(schema.workspaceReconciliationFindings)
+    )[0];
+
+    expect(recovered).toMatchObject({ resolved: 1, quarantined: 0 });
+    expect(finding).toMatchObject({
+      state: "resolved",
+      resultCode: "orphan_rescued_and_removed",
+      rescueRef: afterCrash.rescueRef,
+      rescueCommit: afterCrash.rescueCommit,
+    });
   });
 });

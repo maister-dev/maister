@@ -1,5 +1,4 @@
 import type { ReactElement } from "react";
-
 import type { WorkspaceReconciliationFindingPageItem } from "@/lib/queries/workspace-reconciliation-findings";
 
 export function WorkspaceReconciliationFindings({
@@ -51,7 +50,10 @@ export function WorkspaceReconciliationFindings({
               </tr>
             ) : (
               findings.map((finding) => (
-                <tr className="border-b border-line last:border-b-0" key={finding.id}>
+                <tr
+                  key={finding.id}
+                  className="border-b border-line last:border-b-0"
+                >
                   <td className="px-5 py-3 font-mono text-[11.5px] text-ink">
                     {finding.relativePath}
                   </td>

@@ -91,7 +91,9 @@ function metadataText(metadata: MaisterProvenance): string {
   return `runId=${metadata.runId}\n${task}${flow}`;
 }
 
-function assertVersion2Metadata(metadata: MaisterProvenance): MaisterProvenance &
+function assertVersion2Metadata(
+  metadata: MaisterProvenance,
+): MaisterProvenance &
   Required<
     Pick<
       MaisterProvenance,
@@ -478,10 +480,7 @@ export async function readWorktreeProvenanceMetadata(
     const key = separator >= 0 ? line.slice(0, separator) : "";
     const value = separator >= 0 ? line.slice(separator + 1) : "";
 
-    if (
-      !isProvenanceMetadataField(key) ||
-      !value
-    ) {
+    if (!isProvenanceMetadataField(key) || !value) {
       throw new MaisterError(
         "PRECONDITION",
         "managed provenance metadata has an invalid field",

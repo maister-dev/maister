@@ -1,6 +1,6 @@
 # HITL domain
 
-## ADR-140 removed-workspace boundary (Designed)
+## ADR-142 removed-workspace boundary (Implemented)
 
 Archive must preflight unanswered actionable HITL and refuse without a side
 effect. It never resolves, deletes, or fabricates a HITL response. After an

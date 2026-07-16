@@ -12,12 +12,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { worktreesRoot } from "@/lib/instance-config";
 
-const {
-  localPackages,
-  projects,
-  runs,
-  workspaces,
-} = schemaModule;
+const { localPackages, projects, runs, workspaces } = schemaModule;
 
 type SelectQuery = PromiseLike<unknown> & {
   where(condition: unknown): Promise<unknown>;
@@ -149,8 +144,7 @@ function shouldRestoreMaterialization(
 export async function runAgentMaterializationCleanupSweep(
   opts: RunAgentMaterializationCleanupSweepOptions = {},
 ): Promise<AgentMaterializationGcSummary> {
-  const resolveDb = (): Db =>
-    (opts.db ?? getDb()) as unknown as Db;
+  const resolveDb = (): Db => (opts.db ?? getDb()) as unknown as Db;
   const roots = opts.candidateRoots
     ? [...new Set(opts.candidateRoots.map((root) => path.resolve(root)))].sort()
     : await discoverAgentMaterializationCandidateRoots(resolveDb());

@@ -22,10 +22,14 @@ async function writeProvenance(contents: string): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(createdPaths.splice(0).map((entry) => rm(entry, {
-    recursive: true,
-    force: true,
-  })));
+  await Promise.all(
+    createdPaths.splice(0).map((entry) =>
+      rm(entry, {
+        recursive: true,
+        force: true,
+      }),
+    ),
+  );
 });
 
 describe("worktree provenance v2", () => {
@@ -45,17 +49,19 @@ describe("worktree provenance v2", () => {
       ].join("\n"),
     );
 
-    await expect(readWorktreeProvenanceMetadata(worktreePath)).resolves.toEqual({
-      version: 2,
-      runId: "run-1",
-      parentRepoPath: "/repos/project",
-      projectId: "project-1",
-      branch: "maister/run-1",
-      workspaceKind: "flow",
-      createdAt: "2026-07-16T12:00:00.000Z",
-      task: "MAI-1",
-      flow: "release@abc123",
-    });
+    await expect(readWorktreeProvenanceMetadata(worktreePath)).resolves.toEqual(
+      {
+        version: 2,
+        runId: "run-1",
+        parentRepoPath: "/repos/project",
+        projectId: "project-1",
+        branch: "maister/run-1",
+        workspaceKind: "flow",
+        createdAt: "2026-07-16T12:00:00.000Z",
+        task: "MAI-1",
+        flow: "release@abc123",
+      },
+    );
   });
 
   it("rejects incomplete v2 metadata instead of granting autonomous cleanup authority", async () => {
@@ -71,7 +77,9 @@ describe("worktree provenance v2", () => {
       ].join("\n"),
     );
 
-    await expect(readWorktreeProvenanceMetadata(worktreePath)).rejects.toMatchObject({
+    await expect(
+      readWorktreeProvenanceMetadata(worktreePath),
+    ).rejects.toMatchObject({
       code: "PRECONDITION",
     });
   });

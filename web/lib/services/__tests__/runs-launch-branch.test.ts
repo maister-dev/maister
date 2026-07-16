@@ -510,9 +510,7 @@ describe("launchRun — execution-control policy (T0.3)", () => {
 describe("launchRun — version-adopt compensation (ADR-107, finding #1)", () => {
   it("reverts the adopted pin when the adopted cut no longer ships the flow", async () => {
     versionsMock.applyPackageVersionChoices.mockResolvedValue({
-      reverts: [
-      { attachmentId: "att-1", priorInstallId: "prior-1" },
-      ],
+      reverts: [{ attachmentId: "att-1", priorInstallId: "prior-1" }],
       tryOncePins: [],
     });
     // tasks, projects, flows(initial), then the post-adopt flow reload returns

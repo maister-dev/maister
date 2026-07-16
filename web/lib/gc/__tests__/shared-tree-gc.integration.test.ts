@@ -251,7 +251,7 @@ describe("ADR-102 T16 — workspace GC is shared-tree-aware", () => {
         status: "Abandoned",
       });
 
-    // A shared sibling of the SAME tree is still protected from auto-removal.
+      // A shared sibling of the SAME tree is still protected from auto-removal.
       await seedSibling({ rootRunId: root, status: liveStatus });
 
       const { opts, removeOwnedWorktree, preserveWorktree } = makeOpts();

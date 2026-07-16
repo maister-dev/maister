@@ -590,6 +590,7 @@ describe("scheduler job SQL integration", () => {
       jobKind: "system_sweep",
       db: schedulerDb,
     });
+
     expect(claimed).toHaveLength(1);
   });
 });

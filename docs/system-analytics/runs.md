@@ -1,6 +1,6 @@
 # Runs domain
 
-## ADR-140 workspace-presence guard (Designed)
+## ADR-142 workspace-presence guard (Implemented)
 
 `runs.status` remains the execution-history source of truth. If the associated
 workspace has `removed_at`, the retained run is historical only: Recover,

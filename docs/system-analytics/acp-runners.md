@@ -1,6 +1,6 @@
 # Platform ACP runner catalog domain
 
-## ADR-140 workspace lifecycle boundary (Designed)
+## ADR-142 workspace lifecycle boundary (Implemented)
 
 ACP/session operations remain live-execution concerns. Archive refuses a run
 with active assignment, takeover, or actionable HITL and never erases ACP

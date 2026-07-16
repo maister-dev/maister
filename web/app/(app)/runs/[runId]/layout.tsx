@@ -1441,7 +1441,9 @@ export default async function RunDetailLayout({
               runId={detail.runId}
               runKind={detail.runKind}
               variant="detail"
-              workspaceAvailable={Boolean(detail.worktreePath) && !detail.pruned}
+              workspaceAvailable={
+                Boolean(detail.worktreePath) && !detail.pruned
+              }
             />
           ) : null}
 

@@ -259,6 +259,8 @@ type SeedRunOpts = {
   lifecycleOperationState?: string;
   lifecycleOperationName?: string | null;
   lifecycleOperationClaimedAt?: Date;
+  lifecycleOperationLeaseExpiresAt?: Date;
+  lifecycleOperationExpectedRunStatus?: string | null;
   lifecycleOperationAttemptId?: string;
 };
 
@@ -310,6 +312,14 @@ async function seedRun(opts: SeedRunOpts): Promise<{
     lifecycleOperationClaimedAt:
       opts.lifecycleOperationClaimedAt ??
       (opts.lifecycleOperationName != null ? new Date() : null),
+    lifecycleOperationLeaseExpiresAt:
+      opts.lifecycleOperationLeaseExpiresAt ??
+      (opts.lifecycleOperationState === "claiming"
+        ? new Date(Date.now() + 60_000)
+        : null),
+    lifecycleOperationExpectedRunStatus:
+      opts.lifecycleOperationExpectedRunStatus ??
+      (opts.lifecycleOperationState === "claiming" ? "Review" : null),
   });
 
   return { runId, workspaceId };
@@ -759,7 +769,12 @@ describe("syncRunTarget — the double fence (both directions)", () => {
     });
 
     await expect(
-      claimLifecycleOperation({ runId, workspaceId, operation: "archive" }),
+      claimLifecycleOperation({
+        runId,
+        workspaceId,
+        operation: "archive",
+        expectedRunStatus: "Review",
+      }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
@@ -788,7 +803,12 @@ describe("syncRunTarget — the double fence (both directions)", () => {
     });
 
     await expect(
-      claimLifecycleOperation({ runId, workspaceId, operation }),
+      claimLifecycleOperation({
+        runId,
+        workspaceId,
+        operation,
+        expectedRunStatus: "Review",
+      }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
@@ -835,6 +855,7 @@ describe("syncRunTarget — the double fence (both directions)", () => {
         // Older than the whole window — a sync this old is either dead (and SHOULD
         // be reclaimed) or alive and beating.
         lifecycleOperationClaimedAt: new Date(Date.now() - 60_000),
+        lifecycleOperationLeaseExpiresAt: new Date(Date.now() - 60_000),
       });
 
       return { ...seeded, lifecycleOperationAttemptId };
@@ -882,7 +903,12 @@ describe("syncRunTarget — the double fence (both directions)", () => {
         // The whole point: a workbench op can no longer steal the slot out from
         // under the live sync, so `name='sync'` survives for promote's fence.
         await expect(
-          claimLifecycleOperation({ runId, workspaceId, operation: "archive" }),
+          claimLifecycleOperation({
+            runId,
+            workspaceId,
+            operation: "archive",
+            expectedRunStatus: "Review",
+          }),
         ).rejects.toMatchObject({ code: "CONFLICT" });
         expect((await readClaim(workspaceId)).lifecycleOperationName).toBe(
           "sync",

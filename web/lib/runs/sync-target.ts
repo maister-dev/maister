@@ -424,8 +424,10 @@ async function releaseSyncClaim(db: Db, claim: Claim): Promise<void> {
     .set({
       lifecycleOperationState: "none",
       lifecycleOperationClaimedAt: null,
+      lifecycleOperationLeaseExpiresAt: null,
       lifecycleOperationAttemptId: null,
       lifecycleOperationName: null,
+      lifecycleOperationExpectedRunStatus: null,
     })
     .where(
       and(
@@ -463,7 +465,12 @@ export function acquireSyncDriver(
   const timer: NodeJS.Timeout = setInterval(() => {
     void db
       .update(workspaces)
-      .set({ lifecycleOperationClaimedAt: new Date() })
+      .set({
+        lifecycleOperationClaimedAt: new Date(),
+        lifecycleOperationLeaseExpiresAt: new Date(
+          Date.now() + promotionClaimTimeoutSeconds() * 1_000,
+        ),
+      })
       .where(
         and(
           eq(workspaces.id, claim.workspaceId),
@@ -820,14 +827,20 @@ export async function syncRunTarget(
     // the slot's fence token — kept, not thrown away: the release and the lease
     // heartbeat both predicate on it so neither can touch a slot we no longer own.
     const lifecycleAttemptId = randomUUID();
+    const lifecycleClaimedAt = now();
+    const lifecycleLeaseExpiresAt = new Date(
+      lifecycleClaimedAt.getTime() + promotionClaimTimeoutSeconds() * 1_000,
+    );
 
     await tx
       .update(workspaces)
       .set({
         lifecycleOperationState: "claiming",
-        lifecycleOperationClaimedAt: now(),
+        lifecycleOperationClaimedAt: lifecycleClaimedAt,
+        lifecycleOperationLeaseExpiresAt: lifecycleLeaseExpiresAt,
         lifecycleOperationAttemptId: lifecycleAttemptId,
         lifecycleOperationName: "sync",
+        lifecycleOperationExpectedRunStatus: run.status,
       })
       .where(eq(workspaces.id, ws.id));
 

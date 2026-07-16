@@ -262,7 +262,9 @@ describe("E2E wrapper environment", () => {
       new Error("database startup failed"),
     );
 
-    await expect(runE2eInvocation([])).rejects.toThrow("database startup failed");
+    await expect(runE2eInvocation([])).rejects.toThrow(
+      "database startup failed",
+    );
 
     expect(mocks.cleanupTestWorktrees).toHaveBeenCalledWith(
       "/tmp/maister-test-worktrees/e2e/invocation",
@@ -272,6 +274,7 @@ describe("E2E wrapper environment", () => {
   it("retains the Playwright failure when cleanup also fails", async () => {
     configureTestDatabase();
     const child = createChildProcess();
+
     mocks.spawn.mockReturnValue(child);
     mocks.cleanupTestWorktrees.mockRejectedValueOnce(
       new Error("worktree cleanup failed"),

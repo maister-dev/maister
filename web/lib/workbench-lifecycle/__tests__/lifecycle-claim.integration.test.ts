@@ -203,6 +203,8 @@ describe("workbench lifecycle claim persistence", () => {
         lifecycleOperationClaimedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
         lifecycleOperationAttemptId: staleAttemptId,
         lifecycleOperationName: "archive",
+        lifecycleOperationExpectedRunStatus: "Review",
+        lifecycleOperationLeaseExpiresAt: new Date(Date.now() - 60 * 60 * 1000),
       })
       .where(eq(schema.workspaces.id, workspaceId));
 

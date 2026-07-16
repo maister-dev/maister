@@ -6,12 +6,11 @@
 > reusing the existing run status enum, workspace archive columns, supervisor
 > session model, and git worktree helpers.
 
-## ADR-140 target contract (Designed)
+## ADR-142 lifecycle contract (Implemented)
 
-ADR-140 replaces the conflicting M19/M27 workspace-retention behavior in this
+ADR-142 replaces the conflicting M19/M27 workspace-retention behavior in this
 document. A run's status is immutable execution history; workspace presence is
-a separate axis. The existing sections below describe the shipped baseline until
-the implementation phases complete.
+a separate axis. The behavior below is implemented.
 
 | Status | Automatic cleanup | Archive | Drop / Discard |
 | --- | --- | --- | --- |

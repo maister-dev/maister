@@ -420,10 +420,7 @@ export async function runWorkspaceGcSweep(
       .update(workspaces)
       .set({ scheduledRemovalAt: retryAt })
       .where(
-        and(
-          eq(workspaces.id, cand.workspaceId),
-          isNull(workspaces.removedAt),
-        ),
+        and(eq(workspaces.id, cand.workspaceId), isNull(workspaces.removedAt)),
       );
 
     log.warn(
@@ -469,6 +466,7 @@ export async function runWorkspaceGcSweep(
         operation: "retention_gc",
         expectedRunStatus: cand.runStatus,
       });
+
       attemptId = claim.attemptId;
 
       // §3.3 pruned-not-marked recovery: a prior tick removed the worktree but
@@ -624,9 +622,7 @@ export async function runWorkspaceGcSweep(
               workspaceId: cand.workspaceId,
               runId: cand.runId,
               errorType:
-                finalizeError instanceof Error
-                  ? finalizeError.name
-                  : "unknown",
+                finalizeError instanceof Error ? finalizeError.name : "unknown",
             },
             "workspace GC failed to persist retry state",
           );

@@ -166,6 +166,7 @@ async function seed(opts: SeedOpts = {}): Promise<{
   const runId = randomUUID();
   const workspaceId = randomUUID();
   const worktreePath = opts.worktreePath ?? `/worktrees/wsgc-${runId}`;
+  const removedAt = opts.removedAt ?? null;
 
   await db.insert(tasks).values({
     number: Math.trunc(Math.random() * 1e9) + 1,
@@ -199,7 +200,9 @@ async function seed(opts: SeedOpts = {}): Promise<{
     branch: `maister/${runId}`,
     worktreePath,
     parentRepoPath: projectRepoPath,
-    removedAt: opts.removedAt ?? null,
+    removedAt,
+    removalKind: removedAt === null ? null : "retention_gc",
+    preservationOutcome: removedAt === null ? null : "not_needed",
     scheduledRemovalAt:
       opts.scheduledRemovalAt === undefined ? null : opts.scheduledRemovalAt,
   });

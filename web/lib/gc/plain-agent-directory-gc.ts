@@ -106,7 +106,9 @@ export async function removeOwnedPlainAgentDirectory(args: {
     );
   }
 
-  const pathSegments = path.relative(resolvedRoot, resolvedTarget).split(path.sep);
+  const pathSegments = path
+    .relative(resolvedRoot, resolvedTarget)
+    .split(path.sep);
 
   if (pathSegments.length !== 2) {
     throw new MaisterError(
@@ -159,7 +161,11 @@ export async function runPlainAgentDirectoryGcSweep(
   let failed = 0;
 
   for (const candidate of candidates) {
-    const directoryPath = path.join(root, candidate.projectSlug, candidate.runId);
+    const directoryPath = path.join(
+      root,
+      candidate.projectSlug,
+      candidate.runId,
+    );
 
     try {
       await restore(directoryPath, candidate.runId);

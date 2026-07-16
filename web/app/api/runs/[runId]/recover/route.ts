@@ -122,7 +122,8 @@ function errorBodyForState(state: RecoverErrorState): {
     case "workspace-removed":
       return {
         code: "PRECONDITION",
-        message: "run workspace was removed; archived history cannot be recovered",
+        message:
+          "run workspace was removed; archived history cannot be recovered",
       };
     case "unresumable":
       return {

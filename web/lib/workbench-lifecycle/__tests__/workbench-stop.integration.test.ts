@@ -326,10 +326,9 @@ describe("workbench stop — scratch runs", () => {
       promoteNextPending: vi.fn(async () => undefined),
       finalizeAgentRun: vi.fn(async () => ({ finalized: true })),
       cleanupAgentMaterializations: vi.fn(async () => undefined),
-      stopScratchWorkbench: vi.fn(async () => ({
-        runStatus: "Review" as const,
-        supervisorStopped: false,
-      })),
+      stopScratchWorkbench: vi.fn(async (scratchRunId: string) =>
+        stopScratchWorkbench(scratchRunId, { db }),
+      ),
       assertWorkspaceRemovalAllowed: vi.fn(async () => undefined),
       preserveWorktree: vi.fn(async () => ({
         ok: true,

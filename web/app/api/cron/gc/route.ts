@@ -30,7 +30,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   );
 
   return NextResponse.json(summary, {
-    status: summary.failedCount > 0 ? 207 : summary.claimedCount === 0 ? 202 : 200,
+    status:
+      summary.failedCount > 0 ? 207 : summary.claimedCount === 0 ? 202 : 200,
   });
 }
 

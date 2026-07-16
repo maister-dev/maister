@@ -190,7 +190,9 @@ test.describe("M19 reconcile + GC UI", () => {
 });
 
 test.describe("M19 cron GC auth gate", () => {
-  test("(d) wrong token → 401, valid token → scheduler tick summary", async ({ request }) => {
+  test("(d) wrong token → 401, valid token → scheduler tick summary", async ({
+    request,
+  }) => {
     // Wrong token → 401 (the running webServer HAS MAISTER_CRON_TOKEN set, so a
     // mismatch is unauthorized, not "disabled"). The 503 disabled case (token
     // env unset) is covered by the route integration test.

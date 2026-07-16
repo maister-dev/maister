@@ -85,10 +85,7 @@ export function deriveStage(input: DeriveStageInput): BoardColumn {
 
   // A user-removed workspace turns a parked Review/Crashed result into
   // historical evidence. It must not keep the task in a non-relaunchable lane.
-  if (
-    workspaceRemoved &&
-    (runStatus === "Review" || runStatus === "Crashed")
-  ) {
+  if (workspaceRemoved && (runStatus === "Review" || runStatus === "Crashed")) {
     return "Backlog";
   }
 

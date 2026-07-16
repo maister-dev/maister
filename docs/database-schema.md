@@ -1931,7 +1931,8 @@ and `removed_at IS NOT NULL` has a non-null allowed `removal_kind`.
 index supporting stale-claim lease scans, backfills only existing removed rows,
 and has no filesystem/Git action.
 
-**(ADR-148 — Implemented, migration `0116`, additive.)**
+**(ADR-148 — Implemented, migration `0116`, additive.)** The same migration
+also creates
 `workspace_reconciliation_findings` is the durable, report-first observation
 ledger for disk-only candidates. It records deterministic canonical-path /
 provenance identity, optional correlated run/project/workspace, candidate kind,

@@ -737,13 +737,19 @@ export default async function ProjectBoardPage({
               catchup_queued: tAutomations("outcomes.catchup_queued"),
               skipped_task_busy: tAutomations("outcomes.skipped_task_busy"),
               skipped_cap: tAutomations("outcomes.skipped_cap"),
-              skipped_target_terminal: tAutomations("outcomes.skipped_target_terminal"),
+              skipped_target_terminal: tAutomations(
+                "outcomes.skipped_target_terminal",
+              ),
               skipped_crashed: tAutomations("outcomes.skipped_crashed"),
               skipped_flagged: tAutomations("outcomes.skipped_flagged"),
               skipped_blocked: tAutomations("outcomes.skipped_blocked"),
-              skipped_unconfigured: tAutomations("outcomes.skipped_unconfigured"),
+              skipped_unconfigured: tAutomations(
+                "outcomes.skipped_unconfigured",
+              ),
               launch_failed: tAutomations("outcomes.launch_failed"),
-              incompatible_disabled: tAutomations("outcomes.incompatible_disabled"),
+              incompatible_disabled: tAutomations(
+                "outcomes.incompatible_disabled",
+              ),
             },
             recurring: tAutomations("recurring"),
             runNow: tAutomations("runNow"),
@@ -970,11 +976,11 @@ function ProjectActiveWorkspaces({
               </Link>
               {workspace.lifecycleActions.length > 0 ? (
                 <WorkbenchLifecycleActions
+                  workspaceAvailable
                   actions={workspace.lifecycleActions}
                   className="px-3 pb-2.5"
                   runId={workspace.runId}
                   runKind={workspace.runKind}
-                  workspaceAvailable
                 />
               ) : null}
             </li>

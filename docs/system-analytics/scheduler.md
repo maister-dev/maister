@@ -1,6 +1,6 @@
 # Scheduler service domain
 
-## ADR-140 target contract (Designed)
+## ADR-142 workspace cleanup contract (Implemented)
 
 `system_sweep.default` becomes the single periodic owner of workspace cleanup.
 The timer, `/api/cron/tick`, and the immediate `/api/cron/gc` compatibility

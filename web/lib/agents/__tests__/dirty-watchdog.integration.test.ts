@@ -202,7 +202,9 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
       finalized: true,
       status: "Done",
     });
-    await expect(stat(agentDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(agentDirectory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("reports an unknown agent-materialization descendant as repo_read dirt", async () => {

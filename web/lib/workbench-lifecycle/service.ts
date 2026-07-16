@@ -841,6 +841,7 @@ async function archiveWorkbenchForCtx(
   requireActionAllowed(ctx, "archive", options);
 
   const workspace = workspaceRecord;
+
   log.info(
     {
       runId,
@@ -1313,6 +1314,7 @@ async function dropWorkbenchForCtx(
   await deps.cascadeOrchestratorIfNeeded(ctx.run);
 
   const workspace = workspaceRecord;
+
   log.info(
     {
       runId,

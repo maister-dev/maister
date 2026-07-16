@@ -233,12 +233,12 @@ export function ActiveWorkspaceRow({
     <ActiveWorkspaceRowView
       actions={
         <WorkbenchLifecycleActions
+          workspaceAvailable
           actions={row.lifecycleActions}
           runHref={row.href}
           runId={row.runId}
           runKind={row.runKind}
           runLabel={row.name}
-          workspaceAvailable
           taskKey={row.taskKey}
           taskNumber={row.taskNumber}
           variant="menu"

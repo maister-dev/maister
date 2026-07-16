@@ -320,7 +320,10 @@ describe("workbench lifecycle service", () => {
     const d = deps(shared);
 
     vi.mocked(d.assertWorkspaceRemovalAllowed).mockRejectedValueOnce(
-      new MaisterError("CONFLICT", "shared workspace has 1 actionable sibling run(s)"),
+      new MaisterError(
+        "CONFLICT",
+        "shared workspace has 1 actionable sibling run(s)",
+      ),
     );
 
     await expect(dropWorkbench("run-1", { deps: d })).rejects.toMatchObject({

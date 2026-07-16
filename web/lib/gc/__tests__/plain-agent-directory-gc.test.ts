@@ -62,7 +62,9 @@ describe("plain agent directory cleanup", () => {
   it("leaves a missing terminal directory as an idempotent outcome", async () => {
     await expect(
       runPlainAgentDirectoryGcSweep({
-        candidates: [{ runId: "run-1", projectSlug: "project", status: "Done" }],
+        candidates: [
+          { runId: "run-1", projectSlug: "project", status: "Done" },
+        ],
         restoreMaterialization: vi.fn(async () => undefined),
       }),
     ).resolves.toEqual({ scanned: 1, removed: 0, missing: 1, failed: 0 });

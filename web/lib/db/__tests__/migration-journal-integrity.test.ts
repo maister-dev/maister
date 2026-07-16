@@ -195,5 +195,8 @@ describe("main migration snapshot integrity", () => {
     expect(migration).toContain('WHERE "removed_at" IS NOT NULL');
     expect(migration).toContain('"workspaces_lifecycle_claim_shape_check"');
     expect(migration).toContain('"workspaces_removed_result_check"');
+    expect(migration).toContain(
+      'CREATE TABLE IF NOT EXISTS "workspace_reconciliation_findings"',
+    );
   });
 });

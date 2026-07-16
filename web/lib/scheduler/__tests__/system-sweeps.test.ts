@@ -207,14 +207,6 @@ describe("scheduler system sweeps", () => {
     expect(summary.syncRecovery).toBeNull();
   });
 
-  it("runGcCompatibilitySweep does NOT run the cost-rollup reconcile", async () => {
-    const { runGcCompatibilitySweep } = await import("../system-sweeps");
-
-    await runGcCompatibilitySweep();
-
-    expect(reconcileTerminalCostRollupsMock).not.toHaveBeenCalled();
-  });
-
   it("surfaces deferred and quarantined reconciliation findings", async () => {
     runWorkspaceReconciliationSweepMock.mockResolvedValueOnce({
       scanned: 2,
@@ -232,8 +224,12 @@ describe("scheduler system sweeps", () => {
 
     expect(summary.errors).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("1 workspace reconciliation candidate(s) failed"),
-        expect.stringContaining("1 workspace reconciliation candidate(s) quarantined"),
+        expect.stringContaining(
+          "1 workspace reconciliation candidate(s) failed",
+        ),
+        expect.stringContaining(
+          "1 workspace reconciliation candidate(s) quarantined",
+        ),
       ]),
     );
   });
