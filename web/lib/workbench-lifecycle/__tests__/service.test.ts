@@ -68,6 +68,11 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
     pushBranch: vi.fn(async () => undefined),
     claimLifecycleOperation: vi.fn(async () => ({
       attemptId: "lifecycle-attempt-1",
+      leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
+    })),
+    renewLifecycleOperationLease: vi.fn(async () => ({
+      attemptId: "lifecycle-attempt-1",
+      leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
     })),
     finalizeLifecycleOperation: vi.fn(async () => undefined),
     listRemotes: vi.fn(async () => ["origin"]),
@@ -91,7 +96,7 @@ describe("workbench lifecycle service", () => {
     expect(d.recordArchive).not.toHaveBeenCalled();
   });
 
-  it("archive records the archive branch only after preserve succeeds", async () => {
+  it("archive persists preservation before removing the worktree", async () => {
     const d = deps(context());
 
     const result = await archiveWorkbench("run-1", { deps: d });
@@ -113,17 +118,29 @@ describe("workbench lifecycle service", () => {
       runId: "run-1",
       workspaceId: "workspace-1",
       operation: "archive",
+      expectedRunStatus: "Review",
     });
     expect(d.recordArchive).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
+      attemptId: "lifecycle-attempt-1",
       archivedBranch: "maister/archive/run-1",
       archivedAt: new Date("2026-06-09T08:00:00.000Z"),
+      archivedCommit: null,
+      preservationOutcome: "snapshot_created",
     });
-    expect(d.finalizeLifecycleOperation).toHaveBeenCalledWith({
-      workspaceId: "workspace-1",
-      attemptId: "lifecycle-attempt-1",
-      state: "done",
+    expect(d.removeOwnedWorktree).toHaveBeenCalledWith({
+      projectRepoPath: "/tmp/repo",
+      worktreePath: "/tmp/maister/worktrees/run-1",
+      allowedRoot: "/tmp/maister/worktrees",
+      force: true,
     });
+    expect(d.recordDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptId: "lifecycle-attempt-1",
+        removalKind: "archive",
+        preservationOutcome: "snapshot_created",
+      }),
+    );
   });
 
   it("archive refuses to mutate DB state when preservation fails", async () => {
@@ -167,9 +184,13 @@ describe("workbench lifecycle service", () => {
     vi.mocked(d.recordDrop).mockImplementationOnce(async () => {
       order.push("record");
     });
-    vi.mocked(d.finalizeLifecycleOperation).mockImplementationOnce(async () => {
-      order.push("finalize");
-    });
+    vi.mocked(d.renewLifecycleOperationLease).mockImplementationOnce(
+      async () => {
+        order.push("renew");
+
+        return { attemptId: "lifecycle-attempt-1" };
+      },
+    );
 
     const result = await dropWorkbench("run-1", { deps: d });
 
@@ -178,13 +199,7 @@ describe("workbench lifecycle service", () => {
       runStatus: "Abandoned",
       workspaceRemoved: true,
     });
-    expect(order).toEqual([
-      "claim",
-      "preserve",
-      "remove",
-      "record",
-      "finalize",
-    ]);
+    expect(order).toEqual(["claim", "preserve", "renew", "remove", "record"]);
     expect(d.recordDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: "run-1",
@@ -286,6 +301,7 @@ describe("workbench lifecycle service", () => {
       runId: "run-1",
       workspaceId: "workspace-1",
       operation: "exportBranch",
+      expectedRunStatus: "Review",
     });
     expect(d.finalizeLifecycleOperation).toHaveBeenCalledWith({
       workspaceId: "workspace-1",

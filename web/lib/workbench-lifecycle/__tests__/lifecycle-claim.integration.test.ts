@@ -144,10 +144,16 @@ describe("workbench lifecycle claim persistence", () => {
       runId,
       workspaceId,
       operation: "archive",
+      expectedRunStatus: "Review",
     });
 
     await expect(
-      claimLifecycleOperation({ runId, workspaceId, operation: "drop" }),
+      claimLifecycleOperation({
+        runId,
+        workspaceId,
+        operation: "drop",
+        expectedRunStatus: "Review",
+      }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
 
     await finalizeLifecycleOperation({
@@ -160,6 +166,7 @@ describe("workbench lifecycle claim persistence", () => {
       runId,
       workspaceId,
       operation: "drop",
+      expectedRunStatus: "Review",
     });
 
     await finalizeLifecycleOperation({
@@ -203,6 +210,7 @@ describe("workbench lifecycle claim persistence", () => {
       runId,
       workspaceId,
       operation: "drop",
+      expectedRunStatus: "Review",
     });
 
     expect(claim.attemptId).not.toBe(staleAttemptId);
@@ -242,6 +250,10 @@ describe("workbench lifecycle claim persistence", () => {
         nextRunStatus: "Abandoned",
         archivedBranch: null,
         archivedAt: null,
+        archivedCommit: null,
+        preservationOutcome: "not_needed",
+        removalKind: "drop",
+        attemptId: randomUUID(),
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
 

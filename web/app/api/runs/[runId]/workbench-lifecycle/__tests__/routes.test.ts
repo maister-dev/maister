@@ -58,6 +58,11 @@ describe("workbench lifecycle route wrappers", () => {
     vi.mocked(lifecycleService.stopThenArchive).mockResolvedValueOnce({
       ok: true,
       runId: "run-1",
+      operation: "archive",
+      runStatus: "Review",
+      workspaceRemoved: true,
+      idempotent: false,
+      preservationOutcome: "snapshot_created",
       archived: true,
       archivedBranch: "maister/archive/run-1",
       snapshotted: true,
@@ -82,8 +87,11 @@ describe("workbench lifecycle route wrappers", () => {
     vi.mocked(lifecycleService.stopThenDrop).mockResolvedValueOnce({
       ok: true,
       runId: "run-1",
+      operation: "drop",
       runStatus: "Abandoned",
       workspaceRemoved: true,
+      idempotent: false,
+      preservationOutcome: "snapshot_created",
       archivedBranch: "maister/archive/run-1",
       supervisorStopped: true,
     });
@@ -107,6 +115,11 @@ describe("workbench lifecycle route wrappers", () => {
     vi.mocked(lifecycleService.archiveWorkbench).mockResolvedValueOnce({
       ok: true,
       runId: "run-1",
+      operation: "archive",
+      runStatus: "Review",
+      workspaceRemoved: true,
+      idempotent: false,
+      preservationOutcome: "snapshot_created",
       archived: true,
       archivedBranch: "maister/archive/run-1",
       snapshotted: true,
@@ -129,8 +142,11 @@ describe("workbench lifecycle route wrappers", () => {
     vi.mocked(lifecycleService.dropWorkbench).mockResolvedValueOnce({
       ok: true,
       runId: "run-1",
+      operation: "drop",
       runStatus: "Abandoned",
       workspaceRemoved: true,
+      idempotent: false,
+      preservationOutcome: "snapshot_created",
       archivedBranch: "maister/archive/run-1",
     });
 

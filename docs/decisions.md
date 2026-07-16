@@ -12750,8 +12750,8 @@ the user acts; runtime JSONL/evidence retention is deliberately out of scope.
 
 **Consequences:**
 
-- Migration `0115` extends the workspace lifecycle claim/result and migration
-  `0116` introduces reconciliation findings. Existing removed rows are marked
+- Migration `0116` extends the workspace lifecycle claim/result and migration
+  `0117` adds reconciliation integrity checks. Existing removed rows are marked
   `legacy`/`legacy_unknown`; no historical intent is invented.
 - Public lifecycle actions retain empty bodies and use `recoverRun` membership.
   Their common success response includes operation, retained run status,

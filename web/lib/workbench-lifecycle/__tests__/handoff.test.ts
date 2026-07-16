@@ -91,6 +91,11 @@ function deps(ctx: LifecycleContext = context()): HandoffDeps {
     pushBranch: vi.fn(async () => undefined),
     claimLifecycleOperation: vi.fn(async () => ({
       attemptId: "lifecycle-attempt-1",
+      leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
+    })),
+    renewLifecycleOperationLease: vi.fn(async () => ({
+      attemptId: "lifecycle-attempt-1",
+      leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
     })),
     finalizeLifecycleOperation: vi.fn(async () => undefined),
     listRemotes: vi.fn(async () => ["origin", "backup"]),
@@ -161,6 +166,7 @@ describe("workbench lifecycle handoff services", () => {
       runId: "run-1",
       workspaceId: "workspace-1",
       operation: "snapshotCommit",
+      expectedRunStatus: "Review",
     });
     expect(d.snapshotDirtyWorktree).toHaveBeenCalledWith({
       worktreePath: "/tmp/maister/worktrees/run-1",
@@ -364,6 +370,7 @@ describe("workbench lifecycle handoff services", () => {
       runId: "run-1",
       workspaceId: "workspace-1",
       operation: "handoffBranch",
+      expectedRunStatus: "Review",
     });
     expect(d.createBranchAtHead).toHaveBeenCalledWith({
       worktreePath: "/tmp/maister/worktrees/run-1",

@@ -157,14 +157,43 @@ describe("main migration snapshot integrity", () => {
     ).toBe(true);
   });
 
-  it("registers the canonical Create Flow journal migration as the newest main lineage entry", () => {
-    const newest = journalEntries(MAIN_MIGRATIONS_DIR).at(-1);
+  it("registers the canonical Create Flow migration", () => {
+    const migration = journalEntries(MAIN_MIGRATIONS_DIR).find((entry) =>
+      /^0115_/.test(entry.tag),
+    );
 
-    expect(newest, "main migration journal must have entries").toBeDefined();
-    expect(newest?.tag).toMatch(/^0115_/);
+    expect(migration, "0115 must be registered").toBeDefined();
     expect(
-      newest && existsSync(join(MAIN_MIGRATIONS_DIR, `${newest.tag}.sql`)),
+      migration &&
+        existsSync(join(MAIN_MIGRATIONS_DIR, `${migration.tag}.sql`)),
       "0115 must register the local-package creation-state SQL migration",
     ).toBe(true);
+  });
+
+  it("registers the ADR-148 lifecycle-result migration", () => {
+    const migration = journalEntries(MAIN_MIGRATIONS_DIR).find(
+      (entry) => entry.tag === "0116_keen_talisman",
+    );
+
+    if (!migration) {
+      throw new Error("expected ADR-148 lifecycle migration");
+    }
+
+    expect(existsSync(join(MAIN_MIGRATIONS_DIR, `${migration.tag}.sql`))).toBe(
+      true,
+    );
+  });
+
+  it("backfills only removed workspaces as legacy lifecycle results", () => {
+    const migration = readFileSync(
+      join(MAIN_MIGRATIONS_DIR, "0116_keen_talisman.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("\"removal_kind\" = 'legacy'");
+    expect(migration).toContain("\"preservation_outcome\" = 'legacy_unknown'");
+    expect(migration).toContain('WHERE "removed_at" IS NOT NULL');
+    expect(migration).toContain('"workspaces_lifecycle_claim_shape_check"');
+    expect(migration).toContain('"workspaces_removed_result_check"');
   });
 });

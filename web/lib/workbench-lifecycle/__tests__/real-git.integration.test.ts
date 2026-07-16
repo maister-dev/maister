@@ -156,7 +156,14 @@ function realGitDeps(
     statusPorcelain,
     snapshotDirtyWorktree,
     pushBranch,
-    claimLifecycleOperation: vi.fn(async () => ({ attemptId: "attempt-real" })),
+    claimLifecycleOperation: vi.fn(async () => ({
+      attemptId: "attempt-real",
+      leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
+    })),
+    renewLifecycleOperationLease: vi.fn(async () => ({
+      attemptId: "attempt-real",
+      leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
+    })),
     finalizeLifecycleOperation: vi.fn(async () => undefined),
     listRemotes,
     headCommit,
@@ -345,7 +352,7 @@ describe("workbench lifecycle real git integration", () => {
     expect(remoteRef).toContain(snapshot.commit);
   });
 
-  it("archive preserves dirty work in an archive ref before DB archive state", async () => {
+  it("archive preserves dirty work before removing the owned worktree", async () => {
     const workbench = await createGitWorkbench("run-archive");
     const store = records();
     const deps = realGitDeps(
@@ -368,9 +375,11 @@ describe("workbench lifecycle real git integration", () => {
     expect(store.archives[0]?.archivedBranch).toBe(
       `maister/archive/${workbench.runId}`,
     );
+    expect(store.drops).toHaveLength(1);
+    expect(await pathExists(workbench.worktree)).toBe(false);
 
     const archived = await git(
-      workbench.worktree,
+      workbench.repo,
       "show",
       `maister/archive/${workbench.runId}:archive-note.txt`,
     );

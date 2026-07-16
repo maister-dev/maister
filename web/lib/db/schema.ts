@@ -3478,6 +3478,31 @@ export const repoDeliveryRollups = pgTable(
   }),
 );
 
+export type WorkspaceLifecycleOperationName =
+  | "archive"
+  | "drop"
+  | "discard"
+  | "retention_gc"
+  | "reconciliation"
+  | "exportBranch"
+  | "snapshotCommit"
+  | "handoffBranch"
+  | "sync";
+
+export type WorkspacePreservationOutcome =
+  | "not_needed"
+  | "ref_created"
+  | "snapshot_created"
+  | "legacy_unknown";
+
+export type WorkspaceRemovalKind =
+  | "archive"
+  | "drop"
+  | "discard"
+  | "retention_gc"
+  | "reconciliation"
+  | "legacy";
+
 export const workspaces = pgTable(
   "workspaces",
   {
@@ -3501,6 +3526,11 @@ export const workspaces = pgTable(
     }),
     archivedBranch: text("archived_branch"),
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+    archivedCommit: text("archived_commit"),
+    preservationOutcome: text(
+      "preservation_outcome",
+    ).$type<WorkspacePreservationOutcome | null>(),
+    removalKind: text("removal_kind").$type<WorkspaceRemovalKind | null>(),
     baseBranch: text("base_branch"),
     baseCommit: text("base_commit"),
     targetBranch: text("target_branch"),
@@ -3529,8 +3559,17 @@ export const workspaces = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    lifecycleOperationLeaseExpiresAt: timestamp(
+      "lifecycle_operation_lease_expires_at",
+      { withTimezone: true, mode: "date" },
+    ),
     lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
-    lifecycleOperationName: text("lifecycle_operation_name"),
+    lifecycleOperationName: text(
+      "lifecycle_operation_name",
+    ).$type<WorkspaceLifecycleOperationName | null>(),
+    lifecycleOperationExpectedRunStatus: text(
+      "lifecycle_operation_expected_run_status",
+    ),
     // ADR-140 (migration 0105): PR lifecycle tracking. `pr_state` NULL = never
     // scanned, and is written ONLY from a SUCCESSFUL provider read — a failed
     // read leaves it untouched, because no writer here could ever undo a wrong
@@ -3544,6 +3583,44 @@ export const workspaces = pgTable(
     prMergeCommitSha: text("pr_merge_commit_sha"),
   },
   (t) => ({
+    lifecycleClaimIndex: index("workspaces_lifecycle_claim_idx").on(
+      t.lifecycleOperationState,
+      t.lifecycleOperationLeaseExpiresAt,
+    ),
+    lifecycleClaimShapeCheck: check(
+      "workspaces_lifecycle_claim_shape_check",
+      sql`(
+        (${t.lifecycleOperationState} = 'none'
+          AND ${t.lifecycleOperationAttemptId} IS NULL
+          AND ${t.lifecycleOperationName} IS NULL
+          AND ${t.lifecycleOperationExpectedRunStatus} IS NULL
+          AND ${t.lifecycleOperationLeaseExpiresAt} IS NULL)
+        OR
+        (${t.lifecycleOperationState} = 'claiming'
+          AND ${t.lifecycleOperationAttemptId} IS NOT NULL
+          AND ${t.lifecycleOperationName} IS NOT NULL
+          AND ${t.lifecycleOperationExpectedRunStatus} IS NOT NULL
+          AND ${t.lifecycleOperationLeaseExpiresAt} IS NOT NULL)
+        OR
+        (${t.lifecycleOperationState} = 'failed'
+          AND ${t.lifecycleOperationAttemptId} IS NOT NULL
+          AND ${t.lifecycleOperationName} IS NOT NULL
+          AND ${t.lifecycleOperationExpectedRunStatus} IS NOT NULL
+          AND ${t.lifecycleOperationLeaseExpiresAt} IS NULL)
+      )`,
+    ),
+    preservationOutcomeCheck: check(
+      "workspaces_preservation_outcome_check",
+      sql`${t.preservationOutcome} IS NULL OR ${t.preservationOutcome} IN ('not_needed', 'ref_created', 'snapshot_created', 'legacy_unknown')`,
+    ),
+    removalKindCheck: check(
+      "workspaces_removal_kind_check",
+      sql`${t.removalKind} IS NULL OR ${t.removalKind} IN ('archive', 'drop', 'discard', 'retention_gc', 'reconciliation', 'legacy')`,
+    ),
+    removedWorkspaceResultCheck: check(
+      "workspaces_removed_result_check",
+      sql`${t.removedAt} IS NULL OR ${t.removalKind} IS NOT NULL`,
+    ),
     prStateCheck: check(
       "workspaces_pr_state_check",
       sql`${t.prState} in ('open', 'merged', 'closed')`,

@@ -60,7 +60,10 @@ function claimOnce(): WorkbenchLifecycleDeps["claimLifecycleOperation"] {
 
       claimed = true;
 
-      return { attemptId: "attempt-1" };
+      return {
+        attemptId: "attempt-1",
+        leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
+      };
     },
   );
 }
@@ -90,6 +93,10 @@ function deps(
     snapshotDirtyWorktree: vi.fn(async () => true),
     pushBranch: vi.fn(async () => undefined),
     claimLifecycleOperation: claimOnce(),
+    renewLifecycleOperationLease: vi.fn(async () => ({
+      attemptId: "attempt-1",
+      leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
+    })),
     finalizeLifecycleOperation: vi.fn(async () => undefined),
     listRemotes: vi.fn(async () => ["origin"]),
     headCommit: vi.fn(async () => "abc1234"),
@@ -125,7 +132,8 @@ describe("workbench lifecycle race/idempotency", () => {
 
     expect(d.preserveWorktree).toHaveBeenCalledTimes(1);
     expect(d.recordArchive).toHaveBeenCalledTimes(1);
-    expect(d.finalizeLifecycleOperation).toHaveBeenCalledTimes(1);
+    expect(d.removeOwnedWorktree).toHaveBeenCalledTimes(1);
+    expect(d.recordDrop).toHaveBeenCalledTimes(1);
   });
 
   it("allows only one drop owner to preserve, remove, and record removal", async () => {

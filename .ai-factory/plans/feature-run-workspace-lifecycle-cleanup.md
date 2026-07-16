@@ -848,7 +848,7 @@ pnpm --filter maister-web typecheck
 
 ### Phase 2 — Canonical explicit lifecycle removal
 
-- [ ] **Task 8: RED — lock migration 0105 and durable lifecycle-result behavior.**
+- [x] **Task 8: RED — lock migration 0105 and durable lifecycle-result behavior.**
   - **Files:** `web/lib/db/__tests__/migration-journal-integrity.test.ts`,
     schema/migration integration tests, and new lifecycle-result repository
     integration tests.
@@ -862,7 +862,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** RED covers fresh and upgrade schemas and demonstrates why
     `archived_at` plus a cleared claim cannot distinguish Archive/Drop/GC.
 
-- [ ] **Task 9: GREEN — generate migration 0105 and persist lifecycle results.**
+- [x] **Task 9: GREEN — generate migration 0105 and persist lifecycle results.**
   - **Files:** `web/lib/db/schema.ts`, generated `0105_*.sql`,
     `web/lib/db/migrations/meta/_journal.json`,
     `web/lib/db/migrations/meta/0105_snapshot.json`, and focused lifecycle

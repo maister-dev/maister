@@ -339,6 +339,11 @@ describe("workbench stop — scratch runs", () => {
       pushBranch: vi.fn(async () => undefined),
       claimLifecycleOperation: vi.fn(async () => ({
         attemptId: "scratch-archive-attempt",
+        leaseExpiresAt: new Date("2026-06-16T08:05:00.000Z"),
+      })),
+      renewLifecycleOperationLease: vi.fn(async () => ({
+        attemptId: "scratch-archive-attempt",
+        leaseExpiresAt: new Date("2026-06-16T08:05:00.000Z"),
       })),
       finalizeLifecycleOperation: vi.fn(async () => undefined),
       listRemotes: vi.fn(async () => ["origin"]),

@@ -28,8 +28,10 @@ export interface PreserveWorktreeArgs {
 
 export interface PreserveResult {
   ok: boolean;
+  archivedCommit?: string;
   archivedBranch?: string;
   archivedAt?: Date;
+  preservationOutcome?: "not_needed" | "ref_created" | "snapshot_created";
   snapshotted?: boolean;
 }
 
@@ -77,6 +79,9 @@ export async function preserveWorktree(
 
     if (dirty || diverged) {
       await git(worktreePath, ["branch", "-f", archiveBranch, "HEAD"]);
+      const archivedCommit = (
+        await git(worktreePath, ["rev-parse", "HEAD"])
+      ).trim();
 
       if (args.archivePush) {
         const remotes = (await git(worktreePath, ["remote"])).trim();
@@ -110,8 +115,10 @@ export async function preserveWorktree(
 
       return {
         ok: true,
+        archivedCommit,
         archivedBranch: archiveBranch,
         archivedAt: new Date(),
+        preservationOutcome: dirty ? "snapshot_created" : "ref_created",
         snapshotted: dirty,
       };
     }
@@ -119,13 +126,12 @@ export async function preserveWorktree(
     // Clean tree with no divergence — nothing to preserve.
     log.debug({ runId }, "GC preserve: clean, nothing to archive");
 
-    return { ok: true };
+    return { ok: true, preservationOutcome: "not_needed" };
   } catch (err) {
     log.warn(
       {
         runId,
-        worktreePath,
-        err: err instanceof Error ? err.message : String(err),
+        errorType: err instanceof Error ? err.name : "unknown",
       },
       "GC preserve failed — caller MUST skip removal",
     );

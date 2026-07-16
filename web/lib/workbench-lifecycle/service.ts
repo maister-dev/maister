@@ -3,10 +3,14 @@ import "server-only";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ZodType } from "zod";
 import type { ProjectAction } from "@/lib/authz";
+import type {
+  WorkspacePreservationOutcome,
+  WorkspaceRemovalKind,
+} from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
@@ -65,6 +69,9 @@ type LifecycleOperationState = "done" | "failed";
 export type LifecycleOperationName =
   | "archive"
   | "drop"
+  | "discard"
+  | "retention_gc"
+  | "reconciliation"
   | "exportBranch"
   | "snapshotCommit"
   | "handoffBranch"
@@ -74,6 +81,7 @@ export type LifecycleOperationName =
 
 export type LifecycleOperationClaim = {
   attemptId: string;
+  leaseExpiresAt?: Date;
 };
 
 export type LifecycleProject = {
@@ -102,6 +110,9 @@ export type LifecycleWorkspace = {
   removedAt: Date | null;
   archivedBranch: string | null;
   archivedAt: Date | null;
+  archivedCommit?: string | null;
+  preservationOutcome?: WorkspacePreservationOutcome | null;
+  removalKind?: WorkspaceRemovalKind | null;
   baseBranch: string | null;
   baseCommit: string | null;
 };
@@ -114,8 +125,11 @@ export type LifecycleContext = {
 
 export type RecordArchiveInput = {
   workspaceId: string;
-  archivedBranch: string;
+  attemptId: string;
+  archivedBranch: string | null;
   archivedAt: Date;
+  archivedCommit: string | null;
+  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
 };
 
 export type RecordDropInput = {
@@ -127,6 +141,10 @@ export type RecordDropInput = {
   nextRunStatus: WorkbenchRunStatus | null;
   archivedBranch: string | null;
   archivedAt: Date | null;
+  archivedCommit: string | null;
+  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
+  removalKind: Exclude<WorkspaceRemovalKind, "legacy">;
+  attemptId: string;
 };
 
 export type WorkbenchLifecycleDeps = {
@@ -172,6 +190,11 @@ export type WorkbenchLifecycleDeps = {
     runId: string;
     workspaceId: string;
     operation: LifecycleOperationName;
+    expectedRunStatus: WorkbenchRunStatus;
+  }) => Promise<LifecycleOperationClaim>;
+  renewLifecycleOperationLease: (args: {
+    workspaceId: string;
+    attemptId: string;
   }) => Promise<LifecycleOperationClaim>;
   finalizeLifecycleOperation: (args: {
     workspaceId: string;
@@ -208,6 +231,11 @@ export type WorkbenchLifecycleOptions = {
 export type ArchiveWorkbenchResult = {
   ok: true;
   runId: string;
+  operation: "archive";
+  runStatus: WorkbenchRunStatus;
+  workspaceRemoved: true;
+  idempotent: boolean;
+  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
   archived: boolean;
   archivedBranch: string | null;
   snapshotted: boolean;
@@ -216,8 +244,11 @@ export type ArchiveWorkbenchResult = {
 export type DropWorkbenchResult = {
   ok: true;
   runId: string;
+  operation: "drop" | "discard";
   runStatus: WorkbenchRunStatus;
-  workspaceRemoved: boolean;
+  workspaceRemoved: true;
+  idempotent: boolean;
+  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
   archivedBranch: string | null;
 };
 
@@ -369,7 +400,7 @@ function requireActionAllowed(
   );
 }
 
-function requireWorkspace(ctx: LifecycleContext): LifecycleWorkspace {
+function requireWorkspaceRecord(ctx: LifecycleContext): LifecycleWorkspace {
   if (ctx.workspace === null) {
     throw new MaisterError(
       "PRECONDITION",
@@ -377,14 +408,20 @@ function requireWorkspace(ctx: LifecycleContext): LifecycleWorkspace {
     );
   }
 
-  if (ctx.workspace.removedAt !== null) {
+  return ctx.workspace;
+}
+
+function requireWorkspace(ctx: LifecycleContext): LifecycleWorkspace {
+  const workspace = requireWorkspaceRecord(ctx);
+
+  if (workspace.removedAt !== null) {
     throw new MaisterError(
       "PRECONDITION",
       `workbench run ${ctx.run.id} workspace was already removed`,
     );
   }
 
-  return ctx.workspace;
+  return workspace;
 }
 
 function validateInput<T>(
@@ -452,21 +489,20 @@ function defaultRemoteFor(remotes: string[]): string | null {
 
 function canReclaimLifecycle(workspace: {
   lifecycleOperationState?: string | null;
-  lifecycleOperationClaimedAt?: Date | null;
+  lifecycleOperationLeaseExpiresAt?: Date | null;
 }): boolean {
   const state = workspace.lifecycleOperationState ?? "none";
 
   if (LIFECYCLE_RECLAIMABLE_STATES.has(state)) return true;
 
   if (state === "claiming") {
-    const claimedAt = workspace.lifecycleOperationClaimedAt
-      ? new Date(workspace.lifecycleOperationClaimedAt)
+    const leaseExpiresAt = workspace.lifecycleOperationLeaseExpiresAt
+      ? new Date(workspace.lifecycleOperationLeaseExpiresAt)
       : null;
 
-    if (!claimedAt) return true;
-    const cutoffMs = Date.now() - promotionClaimTimeoutSeconds() * 1000;
+    if (!leaseExpiresAt) return true;
 
-    return claimedAt.getTime() < cutoffMs;
+    return leaseExpiresAt.getTime() <= Date.now();
   }
 
   return false;
@@ -503,6 +539,20 @@ async function preservePresentWorkspace(
   return result;
 }
 
+function requirePreservationOutcome(
+  result: PreserveResult,
+): Exclude<WorkspacePreservationOutcome, "legacy_unknown"> {
+  if (result.preservationOutcome !== undefined) {
+    return result.preservationOutcome;
+  }
+
+  if (result.snapshotted === true) return "snapshot_created";
+
+  if (result.archivedBranch !== undefined) return "ref_created";
+
+  return "not_needed";
+}
+
 async function markLifecycleClaimFailed(args: {
   deps: WorkbenchLifecycleDeps;
   workspaceId: string;
@@ -527,34 +577,68 @@ async function markLifecycleClaimFailed(args: {
       {
         workspaceId: args.workspaceId,
         attemptId: args.attemptId,
-        err:
-          finalizeErr instanceof Error
-            ? finalizeErr.message
-            : String(finalizeErr),
+        errorCode:
+          finalizeErr instanceof MaisterError ? finalizeErr.code : "unknown",
       },
       "workbench lifecycle failure finalization failed",
     );
   }
 }
 
-async function recordArchiveIfCreated(
+async function recordPreservation(
   workspace: LifecycleWorkspace,
   result: PreserveResult,
+  attemptId: string,
   deps: WorkbenchLifecycleDeps,
-): Promise<string | null> {
-  if (!result.archivedBranch) {
-    return workspace.archivedBranch;
-  }
-
+): Promise<{
+  archivedAt: Date;
+  archivedBranch: string | null;
+  archivedCommit: string | null;
+  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
+}> {
   const archivedAt = result.archivedAt ?? new Date();
+  const archivedBranch = result.archivedBranch ?? workspace.archivedBranch;
+  const archivedCommit =
+    result.archivedCommit ?? workspace.archivedCommit ?? null;
+  const preservationOutcome = requirePreservationOutcome(result);
 
   await deps.recordArchive({
     workspaceId: workspace.id,
-    archivedBranch: result.archivedBranch,
+    attemptId,
+    archivedBranch,
     archivedAt,
+    archivedCommit,
+    preservationOutcome,
   });
 
-  return result.archivedBranch;
+  return {
+    archivedAt,
+    archivedBranch,
+    archivedCommit,
+    preservationOutcome,
+  };
+}
+
+function isReplayableRemoval(
+  workspace: LifecycleWorkspace,
+  expectedRemovalKind: "archive" | "drop",
+): workspace is LifecycleWorkspace & {
+  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
+} {
+  return (
+    workspace.removedAt !== null &&
+    workspace.removalKind === expectedRemovalKind &&
+    (workspace.preservationOutcome === "not_needed" ||
+      workspace.preservationOutcome === "ref_created" ||
+      workspace.preservationOutcome === "snapshot_created")
+  );
+}
+
+function throwRemovedWorkspaceConflict(workspace: LifecycleWorkspace): never {
+  throw new MaisterError(
+    "CONFLICT",
+    `workbench workspace already removed with a different lifecycle intent: ${workspace.id}`,
+  );
 }
 
 export async function archiveWorkbench(
@@ -580,34 +664,84 @@ async function archiveWorkbenchForCtx(
   deps: WorkbenchLifecycleDeps,
   options?: { allowPausedBudgetRun?: boolean },
 ): Promise<ArchiveWorkbenchResult> {
+  const workspaceRecord = requireWorkspaceRecord(ctx);
+
+  if (workspaceRecord.removedAt !== null) {
+    if (isReplayableRemoval(workspaceRecord, "archive")) {
+      return {
+        ok: true,
+        runId,
+        operation: "archive",
+        runStatus: ctx.run.status,
+        workspaceRemoved: true,
+        idempotent: true,
+        preservationOutcome: workspaceRecord.preservationOutcome,
+        archived: workspaceRecord.preservationOutcome !== "not_needed",
+        archivedBranch: workspaceRecord.archivedBranch,
+        snapshotted: workspaceRecord.preservationOutcome === "snapshot_created",
+      };
+    }
+
+    return throwRemovedWorkspaceConflict(workspaceRecord);
+  }
+
   requireActionAllowed(ctx, "archive", options);
 
-  const workspace = requireWorkspace(ctx);
+  const workspace = workspaceRecord;
   const claim = await deps.claimLifecycleOperation({
     runId,
     workspaceId: workspace.id,
     operation: "archive",
+    expectedRunStatus: ctx.run.status,
   });
 
   try {
     const preserveResult = await preservePresentWorkspace(runId, ctx, deps);
-    const archivedBranch = await recordArchiveIfCreated(
+    const preservation = await recordPreservation(
       workspace,
       preserveResult,
+      claim.attemptId,
       deps,
     );
 
-    await deps.finalizeLifecycleOperation({
+    await deps.renewLifecycleOperationLease({
       workspaceId: workspace.id,
       attemptId: claim.attemptId,
-      state: "done",
+    });
+    await deps.removeOwnedWorktree({
+      projectRepoPath: workspace.parentRepoPath,
+      worktreePath: workspace.worktreePath,
+      allowedRoot: deps.worktreesRoot(),
+      force: true,
+    });
+
+    const removedAt = new Date();
+
+    await deps.recordDrop({
+      runId,
+      runKind: ctx.run.runKind,
+      workspaceId: workspace.id,
+      removedAt,
+      expectedRunStatus: ctx.run.status,
+      nextRunStatus: null,
+      archivedBranch: preservation.archivedBranch,
+      archivedAt: preservation.archivedAt,
+      archivedCommit: preservation.archivedCommit,
+      preservationOutcome: preservation.preservationOutcome,
+      removalKind: "archive",
+      attemptId: claim.attemptId,
     });
 
     return {
       ok: true,
       runId,
-      archived: preserveResult.archivedBranch !== undefined,
-      archivedBranch,
+      operation: "archive",
+      runStatus: ctx.run.status,
+      workspaceRemoved: true,
+      idempotent: false,
+      preservationOutcome: preservation.preservationOutcome,
+      archived: preservation.preservationOutcome !== "not_needed",
+      archivedBranch: preservation.archivedBranch,
       snapshotted: preserveResult.snapshotted === true,
     };
   } catch (err) {
@@ -705,6 +839,7 @@ export async function snapshotWorkbenchCommit(
     runId,
     workspaceId: workspace.id,
     operation: "snapshotCommit",
+    expectedRunStatus: ctx.run.status,
   });
 
   try {
@@ -716,6 +851,10 @@ export async function snapshotWorkbenchCommit(
       worktreePath: workspace.worktreePath,
     });
 
+    await deps.renewLifecycleOperationLease({
+      workspaceId: workspace.id,
+      attemptId: claim.attemptId,
+    });
     await deps.finalizeLifecycleOperation({
       workspaceId: workspace.id,
       attemptId: claim.attemptId,
@@ -850,6 +989,7 @@ export async function createWorkbenchHandoffBranch(
     runId,
     workspaceId: workspace.id,
     operation: "handoffBranch",
+    expectedRunStatus: ctx.run.status,
   });
 
   try {
@@ -868,6 +1008,10 @@ export async function createWorkbenchHandoffBranch(
       });
     }
 
+    await deps.renewLifecycleOperationLease({
+      workspaceId: workspace.id,
+      attemptId: claim.attemptId,
+    });
     await deps.finalizeLifecycleOperation({
       workspaceId: workspace.id,
       attemptId: claim.attemptId,
@@ -946,24 +1090,52 @@ async function dropWorkbenchForCtx(
   ctx: LifecycleContext,
   deps: WorkbenchLifecycleDeps,
 ): Promise<DropWorkbenchResult> {
+  const workspaceRecord = requireWorkspaceRecord(ctx);
+
+  if (workspaceRecord.removedAt !== null) {
+    if (isReplayableRemoval(workspaceRecord, "drop")) {
+      return {
+        ok: true,
+        runId,
+        operation: "drop",
+        runStatus: ctx.run.status,
+        workspaceRemoved: true,
+        idempotent: true,
+        preservationOutcome: workspaceRecord.preservationOutcome,
+        archivedBranch: workspaceRecord.archivedBranch,
+      };
+    }
+
+    return throwRemovedWorkspaceConflict(workspaceRecord);
+  }
+
   requireActionAllowed(ctx, "drop");
 
   // T7.4: a direct drop of a flow orchestrator (no preceding stop) cascades the
   // sub-tree first. After a stop (stopThenDrop) this is an idempotent no-op.
   await deps.cascadeOrchestratorIfNeeded(ctx.run);
 
-  const workspace = requireWorkspace(ctx);
+  const workspace = workspaceRecord;
   const claim = await deps.claimLifecycleOperation({
     runId,
     workspaceId: workspace.id,
     operation: "drop",
+    expectedRunStatus: ctx.run.status,
   });
 
   try {
     const preserveResult = await preservePresentWorkspace(runId, ctx, deps);
-    const archivedBranch =
-      preserveResult.archivedBranch ?? workspace.archivedBranch;
-    const archivedAt = preserveResult.archivedAt ?? workspace.archivedAt;
+    const preservation = await recordPreservation(
+      workspace,
+      preserveResult,
+      claim.attemptId,
+      deps,
+    );
+
+    await deps.renewLifecycleOperationLease({
+      workspaceId: workspace.id,
+      attemptId: claim.attemptId,
+    });
 
     await deps.removeOwnedWorktree({
       projectRepoPath: workspace.parentRepoPath,
@@ -982,21 +1154,23 @@ async function dropWorkbenchForCtx(
       removedAt,
       expectedRunStatus: ctx.run.status,
       nextRunStatus,
-      archivedBranch,
-      archivedAt,
-    });
-    await deps.finalizeLifecycleOperation({
-      workspaceId: workspace.id,
+      archivedBranch: preservation.archivedBranch,
+      archivedAt: preservation.archivedAt,
+      archivedCommit: preservation.archivedCommit,
+      preservationOutcome: preservation.preservationOutcome,
+      removalKind: "drop",
       attemptId: claim.attemptId,
-      state: "done",
     });
 
     return {
       ok: true,
       runId,
+      operation: "drop",
       runStatus: nextRunStatus ?? ctx.run.status,
       workspaceRemoved: true,
-      archivedBranch,
+      idempotent: false,
+      preservationOutcome: preservation.preservationOutcome,
+      archivedBranch: preservation.archivedBranch,
     };
   } catch (err) {
     await markLifecycleClaimFailed({
@@ -1055,6 +1229,7 @@ export async function exportWorkbenchBranch(
     runId,
     workspaceId: workspace.id,
     operation: "exportBranch",
+    expectedRunStatus: ctx.run.status,
   });
 
   try {
@@ -1079,6 +1254,10 @@ export async function exportWorkbenchBranch(
       remote,
       branch: workspace.branch,
       force: args.force,
+    });
+    await deps.renewLifecycleOperationLease({
+      workspaceId: workspace.id,
+      attemptId: claim.attemptId,
     });
     await deps.finalizeLifecycleOperation({
       workspaceId: workspace.id,
@@ -1430,6 +1609,7 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     snapshotDirtyWorktree,
     pushBranch,
     claimLifecycleOperation,
+    renewLifecycleOperationLease,
     finalizeLifecycleOperation,
     listRemotes,
     headCommit,
@@ -1481,6 +1661,9 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
         removedAt: workspaces.removedAt,
         archivedBranch: workspaces.archivedBranch,
         archivedAt: workspaces.archivedAt,
+        archivedCommit: workspaces.archivedCommit,
+        preservationOutcome: workspaces.preservationOutcome,
+        removalKind: workspaces.removalKind,
         baseBranch: workspaces.baseBranch,
         baseCommit: workspaces.baseCommit,
       })
@@ -1504,13 +1687,30 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
 }
 
 async function recordArchive(args: RecordArchiveInput): Promise<void> {
-  await db()
+  const rows = await db()
     .update(workspaces)
     .set({
       archivedBranch: args.archivedBranch,
       archivedAt: args.archivedAt,
+      archivedCommit: args.archivedCommit,
+      preservationOutcome: args.preservationOutcome,
     })
-    .where(eq(workspaces.id, args.workspaceId));
+    .where(
+      and(
+        eq(workspaces.id, args.workspaceId),
+        eq(workspaces.lifecycleOperationAttemptId, args.attemptId),
+        eq(workspaces.lifecycleOperationState, "claiming"),
+        gt(workspaces.lifecycleOperationLeaseExpiresAt, new Date()),
+      ),
+    )
+    .returning({ id: workspaces.id });
+
+  if (rows.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      `lifecycle operation claim lost before preservation recording: ${args.workspaceId}`,
+    );
+  }
 }
 
 export async function recordDrop(args: RecordDropInput): Promise<void> {
@@ -1551,12 +1751,24 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         removedAt: args.removedAt,
         archivedBranch: args.archivedBranch,
         archivedAt: args.archivedAt,
+        archivedCommit: args.archivedCommit,
+        preservationOutcome: args.preservationOutcome,
+        removalKind: args.removalKind,
+        lifecycleOperationState: "none",
+        lifecycleOperationClaimedAt: null,
+        lifecycleOperationLeaseExpiresAt: null,
+        lifecycleOperationAttemptId: null,
+        lifecycleOperationName: null,
+        lifecycleOperationExpectedRunStatus: null,
       })
       .where(
         and(
           eq(workspaces.id, args.workspaceId),
           eq(workspaces.runId, args.runId),
           isNull(workspaces.removedAt),
+          eq(workspaces.lifecycleOperationState, "claiming"),
+          eq(workspaces.lifecycleOperationAttemptId, args.attemptId),
+          gt(workspaces.lifecycleOperationLeaseExpiresAt, new Date()),
         ),
       )
       .returning({ id: workspaces.id });
@@ -1718,13 +1930,15 @@ export async function claimLifecycleOperation(args: {
   runId: string;
   workspaceId: string;
   operation: LifecycleOperationName;
+  expectedRunStatus: WorkbenchRunStatus;
 }): Promise<LifecycleOperationClaim> {
   return db().transaction(async (tx) => {
     const rows = await tx
       .select({
         id: workspaces.id,
         lifecycleOperationState: workspaces.lifecycleOperationState,
-        lifecycleOperationClaimedAt: workspaces.lifecycleOperationClaimedAt,
+        lifecycleOperationLeaseExpiresAt:
+          workspaces.lifecycleOperationLeaseExpiresAt,
       })
       .from(workspaces)
       .where(eq(workspaces.id, args.workspaceId))
@@ -1746,14 +1960,20 @@ export async function claimLifecycleOperation(args: {
     }
 
     const attemptId = randomUUID();
+    const claimedAt = new Date();
+    const leaseExpiresAt = new Date(
+      claimedAt.getTime() + promotionClaimTimeoutSeconds() * 1000,
+    );
 
     await tx
       .update(workspaces)
       .set({
         lifecycleOperationState: "claiming",
-        lifecycleOperationClaimedAt: new Date(),
+        lifecycleOperationClaimedAt: claimedAt,
+        lifecycleOperationLeaseExpiresAt: leaseExpiresAt,
         lifecycleOperationAttemptId: attemptId,
         lifecycleOperationName: args.operation,
+        lifecycleOperationExpectedRunStatus: args.expectedRunStatus,
       })
       .where(eq(workspaces.id, args.workspaceId));
 
@@ -1767,8 +1987,38 @@ export async function claimLifecycleOperation(args: {
       "workbench lifecycle operation claimed",
     );
 
-    return { attemptId };
+    return { attemptId, leaseExpiresAt };
   });
+}
+
+export async function renewLifecycleOperationLease(args: {
+  workspaceId: string;
+  attemptId: string;
+}): Promise<LifecycleOperationClaim> {
+  const leaseExpiresAt = new Date(
+    Date.now() + promotionClaimTimeoutSeconds() * 1000,
+  );
+  const rows = await db()
+    .update(workspaces)
+    .set({ lifecycleOperationLeaseExpiresAt: leaseExpiresAt })
+    .where(
+      and(
+        eq(workspaces.id, args.workspaceId),
+        eq(workspaces.lifecycleOperationState, "claiming"),
+        eq(workspaces.lifecycleOperationAttemptId, args.attemptId),
+        gt(workspaces.lifecycleOperationLeaseExpiresAt, new Date()),
+      ),
+    )
+    .returning({ id: workspaces.id });
+
+  if (rows.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      `lifecycle operation lease lost for workspace ${args.workspaceId}`,
+    );
+  }
+
+  return { attemptId: args.attemptId, leaseExpiresAt };
 }
 
 export async function finalizeLifecycleOperation(args: {
@@ -1781,14 +2031,16 @@ export async function finalizeLifecycleOperation(args: {
       ? {
           lifecycleOperationState: "none",
           lifecycleOperationClaimedAt: null,
+          lifecycleOperationLeaseExpiresAt: null,
           lifecycleOperationAttemptId: null,
           lifecycleOperationName: null,
+          lifecycleOperationExpectedRunStatus: null,
         }
       : {
           lifecycleOperationState: "failed",
           lifecycleOperationClaimedAt: null,
+          lifecycleOperationLeaseExpiresAt: null,
           lifecycleOperationAttemptId: args.attemptId,
-          lifecycleOperationName: null,
         };
 
   const rows = await db()
@@ -1798,6 +2050,12 @@ export async function finalizeLifecycleOperation(args: {
       and(
         eq(workspaces.id, args.workspaceId),
         eq(workspaces.lifecycleOperationAttemptId, args.attemptId),
+        ...(args.state === "done"
+          ? [
+              eq(workspaces.lifecycleOperationState, "claiming"),
+              gt(workspaces.lifecycleOperationLeaseExpiresAt, new Date()),
+            ]
+          : []),
       ),
     )
     .returning({ id: workspaces.id });

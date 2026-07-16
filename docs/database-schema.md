@@ -1843,7 +1843,7 @@ numerator.
                                  //   archive | drop | exportBranch |
                                  //   snapshotCommit | handoffBranch |
                                  //   sync (ADR-141, Implemented; TS-only 6th op)
-  lifecycleOperationLeaseExpiresAt?, // ADR-148 (Implemented, migration 0115)
+  lifecycleOperationLeaseExpiresAt?, // ADR-148 (Implemented, migration 0116)
   lifecycleOperationExpectedRunStatus?, // fenced finalization status
   archivedCommit?,                // exact preservation snapshot/head evidence
   preservationOutcome?,           // not_needed | ref_created | snapshot_created |
@@ -1904,7 +1904,7 @@ that `canReclaim` admits and the auto-promote prefilter excludes. See
 [ADR-140](decisions.md#adr-140-pr-lifecycle-tracking),
 [ADR-141](decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen),
 and [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md).
-**(ADR-148 — Implemented, migration `0115`, additive.)** Lifecycle claims become
+**(ADR-148 — Implemented, migration `0116`, additive.)** Lifecycle claims become
 renewable leases. `lifecycleOperationLeaseExpiresAt` and
 `lifecycleOperationExpectedRunStatus` pair with the existing active attempt,
 name, and state; a failed/stale claim retains those fields until a new fenced
@@ -1916,7 +1916,7 @@ rows are backfilled only as `legacy` / `legacy_unknown`; existing archive facts
 are retained without invented intent. This design distinguishes execution
 history from workspace presence and leaves JSONL/runtime artifacts unchanged.
 
-| `0115` field / invariant | Writer | Reader / retention owner |
+| `0116` field / invariant | Writer | Reader / retention owner |
 | --- | --- | --- |
 | `lifecycle_operation_lease_expires_at` | claim/heartbeat | irreversible-side-effect and finalization fence; cleared only on completed result |
 | `lifecycle_operation_expected_run_status` | claim | finalization CAS; retained with failed/stale intent until a new owner replaces it |
@@ -1924,7 +1924,7 @@ history from workspace presence and leaves JSONL/runtime artifacts unchanged.
 | `preservation_outcome` | preservation persistence | replay/read model; closed set `not_needed|ref_created|snapshot_created|legacy_unknown` |
 | `removal_kind` | successful finalization or legacy backfill | disposition/replay; closed set `archive|drop|discard|retention_gc|reconciliation|legacy` |
 
-`0115` checks require a `claiming` row to have operation name, attempt ID,
+`0116` checks require a `claiming` row to have operation name, attempt ID,
 unexpired lease value, and expected status; `none` has no active claim fields;
 and `removed_at IS NOT NULL` has a non-null allowed `removal_kind`.
 `preservation_outcome='legacy_unknown'` is migration-only. The migration adds an
