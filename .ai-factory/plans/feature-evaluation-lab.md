@@ -874,7 +874,9 @@ Phase 3 exit: unit/integration/contract green; dispatcher wiring and SSE replay 
   - Logging: DEBUG attempt/role/ordinal/digests; INFO launch/terminal; WARN repair/timeout/exclusion; ERROR invalid/poison; never rationale/result/evidence body.
   - Depends on: T3.3.
 
-- [ ] T4.2 RED/GREEN/REFACTOR quorum, aggregation, disagreement, and partial-panel semantics.
+- [~] T4.2 RED/GREEN/REFACTOR quorum, aggregation, disagreement, and partial-panel semantics.
+  - DONE (this session): `lib/evaluations/aggregation/algorithms.ts` — pure `computeAggregate` for weighted_mean@1/median@1/majority@1 (deterministic, unrounded internally + explicit display rounding, invalid-attempt exclusion w/ reason, quorum-vs-valid-count, missing criterion → insufficient_evidence with weight-renormalized total NEVER zero, item/total cap enforcement, majority ties→lowest deterministically). `disagreement.ts` — `classifyDisagreement` over score spread / confidence spread / insufficient-evidence asymmetry / objective contradiction / panel completeness with EXPLICIT inclusive thresholds; low disagreement never relabeled as confidence; incomplete panel is a signal, not agreement. `persist.ts` — `persistAggregate` append-only (digest-anchored to method definition+schema digests, revision-incrementing, exact included/excluded attempt ids, unrounded calc + display values, quorum decision, dispersion). 11 tests green (10 golden unit + 1 persist integration).
+  - CO-EVOLVE (with T4.1): feeding real `evaluation_judge_attempts` → `criterion_results` into `computeAggregate` (the AttemptResult adapter) + the worker handler that runs aggregate→disagreement→review-or-complete on the T3.3 FSM. The math + persistence are verified now.
   - Files: web/lib/evaluations/aggregation/*, disagreement/*, worker handler.
   - RED: property/golden tests for weighted_mean@1, median@1, majority@1; missing/NA/insufficient; cap enforcement; unrounded math; threshold inclusivity; objective contradiction; no cross-method aggregation; quorum/retry interaction.
   - GREEN: deterministic persisted aggregates and durable review flags.
