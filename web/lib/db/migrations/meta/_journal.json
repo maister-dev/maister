@@ -778,6 +778,13 @@
 			"when": 1784200175000,
 			"tag": "0114_bright_doctor_spectrum",
 			"breakpoints": true
+		},
+		{
+			"idx": 115,
+			"version": "7",
+			"when": 1784401836239,
+			"tag": "0115_high_nuke",
+			"breakpoints": true
 		}
 	]
 }

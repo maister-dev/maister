@@ -195,7 +195,12 @@ mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
 publish and the ADR-132 divergence/sync (an upstream sync advances
 `source_install_id`/`source_ref` and drives the `sync_state` jsonb:
 `{targetInstallId, targetRef, conflictedFiles, startedAt}`, NULL = no sync in
-flight).
+flight). **(Canonical Create Flow, migration `0115`)** `creation_state` is a
+private nullable hash-only state for an in-flight first-Flow or additional-Flow
+write; its paired ignored filesystem journal holds the private recovery input
+and any backup bytes. It has no client projection, blocks competing package
+mutations, and enables deterministic crash recovery across the DB, working
+tree, and initial git commit.
 
 ## Constraints
 

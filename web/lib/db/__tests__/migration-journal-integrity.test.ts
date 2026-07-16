@@ -157,14 +157,14 @@ describe("main migration snapshot integrity", () => {
     ).toBe(true);
   });
 
-  it("keeps the Evaluation Lab standardized-recipes migration as the newest main lineage entry", () => {
+  it("registers the canonical Create Flow journal migration as the newest main lineage entry", () => {
     const newest = journalEntries(MAIN_MIGRATIONS_DIR).at(-1);
 
     expect(newest, "main migration journal must have entries").toBeDefined();
-    expect(newest?.tag).toMatch(/^0114_/);
+    expect(newest?.tag).toMatch(/^0115_/);
     expect(
       newest && existsSync(join(MAIN_MIGRATIONS_DIR, `${newest.tag}.sql`)),
-      "0114 must register the Evaluation Lab standardized-recipes SQL migration",
+      "0115 must register the local-package creation-state SQL migration",
     ).toBe(true);
   });
 });

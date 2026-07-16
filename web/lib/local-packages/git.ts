@@ -141,7 +141,7 @@ export async function gitInitWithCommit(
   branch: string,
   message: string,
 ): Promise<void> {
-  log.debug({ dir, branch }, "git init local-package working dir");
+  log.debug({ branch }, "git init local-package working dir");
   await git(dir, ["init", "-q", "-b", branch]);
   await ensureLocalPackageGitExclude(dir);
   await git(dir, ["add", "-A"]);
@@ -168,7 +168,7 @@ export async function gitCommitWorkingDir(
   dir: string,
   message: string,
 ): Promise<void> {
-  log.debug({ dir }, "git commit local-package working dir");
+  log.debug("git commit local-package working dir");
   await ensureLocalPackageGitExclude(dir);
   await git(dir, ["add", "-A"]);
   await git(dir, [
@@ -199,7 +199,7 @@ export async function gitDiscardPaths(
 ): Promise<void> {
   const targets = paths && paths.length > 0 ? [...paths] : ["."];
 
-  log.debug({ dir, count: targets.length }, "git discard local-package edits");
+  log.debug({ count: targets.length }, "git discard local-package edits");
   await ensureLocalPackageGitExclude(dir);
   await git(dir, ["checkout", "HEAD", "--", ...targets]);
   await git(dir, ["clean", "-fdq", "--", ...targets]);

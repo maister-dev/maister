@@ -5289,6 +5289,13 @@ export const localPackages = pgTable(
     // the fork lineage (source_install_id/source_ref). NULL = no sync in flight;
     // pending + tree state is the single crash-window discriminant.
     syncState: jsonb("sync_state").$type<LocalPackageSyncState | null>(),
+    // Canonical Studio Flow creation uses this private, durable operation
+    // journal across the DB + filesystem + git boundary. It is never projected
+    // to a client; a non-null value blocks concurrent package mutations until
+    // recovery deterministically completes or reports a conflict.
+    creationState: jsonb("creation_state").$type<
+      LocalPackageCreationState | null
+    >(),
   },
   (t) => ({
     defaultPerProject: uniqueIndex("local_packages_default_per_project")
@@ -5305,6 +5312,17 @@ export type LocalPackageSyncState = {
   targetInstallId: string;
   targetRef: string;
   conflictedFiles: string[];
+  startedAt: string;
+};
+
+export type LocalPackageCreationState = {
+  operationId: string;
+  kind: "create_package_with_flow" | "add_flow";
+  phase: "claimed" | "scaffolded" | "git_initialized" | "recovery_required";
+  flowId: string;
+  manifestHash: string;
+  flowHash: string;
+  originalManifestHash?: string;
   startedAt: string;
 };
 

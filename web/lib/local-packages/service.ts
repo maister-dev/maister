@@ -1,7 +1,10 @@
 import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type { LocalPackage } from "@/lib/db/schema";
+import type {
+  LocalPackage,
+  LocalPackageCreationState,
+} from "@/lib/db/schema";
 
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -18,18 +21,31 @@ import path from "node:path";
 
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
+import { stringify as stringifyYaml } from "yaml";
 
 import {
   ensureLocalPackageGitExclude,
   gitCommitWorkingDir,
   gitDiscardPaths,
+  gitHeadSha,
   gitInitWithCommit,
 } from "./git";
 import {
   appendManifestFlow,
   parsePackageManifest,
   serializeScaffoldManifest,
+  validatePackageManifestYaml,
 } from "./manifest";
+import {
+  acquireWorkingDirLock,
+  assertHoldsLock,
+  releaseWorkingDirLock,
+} from "./lock";
+import {
+  readCreationJournal,
+  removeCreationJournal,
+  writeCreationJournal,
+} from "./create-flow-operation";
 import {
   isLocalPackageInternalEntryName,
   isLocalPackageInternalPath,
@@ -44,6 +60,10 @@ import { loadFlowManifest } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  buildStarterFlowManifest,
+  type CreateFlowInput,
+} from "@/lib/local-packages/create-flow-contract";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
 import {
   prepareDiff,
@@ -130,6 +150,442 @@ async function scaffoldWorkingDir(
     path.join(workingDir, "maister-package.yaml"),
     serializeScaffoldManifest(manifestName, title),
   );
+}
+
+const PACKAGE_MANIFEST_PATH = "maister-package.yaml";
+
+type CanonicalFlowArtifacts = {
+  flowPath: string;
+  flowYaml: string;
+  manifestYaml: string;
+};
+
+function textHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function flowYamlPath(flowId: string): string {
+  return `flows/${flowId}/flow.yaml`;
+}
+
+function flowDirPath(flowId: string): string {
+  return `flows/${flowId}`;
+}
+
+function createFlowArtifacts(
+  manifestYaml: string,
+  flow: CreateFlowInput,
+): CanonicalFlowArtifacts {
+  const parsed = parsePackageManifest(manifestYaml);
+
+  if (!parsed.ok) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "maister-package.yaml is invalid; fix it before adding a Flow",
+    );
+  }
+
+  if (parsed.model.flows.some((entry) => entry.id === flow.id)) {
+    throw new MaisterError(
+      "CONFLICT",
+      `Flow ID "${flow.id}" already belongs to this package`,
+    );
+  }
+
+  const nextManifest = appendManifestFlow(parsed.raw, {
+    id: flow.id,
+    path: flowDirPath(flow.id),
+  });
+  const manifestIssues = validatePackageManifestYaml(nextManifest);
+
+  if (manifestIssues.length > 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "maister-package.yaml is not valid after adding this Flow",
+      { details: { invalidArtifacts: manifestIssues } },
+    );
+  }
+
+  return {
+    flowPath: flowYamlPath(flow.id),
+    flowYaml: stringifyYaml(buildStarterFlowManifest(flow)),
+    manifestYaml: nextManifest,
+  };
+}
+
+function assertProposedFlowArtifactsValid(
+  existingFiles: readonly PackageArtifactFile[],
+  artifacts: CanonicalFlowArtifacts,
+): void {
+  const changedPaths = [PACKAGE_MANIFEST_PATH, artifacts.flowPath];
+  const changed = new Set(changedPaths);
+  const proposedFiles = [
+    ...existingFiles.filter((file) => !changed.has(file.path)),
+    { path: PACKAGE_MANIFEST_PATH, content: artifacts.manifestYaml },
+    { path: artifacts.flowPath, content: artifacts.flowYaml },
+  ];
+  const errors = validatePackageArtifacts({
+    files: proposedFiles,
+    changedPaths,
+  });
+
+  if (errors.length > 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "the initial Flow does not produce a valid package",
+      { details: { invalidArtifacts: errors } },
+    );
+  }
+}
+
+async function readTextIfPresent(filePath: string): Promise<string | null> {
+  try {
+    return await fsReadFile(filePath, "utf8");
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
+function creationRecoveryStatus(
+  row: LocalPackage,
+): "ready" | "recovering" | "recovery_required" {
+  if (!row.creationState) return "ready";
+  return row.creationState.phase === "recovery_required"
+    ? "recovery_required"
+    : "recovering";
+}
+
+function creationConflict(): MaisterError {
+  return new MaisterError(
+    "CONFLICT",
+    "this package has an incomplete Flow creation operation — recover it before editing",
+  );
+}
+
+export function assertLocalPackageCreationReady(pkg: LocalPackage): void {
+  if (pkg.creationState) throw creationConflict();
+}
+
+async function updateCreationState(
+  packageId: string,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  await resolveDb(db)
+    .update(lp)
+    .set({ creationState: state, updatedAt: new Date() })
+    .where(eq(lp.id, packageId));
+}
+
+async function updateCreationPhase(
+  packageId: string,
+  state: LocalPackageCreationState,
+  phase: LocalPackageCreationState["phase"],
+  db?: Db,
+): Promise<LocalPackageCreationState> {
+  const next = { ...state, phase };
+
+  await updateCreationState(packageId, next, db);
+
+  return next;
+}
+
+async function clearCreationState(packageId: string, db?: Db): Promise<void> {
+  await resolveDb(db)
+    .update(lp)
+    .set({ creationState: null, updatedAt: new Date() })
+    .where(eq(lp.id, packageId));
+}
+
+async function markCreationRecoveryRequired(
+  packageId: string,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  await updateCreationPhase(packageId, state, "recovery_required", db);
+}
+
+async function claimCreationState(
+  packageId: string,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  const rows = await resolveDb(db)
+    .update(lp)
+    .set({ creationState: state, updatedAt: new Date() })
+    .where(and(eq(lp.id, packageId), isNull(lp.creationState)))
+    .returning({ id: lp.id });
+
+  if (rows.length === 0) throw creationConflict();
+}
+
+function newCreationState(opts: {
+  kind: LocalPackageCreationState["kind"];
+  flowId: string;
+  manifestYaml: string;
+  flowYaml: string;
+  originalManifestHash?: string;
+}): LocalPackageCreationState {
+  return {
+    operationId: randomUUID(),
+    kind: opts.kind,
+    phase: "claimed",
+    flowId: opts.flowId,
+    manifestHash: textHash(opts.manifestYaml),
+    flowHash: textHash(opts.flowYaml),
+    ...(opts.originalManifestHash
+      ? { originalManifestHash: opts.originalManifestHash }
+      : {}),
+    startedAt: new Date().toISOString(),
+  };
+}
+
+function assertExpectedArtifacts(
+  state: LocalPackageCreationState,
+  artifacts: CanonicalFlowArtifacts,
+): void {
+  if (
+    textHash(artifacts.manifestYaml) !== state.manifestHash ||
+    textHash(artifacts.flowYaml) !== state.flowHash
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      "the pending Flow creation journal does not match its expected artifacts",
+    );
+  }
+}
+
+async function materializeInitialFlow(
+  pkg: LocalPackage,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  const journal = await readCreationJournal(pkg.workingDir, state.operationId);
+
+  if (!journal) {
+    const [currentManifest, currentFlow] = await Promise.all([
+      readTextIfPresent(path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH)),
+      readTextIfPresent(path.join(pkg.workingDir, flowYamlPath(state.flowId))),
+    ]);
+
+    // A process can die after the private journal is removed but before the
+    // DB marker is cleared. The two stored content hashes are sufficient to
+    // prove the working tree already contains exactly the completed result;
+    // do not strand an otherwise usable package in that narrow window.
+    if (
+      currentManifest !== null &&
+      currentFlow !== null &&
+      textHash(currentManifest) === state.manifestHash &&
+      textHash(currentFlow) === state.flowHash
+    ) {
+      await clearCreationState(pkg.id, db);
+      return;
+    }
+
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    throw creationConflict();
+  }
+  if (journal.flow.id !== state.flowId) {
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    throw creationConflict();
+  }
+
+  const seedManifest = serializeScaffoldManifest(pkg.slug, pkg.name);
+  const artifacts = createFlowArtifacts(seedManifest, journal.flow);
+
+  assertExpectedArtifacts(state, artifacts);
+
+  const manifestAbs = path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH);
+  const flowAbs = path.join(pkg.workingDir, artifacts.flowPath);
+  const [currentManifest, currentFlow] = await Promise.all([
+    readTextIfPresent(manifestAbs),
+    readTextIfPresent(flowAbs),
+  ]);
+  const manifestMatches = currentManifest === artifacts.manifestYaml;
+  const flowMatches = currentFlow === artifacts.flowYaml;
+
+  if (!manifestMatches || !flowMatches) {
+    const mayMaterialize =
+      (currentManifest === null || manifestMatches) &&
+      (currentFlow === null || flowMatches);
+
+    if (!mayMaterialize) {
+      await markCreationRecoveryRequired(pkg.id, state, db);
+      throw creationConflict();
+    }
+
+    await mkdir(path.dirname(flowAbs), { recursive: true });
+    if (!flowMatches) await atomicWriteText(flowAbs, artifacts.flowYaml);
+    if (!manifestMatches) {
+      await atomicWriteText(manifestAbs, artifacts.manifestYaml);
+    }
+    state = await updateCreationPhase(pkg.id, state, "scaffolded", db);
+  }
+
+  const hasHead = await gitHeadSha(pkg.workingDir)
+    .then(() => true)
+    .catch(() => false);
+
+  if (!hasHead) {
+    await gitInitWithCommit(
+      pkg.workingDir,
+      DEFAULT_BRANCH,
+      "maister: initialize local package with Flow",
+    );
+  }
+
+  await updateCreationPhase(pkg.id, state, "git_initialized", db);
+  await removeCreationJournal(pkg.workingDir, state.operationId);
+  await clearCreationState(pkg.id, db);
+}
+
+async function materializeAdditionalFlow(
+  pkg: LocalPackage,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  const journal = await readCreationJournal(pkg.workingDir, state.operationId);
+  const originalManifest = journal?.originalManifest;
+
+  if (!originalManifest || !state.originalManifestHash) {
+    const [currentManifest, currentFlow] = await Promise.all([
+      readTextIfPresent(path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH)),
+      readTextIfPresent(path.join(pkg.workingDir, flowYamlPath(state.flowId))),
+    ]);
+
+    if (
+      currentManifest !== null &&
+      currentFlow !== null &&
+      textHash(currentManifest) === state.manifestHash &&
+      textHash(currentFlow) === state.flowHash
+    ) {
+      await clearCreationState(pkg.id, db);
+      return;
+    }
+
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    throw creationConflict();
+  }
+  if (journal.flow.id !== state.flowId) {
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    throw creationConflict();
+  }
+
+  const artifacts = createFlowArtifacts(originalManifest, journal.flow);
+
+  assertExpectedArtifacts(state, artifacts);
+  if (textHash(originalManifest) !== state.originalManifestHash) {
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    throw creationConflict();
+  }
+
+  const manifestAbs = path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH);
+  const flowAbs = path.join(pkg.workingDir, artifacts.flowPath);
+  const [currentManifest, currentFlow] = await Promise.all([
+    readTextIfPresent(manifestAbs),
+    readTextIfPresent(flowAbs),
+  ]);
+  const manifestMatches = currentManifest === artifacts.manifestYaml;
+  const flowMatches = currentFlow === artifacts.flowYaml;
+  const manifestAtBaseline = currentManifest === originalManifest;
+
+  if (!manifestMatches || !flowMatches) {
+    const mayMaterialize =
+      (manifestAtBaseline || manifestMatches) &&
+      (currentFlow === null || flowMatches);
+
+    if (!mayMaterialize) {
+      await markCreationRecoveryRequired(pkg.id, state, db);
+      throw creationConflict();
+    }
+
+    await mkdir(path.dirname(flowAbs), { recursive: true });
+    if (!flowMatches) await atomicWriteText(flowAbs, artifacts.flowYaml);
+    if (!manifestMatches) {
+      await atomicWriteText(manifestAbs, artifacts.manifestYaml);
+    }
+    state = await updateCreationPhase(pkg.id, state, "scaffolded", db);
+  }
+
+  await removeCreationJournal(pkg.workingDir, state.operationId);
+  await clearCreationState(pkg.id, db);
+}
+
+async function materializeCreation(
+  pkg: LocalPackage,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  if (state.kind === "create_package_with_flow") {
+    await materializeInitialFlow(pkg, state, db);
+    return;
+  }
+
+  await materializeAdditionalFlow(pkg, state, db);
+}
+
+async function compensateFailedInitialCreation(
+  pkg: LocalPackage,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  try {
+    await rm(pkg.workingDir, { recursive: true, force: true });
+  } catch (err) {
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    log.error(
+      { packageId: pkg.id, operationId: state.operationId },
+      "initial Flow creation cleanup could not remove the working directory",
+    );
+    throw err;
+  }
+
+  try {
+    await resolveDb(db).delete(lp).where(eq(lp.id, pkg.id));
+  } catch (err) {
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    log.error(
+      { packageId: pkg.id, operationId: state.operationId },
+      "initial Flow creation cleanup could not remove the package row",
+    );
+    throw err;
+  }
+}
+
+async function compensateFailedAdditionalFlow(
+  pkg: LocalPackage,
+  state: LocalPackageCreationState,
+  fallbackOriginalManifest?: string,
+  db?: Db,
+): Promise<void> {
+  const journal = await readCreationJournal(pkg.workingDir, state.operationId);
+  const originalManifest = journal?.originalManifest ?? fallbackOriginalManifest;
+
+  if (!originalManifest) {
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    throw creationConflict();
+  }
+
+  try {
+    await atomicWriteText(
+      path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH),
+      originalManifest,
+    );
+    await rm(path.join(pkg.workingDir, flowDirPath(state.flowId)), {
+      recursive: true,
+      force: true,
+    });
+    await removeCreationJournal(pkg.workingDir, state.operationId);
+    await clearCreationState(pkg.id, db);
+  } catch (err) {
+    await markCreationRecoveryRequired(pkg.id, state, db);
+    log.error(
+      { packageId: pkg.id, operationId: state.operationId, flowId: state.flowId },
+      "additional Flow creation compensation failed",
+    );
+    throw err;
+  }
 }
 
 // pg unique-violation → CONFLICT (mirrors lib/users.ts + lib/project-members.ts).
@@ -220,6 +676,7 @@ export async function cleanCopyExcludingGit(
 // dir the caller MUST `rm` after use. Used by cut-version to feed an immutable,
 // content-addressed install without exposing the working dir to the installer.
 export async function exportWorkingDir(pkg: LocalPackage): Promise<string> {
+  assertLocalPackageCreationReady(pkg);
   const exportDir = await mkdtemp(path.join(os.tmpdir(), "maister-lp-export-"));
 
   await cleanCopyExcludingGit(pkg.workingDir, exportDir);
@@ -236,7 +693,7 @@ export async function createLocalPackage(opts: {
   const slug = await uniqueSlugForName(opts.name, opts.db);
   const workingDir = localPackageWorkingDir(slug);
 
-  log.info({ slug, workingDir }, "create local package");
+  log.info({ packageSlug: slug }, "create local package");
 
   // Insert-first: claim the slug before any fs work (see insertLocalPackageRow).
   const row = await insertLocalPackageRow(
@@ -267,6 +724,262 @@ export async function createLocalPackage(opts: {
   }
 
   return row;
+}
+
+// Canonical Studio create: unlike the legacy generic scaffold, this persists a
+// first valid Flow in the same operation and makes the initial git commit only
+// after both package artifacts are present. No setup script, hook, or package
+// code is discovered or executed here.
+export async function createLocalPackageWithFlow(opts: {
+  name: string;
+  createdBy: string;
+  flow: CreateFlowInput;
+  db?: Db;
+}): Promise<{ package: LocalPackage; flowPath: string }> {
+  const slug = await uniqueSlugForName(opts.name, opts.db);
+  const workingDir = localPackageWorkingDir(slug);
+  const seedManifest = serializeScaffoldManifest(slug, opts.name);
+  const artifacts = createFlowArtifacts(seedManifest, opts.flow);
+
+  assertProposedFlowArtifactsValid([], artifacts);
+  const state = newCreationState({
+    kind: "create_package_with_flow",
+    flowId: opts.flow.id,
+    manifestYaml: artifacts.manifestYaml,
+    flowYaml: artifacts.flowYaml,
+  });
+
+  log.info(
+    { flowId: opts.flow.id, operationId: state.operationId },
+    "create local package with first Flow",
+  );
+
+  const row = await insertLocalPackageRow(
+    {
+      name: opts.name,
+      slug,
+      workingDir,
+      status: "active",
+      branchName: DEFAULT_BRANCH,
+      createdBy: opts.createdBy,
+      creationState: state,
+    },
+    opts.db,
+  );
+  const lockToken = await acquireWorkingDirLock(row.id, opts.db);
+
+  try {
+    await writeCreationJournal(row.workingDir, state.operationId, {
+      flow: opts.flow,
+    });
+    await materializeCreation(row, state, opts.db);
+  } catch (err) {
+    const current = await getLocalPackage(row.id, opts.db);
+
+    if (current?.creationState?.phase !== "recovery_required") {
+      try {
+        await compensateFailedInitialCreation(row, state, opts.db);
+      } catch (compensationErr) {
+        throw new MaisterError(
+          "CRASH",
+          "creating the local package failed and cleanup requires recovery",
+          {
+            cause: compensationErr,
+            details: { packageId: row.id, operationId: state.operationId },
+          },
+        );
+      }
+    }
+
+    throw err;
+  } finally {
+    await releaseWorkingDirLock(row.id, lockToken, opts.db);
+  }
+
+  const created = await getLocalPackage(row.id, opts.db);
+
+  if (!created) {
+    throw new MaisterError(
+      "CRASH",
+      "the local package disappeared after its first Flow was created",
+      { details: { packageId: row.id, operationId: state.operationId } },
+    );
+  }
+
+  return { package: created, flowPath: artifacts.flowPath };
+}
+
+// Canonical "Add Flow" operation for an existing editable package. It takes
+// the editor session token only to enforce the existing edit lock; the package
+// identity itself is always resolved from the route-owned package id.
+export async function addFlowToLocalPackage(opts: {
+  packageId: string;
+  sessionId: string;
+  flow: CreateFlowInput;
+  db?: Db;
+}): Promise<{ package: LocalPackage; flowPath: string }> {
+  await assertHoldsLock(opts.packageId, opts.sessionId, opts.db);
+  const lockToken = await acquireWorkingDirLock(opts.packageId, opts.db);
+
+  try {
+    await assertHoldsLock(opts.packageId, opts.sessionId, opts.db);
+    const pkg = await getLocalPackage(opts.packageId, opts.db);
+
+    if (!pkg || pkg.status !== "active") {
+      throw new MaisterError("PRECONDITION", "local package not found");
+    }
+    assertLocalPackageCreationReady(pkg);
+
+    const manifestPath = path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH);
+    const currentManifest = await readTextIfPresent(manifestPath);
+
+    if (currentManifest === null) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "maister-package.yaml is missing; recover the package before adding a Flow",
+      );
+    }
+
+    const existingFlow = await readTextIfPresent(
+      path.join(pkg.workingDir, flowYamlPath(opts.flow.id)),
+    );
+
+    if (existingFlow !== null) {
+      throw new MaisterError(
+        "CONFLICT",
+        `Flow ID "${opts.flow.id}" already exists in this package`,
+      );
+    }
+
+    const artifacts = createFlowArtifacts(currentManifest, opts.flow);
+    const existingFiles = await readWorkingDirArtifactFiles(pkg);
+
+    assertProposedFlowArtifactsValid(existingFiles, artifacts);
+    const state = newCreationState({
+      kind: "add_flow",
+      flowId: opts.flow.id,
+      manifestYaml: artifacts.manifestYaml,
+      flowYaml: artifacts.flowYaml,
+      originalManifestHash: textHash(currentManifest),
+    });
+
+    await claimCreationState(pkg.id, state, opts.db);
+    log.info(
+      { packageId: pkg.id, flowId: opts.flow.id, operationId: state.operationId },
+      "add Flow to local package",
+    );
+
+    try {
+      await writeCreationJournal(pkg.workingDir, state.operationId, {
+        flow: opts.flow,
+        originalManifest: currentManifest,
+      });
+      await materializeCreation(pkg, state, opts.db);
+    } catch (err) {
+      const current = await getLocalPackage(pkg.id, opts.db);
+
+      if (current?.creationState?.phase !== "recovery_required") {
+        try {
+          await compensateFailedAdditionalFlow(
+            pkg,
+            state,
+            currentManifest,
+            opts.db,
+          );
+        } catch (compensationErr) {
+          throw new MaisterError(
+            "CRASH",
+            "adding the Flow failed and compensation requires recovery",
+            {
+              cause: compensationErr,
+              details: { packageId: pkg.id, operationId: state.operationId },
+            },
+          );
+        }
+      }
+
+      throw err;
+    }
+
+    const created = await getLocalPackage(pkg.id, opts.db);
+
+    if (!created) {
+      throw new MaisterError(
+        "CRASH",
+        "the local package disappeared after adding a Flow",
+        { details: { packageId: pkg.id, operationId: state.operationId } },
+      );
+    }
+
+    return { package: created, flowPath: artifacts.flowPath };
+  } finally {
+    await releaseWorkingDirLock(opts.packageId, lockToken, opts.db);
+  }
+}
+
+// Replays only the verified, hash-addressed artifact write described by the
+// private journal. A diverged working tree is never overwritten: it is marked
+// recovery_required and remains visible for an operator to inspect.
+export async function recoverLocalPackageCreation(
+  packageId: string,
+  db?: Db,
+): Promise<{
+  package: LocalPackage;
+  flowPath: string | null;
+  recoveryStatus: "ready" | "recovering" | "recovery_required";
+}> {
+  const lockToken = await acquireWorkingDirLock(packageId, db);
+
+  try {
+    const pkg = await getLocalPackage(packageId, db);
+
+    if (!pkg || pkg.status !== "active") {
+      throw new MaisterError("PRECONDITION", "local package not found");
+    }
+
+    const state = pkg.creationState;
+
+    if (!state) {
+      return {
+        package: pkg,
+        flowPath: null,
+        recoveryStatus: "ready",
+      };
+    }
+
+    try {
+      await materializeCreation(pkg, state, db);
+    } catch (err) {
+      const fresh = await getLocalPackage(packageId, db);
+
+      if (fresh?.creationState?.phase !== "recovery_required") {
+        await markCreationRecoveryRequired(packageId, state, db);
+      }
+      throw err;
+    }
+
+    const recovered = await getLocalPackage(packageId, db);
+
+    if (!recovered) {
+      throw new MaisterError(
+        "CRASH",
+        "the local package disappeared while recovering Flow creation",
+        { details: { packageId, operationId: state.operationId } },
+      );
+    }
+
+    log.info(
+      { packageId, flowId: state.flowId, operationId: state.operationId },
+      "recovered local package Flow creation",
+    );
+    return {
+      package: recovered,
+      flowPath: flowYamlPath(state.flowId),
+      recoveryStatus: creationRecoveryStatus(recovered),
+    };
+  } finally {
+    await releaseWorkingDirLock(packageId, lockToken, db);
+  }
 }
 
 export async function listLocalPackages(db?: Db): Promise<LocalPackage[]> {
@@ -517,7 +1230,7 @@ export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
   // (owner decision) — orphans from a crash mid-delete are cleaned manually.
   await rm(row.workingDir, { recursive: true, force: true }).catch((err) =>
     log.warn(
-      { err, workingDir: row.workingDir },
+      { packageId: row.id, packageSlug: row.slug, err },
       "working dir rm failed (left for manual cleanup)",
     ),
   );
@@ -614,6 +1327,7 @@ export async function writeWorkingDirFile(
   relPath: string,
   content: string,
 ): Promise<LocalPackageFileContent> {
+  assertLocalPackageCreationReady(pkg);
   const abs = await resolveWithinWorkingDir(pkg.workingDir, relPath);
 
   await mkdir(path.dirname(abs), { recursive: true });
@@ -637,6 +1351,7 @@ export async function registerFlowElementInManifest(
   elementPath: string,
   isDirectory: boolean,
 ): Promise<void> {
+  assertLocalPackageCreationReady(pkg);
   let flowDir: string | null = null;
 
   if (isDirectory) {
@@ -684,6 +1399,7 @@ export async function deleteWorkingDirFile(
   pkg: LocalPackage,
   relPath: string,
 ): Promise<void> {
+  assertLocalPackageCreationReady(pkg);
   const abs = await resolveWithinWorkingDir(pkg.workingDir, relPath);
 
   await rm(abs, { force: true });
@@ -767,6 +1483,7 @@ export async function readWorkingDirArtifactFiles(
 export async function assertPackageCommittable(
   pkg: LocalPackage,
 ): Promise<void> {
+  assertLocalPackageCreationReady(pkg);
   await ensureLocalPackageGitExclude(pkg.workingDir);
   const wt = await diffWorkingTree(pkg.workingDir);
   const changedPaths = [
@@ -821,6 +1538,7 @@ export async function commitWorkingDir(
 // commit gate (changed paths only), this validates EVERY artifact, catching an
 // invalid baseline that a scoped commit never re-checked.
 export async function assertPackageCuttable(pkg: LocalPackage): Promise<void> {
+  assertLocalPackageCreationReady(pkg);
   await ensureLocalPackageGitExclude(pkg.workingDir);
   const wt = await diffWorkingTree(pkg.workingDir);
 
@@ -867,6 +1585,7 @@ export async function discardWorkingDir(
   pkg: LocalPackage,
   paths?: readonly string[],
 ): Promise<void> {
+  assertLocalPackageCreationReady(pkg);
   if (!paths || paths.length === 0) {
     await gitDiscardPaths(pkg.workingDir);
 
@@ -903,5 +1622,6 @@ export function toLocalPackageDto(row: LocalPackage) {
     createdBy: row.createdBy,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    recoveryStatus: creationRecoveryStatus(row),
   };
 }

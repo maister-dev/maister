@@ -1,7 +1,7 @@
 import type { LocalPackage } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,7 +19,9 @@ import {
 } from "@/lib/local-packages/lock";
 import {
   assertPackageCuttable,
+  addFlowToLocalPackage,
   commitWorkingDir,
+  createLocalPackageWithFlow,
   createLocalPackage,
   deleteLocalPackage,
   ensureDefaultLocalPackage,
@@ -101,6 +103,73 @@ describe("local-packages substrate (integration)", () => {
 
     expect(files.some((f) => f.path === "maister-package.yaml")).toBe(true);
     expect((await stat(join(pkg.workingDir, ".git"))).isDirectory()).toBe(true);
+  });
+
+  it("creates a package and its first valid Flow in one git-backed operation", async () => {
+    const { package: pkg } = await createLocalPackageWithFlow({
+      name: "Canonical package",
+      createdBy: userId,
+      flow: {
+        id: "first-flow",
+        metadata: {
+          title: "First Flow",
+          summary: "A launchable initial Flow.",
+          route_when: "A user wants to start a real Flow.",
+          labels: ["starter"],
+        },
+      },
+      db,
+    });
+
+    const manifest = await readFile(
+      join(pkg.workingDir, "maister-package.yaml"),
+      "utf8",
+    );
+    const flow = await readFile(
+      join(pkg.workingDir, "flows", "first-flow", "flow.yaml"),
+      "utf8",
+    );
+
+    expect(manifest).toContain("id: first-flow");
+    expect(manifest).toContain("path: flows/first-flow");
+    expect(flow).toContain("name: first-flow");
+    expect(flow).toContain("title: First Flow");
+    expect((await stat(join(pkg.workingDir, ".git"))).isDirectory()).toBe(
+      true,
+    );
+  });
+
+  it("adds another Flow to an editable package without replacing existing membership", async () => {
+    const { package: pkg } = await createLocalPackageWithFlow({
+      name: "Many flows",
+      createdBy: userId,
+      flow: {
+        id: "one",
+        metadata: { title: "One", summary: "First.", route_when: "First route." },
+      },
+      db,
+    });
+
+    await acquireLock(pkg.id, userId, "add-flow-session", db);
+    await addFlowToLocalPackage({
+      packageId: pkg.id,
+      sessionId: "add-flow-session",
+      flow: {
+        id: "two",
+        metadata: { title: "Two", summary: "Second.", route_when: "Second route." },
+      },
+      db,
+    });
+
+    const manifest = await readFile(
+      join(pkg.workingDir, "maister-package.yaml"),
+      "utf8",
+    );
+    expect(manifest).toContain("id: one");
+    expect(manifest).toContain("id: two");
+    await expect(
+      readFile(join(pkg.workingDir, "flows", "two", "flow.yaml"), "utf8"),
+    ).resolves.toContain("name: two");
   });
 
   it("reads the scaffolded manifest with a content hash", async () => {

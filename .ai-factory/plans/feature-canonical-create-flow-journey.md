@@ -435,7 +435,7 @@ path, package name, YAML, form values, Git output, and package bytes.
 
 ### Phase 1 — Typed Flow Contract, Durable State, and Server Operations
 
-- [ ] **T1.1 — GREEN: create a pure, client-safe Flow contract/factory.**
+- [x] **T1.1 — GREEN: create a pure, client-safe Flow contract/factory.**
   - Depends on: T0.4 RED contract tests.
   - Add `web/lib/local-packages/create-flow-contract.ts` with client-safe
     input/output types and pure functions to normalize `CreateFlowInput`, build
@@ -452,7 +452,7 @@ path, package name, YAML, form values, Git output, and package bytes.
     alter generic non-Flow artifact scaffolding.
   - Logging: pure module logs nothing.
 
-- [ ] **T1.2 — GREEN: add durable creation-state schema and generated migration.**
+- [x] **T1.2 — GREEN: add durable creation-state schema and generated migration.**
   - Depends on: T0.4 RED migration/recovery tests.
   - Modify `web/lib/db/schema.ts` with nullable `creationState` and a strict
     server-only decoded `LocalPackageCreationState` union. Its values are only
@@ -469,7 +469,7 @@ path, package name, YAML, form values, Git output, and package bytes.
     inspection. Refactor only the local-package schema/DTO boundary.
   - Logging: no payload-bearing migration or DTO logs.
 
-- [ ] **T1.3 — GREEN: introduce the operation journal, recovery service, and package operations.**
+- [x] **T1.3 — GREEN: introduce the operation journal, recovery service, and package operations.**
   - Depends on: T1.1, T1.2, and RED recovery integration tests.
   - Add `web/lib/local-packages/create-flow-operation.ts` for operation IDs,
     staging/private backups, hash-only journals, atomic journal writes,
