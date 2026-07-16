@@ -15,8 +15,9 @@ const schema = schemaModule as unknown as Record<string, any>;
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 
-// Two projects, each owning a flow whose ref collides by name across projects —
-// the shape that proves resolution is project-scoped (R4).
+// Two projects that BOTH own a flow with ref "aif-bugfix". That collision is the
+// only shape where project-scoping on the ref axis can return the WRONG row — a
+// fixture with distinct refs could only ever prove "not found" (R4).
 const PROJECT_A = randomUUID();
 const PROJECT_B = randomUUID();
 const FLOW_A_BUGFIX = randomUUID();
@@ -82,7 +83,7 @@ beforeEach(async () => {
     {
       id: FLOW_B_BUGFIX,
       projectId: PROJECT_B,
-      flowRefId: "b-only",
+      flowRefId: "aif-bugfix",
       ...flowDefaults,
     },
   ]);
@@ -125,9 +126,45 @@ describe("resolveFlowRef (integration)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("refuses another project's flow_ref_id", async () => {
-    const result = await resolveFlowRef(PROJECT_A, "b-only", db);
+  // The only case where ref-axis scoping can return the WRONG row rather than
+  // simply missing: both projects own "aif-bugfix".
+  it("resolves a ref shared with another project to THIS project's flow", async () => {
+    const a = await resolveFlowRef(PROJECT_A, "aif-bugfix", db);
+    const b = await resolveFlowRef(PROJECT_B, "aif-bugfix", db);
 
-    expect(result.ok).toBe(false);
+    expect(a).toEqual({ ok: true, flowId: FLOW_A_BUGFIX });
+    expect(b).toEqual({ ok: true, flowId: FLOW_B_BUGFIX });
+  });
+
+  // Both columns are `text`, so an id colliding with a sibling's ref is not
+  // schema-forbidden (only convention keeps ids UUID-shaped). The id match must
+  // win deterministically rather than depending on Postgres row order.
+  it("prefers the flows.id match when a sibling's flow_ref_id collides with it", async () => {
+    const collidingId = "collides-with-a-ref";
+
+    await db.insert(schema.flows).values({
+      id: collidingId,
+      projectId: PROJECT_A,
+      flowRefId: "some-other-ref",
+      source: "github.com/acme/pkg",
+      version: "v1.0.0",
+      installedPath: "/tmp/flow",
+      manifest: {},
+      schemaVersion: 1,
+    });
+    await db.insert(schema.flows).values({
+      id: randomUUID(),
+      projectId: PROJECT_A,
+      flowRefId: collidingId,
+      source: "github.com/acme/pkg",
+      version: "v1.0.0",
+      installedPath: "/tmp/flow",
+      manifest: {},
+      schemaVersion: 1,
+    });
+
+    const result = await resolveFlowRef(PROJECT_A, collidingId, db);
+
+    expect(result).toEqual({ ok: true, flowId: collidingId });
   });
 });

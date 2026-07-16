@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, or } from "drizzle-orm";
+import { and, asc, eq, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -35,10 +35,12 @@ const EXPECTED =
  * Resolve a body-controlled flow reference to the flow's `flows.id`, scoped to
  * `projectId`.
  *
- * A `ref` may be either namespace: the `flows.id` UUID or the human
- * `flows.flow_ref_id`. The two cannot collide — `flows.id` is a UUID PK and
- * `flows_project_ref_uq (project_id, flow_ref_id)` makes the ref unique per
- * project — so one project-scoped OR-match returns at most one row.
+ * A `ref` may be either namespace: the `flows.id` id or the human
+ * `flows.flow_ref_id`. `flows_project_ref_uq (project_id, flow_ref_id)` makes
+ * the ref unique per project, and ids are UUIDs in practice — but BOTH columns
+ * are `text`, so a collision (one flow's id equal to a sibling's ref) is not
+ * schema-forbidden. The id match therefore wins deterministically rather than
+ * relying on that convention.
  *
  * Returns a discriminated result rather than throwing: each call site maps a
  * miss onto its own error taxonomy (`CONFIG` for triage/task writes,
@@ -62,6 +64,7 @@ export async function resolveFlowRef(
         or(eq(flows.id, ref), eq(flows.flowRefId, ref)),
       ),
     )
+    .orderBy(sql`case when ${flows.id} = ${ref} then 0 else 1 end`)
     .limit(1);
 
   const flowId = rows[0]?.id;
@@ -88,10 +91,18 @@ export async function resolveFlowRef(
   };
 }
 
-/** Render a mismatch as the message text carried by the caller's MaisterError. */
+/**
+ * Render a mismatch as the message text carried by the caller's MaisterError.
+ *
+ * `validRefs` lists every ref INSTALLED in the project, which is deliberately
+ * wider than `flow_list` (launchable-only): task creation accepts any installed
+ * flow, so filtering here would hide legitimate choices. Launchability is a
+ * separate gate with its own message, so the wording promises existence — not
+ * assignability — to avoid steering a caller onto a disabled flow.
+ */
 export function formatFlowRefError(detail: FlowRefMismatch): string {
   const refs =
     detail.validRefs.length > 0 ? detail.validRefs.join(", ") : "(none)";
 
-  return `invalid ${detail.field}: expected ${detail.expected}; received "${detail.received}"; valid refs for this project: ${refs}`;
+  return `invalid ${detail.field}: expected ${detail.expected}; received "${detail.received}"; refs installed in this project: ${refs} (a triage verdict additionally requires the flow to be launchable)`;
 }

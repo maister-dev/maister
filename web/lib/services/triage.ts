@@ -105,10 +105,13 @@ export async function validateVerdictRefs(
       .from(flows)
       .where(and(eq(flows.id, resolvedFlowId), eq(flows.projectId, projectId)));
 
+    // Reachable only if the flow is deleted between the resolve above and this
+    // read — both run outside the caller's transaction. Names the resolved id,
+    // matching the launchability refusal below.
     if (rows.length === 0) {
       throw new MaisterError(
         "CONFIG",
-        `flow ${patch.flowId} is not configured for project`,
+        `flow ${resolvedFlowId} is not configured for project`,
       );
     }
 

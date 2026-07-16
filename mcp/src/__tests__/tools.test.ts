@@ -407,9 +407,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     const { url, init } = lastRequest();
 
     expect(init.method).toBe("GET");
-    expect(url).toBe(
-      `${BASE_URL}/api/v1/ext/projects/demo/experiments/exp-1`,
-    );
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/experiments/exp-1`);
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toBeUndefined();
   });
@@ -1003,17 +1001,22 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
   // The description is the ONLY signal the agent gets that a ref is accepted —
   // main.ts registers a passthrough z.record, so the per-field inputSchema is
   // never advertised. Losing this text silently strands agents on UUIDs.
-  it("advertises ref-or-UUID flowId on the tools that accept one, and nowhere else", async () => {
+  it("advertises ref-or-UUID flowId on triage_set and task_create, and on no other tool", async () => {
     for (const tool of ["triage_set", "task_create"]) {
-      expect(TOOL_SPECS[tool].description).toContain("ref");
+      // Exact phrase, not a loose "ref" substring ("reference"/"prefer" would
+      // satisfy that while saying nothing about the ref namespace).
+      expect(TOOL_SPECS[tool].description).toContain(
+        "accepts either the flow's UUID or its ref",
+      );
       expect(TOOL_SPECS[tool].description).toContain("flow_list");
     }
 
-    // run_launch has no flowId param and the ext runs route refuses one
-    // (ADR-085); delegate's target.flowId is a Phase-3 stub.
-    expect(TOOL_SPECS.run_launch.inputSchema).not.toHaveProperty(
-      "properties.flowId",
-    );
+    // The scope fence: delegate's target.flowId is a Phase-3 stub and
+    // run_launch has no flowId param (the ext runs route refuses one per
+    // ADR-085) — neither may start advertising ref acceptance.
+    for (const tool of ["run_launch", "run_delegate"]) {
+      expect(TOOL_SPECS[tool].description).not.toContain("or its ref");
+    }
   });
 
   it("triage_set coerces a stringified numeric confidence to a number (an LLM emits 0.8 as a string; the strict ext route needs a number)", async () => {

@@ -10,7 +10,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { createTask } from "@/lib/services/tasks";
+import { createTask, updateTask } from "@/lib/services/tasks";
 import {
   isValidGitBranchName,
   sendTaskToTriage,
@@ -174,6 +174,104 @@ describe("updateTaskVerdict (web card PATCH semantics)", () => {
         db,
       ),
     ).rejects.toMatchObject({ code: "CONFIG" });
+  });
+
+  // Regression for the pre-built-patch trap: this writer snapshots its column
+  // set BEFORE validating, so resolution has to reach the value that is
+  // actually WRITTEN. If validateVerdictRefs ever reverts to void/in-place
+  // mutation, the raw ref lands in tasks.flow_id and this goes red.
+  it("resolves a flowId given as a ref and persists the flows.id, never the ref", async () => {
+    await updateTaskVerdict(
+      {
+        taskId: fx.taskId,
+        projectId: fx.projectId,
+        patch: { flowId: "bugfix" },
+      },
+      db,
+    );
+
+    const row = await pool.query(`SELECT flow_id FROM tasks WHERE id = $1`, [
+      fx.taskId,
+    ]);
+
+    expect(row.rows[0].flow_id).toBe(fx.flowId);
+  });
+});
+
+describe("updateTask flow reference (web PATCH/PUT — both funnel here)", () => {
+  // The sibling of the updateTaskVerdict trap: `patch` is built by
+  // updateColumns() BEFORE validateVerdictRefs runs, and the validated object
+  // is a throwaway — so the resolved id must be applied onto the patch that is
+  // actually written. Revert that and the raw ref lands in tasks.flow_id.
+  it("resolves a flowId given as a ref and persists the flows.id, never the ref", async () => {
+    const created = await createTask(
+      { title: "upd", prompt: "p" },
+      { projectId: fx.projectId, actorUserId: fx.userId },
+      db,
+    );
+
+    await updateTask(
+      created.taskId,
+      fx.projectId,
+      { flowId: "bugfix" },
+      db as never,
+    );
+
+    const row = await pool.query(`SELECT flow_id FROM tasks WHERE id = $1`, [
+      created.taskId,
+    ]);
+
+    expect(row.rows[0].flow_id).toBe(fx.flowId);
+  });
+
+  it("still CLEARS the flow when flowId is explicitly null", async () => {
+    const created = await createTask(
+      { title: "clr", prompt: "p", flowId: "bugfix" },
+      { projectId: fx.projectId, actorUserId: fx.userId },
+      db,
+    );
+
+    await updateTask(
+      created.taskId,
+      fx.projectId,
+      { flowId: null },
+      db as never,
+    );
+
+    const row = await pool.query(`SELECT flow_id FROM tasks WHERE id = $1`, [
+      created.taskId,
+    ]);
+
+    expect(row.rows[0].flow_id).toBeNull();
+  });
+});
+
+describe("createTask flow reference", () => {
+  it("resolves a flowId given as a ref and persists the flows.id", async () => {
+    const created = await createTask(
+      { title: "by-ref", prompt: "p", flowId: "bugfix" },
+      { projectId: fx.projectId, actorUserId: fx.userId },
+      db,
+    );
+
+    const row = await pool.query(`SELECT flow_id FROM tasks WHERE id = $1`, [
+      created.taskId,
+    ]);
+
+    expect(row.rows[0].flow_id).toBe(fx.flowId);
+  });
+
+  it("refuses an unresolvable flowId with CONFIG naming the received value and the project's refs", async () => {
+    await expect(
+      createTask(
+        { title: "bad-ref", prompt: "p", flowId: "no-such-flow" },
+        { projectId: fx.projectId, actorUserId: fx.userId },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringContaining("no-such-flow"),
+    });
   });
 });
 
