@@ -348,6 +348,29 @@ export async function installPackageRevision(opts: {
       );
     }
 
+    // ADR-140 D6/D7: project every `evaluationMethods[]` entry into
+    // `evaluation_method_revisions` (INERT parse/hash, activation stays
+    // disabled). Best-effort: an invalid method is projected report-only, never
+    // fails the surrounding install.
+    try {
+      const { registerPackageMethods } = await import(
+        "@/lib/evaluations/methods-registry"
+      );
+      const methodSummary = await registerPackageMethods(id, db);
+
+      if (methodSummary.invalid.length > 0) {
+        log.warn(
+          { id, name, invalid: methodSummary.invalid },
+          "package shipped invalid evaluation methods",
+        );
+      }
+    } catch (err) {
+      log.warn(
+        { id, name, err: err instanceof Error ? err.message : String(err) },
+        "evaluation method projection after package install failed",
+      );
+    }
+
     log.info(
       {
         id,

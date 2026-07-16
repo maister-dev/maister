@@ -56,6 +56,77 @@ async function assertRevisionOrThrow(
   );
 }
 
+// --- Read helpers ------------------------------------------------------------
+
+export async function listPanels(db?: Db): Promise<Record<string, unknown>[]> {
+  const d = db ?? getDb();
+
+  return d.select().from(evaluationJudgePanels);
+}
+
+export async function getPanel(
+  panelId: string,
+  db?: Db,
+): Promise<Record<string, unknown>> {
+  const d = db ?? getDb();
+  const [row] = await d
+    .select()
+    .from(evaluationJudgePanels)
+    .where(eq(evaluationJudgePanels.id, panelId));
+
+  if (!row) {
+    throw new MaisterError("PRECONDITION", `judge panel not found: ${panelId}`);
+  }
+
+  return row;
+}
+
+export async function listProfiles(
+  db?: Db,
+): Promise<Record<string, unknown>[]> {
+  const d = db ?? getDb();
+
+  return d.select().from(evaluationProfiles);
+}
+
+export async function getProfile(
+  profileId: string,
+  db?: Db,
+): Promise<Record<string, unknown>> {
+  const d = db ?? getDb();
+  const [row] = await d
+    .select()
+    .from(evaluationProfiles)
+    .where(eq(evaluationProfiles.id, profileId));
+
+  if (!row) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `evaluation profile not found: ${profileId}`,
+    );
+  }
+
+  return row;
+}
+
+export async function getProjectOverride(
+  args: { projectId: string; profileId: string },
+  db?: Db,
+): Promise<Record<string, unknown> | null> {
+  const d = db ?? getDb();
+  const [row] = await d
+    .select()
+    .from(evaluationProjectProfileOverrides)
+    .where(
+      and(
+        eq(evaluationProjectProfileOverrides.projectId, args.projectId),
+        eq(evaluationProjectProfileOverrides.profileId, args.profileId),
+      ),
+    );
+
+  return row ?? null;
+}
+
 // --- Judge Panels ------------------------------------------------------------
 
 export async function createPanel(

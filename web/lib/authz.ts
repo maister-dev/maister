@@ -58,6 +58,17 @@ export const PROJECT_ACTION_MIN = {
   readExperiments: "viewer",
   manageExperiments: "member",
   concludeExperiments: "member",
+  // Evaluation Lab (M46, ADR-139..142). Global `manageEvaluationConfig`
+  // (Method activation, Panels, Profiles) is a global-admin action guarded by
+  // requireGlobalRole in the admin routes, NOT a project action.
+  readEvaluationStudies: "viewer",
+  readEvaluationEvidence: "member",
+  manageEvaluationStudies: "member",
+  launchEvaluationRuns: "member",
+  runEvaluations: "member",
+  resolveEvaluationReview: "admin",
+  concludeEvaluationStudy: "member",
+  manageProjectEvaluationOverrides: "admin",
   answerHitl: "member",
   // ADR-122 (Project Brain): recall / retain over the project-memory substrate.
   // brain_enabled + the can_read_brain/can_write_brain link axes gate further.
