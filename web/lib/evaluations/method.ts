@@ -1,12 +1,12 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import pino from "pino";
 import { parse as parseYaml } from "yaml";
 
+import { sha256, stableStringify } from "./digest";
 import {
   EVALUATION_METHOD_FILENAME,
   evaluationMethodSchema,
@@ -26,27 +26,6 @@ const log = pino({
 
 function asError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-// Deterministic content digest — stable key ordering so the same definition
-// always digests identically regardless of YAML key order.
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
-
-  return `{${entries.join(",")}}`;
 }
 
 export interface NormalizedCriterion {
