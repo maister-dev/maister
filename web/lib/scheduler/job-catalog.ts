@@ -12,6 +12,7 @@ export const ALL_SCHEDULER_JOB_KINDS = [
   "auto_promote",
   "repo_delivery_scan",
   "pr_state_scan",
+  "evaluation_dispatch",
 ] as const satisfies readonly SchedulerJobKind[];
 
 export const CREATABLE_SCHEDULER_JOB_KINDS = [
@@ -86,6 +87,7 @@ export const SCHEDULER_JOB_KIND_CATALOG: Record<
   // ADR-140: per-project PR-state poll. Not creatable, system-managed, and NOT
   // a seeded singleton (one job per project, seeded by ensurePrStateScanJobs).
   pr_state_scan: {
+  evaluation_dispatch: {
     creatable: false,
     filterable: true,
     systemManaged: true,
@@ -97,6 +99,7 @@ const SEEDED_SINGLETON_IDS: Partial<Record<SchedulerJobKind, string>> = {
   auto_launch_triaged: "auto_launch_triaged.default",
   auto_promote: "auto_promote.default",
   domain_event_dispatch: "domain_event_dispatch.default",
+  evaluation_dispatch: "evaluation_dispatch.dispatcher",
   run_schedule: "run_schedule.dispatcher",
   system_sweep: "system_sweep.default",
   webhook_delivery: "webhook_delivery.default",

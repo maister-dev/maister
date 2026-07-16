@@ -675,7 +675,8 @@ export type SchedulerJobKind =
   | "auto_launch_triaged"
   | "auto_promote"
   | "repo_delivery_scan"
-  | "pr_state_scan";
+  | "pr_state_scan"
+  | "evaluation_dispatch";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -703,6 +704,7 @@ export const schedulerJobs = pgTable(
         "auto_promote",
         "repo_delivery_scan",
         "pr_state_scan",
+        "evaluation_dispatch",
       ],
     }).notNull(),
     target: jsonb("target")
@@ -765,6 +767,7 @@ export const schedulerJobRuns = pgTable(
         "auto_promote",
         "repo_delivery_scan",
         "pr_state_scan",
+        "evaluation_dispatch",
       ],
     }).notNull(),
     status: text("status", {

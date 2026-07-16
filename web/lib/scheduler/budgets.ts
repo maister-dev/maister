@@ -11,7 +11,8 @@ export type SchedulerBudgetKey =
   | "auto_launch_triaged"
   | "auto_promote"
   | "repo_delivery_scan"
-  | "pr_state_scan";
+  | "pr_state_scan"
+  | "evaluation_dispatch";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
@@ -25,6 +26,7 @@ export type SchedulerBudgetLimits = {
   autoPromote: number;
   repoDeliveryScan: number;
   prStateScan: number;
+  evaluationDispatch: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -53,6 +55,10 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     // ADR-140: per-project PR-state poll — provider CLI/REST only, network-bound,
     // sequentially bounded, not operator-configurable.
     prStateScan: 1,
+    // T3.3 (ADR-139): the seeded singleton evaluation dispatcher — one attempt
+    // at a time (run_schedule precedent). The singleton lease serializes ticks;
+    // per-execution CAS + bounded per-tick scan bound the work inside a tick.
+    evaluationDispatch: 1,
   };
 }
 

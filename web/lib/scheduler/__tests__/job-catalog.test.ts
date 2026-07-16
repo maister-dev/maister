@@ -22,6 +22,7 @@ const ALL_JOB_KINDS = [
   "auto_promote",
   "repo_delivery_scan",
   "pr_state_scan",
+  "evaluation_dispatch",
 ] as const;
 
 describe("scheduler job catalog", () => {
