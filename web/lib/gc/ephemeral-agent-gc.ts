@@ -124,7 +124,7 @@ export async function runEphemeralAgentGcSweep(
         });
         removed += 1;
         log.info(
-          { runId, slug: project.slug, worktreePath },
+          { runId, slug: project.slug },
           "ephemeral -ro checkout reaped (owning run terminal/absent)",
         );
       } catch (err) {
@@ -133,8 +133,7 @@ export async function runEphemeralAgentGcSweep(
           {
             runId,
             slug: project.slug,
-            worktreePath,
-            err: err instanceof Error ? err.message : String(err),
+            errorType: err instanceof Error ? err.name : "unknown",
           },
           "ephemeral -ro checkout removal failed — retried next sweep",
         );

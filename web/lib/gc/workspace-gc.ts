@@ -7,6 +7,7 @@ import { access } from "node:fs/promises";
 
 import {
   and,
+  asc,
   eq,
   exists,
   inArray,
@@ -26,8 +27,16 @@ import * as schemaModule from "@/lib/db/schema";
 import { gcAgeDays, gcArchivePush, worktreesRoot } from "@/lib/instance-config";
 import { deleteRunCheckpointRefs } from "@/lib/flows/graph/workspace-checkpoint";
 import { preserveWorktree } from "@/lib/gc/preserve";
+import { MaisterError } from "@/lib/errors";
 import { removeOwnedWorktree } from "@/lib/worktree";
 import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  claimLifecycleOperation,
+  finalizeLifecycleOperation,
+  recordArchive,
+  recordDrop,
+  renewLifecycleOperationLease,
+} from "@/lib/workbench-lifecycle/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -50,12 +59,19 @@ const log = pino({
 
 const PER_TICK_LIMIT = 100;
 const PER_PASS_CONCURRENCY = 4;
+const RETRY_DELAY_MS = 15 * 60_000;
+
+type DisposableWorkspaceRunStatus =
+  (typeof DISPOSABLE_WORKSPACE_RUN_STATUSES)[number];
+type PreservationOutcome = "not_needed" | "ref_created" | "snapshot_created";
 
 export interface WorkspaceGcSummary {
   scanned: number;
   preserved: number;
   pruned: number;
   skippedUnpreserved: number;
+  skippedClaimed: number;
+  retryableFailed: number;
   failed: number;
 }
 
@@ -90,7 +106,39 @@ type CandidateRow = {
   runId: string;
   projectId: string;
   rootRunId: string | null;
+  runKind: "flow" | "scratch" | "agent";
+  runStatus: DisposableWorkspaceRunStatus;
+  archivedBranch: string | null;
+  archivedAt: Date | null;
+  archivedCommit: string | null;
+  preservationOutcome: PreservationOutcome | "legacy_unknown" | null;
 };
+
+function preservationOutcome(result: PreserveResult): PreservationOutcome {
+  if (result.preservationOutcome === "ref_created") {
+    return "ref_created";
+  }
+
+  if (result.preservationOutcome === "snapshot_created" || result.snapshotted) {
+    return "snapshot_created";
+  }
+
+  return "not_needed";
+}
+
+function persistedPreservationOutcome(
+  candidate: CandidateRow,
+): PreservationOutcome {
+  if (candidate.preservationOutcome === "ref_created") {
+    return "ref_created";
+  }
+
+  if (candidate.preservationOutcome === "snapshot_created") {
+    return "snapshot_created";
+  }
+
+  return "not_needed";
+}
 
 // Default §3.3 recovery probe: does the worktree path still exist on disk?
 async function defaultWorktreeExists(worktreePath: string): Promise<boolean> {
@@ -220,13 +268,19 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
       runId: workspaces.runId,
       projectId: workspaces.projectId,
       rootRunId: runs.rootRunId,
+      runKind: runs.runKind,
+      runStatus: runs.status,
+      archivedBranch: workspaces.archivedBranch,
+      archivedAt: workspaces.archivedAt,
+      archivedCommit: workspaces.archivedCommit,
+      preservationOutcome: workspaces.preservationOutcome,
     })
     .from(workspaces)
     .innerJoin(runs, eq(runs.id, workspaces.runId))
     .where(
       and(
         isNull(workspaces.removedAt),
-        inArray(runs.status, ["Abandoned", "Done"]),
+        inArray(runs.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
         or(
           and(
             isNotNull(workspaces.scheduledRemovalAt),
@@ -242,9 +296,14 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
         evaluationNotBlocked,
       ),
     )
+    .orderBy(
+      asc(workspaces.scheduledRemovalAt),
+      asc(runs.endedAt),
+      asc(workspaces.id),
+    )
     .limit(PER_TICK_LIMIT);
 
-  return rows;
+  return rows as CandidateRow[];
 }
 
 // T16 observability: emit one debug line per workspace that WOULD be due but is
@@ -286,7 +345,7 @@ async function logTreeBlockedSkips(db: Db, now: Date): Promise<void> {
     .where(
       and(
         isNull(workspaces.removedAt),
-        inArray(runs.status, ["Abandoned", "Done"]),
+        inArray(runs.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
         eq(runs.workspaceMode, "shared"),
         eq(runs.agentWorkspace, "worktree"),
         isNotNull(runs.rootRunId),
@@ -354,6 +413,29 @@ export async function runWorkspaceGcSweep(
     }
   };
 
+  const scheduleRetry = async (cand: CandidateRow): Promise<void> => {
+    const retryAt = new Date(now().getTime() + RETRY_DELAY_MS);
+
+    await db
+      .update(workspaces)
+      .set({ scheduledRemovalAt: retryAt })
+      .where(
+        and(
+          eq(workspaces.id, cand.workspaceId),
+          isNull(workspaces.removedAt),
+        ),
+      );
+
+    log.warn(
+      {
+        workspaceId: cand.workspaceId,
+        runId: cand.runId,
+        retryAt,
+      },
+      "workspace GC retry scheduled",
+    );
+  };
+
   const candidates = await loadCandidates(db, now());
 
   // Best-effort observability: report shared-tree workspaces held back by a
@@ -372,10 +454,23 @@ export async function runWorkspaceGcSweep(
   let preserved = 0;
   let pruned = 0;
   let skippedUnpreserved = 0;
+  let skippedClaimed = 0;
+  let retryableFailed = 0;
   let failed = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
+    let attemptId: string | null = null;
+
     try {
+      const claim = await claimLifecycleOperation({
+        database: db,
+        runId: cand.runId,
+        workspaceId: cand.workspaceId,
+        operation: "retention_gc",
+        expectedRunStatus: cand.runStatus,
+      });
+      attemptId = claim.attemptId;
+
       // §3.3 pruned-not-marked recovery: a prior tick removed the worktree but
       // died before the DB write, so removed_at is still null. The work (if
       // any) was already archived in that tick's preserve. Re-running preserve
@@ -385,14 +480,21 @@ export async function runWorkspaceGcSweep(
       const exists = await worktreeExists(cand.worktreePath);
 
       if (!exists) {
-        await db
-          .update(workspaces)
-          .set({
-            removedAt: now(),
-            removalKind: "retention_gc",
-            preservationOutcome: "not_needed",
-          })
-          .where(eq(workspaces.id, cand.workspaceId));
+        await recordDrop({
+          database: db,
+          runId: cand.runId,
+          runKind: cand.runKind,
+          workspaceId: cand.workspaceId,
+          removedAt: now(),
+          expectedRunStatus: cand.runStatus,
+          nextRunStatus: null,
+          archivedBranch: cand.archivedBranch,
+          archivedAt: cand.archivedAt,
+          archivedCommit: cand.archivedCommit,
+          preservationOutcome: persistedPreservationOutcome(cand),
+          removalKind: "retention_gc",
+          attemptId,
+        });
 
         // The worktree is gone but its checkpoint refs persist in the shared
         // parent repo — clean them here too.
@@ -419,13 +521,40 @@ export async function runWorkspaceGcSweep(
 
       if (!r.ok) {
         skippedUnpreserved += 1;
+        retryableFailed += 1;
+        await finalizeLifecycleOperation({
+          database: db,
+          workspaceId: cand.workspaceId,
+          attemptId,
+          state: "failed",
+        });
+        await scheduleRetry(cand);
         log.warn(
           { workspaceId: cand.workspaceId, runId: cand.runId },
-          "workspace GC: preserve failed — skipping removal (removed_at stays null)",
+          "workspace GC preserve failed; removal deferred",
         );
 
         return;
       }
+
+      const outcome = preservationOutcome(r);
+      const archivedAt = r.archivedAt ?? now();
+
+      await recordArchive({
+        database: db,
+        workspaceId: cand.workspaceId,
+        attemptId,
+        archivedBranch: r.archivedBranch ?? null,
+        archivedAt,
+        archivedCommit: r.archivedCommit ?? null,
+        preservationOutcome: outcome,
+      });
+
+      await renewLifecycleOperationLease({
+        database: db,
+        workspaceId: cand.workspaceId,
+        attemptId,
+      });
 
       await remove({
         worktreePath: cand.worktreePath,
@@ -434,41 +563,83 @@ export async function runWorkspaceGcSweep(
         allowedRoot: worktreesRoot(),
       });
 
+      await recordDrop({
+        database: db,
+        runId: cand.runId,
+        runKind: cand.runKind,
+        workspaceId: cand.workspaceId,
+        removedAt: now(),
+        expectedRunStatus: cand.runStatus,
+        nextRunStatus: null,
+        archivedBranch: r.archivedBranch ?? null,
+        archivedAt,
+        archivedCommit: r.archivedCommit ?? null,
+        preservationOutcome: outcome,
+        removalKind: "retention_gc",
+        attemptId,
+      });
+
       await gcCheckpointRefs(cand);
 
-      await db
-        .update(workspaces)
-        .set({
-          removedAt: now(),
-          archivedBranch: r.archivedBranch ?? null,
-          archivedAt: r.archivedAt ?? null,
-          archivedCommit: r.archivedCommit ?? null,
-          preservationOutcome:
-            r.preservationOutcome ??
-            (r.snapshotted ? "snapshot_created" : "not_needed"),
-          removalKind: "retention_gc",
-        })
-        .where(eq(workspaces.id, cand.workspaceId));
-
       pruned += 1;
-      if (r.archivedBranch) preserved += 1;
+      if (outcome !== "not_needed") preserved += 1;
       log.info(
         {
           workspaceId: cand.workspaceId,
           runId: cand.runId,
-          archivedBranch: r.archivedBranch ?? null,
+          preservationOutcome: outcome,
         },
-        "workspace GC: preserved then pruned",
+        "workspace GC preserved then pruned",
       );
     } catch (err) {
+      if (err instanceof MaisterError && err.code === "CONFLICT") {
+        skippedClaimed += 1;
+        log.warn(
+          {
+            workspaceId: cand.workspaceId,
+            runId: cand.runId,
+            errorCode: err.code,
+          },
+          "workspace GC lifecycle claim unavailable",
+        );
+
+        return;
+      }
+
       failed += 1;
+      retryableFailed += 1;
+
+      if (attemptId !== null) {
+        try {
+          await finalizeLifecycleOperation({
+            database: db,
+            workspaceId: cand.workspaceId,
+            attemptId,
+            state: "failed",
+          });
+          await scheduleRetry(cand);
+        } catch (finalizeError) {
+          log.error(
+            {
+              workspaceId: cand.workspaceId,
+              runId: cand.runId,
+              errorType:
+                finalizeError instanceof Error
+                  ? finalizeError.name
+                  : "unknown",
+            },
+            "workspace GC failed to persist retry state",
+          );
+        }
+      }
+
       log.error(
         {
           workspaceId: cand.workspaceId,
           runId: cand.runId,
           errorType: err instanceof Error ? err.name : "unknown",
         },
-        "workspace GC: row failed — continuing",
+        "workspace GC row failed",
       );
     }
   });
@@ -478,6 +649,8 @@ export async function runWorkspaceGcSweep(
     preserved,
     pruned,
     skippedUnpreserved,
+    skippedClaimed,
+    retryableFailed,
     failed,
   };
 

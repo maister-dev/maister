@@ -37,6 +37,7 @@ import {
 } from "@/lib/agents/materialization-manifest";
 import { isMaisterError } from "@/lib/errors";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
+import { worktreesRoot } from "@/lib/instance-config";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -167,6 +168,43 @@ describe("filterManifestPorcelain", () => {
 });
 
 describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
+  it("restores materialization before removing a terminal workspace=none agent directory", async () => {
+    const { projectId, runId } = await seedWorld();
+    const projectRows = await pool.query(
+      `SELECT "slug" FROM "projects" WHERE "id" = $1`,
+      [projectId],
+    );
+    const projectSlug = String(projectRows.rows[0]?.slug);
+    const agentDirectory = path.join(worktreesRoot(), projectSlug, runId);
+
+    await pool.query(
+      `UPDATE "agents" SET "workspace" = 'none' WHERE "id" = 'watchdog-agent'`,
+    );
+    await pool.query(
+      `UPDATE "runs" SET "agent_workspace" = 'none' WHERE "id" = $1`,
+      [runId],
+    );
+    await mkdir(agentDirectory, { recursive: true });
+    await materializeWithAgentLease({
+      cwd: agentDirectory,
+      runId,
+      materialize: async (_ownedPaths, recordIntent) => {
+        const materializedPath = path.join(agentDirectory, "owned.txt");
+
+        await recordIntent([materializedPath]);
+        await writeFile(materializedPath, "owned\n");
+
+        return [materializedPath];
+      },
+    });
+
+    await expect(finalizeAgentRun(runId, "Done", { db })).resolves.toEqual({
+      finalized: true,
+      status: "Done",
+    });
+    await expect(stat(agentDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("reports an unknown agent-materialization descendant as repo_read dirt", async () => {
     const { runId } = await seedWorld();
     const unexpectedPath = path.join(

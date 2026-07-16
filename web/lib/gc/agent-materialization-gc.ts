@@ -166,7 +166,7 @@ export async function runAgentMaterializationCleanupSweep(
     } catch (err) {
       failed += 1;
       log.error(
-        { cwd, error: err instanceof Error ? err.message : String(err) },
+        { errorType: err instanceof Error ? err.name : "unknown" },
         "agent materialization cleanup candidate discovery failed",
       );
     }
@@ -195,11 +195,10 @@ export async function runAgentMaterializationCleanupSweep(
       failed += 1;
       log.error(
         {
-          cwd: candidate.cwd,
           runId: candidate.runId,
           status: state?.status ?? "missing",
           agentWorkspace: state?.agentWorkspace ?? null,
-          error: err instanceof Error ? err.message : String(err),
+          errorType: err instanceof Error ? err.name : "unknown",
         },
         "agent materialization cleanup failed; ownership record retained for retry",
       );

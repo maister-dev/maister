@@ -960,7 +960,7 @@ pnpm --filter maister-web typecheck
 
 ### Phase 3 — Automatic retention and reconstructible agent cleanup
 
-- [ ] **Task 14: RED — lock the complete GC protection and progress matrix.**
+- [x] **Task 14: RED — lock the complete GC protection and progress matrix.**
   - **Files:** `web/lib/gc/__tests__/workspace-gc.integration.test.ts`,
     `shared-tree-gc.integration.test.ts`, and lifecycle/GC race tests.
   - **Change:** add due rows for every run status; prove only `Done` and
@@ -973,7 +973,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** RED demonstrates the broad-terminal shared sibling bug and
     poison-first-page starvation before the fix.
 
-- [ ] **Task 15: GREEN — use the disposable set and lifecycle protocol in GC.**
+- [x] **Task 15: GREEN — use the disposable set and lifecycle protocol in GC.**
   - **Files:** `web/lib/gc/workspace-gc.ts`,
     `web/lib/runs/run-status-sets.ts` or a dedicated workspace-retention module,
     lifecycle claim helpers, and GC tests.
@@ -988,7 +988,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** user actions and GC cannot race Git removal, and no protected
     worktree is selected.
 
-- [ ] **Task 16: RED — specify reconstructible agent-directory cleanup.**
+- [x] **Task 16: RED — specify reconstructible agent-directory cleanup.**
   - **Files:** `web/lib/agents/launch.ts`,
     `web/lib/agents/materialization-manifest.ts`,
     `web/lib/gc/ephemeral-agent-gc.ts`,
@@ -1003,7 +1003,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** RED isolates the leaked `workspace=none` finalizer and any
     missing `repo_read` recovery without duplicating writable-worktree GC tests.
 
-- [ ] **Task 17: GREEN — remove reconstructible agent directories safely.**
+- [x] **Task 17: GREEN — remove reconstructible agent directories safely.**
   - **Files:** files from Task 16 plus existing terminal finalization seams.
   - **Change:** implement immediate finalizer cleanup plus sweep recovery for
     `workspace=none`, retaining/reusing `repo_read` restore-before-remove and
@@ -1015,7 +1015,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** terminal plain/read-only directories converge to absent,
     while writable worktrees remain governed solely by D1-D5.
 
-- [ ] **Task 18: REFACTOR — centralize retention policy and cleanup summaries.**
+- [x] **Task 18: REFACTOR — centralize retention policy and cleanup summaries.**
   - **Files:** workspace GC, reconstructible cleanup services, shared status
     sets, and summary types.
   - **Change:** keep one disposable-status policy and one summary vocabulary,

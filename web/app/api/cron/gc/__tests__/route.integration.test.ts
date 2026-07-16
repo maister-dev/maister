@@ -45,6 +45,8 @@ const workspaceSweepSpy = vi.fn(async () => ({
   preserved: 0,
   pruned: 0,
   skippedUnpreserved: 0,
+  skippedClaimed: 0,
+  retryableFailed: 0,
   failed: 0,
 }));
 const revisionSweepSpy = vi.fn(async () => ({
@@ -122,6 +124,8 @@ beforeEach(() => {
     preserved: 0,
     pruned: 0,
     skippedUnpreserved: 0,
+    skippedClaimed: 0,
+    retryableFailed: 0,
     failed: 0,
   });
   revisionSweepSpy.mockReset();
@@ -210,6 +214,8 @@ describe("GET/POST /api/cron/gc", () => {
       preserved: 1,
       pruned: 1,
       skippedUnpreserved: 1,
+      skippedClaimed: 0,
+      retryableFailed: 1,
       failed: 1,
     });
 

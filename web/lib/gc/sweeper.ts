@@ -80,6 +80,8 @@ export async function runGcSweeps(): Promise<GcSweepsResult> {
             preserved: 0,
             pruned: 0,
             skippedUnpreserved: 0,
+            skippedClaimed: 0,
+            retryableFailed: 0,
             failed: 0,
           },
     revision:

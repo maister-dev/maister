@@ -4,6 +4,8 @@ import type { EphemeralAgentGcSummary } from "@/lib/gc/ephemeral-agent-gc";
 import type { AgentMaterializationGcSummary } from "@/lib/gc/agent-materialization-gc";
 import type { RevisionGcSummary } from "@/lib/gc/revision-gc";
 import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
+import type { PlainAgentDirectoryGcSummary } from "@/lib/gc/plain-agent-directory-gc";
+import type { EvidenceSweepSummary } from "@/lib/evaluations/evidence/gc";
 
 import pino from "pino";
 
@@ -14,10 +16,8 @@ import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
-import {
-  sweepEvaluationEvidence,
-  type EvidenceSweepSummary,
-} from "@/lib/evaluations/evidence/gc";
+import { sweepEvaluationEvidence } from "@/lib/evaluations/evidence/gc";
+import { runPlainAgentDirectoryGcSweep } from "@/lib/gc/plain-agent-directory-gc";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
@@ -46,6 +46,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // T2.3 (ADR-142): the Evaluation evidence sweep — recovers crashed captures
   // (orphan `preparing`) and finalizes unreferenced two-stage deletes.
   evaluationEvidence: EvidenceSweepSummary | null;
+  plainAgentDirectory: PlainAgentDirectoryGcSummary | null;
   // ADR-122: the Project Brain decay sweep (self-throttled hourly; expires items
   // past expires_at). null when it never ran this process.
   brain: Awaited<ReturnType<typeof runBrainDecaySweep>> | null;
@@ -67,6 +68,7 @@ type GcBundleResult = {
   ephemeralAgent: EphemeralAgentGcSummary | null;
   agentMaterialization: AgentMaterializationGcSummary | null;
   evaluationEvidence: EvidenceSweepSummary | null;
+  plainAgentDirectory: PlainAgentDirectoryGcSummary | null;
   errors: string[];
 };
 
@@ -78,6 +80,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let ephemeralAgent: EphemeralAgentGcSummary | null = null;
   let agentMaterialization: AgentMaterializationGcSummary | null = null;
   let evaluationEvidence: EvidenceSweepSummary | null = null;
+  let plainAgentDirectory: PlainAgentDirectoryGcSummary | null = null;
 
   try {
     workspace = await runWorkspaceGcSweep();
@@ -133,6 +136,15 @@ async function runGcBundle(): Promise<GcBundleResult> {
     log.error({ err: message }, "gc bundle evaluation evidence threw");
   }
 
+  try {
+    plainAgentDirectory = await runPlainAgentDirectoryGcSweep();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`plain agent directory sweep failed: ${message}`);
+    log.error({ err: message }, "gc bundle plain agent directory threw");
+  }
+
   errors.push(...gcFailureMessages(workspace, revision, capabilities));
   if (ephemeralAgent && ephemeralAgent.failed > 0) {
     errors.push(
@@ -144,6 +156,11 @@ async function runGcBundle(): Promise<GcBundleResult> {
       `${agentMaterialization.failed} agent materialization cleanup(s) failed (left for retry)`,
     );
   }
+  if (plainAgentDirectory && plainAgentDirectory.failed > 0) {
+    errors.push(
+      `${plainAgentDirectory.failed} plain agent directory cleanup(s) failed (left for retry)`,
+    );
+  }
 
   return {
     workspace,
@@ -152,6 +169,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     ephemeralAgent,
     agentMaterialization,
     evaluationEvidence,
+    plainAgentDirectory,
     errors,
   };
 }
@@ -240,6 +258,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     ephemeralAgent: gc.ephemeralAgent,
     agentMaterialization: gc.agentMaterialization,
     evaluationEvidence: gc.evaluationEvidence,
+    plainAgentDirectory: gc.plainAgentDirectory,
     worktreesPreserved: gc.workspace?.preserved ?? 0,
     worktreesRemoved: gc.workspace?.pruned ?? 0,
     revisionsRemoved: gc.revision?.deleted ?? 0,

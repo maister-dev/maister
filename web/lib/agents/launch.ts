@@ -66,6 +66,7 @@ import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/age
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
+import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import {
   loadActiveRunSession,
   persistRunSessionAcpSessionId,
@@ -2330,9 +2331,8 @@ export async function finalizeAgentRun(
           log.error(
             {
               runId,
-              cwd: cleanup.cwd,
               workspace: cleanup.workspace,
-              error: err instanceof Error ? err.message : String(err),
+              errorType: err instanceof Error ? err.name : "unknown",
             },
             "post-commit agent materialization release failed",
           );
@@ -2361,7 +2361,7 @@ export async function finalizeAgentRun(
 
       if (materializationReleaseFailedFor === cleanup.worktreePath) {
         log.warn(
-          { runId, worktreePath: cleanup.worktreePath },
+          { runId, workspace: "repo_read" },
           "ephemeral checkout retained because materialization release must be retried",
         );
       } else {
@@ -2371,11 +2371,37 @@ export async function finalizeAgentRun(
           force: true,
         }).catch((err: unknown) => {
           log.warn(
-            { runId, err: err instanceof Error ? err.message : String(err) },
+            {
+              runId,
+              errorType: err instanceof Error ? err.name : "unknown",
+            },
             "ephemeral checkout removal failed — next spawn recreates it",
           );
         });
       }
+    }
+
+    const plainAgentCleanup = materializationCleanup as {
+      cwd: string;
+      workspace: "none" | "repo_read" | "worktree";
+    } | null;
+
+    if (
+      plainAgentCleanup?.workspace === "none" &&
+      materializationReleaseFailedFor !== plainAgentCleanup.cwd
+    ) {
+      await removeOwnedPlainAgentDirectory({
+        root: worktreesRoot(),
+        directoryPath: plainAgentCleanup.cwd,
+      }).catch((err: unknown) => {
+        log.warn(
+          {
+            runId,
+            errorType: err instanceof Error ? err.name : "unknown",
+          },
+          "plain agent directory removal failed and will retry during GC",
+        );
+      });
     }
 
     await promoteNextPending({ db: _db, pool: "agent" }).catch(

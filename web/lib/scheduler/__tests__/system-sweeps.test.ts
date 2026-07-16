@@ -12,6 +12,7 @@ const runSyncRecoverySweepMock = vi.hoisted(() => vi.fn());
 const runBrainDecaySweepMock = vi.hoisted(() => vi.fn());
 const runBrainReindexSweepMock = vi.hoisted(() => vi.fn());
 const sweepEvaluationEvidenceMock = vi.hoisted(() => vi.fn());
+const runPlainAgentDirectoryGcSweepMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -56,12 +57,17 @@ vi.mock("@/lib/brain/reindex", () => ({
 vi.mock("@/lib/evaluations/evidence/gc", () => ({
   sweepEvaluationEvidence: sweepEvaluationEvidenceMock,
 }));
+vi.mock("@/lib/gc/plain-agent-directory-gc", () => ({
+  runPlainAgentDirectoryGcSweep: runPlainAgentDirectoryGcSweepMock,
+}));
 
 const workspaceSummary = {
   scanned: 0,
   preserved: 0,
   pruned: 0,
   skippedUnpreserved: 0,
+  skippedClaimed: 0,
+  retryableFailed: 0,
   failed: 0,
 };
 const revisionSummary = {
@@ -102,6 +108,9 @@ describe("scheduler system sweeps", () => {
     sweepEvaluationEvidenceMock
       .mockReset()
       .mockResolvedValue({ orphansMarked: 0, deleted: 0 });
+    runPlainAgentDirectoryGcSweepMock
+      .mockReset()
+      .mockResolvedValue({ scanned: 0, removed: 0, missing: 0, failed: 0 });
   });
 
   it("runGcCompatibilitySweep runs GC + capabilities but NOT keepalive/reconcile", async () => {
@@ -115,6 +124,7 @@ describe("scheduler system sweeps", () => {
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(sweepEvaluationEvidenceMock).toHaveBeenCalledTimes(1);
+    expect(runPlainAgentDirectoryGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runSweepTickMock).not.toHaveBeenCalled();
     expect(runReconcileSweepMock).not.toHaveBeenCalled();
     expect(summary).toEqual({
@@ -150,6 +160,8 @@ describe("scheduler system sweeps", () => {
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runSyncRecoverySweepMock).toHaveBeenCalledTimes(1);
+    expect(sweepEvaluationEvidenceMock).toHaveBeenCalledTimes(1);
+    expect(runPlainAgentDirectoryGcSweepMock).toHaveBeenCalledTimes(1);
   });
 
   // Every arm is individually try/caught into `errors[]`, so a sweep that throws

@@ -236,7 +236,14 @@ function makeOpts() {
 }
 
 describe("ADR-102 T16 — workspace GC is shared-tree-aware", () => {
-  for (const liveStatus of ["Running", "Review", "Failed", "Crashed"]) {
+  for (const liveStatus of [
+    "Running",
+    "Review",
+    "Failed",
+    "Crashed",
+    "NeedsInput",
+    "NeedsInputIdle",
+  ]) {
     it(`does NOT collect a terminal allocator while a shared sibling is still ${liveStatus}`, async () => {
       const root = await seedRoot();
       const { workspaceId } = await seedAllocator({

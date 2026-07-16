@@ -487,6 +487,28 @@ describe("runWorkspaceGcSweep (integration)", () => {
     expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
   }, 60_000);
 
+  for (const protectedStatus of [
+    "Review",
+    "Crashed",
+    "Failed",
+    "NeedsInput",
+    "NeedsInputIdle",
+  ]) {
+    it(`does NOT collect a due ${protectedStatus} workspace`, async () => {
+      const { workspaceId } = await seed({
+        runStatus: protectedStatus,
+        scheduledRemovalAt: new Date(Date.now() - 86_400_000),
+      });
+
+      const { opts, removeOwnedWorktree } = makeOpts();
+      const summary = await runWorkspaceGcSweep(opts);
+
+      expect(summary.scanned).toBe(0);
+      expect(removeOwnedWorktree).not.toHaveBeenCalled();
+      expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
+    }, 60_000);
+  }
+
   it("holds experiment-member workspaces while the experiment is non-terminal and releases them after conclusion", async () => {
     const { runId, taskId, workspaceId } = await seed({
       scheduledRemovalAt: new Date(Date.now() - 86_400_000),
@@ -544,5 +566,37 @@ describe("runWorkspaceGcSweep (integration)", () => {
     expect(preserveWorktree).not.toHaveBeenCalled();
     expect(removeOwnedWorktree).not.toHaveBeenCalled();
     expect((await readWorkspace(workspaceId)).removedAt).not.toBeNull();
+  }, 60_000);
+
+  it("makes progress after a full poison page by deferring failed rows before the next sweep", async () => {
+    const fixedNow = new Date("2026-07-16T12:00:00.000Z");
+
+    for (let index = 0; index < 100; index += 1) {
+      await seed({
+        scheduledRemovalAt: new Date(fixedNow.getTime() - 2 * 86_400_000),
+      });
+    }
+    const later = await seed({
+      scheduledRemovalAt: new Date(fixedNow.getTime() - 86_400_000),
+    });
+
+    const { opts, removeOwnedWorktree } = makeOpts({
+      now: () => fixedNow,
+      preserveResult: async () => ({ ok: false }),
+    });
+    const first = await runWorkspaceGcSweep(opts);
+
+    expect(first.scanned).toBe(100);
+    expect(first.skippedUnpreserved).toBe(100);
+    expect(first.retryableFailed).toBe(100);
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
+
+    const second = makeOpts({ now: () => fixedNow });
+    const secondSummary = await runWorkspaceGcSweep(second.opts);
+
+    expect(secondSummary.scanned).toBe(1);
+    expect(secondSummary.pruned).toBe(1);
+    expect(second.removeOwnedWorktree).toHaveBeenCalledTimes(1);
+    expect((await readWorkspace(later.workspaceId)).removedAt).not.toBeNull();
   }, 60_000);
 });
