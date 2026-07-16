@@ -8008,6 +8008,15 @@ paths:
         Activity does NOT auto-resume idle runs — `NeedsInputIdle`
         rows return 409 with a hint to call
         `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` instead.
+
+        Requires an active session, enforced BEFORE the run lookup so an
+        unauthenticated caller cannot probe run existence (the 404/409/410/204
+        shapes otherwise discriminate). Project membership is then checked on
+        the SERVER-DERIVED `runs.project_id` (viewer+), never a body field;
+        `runs.project_id` is nullable, and a project-less local-package
+        assistant run is private to its launching user. This is a
+        state-changing write — it extends `keepalive_until`, which defers the
+        idle checkpoint that bounds respawn cost and frees a concurrency slot.
       operationId: activityPing
       parameters:
         - name: runId
@@ -8022,6 +8031,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: Run not found.
           content:
@@ -13675,6 +13688,22 @@ components:
           type: string
           nullable: true
           description: Platform runner override; null inherits platform default.
+        syncStrategyDefault:
+          type: string
+          enum: [rebase, merge]
+          description: |
+            (ADR-140) Project default branch-sync strategy
+            (`projects.sync_strategy_default`), seeding the Sync branch dialog
+            and used when a sync omits `strategy`. NOT nullable — the column is
+            NOT NULL; clearing means setting it back to `rebase`.
+        syncRunnerId:
+          type: string
+          nullable: true
+          description: |
+            (ADR-140) Default AI conflict-resolver runner
+            (`projects.sync_runner_id`). Null CLEARS the override, so the
+            launch-time resolver chain (launch override → project default →
+            platform default) applies.
         deliveryPolicyDefault:
           type: object
           allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
