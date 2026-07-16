@@ -225,13 +225,19 @@ export async function POST(
           promotionMode: body.promotionMode,
         };
 
-        await validateVerdictRefs(ctx.projectId, verdict, db);
+        // Resolves a `flowId` given as a flow_ref_id to its `flows.id`; the
+        // RESOLVED verdict is what gets persisted and recorded in the activity.
+        const resolvedVerdict = await validateVerdictRefs(
+          ctx.projectId,
+          verdict,
+          db,
+        );
 
         await (db as TransactionalDb).transaction(async (tx) => {
           await applyTriageVerdict(tx, {
             taskId,
             projectId: ctx.projectId,
-            verdict,
+            verdict: resolvedVerdict,
             actor,
             enqueue,
             queueFields,

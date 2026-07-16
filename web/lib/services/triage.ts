@@ -7,6 +7,10 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
+import {
+  formatFlowRefError,
+  resolveFlowRef,
+} from "@/lib/flows/resolve-flow-ref";
 import { recordTaskActivity, type SocialActor } from "@/lib/social/activity";
 import {
   applyQueueWriteFields,
@@ -70,14 +74,28 @@ export function isValidGitBranchName(name: string): boolean {
 // Allow-list validation of body-controlled verdict ids against server state:
 // flowId ∈ project flows, runnerId ∈ enabled runner catalog, branch names =
 // git ref-name shape. promotionMode is schema-validated by the caller.
+//
+// Returns the patch with `flowId` normalized to the resolved `flows.id`. The
+// caller MUST write the RETURNED patch: every verdict writer snapshots its
+// column set before validating, so mutating the input in place would never
+// reach the UPDATE and a ref would be persisted verbatim.
 export async function validateVerdictRefs(
   projectId: string,
   patch: TaskVerdictPatch,
   db?: Db,
-): Promise<void> {
+): Promise<TaskVerdictPatch> {
   const _db = (db ?? getDb()) as unknown as { select: any };
+  let resolvedFlowId = patch.flowId;
 
   if (patch.flowId != null) {
+    const resolution = await resolveFlowRef(projectId, patch.flowId, _db);
+
+    if (!resolution.ok) {
+      throw new MaisterError("CONFIG", formatFlowRefError(resolution.detail));
+    }
+
+    resolvedFlowId = resolution.flowId;
+
     const rows = await _db
       .select({
         id: flows.id,
@@ -85,7 +103,7 @@ export async function validateVerdictRefs(
         trustStatus: flows.trustStatus,
       })
       .from(flows)
-      .where(and(eq(flows.id, patch.flowId), eq(flows.projectId, projectId)));
+      .where(and(eq(flows.id, resolvedFlowId), eq(flows.projectId, projectId)));
 
     if (rows.length === 0) {
       throw new MaisterError(
@@ -108,7 +126,7 @@ export async function validateVerdictRefs(
     ) {
       throw new MaisterError(
         "CONFIG",
-        `flow ${patch.flowId} is not launchable (enablement: ${flow.enablementState}, trust: ${flow.trustStatus})`,
+        `flow ${resolvedFlowId} is not launchable (enablement: ${flow.enablementState}, trust: ${flow.trustStatus})`,
       );
     }
   }
@@ -145,6 +163,8 @@ export async function validateVerdictRefs(
       `targetBranch is not a valid git branch name`,
     );
   }
+
+  return { ...patch, flowId: resolvedFlowId };
 }
 
 function verdictColumns(patch: TaskVerdictPatch): Record<string, unknown> {
@@ -231,13 +251,15 @@ export async function updateTaskVerdict(
   db?: Db,
 ): Promise<void> {
   const _db = db ?? getDb();
-  const set = verdictColumns(input.patch);
 
-  if (Object.keys(set).length === 0) {
+  if (Object.keys(verdictColumns(input.patch)).length === 0) {
     throw new MaisterError("CONFIG", "at least one verdict field is required");
   }
 
-  await validateVerdictRefs(input.projectId, input.patch, _db);
+  const resolved = await validateVerdictRefs(input.projectId, input.patch, _db);
+  // Build the column set from the RESOLVED patch — a flowId given as a ref must
+  // reach the UPDATE as its `flows.id`.
+  const set = verdictColumns(resolved);
 
   await _db
     .update(tasks)

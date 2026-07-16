@@ -34,6 +34,10 @@ import * as schemaModule from "@/lib/db/schema";
 import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
+  formatFlowRefError,
+  resolveFlowRef,
+} from "@/lib/flows/resolve-flow-ref";
+import {
   deriveExperimentMembershipFromSource,
   type InheritedExperimentMembership,
 } from "@/lib/experiments/membership";
@@ -729,10 +733,29 @@ export async function* launchRunStaged(
     "launch gate",
   );
 
+  // A launch-time flowId override is body-controlled and may name the flow by
+  // its `flows.id` or the project's `flows.flow_ref_id`; `task.flowId` is
+  // already a resolved id. (Session-auth only — the ext runs route refuses
+  // `flowId` per ADR-085.)
+  let overrideFlowId = input.flowId ?? null;
+
+  if (overrideFlowId !== null) {
+    const resolution = await resolveFlowRef(project.id, overrideFlowId, _db);
+
+    if (!resolution.ok) {
+      throw new MaisterError(
+        "PRECONDITION",
+        formatFlowRefError(resolution.detail),
+      );
+    }
+
+    overrideFlowId = resolution.flowId;
+  }
+
   const flowRows = await _db
     .select()
     .from(flows)
-    .where(eq(flows.id, input.flowId ?? task.flowId));
+    .where(eq(flows.id, overrideFlowId ?? task.flowId));
   let flow = flowRows[0];
 
   if (!flow) {

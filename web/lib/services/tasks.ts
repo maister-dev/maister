@@ -12,6 +12,10 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
+import {
+  formatFlowRefError,
+  resolveFlowRef,
+} from "@/lib/flows/resolve-flow-ref";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import {
   validateVerdictRefs,
@@ -22,7 +26,7 @@ import { subscribe } from "@/lib/social/subscriptions";
 import { applyQueueWriteFields } from "@/lib/tasks/queue-fields";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
-const { flows, projects, runs, tasks } = schemaModule as unknown as Record<
+const { projects, runs, tasks } = schemaModule as unknown as Record<
   string,
   any
 >;
@@ -74,21 +78,19 @@ export async function createTask(
     transaction: any;
   };
 
-  const flowId = input.flowId ?? null;
+  let flowId = input.flowId ?? null;
 
-  // Validate flowId belongs to THIS project (body-controlled) when provided.
+  // Resolve the body-controlled flowId against server state — accepts the
+  // `flows.id` UUID or the project's `flows.flow_ref_id`, and it is the resolved
+  // id that is stored below.
   if (flowId !== null) {
-    const flowRows = await _db
-      .select()
-      .from(flows)
-      .where(and(eq(flows.id, flowId), eq(flows.projectId, ctx.projectId)));
+    const resolution = await resolveFlowRef(ctx.projectId, flowId, _db);
 
-    if (flowRows.length === 0) {
-      throw new MaisterError(
-        "CONFIG",
-        `flow ${flowId} is not configured for project`,
-      );
+    if (!resolution.ok) {
+      throw new MaisterError("CONFIG", formatFlowRefError(resolution.detail));
     }
+
+    flowId = resolution.flowId;
   }
 
   const taskId = randomUUID();
@@ -437,7 +439,17 @@ export async function updateTask(
     throw new MaisterError("CONFIG", "at least one task field is required");
   }
 
-  await validateVerdictRefs(projectId, verdictPatch(input), _db);
+  const resolvedVerdict = await validateVerdictRefs(
+    projectId,
+    verdictPatch(input),
+    _db,
+  );
+
+  // `patch` was built before validation, so the resolved id has to be applied
+  // onto it explicitly — otherwise a flowId given as a ref is written verbatim.
+  if (resolvedVerdict.flowId !== undefined) {
+    patch.flowId = resolvedVerdict.flowId;
+  }
 
   await (_db as any)
     .update(tasks)

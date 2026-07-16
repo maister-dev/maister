@@ -182,13 +182,13 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
 > Service tests assert **wiring + persistence + error mapping ONLY** — they do
 > not re-enumerate resolver cases (minimum overlap).
 
-- [ ] **T3.1 — RED (all sites).** Add the failing integration tests:
+- [x] **T3.1 — RED (all sites).** Add the failing integration tests:
   - triage (`web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/triage/__tests__/route.integration.test.ts`): ref verdict → `triaged` + `tasks.flow_id` == UUID (AC1, AC2); unknown ref → 422 whose message carries received + validRefs (AC4); **ref → disabled/untrusted flow still refused** (AC6).
   - task-create (mirror the existing ext tasks integration test): ref → `tasks.flow_id` == UUID.
   - task-update: ref → the **written** value is the UUID (guards the throwaway-patch trap below).
   - launch (**web session-auth only** — ext refuses flowId per ADR-085): ref override resolves; unknown ref → `PRECONDITION` (R6).
   → verify: each new test fails for the right reason.
-- [ ] **T3.2 — GREEN: triage.** `web/lib/services/triage.ts` `validateVerdictRefs` —
+- [x] **T3.2 — GREEN: triage.** `web/lib/services/triage.ts` `validateVerdictRefs` —
   resolve `patch.flowId` at entry; miss → `CONFIG` + `formatFlowRefError`; hit → the
   launchability/trust gate runs on the resolved UUID (R7).
   **Trap:** `updateTask` (`tasks.ts:440`) validates a *throwaway* `verdictPatch(input)`
@@ -196,16 +196,16 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
   Return/assign the resolved UUID explicitly at each of the three callers (ext triage
   route, `updateTaskVerdict`, `updateTask`).
   → verify: triage + task-update tests green.
-- [ ] **T3.3 — GREEN: task create/update.** `web/lib/services/tasks.ts` — resolve
+- [x] **T3.3 — GREEN: task create/update.** `web/lib/services/tasks.ts` — resolve
   before write; `createTask`'s existing `flows.id` existence check is **replaced** by
   the resolver (DRY — one resolution path, R8).
   → verify: task-create test green.
-- [ ] **T3.4 — GREEN: run launch (web-only).** `web/lib/services/runs.ts` `launchRun`
+- [x] **T3.4 — GREEN: run launch (web-only).** `web/lib/services/runs.ts` `launchRun`
   (~717) — resolve the `input.flowId` **override** before the `eq(flows.id, …)` lookup;
   `task.flowId` is already a UUID; miss → keep `PRECONDITION` (R6). Scope note: only
   the session-auth `POST /api/runs` supplies `flowId`.
   → verify: launch test green.
-- [ ] **T3.5 — Refactor + status flip.** Remove duplication across the four sites
+- [x] **T3.5 — Refactor + status flip.** Remove duplication across the four sites
   (DRY); flip the Phase-1 `(Designed)` tags to `(Implemented)` (R6).
   → verify: web unit + integration green.
 

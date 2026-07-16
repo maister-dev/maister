@@ -276,6 +276,50 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
     expect(audit.rows[0]).toMatchObject({ result: "error", status_code: 403 });
   });
 
+  // The OpenAPI `verdict` example passes `flowId: "bugfix"` — a flow_ref_id, not
+  // a UUID. This is that example executing verbatim (AC1); before ref resolution
+  // it 422'd, making the spec's own example a lie.
+  it("resolves a verdict flowId given as a flow_ref_id and persists the resolved UUID", async () => {
+    const res = await TRIAGE(
+      request("POST", fx.agentToken, {
+        flowId: "bugfix",
+        runnerId: "triage-runner",
+      }),
+      routeParams(SLUG, fx.taskId),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, triageStatus: "triaged" });
+
+    const task = await pool.query(
+      `SELECT flow_id, triage_status FROM tasks WHERE id = $1`,
+      [fx.taskId],
+    );
+
+    // The ref resolves to the UUID and the UUID — never the ref — is stored.
+    expect(task.rows[0]).toMatchObject({
+      flow_id: fx.flowId,
+      triage_status: "triaged",
+    });
+  });
+
+  it("an unresolvable flowId names the received value and the project's valid refs", async () => {
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { flowId: "no-such-flow" }),
+      routeParams(SLUG, fx.taskId),
+    );
+
+    expect(res.status).toBe(422);
+
+    // The detail is what lets an agent self-correct in one shot instead of
+    // burning retries against a terse refusal.
+    const body = (await res.json()) as { code: string; message: string };
+
+    expect(body.code).toBe("CONFIG");
+    expect(body.message).toContain("no-such-flow");
+    expect(body.message).toContain("bugfix");
+  });
+
   it("rejects an unknown flowId (422), a bad branch name (422), and an empty body (422)", async () => {
     const unknownFlow = await TRIAGE(
       request("POST", fx.userToken, { flowId: randomUUID() }),
@@ -512,6 +556,28 @@ describe("POST /api/v1/ext/.../triage — enqueue + D9 (ADR-112)", () => {
       triage_status: null,
       flow_id: null,
     });
+  });
+
+  // Same D9 gate as above, reached via the ref namespace: resolution must hand the
+  // gate a real flow, never route around it. If the gate were bypassed the ref
+  // would resolve and this would 200.
+  it("a non-launchable flow named by its ref is still refused (resolution does not bypass D9)", async () => {
+    const taskId = await freshTask();
+
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { flowId: "disabled-flow" }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ code: "CONFIG" });
+
+    const task = await pool.query(
+      `SELECT triage_status, flow_id FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({ triage_status: null, flow_id: null });
   });
 
   it("verdict WITHOUT enqueue clears a prior launch_mode='auto' (triage_set is authoritative)", async () => {

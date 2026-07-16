@@ -226,7 +226,7 @@ flowchart TD
   a `flag` also clears them — `triage_set` is authoritative for the enqueue
   intent), the `triage_status`, the `task_activity`, and the token audit in ONE
   `db.transaction`.
-- (Designed) A verdict `flowId` MUST resolve within the acting project against
+- A verdict `flowId` MUST resolve within the acting project against
   `flows.id` OR `flows.flow_ref_id` (exact match — `flows_project_ref_uq` makes the
   ref unique per project), the resolved `flows.id` — never the ref — MUST be what is
   persisted to `tasks.flow_id`, and a value matching neither MUST be refused
