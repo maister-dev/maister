@@ -102,11 +102,42 @@ describe("evaluationMethodSchema (structural)", () => {
   it("rejects an aggregation algorithm outside the closed registry", () => {
     const parsed = evaluationMethodSchema.safeParse({
       ...validDefinition(),
+      aggregation: { algorithm: "elo@1" },
+    });
+
+    expect(parsed.success).toBe(false);
+    expect(AGGREGATION_ALGORITHMS).not.toContain("elo@1");
+  });
+
+  it("accepts a pairwise tournament method (M48)", () => {
+    const parsed = evaluationMethodSchema.safeParse({
+      ...validDefinition(),
+      modes: ["pairwise"],
+      aggregation: { algorithm: "pairwise_tournament@1" },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(AGGREGATION_ALGORITHMS).toContain("pairwise_tournament@1");
+  });
+
+  it("rejects pairwise_tournament aggregation without the pairwise mode", () => {
+    const parsed = evaluationMethodSchema.safeParse({
+      ...validDefinition(),
+      modes: ["n_way"],
       aggregation: { algorithm: "pairwise_tournament@1" },
     });
 
     expect(parsed.success).toBe(false);
-    expect(AGGREGATION_ALGORITHMS).not.toContain("pairwise_tournament@1");
+  });
+
+  it("rejects the pairwise mode without the tournament aggregation", () => {
+    const parsed = evaluationMethodSchema.safeParse({
+      ...validDefinition(),
+      modes: ["pairwise"],
+      aggregation: { algorithm: "weighted_mean@1" },
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it("rejects an objective-check provider outside the closed registry", () => {

@@ -13,14 +13,28 @@ import { z } from "zod";
 
 export const EVALUATION_METHOD_FILENAME = "evaluation-method.yaml";
 
-// Closed aggregation registry. M46 ships three; `pairwise_tournament@1` is
-// reserved for M48 (ADR-144) and is intentionally NOT selectable in M46.
+// Closed aggregation registry. M46 shipped three scalar algorithms;
+// `pairwise_tournament@1` (M48, ADR-144) is a DISTINCT non-scalar aggregation —
+// it consumes per-match A/B/tie verdicts and produces a ranking, never a
+// universal score (see lib/evaluations/aggregation/tournament.ts). A method
+// declaring it MUST use the `pairwise` mode.
 export const AGGREGATION_ALGORITHMS = [
   "weighted_mean@1",
   "median@1",
   "majority@1",
+  "pairwise_tournament@1",
 ] as const;
 export type AggregationAlgorithm = (typeof AGGREGATION_ALGORITHMS)[number];
+
+// The scalar (per-criterion combine) subset — `pairwise_tournament@1` is
+// excluded because it is a ranking aggregation, not a scalar combine.
+export const SCALAR_AGGREGATION_ALGORITHMS = [
+  "weighted_mean@1",
+  "median@1",
+  "majority@1",
+] as const;
+export type ScalarAggregationAlgorithm =
+  (typeof SCALAR_AGGREGATION_ALGORITHMS)[number];
 
 // Closed objective-check provider registry (M46, ADR-140 D11). All are
 // non-executable from package content: recorded gate/artifact results,
@@ -37,10 +51,16 @@ export const OBJECTIVE_CHECK_PROVIDERS = [
 ] as const;
 export type ObjectiveCheckProvider = (typeof OBJECTIVE_CHECK_PROVIDERS)[number];
 
-// M46 evaluation modes. `absolute` scores each participant independently on the
-// rubric; `n_way` scores participants against each other on the same rubric.
-// Pairwise/tournament modes are M48 (ADR-144).
-export const EVALUATION_METHOD_MODES = ["absolute", "n_way"] as const;
+// Evaluation modes. `absolute` scores each participant independently on the
+// rubric; `n_way` scores participants against each other on the same rubric;
+// `pairwise` (M48, ADR-144) compares participants two at a time and aggregates
+// the match verdicts into a tournament ranking. `n_way` remains the default
+// overview — `pairwise` is only intrinsic to methods that declare it.
+export const EVALUATION_METHOD_MODES = [
+  "absolute",
+  "n_way",
+  "pairwise",
+] as const;
 export type EvaluationMethodMode = (typeof EVALUATION_METHOD_MODES)[number];
 
 // How an objective check's result relates to the panel/criteria (ADR-140 D11).
@@ -261,6 +281,30 @@ export const evaluationMethodSchema = z
       .default({ primaryView: "scoreboard" }),
     compat: methodCompatSchema.default({}),
   })
-  .strict();
+  .strict()
+  .superRefine((method, ctx) => {
+    // M48 coupling: the tournament aggregation and the `pairwise` mode are two
+    // sides of the same method shape — one without the other is incoherent.
+    const isTournament =
+      method.aggregation.algorithm === "pairwise_tournament@1";
+    const hasPairwise = method.modes.includes("pairwise");
+
+    if (isTournament && !hasPairwise) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["modes"],
+        message:
+          "aggregation `pairwise_tournament@1` requires the `pairwise` mode",
+      });
+    }
+    if (hasPairwise && !isTournament) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["aggregation", "algorithm"],
+        message:
+          "`pairwise` mode requires the `pairwise_tournament@1` aggregation",
+      });
+    }
+  });
 
 export type EvaluationMethodDefinition = z.infer<typeof evaluationMethodSchema>;

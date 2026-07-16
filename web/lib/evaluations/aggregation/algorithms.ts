@@ -114,6 +114,12 @@ function combine(values: number[], algorithm: AggregationAlgorithm): number {
       return median(values);
     case "majority@1":
       return majority(values);
+    case "pairwise_tournament@1":
+      // Non-scalar: pairwise methods aggregate through computeTournament, never
+      // this per-criterion combine (defensive — routing keeps them apart).
+      throw new Error(
+        "pairwise_tournament@1 is not a scalar aggregation; use computeTournament",
+      );
   }
 }
 
