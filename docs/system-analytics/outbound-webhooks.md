@@ -195,7 +195,7 @@ never fanned out or retried.
 
 ## Event taxonomy v1
 
-Exactly 13 types, each mapped from a DB transition (never raw `session/update`).
+Exactly 16 types, each mapped from a DB transition (never raw `session/update`).
 Adding a type later = one taxonomy entry + one emit site + one doc row (additive,
 cheap). (All Implemented.)
 

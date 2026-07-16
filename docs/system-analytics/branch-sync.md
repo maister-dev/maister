@@ -43,7 +43,7 @@ Run status across an **agent-path** sync (mechanical sync never changes status).
 ```mermaid
 stateDiagram-v2
     [*] --> Review
-    Review --> Running: markSyncFromReview (agent path, cap-gated, one tx with claim + attempt)
+    Review --> Running: markSyncFromReview (agent path, cap-gated, own locked tx after the conflict)
     Running --> NeedsInput: resolver permission_request
     NeedsInput --> Running: HITL respond (re-stamps agent_running_since)
     Running --> Review: verified + pushed / finalize + promoteNextPending
@@ -82,7 +82,7 @@ sequenceDiagram
     Op->>Route: sync {strategy, agent, push}
     Route->>Svc: eligibility + double fence
     Svc->>Svc: one tx {attempt#, starting row, "sync" claim}
-    Svc->>Git: fetch origin <target> (target-scoped)
+    Svc->>Git: fetch origin (all refs — refreshes origin/<branch> too)
     Svc->>Git: ff local target from origin/<target>
     Svc->>Git: rebase run branch onto target
     Git-->>Svc: clean
@@ -101,7 +101,7 @@ sequenceDiagram
     participant Sup as supervisor-client
     participant Res as resolver session sync-N
     participant Gate as verification gate
-    Svc->>State: Review to Running, cap-gated, in the claim tx
+    Svc->>State: Review to Running, cap-gated, in a SECOND locked tx (post-conflict)
     Svc->>Sup: createSession cwd=worktree, stamp agent_running_since
     Sup->>Res: fresh session, never resume
     Res->>Svc: permission_request to hitl_requests plus NeedsInput
@@ -158,9 +158,14 @@ sequenceDiagram
   published, and leave `runs.status='Review'`.
 - The local target MUST fast-forward from `origin/<target>` when FF-able; any
   divergence MUST refuse with `PRECONDITION` naming both SHAs.
-- The attempt-number allocation, `starting` row, `"sync"` lifecycle claim, and (agent
-  path) the `Review→Running` CAS MUST be exactly ONE transaction; a concurrent
-  double-launch MUST yield exactly one attempt row and a `CONFLICT` for the loser.
+- The attempt-number allocation, the `starting` row, and the `"sync"` lifecycle
+  claim MUST be exactly ONE `FOR UPDATE` transaction; a concurrent double-launch
+  MUST yield exactly one attempt row and a `CONFLICT` for the loser.
+- The agent path's `Review→Running` CAS MUST be a SECOND locked transaction, taken
+  only after the rebase has conflicted. It cannot join the claim tx: which path a
+  sync takes is unknowable until the rebase runs, and a mechanical sync MUST never
+  flip the run to `Running`. That tx re-checks the cap and the promotion fence
+  under the same lock, so the split costs no serialization.
 - While a `"sync"` claim is active, `promote/archive/drop/exportBranch/snapshotCommit/
   handoffBranch` MUST refuse, and `promoteRun` MUST refuse while a sync claim is
   active (double fence, both directions).
@@ -176,9 +181,13 @@ sequenceDiagram
 - `agent=false` + conflict MUST abort cleanly, restore the pre-sync SHA, and return
   `outcome:'conflict'` with no change.
 - `--force-with-lease` MUST use the run branch's remote SHA obtained via
-  `git ls-remote origin refs/heads/<branch>` captured **before** the target-scoped
-  fetch (NOT the local `refs/remotes/origin/<branch>` tracking ref, which the
-  target-scoped fetch does not refresh); if that SHA is indeterminate while
+  `git ls-remote origin refs/heads/<branch>` captured **before** the fetch (NOT
+  the local `refs/remotes/origin/<branch>` tracking ref). The fetch is
+  `git fetch origin` with no refspec, so it refreshes EVERY ref including
+  `origin/<branch>` — a bare `--force-with-lease` issued after it would lease
+  against the just-refreshed ref and pass even though the branch moved. The
+  ordering (capture, THEN fetch) is the whole safety property: it is not
+  incidental and must not be "optimized away". If that SHA is indeterminate while
   `pr_url` is set the push MUST refuse (never fall back to a bare lease). A lease
   rejection MUST fail the attempt (`CONFLICT`) and keep the local rebase result.
 - Every sync attempt MUST be a durable `run_sync_attempts` row whose `phase` advances

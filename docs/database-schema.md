@@ -1777,7 +1777,7 @@ auto-incrementing per `run_id`.
   targetRef, targetSha,          // promotion target and its resolved head
   headShaBefore, headShaAfter?,  // run branch tip before / after the attempt
   remoteShaBefore?,              // run branch remote SHA captured BEFORE the
-                                 //   target-scoped fetch (--force-with-lease expected value)
+                                 //   all-refs fetch (--force-with-lease expected value)
   conflictedFiles?,              // jsonb; captured on the conflict path
   runnerId?,                     // resolver runner (FK -> platform_acp_runners.id)
   sessionName?,                  // 'sync-<attempt>' run_sessions row identity
@@ -1791,9 +1791,11 @@ auto-incrementing per `run_id`.
 ```
 
 UNIQUE `(run_id, attempt)`. The attempt-number allocation, the `starting` row,
-the `"sync"` lifecycle claim, and (agent path) the `markSyncFromReview`
-`Review→Running` CAS are ONE transaction, so a concurrent double-launch yields
-exactly one attempt row and a `CONFLICT` for the loser. The durable `phase`
+and the `"sync"` lifecycle claim are ONE `FOR UPDATE` transaction, so a
+concurrent double-launch yields exactly one attempt row and a `CONFLICT` for the
+loser. The agent path's `markSyncFromReview` `Review→Running` CAS is a SECOND
+locked transaction taken after the rebase conflicts — it cannot join the claim,
+which commits before the rebase that decides whether an agent is needed at all. The durable `phase`
 advances before every git/session side effect so the reconcile classifier
 recovers crash windows W1–W6 to a stable state. Cascade: `ON DELETE CASCADE`
 from `runs.id`. Mechanical (clean-rebase) sync never changes `runs.status`; the

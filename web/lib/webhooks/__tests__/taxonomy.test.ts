@@ -247,7 +247,7 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
     { type: "ping", data: { message: "MAIster webhook ping" } },
   ];
 
-  it("covers all 13 types in the table", () => {
+  it("covers all 16 types in the table", () => {
     expect(cases.map((c) => c.type)).toEqual([...EXPECTED_TYPES]);
   });
 

@@ -362,10 +362,11 @@ Status: **Implemented (ADR-139)** — `getPrState` on the `PrAdapter` family in
 Branch sync publishes the rebased/merged run branch back to its remote with
 `git push --force-with-lease=refs/heads/<branch>:<remote_sha_before>` — an
 **explicit-SHA lease**, not a bare `--force-with-lease`. The run branch's remote
-SHA is captured BEFORE the target-scoped `fetch`; a bare `--force-with-lease`
-issued after any fetch that touched `origin/<branch>` would lease against the
-just-refreshed remote-tracking ref and succeed even when the branch moved
-underneath (the footgun). A lease rejection (the remote branch moved) surfaces as
+SHA is captured BEFORE the `fetch`, which is `git fetch origin` with NO
+refspec and therefore refreshes every ref, `origin/<branch>` included. A bare
+`--force-with-lease` issued after it would lease against the just-refreshed
+remote-tracking ref and succeed even when the branch moved underneath (the
+footgun). The capture-then-fetch ORDER is the safety property. A lease rejection (the remote branch moved) surfaces as
 a typed `CONFLICT` with both SHAs; the local rebase/merge result is kept.
 
 ```mermaid
@@ -375,7 +376,7 @@ sequenceDiagram
     participant REMOTE as origin
     ST->>GIT: capture run-branch remote SHA BEFORE fetch (remote_sha_before)
     Note over ST,GIT: a bare --force-with-lease after a fetch that touched origin/branch would lease against the refreshed ref and pass unsafely
-    ST->>GIT: fetch origin, target ref only (run branch tracking ref untouched)
+    ST->>GIT: fetch origin (all refs — origin/branch IS refreshed)
     ST->>GIT: rebase or merge the run branch onto target, in the worktree
     ST->>REMOTE: git push --force-with-lease=refs/heads/branch:remote_sha_before
     alt lease holds, remote branch unchanged

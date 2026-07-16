@@ -5168,7 +5168,12 @@ board sync) subscribe to it later; none is built here.
 - **Taxonomy = 12 curated types, never raw `session/update`.** `run.started`,
   `run.needs_input`, `hitl.requested`, `hitl.responded`, `run.review`,
   `run.promoted`, `run.done`, `run.failed`, `run.crashed`, `run.abandoned`,
-  `gate.decided`, and a synthetic unpersisted `ping`. The not-emitted set
+  `gate.decided`, and a synthetic unpersisted `ping`.
+  (Superseded — the taxonomy has since grown additively, exactly as this ADR's
+  "additive later" clause anticipated: `run.escalated`, plus ADR-139's
+  `run.pr_merged` / `run.pr_closed` / `run.pr_conflicts`, make 16 today.
+  `lib/webhooks/taxonomy.ts` is the source of truth; the count above records
+  what ADR-077 decided, not the current contract.) The not-emitted set
   (checkpoint/resume, `HumanWorking`, `Pending`, keepalive, non-terminal gate
   states, `gate.opened`, `node_attempts`, all `session.*`) is additive later
   (one type + one emit + one doc row). Both `run.done` and `run.promoted` are
@@ -12219,9 +12224,10 @@ bring a `Done` run whose PR now conflicts back into review.
   `lifecycle_operation_name='sync'` claim exists. Both directions are matrix tested.
 - **Sync pipeline** (`web/lib/runs/sync-target.ts`), eligibility allow-list
   `status='Review'`, `run_kind ∈ {flow, agent}`, `parent_run_id IS NULL`,
-  `workspace_mode <> 'shared'`, not an experiment member: target-scoped
-  `fetch origin <target>` (so the run branch's remote-tracking ref is NOT
-  refreshed — lease safety), fast-forward the local target (non-FF divergence →
+  `workspace_mode <> 'shared'`, not an experiment member: `fetch origin`
+  (no refspec — ALL refs, so `origin/<branch>` IS refreshed; lease safety comes
+  from the pre-fetch `ls-remote` capture, not from the fetch's scope),
+  fast-forward the local target (non-FF divergence →
   typed `PRECONDITION` with both SHAs), compute ahead/behind, no-op when behind=0,
   then rebase (default) or merge (per `projects.sync_strategy_default` or
   per-invocation override) inside the worktree. A dirty worktree refuses with a
@@ -12247,7 +12253,7 @@ bring a `Done` run whose PR now conflicts back into review.
   SHA, attempt `failed`, CAS `Running→Review`.
 - **Push policy**: `--force-with-lease` when `pr_url` is set or the branch has an
   upstream (per-invocation override). Lease safety: capture the run branch's remote
-  SHA BEFORE the target-scoped fetch and push
+  SHA BEFORE the fetch and push
   `--force-with-lease=refs/heads/<branch>:<captured-sha>` — a bare
   `--force-with-lease` after any fetch that touched `origin/<branch>` would lease
   against the refreshed value and defeat the check. Lease failure → attempt
@@ -12259,9 +12265,11 @@ bring a `Done` run whose PR now conflicts back into review.
   `target_ref/sha`, `head_sha_before/after`, `remote_sha_before` (lease),
   `conflicted_files` jsonb, `runner_id`, `session_name`, `agent_running_since`
   (active-time cap), `auto_finalize` (bool), `pushed`, `error_code/message`, actor,
-  timestamps. The attempt-number allocation, `starting` insert, `"sync"` claim, and
-  (agent path) the `markSyncFromReview` CAS are ONE transaction — the claim
-  serializes concurrent launches to exactly one attempt row.
+  timestamps. The attempt-number allocation, `starting` insert, and `"sync"` claim
+  are ONE transaction — the claim serializes concurrent launches to exactly one
+  attempt row. The agent path's `markSyncFromReview` CAS is a SECOND locked tx,
+  taken only once the rebase has conflicted: the claim must commit before the
+  rebase, and the rebase is what decides whether a resolver is needed.
 - **Concurrency**: the agent path holds a kind-pool slot while `Running` (a
   `NeedsInput` resolver still holds it). `Review→Running` reclaims a slot and is
   cap-gated — launch at cap → typed `CONFLICT`, no queueing. Finalize back to

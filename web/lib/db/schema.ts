@@ -2350,8 +2350,11 @@ export const runSyncAttempts = pgTable(
     targetSha: text("target_sha"),
     headShaBefore: text("head_sha_before"),
     headShaAfter: text("head_sha_after"),
-    // captured via `git ls-remote` BEFORE the target-scoped fetch, for the
-    // explicit-SHA force-with-lease (decision 11).
+    // captured via `git ls-remote` BEFORE the fetch, for the explicit-SHA
+    // force-with-lease (decision 11). The fetch is `git fetch origin` with NO
+    // refspec, so it DOES refresh `origin/<branch>` — which is exactly why this
+    // is captured first and why the lease names a SHA instead of relying on the
+    // tracking ref.
     remoteShaBefore: text("remote_sha_before"),
     conflictedFiles: jsonb("conflicted_files").$type<string[]>(),
     // resolved runner SNAPSHOT (plain text, no FK — the terminal path reads this,

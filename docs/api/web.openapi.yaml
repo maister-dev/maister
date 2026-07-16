@@ -4976,7 +4976,8 @@ paths:
         promotion target inside the run's worktree, fast-forwarding the local
         target from `origin/<target>` first, and — when the branch is published —
         force-with-lease pushes using an expected-SHA lease captured before the
-        target-scoped fetch. On conflict with `agent=true` a fresh resolver ACP
+        fetch (which is `git fetch origin`, all refs). On conflict with
+        `agent=true` a fresh resolver ACP
         session is launched (`Review → Running`, cap-gated) and the run resolves
         via standard HITL; with `agent=false` the conflicted rebase is aborted
         and `outcome:"conflict"` returned with no change. `runId`, project,
@@ -16838,6 +16839,18 @@ components:
             `reviewedTargetCommit`-vs-live-HEAD equality check is skipped,
             merging into the advanced target. A deliberate human action, never
             a default.
+        autoFinalize:
+          type: boolean
+          default: false
+          description: |
+            (ADR-140, Implemented) Opt-in one-click chaining for a
+            resolver-backed `ai_rebase_merge` conflict. Ignored for every other
+            strategy. Default OFF — the two-step contract: the resolver returns
+            the run to `Review` and a human promotes it. When true, a verified
+            resolution best-effort chains `promoteRun(rebase_merge)` to `Done`;
+            ANY failure degrades to that same clean `Review` state.
+            This schema is `additionalProperties: false`, so omitting the field
+            made the spec reject the request the UI actually sends.
     PromoteRunResponse:
       type: object
       required: [ok, mode]
@@ -18902,11 +18915,15 @@ components:
     WebhookEventType:
       type: string
       description: |
-        (ADR-077) The curated outbound event taxonomy (12 types). The full
-        per-type `data` shapes are in `async/outbound-webhooks.asyncapi.yaml`.
+        (ADR-077) The curated outbound event taxonomy (16 types), mirroring
+        `lib/webhooks/taxonomy.ts` in order. The full per-type `data` shapes are
+        in `async/outbound-webhooks.asyncapi.yaml`. This enum feeds live
+        subscription request bodies, so a missing member is not cosmetic — it
+        rejects a subscription to an event the code really emits.
       enum:
         - run.started
         - run.needs_input
+        - run.escalated
         - hitl.requested
         - hitl.responded
         - run.review
@@ -18915,6 +18932,9 @@ components:
         - run.failed
         - run.crashed
         - run.abandoned
+        - run.pr_merged
+        - run.pr_closed
+        - run.pr_conflicts
         - gate.decided
         - ping
 

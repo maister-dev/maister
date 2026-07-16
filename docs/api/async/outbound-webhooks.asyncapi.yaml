@@ -14,7 +14,7 @@ info:
     this AsyncAPI doc therefore models the channel from the **consumer's**
     perspective, so the `subscribe` operation = "events the consumer receives".
 
-    **Curated taxonomy, not raw session noise.** Events are 12 curated
+    **Curated taxonomy, not raw session noise.** Events are 16 curated
     lifecycle facts mapped from MAIster DB transitions (run started, needs
     input, HITL requested/responded, review, promoted, done, failed, crashed,
     abandoned, gate decided, ping). Low-level ACP `session/*` stream events are
