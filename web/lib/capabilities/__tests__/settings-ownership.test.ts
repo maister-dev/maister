@@ -123,6 +123,64 @@ describe("settings.local.json ownership", () => {
     ).rejects.toThrow(/owned by capability run first-run/);
   });
 
+  // The marker gained its `capability:`/`agent-l2:` kind prefix after the format
+  // had already been written to disk as a BARE runId. Those markers live in
+  // long-lived run worktrees, so an old run resuming (e.g. a human review
+  // approved days later) hands the parser a legacy marker it must still read as
+  // ITS OWN — otherwise the run fails `CONFLICT` claiming the settings are
+  // "owned by an unknown MAIster writer" while naming the run's own id.
+  it("adopts a legacy bare-runId marker written by the same run", async () => {
+    const markerPath = path.join(root, SETTINGS_MARKER_RELATIVE);
+
+    // The on-disk shape a pre-prefix claim actually leaves behind: materialized
+    // settings, the user's original backed up beside them, and a marker holding
+    // nothing but the run id (no `.maister-op` — the operation record postdates
+    // these markers too).
+    await mkdir(path.dirname(markerPath), { recursive: true });
+    await writeFile(path.join(root, SETTINGS_RELATIVE), '{"legacy":true}\n');
+    await writeFile(path.join(root, SETTINGS_BACKUP_RELATIVE), '{"user":1}\n');
+    await writeFile(markerPath, "legacy-run");
+
+    await expect(
+      materializeCapabilitySettings({
+        cwd: root,
+        runId: "legacy-run",
+        content: '{"fresh":true}\n',
+      }),
+    ).resolves.toBe(path.join(root, SETTINGS_RELATIVE));
+
+    // The run owns the file: its content is the freshly materialized profile.
+    await expect(
+      readFile(path.join(root, SETTINGS_RELATIVE), "utf8"),
+    ).resolves.toBe('{"fresh":true}\n');
+
+    // The marker is left in its legacy shape — a re-materialization by the owning
+    // run rewrites content only. Pinned so the read-side tolerance is not quietly
+    // swapped for an out-of-protocol re-stamp.
+    await expect(readFile(markerPath, "utf8")).resolves.toBe("legacy-run");
+
+    // And the legacy owner still releases cleanly through the normal path.
+    await expect(
+      reclaimCapabilitySettings({ cwd: root, runId: "legacy-run" }),
+    ).resolves.toEqual({ status: "reclaimed" });
+  });
+
+  it("still refuses a legacy bare-runId marker owned by a DIFFERENT run", async () => {
+    const markerPath = path.join(root, SETTINGS_MARKER_RELATIVE);
+
+    await mkdir(path.dirname(markerPath), { recursive: true });
+    await writeFile(path.join(root, SETTINGS_RELATIVE), '{"legacy":true}\n');
+    await writeFile(markerPath, "someone-else");
+
+    await expect(
+      materializeCapabilitySettings({
+        cwd: root,
+        runId: "legacy-run",
+        content: '{"fresh":true}\n',
+      }),
+    ).rejects.toThrow(/owned by capability run someone-else/);
+  });
+
   it("refuses a symlinked Claude directory without writing outside the worktree", async () => {
     const outside = path.join(root, "outside");
 

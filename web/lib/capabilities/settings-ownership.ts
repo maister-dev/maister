@@ -109,16 +109,42 @@ export function capabilitySettingsOperation(
   } satisfies CapabilitySettingsOperation)}\n`;
 }
 
+// What the agent-L2 watchdog wrote before markers carried a kind prefix. It is
+// NOT a run id, so it must be excluded from the legacy-capability branch below —
+// otherwise it would be read as a capability run literally named "maister-owned".
+const LEGACY_AGENT_L2_MARKER = "maister-owned";
+
 function parseOwner(value: string): SettingsOwner {
   const marker = value.trim();
   const match = /^(capability|agent-l2):([A-Za-z0-9._-]+)$/.exec(marker);
 
-  if (!match) return { kind: "unknown" };
+  if (match) {
+    return {
+      kind: match[1] as "capability" | "agent-l2",
+      runId: match[2],
+    };
+  }
 
-  return {
-    kind: match[1] as "capability" | "agent-l2",
-    runId: match[2],
-  };
+  // The kind prefix was added AFTER markers were already on disk: the capability
+  // materializer used to write a BARE run id. Those markers sit in long-lived run
+  // worktrees, so a run that resumes across the change (a review approved days
+  // later) would otherwise be told its OWN settings are owned by "an unknown
+  // MAIster writer" and fail CONFLICT — with no retry, because CONFLICT is not a
+  // retryable node error, so a fully-working run is lost.
+  //
+  // Read-side only, deliberately: a re-materialization by the owning run rewrites
+  // the settings content but NOT the marker, so a legacy marker keeps its shape
+  // and is re-read through this branch every time. That is cheaper and safer than
+  // re-stamping it, which would put an extra write inside the crash-safe
+  // backup/write/marker operation protocol for no correctness gain.
+  //
+  // Ownership is NOT widened — a legacy marker still names its run, so a FOREIGN
+  // legacy marker keeps conflicting exactly as it should.
+  if (marker !== LEGACY_AGENT_L2_MARKER && /^[A-Za-z0-9._-]+$/.test(marker)) {
+    return { kind: "capability", runId: marker };
+  }
+
+  return { kind: "unknown" };
 }
 
 function parseCapabilitySettingsOperation(
