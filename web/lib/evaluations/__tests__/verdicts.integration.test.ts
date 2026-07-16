@@ -132,6 +132,26 @@ describe("recordVerdict (append-only, human-only)", () => {
       .where(eq(schema.evaluationEvents.studyId, s.studyId));
 
     expect(events.map((e: any) => e.eventType)).toContain("verdict.recorded");
+
+    // Social-board mirror: the study's task timeline reflects the conclusion in
+    // the same transaction (ADR-078), with bounded metadata only.
+    const [studyRow] = await db
+      .select({ taskId: schema.evaluationStudies.taskId })
+      .from(schema.evaluationStudies)
+      .where(eq(schema.evaluationStudies.id, s.studyId));
+    const activity = await db
+      .select({
+        eventKind: schema.taskActivity.eventKind,
+        actorType: schema.taskActivity.actorType,
+        payload: schema.taskActivity.payload,
+      })
+      .from(schema.taskActivity)
+      .where(eq(schema.taskActivity.taskId, studyRow.taskId));
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0].eventKind).toBe("evaluation_decided");
+    expect(activity[0].actorType).toBe("user");
+    expect(activity[0].payload).toMatchObject({ outcome: "winner" });
   });
 
   it("refuses a zero-citation verdict without the acknowledgement", async () => {

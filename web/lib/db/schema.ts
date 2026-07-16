@@ -5477,6 +5477,8 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   // ADR-140 (migration 0105): PR merged onto target — merged-only board feed
   // (closed/conflict surface via chip + webhook, not task_activity).
   "run_pr_merged",
+  // M46 (ADR-139): a conclusive human Evaluation Study verdict was recorded.
+  "evaluation_decided",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -5519,7 +5521,7 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided')`,
     ),
     actorTypeCheck: check(
       "task_activity_actor_type_check",

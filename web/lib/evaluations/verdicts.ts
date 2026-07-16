@@ -10,6 +10,7 @@ import { appendEvaluationEvent } from "./dispatcher/events";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 
 // FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
 const { evaluationHumanVerdicts, evaluationExecutions, evaluationStudies } =
@@ -53,7 +54,12 @@ export async function recordVerdict(
 
   return d.transaction(async (tx: Db) => {
     const [study] = await tx
-      .select({ id: evaluationStudies.id, status: evaluationStudies.status })
+      .select({
+        id: evaluationStudies.id,
+        status: evaluationStudies.status,
+        taskId: evaluationStudies.taskId,
+        projectId: evaluationStudies.projectId,
+      })
       .from(evaluationStudies)
       .where(eq(evaluationStudies.id, args.studyId))
       .for("update");
@@ -186,6 +192,23 @@ export async function recordVerdict(
         outcome: args.outcome,
         citedExecutions: args.executionIds.length,
         supersedes: args.supersedesId ?? null,
+      },
+    });
+
+    // Social-board mirror (ADR-078): the study's task timeline reflects the
+    // conclusion in the SAME transaction as the verdict — bounded metadata only
+    // (no rationale/comment body). NOT a Run mutation or promotion (D14).
+    await recordTaskActivity(tx, {
+      taskId: study.taskId,
+      projectId: study.projectId,
+      actor: actorForUserId(args.createdByUserId),
+      eventKind: "evaluation_decided",
+      payload: {
+        studyId: args.studyId,
+        verdictId: row.id,
+        outcome: args.outcome,
+        citedExecutions: args.executionIds.length,
+        superseded: args.supersedesId ?? null,
       },
     });
 
