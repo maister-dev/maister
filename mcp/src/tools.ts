@@ -9,7 +9,7 @@ export type ToolSpec = {
 export const TOOL_SPECS: Record<string, ToolSpec> = {
   task_create: {
     description:
-      "Create a new task in a project (flowId optional — a flowless task is a simple-intent task awaiting triage)",
+      "Create a new task in a project (flowId optional — a flowless task is a simple-intent task awaiting triage). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`).",
     inputSchema: {
       type: "object",
       properties: {
@@ -468,7 +468,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   triage_set: {
     description:
-      "Submit a triage verdict for a task: any of flowId/runnerId/baseBranch/targetBranch/promotionMode stamps triage_status='triaged'; `flag: true` instead holds the task for a human (mutually exclusive with verdict fields). `enqueue: true` sets the auto-launch intent (valid only with a verdict that yields a flow). `priority` (queue admission order) and `confidence` (0..1, advisory) are independent and may accompany either shape — send `null` to clear (priority → 'normal', confidence → none).",
+      "Submit a triage verdict for a task: any of flowId/runnerId/baseBranch/targetBranch/promotionMode stamps triage_status='triaged'; `flag: true` instead holds the task for a human (mutually exclusive with verdict fields). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`). `enqueue: true` sets the auto-launch intent (valid only with a verdict that yields a flow). `priority` (queue admission order) and `confidence` (0..1, advisory) are independent and may accompany either shape — send `null` to clear (priority → 'normal', confidence → none).",
     inputSchema: {
       type: "object",
       properties: {

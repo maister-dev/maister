@@ -211,18 +211,18 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
 
 ### Phase 4 — MCP surface + agent guidance
 
-- [ ] **T4.1 — Tool descriptions.** `mcp/src/tools.ts`: **`triage_set.flowId` and
+- [x] **T4.1 — Tool descriptions.** `mcp/src/tools.ts`: **`triage_set.flowId` and
   `task_create.flowId` ONLY** → "flow UUID or ref (e.g. `aif-bugfix`), as returned by
   `flow_list`". **Do NOT touch `run_launch`** (no `flowId` param) **or `delegate`** (stub).
   → verify: T4.2 green.
-- [ ] **T4.2 — MCP tests.** `mcp/src/__tests__/tools.test.ts` / `tool-contract.test.ts`:
+- [x] **T4.2 — MCP tests.** `mcp/src/__tests__/tools.test.ts` / `tool-contract.test.ts`:
   the two descriptions mention "ref"; routing unchanged (the facade forwards the string;
   the web service resolves). Runner: **mcp unit project**.
   → verify: `pnpm --filter @maister/mcp test` green.
-- [ ] **T4.3 — Rebuild facade bundle.** `pnpm --filter @maister/mcp build`; grep the new
+- [x] **T4.3 — Rebuild facade bundle.** `pnpm --filter @maister/mcp build`; grep the new
   description text in `mcp/dist/main.js` (agents run the bundle, not source).
   → verify: bundle carries the text.
-- [ ] **T4.4 — Triager guidance** (external repo `maister-plugins`, separate commit):
+- [x] **T4.4 — Triager guidance** (external repo `maister-plugins`, separate commit):
   `packages/core/maister-agents/triager.md` ~188 — note the ref is accepted.
   → verify: owner-visible; this repo's tree untouched.
 

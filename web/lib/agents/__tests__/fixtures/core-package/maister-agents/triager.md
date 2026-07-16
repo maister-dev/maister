@@ -185,7 +185,9 @@ circular, leave the relation out and note the conflict in a comment.
 
 Record the routing decision with `triage_set`:
 
-- `flowId` — the chosen flow's id (from `flow_list`).
+- `flowId` — the chosen flow, from `flow_list`: either its `id` or its `ref`
+  (e.g. `aif-bugfix`). Both resolve to the same flow; prefer the `ref` — it is
+  readable and stable across the package's revisions.
 - `runnerId` — a suitable runner's id (from `runner_list`); pick by adapter/model
   fit for the work.
 - `baseBranch` — the branch to fork from (the project's default unless the task

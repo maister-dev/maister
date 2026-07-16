@@ -1000,6 +1000,22 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     });
   });
 
+  // The description is the ONLY signal the agent gets that a ref is accepted —
+  // main.ts registers a passthrough z.record, so the per-field inputSchema is
+  // never advertised. Losing this text silently strands agents on UUIDs.
+  it("advertises ref-or-UUID flowId on the tools that accept one, and nowhere else", async () => {
+    for (const tool of ["triage_set", "task_create"]) {
+      expect(TOOL_SPECS[tool].description).toContain("ref");
+      expect(TOOL_SPECS[tool].description).toContain("flow_list");
+    }
+
+    // run_launch has no flowId param and the ext runs route refuses one
+    // (ADR-085); delegate's target.flowId is a Phase-3 stub.
+    expect(TOOL_SPECS.run_launch.inputSchema).not.toHaveProperty(
+      "properties.flowId",
+    );
+  });
+
   it("triage_set coerces a stringified numeric confidence to a number (an LLM emits 0.8 as a string; the strict ext route needs a number)", async () => {
     mockOnce({ ok: true, triageStatus: "triaged" }, 200);
 
