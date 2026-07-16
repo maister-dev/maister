@@ -14,6 +14,17 @@ export const TERMINAL_RUN_STATUSES = [
   "Abandoned",
 ] as const;
 
+// Workspace retention is intentionally narrower than generic terminality:
+// failed/crashed/reviewed runs remain visible and require an explicit user
+// decision before their worktrees may be removed.
+export const DISPOSABLE_WORKSPACE_RUN_STATUSES = ["Done", "Abandoned"] as const;
+
+export function isDisposableWorkspaceRunStatus(status: string): boolean {
+  return (DISPOSABLE_WORKSPACE_RUN_STATUSES as readonly string[]).includes(
+    status,
+  );
+}
+
 // M37 (ADR-100): the SETTLED set — terminal statuses PLUS `Review`. A delegated
 // child is no longer "pending" for its orchestrator once it is settled: it is
 // either terminal, or sitting in `Review` with a diff awaiting the coordinator's

@@ -9,8 +9,8 @@
 //
 // Contract:
 //   - an Abandoned/Done ALLOCATOR whose shared sibling (same root_run_id) is
-//     still NON-terminal (Running/Review) is NOT collected (worktree preserved).
-//   - once ALL shared siblings are terminal (Done|Failed|Crashed|Abandoned),
+//     still actionable/protected (Running|Review|Failed|Crashed) is NOT collected.
+//   - only once ALL shared siblings are disposable (Done|Abandoned),
 //     the workspace IS collected.
 //
 // RED today: loadCandidates joins workspaces ⨝ runs ON runs.id =
@@ -179,7 +179,7 @@ async function seedSibling(args: {
       projectId,
       args.status,
       args.rootRunId,
-      // Terminal siblings get an ended_at; live ones leave it null.
+      // Settled siblings get an ended_at; active ones leave it null.
       ["Done", "Failed", "Crashed", "Abandoned"].includes(args.status)
         ? new Date()
         : null,
@@ -236,7 +236,7 @@ function makeOpts() {
 }
 
 describe("ADR-102 T16 — workspace GC is shared-tree-aware", () => {
-  for (const liveStatus of ["Running", "Review"]) {
+  for (const liveStatus of ["Running", "Review", "Failed", "Crashed"]) {
     it(`does NOT collect a terminal allocator while a shared sibling is still ${liveStatus}`, async () => {
       const root = await seedRoot();
       const { workspaceId } = await seedAllocator({
@@ -244,7 +244,7 @@ describe("ADR-102 T16 — workspace GC is shared-tree-aware", () => {
         status: "Abandoned",
       });
 
-      // A shared sibling of the SAME tree is still non-terminal.
+    // A shared sibling of the SAME tree is still protected from auto-removal.
       await seedSibling({ rootRunId: root, status: liveStatus });
 
       const { opts, removeOwnedWorktree, preserveWorktree } = makeOpts();
@@ -258,16 +258,16 @@ describe("ADR-102 T16 — workspace GC is shared-tree-aware", () => {
     }, 60_000);
   }
 
-  it("DOES collect once ALL shared siblings are terminal", async () => {
+  it("DOES collect once ALL shared siblings are disposable", async () => {
     const root = await seedRoot();
     const { workspaceId } = await seedAllocator({
       rootRunId: root,
       status: "Abandoned",
     });
 
-    // Every shared sibling is terminal now.
+    // Every shared sibling is explicitly disposable now.
     await seedSibling({ rootRunId: root, status: "Done" });
-    await seedSibling({ rootRunId: root, status: "Failed" });
+    await seedSibling({ rootRunId: root, status: "Abandoned" });
 
     const { opts, removeOwnedWorktree } = makeOpts();
     const summary = await runWorkspaceGcSweep(opts);

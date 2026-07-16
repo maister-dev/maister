@@ -27,7 +27,7 @@ import { gcAgeDays, gcArchivePush, worktreesRoot } from "@/lib/instance-config";
 import { deleteRunCheckpointRefs } from "@/lib/flows/graph/workspace-checkpoint";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { removeOwnedWorktree } from "@/lib/worktree";
-import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -170,7 +170,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
             eq(sibling.rootRunId, runs.rootRunId),
             eq(sibling.workspaceMode, "shared"),
             eq(sibling.agentWorkspace, "worktree"),
-            notInArray(sibling.status, [...TERMINAL_RUN_STATUSES]),
+            notInArray(sibling.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
           ),
         ),
     ),
@@ -264,7 +264,7 @@ async function logTreeBlockedSkips(db: Db, now: Date): Promise<void> {
     eq(sibling.rootRunId, runs.rootRunId),
     eq(sibling.workspaceMode, "shared"),
     eq(sibling.agentWorkspace, "worktree"),
-    notInArray(sibling.status, [...TERMINAL_RUN_STATUSES]),
+    notInArray(sibling.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
   );
   const countSubquery = db
     .select({ c: sql<number>`count(*)::int` })
@@ -347,8 +347,7 @@ export async function runWorkspaceGcSweep(
       log.warn(
         {
           runId: cand.runId,
-          parentRepoPath: cand.parentRepoPath,
-          err: err instanceof Error ? err.message : String(err),
+          errorType: err instanceof Error ? err.name : "unknown",
         },
         "[checkpoint] ref GC failed — refs remain orphaned (harmless)",
       );
@@ -363,7 +362,7 @@ export async function runWorkspaceGcSweep(
     await logTreeBlockedSkips(db, now());
   } catch (err) {
     log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
+      { errorType: err instanceof Error ? err.name : "unknown" },
       "[gc] shared-tree skip diagnostics failed (non-fatal)",
     );
   }
@@ -388,7 +387,11 @@ export async function runWorkspaceGcSweep(
       if (!exists) {
         await db
           .update(workspaces)
-          .set({ removedAt: now() })
+          .set({
+            removedAt: now(),
+            removalKind: "retention_gc",
+            preservationOutcome: "not_needed",
+          })
           .where(eq(workspaces.id, cand.workspaceId));
 
         // The worktree is gone but its checkpoint refs persist in the shared
@@ -439,6 +442,11 @@ export async function runWorkspaceGcSweep(
           removedAt: now(),
           archivedBranch: r.archivedBranch ?? null,
           archivedAt: r.archivedAt ?? null,
+          archivedCommit: r.archivedCommit ?? null,
+          preservationOutcome:
+            r.preservationOutcome ??
+            (r.snapshotted ? "snapshot_created" : "not_needed"),
+          removalKind: "retention_gc",
         })
         .where(eq(workspaces.id, cand.workspaceId));
 
@@ -458,7 +466,7 @@ export async function runWorkspaceGcSweep(
         {
           workspaceId: cand.workspaceId,
           runId: cand.runId,
-          err: err instanceof Error ? err.message : String(err),
+          errorType: err instanceof Error ? err.name : "unknown",
         },
         "workspace GC: row failed — continuing",
       );
