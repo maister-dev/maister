@@ -922,7 +922,8 @@ Phase 4 exit: judge/MCP/external contract suites green; real multi-judge wiring 
 
 ### Phase 5 — Evaluation Foundation UI, compatibility, and rollout
 
-- [ ] T5.1 RED/GREEN/REFACTOR admin Evaluations settings UI.
+- [x] T5.1 RED/GREEN/REFACTOR admin Evaluations settings UI.
+  - DONE (this session): `app/(app)/settings/evaluations/page.tsx` (admin-gated server page, maps `listMethodologies`/`listPanels`/`listProfiles` → client DTOs, no Date/secrets cross the RSC boundary) + `components/settings/evaluations/{types,evaluations-settings,judge-panel-modal,profile-modal}.tsx` — 3-tab surface (Methodologies read + health-gated activation toggle; Judge Panels view-only table + create/edit modal (roles + numeric policy + blind/randomize) + usage-guarded delete w/ If-Match→409; Profiles view-only table + create/edit modal (method/panel dropdowns, immutable on edit) + delete). Discoverable link card added to `/settings` hub. EN+RU `settingsEvaluations` namespace (59 keys, parity-verified) + `adminScheduler.kind.evaluation_dispatch` label (fixes the scheduler-kind-keys contract that T3.3's enum left open). 3-test `renderToStaticMarkup` contract (tabs+counts, health-gated action + validation-reason surfacing, empty-state) + i18n parity/kind tests green; typecheck baseline-only. No raw IDs/secrets in DTOs; role-driven (route enforces `requireGlobalRole("admin")`).
   - Files: web/app/(app)/settings/evaluations/*, methodology/panel/profile components, typed clients/actions, EN/RU messages.
   - RED: RBAC, package provenance/compatibility/errors, role bindings, effective preview, stale revision, keyboard/focus, dense/degraded states.
   - GREEN: Methodologies/Panels/Profiles CRUD/activation with no raw IDs/secrets.

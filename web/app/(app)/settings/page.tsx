@@ -72,6 +72,23 @@ export default async function SettingsPage(): Promise<ReactElement> {
 
       {isAdmin ? (
         <>
+          <a
+            className="mb-5 flex items-center justify-between gap-3 rounded-[16px] border border-line bg-paper px-7 py-5 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)] hover:border-mute"
+            href="/settings/evaluations"
+          >
+            <span className="flex flex-col gap-0.5">
+              <span className="text-[14px] font-semibold text-ink">
+                {t("evaluationLabTitle")}
+              </span>
+              <span className="text-[12.5px] leading-[1.5] text-mute">
+                {t("evaluationLabSub")}
+              </span>
+            </span>
+            <span aria-hidden="true" className="text-[18px] text-mute">
+              →
+            </span>
+          </a>
+
           <div className="grid gap-5 md:grid-cols-2">
             <div className="rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
               <dl className="flex flex-col gap-5">
