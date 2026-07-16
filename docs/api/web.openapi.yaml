@@ -2229,7 +2229,10 @@ paths:
         `prompt` are required; the launch-default fields are required keys
         whose value MAY be `null` to CLEAR. The ADR-121 queue fields
         (`priority`, `triageConfidence`, `queuePaused`) are optional so
-        pre-existing PUT clients stay valid. Config fields are Backlog-gated
+        pre-existing PUT clients stay valid. `flowId` is accepted as either the
+        `flows.id` UUID or the project's `flows.flow_ref_id`, with the resolved
+        UUID persisted (same resolution as `PATCH` — both funnel through
+        `updateTask`). Config fields are Backlog-gated
         (editing one while the task is InFlight → `PRECONDITION`);
         `queuePaused` works while InFlight.
       operationId: putTask

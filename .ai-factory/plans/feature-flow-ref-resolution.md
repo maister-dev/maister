@@ -98,6 +98,7 @@ examples pass `ref`. Phase 1 resolves that contradiction explicitly.
 | delegate / plan `target.flowId` | same | **no change** — Phase-3 stub |
 | **`POST /api/projects/{slug}/tasks`** (createTask) | **`docs/api/web.openapi.yaml`** (~2071) | UUID-or-ref + structured `CONFIG` refusal |
 | **`PATCH …/tasks/{number}`** (updateTask verdict) | **`docs/api/web.openapi.yaml`** (~2150) | UUID-or-ref, resolved UUID persisted |
+| **`PUT …/tasks/{number}`** (putTask — same `updateTask`) | **`docs/api/web.openapi.yaml`** (~2224) | UUID-or-ref, resolved UUID persisted |
 | **`POST /api/runs`** → `PostRunBody.flowId` (launch override) | **`docs/api/web.openapi.yaml`** (~13922) | UUID-or-ref; miss → `PRECONDITION` |
 | Triage domain behavior (`validateVerdictRefs` at line 184; Expectations ~229/233) | `docs/system-analytics/triage.md` | describe ref-or-UUID resolution; add a testable Expectation (R5a: normative, verbatim ids, ≤12 bullets) |
 | ext facade contract | `docs/system-analytics/external-operations.md` | one Expectations bullet |
