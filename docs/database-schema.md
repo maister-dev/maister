@@ -81,11 +81,11 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions. **(ADR-134 — Implemented, migration `0098`)** adds the system-managed per-project `repo_delivery_scan` kind. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
-| `agent_schedules`             | **(M24 table, reworked M34 — Implemented, migration `0049`; ADR-139 telemetry, `0103`)** Per-agent cron/event trigger bindings. The dead M24 `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows), `event_match` jsonb (event rows), and fenced safe latest-attempt telemetry. Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer. | `projects.id`, `agents.id`, optional `runs.id`                    |
+| `agent_schedules`             | **(M24 table, reworked M34 — Implemented, migration `0049`; ADR-139 telemetry, `0104`)** Per-agent cron/event trigger bindings. The dead M24 `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows), `event_match` jsonb (event rows), and fenced safe latest-attempt telemetry. Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer. | `projects.id`, `agents.id`, optional `runs.id`                    |
 | `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
-| `scheduled_task_launches`     | **(ADR-139 — Implemented, migration `0103`)** Recoverable one-time task-launch intent with immutable task display snapshot, local-time/UTC contract, revision fence, safe outcome, and retry/claim state. It is driven by the existing `run_schedule.dispatcher`, never by the supervisor. | `projects.id`, optional `tasks.id`, optional `users.id` |
-| `scheduled_task_launch_attempts` | **(ADR-139 — Implemented, migration `0103`)** Durable pre-Git reservation: fixed Run identity, task attempt number, managed branch/path, request hash, and claim fence. | `scheduled_task_launches.id` |
-| `scheduled_task_launch_events` | **(ADR-139 — Implemented, migration `0103`)** Append-only safe audit ledger for intent creation, claim, retry, cancellation, launch, and terminal failure. | `scheduled_task_launches.id` |
+| `scheduled_task_launches`     | **(ADR-139 — Implemented, migration `0104`)** Recoverable one-time task-launch intent with immutable task display snapshot, local-time/UTC contract, revision fence, safe outcome, and retry/claim state. It is driven by the existing `run_schedule.dispatcher`, never by the supervisor. | `projects.id`, optional `tasks.id`, optional `users.id` |
+| `scheduled_task_launch_attempts` | **(ADR-139 — Implemented, migration `0104`)** Durable pre-Git reservation: fixed Run identity, task attempt number, managed branch/path, request hash, and claim fence. | `scheduled_task_launches.id` |
+| `scheduled_task_launch_events` | **(ADR-139 — Implemented, migration `0104`)** Append-only safe audit ledger for intent creation, claim, retry, cancellation, launch, and terminal failure. | `scheduled_task_launches.id` |
 | `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`.                                                                                                                                                         | `projects.id`                                                              |
 | `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
 | `webhook_subscriptions`       | **(Implemented, ADR-077, migration `0041`)** Operator-configured delivery endpoints. `project_id = NULL` = platform scope; non-null = project scope. Secrets stored as `env:NAME` refs only. Usage-guarded DELETE.                                                                                                                              | optional `projects.id`                                                     |
@@ -808,7 +808,7 @@ subsequent explicit `enabled:true` update re-arms the cron schedule.
 `(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
 (FK SET NULL + the read-time `lastRunStatus` join).
 
-## One-time scheduled task launch tables (Implemented, ADR-139, migration `0103`)
+## One-time scheduled task launch tables (Implemented, ADR-139, migration `0104`)
 
 These tables are the recoverable write-side ledger for a future task launch.
 They do not replace `run_schedules`: recurring cron semantics and overlap
@@ -1187,10 +1187,10 @@ unread badge and inbox panel.
                                  //   trigger_event_id) for outbox no-dup
   triggerPayload?,               // M34: jsonb webhook/event context,
                                  //   bounded <= 32 KB at the boundary
-  scheduledLaunchId?,            // ADR-139 (0103): FK -> scheduled_task_launches.id
+  scheduledLaunchId?,            // ADR-139 (0104): FK -> scheduled_task_launches.id
                                  //   SET NULL; UNIQUE when set, so one intent
                                  //   can link exactly one normal Run
-  agentScheduleId?,              // ADR-139 (0103): FK -> agent_schedules.id
+  agentScheduleId?,              // ADR-139 (0104): FK -> agent_schedules.id
                                  //   SET NULL; agent binding provenance
   agentWorkspace?,               // M34 (migration 0052): 'none' | 'repo_read'
                                  //   | 'worktree' — snapshot of the run's
@@ -1339,7 +1339,7 @@ feature explicitly creates a board task.
 set to `NULL`. They still keep non-null legacy display fields by writing
 `flowVersion = 'scratch'` and `flowRevision = 'manual'`.
 
-**ADR-139 (Implemented, migration `0103`).** A one-time launch is not a
+**ADR-139 (Implemented, migration `0104`).** A one-time launch is not a
 pre-created Run. The scheduler claims a durable `scheduled_task_launches` row,
 then reserves a Run identity in `scheduled_task_launch_attempts`; only the
 ordinary `launchRun` transaction writes `runs.scheduled_launch_id`. The partial

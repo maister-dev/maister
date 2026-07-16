@@ -3,7 +3,7 @@
 - **Type:** project board tab.
 - **Route:** `/projects/{slug}?tab=automations`; legacy
   `?tab=schedules` renders this tab.
-- **Status:** Implemented (ADR-139, migration 0103).
+- **Status:** Implemented (ADR-139, migration 0104).
 - **Source:** `web/components/automations/*`,
   `web/components/board/launch-popover.tsx`, and
   `web/components/board/project-tabs.tsx`.

@@ -25,7 +25,7 @@ the **M27 Flow Studio (Implemented, migrations `0033+`)** schema deltas:
 `AUTHORED_CAPABILITIES.source_flow_ref_id`, `RUNS.resolved_capability_set`, and
 the new `PLATFORM_MCP_SERVERS` table, the **M28 (Implemented, migration
 `0038`)** `RUN_SCHEDULES` table for user-facing cron schedules, the
-**ADR-139 (Implemented, migration `0103`)** `SCHEDULED_TASK_LAUNCHES`,
+**ADR-139 (Implemented, migration `0104`)** `SCHEDULED_TASK_LAUNCHES`,
 `SCHEDULED_TASK_LAUNCH_ATTEMPTS`, and `SCHEDULED_TASK_LAUNCH_EVENTS` ledger
 for recoverable one-time task launches plus nullable Run provenance links, the
 **ADR-072 (Implemented, migration `0039`)** `REVIEW_COMMENTS`

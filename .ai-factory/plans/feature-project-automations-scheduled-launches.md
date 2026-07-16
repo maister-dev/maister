@@ -167,7 +167,7 @@ All route errors use the existing `MaisterError` taxonomy and current project-ro
 | State/dispatch/recovery/time semantics | new `docs/system-analytics/project-automations.md`; update `scheduler.md`, `run-schedules.md`, `tasks.md`, `runs.md`, and `agents.md`. Define state/attempt counters, lateness, retry-exhaustion, and the boundary between operational audit and Observatory’s read-only ledgers. |
 | New DB tables/columns/indexes | Drizzle schema + `0104_*` migration triple, `docs/database-schema.md`, `docs/db/scheduler-domain.md`, `docs/db/erd.md`, and relevant runs/agents domain docs. Both ERDs show intent → attempt → Run and agent binding → Run cardinalities. |
 | Project/admin screen IA | new `docs/screens/projects/project-automations.md`, update screen index, project-board and admin-scheduler docs |
-| Durable architectural decision | `docs/decisions.md` candidate ADR-139, `.ai-factory/ROADMAP.md`, aligned product/architecture description only where wording changes |
+| Durable architectural decision | `docs/decisions.md` ADR-139, `.ai-factory/ROADMAP.md`, aligned product/architecture description only where wording changes |
 | Error and authorization semantics | `docs/error-taxonomy.md`, OpenAPI, `web/lib/authz.ts` action tests |
 | EN/RU copy | `web/messages/en.json`, `web/messages/ru.json`, i18n parity tests |
 
@@ -195,8 +195,8 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
   - **Acceptance:** no state, crash window, destructive cleanup condition, race winner, retry class, telemetry owner, or agent mutation owner remains implicit.
 
 - [x] **Task 2: Reserve shared namespaces and freeze external contracts.**
-  - **Files:** `docs/decisions.md` (candidate ADR-139), `.ai-factory/ROADMAP.md`, `docs/api/web.openapi.yaml`, `docs/error-taxonomy.md`; recheck `main` before editing; migration target `web/lib/db/migrations/0104_*` is provisional.
-  - **Deliverable:** reserve the actual next ADR/migration numbers from `main` (currently ADR-139 and migration 0104 candidates), write the ADR header before links, add complete routes/schemas/enums/examples, `Idempotency-Key` replay/mismatch, `If-Match`/ETag, cursor encoding/order, the type-specific automation detail route, and the identifier table. Label Designed vs Implemented honestly.
+  - **Files:** `docs/decisions.md` (ADR-139), `.ai-factory/ROADMAP.md`, `docs/api/web.openapi.yaml`, `docs/error-taxonomy.md`; recheck `main` before editing; migration target `web/lib/db/migrations/0104_*`.
+  - **Deliverable:** reserve the actual next ADR/migration numbers from `main` (ADR-139 and migration 0104), write the ADR header before links, add complete routes/schemas/enums/examples, `Idempotency-Key` replay/mismatch, `If-Match`/ETag, cursor encoding/order, the type-specific automation detail route, and the identifier table. Label Designed vs Implemented honestly.
   - **Dependencies:** Task 1. **Logging:** contract does not expose sensitive diagnostics; error examples use safe code/message forms.
   - **Tests/evidence:** `pnpm validate:docs`; run `pnpm validate:docs:adr:all`; record the current journal/snapshot check. Budget a post-rebase renumber pass, including prose grep for superseded numbers.
   - **Acceptance:** API, decision, roadmap, and system analytics use one terminology and one enum set.
@@ -343,7 +343,7 @@ Every behavior-bearing slice follows RED → GREEN → refactor: RED is a record
 - **Launch-request drift:** preserve the member's normalized, whitelisted requested choices and request hash, then revalidate mutable eligibility/snapshot at dispatch through `launchRun`; never fall back to an arbitrary mutable default silently.
 - **API concurrency risk:** a key without request hash or a mutable request without `If-Match` can create divergent intent state. Same-key/same-hash replay, mismatched-key conflict, ETag/CAS, and auth-before-body tests are mandatory.
 - **Agent telemetry gap:** aggregate rows cannot fabricate latest outcomes for cron/event bindings. Preserve binding IDs through revision-fenced reconciliation, choose a deterministic event owner, record suppressed matches honestly, and retain the existing event dedupe backstop.
-- **Migration collisions:** ADR-139/0104 are candidates only. Rebase/re-reserve from `main`, preserve the SQL+journal+snapshot triple, and repair all anchors before merge.
+- **Migration collisions:** resolved during rebase as ADR-139/migration 0104. Preserve the SQL+journal+snapshot triple and keep all current-contract references aligned before merge.
 - **No deployment wiring expected:** this adds no env var, port, sidecar, mounted path, or background process. The only dependency is a web package; lockfile/build validation proves container compatibility. If implementation introduces runtime configuration, add the required `.env.example`/compose/docs task before code lands.
 
 Adversarial completion review must reject the change until it finds no missing state transition, crash-window recovery branch, unsafe orphan cleanup, undefined race winner, duplicate launch path/clock, lost overdue window, unbounded retry/poison row, stale authorisation, idempotency/ETag ambiguity, unstable union cursor, inconsistent API/DB enum, hidden agent-editor fork, ambiguous agent-event owner, untracked migration, UI action without server authority, server outcome without a user explanation, secret/path leak, or acceptance criterion without a test and contract source.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This domain is **Implemented** (ADR-139, migration 0103). It provides a member-facing project
+This domain is **Implemented** (ADR-139, migration 0104). It provides a member-facing project
 **Automations** surface and a durable, one-time future launch of an existing
 configured task. It extends the existing M24 `run_schedule.dispatcher` clock;
 it does not add a timer, a scheduler job per intent, supervisor database

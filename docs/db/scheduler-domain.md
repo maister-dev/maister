@@ -13,7 +13,7 @@ job lifecycle, tick route, and catch-up policy.
 > and [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 > Cron expressions live ONLY here; `scheduler_jobs` stays fixed-interval.
 >
-> **Project Automations: Implemented (ADR-139, migration `0103`).** One-time
+> **Project Automations: Implemented (ADR-139, migration `0104`).** One-time
 > task launches use their own intent/reservation/event ledger, but are driven
 > only by the existing seeded `run_schedule.dispatcher` job.
 

@@ -22,7 +22,7 @@ column-level narrative.
 > The ERD/tables below show the post-0068 shape; the M34 columns they replace are
 > noted inline.
 >
-> **(Implemented — ADR-139, migration `0103`)** stable agent schedule IDs are
+> **(Implemented — ADR-139, migration `0104`)** stable agent schedule IDs are
 > reconciled under `agent_project_links.schedules_revision`; bindings retain
 > fenced latest-attempt telemetry and `runs.agent_schedule_id` records the
 > binding that launched an agent run.

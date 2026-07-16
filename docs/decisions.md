@@ -12040,7 +12040,7 @@ without changing the Flow's review decision.
 ### ADR-139: Project Automations — one-time task-launch reservation and truthful agent-binding telemetry
 
 **Date:** 2026-07-15
-**Status:** Implemented (migration 0103)
+**Status:** Implemented (migration 0104)
 
 **Context:** Existing M28 recurring task schedules deliberately accept a W1
 at-most-once loss window after their fire marker commits but before `launchRun`

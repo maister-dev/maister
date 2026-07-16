@@ -24,7 +24,7 @@ M41 adds the designed `consensus_round_verdicts` ledger for consensus-node
 cross-verification; behavior lives in
 [`../system-analytics/consensus.md`](../system-analytics/consensus.md).
 
-**ADR-139 (Implemented, migration `0103`)** adds nullable Run provenance for
+**ADR-139 (Implemented, migration `0104`)** adds nullable Run provenance for
 recoverable one-time task launches (`scheduled_launch_id`, unique when set) and
 agent schedule bindings (`agent_schedule_id`, `ON DELETE SET NULL`). The
 scheduled dispatcher remains outside the Run table: it first reserves identity
