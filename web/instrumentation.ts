@@ -108,20 +108,6 @@ export async function register(): Promise<void> {
     );
   }
 
-  const { startKeepaliveSweeper } = await import(
-    "@/lib/runs/keepalive-sweeper"
-  );
-
-  startKeepaliveSweeper();
-
-  const { startReconcileSweeper } = await import("@/lib/reconcile");
-
-  startReconcileSweeper();
-
-  const { startGcSweeper } = await import("@/lib/gc/sweeper");
-
-  startGcSweeper();
-
   const { startSchedulerTimer } = await import("@/lib/scheduler/timer");
 
   startSchedulerTimer();

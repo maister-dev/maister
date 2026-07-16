@@ -60,6 +60,12 @@ export type EnsureDefaultSchedulerJobsInput = {
   db?: SchedulerDb;
 };
 
+export type RequestSchedulerJobNowInput = {
+  jobId: string;
+  now?: Date;
+  db?: SchedulerDb;
+};
+
 export type ReapedSchedulerAttempt = {
   attemptId: string;
   jobId: string;
@@ -104,7 +110,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const DEFAULT_SYSTEM_SWEEP_JOB_ID = "system_sweep.default";
+export const DEFAULT_SYSTEM_SWEEP_JOB_ID = "system_sweep.default";
 const DEFAULT_SYSTEM_SWEEP_CADENCE_SECONDS = 60;
 const DEFAULT_RUN_SCHEDULE_DISPATCHER_JOB_ID = "run_schedule.dispatcher";
 const DEFAULT_RUN_SCHEDULE_DISPATCHER_CADENCE_SECONDS = 60;
@@ -494,6 +500,26 @@ export async function ensureRepoDeliveryScanJobs(
       updated_at = EXCLUDED.updated_at
     WHERE scheduler_jobs.disabled_at IS NOT NULL
       AND scheduler_jobs.consecutive_failures < scheduler_jobs.max_failures
+  `);
+}
+
+/**
+ * Makes an enabled durable job eligible for its next claim without executing it
+ * directly. Claiming remains the only authority that starts a scheduler job.
+ */
+export async function requestSchedulerJobNow(
+  input: RequestSchedulerJobNowInput,
+): Promise<void> {
+  const now = input.now ?? new Date();
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+
+  await db.execute(sql`
+    UPDATE scheduler_jobs
+    SET
+      next_run_at = least(next_run_at, ${now}),
+      updated_at = ${now}
+    WHERE id = ${input.jobId}
+      AND disabled_at IS NULL
   `);
 }
 

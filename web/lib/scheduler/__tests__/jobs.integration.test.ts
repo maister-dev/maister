@@ -16,21 +16,32 @@ import * as schema from "@/lib/db/schema";
 import {
   claimDueJobs,
   disableArchivedPrStateScanJobs,
+  DEFAULT_SYSTEM_SWEEP_JOB_ID,
   disableArchivedRepoDeliveryScanJobs,
   ensureDefaultSchedulerJobs,
   ensurePrStateScanJobs,
   ensureRepoDeliveryScanJobs,
   reapStuckSchedulerAttempts,
   recordJobAttemptResult,
+  requestSchedulerJobNow,
   type ClaimDueJobsInput,
 } from "@/lib/scheduler/jobs";
-import { runSchedulerTick } from "@/lib/scheduler/tick-service";
+import {
+  requestSystemSweep,
+  runSchedulerTick,
+} from "@/lib/scheduler/tick-service";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+const runSystemSweepMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/scheduler/system-sweeps", () => ({
+  runSystemSweep: runSystemSweepMock,
+}));
 
 type SchedulerTestDb = NonNullable<ClaimDueJobsInput["db"]>;
 
@@ -47,6 +58,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterEach(async () => {
+  runSystemSweepMock.mockReset();
   await db.delete(schema.agentSchedules);
   await db.delete(schema.schedulerJobRuns);
   await db.delete(schema.schedulerJobs);
@@ -510,6 +522,75 @@ describe("scheduler job SQL integration", () => {
         nextRunAt: now,
       },
     );
+  });
+
+  it("requests an enabled system sweep through its durable scheduler claim and persists its summary", async () => {
+    runSystemSweepMock.mockResolvedValue({
+      keepalive: { idled: 0 },
+      reconcile: { reconciled: 0 },
+      cost: { candidates: 0, reconciled: 0 },
+      workspace: null,
+      workspaceReconciliation: null,
+      revision: null,
+      capabilities: null,
+      ephemeralAgent: null,
+      agentMaterialization: null,
+      plainAgentDirectory: null,
+      brain: null,
+      brainReindex: null,
+      worktreesPreserved: 0,
+      worktreesRemoved: 0,
+      revisionsRemoved: 0,
+      errors: [],
+    });
+
+    const tick = await requestSystemSweep();
+
+    expect(tick).toMatchObject({ claimedCount: 1, succeededCount: 1 });
+    expect(runSystemSweepMock).toHaveBeenCalledOnce();
+
+    const attempts = await db
+      .select()
+      .from(schema.schedulerJobRuns)
+      .where(eq(schema.schedulerJobRuns.jobId, DEFAULT_SYSTEM_SWEEP_JOB_ID));
+
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].summary).toMatchObject({
+      workspaceReconciliation: null,
+      errors: [],
+    });
+  });
+
+  it("makes an enabled scheduler job due without bypassing its claim", async () => {
+    const now = new Date("2026-06-05T10:00:00.000Z");
+    const future = new Date("2026-06-06T10:00:00.000Z");
+
+    await ensureDefaultSchedulerJobs({ now, db: schedulerDb });
+    await db
+      .update(schema.schedulerJobs)
+      .set({ nextRunAt: future })
+      .where(eq(schema.schedulerJobs.id, DEFAULT_SYSTEM_SWEEP_JOB_ID));
+
+    await requestSchedulerJobNow({
+      jobId: DEFAULT_SYSTEM_SWEEP_JOB_ID,
+      now,
+      db: schedulerDb,
+    });
+
+    const job = (
+      await db
+        .select()
+        .from(schema.schedulerJobs)
+        .where(eq(schema.schedulerJobs.id, DEFAULT_SYSTEM_SWEEP_JOB_ID))
+    )[0];
+
+    expect(job.nextRunAt).toEqual(now);
+    const claimed = await claimDueJobs({
+      now,
+      jobKind: "system_sweep",
+      db: schedulerDb,
+    });
+    expect(claimed).toHaveLength(1);
   });
 });
 

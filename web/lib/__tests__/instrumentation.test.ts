@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getDb = vi.hoisted(() => vi.fn());
 const findPendingMigrations = vi.hoisted(() => vi.fn());
 const findPendingBrainMigrations = vi.hoisted(() => vi.fn());
+const startKeepaliveSweeper = vi.hoisted(() => vi.fn());
+const startReconcileSweeper = vi.hoisted(() => vi.fn());
+const startSchedulerTimer = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db/check-migrations", () => ({
   findPendingBrainMigrations,
@@ -15,7 +18,7 @@ vi.mock("@/lib/runs/resume-recovery", () => ({
 }));
 vi.mock("@/lib/reconcile", () => ({
   runReconcileSweep: vi.fn().mockResolvedValue(undefined),
-  startReconcileSweeper: vi.fn(),
+  startReconcileSweeper,
 }));
 vi.mock("@/lib/agents/registry", () => ({
   resyncAgents: vi.fn().mockResolvedValue(undefined),
@@ -24,10 +27,9 @@ vi.mock("@/lib/projector/catch-up-sweep", () => ({
   runProjectorCatchUpSweep: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
-  startKeepaliveSweeper: vi.fn(),
+  startKeepaliveSweeper,
 }));
-vi.mock("@/lib/gc/sweeper", () => ({ startGcSweeper: vi.fn() }));
-vi.mock("@/lib/scheduler/timer", () => ({ startSchedulerTimer: vi.fn() }));
+vi.mock("@/lib/scheduler/timer", () => ({ startSchedulerTimer }));
 vi.mock("@/lib/packages/catalog", () => ({
   ensureDefaultPackageSources: vi.fn().mockResolvedValue(undefined),
   refreshStaleSources: vi.fn().mockResolvedValue(undefined),
@@ -46,6 +48,9 @@ describe("instrumentation DB boot boundary", () => {
     findPendingMigrations.mockResolvedValue([]);
     findPendingBrainMigrations.mockReset();
     findPendingBrainMigrations.mockResolvedValue([]);
+    startKeepaliveSweeper.mockReset();
+    startReconcileSweeper.mockReset();
+    startSchedulerTimer.mockReset();
   });
 
   afterEach(() => {
@@ -69,5 +74,13 @@ describe("instrumentation DB boot boundary", () => {
     await expect(register()).rejects.toThrow(
       /0094_postgres_graph_only_cutover/,
     );
+  });
+
+  it("starts only the scheduler fallback timer after boot recovery", async () => {
+    await register();
+
+    expect(startSchedulerTimer).toHaveBeenCalledOnce();
+    expect(startKeepaliveSweeper).not.toHaveBeenCalled();
+    expect(startReconcileSweeper).not.toHaveBeenCalled();
   });
 });

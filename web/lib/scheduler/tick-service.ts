@@ -2,12 +2,15 @@ import "server-only";
 
 import pino from "pino";
 
+import { isMaisterError } from "@/lib/errors";
 import {
   claimDueJobs,
+  DEFAULT_SYSTEM_SWEEP_JOB_ID,
   ensureDefaultSchedulerJobs,
   reapStuckSchedulerAttempts,
   recordJobAttemptResult,
   recordJobAttemptStarted,
+  requestSchedulerJobNow,
   type ClaimedSchedulerJob,
   type SchedulerJobKind,
 } from "@/lib/scheduler/jobs";
@@ -25,7 +28,6 @@ import { runPrStateScanJob } from "@/lib/scheduler/handlers/pr-state-scan";
 import { runRepoDeliveryScanJob } from "@/lib/scheduler/handlers/repo-delivery-scan";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { runSystemSweep } from "@/lib/scheduler/system-sweeps";
-import { isMaisterError } from "@/lib/errors";
 
 export type SchedulerTickSummary = {
   attemptedCount: number;
@@ -83,6 +85,23 @@ export async function runSchedulerTick(
   return summary;
 }
 
+/**
+ * Requests the canonical system sweep through the durable scheduler claim.
+ * Callers receive the scheduler attempt rather than invoking cleanup services
+ * outside their lease and summary persistence boundary.
+ */
+export async function requestSystemSweep(): Promise<SchedulerTickSummary> {
+  const now = new Date();
+
+  await ensureDefaultSchedulerJobs({ now });
+  await requestSchedulerJobNow({
+    jobId: DEFAULT_SYSTEM_SWEEP_JOB_ID,
+    now,
+  });
+
+  return runSchedulerTick({ jobKind: "system_sweep" });
+}
+
 async function runClaimedJob(
   job: ClaimedSchedulerJob,
 ): Promise<SchedulerTickJobSummary> {
@@ -90,15 +109,18 @@ async function runClaimedJob(
 
   try {
     switch (job.jobKind) {
-      case "system_sweep":
-        await runSystemSweep();
+      case "system_sweep": {
+        const systemSweepSummary = await runSystemSweep();
+
         await recordJobAttemptResult({
           jobId: job.id,
           attemptId: job.attemptId,
           status: "Succeeded",
+          summary: systemSweepSummary,
         });
 
         return succeeded(job);
+      }
       case "command":
         await runCommandJob(job.target);
         await recordJobAttemptResult({

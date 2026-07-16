@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { authorizeCronRequest } from "@/lib/scheduler/cron-auth";
-import { runGcCompatibilitySweep } from "@/lib/scheduler/system-sweeps";
+import { requestSystemSweep } from "@/lib/scheduler/tick-service";
 
 const log = pino({
   name: "cron-gc",
@@ -18,15 +18,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json(auth.body, { status: auth.status });
   }
 
-  const summary = await runGcCompatibilitySweep();
+  const summary = await requestSystemSweep();
 
   log.info(
-    { ...summary, source: "cron-gc-compat", errorCount: summary.errors.length },
-    "cron GC sweep completed",
+    {
+      ...summary,
+      source: "cron-gc-compat",
+      failedCount: summary.failedCount,
+    },
+    "cron GC sweep requested through scheduler",
   );
 
   return NextResponse.json(summary, {
-    status: summary.errors.length > 0 ? 207 : 200,
+    status: summary.failedCount > 0 ? 207 : summary.claimedCount === 0 ? 202 : 200,
   });
 }
 

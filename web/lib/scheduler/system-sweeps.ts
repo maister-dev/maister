@@ -296,17 +296,6 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   return summary;
 }
 
-export async function runGcCompatibilitySweep(): Promise<GcCompatibilitySummary> {
-  const gc = await runGcBundle();
-
-  return {
-    worktreesPreserved: gc.workspace?.preserved ?? 0,
-    worktreesRemoved: gc.workspace?.pruned ?? 0,
-    revisionsRemoved: gc.revision?.deleted ?? 0,
-    errors: gc.errors,
-  };
-}
-
 function gcFailureMessages(
   workspace: WorkspaceGcSummary | null,
   revision: RevisionGcSummary | null,

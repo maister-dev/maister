@@ -109,7 +109,6 @@ export function importMaxFileBytes(): number {
 const DEFAULT_GC_AGE_DAYS = 14;
 const DEFAULT_WORKBENCH_MAX_FILE_BYTES = 524_288;
 const DEFAULT_GC_WARNING_DAYS = 2;
-const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 const DEFAULT_RALPH_MAX_ATTEMPTS = 5;
@@ -211,21 +210,6 @@ export function gcWarningDays(): number {
   const parsed = Number.parseInt(raw, 10);
 
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_GC_WARNING_DAYS;
-
-  return parsed;
-}
-
-// M19 Phase 4 (T4.5): how often the background GC sweeper ticks. Env override,
-// sane default, floor at 1. Mirrors gcAgeDays / reconcileSweepIntervalSeconds.
-export function gcSweepIntervalSeconds(): number {
-  const raw = process.env.MAISTER_GC_SWEEP_INTERVAL_SECONDS;
-
-  if (!raw) return DEFAULT_GC_SWEEP_INTERVAL_SECONDS;
-  const parsed = Number.parseInt(raw, 10);
-
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return DEFAULT_GC_SWEEP_INTERVAL_SECONDS;
-  }
 
   return parsed;
 }

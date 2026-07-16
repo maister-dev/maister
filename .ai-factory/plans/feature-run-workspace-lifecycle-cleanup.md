@@ -1137,7 +1137,7 @@ pnpm --filter maister-web typecheck
 
 ### Phase 5 — One cleanup owner and truthful scheduler telemetry
 
-- [ ] **Task 24: RED — prove singleton ownership, lease renewal, and summary persistence.**
+- [x] **Task 24: RED — prove singleton ownership, lease renewal, and summary persistence.**
   - **Files:** `web/lib/__tests__/instrumentation.test.ts`,
     `web/lib/scheduler/__tests__/system-sweeps.test.ts`, scheduler job/tick
     integration tests, and `/api/cron/gc` compatibility tests.
@@ -1152,7 +1152,7 @@ pnpm --filter maister-web typecheck
   - **Tests:** unit wiring plus real DB claim integration.
   - **Acceptance:** RED exposes the legacy timer and empty scheduler summary.
 
-- [ ] **Task 25: GREEN — route all periodic cleanup through one claimed system sweep.**
+- [x] **Task 25: GREEN — route all periodic cleanup through one claimed system sweep.**
   - **Files:** `web/instrumentation.ts`, `web/lib/gc/sweeper.ts`,
     `web/lib/instance-config.ts`, `web/lib/scheduler/system-sweeps.ts`,
     `web/lib/scheduler/tick-service.ts`, `/api/cron/gc`, `.env.example`, and
@@ -1177,7 +1177,7 @@ pnpm --filter maister-web typecheck
     `MAISTER_GC_SWEEP_INTERVAL_SECONDS`; every periodic cleanup service has one
     owner; no direct `runGcBundle` compatibility bypass remains.
 
-- [ ] **Task 26: REFACTOR — make scheduler ownership and summaries single-source.**
+- [x] **Task 26: REFACTOR — make scheduler ownership and summaries single-source.**
   - **Files:** scheduler job claim/request, tick dispatch, system-sweep
     composition, compatibility route, instrumentation, and summary types.
   - **Change:** remove duplicate claim/summary paths, keep one typed attempt
