@@ -48,8 +48,13 @@ const {
   remoteBranchHead,
   syncOperationInProgress,
 } = await import("@/lib/worktree");
-const { syncRunTarget, assertSyncEligible, verifySyncGate, pushWithLease } =
-  await import("@/lib/runs/sync-target");
+const {
+  syncRunTarget,
+  assertSyncEligible,
+  verifySyncGate,
+  pushWithLease,
+  acquireSyncDriver,
+} = await import("@/lib/runs/sync-target");
 const { promoteRun } = await import("@/lib/runs/promote");
 const { claimLifecycleOperation } = await import(
   "@/lib/workbench-lifecycle/service"
@@ -233,6 +238,8 @@ type SeedRunOpts = {
   promotionState?: string;
   lifecycleOperationState?: string;
   lifecycleOperationName?: string | null;
+  lifecycleOperationClaimedAt?: Date;
+  lifecycleOperationAttemptId?: string;
 };
 
 async function seedRun(opts: SeedRunOpts): Promise<{
@@ -278,9 +285,11 @@ async function seedRun(opts: SeedRunOpts): Promise<{
     lifecycleOperationState: opts.lifecycleOperationState ?? "none",
     lifecycleOperationName: opts.lifecycleOperationName ?? null,
     lifecycleOperationAttemptId:
-      opts.lifecycleOperationName != null ? randomUUID() : null,
+      opts.lifecycleOperationAttemptId ??
+      (opts.lifecycleOperationName != null ? randomUUID() : null),
     lifecycleOperationClaimedAt:
-      opts.lifecycleOperationName != null ? new Date() : null,
+      opts.lifecycleOperationClaimedAt ??
+      (opts.lifecycleOperationName != null ? new Date() : null),
   });
 
   return { runId, workspaceId };
@@ -663,6 +672,134 @@ describe("syncRunTarget — the double fence (both directions)", () => {
     await expect(
       claimLifecycleOperation({ runId, workspaceId, operation: "archive" }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  // (f.3) above only ever seeds a FRESH `claimed_at`, so it proves the fence for a
+  // young claim and never reaches the window where it breaks. The lifecycle claim
+  // is a LEASE: `canReclaimLifecycle` steals any `claiming` slot older than
+  // `promotionClaimTimeoutSeconds()` (300s), while a sync legitimately runs far
+  // longer — `agent_running_since` is re-stamped on every HITL resume, so a
+  // resolver waiting on a human holds the slot for hours. A steal overwrites
+  // `lifecycle_operation_name='sync'`, the exact predicate promote's reverse fence
+  // reads, so promotion then merges a branch mid-rebase.
+  describe("(f.4) the claim lease vs a long-running sync", () => {
+    const ORIGINAL_TIMEOUT =
+      process.env.MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS;
+
+    beforeEach(() => {
+      // 4s window ⇒ the driver beats every 1s (window / 4).
+      process.env.MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS = "4";
+    });
+
+    afterEach(() => {
+      if (ORIGINAL_TIMEOUT === undefined) {
+        delete process.env.MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS;
+      } else {
+        process.env.MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS = ORIGINAL_TIMEOUT;
+      }
+    });
+
+    async function seedStaleSyncClaim(name: string) {
+      const { parent, baseSha } = await initRepoWithRemote();
+      const wt = await addRunWorktree(parent, name);
+      const { projectId, flowId } = await seedGraph(parent);
+      const lifecycleOperationAttemptId = randomUUID();
+      const seeded = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch: name,
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        lifecycleOperationState: "claiming",
+        lifecycleOperationName: "sync",
+        lifecycleOperationAttemptId,
+        // Older than the whole window — a sync this old is either dead (and SHOULD
+        // be reclaimed) or alive and beating.
+        lifecycleOperationClaimedAt: new Date(Date.now() - 60_000),
+      });
+
+      return { ...seeded, lifecycleOperationAttemptId };
+    }
+
+    async function readClaim(workspaceId: string) {
+      const [row] = await db
+        .select()
+        .from(workspaces)
+        .where(eq(workspaces.id, workspaceId));
+
+      return row;
+    }
+
+    it("a LIVE driver beats the lease, so the slot stays un-stealable past the window", async () => {
+      const { runId, workspaceId, lifecycleOperationAttemptId } =
+        await seedStaleSyncClaim("sync/f4a");
+
+      // Precondition: without a beat this claim is stale ⇒ genuinely stealable.
+      // That is the self-healing the window is for, and it is what makes the
+      // steal below a real risk rather than a hypothetical.
+      const before = await readClaim(workspaceId);
+
+      expect(
+        Date.now() - new Date(before.lifecycleOperationClaimedAt).getTime(),
+      ).toBeGreaterThan(4_000);
+
+      const release = acquireSyncDriver(db, runId, {
+        attemptId: randomUUID(),
+        attempt: 1,
+        workspaceId,
+        lifecycleAttemptId: lifecycleOperationAttemptId,
+      });
+
+      try {
+        await new Promise((r) => setTimeout(r, 1_400));
+
+        const after = await readClaim(workspaceId);
+
+        expect(
+          new Date(after.lifecycleOperationClaimedAt).getTime(),
+        ).toBeGreaterThan(
+          new Date(before.lifecycleOperationClaimedAt).getTime(),
+        );
+        // The whole point: a workbench op can no longer steal the slot out from
+        // under the live sync, so `name='sync'` survives for promote's fence.
+        await expect(
+          claimLifecycleOperation({ runId, workspaceId, operation: "archive" }),
+        ).rejects.toMatchObject({ code: "CONFLICT" });
+        expect((await readClaim(workspaceId)).lifecycleOperationName).toBe(
+          "sync",
+        );
+      } finally {
+        release();
+      }
+    });
+
+    it("the beat is FENCED — it never refreshes a slot another op has taken over", async () => {
+      const { runId, workspaceId } = await seedStaleSyncClaim("sync/f4b");
+
+      // The driver holds a token that is NOT the one on the row (i.e. the slot
+      // was taken over). Its beat must not resurrect someone else's claim.
+      const release = acquireSyncDriver(db, runId, {
+        attemptId: randomUUID(),
+        attempt: 1,
+        workspaceId,
+        lifecycleAttemptId: randomUUID(),
+      });
+
+      try {
+        const before = await readClaim(workspaceId);
+
+        await new Promise((r) => setTimeout(r, 1_400));
+
+        const after = await readClaim(workspaceId);
+
+        expect(new Date(after.lifecycleOperationClaimedAt).getTime()).toBe(
+          new Date(before.lifecycleOperationClaimedAt).getTime(),
+        );
+      } finally {
+        release();
+      }
+    });
   });
 });
 

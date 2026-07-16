@@ -15,6 +15,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
+import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import {
   markSyncFromReview,
   markSyncReviewFromRunning,
@@ -130,7 +131,27 @@ type Claim = {
   attemptId: string;
   attempt: number;
   workspaceId: string;
+  // The shared lifecycle slot's own fence token (`workspaces.
+  // lifecycle_operation_attempt_id`), NOT the sync attempt id. It identifies
+  // THIS claim of the slot, so the release and the lease heartbeat can both
+  // refuse to touch a slot that is no longer ours.
+  lifecycleAttemptId: string;
 };
+
+// Beat the lease this many times per reclaim window. Derived rather than fixed
+// so tuning MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS down cannot silently make
+// the heartbeat slower than the window it defends.
+const CLAIM_HEARTBEAT_BEATS_PER_WINDOW = 4;
+
+function claimHeartbeatMs(): number {
+  return Math.max(
+    1_000,
+    Math.floor(
+      (promotionClaimTimeoutSeconds() * 1_000) /
+        CLAIM_HEARTBEAT_BEATS_PER_WINDOW,
+    ),
+  );
+}
 
 // The shared readiness contract Task 9 needs from a run row + its workspace. A
 // sync targets exactly a top-level, non-shared, non-experiment Review flow/agent
@@ -315,10 +336,14 @@ async function setAttemptPhase(
     .where(eq(runSyncAttempts.id, attemptId));
 }
 
-// Free the shared lifecycle slot this attempt holds. Guarded on
-// `lifecycle_operation_name='sync'` so it is idempotent (a second call after the
-// slot is already freed matches no row) and never releases another op's claim.
-async function releaseSyncClaim(db: Db, workspaceId: string): Promise<void> {
+// Free the shared lifecycle slot this attempt holds. Fenced on the slot's OWN
+// attempt id, so it is idempotent (a second call after the slot is freed matches
+// no row) and can only ever release the claim it took. The previous
+// `lifecycle_operation_name='sync'` guard was not a fence: once recovery has
+// released a stranded claim and a NEW sync has taken the slot, the zombie
+// driver's release still matched `name='sync'` and freed the new sync's claim
+// out from under it, dropping the promotion fence mid-rebase.
+async function releaseSyncClaim(db: Db, claim: Claim): Promise<void> {
   await db
     .update(workspaces)
     .set({
@@ -329,10 +354,65 @@ async function releaseSyncClaim(db: Db, workspaceId: string): Promise<void> {
     })
     .where(
       and(
-        eq(workspaces.id, workspaceId),
-        eq(workspaces.lifecycleOperationName, "sync"),
+        eq(workspaces.id, claim.workspaceId),
+        eq(workspaces.lifecycleOperationAttemptId, claim.lifecycleAttemptId),
       ),
     );
+}
+
+// The in-process driver's liveness, acquired as ONE handle because the registry
+// membership and the claim lease share exactly one lifetime and exactly one
+// owner. Returns the sole release; call it once, from whoever owns the driver at
+// that moment (see the ownership handoff in `syncRunTarget`).
+//
+// The heartbeat exists because the lifecycle claim is a LEASE:
+// `canReclaimLifecycle` (workbench-lifecycle/service.ts) treats any `claiming`
+// slot whose `claimed_at` is older than `promotionClaimTimeoutSeconds()`
+// (default 300s) as crashed, and steals it. A sync legitimately outlives that
+// window by a wide margin — a mechanical rebase can be slow, and a resolver's
+// `agent_running_since` is RE-STAMPED on every HITL resume, so one waiting on a
+// human holds the slot for hours. A steal overwrites
+// `lifecycle_operation_name='sync'`, which is the exact predicate promote's
+// reverse fence keys on, so promotion would then `git merge` a branch mid-rebase.
+// Beating `claimed_at` makes the column mean "last known alive" — which is what
+// the reclaim window already assumes it means — so a live sync is never stolen
+// and a dead one still self-heals after the window. This is a lease renewal, not
+// polling for a state transition.
+export function acquireSyncDriver(
+  db: Db,
+  runId: string,
+  claim: Claim,
+): () => void {
+  registerSyncDriver(runId);
+
+  const timer: NodeJS.Timeout = setInterval(() => {
+    void db
+      .update(workspaces)
+      .set({ lifecycleOperationClaimedAt: new Date() })
+      .where(
+        and(
+          eq(workspaces.id, claim.workspaceId),
+          eq(workspaces.lifecycleOperationAttemptId, claim.lifecycleAttemptId),
+        ),
+      )
+      .catch((err: unknown) => {
+        log.warn(
+          {
+            runId,
+            attemptId: claim.attemptId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "sync lifecycle-claim heartbeat failed — the claim may be reclaimed as stale",
+        );
+      });
+  }, claimHeartbeatMs());
+
+  timer.unref?.();
+
+  return () => {
+    clearInterval(timer);
+    unregisterSyncDriver(runId);
+  };
 }
 
 // Terminal write for a `noop`/`synced` attempt: record the phase (+ pushed /
@@ -361,7 +441,7 @@ async function settleAttempt(
       .set({ reviewEnteredAt: args.now() })
       .where(eq(runs.id, args.runId));
   }
-  await releaseSyncClaim(db, claim.workspaceId);
+  await releaseSyncClaim(db, claim);
 }
 
 // Terminal write for an aborted attempt (divergence / clean conflict abort):
@@ -372,7 +452,7 @@ async function abortAttempt(
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   await setAttemptPhase(db, claim.attemptId, "aborted", extra);
-  await releaseSyncClaim(db, claim.workspaceId);
+  await releaseSyncClaim(db, claim);
 }
 
 // Terminal write for a failed attempt (verify-fail / lease-fail): record `failed`
@@ -387,7 +467,7 @@ async function failAttempt(
     errorCode,
     errorMessage,
   });
-  await releaseSyncClaim(db, claim.workspaceId);
+  await releaseSyncClaim(db, claim);
 }
 
 // Safety net for an UNHANDLED throw between the claim commit and an explicit
@@ -418,7 +498,7 @@ async function terminalizeSafetyNet(
         ),
       ),
     );
-  await releaseSyncClaim(db, claim.workspaceId);
+  await releaseSyncClaim(db, claim);
 }
 
 /**
@@ -540,31 +620,35 @@ export async function syncRunTarget(
       actorId: input.actor.id,
     });
 
-    // (e) take the shared workspace lifecycle slot as `sync`.
+    // (e) take the shared workspace lifecycle slot as `sync`. The attempt id is
+    // the slot's fence token — kept, not thrown away: the release and the lease
+    // heartbeat both predicate on it so neither can touch a slot we no longer own.
+    const lifecycleAttemptId = randomUUID();
+
     await tx
       .update(workspaces)
       .set({
         lifecycleOperationState: "claiming",
         lifecycleOperationClaimedAt: now(),
-        lifecycleOperationAttemptId: randomUUID(),
+        lifecycleOperationAttemptId: lifecycleAttemptId,
         lifecycleOperationName: "sync",
       })
       .where(eq(workspaces.id, ws.id));
 
     log.debug({ runId, attemptId, attempt, strategy }, "sync claim minted");
 
-    return { attemptId, attempt, workspaceId: ws.id };
+    return { attemptId, attempt, workspaceId: ws.id, lifecycleAttemptId };
   });
 
   // ADR-140 (Task 11): THIS call is the in-process sync driver — for the
   // mechanical rebase AND, transitively, the agent resolver it awaits below.
-  // Registration MUST live here, not in the resolver: the recovery sweeps treat a
+  // Acquisition MUST live here, not in the resolver: the recovery sweeps treat a
   // non-terminal attempt with no registered driver as a post-restart ORPHAN and
   // abort it (restore + release claim). Registering only around the resolver left
   // every live MECHANICAL sync looking orphaned, so a sweep tick landing mid-rebase
   // would `git rebase --abort` under it and release the claim while it ran.
-  // The registry is a plain Set (not refcounted) — register in exactly ONE place.
-  registerSyncDriver(runId);
+  // The registry is a plain Set (not refcounted) — acquire in exactly ONE place.
+  const releaseDriver = acquireSyncDriver(db, runId, claim);
 
   try {
     // 4. Fetch the target and fast-forward the LOCAL target from origin/<target>.
@@ -771,7 +855,7 @@ export async function syncRunTarget(
   } finally {
     // The driver is off the stack: any non-terminal attempt left behind IS now a
     // real orphan, and the sweeps must be free to abort it.
-    unregisterSyncDriver(runId);
+    releaseDriver();
   }
 }
 
@@ -1182,7 +1266,7 @@ async function runSyncResolver(
       .set({ reviewEnteredAt: now() })
       .where(eq(runs.id, runId));
     await markSyncReviewFromRunning(runId, { db });
-    await releaseSyncClaim(db, claim.workspaceId);
+    await releaseSyncClaim(db, claim);
     await promoteNextPending({ db, pool });
 
     log.info(
@@ -1228,7 +1312,7 @@ async function runSyncResolver(
       // step is independent — a lagging attempt row is a reconcile concern, never
       // a reason to strand the run.
       await markSyncReviewFromRunning(runId, { db }).catch(() => undefined);
-      await releaseSyncClaim(db, claim.workspaceId).catch(() => undefined);
+      await releaseSyncClaim(db, claim).catch(() => undefined);
       await promoteNextPending({ db, pool }).catch(() => undefined);
     }
 
