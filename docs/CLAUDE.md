@@ -59,6 +59,7 @@ truth). The fix is to update docs in the same PR.
 | [`db/domain-events.md`](db/domain-events.md) | Domain-event outbox ERD: `domain_events` fact log + per-consumer cursor rows (ADR-086). |
 | [`db/agents-domain.md`](db/agents-domain.md) | Platform-agent ERD: `agents` catalog index, `agent_project_links`, `agent_schedules` trigger bindings, runs/tasks/tokens alters (ADR-089/090). |
 | [`db/brain-domain.md`](db/brain-domain.md) | Project Brain ERD (ADR-122/127/128, Implemented): owned items, indexed sources/chunks, embeddings, snapshots, index jobs, edges, project config, proposals, proposal decision stats, shared enablement alters, per-generation HNSW expression indexes, partial UNIQUEs, and project-CASCADE/SET-NULL chain. |
+| [`db/evaluations-domain.md`](db/evaluations-domain.md) | Evaluation Lab ERD (ADR-139..142, Implemented — migrations `0104`–`0107`): neutral Study/participant/recipe model, package-sourced method revisions + admin panels/profiles/overrides, immutable evidence snapshots/items, execution FSM + objective checks/metrics + judge attempts/criteria/aggregate/reviews, append-only human verdicts, per-Study event log, and the lossless legacy Experiment backfill. |
 | [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
 
 ### System analysis (`system-analytics/`)

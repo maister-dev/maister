@@ -9,7 +9,11 @@ Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 `[ ]` not started. This session ran M46 phase-gated; pick up at **NEXT** below.
 
 **Owner-locked scope decisions (do not re-litigate):**
-- Target = **M46 only**, phase-gated; M47/M48 deferred.
+- ⚠️ SCOPE OVERRIDE (2026-07-16, owner via `/aif-implement all the plan`):
+  implement **all phases 2–7 (M46 + M47 + M48)**, commit by phase, **stop
+  before owner-gated steps** (live-deploy T5.4, `core/v1.1.0` tag, `git push`).
+  This supersedes the "M46 only" line below.
+- Target = **M46 only**, phase-gated; M47/M48 deferred. *(superseded above.)*
 - **Lean Phase 0** — core contracts frozen in the ADR ledger; wider
   analytics/API/screens docs **co-evolve** with the code that implements them.
 - **maister-plugins package is in scope** (method authored + committed there).
@@ -28,13 +32,21 @@ Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 - Phase 2 T2.1 **partial** `6f88dd5f2` — migration **0104** (studies/recipes/
   participants) + 7 real-PG integration tests green.
 
-**▶ NEXT (resume here):** finish **T2.1** — (a) legacy Experiment backfill in a
-`0104`-lineage data migration (`0090`→studies/recipes/launched-participants with
-count/digest parity, fixed status map, `legacy_advisory` Partial executions,
-zero-citation verdicts — see "Legacy backfill" §); (b) `0105` platform-config
-tables; (c) `0106` execution/evidence tables. Then **T2.2** services (+
-membership-consumer migration to the launched-lineage predicate), **T2.3**
-evidence storage, then Phases 3–5.
+**▶ NEXT (resume here):** **T2.2** services (Study/recipe/participant service +
+legacy adapters + membership-consumer migration to the launched-lineage
+predicate), then **T2.3** evidence storage, then Phases 3–7.
+
+**T2.1 DONE (this session):** migrations `0105` (config: method_revisions /
+judge_panels / profiles / project_profile_overrides), `0106` (execution +
+evidence: 11 tables; `executions.method_revision_id` nullable for legacy;
+`studies.legacy_snapshot` added), `0107` (retained idempotent parity-asserting
+`evaluation_backfill_from_experiments()` — lossless 0090→010x). 15 schema tables
++ types in `web/lib/evaluations/types.ts`; 10-test backfill integration +
+existing 7-test schema integration green; journal-integrity + drift-check green;
+`validate:docs:all` green; DB docs + `docs/db/evaluations-domain.md` ERD added.
+Migration numbering finalized: `0104` studies, `0105` config, `0106`
+exec/evidence, `0107` legacy backfill, **`0108` reserved** for the deferred
+legacy-contract drop.
 
 **Env & commands (verified this session):**
 - Engine constant is `3.2.0` (`web/lib/flows/engine-version.ts`).
@@ -395,10 +407,11 @@ At plan creation, local main ends at ADR-138 and migration journal idx/tag 103/0
 - ADR-142 — Multi-judge execution, aggregation, disagreement, and human verdict.
 - ADR-143 — Controlled Evaluation recipes and slot-keyed execution profiles.
 - ADR-144 — Advanced suites, calibration, and human-approved recipe standardization.
-- 0104_evaluation_studies_expand.
-- 0105_evaluation_platform_config.
-- 0106_evaluation_execution_evidence.
-- 0107_evaluation_legacy_contract (deferred contract/drop migration after rollback window).
+- 0104_evaluation_studies_expand (`0104_wet_red_skull`, Implemented).
+- 0105_evaluation_platform_config (`0105_dizzy_speed`, Implemented).
+- 0106_evaluation_execution_evidence (`0106_clear_major_mapleleaf`, Implemented; also adds `studies.legacy_snapshot`).
+- 0107_evaluation_legacy_backfill (`0107_evaluation_legacy_backfill`, Implemented — the backfill was split out of 0104 into its own post-0106 data migration so it can synthesize legacy executions/attempts).
+- 0108_evaluation_legacy_contract (RESERVED — deferred contract/drop migration after the rollback window; NOT implemented in M46).
 
 Before implementation, rebase on current main, recompute maxima from main HEAD and _journal.json, renumber this reservation block/ADR stubs/migration triples if necessary, and run the ADR-anchor and journal-integrity checks. Every migration is SQL + journal entry + matching snapshot.
 
@@ -769,9 +782,9 @@ Phase 1 exit: package parser/local workflow/release gate suites green; old packa
 
 ### Phase 2 — Study schema, legacy migration, participants, and evidence
 
-- [~] T2.1 RED/GREEN/REFACTOR migrations 0104–0106 and Drizzle schema.
-  - DONE (foundational slice, migration 0104): `evaluation_studies` / `evaluation_recipes` / `evaluation_participants` in `web/lib/db/schema.ts` + `web/lib/evaluations/types.ts`, generated `0104_wet_red_skull.sql` (purely additive; journal idx 104, snapshot written). Real-PG integration test `evaluation-schema.integration.test.ts` (7 tests green): status check, legacy_experiment_id UNIQUE + many-NULLs, task RESTRICT, run SET NULL identity-survival, observed-no-recipe check, partial-unique live-run + re-add after tombstone. migration-cli-contract green.
-  - REMAINING (subsequent commits): legacy Experiment backfill (0090→0104 parity — the risky data migration), platform-config tables (0105: method_revisions/panels/profiles/overrides), execution/evidence tables (0106). Deferred to keep each commit green and low-risk.
+- [x] T2.1 RED/GREEN/REFACTOR migrations 0104–0107 and Drizzle schema.
+  - DONE (0104): `evaluation_studies` / `evaluation_recipes` / `evaluation_participants` + `web/lib/evaluations/types.ts`; 7-test schema integration green.
+  - DONE (0105/0106/0107, this session): config tables (`evaluation_method_revisions` / `evaluation_judge_panels` / `evaluation_profiles` / `evaluation_project_profile_overrides`); execution+evidence tables (11: snapshots/items/executions/objective_check_runs/metric_results/judge_attempts/criterion_results/aggregate_results/reviews/human_verdicts/events) with CAS `version`, score-state + zero-citation CHECKs, self-FKs (retry_of, supersedes), `executions.method_revision_id` NULLABLE for honest legacy executions, `studies.legacy_snapshot`; `0107` retained idempotent parity-asserting `evaluation_backfill_from_experiments()` (fixed status map, budget_restart→manual_relaunch, advisories→one Partial/`legacy_advisory` execution + attempt-per-advisory verbatim, advisory-less conclusions→zero-citation verdicts, RAISE+rollback on any mismatch). 10-test backfill integration green; journal-integrity(15) + drift-check(2) green; `validate:docs:all` green (367 mermaid). DB narrative + `docs/db/evaluations-domain.md` ERD added. **0108 reserved** for the deferred legacy-contract drop.
   - Files: web/lib/db/schema.ts, migrations SQL/journal/snapshots, migration integration tests, docs DB artifacts already frozen in Phase 0.
   - RED: migrate a realistic 0090 database containing every Experiment status, variants, members, failures, snapshots, advisories, human verdicts, missing historical provenance, and package pins; assert count/digest parity and constraints, the fixed status mapping (incl. archived_reason=legacy_abandoned), Partial legacy executions with reason legacy_advisory, and zero-citation verdicts for advisory-less conclusions.
   - GREEN: create all foundation tables/indexes/FKs/checks; lossless legacy backfill; loud abort on invalid/mismatched data; no destructive drop.

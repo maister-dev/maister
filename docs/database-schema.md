@@ -55,6 +55,24 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. **(ADR-134 — Implemented, migration `0098`)** adds final promoted-delivery evidence. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `experiments`                 | **(ADR-124 — Implemented, migration `0090`)** Task-bound Experiment Comparison Studio container: pinned `base_commit`, immutable variants/rubric snapshots, five-state FSM, and optional human/advisory verdict envelope.                                                                                                    | `projects.id`, `tasks.id`, optional `users.id`                             |
 | `experiment_runs`             | **(ADR-124 — Implemented, migration `0090`)** Membership rows linking ordinary runs to an experiment variant/replicate, with launch lineage, pinned `base_commit`, capped diff snapshot, structured truncation fields, full-file summary, and materialization delta.                                                            | `experiments.id`, `runs.id`                                                |
+| `evaluation_studies`          | **(ADR-139 — Implemented, migrations `0104`/`0107`)** Neutral Evaluation Study container (one project + one task). Status `draft\|open\|decided\|archived`; readiness/active-eval count are derived. `legacy_experiment_id` UNIQUE + `legacy_snapshot` preserve a migrated Experiment.                                          | `projects.id`, `tasks.id` (RESTRICT), optional `users.id`                  |
+| `evaluation_recipes`          | **(ADR-139 — Implemented, migration `0104`)** Immutable Study recipe definition (M46 = legacy variant config; M47 = typed controlled recipe). `definition_digest`; tombstone-after-launch. UNIQUE `(study_id, key)`.                                                                                                            | `evaluation_studies.id`                                                    |
+| `evaluation_participants`     | **(ADR-139 — Implemented, migration `0104`)** Study participant with immutable `source_type` (`observed`/`launched`) provenance; copied `run_identity` survives Run deletion (`run_id` SET NULL). Partial UNIQUE `(study_id, run_id)` on live rows; tombstone via `removed_at`.                                                  | `evaluation_studies.id`, optional `runs.id`, `evaluation_recipes.id`      |
+| `evaluation_method_revisions` | **(ADR-140 — Implemented, migration `0105`)** Immutable package-projected Evaluation Method revision (`qualified_id`, digests, `compat`), mutable `activation`; derived health. UNIQUE `(package_install_id, method_id)`; package-install delete RESTRICTed while referenced.                                                     | `package_installs.id` (RESTRICT)                                          |
+| `evaluation_judge_panels`     | **(ADR-142 — Implemented, migration `0105`)** Mutable admin Judge Panel (role→package-agent bindings + policy) with optimistic `revision`; snapshotted at execution start.                                                                                                                                                     | optional `users.id`                                                       |
+| `evaluation_profiles`         | **(ADR-142 — Implemented, migration `0105`)** Mutable admin Profile = one method revision + one panel + defaults/hard-limits/allowed-overrides; RESTRICT-guarded deletes.                                                                                                                                                       | `evaluation_method_revisions.id` (RESTRICT), `evaluation_judge_panels.id` (RESTRICT), optional `users.id` |
+| `evaluation_project_profile_overrides` | **(ADR-142 — Implemented, migration `0105`)** Optional per-project saved Profile overrides, constrained to the Profile allow-list. UNIQUE `(project_id, profile_id)`.                                                                                                                                                   | `projects.id` (CASCADE), `evaluation_profiles.id` (RESTRICT), optional `users.id` |
+| `evaluation_evidence_snapshots` | **(ADR-141 — Implemented, migration `0106`)** Immutable sealed evidence snapshot (`preparing→sealed→pending_delete→deleted`); reusable across executions on protocol-digest match; two-stage reference-guarded deletion.                                                                                                       | `evaluation_studies.id`, optional `users.id`                             |
+| `evaluation_evidence_items`   | **(ADR-141 — Implemented, migration `0106`)** One bounded manifest item (opaque `locator`, `digest`, `coverage_class`, `blob_key`); payload lives on the host content store, never a DTO.                                                                                                                                      | `evaluation_evidence_snapshots.id`, optional `evaluation_participants.id` |
+| `evaluation_executions`       | **(ADR-141/142 — Implemented, migration `0106`)** Append-only Evaluation Execution identity over a sealed snapshot; CAS/`version`-guarded 11-state FSM; nullable `method_revision_id` (legacy) + `retry_of`; idempotency-keyed per Study.                                                                                       | `evaluation_studies.id`, optional `evaluation_method_revisions.id` (RESTRICT), `evaluation_evidence_snapshots.id` (RESTRICT), optional `users.id` |
+| `evaluation_objective_check_runs` | **(ADR-141 — Implemented, migration `0106`)** One objective-check attempt per participant (`queued…unavailable`, reason-required for absence). UNIQUE `(execution, participant, check, attempt)`.                                                                                                                          | `evaluation_executions.id`, optional `evaluation_participants.id`, `evaluation_evidence_items.id` |
+| `evaluation_metric_results`   | **(ADR-141 — Implemented, migration `0106`)** Normalized objective metric per participant; missing is explicit (`measured\|unavailable\|not_run`), never zero.                                                                                                                                                                 | `evaluation_executions.id`, optional `evaluation_participants.id`         |
+| `evaluation_judge_attempts`   | **(ADR-142 — Implemented, migration `0106`)** One independent judge attempt (`role`/`ordinal`/`retry_ordinal` UNIQUE) with server-derived agent/runner/model/token attribution and a sealed result; timeout anchored at `running_at`.                                                                                          | `evaluation_executions.id`, optional `agents.id`, `runs.id`              |
+| `evaluation_criterion_results` | **(ADR-142 — Implemented, migration `0106`)** Per-criterion result inside a sealed attempt; `scored` ⇒ numeric score, non-scored ⇒ NULL (CHECK).                                                                                                                                                                              | `evaluation_judge_attempts.id`, optional `evaluation_participants.id`     |
+| `evaluation_aggregate_results` | **(ADR-142 — Implemented, migration `0106`)** The single deterministic aggregate for an execution (exact inputs/calculations/exclusions/quorum/digest); append-only revision, never overwrites attempts.                                                                                                                       | `evaluation_executions.id`                                               |
+| `evaluation_reviews`          | **(ADR-142 — Implemented, migration `0106`)** Durable disagreement/escalation review ledger (`disagreement\|escalation`, `required\|resolved`).                                                                                                                                                                                | `evaluation_executions.id`, optional `users.id`                          |
+| `evaluation_human_verdicts`   | **(ADR-142 — Implemented, migration `0106`/`0107`)** Append-only, human-auth-only conclusive verdict; zero-citation requires `no_evaluation_evidence_ack` (CHECK); `supersedes_id` correction chain.                                                                                                                           | `evaluation_studies.id`, optional `users.id`                             |
+| `evaluation_events`           | **(ADR-141 — Implemented, migration `0106`)** Replayable per-Study SSE event log; bounded ids/status/counts only. UNIQUE `(study_id, sequence)`.                                                                                                                                                                               | `evaluation_studies.id`, optional `evaluation_executions.id`             |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
 | `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0059`, ADR-097)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
 | `run_messages`                | Run-kind-agnostic transcript ledger (generalized from `scratch_messages`, migration `0085`). Append/upsert message rows with monotonic `sequence`; nullable `node_attempt_id` attributes a flow node session's transcript (NULL for scratch / single-session). Unique `(run_id, node_attempt_id, sequence)` `NULLS NOT DISTINCT` keeps scratch's `(run_id, sequence)` invariant. | `runs.id`, optional `node_attempts.id`                                     |
@@ -1543,6 +1561,63 @@ when `diffSnapshot` is truncated or the worktree is later removed.
 
 Indexes: `experiments(projectId, status)`, `experiments(taskId)`,
 `experiment_runs(experimentId)`, and `experiment_runs(runId)`.
+
+## Evaluation Lab tables (Implemented — ADR-139..142, migrations `0104`–`0107`)
+
+The Evaluation Lab (M46) evolves the task-bound Experiment Studio into a
+project-level, package-sourced, multi-judge evaluation system. The full ERD and
+per-table field detail live in [`db/evaluations-domain.md`](db/evaluations-domain.md);
+this section names the invariants the columns encode. Four migrations:
+`0104` (Study/recipe/participant), `0105` (platform config), `0106`
+(execution + immutable evidence), `0107` (lossless legacy Experiment backfill).
+
+- **Study / participant / recipe (`0104`).** `evaluation_studies` is the neutral
+  container bound to exactly one project + one task; persisted status is only
+  `draft|open|decided|archived` (readiness and active-evaluation count are
+  DERIVED, never a lossy Study-level flip). A migrated Experiment keeps its id as
+  the Study id, records `legacy_experiment_id` (UNIQUE), and preserves the
+  original row verbatim in `legacy_snapshot`. `evaluation_participants` carries
+  immutable `source_type` provenance — `observed` (a selected existing Run, never
+  gains launch semantics) vs `launched` (recipe-owned, forced promotion hold);
+  `run_id` is `ON DELETE SET NULL` so the copied `run_identity` survives Run
+  deletion, and a partial UNIQUE `(study_id, run_id)` on non-tombstoned rows
+  allows re-adding a Run after its participant is tombstoned. `evaluation_recipes`
+  is immutable per launch (tombstone + add, never rewrite).
+
+- **Platform config (`0105`).** `evaluation_method_revisions` projects an
+  immutable package method revision (no method-local version field — the version
+  IS the install's `version_label` + digests, avoiding skew); a package install
+  delete is RESTRICTed while a revision references it. `evaluation_judge_panels`
+  and `evaluation_profiles` are mutable admin config with optimistic `revision`,
+  snapshotted into each execution at start so editing them never mutates a
+  historical result; both are RESTRICT-guarded against delete-while-referenced.
+  `evaluation_project_profile_overrides` holds optional per-project values
+  constrained to the Profile's allow-list (UNIQUE `(project_id, profile_id)`).
+
+- **Execution + evidence (`0106`).** `evaluation_executions` is append-only
+  identity with a CAS/`version`-guarded 11-state FSM
+  (`queued→capturing→checking→judging→aggregating→…`); `method_revision_id` is
+  nullable ONLY for legacy synthesized executions (the service requires it for
+  every new execution), `evidence_snapshot_id` is required before `checking`, and
+  an explicit `retry_of` never re-enters a terminal row. A sealed
+  `evaluation_evidence_snapshots` row is immutable and reusable across executions
+  when the participant-set + `evidence_protocol_digest` match; deletion is
+  two-stage (`pending_delete→deleted`) and reference-guarded. Judge independence
+  lives in `evaluation_judge_attempts` (UNIQUE `(execution, role, ordinal,
+  retry_ordinal)`, timeout anchored at `running_at`, sealed peer results);
+  `evaluation_criterion_results` enforces `scored ⇒ numeric score, else NULL`
+  (missing never becomes zero); `evaluation_human_verdicts` is append-only,
+  human-auth-only, and requires `no_evaluation_evidence_ack` for a zero-citation
+  verdict (CHECK).
+
+- **Legacy backfill (`0107`).** A retained idempotent, parity-asserting
+  `evaluation_backfill_from_experiments()` function maps every `experiments` /
+  `experiment_runs` row losslessly (fixed status map, `budget_restart`→
+  `manual_relaunch`, advisories → one terminal `partial`/`legacy_advisory`
+  execution with the raw advisory preserved verbatim, advisory-less conclusions →
+  zero-citation verdicts with the acknowledgement) or RAISEs and rolls the whole
+  migration back. The legacy tables are NOT dropped in M46 (the deferred `0108`
+  contract migration drops them after the rollback window and sign-off).
 
 ## Cost rollup tables (Designed — ADR-085, migration `0047`)
 

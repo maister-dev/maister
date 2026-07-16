@@ -19,6 +19,9 @@ import type {
 } from "@/lib/experiments/types";
 import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
 import type {
+  EvaluationMethodCompat,
+  EvaluationPanelPolicy,
+  EvaluationPanelRoleBinding,
   EvaluationRecipeDefinition,
   EvaluationRunIdentitySnapshot,
 } from "@/lib/evaluations/types";
@@ -2092,6 +2095,11 @@ export const evaluationStudies = pgTable(
     // Postgres UNIQUE, so new Studies (NULL) never collide.
     legacyExperimentId: text("legacy_experiment_id"),
     archivedReason: text("archived_reason"),
+    // The original Experiment row preserved verbatim at backfill time so the
+    // Study stays self-contained once the deferred legacy-contract migration
+    // (0108) drops the experiments table (plan §Legacy backfill step 4). Null
+    // for natively-created Studies.
+    legacySnapshot: jsonb("legacy_snapshot").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -2213,6 +2221,789 @@ export const evaluationParticipants = pgTable(
       "evaluation_participants_replicate_positive_check",
       sql`${t.replicateOrdinal} is null or ${t.replicateOrdinal} >= 1`,
     ),
+  }),
+);
+
+// --- Evaluation platform configuration (M46, ADR-140/142; 0105) ------------
+// Immutable package-derived Method revisions + mutable admin Panels/Profiles
+// and project overrides (D6, D8). Package content NEVER contains credentials,
+// concrete runner ids, host model ids, or executable scripts (D7); portable
+// method definitions resolve checks/aggregators only through closed registries.
+
+// A package install's projected Evaluation Method revision. The immutable
+// version is the containing install's versionLabel + resolvedRevision/digests —
+// there is deliberately NO method-local version field (D6, avoids skew).
+export const evaluationMethodRevisions = pgTable(
+  "evaluation_method_revisions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // RESTRICT: a package install cannot be deleted while a projected method
+    // revision references it (usage-guarded, D6). Detach happens first.
+    packageInstallId: text("package_install_id")
+      .notNull()
+      .references(() => packageInstalls.id, { onDelete: "restrict" }),
+    // The method id within the package (e.g. "sdd-quality").
+    methodId: text("method_id").notNull(),
+    // `<packageName>:<methodId>` (D6).
+    qualifiedId: text("qualified_id").notNull(),
+    // Denormalized for the Methodologies list (package/version/SHA display).
+    packageName: text("package_name").notNull(),
+    versionLabel: text("version_label").notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    // The normalized method definition (opaque, closed-registry refs only).
+    normalizedDefinition: jsonb("normalized_definition")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    promptDigest: text("prompt_digest").notNull(),
+    schemaDigest: text("schema_digest").notNull(),
+    compat: jsonb("compat").$type<EvaluationMethodCompat>().notNull(),
+    // Mutable activation state; health (ready|degraded|incompatible) is derived.
+    activation: text("activation", { enum: ["enabled", "disabled"] })
+      .notNull()
+      .default("disabled"),
+    // Non-empty only for a projection that failed strict validation; such a
+    // revision is never selectable.
+    validationErrors: jsonb("validation_errors").$type<string[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqInstallMethod: unique(
+      "evaluation_method_revisions_install_method_uq",
+    ).on(t.packageInstallId, t.methodId),
+    idxQualified: index("evaluation_method_revisions_qualified_idx").on(
+      t.qualifiedId,
+    ),
+    activationCheck: check(
+      "evaluation_method_revisions_activation_check",
+      sql`${t.activation} in ('enabled', 'disabled')`,
+    ),
+  }),
+);
+
+// Mutable admin Judge Panel with optimistic revision. Maps logical roles to
+// package-qualified platform agents ONLY in M46 (D8); project-linked bindings
+// are deferred. Historical executions snapshot the effective panel at start, so
+// editing a panel never mutates an in-flight or completed execution.
+export const evaluationJudgePanels = pgTable(
+  "evaluation_judge_panels",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull(),
+    // Optimistic-concurrency guard; PATCH/DELETE require If-Match.
+    revision: integer("revision").notNull().default(1),
+    roleBindings: jsonb("role_bindings")
+      .$type<EvaluationPanelRoleBinding[]>()
+      .notNull(),
+    policy: jsonb("policy").$type<EvaluationPanelPolicy>().notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxEnabled: index("evaluation_judge_panels_enabled_idx").on(t.enabled),
+  }),
+);
+
+// Mutable admin Evaluation Profile: one Method revision + one Panel + defaults,
+// hard limits, and an explicit allow-list of project/study overrides (D8).
+export const evaluationProfiles = pgTable(
+  "evaluation_profiles",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull(),
+    // RESTRICT on both refs — the Profile is usage that guards deletion of a
+    // Method revision / Panel; historical executions use snapshots (D8).
+    methodRevisionId: text("method_revision_id")
+      .notNull()
+      .references(() => evaluationMethodRevisions.id, { onDelete: "restrict" }),
+    panelId: text("panel_id")
+      .notNull()
+      .references(() => evaluationJudgePanels.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull().default(1),
+    defaults: jsonb("defaults").$type<Record<string, unknown>>(),
+    hardLimits: jsonb("hard_limits").$type<Record<string, unknown>>(),
+    // Which fields a project/study may override, and the bounds on each.
+    allowedOverrides:
+      jsonb("allowed_overrides").$type<Record<string, unknown>>(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxMethod: index("evaluation_profiles_method_idx").on(t.methodRevisionId),
+    idxPanel: index("evaluation_profiles_panel_idx").on(t.panelId),
+  }),
+);
+
+// Optional per-project saved override values, constrained to the Profile's
+// allowed-override allow-list. SET/CLEAR/re-set symmetry is service-enforced.
+export const evaluationProjectProfileOverrides = pgTable(
+  "evaluation_project_profile_overrides",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    // RESTRICT: an override counts as usage guarding Profile deletion (D8).
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => evaluationProfiles.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull().default(1),
+    overrides: jsonb("overrides").$type<Record<string, unknown>>().notNull(),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectProfile: unique(
+      "evaluation_project_profile_overrides_project_profile_uq",
+    ).on(t.projectId, t.profileId),
+  }),
+);
+
+// --- Evaluation execution + immutable evidence (M46, ADR-141/142; 0106) -----
+// The runtime record of an Evaluation Execution over a sealed evidence
+// snapshot, its objective checks/metrics, multi-judge attempts, aggregation,
+// disagreement reviews, human verdicts, and the replayable Study event log.
+// Evidence payloads live on the host content-addressed store (D9); only bounded
+// metadata is normalized here. No client-visible column carries a private path,
+// session id, adapter env, credential, or evidence/rationale body.
+
+// An immutable evidence snapshot (D5, D9). A `sealed` snapshot may be attached
+// to multiple executions when participant-set + evidence-protocol digests
+// match; later Run progress never mutates it — a new execution captures later
+// state. Deletion is two-stage (pending_delete → deleted) and reference-guarded.
+export const evaluationEvidenceSnapshots = pgTable(
+  "evaluation_evidence_snapshots",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["preparing", "sealed", "pending_delete", "deleted"],
+    })
+      .notNull()
+      .default("preparing"),
+    // The frozen participant id list + each participant's resolved Run/event
+    // watermark (branch tip SHA + append-only log offset) at capture time.
+    participantWatermarks: jsonb("participant_watermarks")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    // Digest of the method/profile evidence protocol this snapshot satisfies —
+    // an execution may attach only when its protocol digest matches (D5).
+    evidenceProtocolDigest: text("evidence_protocol_digest").notNull(),
+    // Digest over the sealed manifest (all item rows); the attach/reuse key.
+    manifestDigest: text("manifest_digest"),
+    coverageSummary: jsonb("coverage_summary").$type<Record<string, unknown>>(),
+    warnings: jsonb("warnings").$type<string[]>(),
+    // Host content-store generation (root rotation marker) for GC.
+    storageGeneration: text("storage_generation"),
+    sealedAt: timestamp("sealed_at", { withTimezone: true, mode: "date" }),
+    preparedByUserId: text("prepared_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    pendingDeleteAt: timestamp("pending_delete_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxStudy: index("evaluation_evidence_snapshots_study_idx").on(t.studyId),
+    // Sealed snapshots with the same participant-set + protocol digest are
+    // reusable; the digest index backs the attach lookup.
+    idxProtocolDigest: index(
+      "evaluation_evidence_snapshots_protocol_digest_idx",
+    ).on(t.evidenceProtocolDigest),
+    statusCheck: check(
+      "evaluation_evidence_snapshots_status_check",
+      sql`${t.status} in ('preparing', 'sealed', 'pending_delete', 'deleted')`,
+    ),
+  }),
+);
+
+// One bounded evidence item in a snapshot manifest (D9). Public DTOs expose the
+// opaque id + logical label only — never `locator` (a logical path) as a real
+// filesystem path, and never the payload (which lives on the content store).
+export const evaluationEvidenceItems = pgTable(
+  "evaluation_evidence_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => evaluationEvidenceSnapshots.id, {
+        onDelete: "cascade",
+      }),
+    // Nullable for items shared across participants (e.g. the task/ground-truth).
+    participantId: text("participant_id").references(
+      () => evaluationParticipants.id,
+      { onDelete: "set null" },
+    ),
+    kind: text("kind").notNull(),
+    // Logical locator (opaque label), NOT a host filesystem path.
+    locator: text("locator").notNull(),
+    digest: text("digest").notNull(),
+    bytes: integer("bytes"),
+    coverageClass: text("coverage_class").notNull(),
+    inclusionReason: text("inclusion_reason"),
+    truncation: jsonb("truncation").$type<Record<string, unknown>>(),
+    redaction: jsonb("redaction").$type<Record<string, unknown>>(),
+    // Content-store key for the immutable payload (server-only; never in a DTO).
+    blobKey: text("blob_key"),
+    retention: text("retention"),
+    capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" }),
+    sourceWatermark: text("source_watermark"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxSnapshot: index("evaluation_evidence_items_snapshot_idx").on(
+      t.snapshotId,
+    ),
+    idxParticipant: index("evaluation_evidence_items_participant_idx").on(
+      t.participantId,
+    ),
+  }),
+);
+
+// The append-only identity of one Evaluation Execution (D4, D5). State
+// transitions are CAS/version-guarded; retry never re-enters a terminal row
+// (a new execution with `retry_of` starts at queued). `evidence_snapshot_id`
+// is required before Checking.
+export const evaluationExecutions = pgTable(
+  "evaluation_executions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    // RESTRICT: method revision usage guard (historical executions snapshot the
+    // effective profile, but the revision row itself stays referenceable).
+    // Nullable ONLY to represent legacy synthesized executions honestly — the
+    // old hardcoded judge had no package method (never fabricate one). The
+    // service REQUIRES a method revision for every new (non-legacy) execution.
+    methodRevisionId: text("method_revision_id").references(
+      () => evaluationMethodRevisions.id,
+      { onDelete: "restrict" },
+    ),
+    // Nullable until sealed; RESTRICT so a sealed snapshot citing this execution
+    // cannot be hard-deleted (deletion is reference-guarded, D5).
+    evidenceSnapshotId: text("evidence_snapshot_id").references(
+      () => evaluationEvidenceSnapshots.id,
+      { onDelete: "restrict" },
+    ),
+    status: text("status", {
+      enum: [
+        "queued",
+        "capturing",
+        "checking",
+        "judging",
+        "aggregating",
+        "review_required",
+        "cancelling",
+        "completed",
+        "partial",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    version: integer("version").notNull().default(1),
+    // The complete resolved effective profile snapshotted at start (D8): method
+    // hard constraints, profile bounds, panel binding, project/study overrides,
+    // resolved agents/runners/models, MCP allow-list, prompt/schema digests.
+    effectiveProfileSnapshot: jsonb("effective_profile_snapshot").$type<
+      Record<string, unknown>
+    >(),
+    randomizationSeed: text("randomization_seed"),
+    objectivePolicySnapshot: jsonb("objective_policy_snapshot").$type<
+      Record<string, unknown>
+    >(),
+    judgePolicySnapshot: jsonb("judge_policy_snapshot").$type<
+      Record<string, unknown>
+    >(),
+    aggregationPolicySnapshot: jsonb("aggregation_policy_snapshot").$type<
+      Record<string, unknown>
+    >(),
+    idempotencyKey: text("idempotency_key"),
+    // Terminal/failure reason (typed code), never a private body.
+    terminalReason: text("terminal_reason"),
+    retryOf: text("retry_of").references(
+      (): AnyPgColumn => {
+        return evaluationExecutions.id;
+      },
+      { onDelete: "set null" },
+    ),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    cancelledByUserId: text("cancelled_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    requestedAt: timestamp("requested_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    cancelledAt: timestamp("cancelled_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    terminalAt: timestamp("terminal_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxStudyStatus: index("evaluation_executions_study_status_idx").on(
+      t.studyId,
+      t.status,
+    ),
+    // Same idempotency key within a Study returns the original execution.
+    uniqStudyIdem: uniqueIndex("evaluation_executions_study_idem_uq")
+      .on(t.studyId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} is not null`),
+    statusCheck: check(
+      "evaluation_executions_status_check",
+      sql`${t.status} in ('queued', 'capturing', 'checking', 'judging', 'aggregating', 'review_required', 'cancelling', 'completed', 'partial', 'failed', 'cancelled')`,
+    ),
+  }),
+);
+
+// One objective check attempt over a participant in an execution (D11). No PASS
+// without an executed/recorded fact; nonterminal/absence statuses need a reason.
+export const evaluationObjectiveCheckRuns = pgTable(
+  "evaluation_objective_check_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => evaluationExecutions.id, { onDelete: "cascade" }),
+    participantId: text("participant_id").references(
+      () => evaluationParticipants.id,
+      { onDelete: "set null" },
+    ),
+    checkId: text("check_id").notNull(),
+    checkVersion: text("check_version").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status", {
+      enum: [
+        "queued",
+        "running",
+        "passed",
+        "failed",
+        "error",
+        "cancelled",
+        "not_run",
+        "unavailable",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    reason: text("reason"),
+    inputDigest: text("input_digest"),
+    outputDigest: text("output_digest"),
+    // Which trusted host check profile executed this (platform-owned), if any.
+    trustedProfileProvenance: jsonb("trusted_profile_provenance").$type<
+      Record<string, unknown>
+    >(),
+    logEvidenceItemId: text("log_evidence_item_id").references(
+      () => evaluationEvidenceItems.id,
+      { onDelete: "set null" },
+    ),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqExecParticipantCheckAttempt: unique(
+      "evaluation_objective_check_runs_unique",
+    ).on(t.executionId, t.participantId, t.checkId, t.attempt),
+    idxExecution: index("evaluation_objective_check_runs_execution_idx").on(
+      t.executionId,
+    ),
+    statusCheck: check(
+      "evaluation_objective_check_runs_status_check",
+      sql`${t.status} in ('queued', 'running', 'passed', 'failed', 'error', 'cancelled', 'not_run', 'unavailable')`,
+    ),
+  }),
+);
+
+// A normalized objective metric per participant/execution (D11, D18). Missing
+// is explicit with a reason; never converted to numeric zero.
+export const evaluationMetricResults = pgTable(
+  "evaluation_metric_results",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => evaluationExecutions.id, { onDelete: "cascade" }),
+    participantId: text("participant_id").references(
+      () => evaluationParticipants.id,
+      { onDelete: "set null" },
+    ),
+    metricId: text("metric_id").notNull(),
+    metricVersion: text("metric_version").notNull(),
+    status: text("status", {
+      enum: ["measured", "unavailable", "not_run"],
+    }).notNull(),
+    reason: text("reason"),
+    value: jsonb("value").$type<Record<string, unknown>>(),
+    unit: text("unit"),
+    provenance: jsonb("provenance").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxExecution: index("evaluation_metric_results_execution_idx").on(
+      t.executionId,
+    ),
+    statusCheck: check(
+      "evaluation_metric_results_status_check",
+      sql`${t.status} in ('measured', 'unavailable', 'not_run')`,
+    ),
+  }),
+);
+
+// One independent judge attempt (D12). Each attempt is a separate agent Run
+// with a dedicated attempt-bound token; results are sealed from peers until
+// quorum/terminal. All attribution is server-derived at launch/seal.
+export const evaluationJudgeAttempts = pgTable(
+  "evaluation_judge_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => evaluationExecutions.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    // 0 for a primary attempt; > 0 for a bounded repair child (retry_of set).
+    retryOrdinal: integer("retry_ordinal").notNull().default(0),
+    retryOf: text("retry_of").references(
+      (): AnyPgColumn => {
+        return evaluationJudgeAttempts.id;
+      },
+      { onDelete: "set null" },
+    ),
+    agentId: text("agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    agentRevision: text("agent_revision"),
+    agentRunId: text("agent_run_id").references(() => runs.id, {
+      onDelete: "set null",
+    }),
+    // Ephemeral attempt-bound token id (revoked at terminal); opaque, no FK to
+    // keep the token lifecycle independent of this ledger.
+    tokenId: text("token_id"),
+    runnerSnapshot: jsonb("runner_snapshot").$type<Record<string, unknown>>(),
+    modelSnapshot: jsonb("model_snapshot").$type<Record<string, unknown>>(),
+    status: text("status", {
+      enum: [
+        "queued",
+        "running",
+        "completed",
+        "invalid",
+        "timed_out",
+        "cancelled",
+        "error",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    reason: text("reason"),
+    // The sealed strict result body (member-visible via DTO; never streamed).
+    sealedResult: jsonb("sealed_result").$type<Record<string, unknown>>(),
+    resultDigest: text("result_digest"),
+    promptDigest: text("prompt_digest"),
+    schemaDigest: text("schema_digest"),
+    evidenceDigest: text("evidence_digest"),
+    usage: jsonb("usage").$type<Record<string, unknown>>(),
+    cost: jsonb("cost").$type<Record<string, unknown>>(),
+    enqueuedAt: timestamp("enqueued_at", { withTimezone: true, mode: "date" }),
+    // Timeout clock anchors here (session Running), never at enqueue (D12).
+    runningAt: timestamp("running_at", { withTimezone: true, mode: "date" }),
+    terminalAt: timestamp("terminal_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqExecRoleOrdinal: unique("evaluation_judge_attempts_unique").on(
+      t.executionId,
+      t.role,
+      t.ordinal,
+      t.retryOrdinal,
+    ),
+    idxExecution: index("evaluation_judge_attempts_execution_idx").on(
+      t.executionId,
+    ),
+    statusCheck: check(
+      "evaluation_judge_attempts_status_check",
+      sql`${t.status} in ('queued', 'running', 'completed', 'invalid', 'timed_out', 'cancelled', 'error')`,
+    ),
+  }),
+);
+
+// One per-criterion result inside a sealed judge attempt (D12). A null score
+// pairs with insufficient_evidence | not_applicable — missing never becomes 0.
+export const evaluationCriterionResults = pgTable(
+  "evaluation_criterion_results",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => evaluationJudgeAttempts.id, { onDelete: "cascade" }),
+    participantId: text("participant_id").references(
+      () => evaluationParticipants.id,
+      { onDelete: "set null" },
+    ),
+    criterionId: text("criterion_id").notNull(),
+    state: text("state", {
+      enum: ["scored", "insufficient_evidence", "not_applicable"],
+    }).notNull(),
+    score: numeric("score"),
+    rationale: text("rationale"),
+    confidence: numeric("confidence"),
+    evidenceRefs: jsonb("evidence_refs").$type<string[]>(),
+    objectiveRefs: jsonb("objective_refs").$type<string[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxAttempt: index("evaluation_criterion_results_attempt_idx").on(
+      t.attemptId,
+    ),
+    stateCheck: check(
+      "evaluation_criterion_results_state_check",
+      sql`${t.state} in ('scored', 'insufficient_evidence', 'not_applicable')`,
+    ),
+    // scored ⇒ numeric score present; non-scored ⇒ score is null (D12).
+    scoreStateCheck: check(
+      "evaluation_criterion_results_score_state_check",
+      sql`(${t.state} = 'scored' and ${t.score} is not null) or (${t.state} <> 'scored' and ${t.score} is null)`,
+    ),
+  }),
+);
+
+// The single deterministic aggregate for one execution (D13). Persists exact
+// included attempt ids, unrounded calculations, display rounding, exclusions,
+// caps, quorum, dispersion, and digests; never overwrites raw attempts.
+export const evaluationAggregateResults = pgTable(
+  "evaluation_aggregate_results",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => evaluationExecutions.id, { onDelete: "cascade" }),
+    algorithmId: text("algorithm_id").notNull(),
+    algorithmVersion: text("algorithm_version").notNull(),
+    inputs: jsonb("inputs").$type<Record<string, unknown>>().notNull(),
+    calculations: jsonb("calculations")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    displayValues: jsonb("display_values").$type<Record<string, unknown>>(),
+    caps: jsonb("caps").$type<Record<string, unknown>>(),
+    quorum: jsonb("quorum").$type<Record<string, unknown>>(),
+    exclusions: jsonb("exclusions").$type<Record<string, unknown>>(),
+    dispersion: jsonb("dispersion").$type<Record<string, unknown>>(),
+    warnings: jsonb("warnings").$type<string[]>(),
+    digest: text("digest").notNull(),
+    // Append-only: a review adjudication writes a new revision, never a rewrite.
+    revision: integer("revision").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxExecution: index("evaluation_aggregate_results_execution_idx").on(
+      t.executionId,
+    ),
+  }),
+);
+
+// Durable disagreement/escalation review ledger (D13).
+export const evaluationReviews = pgTable(
+  "evaluation_reviews",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => evaluationExecutions.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["disagreement", "escalation"] }).notNull(),
+    status: text("status", { enum: ["required", "resolved"] })
+      .notNull()
+      .default("required"),
+    version: integer("version").notNull().default(1),
+    flags: jsonb("flags").$type<Record<string, unknown>>(),
+    reviewerUserId: text("reviewer_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    resolution: text("resolution"),
+    rationale: text("rationale"),
+    adjudicatedResult:
+      jsonb("adjudicated_result").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxExecution: index("evaluation_reviews_execution_idx").on(t.executionId),
+    kindCheck: check(
+      "evaluation_reviews_kind_check",
+      sql`${t.kind} in ('disagreement', 'escalation')`,
+    ),
+    statusCheck: check(
+      "evaluation_reviews_status_check",
+      sql`${t.status} in ('required', 'resolved')`,
+    ),
+  }),
+);
+
+// Append-only, human-auth-only conclusive verdict (D14). A verdict may cite zero
+// executions only with an explicit no-evaluation-evidence acknowledgement. A
+// correction is a superseding row; judge code can never write one.
+export const evaluationHumanVerdicts = pgTable(
+  "evaluation_human_verdicts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    supersedesId: text("supersedes_id").references(
+      (): AnyPgColumn => {
+        return evaluationHumanVerdicts.id;
+      },
+      { onDelete: "set null" },
+    ),
+    outcome: text("outcome", {
+      enum: ["winner", "tie", "inconclusive"],
+    }).notNull(),
+    participantIds: jsonb("participant_ids").$type<string[]>().notNull(),
+    executionIds: jsonb("execution_ids").$type<string[]>().notNull(),
+    noEvaluationEvidenceAck: boolean("no_evaluation_evidence_ack")
+      .notNull()
+      .default(false),
+    rationale: text("rationale"),
+    acknowledgedWarnings: jsonb("acknowledged_warnings").$type<string[]>(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxStudy: index("evaluation_human_verdicts_study_idx").on(t.studyId),
+    outcomeCheck: check(
+      "evaluation_human_verdicts_outcome_check",
+      sql`${t.outcome} in ('winner', 'tie', 'inconclusive')`,
+    ),
+    // Zero-citation verdict requires the explicit acknowledgement (D14).
+    zeroCitationAckCheck: check(
+      "evaluation_human_verdicts_zero_citation_check",
+      sql`jsonb_array_length(${t.executionIds}) > 0 or ${t.noEvaluationEvidenceAck} = true`,
+    ),
+  }),
+);
+
+// The replayable per-Study event log backing Study SSE (D17). Payloads carry
+// bounded ids/status/counts only — never evidence or rationale bodies.
+export const evaluationEvents = pgTable(
+  "evaluation_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    executionId: text("execution_id").references(
+      () => evaluationExecutions.id,
+      { onDelete: "set null" },
+    ),
+    sequence: integer("sequence").notNull(),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqStudySequence: unique("evaluation_events_study_sequence_uq").on(
+      t.studyId,
+      t.sequence,
+    ),
+    idxStudy: index("evaluation_events_study_idx").on(t.studyId),
   }),
 );
 
