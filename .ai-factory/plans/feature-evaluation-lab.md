@@ -32,25 +32,34 @@ Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 - Phase 2 T2.1 **partial** `6f88dd5f2` — migration **0104** (studies/recipes/
   participants) + 7 real-PG integration tests green.
 
-**▶ NEXT (resume here): PHASE 3 COMPLETE + green — start Phase 4 (T4.1 judge
-token/attempt).** Order: **T4.1** (dedicated judge token + attempt launch +
-sealing + attribution + bounded repair) → **T4.2** (quorum/aggregation:
-weighted_mean@1/median@1/majority@1 + disagreement — pure golden-testable) →
-**T4.3** (disagreement review + append-only human verdict) → **Phase 5**
-(T5.1 admin UI, T5.2 creation + N-way Study Lab + wires the T3.3 scheduler arm +
-SSE route + T2.3 capture + T2.2/T3.1 route surfaces, T5.3 E2E, T5.4 owner-gated
-deploy) → **Phase 6** (M47) → **Phase 7** (M48).
+**▶ NEXT (resume here): PHASE 3 COMPLETE + Phase 4 T4.2/T4.3/T4.1-pure DONE —
+next is the T4.1 AGENT-LAUNCH INTEGRATION SEAM, then Phase 5.** Order: **finish
+T4.1** (dedicated agent-Run-per-attempt launch: workspace:none + attempt-bound
+token + new `evaluations:{context,evidence,objective,result}:*` scopes; evaluator
+MCP facade `evaluation_{context_get,evidence_list,evidence_read,objective_results,
+result_submit}` mirrored in `mcp/src/tools.ts` TOOL_SPECS + ext routes +
+tool-contract test; run_sessions attribution; sealing into
+`evaluation_judge_attempts`/`criterion_results`; timeout-clock-at-Running;
+duplicate-launch adoption; bounded repair — this makes the FSM `judging` state
+live and feeds the built T4.2 aggregation adapter) → **Phase 5** (T5.1 admin UI,
+T5.2 creation + N-way Study Lab + wires the T3.3 scheduler arm + SSE route + T2.3
+capture + T2.2/T3.1 route surfaces, T5.3 E2E, T5.4 owner-gated deploy) →
+**Phase 6** (M47) → **Phase 7** (M48).
 
 **DONE this session (all green, committed on feature/evaluation-lab):**
 Phase 2 COMPLETE — T2.1 `888835b7c`, T2.2 `1f6f5b7ac`+`c06895b59`, T2.3 `9ae4a0775`.
-**Phase 3 COMPLETE** — T3.1 config-CRUD `073f5a371` + projection/resolution/routes/authz
-`fd6b330f3`; T3.2 objective/metrics core `a757b42d6`; T3.3 FSM/CAS-advance/event-log
-core `82b2de8c5`. **Phase 3 exit gate green: 95 eval tests (5 unit files + 7 integration
-files).** CO-EVOLVE debts (land with Phase 5): T2.3 capture pipeline + evidence routes +
-GC; T2.2 HTTP routes + legacy `/experiments` adapters; T3.1 OpenAPI + route-authz E2E;
-T3.2 live ObjectiveFactSource wiring (real gate/artifact/diff readers) + distribution UI;
-T3.3 `evaluation_dispatch` scheduler job-kind arm (enum+budget+CTE+tick handler) +
-immediate kick + `GET .../{studyId}/stream` SSE route + poison/backoff.
+**Phase 3 COMPLETE** — T3.1 `073f5a371`+`fd6b330f3`; T3.2 core `a757b42d6`; T3.3 core
+`82b2de8c5`. **Phase 4 (partial):** T4.2 aggregation/disagreement/persist `c3edff720`;
+T4.3 verdict/review services `f29852882`; T4.1 pure cores (result-validation + blinding)
+`e2025c0b9`. **Phase 3+4 slice green together: 123 eval tests (16 files).** CO-EVOLVE
+debts (land with Phase 5 unless noted): T2.3 capture pipeline + evidence routes + GC;
+T2.2 HTTP routes + legacy `/experiments` adapters; T3.1 OpenAPI + route-authz E2E;
+T3.2 live ObjectiveFactSource reader wiring + distribution UI; T3.3 `evaluation_dispatch`
+scheduler job-kind arm (enum+budget+CTE+tick handler) + immediate kick + `GET
+.../{studyId}/stream` SSE route + poison/backoff; T4.2 real judge-attempt→AttemptResult
+adapter + aggregation worker handler; T4.3 human-session verdict/review routes; **T4.1
+agent-launch/token/MCP-facade seam (do FIRST next session — it unblocks the live judging
+path).**
 
 **T2.1 DONE (this session):** migrations `0105` (config: method_revisions /
 judge_panels / profiles / project_profile_overrides), `0106` (execution +
