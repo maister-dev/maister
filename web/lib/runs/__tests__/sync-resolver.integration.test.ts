@@ -81,6 +81,7 @@ const { addWorktree, syncOperationInProgress, aheadBehindCounts } =
   await import("@/lib/worktree");
 const { syncRunTarget } = await import("@/lib/runs/sync-target");
 const { respondToHitl } = await import("@/lib/services/hitl");
+const { hasSyncDriver } = await import("@/lib/runs/sync-driver-registry");
 
 const schema = fullSchema as unknown as Record<string, any>;
 const { runs, workspaces, tasks, runSyncAttempts, runSessions, hitlRequests } =
@@ -456,6 +457,28 @@ async function waitFor(
 
 // ---------------------------------------------------------------------------
 
+// ADR-140 (#4): the resolver turn is BACKGROUNDED. `syncRunTarget` returns at the
+// cut — the CAS has committed, so the run is `Running` and the attempt is
+// `agent_running` — and the resolve (30min of active time, plus arbitrarily long
+// HITL pauses) continues after the response. Injecting the scheduler lets a test
+// await exactly what the HTTP path deliberately does not, with no polling.
+//
+// A resolve failure is therefore NOT a rejected promise any more: it is a durable
+// state change (the attempt ledger + runs.status), which is what these assert.
+function backgrounded(): {
+  schedule: (task: () => Promise<void>) => void;
+  settled: () => Promise<void>;
+} {
+  let done: Promise<void> = Promise.resolve();
+
+  return {
+    schedule: (task) => {
+      done = task();
+    },
+    settled: () => done,
+  };
+}
+
 describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
   it("conflict + agent=true → resolver session launched, run Running, agent_launched", async () => {
     const { parent, wt } = await seedConflictWorktree("sync/agent-a", {
@@ -485,10 +508,23 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
       return { stopReason: "end_turn" as PromptStopReason };
     });
 
-    const out = await syncRunTarget({ runId, actor: actor(), agent: true, db });
+    const bg = backgrounded();
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      agent: true,
+      db,
+      schedule: bg.schedule,
+    });
 
     expect(out.outcome).toBe("agent_launched");
-    expect(out.pushed).toBe(true);
+    // At the cut the push has not happened yet, so `false` is the honest answer;
+    // the attempt row below carries the real outcome once the resolve settles.
+    expect(out.pushed).toBe(false);
+    // The response is truthful about the run being live (the 202 contract).
+    expect((await readRun(runId)).status).toBe("Running");
+
+    await bg.settled();
 
     // A fresh resolver session was created inside the worktree.
     expect(supMock.createSession).toHaveBeenCalledTimes(1);
@@ -524,6 +560,7 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
     const row = await attemptRow(runId);
 
     expect(row.phase).toBe("succeeded");
+    expect(row.pushed).toBe(true);
     expect(row.mode).toBe("agent");
     expect(row.runnerId).toBe(runnerId);
     expect(row.sessionName).toBe("sync-1");
@@ -534,6 +571,62 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
     ).toBe(0);
     expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
     expect(schedulerSpy.promoteNextPending).toHaveBeenCalled();
+  });
+
+  // THE trap of backgrounding the resolver. `return await` was the only thing
+  // keeping syncRunTarget's `finally` from firing while the resolver ran; handing
+  // the response back without transferring driver ownership deregisters it at
+  // RESPONSE time. reconcile's classifier consults the registry FIRST and treats
+  // "no driver" as a post-restart orphan — a resolver's run_sessions row carries
+  // acp_session_id null, so `liveSession` is false for a live resolver too, giving
+  // `sync-orphaned-idle`: the sweep then hard-resets the worktree under the running
+  // agent and releases its claim. That regression already shipped once.
+  it("keeps the in-proc driver registered for the WHOLE backgrounded resolve", async () => {
+    const { parent, wt } = await seedConflictWorktree("sync/agent-driver");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/agent-driver",
+      parentRepoPath: parent,
+      baseCommit: await headSha(parent, "main"),
+    });
+
+    const stream = eventStream();
+    const gate = deferred<void>();
+
+    supMock.streamSession.mockImplementation((_sid: string, opts: any) =>
+      stream.iterate(opts?.signal),
+    );
+    supMock.sendPrompt.mockImplementation(async () => {
+      await gate.promise;
+      await resolveConflictInWorktree(wt);
+
+      return { stopReason: "end_turn" as PromptStopReason };
+    });
+
+    const bg = backgrounded();
+
+    await syncRunTarget({
+      runId,
+      actor: actor(),
+      agent: true,
+      db,
+      schedule: bg.schedule,
+    });
+
+    // The response has been sent and the resolver is mid-turn: this is the exact
+    // window in which reconcile must still see a live driver and SKIP.
+    expect(hasSyncDriver(runId)).toBe(true);
+
+    gate.resolve();
+    await bg.settled();
+
+    // ...and released exactly once the resolve is genuinely done, so a real
+    // orphan is still recoverable.
+    expect(hasSyncDriver(runId)).toBe(false);
+    expect((await attemptRow(runId)).phase).toBe("succeeded");
   });
 
   it("crash stop-reason (non-end_turn) → abort restore, attempt failed, Review", async () => {
@@ -558,13 +651,27 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
       stopReason: "refusal" as PromptStopReason,
     });
 
-    await expect(
-      syncRunTarget({ runId, actor: actor(), agent: true, db }),
-    ).rejects.toMatchObject({ code: "CRASH" });
+    const bg = backgrounded();
+
+    // The launch itself succeeds — the crash happens in the backgrounded turn,
+    // long after the response, so it settles as state rather than as a throw.
+    expect(
+      (
+        await syncRunTarget({
+          runId,
+          actor: actor(),
+          agent: true,
+          db,
+          schedule: bg.schedule,
+        })
+      ).outcome,
+    ).toBe("agent_launched");
+    await bg.settled();
 
     const row = await attemptRow(runId);
 
     expect(row.phase).toBe("failed");
+    expect(row.errorCode).toBe("CRASH");
     expect((await readRun(runId)).status).toBe("Review");
     expect(await headSha(wt)).toBe(before);
     expect(await syncOperationInProgress(wt)).toBe(false);
@@ -594,13 +701,25 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
       stopReason: "end_turn" as PromptStopReason,
     });
 
-    await expect(
-      syncRunTarget({ runId, actor: actor(), agent: true, db }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const bg = backgrounded();
+
+    expect(
+      (
+        await syncRunTarget({
+          runId,
+          actor: actor(),
+          agent: true,
+          db,
+          schedule: bg.schedule,
+        })
+      ).outcome,
+    ).toBe("agent_launched");
+    await bg.settled();
 
     const row = await attemptRow(runId);
 
     expect(row.phase).toBe("failed");
+    expect(row.errorCode).toBe("PRECONDITION");
     expect((await readRun(runId)).status).toBe("Review");
     expect(await headSha(wt)).toBe(before);
     expect(await syncOperationInProgress(wt)).toBe(false);
@@ -633,7 +752,16 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
       return { stopReason: "end_turn" as PromptStopReason };
     });
 
-    const running = syncRunTarget({ runId, actor: actor(), agent: true, db });
+    const bg = backgrounded();
+    const launched = await syncRunTarget({
+      runId,
+      actor: actor(),
+      agent: true,
+      db,
+      schedule: bg.schedule,
+    });
+
+    expect(launched.outcome).toBe("agent_launched");
 
     // Wait for the resolver consumer to persist the permission HITL.
     await waitFor(async () => {
@@ -669,9 +797,8 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
     expect(afterStamp.getTime()).toBeGreaterThan(beforeStamp.getTime());
 
     gate.resolve();
-    const out = await running;
+    await bg.settled();
 
-    expect(out.outcome).toBe("agent_launched");
     expect((await readRun(runId)).status).toBe("Review");
     expect(supMock.deliverPermission).toHaveBeenCalled();
   });
@@ -704,9 +831,22 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
       return { stopReason: "end_turn" as PromptStopReason };
     });
 
-    await expect(
-      syncRunTarget({ runId, actor: actor(), agent: true, db: failingDb }),
-    ).rejects.toBeTruthy();
+    const bg = backgrounded();
+
+    // The persistence failure happens after createSession — i.e. inside the
+    // backgrounded turn — so it settles as state, not as a rejection.
+    expect(
+      (
+        await syncRunTarget({
+          runId,
+          actor: actor(),
+          agent: true,
+          db: failingDb,
+          schedule: bg.schedule,
+        })
+      ).outcome,
+    ).toBe("agent_launched");
+    await bg.settled();
 
     expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
     const row = await attemptRow(runId);

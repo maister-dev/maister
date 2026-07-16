@@ -117,6 +117,11 @@ export type SyncRunInput = {
   actor: SyncActor;
   db?: Db;
   now?: () => Date;
+  // How the backgrounded resolver turn is scheduled. Production leaves this
+  // unset (`queueMicrotask` — the response does not wait). The task never
+  // rejects, so a scheduler may safely drop the promise; injecting one that
+  // KEEPS it is how a caller awaits the resolve that the HTTP path does not.
+  schedule?: (task: () => Promise<void>) => void;
 };
 
 export type SyncEligibilityRun = {
@@ -518,6 +523,14 @@ export async function syncRunTarget(
 ): Promise<SyncRunOutcome> {
   const db = (input.db ?? getDb()) as Db;
   const now = input.now ?? (() => new Date());
+  // The task swallows its own failures, so dropping the promise is safe — this is
+  // deliberately fire-and-forget. Not serverless: a systemd host process genuinely
+  // outlives the response.
+  const scheduleBackground =
+    input.schedule ??
+    ((task: () => Promise<void>) => {
+      queueMicrotask(() => void task());
+    });
   const { runId } = input;
 
   // 1. Load + eligibility + dirty-tree refusal (all BEFORE any claim).
@@ -649,6 +662,9 @@ export async function syncRunTarget(
   // would `git rebase --abort` under it and release the claim while it ran.
   // The registry is a plain Set (not refcounted) — acquire in exactly ONE place.
   const releaseDriver = acquireSyncDriver(db, runId, claim);
+  // Set at the resolver cut ONLY: from there the background task owns the driver
+  // and is the sole releaser. Exactly one of the two paths releases it.
+  let handedOffDriver = false;
 
   try {
     // 4. Fetch the target and fast-forward the LOCAL target from origin/<target>.
@@ -719,7 +735,7 @@ export async function syncRunTarget(
     //    pre-sync HEAD) and returns `conflict`.
     if (!applied.ok) {
       if (input.agent !== false) {
-        return await runSyncResolver({
+        const resolverArgs: SyncResolverArgs = {
           db,
           now,
           claim,
@@ -742,7 +758,64 @@ export async function syncRunTarget(
           runnerId: input.runnerId,
           autoFinalize: input.autoFinalize ?? false,
           actor: input.actor,
+        };
+        // Everything that can still be refused — the cap gate, runner
+        // resolution, the promotion fence, the Review→Running CAS — runs HERE, on
+        // the request's stack, so those keep surfacing as typed HTTP errors
+        // (CONFLICT / EXECUTOR_UNAVAILABLE / PRECONDITION) instead of vanishing
+        // into a background task. A throw unwinds to the outer catch exactly as
+        // before, having already aborted the rebase and marked the attempt.
+        const prepared = await prepareSyncResolver(resolverArgs);
+
+        // The cut. Past the CAS the run IS `Running` and the attempt IS
+        // `agent_running`, so `agent_launched` is honest and the 202 contract
+        // ("the run is now Running") is literally true. The resolver turn itself
+        // can take 30 minutes of active time — plus arbitrarily long HITL pauses —
+        // which no HTTP request may hold open.
+        //
+        // OWNERSHIP HANDOFF. `return await` above was the ONLY thing keeping the
+        // `finally` below from firing while the resolver ran. Returning without
+        // this flag deregisters the driver at RESPONSE time, and reconcile's
+        // classifier consults the registry FIRST: no driver + no live session
+        // (a resolver's run_sessions row is written with acp_session_id null)
+        // classifies a LIVE resolver as `sync-orphaned-idle` and hard-resets the
+        // worktree under the running agent. That regression already shipped once;
+        // see the classifier comment in reconcile.ts. The driver — registry
+        // membership AND the claim lease — belongs to the background task from
+        // here: released in its `finally`, never here, never in both.
+        handedOffDriver = true;
+        scheduleBackground(async () => {
+          try {
+            await driveSyncResolver(resolverArgs, prepared);
+          } catch (err) {
+            // Nothing is listening any more: a backgrounded failure is not an
+            // HTTP error but a durable state change (the attempt ledger +
+            // `runs.status`) that the UI observes over SSE.
+            log.error(
+              {
+                runId,
+                attemptId: claim.attemptId,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              "backgrounded sync resolver failed",
+            );
+            // The safety net the outer catch used to provide for this path: an
+            // UNHANDLED throw must not leave a dangling `claiming` slot or a
+            // non-terminal attempt. Both writes are idempotent no-ops when the
+            // resolver's own handled paths already terminalized.
+            await abortSyncOperation(worktree).catch(() => undefined);
+            await terminalizeSafetyNet(db, claim, err).catch(() => undefined);
+          } finally {
+            releaseDriver();
+          }
         });
+
+        return {
+          attemptId: claim.attemptId,
+          outcome: "agent_launched",
+          behind,
+          pushed: false,
+        };
       }
 
       await abortSyncOperation(worktree);
@@ -848,14 +921,18 @@ export async function syncRunTarget(
   } catch (err) {
     // Safety net: the explicit terminal sites above already released + terminalized
     // (idempotent no-ops here); this only fires for an UNHANDLED throw so no path
-    // leaves a dangling `claiming` slot or a non-terminal attempt.
+    // leaves a dangling `claiming` slot or a non-terminal attempt. Unreachable once
+    // the driver is handed off — that path returns rather than throwing, and the
+    // background task carries its own copy of this net.
     await abortSyncOperation(worktree).catch(() => undefined);
     await terminalizeSafetyNet(db, claim, err);
     throw err;
   } finally {
     // The driver is off the stack: any non-terminal attempt left behind IS now a
-    // real orphan, and the sweeps must be free to abort it.
-    releaseDriver();
+    // real orphan, and the sweeps must be free to abort it. UNLESS the resolver
+    // was backgrounded — it is still running, still owns the driver, and releasing
+    // here would advertise a live resolver as an orphan.
+    if (!handedOffDriver) releaseDriver();
   }
 }
 
@@ -947,18 +1024,26 @@ type SyncResolverArgs = {
   actor: SyncActor;
 };
 
+// What the pre-session phase hands the (backgrounded) session phase.
+type PreparedSyncResolver = {
+  sessionInput: CreateSessionInput;
+  runnerTier: string;
+  prompt: string;
+  pool: SchedulerPool;
+};
+
 /**
- * The AI conflict resolver (ADR-140, Task 10). Called from `syncRunTarget`'s
- * conflict branch with `agent:true` and the LEFT-in-place conflicted rebase. It
- * cap-gates + fences + flips `Review→Running` (one locked tx), spawns a FRESH
- * resolver session in the worktree (mocked at the supervisor boundary in tests),
- * drives one blocking turn, then applies the SAME Task-9 verify gate + push policy
- * before finalizing back to `Review`. Every path after a spawned session tears it
- * down (deferred-release). Slots are released via `promoteNextPending` on finalize.
+ * The AI conflict resolver's PRE-SESSION phase (ADR-140, Task 10). Called from
+ * `syncRunTarget`'s conflict branch with `agent:true` and the LEFT-in-place
+ * conflicted rebase: cap-gate + runner resolution + promotion fence + the
+ * `Review→Running` CAS (one locked tx). It runs on the REQUEST's stack so every
+ * refusal here is still a typed HTTP error; everything that can throw runs BEFORE
+ * the run is live (or inside the CAS tx), so a pre-session failure is always a
+ * clean abort — nothing strands `Running`.
  */
-async function runSyncResolver(
+async function prepareSyncResolver(
   args: SyncResolverArgs,
-): Promise<SyncRunOutcome> {
+): Promise<PreparedSyncResolver> {
   const {
     db,
     now,
@@ -966,18 +1051,11 @@ async function runSyncResolver(
     runId,
     worktree,
     repo,
-    branch,
     targetBranch,
     strategy,
-    behind,
     conflictedFiles,
-    headShaBefore,
   } = args;
   const pool = poolForRunKind(args.runKind);
-
-  // --- Pre-session: cap gate + runner resolution + Review→Running (one tx) ---
-  // Everything that can throw runs BEFORE the run is live (or inside the CAS tx),
-  // so a pre-session failure is always a clean abort — nothing strands `Running`.
   let sessionInput: CreateSessionInput;
   let runnerTier: string;
   let prompt: string;
@@ -1092,6 +1170,40 @@ async function runSyncResolver(
     await abortAttempt(db, claim, { conflictedFiles });
     throw err;
   }
+
+  return { sessionInput, runnerTier, prompt, pool };
+}
+
+/**
+ * The AI conflict resolver's SESSION phase (ADR-140, Task 10). Spawns a FRESH
+ * resolver session in the worktree (mocked at the supervisor boundary in tests),
+ * drives one blocking turn, then applies the SAME Task-9 verify gate + push policy
+ * before finalizing back to `Review`. Every path after a spawned session tears it
+ * down (deferred-release). Slots are released via `promoteNextPending` on finalize.
+ *
+ * Runs in the BACKGROUND — the caller has already responded 202. It therefore
+ * never surfaces a typed error to a client: every outcome is a durable state
+ * change (the attempt ledger + `runs.status`) that the UI observes over SSE, and
+ * the recovery sweeps own whatever a crash leaves behind. It still throws, so the
+ * caller's background wrapper can log and terminalize.
+ */
+async function driveSyncResolver(
+  args: SyncResolverArgs,
+  prepared: PreparedSyncResolver,
+): Promise<SyncRunOutcome> {
+  const {
+    db,
+    now,
+    claim,
+    runId,
+    worktree,
+    repo,
+    branch,
+    targetBranch,
+    behind,
+    headShaBefore,
+  } = args;
+  const { sessionInput, runnerTier, prompt, pool } = prepared;
 
   // --- Session: drive the resolver, then verify + push + finalize ---
   let session: { sessionId: string; stopReason: PromptStopReason };
