@@ -25,6 +25,7 @@ import pino from "pino";
 import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import { listGraphOnlyCutoverRunIds } from "@/lib/queries/run-cutover";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
@@ -748,7 +749,7 @@ async function loadActiveSyncAttemptRunIds(
     .where(
       and(
         inArray(runSyncAttempts.runId, runIds),
-        notInArray(runSyncAttempts.phase, ["succeeded", "failed", "aborted"]),
+        notInArray(runSyncAttempts.phase, [...RUN_SYNC_TERMINAL_PHASES]),
       ),
     );
 

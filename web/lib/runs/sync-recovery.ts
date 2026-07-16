@@ -5,6 +5,8 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
+import { isBranchPublished } from "@/lib/runs/branch-published";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import { SYNC_STEP_ID } from "@/lib/runs/sync-resolver";
 import { markSyncReviewFromRunning } from "@/lib/runs/state-transitions";
@@ -17,7 +19,6 @@ import {
 } from "@/lib/supervisor-client";
 import {
   abortSyncOperation,
-  branchHasUpstream,
   headCommit,
   localBranchHead,
   remoteBranchHead,
@@ -42,8 +43,6 @@ const log = pino({
 // resume by `markSyncResolverPermissionDelivered` in `lib/services/hitl.ts`); a
 // `NeedsInput` human-pause never counts.
 export const SYNC_ATTEMPT_MAX_MINUTES = 30;
-
-const TERMINAL_PHASES = ["succeeded", "failed", "aborted"] as const;
 
 type DeleteSessionFn = (sessionId: string) => Promise<void>;
 
@@ -88,7 +87,7 @@ async function loadActiveAttempt(
         eq(runSyncAttempts.runId, runId),
         notInArray(
           runSyncAttempts.phase,
-          TERMINAL_PHASES as unknown as string[],
+          RUN_SYNC_TERMINAL_PHASES as unknown as string[],
         ),
       ),
     )
@@ -380,9 +379,11 @@ export async function recoverSyncAttemptOnReconcile(args: {
   // Gate passed → the resolve completed before the crash. Idempotently finalize:
   // push (explicit-SHA lease) iff published, then succeed + return to Review.
   const headShaAfter = await headCommit({ worktreePath: ctx.worktree });
-  const published =
-    ctx.prUrl != null ||
-    (await branchHasUpstream(ctx.repo, ctx.branch).catch(() => false));
+  const published = await isBranchPublished({
+    prUrl: ctx.prUrl,
+    repo: ctx.repo,
+    branch: ctx.branch,
+  }).catch(() => false);
   let pushed = false;
 
   if (published) {
@@ -502,7 +503,10 @@ async function loadSweepCandidates(db: Db): Promise<SweepCandidate[]> {
     .innerJoin(runs, eq(runs.id, runSyncAttempts.runId))
     .innerJoin(workspaces, eq(workspaces.id, runSyncAttempts.workspaceId))
     .where(
-      notInArray(runSyncAttempts.phase, TERMINAL_PHASES as unknown as string[]),
+      notInArray(
+        runSyncAttempts.phase,
+        RUN_SYNC_TERMINAL_PHASES as unknown as string[],
+      ),
     );
 
   return rows.map((row: Record<string, unknown>) => ({

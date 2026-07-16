@@ -4,9 +4,16 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  httpStatusForAuthz,
+  requireActiveSession,
+  requireProjectRole,
+} from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
 import { bumpKeepalive } from "@/lib/runs/state-transitions";
+import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -58,9 +65,36 @@ export async function POST(
     );
   }
 
+  // Auth-first: authenticate BEFORE the run lookup. This route had no auth at
+  // all, so a leaked run id gave any anonymous caller a status oracle (the
+  // 404/409/410/204 shapes discriminate) plus an unauthenticated state-changing
+  // write — `bumpKeepalive` extends `keepalive_until` indefinitely, defeating the
+  // idle-checkpoint cost control (~$0.28 of cache_creation per respawn) and
+  // pinning a run's slot against the global cap. Mirrors the sibling stream
+  // route: session first, project membership once projectId is derived from the
+  // run row (never a body field).
+  let sessionUser: { id: string };
+
+  try {
+    sessionUser = await requireActiveSession();
+  } catch (err) {
+    if (isMaisterError(err)) {
+      return NextResponse.json(
+        { code: err.code, message: err.message },
+        { status: httpStatusForAuthz(err.code) ?? 500 },
+      );
+    }
+    throw err;
+  }
+
   const db = getDb() as any;
   const rows = await db
-    .select({ status: runs.status })
+    .select({
+      status: runs.status,
+      projectId: runs.projectId,
+      createdByUserId: runs.createdByUserId,
+      localPackageId: runs.localPackageId,
+    })
     .from(runs)
     .where(eq(runs.id, runId));
   const row = rows[0];
@@ -72,6 +106,28 @@ export async function POST(
       { code: "PRECONDITION", message: "unknown run" },
       { status: 404 },
     );
+  }
+
+  // Keepalive is a read-scoped affordance ("I am looking at this run"), so
+  // viewer+ on the run's project is the right bar. `runs.project_id` is nullable:
+  // a project-less local-package assistant run is private to its launching user,
+  // exactly as the stream route treats it.
+  try {
+    if (row.projectId) {
+      await requireProjectRole(row.projectId, "viewer");
+    } else {
+      await assertLocalPackageAssistantActor(row, sessionUser.id, {
+        requireLock: false,
+      });
+    }
+  } catch (err) {
+    if (isMaisterError(err)) {
+      return NextResponse.json(
+        { code: err.code, message: err.message },
+        { status: httpStatusForAuthz(err.code) ?? 500 },
+      );
+    }
+    throw err;
   }
 
   if (row.status === "NeedsInputIdle") {

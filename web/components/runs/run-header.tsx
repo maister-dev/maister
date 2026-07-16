@@ -63,6 +63,10 @@ export interface RunHeaderProps {
   // ADR-139 PR lifecycle: provider PR state + conflict flag for the header chip.
   prState?: PrState | null;
   prHasConflicts?: boolean | null;
+  // ADR-140: the chip's reopen affordance is disabled without it. NOT taken from
+  // `promotionOperation` — that is only built for a promotable Review run, and
+  // reopen exists precisely for a DONE one.
+  runId?: string;
   changeSummary?: RunHeaderChangeSummary | null;
   // Derived run-scope budget warn signal (null = no badge).
   budgetStatus?: { warn: boolean; pct: number } | null;
@@ -110,6 +114,7 @@ export function RunHeader({
   targetBranch,
   prState,
   prHasConflicts,
+  runId,
   changeSummary,
   budgetStatus,
   inspectorOpen,
@@ -198,6 +203,7 @@ export function RunHeader({
               labels={labels.prChip}
               prHasConflicts={prHasConflicts ?? null}
               prState={prState ?? null}
+              runId={runId}
             />
           ) : null}
         </div>

@@ -29,6 +29,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
@@ -95,7 +96,7 @@ function excludeActiveSyncAttempt(db: Db) {
       .where(
         and(
           eq(runSyncAttempts.runId, runs.id),
-          notInArray(runSyncAttempts.phase, ["succeeded", "failed", "aborted"]),
+          notInArray(runSyncAttempts.phase, [...RUN_SYNC_TERMINAL_PHASES]),
         ),
       ),
   );

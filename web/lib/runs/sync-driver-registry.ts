@@ -47,8 +47,3 @@ export function unregisterSyncDriver(runId: string): void {
 export function hasSyncDriver(runId: string): boolean {
   return registry().has(runId);
 }
-
-// Test-only: the current membership snapshot (never used by production paths).
-export function activeSyncDriverRunIds(): string[] {
-  return [...registry()];
-}

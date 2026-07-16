@@ -11,7 +11,10 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
-import { getPrState as defaultGetPrState } from "@/lib/runs/pr-adapter";
+import {
+  getPrState as defaultGetPrState,
+  EXEC_TIMEOUT_MS,
+} from "@/lib/runs/pr-adapter";
 import {
   prStateScanJobId,
   schedulerAttemptTimeoutSeconds,
@@ -22,10 +25,11 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 // `target->'cursor'`) paginates the rest through the partial candidate index.
 const PR_STATE_SCAN_BATCH = 50;
 
-// The per-provider-call ceiling the adapters enforce (`EXEC_TIMEOUT_MS` in
-// pr-adapter.ts). Mirrored, not imported, to keep this handler off the adapter's
-// internals — it is only used to reserve headroom, so drift is safe.
-const PR_STATE_SCAN_CALL_BUDGET_MS = 60_000;
+// The per-provider-call ceiling the adapters actually enforce. Imported, not
+// mirrored: this reserves it as lease headroom, so a copy that drifts below the
+// adapter's real timeout lets a candidate started just under the deadline outlive
+// the lease and be reaped mid-call.
+const PR_STATE_SCAN_CALL_BUDGET_MS = EXEC_TIMEOUT_MS;
 
 // How long this handler may keep STARTING candidates before it must stop and let
 // the cursor resume next tick. Derived from the ACTUAL scheduler lease (the same

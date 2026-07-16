@@ -2320,6 +2320,16 @@ export const RUN_SYNC_PHASES = [
 ] as const;
 export type RunSyncPhase = (typeof RUN_SYNC_PHASES)[number];
 
+// The terminal subset. `satisfies` ties it to the phase enum above, so a rename
+// there fails HERE rather than silently leaving a filter matching nothing. This
+// exact array was re-listed in five modules (sync-target, sync-recovery,
+// sync-panel-data, reconcile, keepalive-sweeper) with no shared definition.
+export const RUN_SYNC_TERMINAL_PHASES = [
+  "succeeded",
+  "failed",
+  "aborted",
+] as const satisfies readonly RunSyncPhase[];
+
 export const runSyncAttempts = pgTable(
   "run_sync_attempts",
   {

@@ -26,6 +26,7 @@ export interface RunShellProps {
   targetBranch?: string | null;
   prState?: RunHeaderProps["prState"];
   prHasConflicts?: RunHeaderProps["prHasConflicts"];
+  runId?: RunHeaderProps["runId"];
   changeSummary?: RunHeaderProps["changeSummary"];
   budgetStatus?: RunHeaderProps["budgetStatus"];
   reviewHref?: RunHeaderProps["reviewHref"];
@@ -49,6 +50,7 @@ export function RunShell({
   targetBranch,
   prState,
   prHasConflicts,
+  runId,
   changeSummary,
   budgetStatus,
   reviewHref,
@@ -79,6 +81,7 @@ export function RunShell({
         projectLabel={projectLabel}
         promotionOperation={promotionOperation}
         reviewHref={reviewHref}
+        runId={runId}
         status={status}
         subtitle={subtitle}
         targetBranch={targetBranch}

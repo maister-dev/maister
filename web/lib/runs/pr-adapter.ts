@@ -16,7 +16,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const EXEC_TIMEOUT_MS = 60_000;
+// The per-provider-call ceiling. Exported because `pr_state_scan` reserves it as
+// lease headroom: if the two drift, a candidate started just under the scan's
+// deadline can outlive the scheduler lease and be reaped mid-call.
+export const EXEC_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 
 // Safety bound on the Gitea open-PR pagination sweep (see findOpenPr).

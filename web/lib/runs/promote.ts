@@ -19,6 +19,7 @@ import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
+import { type SyncActor } from "@/lib/runs/sync-target";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
   deliveryPolicyFromLegacyPromotionMode,
@@ -114,6 +115,27 @@ function isHumanPromotion(ctx: PromoteRunContext): boolean {
 
 function resolvePromotionOwnerUserId(ctx: PromoteRunContext): string | null {
   return isHumanPromotion(ctx) ? ctx.sessionUser.id : null;
+}
+
+// ADR-140: WHO to record on the branch-sync attempt when an `ai_rebase_merge`
+// promotion delegates to the resolver. `ctx.actor` is the canonical authority —
+// hardcoding `{user, sessionUser.id}` stamped a phantom human on the ledger of a
+// FORCE-PUSH for every machine promotion. `resolvedMode` comes from the project
+// delivery policy, not from `input.mode`, so the ADR-126 cron lane (whose
+// sessionUser.id is the synthetic `auto-promotion:<projectId>`) and the
+// orchestrator (`orchestrator:<projectId>`) both reach it — and
+// `run_sync_attempts.actor_id` has no FK, so those placeholders wrote silently.
+// Both placeholders' own comments state they are never dereferenced for a
+// non-user actor. Mirrors `socialActorForToken`, the ext routes' mapper.
+function syncActorForPromotion(ctx: PromoteRunContext): SyncActor {
+  if (ctx.actor?.kind === "agent") {
+    return { type: "agent", id: ctx.actor.agentId };
+  }
+  if (ctx.actor?.kind === "system") {
+    return { type: "system", id: null };
+  }
+
+  return { type: "user", id: ctx.sessionUser.id };
 }
 
 export type PromoteRunResult = {
@@ -903,7 +925,10 @@ async function promoteWorkspaceRun(
           agent: true,
           push: false,
           autoFinalize: input.autoFinalize ?? false,
-          actor: { type: "user", id: ctx.sessionUser.id },
+          actor: syncActorForPromotion(ctx),
+          // Pass the INJECTED db through — omitting it silently fell back to
+          // getDb(), so the delegation escaped the caller's (and every test's) seam.
+          db,
         });
 
         log.info(

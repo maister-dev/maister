@@ -56,7 +56,15 @@ export function useActivityPing(opts: UseActivityPingOptions): void {
           { method: "POST" },
         );
 
-        if (res.status === 410 || res.status === 409) {
+        // 409/410: the run left the bumpable window. 401/403: the session ended
+        // or access was revoked mid-view — retrying cannot start succeeding
+        // without a reload, so stop rather than ping on every keystroke forever.
+        if (
+          res.status === 410 ||
+          res.status === 409 ||
+          res.status === 401 ||
+          res.status === 403
+        ) {
           stoppedRef.current = true;
         }
       } catch {

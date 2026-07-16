@@ -5,16 +5,15 @@ import { and, desc, eq, notInArray } from "drizzle-orm";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { aheadBehindCounts, branchHasUpstream } from "@/lib/worktree";
+import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
+import { isBranchPublished } from "@/lib/runs/branch-published";
+import { aheadBehindCounts } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runSyncAttempts } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
-
-// A sync attempt is "in progress" while its phase is not one of these terminals.
-const TERMINAL_SYNC_PHASES = ["succeeded", "failed", "aborted"] as const;
 
 export type RunSyncPanelData = {
   aheadBehind: { ahead: number; behind: number } | null;
@@ -39,6 +38,7 @@ export async function buildRunSyncPanelData(input: {
   targetBranch: string;
   syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
+  prUrl: string | null;
   db?: Db;
 }): Promise<RunSyncPanelData> {
   const db = (input.db ?? getDb()) as Db;
@@ -58,7 +58,14 @@ export async function buildRunSyncPanelData(input: {
   let published = false;
 
   try {
-    published = await branchHasUpstream(input.parentRepoPath, input.branch);
+    // THE shared predicate — the checkbox this seeds is consumed as
+    // `input.push ?? published`, so reading anything narrower than what the push
+    // path reads silently drops the push.
+    published = await isBranchPublished({
+      prUrl: input.prUrl,
+      repo: input.parentRepoPath,
+      branch: input.branch,
+    });
   } catch {
     published = false;
   }
@@ -77,7 +84,7 @@ export async function buildRunSyncPanelData(input: {
     .where(
       and(
         eq(runSyncAttempts.runId, input.runId),
-        notInArray(runSyncAttempts.phase, [...TERMINAL_SYNC_PHASES]),
+        notInArray(runSyncAttempts.phase, [...RUN_SYNC_TERMINAL_PHASES]),
       ),
     )
     .orderBy(desc(runSyncAttempts.attempt))

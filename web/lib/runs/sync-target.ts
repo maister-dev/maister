@@ -13,9 +13,11 @@ import {
 } from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES, type RunSyncPhase } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
+import { isBranchPublished } from "@/lib/runs/branch-published";
 import {
   markSyncFromReview,
   markSyncReviewFromRunning,
@@ -45,7 +47,6 @@ import {
 import {
   aheadBehindCounts,
   currentBranchName,
-  branchHasUpstream,
   abortSyncOperation,
   fetchRemote,
   ffUpdateLocalBranch,
@@ -82,8 +83,6 @@ const log = pino({
   name: "sync-target",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-const TERMINAL_PHASES = ["succeeded", "failed", "aborted"] as const;
 
 export type SyncStrategy = "rebase" | "merge";
 
@@ -332,7 +331,7 @@ async function loadProject(db: Db, projectId: string | null): Promise<any> {
 async function setAttemptPhase(
   db: Db,
   attemptId: string,
-  phase: string,
+  phase: RunSyncPhase,
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   await db
@@ -499,7 +498,7 @@ async function terminalizeSafetyNet(
         eq(runSyncAttempts.id, claim.attemptId),
         notInArray(
           runSyncAttempts.phase,
-          TERMINAL_PHASES as unknown as string[],
+          RUN_SYNC_TERMINAL_PHASES as unknown as string[],
         ),
       ),
     );
@@ -568,8 +567,11 @@ export async function syncRunTarget(
   // 2. Capture remoteShaBefore BEFORE any fetch — the explicit-SHA lease authority
   //    (so a later all-refs fetch cannot move the lease out from under us). Only a
   //    published branch is ever pushed, so only it needs the network read.
-  const published =
-    workspace.prUrl != null || (await branchHasUpstream(repo, branch));
+  const published = await isBranchPublished({
+    prUrl: (workspace.prUrl as string | null) ?? null,
+    repo,
+    branch,
+  });
   let remoteShaBefore: string | null = null;
   let remoteShaIndeterminate = false;
 
@@ -874,7 +876,7 @@ export async function syncRunTarget(
     let pushed = false;
 
     if (shouldPush) {
-      if (published && remoteShaIndeterminate) {
+      if (remoteShaIndeterminate) {
         await failAttempt(
           db,
           claim,
@@ -1006,7 +1008,13 @@ type SyncResolverArgs = {
   runId: string;
   runKind: string;
   taskId: string | null;
-  project: any;
+  // Only these two are read (sync runner resolution + the session's project
+  // slug); typed rather than `any` so a rename cannot silently pass through.
+  project: {
+    slug: string;
+    syncRunnerId: string | null;
+    defaultRunnerId: string | null;
+  } | null;
   worktree: string;
   repo: string;
   branch: string;
@@ -1320,7 +1328,7 @@ async function driveSyncResolver(
     pushed = false;
 
     if (shouldPush) {
-      if (args.published && args.remoteShaIndeterminate) {
+      if (args.remoteShaIndeterminate) {
         await deleteSession(sessionId).catch(() => undefined);
         await failResolver({
           db,
@@ -1436,7 +1444,19 @@ async function driveSyncResolver(
   // promoteRun(rebase_merge) → Done. ANY failure degrades to the clean two-step
   // Review state (benign W6 — no new stuck state / promotion crash window). The
   // resolver ran under the SYNC claim, already released above.
-  if (args.autoFinalize && args.actor.id && targetSha) {
+  //
+  // The actor MUST be a real user: this hands `args.actor.id` to `promoteRun` as
+  // `sessionUser` alongside a no-op `authorize`, so a non-user actor would both
+  // invent a human (an agent id in a user slot) and promote with authorization
+  // bypassed. Only the human promote route ever sets `autoFinalize` — the cron
+  // lane and the orchestrator never do — so this refuses nothing reachable today
+  // and degrades to the documented two-step Review if that ever changes.
+  if (
+    args.autoFinalize &&
+    args.actor.type === "user" &&
+    args.actor.id &&
+    targetSha
+  ) {
     try {
       const { promoteRun } = await import("@/lib/runs/promote");
 

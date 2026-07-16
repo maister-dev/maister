@@ -752,6 +752,7 @@ export default async function RunDetailLayout({
         targetBranch: reviewData.targetBranch,
         syncStrategyDefault: detail.syncStrategyDefault,
         syncRunnerId: detail.syncRunnerId,
+        prUrl: detail.prUrl,
       });
     }
   }
@@ -1367,6 +1368,7 @@ export default async function RunDetailLayout({
         projectLabel={t("backToBoard")}
         promotionOperation={headerPromotionOperation}
         reviewHref={showReview && reviewData ? "#review-panel" : null}
+        runId={detail.runId}
         status={detail.status}
         subtitle={shellSubtitle}
         targetBranch={detail.targetBranch}
