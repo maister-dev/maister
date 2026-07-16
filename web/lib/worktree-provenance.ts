@@ -18,6 +18,35 @@ import {
 
 export type { MaisterProvenance } from "@/lib/worktree-provenance-core";
 
+type ProvenanceMetadataField =
+  | "version"
+  | "runId"
+  | "parentRepoPath"
+  | "projectId"
+  | "branch"
+  | "workspaceKind"
+  | "createdAt"
+  | "task"
+  | "flow";
+
+const PROVENANCE_METADATA_FIELDS = new Set<ProvenanceMetadataField>([
+  "version",
+  "runId",
+  "parentRepoPath",
+  "projectId",
+  "branch",
+  "workspaceKind",
+  "createdAt",
+  "task",
+  "flow",
+]);
+
+function isProvenanceMetadataField(
+  value: string,
+): value is ProvenanceMetadataField {
+  return PROVENANCE_METADATA_FIELDS.has(value as ProvenanceMetadataField);
+}
+
 const execFileAsync = promisify(execFile);
 
 const log = pino({
@@ -48,10 +77,56 @@ function managedPaths(worktreePath: string): ManagedPaths {
 }
 
 function metadataText(metadata: MaisterProvenance): string {
+  if (metadata.version === 2) {
+    const versioned = assertVersion2Metadata(metadata);
+    const task = versioned.task ? `task=${versioned.task}\n` : "";
+    const flow = versioned.flow ? `flow=${versioned.flow}\n` : "";
+
+    return `version=2\nrunId=${versioned.runId}\nparentRepoPath=${versioned.parentRepoPath}\nprojectId=${versioned.projectId}\nbranch=${versioned.branch}\nworkspaceKind=${versioned.workspaceKind}\ncreatedAt=${versioned.createdAt}\n${task}${flow}`;
+  }
+
   const task = metadata.task ? `task=${metadata.task}\n` : "";
   const flow = metadata.flow ? `flow=${metadata.flow}\n` : "";
 
   return `runId=${metadata.runId}\n${task}${flow}`;
+}
+
+function assertVersion2Metadata(metadata: MaisterProvenance): MaisterProvenance &
+  Required<
+    Pick<
+      MaisterProvenance,
+      "parentRepoPath" | "projectId" | "branch" | "workspaceKind" | "createdAt"
+    >
+  > & { version: 2 } {
+  if (
+    !metadata.parentRepoPath ||
+    !metadata.projectId ||
+    !metadata.branch ||
+    !metadata.workspaceKind ||
+    !metadata.createdAt
+  ) {
+    throw new MaisterProvenanceError(
+      "version 2 provenance requires repository, project, branch, workspace kind, and creation time",
+    );
+  }
+
+  if (!Number.isFinite(Date.parse(metadata.createdAt))) {
+    throw new MaisterProvenanceError(
+      "version 2 provenance creation time must be ISO-8601",
+    );
+  }
+
+  return {
+    version: 2,
+    runId: metadata.runId,
+    parentRepoPath: metadata.parentRepoPath,
+    projectId: metadata.projectId,
+    branch: metadata.branch,
+    workspaceKind: metadata.workspaceKind,
+    createdAt: metadata.createdAt,
+    ...(metadata.task ? { task: metadata.task } : {}),
+    ...(metadata.flow ? { flow: metadata.flow } : {}),
+  };
 }
 
 function templateText(metadata: MaisterProvenance): string {
@@ -255,11 +330,7 @@ export async function ensureWorktreeProvenance(args: {
   try {
     const existing = await readWorktreeProvenanceMetadata(args.worktreePath);
 
-    if (
-      existing.runId !== args.metadata.runId ||
-      existing.task !== args.metadata.task ||
-      existing.flow !== args.metadata.flow
-    ) {
+    if (!matchesExpectedProvenance(existing, args.metadata)) {
       throw new MaisterError(
         "PRECONDITION",
         "managed worktree provenance conflicts with the delivery owner",
@@ -294,6 +365,24 @@ export async function ensureWorktreeProvenance(args: {
       { cause: error instanceof Error ? error : undefined },
     );
   }
+}
+
+function matchesExpectedProvenance(
+  existing: MaisterProvenance,
+  expected: MaisterProvenance,
+): boolean {
+  return (
+    existing.runId === expected.runId &&
+    existing.task === expected.task &&
+    existing.flow === expected.flow &&
+    (expected.version === undefined ||
+      (existing.version === expected.version &&
+        existing.parentRepoPath === expected.parentRepoPath &&
+        existing.projectId === expected.projectId &&
+        existing.branch === expected.branch &&
+        existing.workspaceKind === expected.workspaceKind &&
+        existing.createdAt === expected.createdAt))
+  );
 }
 
 /**
@@ -382,14 +471,17 @@ export async function readWorktreeProvenanceMetadata(
 ): Promise<MaisterProvenance> {
   const paths = managedPaths(worktreePath);
   const raw = await readFile(paths.metadata, "utf8");
-  const values: Partial<Record<"runId" | "task" | "flow", string>> = {};
+  const values: Partial<Record<ProvenanceMetadataField, string>> = {};
 
   for (const line of raw.split("\n").filter(Boolean)) {
     const separator = line.indexOf("=");
     const key = separator >= 0 ? line.slice(0, separator) : "";
     const value = separator >= 0 ? line.slice(separator + 1) : "";
 
-    if ((key !== "runId" && key !== "task" && key !== "flow") || !value) {
+    if (
+      !isProvenanceMetadataField(key) ||
+      !value
+    ) {
       throw new MaisterError(
         "PRECONDITION",
         "managed provenance metadata has an invalid field",
@@ -410,11 +502,47 @@ export async function readWorktreeProvenanceMetadata(
     throw new MaisterError("PRECONDITION", "managed provenance has no runId");
   }
 
-  const metadata = {
+  const metadata: MaisterProvenance = {
     runId,
     ...(values.task ? { task: values.task } : {}),
     ...(values.flow ? { flow: values.flow } : {}),
   };
+
+  if (values.version !== undefined) {
+    if (values.version !== "2") {
+      throw new MaisterError(
+        "PRECONDITION",
+        "managed provenance metadata has an unsupported version",
+      );
+    }
+
+    const versioned: MaisterProvenance = {
+      ...metadata,
+      version: 2,
+      parentRepoPath: values.parentRepoPath,
+      projectId: values.projectId,
+      branch: values.branch,
+      workspaceKind:
+        values.workspaceKind === "flow" ||
+        values.workspaceKind === "scratch" ||
+        values.workspaceKind === "agent"
+          ? values.workspaceKind
+          : undefined,
+      createdAt: values.createdAt,
+    };
+
+    try {
+      return assertVersion2Metadata(versioned);
+    } catch (error) {
+      throw new MaisterError(
+        "PRECONDITION",
+        error instanceof Error
+          ? error.message
+          : "managed provenance version 2 is invalid",
+        { cause: error instanceof Error ? error : undefined },
+      );
+    }
+  }
 
   try {
     composeCommitMessage("validate", metadata);

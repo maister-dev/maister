@@ -870,7 +870,15 @@ export async function* launchScratchRunStaged(
     branch,
     worktreePath,
     startPoint: args.body.baseBranch,
-    provenance: { runId },
+    provenance: {
+      version: 2,
+      runId,
+      parentRepoPath: project.repoPath,
+      projectId: project.id,
+      branch,
+      workspaceKind: "scratch",
+      createdAt: new Date().toISOString(),
+    },
   });
   worktreeCreated = true;
   yield launchProgress("worktree_created");

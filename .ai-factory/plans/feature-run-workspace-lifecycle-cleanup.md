@@ -1039,7 +1039,7 @@ pnpm --filter maister-web typecheck
 
 ### Phase 4 — Durable orphan observation and reconciliation
 
-- [ ] **Task 19: RED — specify provenance v2 and migration 0106 in tests.**
+- [x] **Task 19: RED — specify provenance v2 and migration 0106 in tests.**
   - **Files:** provenance core/runtime tests, allocation integration tests,
     schema/migration integration tests,
     `web/lib/db/__tests__/migration-journal-integrity.test.ts`, and pure finding
@@ -1054,7 +1054,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** RED fails on absent provenance-v2/schema behavior, not on a
     missing runner glob; v1 is demonstrably insufficient for autonomous delete.
 
-- [ ] **Task 20: GREEN — write provenance v2 and implement durable findings.**
+- [x] **Task 20: GREEN — write provenance v2 and implement durable findings.**
   - **Files:** provenance core/runtime modules and all writable allocation
     sites; `web/lib/db/schema.ts`, generated `0106_*.sql`,
     `web/lib/db/migrations/meta/_journal.json`,

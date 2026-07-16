@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MaisterError } from "@/lib/errors";
 import {
   clearWorktreeProvenanceNode,
+  readWorktreeProvenanceMetadata,
   readWorktreeProvenanceForPromotion,
   setWorktreeProvenanceNode,
 } from "@/lib/worktree-provenance";
@@ -105,7 +106,13 @@ describe("worktree git helpers", () => {
       worktreePath: wt,
       startPoint: "main",
       provenance: {
+        version: 2,
         runId: "run-123",
+        parentRepoPath: repo,
+        projectId: "project-123",
+        branch: "scratch/provenance",
+        workspaceKind: "flow",
+        createdAt: "2026-07-16T12:00:00.000Z",
         task: "MAI-42",
         flow: "example/flow@abcdef1",
       },
@@ -128,6 +135,13 @@ describe("worktree git helpers", () => {
     expect(message).toContain("Maister-Flow: example/flow@abcdef1");
     expect(author.trim()).toBe("Foreign Author <foreign@example.test>");
     expect(status).not.toContain(".maister-managed");
+    await expect(readWorktreeProvenanceMetadata(wt)).resolves.toMatchObject({
+      version: 2,
+      runId: "run-123",
+      projectId: "project-123",
+      branch: "scratch/provenance",
+      workspaceKind: "flow",
+    });
   });
 
   it("keeps exactly one truthful trailer set through no-verify and amend commits", async () => {

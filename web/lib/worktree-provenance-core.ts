@@ -7,11 +7,22 @@ const TRAILER_KEYS = {
 
 type TrailerField = keyof typeof TRAILER_KEYS;
 
-export type MaisterProvenance = {
+export type MaisterCommitProvenance = {
   runId: string;
   task?: string;
   flow?: string;
   node?: string;
+};
+
+export type WorktreeProvenanceWorkspaceKind = "flow" | "scratch" | "agent";
+
+export type MaisterProvenance = MaisterCommitProvenance & {
+  version?: 2;
+  parentRepoPath?: string;
+  projectId?: string;
+  branch?: string;
+  workspaceKind?: WorktreeProvenanceWorkspaceKind;
+  createdAt?: string;
 };
 
 export type MaisterTrailers = Partial<MaisterProvenance>;
@@ -53,9 +64,16 @@ function valueForTrailerLine(line: string, key: string): string {
 }
 
 function expectedTrailers(
-  metadata: MaisterProvenance,
+  metadata: MaisterCommitProvenance,
 ): Array<[TrailerField, string]> {
-  return (Object.entries(metadata) as Array<[TrailerField, string | undefined]>)
+  const trailerValues: Array<[TrailerField, string | undefined]> = [
+    ["runId", metadata.runId],
+    ["task", metadata.task],
+    ["flow", metadata.flow],
+    ["node", metadata.node],
+  ];
+
+  return trailerValues
     .filter((entry): entry is [TrailerField, string] => entry[1] !== undefined)
     .map(([field, value]) => [
       field,
@@ -92,7 +110,7 @@ export function parseMaisterTrailers(message: string): MaisterTrailers {
 
 export function composeCommitMessage(
   message: string,
-  metadata: MaisterProvenance,
+  metadata: MaisterCommitProvenance,
   existingTrailerLines: readonly string[] = [],
 ): string {
   const safeMessage = assertSafeCommitMessage(message);

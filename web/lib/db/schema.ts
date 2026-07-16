@@ -3503,6 +3503,20 @@ export type WorkspaceRemovalKind =
   | "reconciliation"
   | "legacy";
 
+export type WorkspaceReconciliationFindingState =
+  | "observed"
+  | "held"
+  | "retry_waiting"
+  | "failed"
+  | "quarantined"
+  | "resolved";
+
+export type WorkspaceReconciliationCandidateKind =
+  | "row_missing_path"
+  | "row_removed_path"
+  | "rowless_managed"
+  | "untrusted";
+
 export const workspaces = pgTable(
   "workspaces",
   {
@@ -3722,6 +3736,89 @@ export const runSyncAttempts = pgTable(
 
 export type RunSyncAttemptRow = typeof runSyncAttempts.$inferSelect;
 export type RunSyncAttemptInsert = typeof runSyncAttempts.$inferInsert;
+// ADR-140: bounded operational state for filesystem/DB convergence. This is
+// deliberately not run history and stores a root-relative path only.
+export const workspaceReconciliationFindings = pgTable(
+  "workspace_reconciliation_findings",
+  {
+    id: text("id").primaryKey(),
+    identityFingerprint: text("identity_fingerprint").notNull().unique(),
+    candidateKind: text("candidate_kind")
+      .$type<WorkspaceReconciliationCandidateKind>()
+      .notNull(),
+    relativePath: text("relative_path").notNull(),
+    provenanceVersion: integer("provenance_version"),
+    provenanceFingerprint: text("provenance_fingerprint"),
+    provenanceRunId: text("provenance_run_id"),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
+    workspaceId: text("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    state: text("state").$type<WorkspaceReconciliationFindingState>().notNull(),
+    firstSeenAt: timestamp("first_seen_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+    armedAt: timestamp("armed_at", { withTimezone: true, mode: "date" }),
+    nextRetryAt: timestamp("next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    retryGeneration: integer("retry_generation").notNull().default(0),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    attemptId: text("attempt_id"),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    resultCode: text("result_code"),
+    rescueRef: text("rescue_ref"),
+    rescueCommit: text("rescue_commit"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => ({
+    dueStateIndex: index("workspace_reconciliation_findings_due_idx").on(
+      table.state,
+      table.nextRetryAt,
+      table.firstSeenAt,
+    ),
+    provenanceRunIndex: index(
+      "workspace_reconciliation_findings_provenance_run_idx",
+    ).on(table.provenanceRunId),
+    correlationIndex: index(
+      "workspace_reconciliation_findings_correlation_idx",
+    ).on(table.projectId, table.runId, table.workspaceId),
+    candidateKindCheck: check(
+      "workspace_reconciliation_findings_candidate_kind_check",
+      sql`${table.candidateKind} IN ('row_missing_path', 'row_removed_path', 'rowless_managed', 'untrusted')`,
+    ),
+    stateCheck: check(
+      "workspace_reconciliation_findings_state_check",
+      sql`${table.state} IN ('observed', 'held', 'retry_waiting', 'failed', 'quarantined', 'resolved')`,
+    ),
+    rescueEvidenceCheck: check(
+      "workspace_reconciliation_findings_rescue_evidence_check",
+      sql`(${table.rescueRef} IS NULL) = (${table.rescueCommit} IS NULL)`,
+    ),
+    claimShapeCheck: check(
+      "workspace_reconciliation_findings_claim_shape_check",
+      sql`(${table.attemptId} IS NULL) = (${table.leaseExpiresAt} IS NULL)`,
+    ),
+  }),
+);
 
 export type RunScheduleOverlapPolicy = "skip" | "queue_one" | "start_anyway";
 export type RunScheduleFireOutcome =

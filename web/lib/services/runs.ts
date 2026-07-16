@@ -1551,7 +1551,13 @@ export async function* launchRunStaged(
       worktreePath,
       startPoint: baseCommit,
       provenance: {
+        version: 2,
         runId,
+        parentRepoPath: project.repoPath,
+        projectId: project.id,
+        branch,
+        workspaceKind: "flow",
+        createdAt: new Date().toISOString(),
         task: `${project.taskKey}-${task.number}`,
         flow: `${flow.flowRefId}@${revision.resolvedRevision}`,
       },

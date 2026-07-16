@@ -1125,7 +1125,15 @@ export async function launchAgentRun(
               worktreePath,
               branch,
               startPoint: resolvedBranchBase,
-              provenance: { runId },
+              provenance: {
+                version: 2,
+                runId,
+                parentRepoPath: ctx.project.repoPath,
+                projectId: ctx.project.id,
+                branch,
+                workspaceKind: "agent",
+                createdAt: new Date().toISOString(),
+              },
             });
             allocatedWorktree = true;
           } catch (err) {
@@ -1187,7 +1195,15 @@ export async function launchAgentRun(
         worktreePath,
         branch,
         startPoint: resolvedBranchBase,
-        provenance: { runId },
+        provenance: {
+          version: 2,
+          runId,
+          parentRepoPath: ctx.project.repoPath,
+          projectId: ctx.project.id,
+          branch,
+          workspaceKind: "agent",
+          createdAt: new Date().toISOString(),
+        },
       });
       allocatedWorktree = true;
     }
