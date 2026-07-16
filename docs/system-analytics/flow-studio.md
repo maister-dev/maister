@@ -23,6 +23,22 @@ bridge; per-run workbench visualization remains in
 [`workbench.md`](workbench.md) and flow-graph execution semantics remain in
 [`flow-graph.md`](flow-graph.md).
 
+## Canonical local-package creation (Designed)
+
+New launchable/pinnable Flows are created in Studio local packages, not in the
+authored catalog. The canonical path creates a Git-backed package and Flow, or
+adds any additional Flow to an editable package, then uses the existing Commit
+-> content-addressed Cut -> Attach/Repoint -> launch lifecycle. See
+[`local-packages.md`](local-packages.md#canonical-create-flow-journey-designed).
+
+The older `/flows/new` authored-capability entry is being retired to a Studio
+redirect. It is not a second launchable path. Current code proves a narrower
+bridge than older documentation implied: `publishAuthoredFlowAction` performs
+catalog publication only; the separate
+`POST /api/projects/{slug}/catalog/caps/{capId}/publish-local` route invokes
+`installAuthoredFlowPackageBridge`. Legacy authored detail remains catalog-only
+and must describe that limit explicitly.
+
 ## Domain entities
 
 - **Authored flow draft / revision** — `authored_capabilities` row (kind=`flow`)

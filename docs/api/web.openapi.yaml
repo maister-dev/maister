@@ -9547,12 +9547,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
     post:
       tags: [flow-packages]
-      summary: (ADR-096 — Designed) Create (or fork) a local package
+      summary: (Canonical Create Flow — Designed) Create a local package and Flow
       description: |
-        (ADR-096 — Designed.) Creates a `local_packages` row and scaffolds a
-        git-backed working directory (`git init` + initial commit). With
-        `sourceInstallId`, seeds the working dir from that git-package install
-        (fork). Authenticated users only.
+        Creates a ready `local_packages` row plus a graph-valid Flow in one
+        operation. The body supplies only package name and Flow metadata; the
+        server derives identity, working directory, Git branch, and operation
+        state. The initial commit contains package membership plus `flow.yaml`.
+        Requires an active global member. Dedicated fork routes remain separate.
       operationId: createStudioLocalPackage
       requestBody:
         required: true
@@ -9564,7 +9565,7 @@ paths:
           description: Created.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LocalPackage" }
+              schema: { $ref: "#/components/schemas/LocalPackageCreateResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
@@ -9623,6 +9624,67 @@ paths:
         "204": { description: Deleted (row + working_dir removed). }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/studio/local-packages/{id}/flows:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Server-resolved `local_packages.id`; not duplicated in the body.
+    post:
+      tags: [flow-packages]
+      summary: (Canonical Create Flow — Designed) Add a Flow to an editable package
+      description: |
+        Requires an active global member and a live `sessionId` edit lock for
+        this exact URL package. The body supplies only `sessionId` and Flow
+        metadata. A pending creation recovery, active local-package assistant,
+        duplicate Flow ID/path, or mutation lease conflict is refused before a
+        filesystem write.
+      operationId: createStudioLocalPackageFlow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackageFlowCreateBody" }
+      responses:
+        "201":
+          description: Created as an uncommitted working-tree change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageFlowCreateResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/creation-recovery:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Server-resolved `local_packages.id`; this route accepts no body.
+    post:
+      tags: [flow-packages]
+      summary: (Canonical Create Flow — Designed) Retry deterministic creation recovery
+      description: |
+        Requires an active global member. This body-less operation only performs
+        hash-based reconciliation of the URL package's durable creation state;
+        it accepts no repair payload, path, or cross-resource identifier.
+      operationId: recoverStudioLocalPackageCreation
+      responses:
+        "200":
+          description: Recovery completed or the package was already ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageRecoveryResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
 
   /api/studio/local-packages/{id}/lock-refresh:
     parameters:
@@ -9701,35 +9763,6 @@ paths:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "409": { $ref: "#/components/responses/Conflict" }
-
-  /api/studio/local-packages/{id}/files/{path}/move:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: { type: string }
-      - name: path
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      tags: [flow-packages]
-      summary: (ADR-096 — Designed) Move an artifact to another local package
-      description: |
-        (ADR-096 — Designed.) Relocates a file to a target local package's
-        working dir. Both source and target paths are confined; both require a
-        live lock.
-      operationId: moveStudioLocalPackageFile
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/LocalPackageMoveBody" }
-      responses:
-        "200": { description: Moved. }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "409": { $ref: "#/components/responses/Conflict" }
-        "422": { $ref: "#/components/responses/Config" }
 
   /api/studio/local-packages/{id}/cut-version:
     parameters:
@@ -19417,12 +19450,18 @@ components:
       description: |
         (ADR-096 — Designed) A `local_packages` row (Flow Studio Phase C).
         `working_dir` is server-only and intentionally absent.
-      required: [id, name, slug, status, createdAt, updatedAt]
+      required: [id, name, slug, status, recoveryStatus, createdAt, updatedAt]
       properties:
         id: { type: string }
         name: { type: string }
         slug: { type: string }
         status: { type: string, enum: [active, archived] }
+        recoveryStatus:
+          {
+            type: string,
+            enum: [ready, recovering, recovery_required],
+            description: "Safe projection of creation recovery; raw operation state is server-only.",
+          }
         sourceInstallId:
           {
             type: string,
@@ -19490,15 +19529,70 @@ components:
           }
     LocalPackageCreateBody:
       type: object
-      required: [name]
+      required: [name, flow]
       properties:
         name: { type: string }
-        sourceInstallId:
-          {
-            type: string,
-            nullable: true,
-            description: "Fork: seed the working dir from this git-package install.",
-          }
+        flow: { $ref: "#/components/schemas/CreateFlowInput" }
+    CreateFlowInput:
+      type: object
+      required: [id, metadata]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        metadata:
+          type: object
+          required: [title, summary, route_when]
+          properties:
+            title: { type: string, minLength: 1 }
+            summary: { type: string, minLength: 1 }
+            route_when: { type: string, minLength: 1 }
+            labels:
+              type: array
+              items: { type: string, minLength: 1 }
+            links:
+              type: array
+              items:
+                type: object
+                required: [title, url]
+                properties:
+                  kind: { type: string, minLength: 1 }
+                  title: { type: string, minLength: 1 }
+                  url: { type: string, format: uri }
+            sources:
+              type: array
+              items:
+                type: object
+                required: [component, origin]
+                properties:
+                  component: { type: string, minLength: 1 }
+                  origin: { type: string, minLength: 1 }
+    CreatedFlow:
+      type: object
+      required: [id, path]
+      properties:
+        id: { type: string }
+        path: { type: string, description: "Server-generated editor-relative Flow path." }
+    LocalPackageCreateResult:
+      type: object
+      required: [localPackage, createdFlow]
+      properties:
+        localPackage: { $ref: "#/components/schemas/LocalPackage" }
+        createdFlow: { $ref: "#/components/schemas/CreatedFlow" }
+    LocalPackageFlowCreateBody:
+      type: object
+      required: [sessionId, flow]
+      properties:
+        sessionId: { type: string, minLength: 1 }
+        flow: { $ref: "#/components/schemas/CreateFlowInput" }
+    LocalPackageFlowCreateResult:
+      type: object
+      required: [createdFlow]
+      properties:
+        createdFlow: { $ref: "#/components/schemas/CreatedFlow" }
+    LocalPackageRecoveryResult:
+      type: object
+      required: [recoveryStatus]
+      properties:
+        recoveryStatus: { type: string, enum: [ready, recovering, recovery_required] }
     LocalPackagePatchBody:
       type: object
       properties:
@@ -19506,20 +19600,10 @@ components:
         status: { type: string, enum: [active, archived] }
     LocalPackageFileWriteBody:
       type: object
-      required: [content]
+      required: [content, sessionId]
       properties:
         content: { type: string }
-    LocalPackageMoveBody:
-      type: object
-      required: [targetLocalPackageId]
-      properties:
-        targetLocalPackageId: { type: string }
-        targetPath:
-          {
-            type: string,
-            nullable: true,
-            description: "Defaults to the same relative path in the target.",
-          }
+        sessionId: { type: string, minLength: 1 }
     CutVersionBody:
       type: object
       properties:

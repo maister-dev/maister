@@ -130,7 +130,7 @@ declared `output` transition keys; these are already transition keys, compile-en
 rework amber-dashed, a `deny`/`fail` verdict branch red). The read-only
 `FlowGraphView` twin inherits the same outcome-labeled edges.
 
-### Package authoring IA (M39 Stream A — Implemented, ADR-105 — create wizards deferred)
+### Package authoring IA (M39 Stream A — Implemented; Canonical Create Flow — Designed)
 
 Stream A reworks the `/studio/edit/{id}/{path}` local-package editor for
 correctness and first-class kinds (behavior SSOT:
@@ -167,9 +167,20 @@ correctness and first-class kinds (behavior SSOT:
   the inline message and lifecycle gates never disagree about draft state.
   Issue copy identifies the exact field path and keeps the compact structural
   editor; this hardening adds no package-skill selector or new authoring IA.
-  **Create is a generic Add-File today** — the per-kind create wizards (New Flow /
-  Platform Agent / Subagent / Skill, with seeded templates) are **deferred** (#134,
-  A4); `newSubagentTemplate` exists but is not yet wired into a create flow.
+  **Canonical Create Flow (Designed).** Studio Packages and Local Packages open
+  one accessible dialog for package name (new package only), Flow ID, display
+  title, `metadata.summary`, and `metadata.route_when`, with optional labels,
+  links, and sources. Copy calls this Flow metadata, never frontmatter. Success
+  opens `flows/<flow-id>/flow.yaml` directly in this existing editor; no narrow
+  second editor is introduced. From package home, **Add Flow** uses the same
+  dialog with package identity fixed and may be repeated for any additional
+  Flow. Generic Add File remains for non-Flow artifacts.
+
+  Existing zero-Flow packages show a localized **No Flow yet** explanation and
+  Add Flow CTA; they remain otherwise supported. Pending or recovery-required
+  create operations show localized read-only remediation and disable normal
+  writers. Viewers, inactive users, and users who must change their password
+  never receive an enabled creation/mutation action; routes remain authoritative.
 
 ### Fork ↔ upstream surface (ADR-132)
 

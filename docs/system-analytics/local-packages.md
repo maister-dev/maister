@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-116 — Implemented (web-only, no migration); the fork loop — `try_once` per-run pin, upstream divergence view, upstream sync, publish base branch + sync-first refusal — is ADR-132, Implemented (migration 0097).** Surface:
+> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-116 — Implemented (web-only, no migration); the fork loop — `try_once` per-run pin, upstream divergence view, upstream sync, publish base branch + sync-first refusal — is ADR-132, Implemented (migration 0097). Canonical Create Flow is Designed; it adds a durable local-package operation claim and does not create a DB-authored Flow model.** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -213,6 +213,61 @@ never silently). `POST .../commit` (lock-guarded; `git add -A` + `git commit`,
 optional message) clears the count; `POST .../discard` (lock-guarded; body
 `paths[]` confined BEFORE git, omitted → all) restores to `HEAD`. All three work
 with NO AI session present.
+
+## Canonical Create Flow journey (Designed)
+
+Studio Packages and Local Packages will expose **Create package and Flow**.
+One dialog collects package name, Flow ID, display title,
+`metadata.summary`, and `metadata.route_when`; labels, links, and sources are
+optional Flow metadata. Success creates `maister-package.yaml` membership and
+`flows/<flow-id>/flow.yaml`, then opens that Flow in the existing local-package
+editor. The package's initial Git commit contains both files. From an editable
+package home, **Add Flow** invokes the same dialog and leaves the working tree
+dirty for the existing Commit action. It is repeatable for every additional
+Flow, not only a package's first Flow.
+
+The generated Flow is graph-only and starts with an `ai_coding` node whose
+`success` target is the implicit `done` terminal. It sets `schemaVersion: 1`,
+`name` to the machine ID, `metadata.title` to the display title,
+`compat.engine_min: "3.0.0"`, and empty capabilities/artifacts. It does not
+run `setup.sh`, hooks, MCPs, installer code, or Flow nodes; Git uses
+`--no-verify`.
+
+### Durable recovery and serialization
+
+The feature adds nullable `local_packages.creation_state` JSONB. It contains
+only operation ID, kind, phase, Flow ID, and hashes; filesystem payloads and
+backups remain in a private, Git-excluded journal. This is operation recovery
+state, not another authored Flow store. A pending state serializes writers with
+the existing mutation lease. Deterministic recovery may finalize exact hashes or
+clear an exact original/compensated state; drift becomes a visible localized
+recovery-required state and is never overwritten.
+
+Normal writer order is member authorization/edit lock, mutation lease, reload,
+write/validate, release. Add Flow refuses while a local-package assistant can
+write. Pending/recovery-required packages are read-safe but cannot be mutated,
+Committed, Cut, archived, or deleted. Existing immutable cuts remain usable for
+Attach/Repoint because they do not read the working directory.
+
+Existing empty packages are still valid, cuttable, and attachable. They receive
+a localized **No Flow yet** state with Add Flow rather than a silent dead end.
+Only the public scratch-create route becomes Flow-required; default/fork
+internals can retain intentionally empty packages.
+
+### Canonical HTTP boundary
+
+- `POST /api/studio/local-packages` accepts only `{name, flow}`; the server
+  derives creator, package ID, slug, working directory, branch, and operation.
+- `POST /api/studio/local-packages/{id}/flows` accepts only `{sessionId, flow}`;
+  URL `{id}` resolves the server package and `sessionId` is checked against its
+  edit lock.
+- `POST /api/studio/local-packages/{id}/creation-recovery` accepts no body and
+  only retries deterministic reconciliation. It never accepts a repair payload.
+
+No response exposes a working directory, journal, or package content. The
+existing collection `sourceInstallId` fork contract is stale; package forks keep
+their dedicated endpoint. The documented file move endpoint has no route and
+will be removed from OpenAPI rather than represented as implemented.
 
 ## M39 Stream A — first-class authoring (Implemented, ADR-105 — create wizards deferred)
 
