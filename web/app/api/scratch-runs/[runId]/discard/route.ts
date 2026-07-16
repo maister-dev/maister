@@ -8,6 +8,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
@@ -15,10 +16,8 @@ import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { localPackages, runs, scratchRuns, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { localPackages, runs, scratchRuns, workspaces } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-scratch-discard",
@@ -191,14 +190,68 @@ export async function POST(
       );
     }
 
-    const now = new Date();
     const shouldRemoveWorkspace = Boolean(workspace && !workspace.removedAt);
 
+    let removalResult:
+      | {
+          archivedAt: Date;
+          archivedBranch: string | null;
+          archivedCommit: string | null;
+          preservationOutcome:
+            | "not_needed"
+            | "ref_created"
+            | "snapshot_created";
+        }
+      | undefined;
+
+    if (shouldRemoveWorkspace && workspace) {
+      const preserved = await preserveWorktree({
+        worktreePath: workspace.worktreePath,
+        parentRepoPath: workspace.parentRepoPath,
+        branch: workspace.branch,
+        baseRef: workspace.baseCommit ?? workspace.baseBranch ?? "main",
+        runId,
+      });
+
+      if (!preserved.ok) {
+        throw new MaisterError(
+          "CONFLICT",
+          `could not preserve scratch worktree before discard: ${runId}`,
+        );
+      }
+
+      await removeOwnedWorktree({
+        projectRepoPath: workspace.parentRepoPath,
+        worktreePath: workspace.worktreePath,
+        allowedRoot: worktreesRoot(),
+        force: true,
+      });
+
+      removalResult = {
+        archivedAt: preserved.archivedAt ?? new Date(),
+        archivedBranch: preserved.archivedBranch ?? workspace.archivedBranch,
+        archivedCommit: preserved.archivedCommit ?? null,
+        preservationOutcome:
+          preserved.preservationOutcome ??
+          (preserved.snapshotted ? "snapshot_created" : "not_needed"),
+      };
+      workspaceRemoved = true;
+    }
+
+    const now = new Date();
+
     await db.transaction(async (tx: Db) => {
-      if (shouldRemoveWorkspace && workspace) {
+      if (shouldRemoveWorkspace && workspace && removalResult) {
         await tx
           .update(workspaces)
-          .set({ removedAt: now })
+          .set({
+            removedAt: now,
+            archivedAt: removalResult.archivedAt,
+            archivedBranch: removalResult.archivedBranch,
+            archivedCommit: removalResult.archivedCommit,
+            preservationOutcome: removalResult.preservationOutcome,
+            removalKind: "discard",
+          })
           .where(eq(workspaces.id, workspace.id));
       }
       await tx
@@ -218,27 +271,6 @@ export async function POST(
         })
         .where(eq(runs.id, runId));
     });
-
-    if (shouldRemoveWorkspace && workspace) {
-      try {
-        await removeOwnedWorktree({
-          projectRepoPath: workspace.parentRepoPath,
-          worktreePath: workspace.worktreePath,
-          allowedRoot: worktreesRoot(),
-          force: true,
-        });
-        workspaceRemoved = true;
-      } catch (err) {
-        log.error(
-          {
-            runId,
-            workspaceId: workspace.id,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "scratch discard marked abandoned but worktree removal failed",
-        );
-      }
-    }
 
     if (run.localPackageId) {
       const packageRows = await db

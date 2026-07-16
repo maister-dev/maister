@@ -8,6 +8,7 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
@@ -94,6 +95,13 @@ vi.mock("@/lib/worktree", () => ({
   removeOwnedWorktree: vi.fn(async () => undefined),
 }));
 
+vi.mock("@/lib/gc/preserve", () => ({
+  preserveWorktree: vi.fn(async () => ({
+    ok: true,
+    preservationOutcome: "not_needed",
+  })),
+}));
+
 // Only assertLocalPackageAssistantActor is consumed from the (heavy) service —
 // stub it so the route's project-less authz branch is exercised without pulling
 // the full scratch-runs service dependency graph into this lightweight test.
@@ -152,6 +160,7 @@ function seedScratchRun(
       runId,
       projectId,
       parentRepoPath: "/repos/demo",
+      branch: "maister/run-discard",
       worktreePath: "/tmp/maister-worktrees/demo/run-discard",
       removedAt: overrides.removedAt ?? null,
     });
@@ -181,6 +190,11 @@ beforeEach(() => {
   transactionFailure = null;
   vi.mocked(deleteSession).mockClear();
   vi.mocked(removeOwnedWorktree).mockClear();
+  vi.mocked(preserveWorktree).mockReset();
+  vi.mocked(preserveWorktree).mockResolvedValue({
+    ok: true,
+    preservationOutcome: "not_needed",
+  });
   vi.mocked(worktreesRoot).mockClear();
   vi.mocked(worktreesRoot).mockReturnValue("/tmp/maister-worktrees");
   vi.mocked(assertLocalPackageAssistantActor).mockClear();
@@ -202,6 +216,13 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
       worktreePath: "/tmp/maister-worktrees/demo/run-discard",
       allowedRoot: "/tmp/maister-worktrees",
       force: true,
+    });
+    expect(preserveWorktree).toHaveBeenCalledWith({
+      worktreePath: "/tmp/maister-worktrees/demo/run-discard",
+      parentRepoPath: "/repos/demo",
+      branch: "maister/run-discard",
+      baseRef: "main",
+      runId,
     });
     expect(body.workspaceRemoved).toBe(true);
     expect(dbState.tables.workspaces[0].removedAt).toBeInstanceOf(Date);
@@ -284,7 +305,7 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     expect(dbState.tables.workspaces[0].removedAt).toBeNull();
   });
 
-  it("does not remove the worktree when the durable discard transaction fails", async () => {
+  it("reports a durable discard failure after the confirmed removal for retry convergence", async () => {
     const runId = seedScratchRun();
 
     transactionFailure = new Error("db write failed");
@@ -292,7 +313,7 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     const res = await invokePost(runId);
 
     expect(res.status).toBe(500);
-    expect(removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(removeOwnedWorktree).toHaveBeenCalledOnce();
     expect(dbState.tables.workspaces[0].removedAt).toBeNull();
     expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Running");
   });
@@ -315,6 +336,7 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
       workspace: false,
       supervisorSessionId: "sup-live",
     });
+
     dbState.tables.local_packages.push({
       id: "lp-1",
       workingDir: "/local-packages/lp-1",
