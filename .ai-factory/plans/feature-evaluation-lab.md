@@ -3,6 +3,53 @@
 Branch: feature/evaluation-lab
 Created: 2026-07-15
 
+## ⏯️ RESUME POINTER (updated 2026-07-16 — read this first)
+
+Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
+`[ ]` not started. This session ran M46 phase-gated; pick up at **NEXT** below.
+
+**Owner-locked scope decisions (do not re-litigate):**
+- Target = **M46 only**, phase-gated; M47/M48 deferred.
+- **Lean Phase 0** — core contracts frozen in the ADR ledger; wider
+  analytics/API/screens docs **co-evolve** with the code that implements them.
+- **maister-plugins package is in scope** (method authored + committed there).
+- Branch is held **LOCAL — do NOT push** until M46 is complete.
+- On ADR/migration-number collision with sibling branch
+  `claude/pr-merge-workflows-4d0e7e` (it also claims ADR-139/140 + migr 0104):
+  **renumber** (owner preference), including the journal `when` bump.
+- `core/v1.1.0` tag is **owner-gated** — do NOT create it.
+
+**Committed & green so far:**
+- Phase 0 `59f889230` — ADR-139..144 + migr 0104..0107 reserved; engine→3.2.0;
+  roadmap M46/M47/M48; terminology. (T0.2/T0.3 `[~]` = co-evolve.)
+- Phase 1 `630395ae2` + plugins `865db4a` — Evaluation Method contract
+  (`web/lib/evaluations/method-schema.ts`+`method.ts`), `evaluationMethods[]`
+  manifest, `validate:package-compatibility` gate, published `core:sdd-quality`.
+- Phase 2 T2.1 **partial** `6f88dd5f2` — migration **0104** (studies/recipes/
+  participants) + 7 real-PG integration tests green.
+
+**▶ NEXT (resume here):** finish **T2.1** — (a) legacy Experiment backfill in a
+`0104`-lineage data migration (`0090`→studies/recipes/launched-participants with
+count/digest parity, fixed status map, `legacy_advisory` Partial executions,
+zero-citation verdicts — see "Legacy backfill" §); (b) `0105` platform-config
+tables; (c) `0106` execution/evidence tables. Then **T2.2** services (+
+membership-consumer migration to the launched-lineage predicate), **T2.3**
+evidence storage, then Phases 3–5.
+
+**Env & commands (verified this session):**
+- Engine constant is `3.2.0` (`web/lib/flows/engine-version.ts`).
+- Generate a migration: `DB_URL=postgresql://maister:maister@localhost:5432/maister pnpm db:generate` (from `web/`).
+- Docker PG `maister-postgres-1` (pgvector pg16) is up on `localhost:5432`.
+- Run unit tests **sharded** — `npx vitest run --project unit --shard=n/4` (the
+  full one-process run OOMs on a **pre-existing** runaway test file in shard 3,
+  even at 12 GB; not ours — quarantine candidate). Integration:
+  `npx vitest run --project integration <file>`.
+- Lint changed files with `npx eslint --fix <files>` — never bare `pnpm lint`
+  (it reformats the whole repo). `scripts/**` is eslint-ignored.
+- Pre-existing baseline typecheck error: `lib/theme.tsx:85` `cookieStore` — not ours.
+
+Full detail + gotchas: memory `evaluation-lab-m46-impl-state`.
+
 ## Settings
 
 - Testing: yes — SDD first, then RED → GREEN → REFACTOR for every implementation slice.
