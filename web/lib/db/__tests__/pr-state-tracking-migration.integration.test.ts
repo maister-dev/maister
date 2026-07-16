@@ -108,11 +108,21 @@ describe("0103 pr_state_tracking schema shape", () => {
 
   it("creates the partial pr_state_scan candidate index", async () => {
     const idx = await pool.query(
-      `select indexname from pg_indexes
+      `select indexdef from pg_indexes
        where tablename = 'workspaces' and indexname = 'workspaces_pr_state_scan_idx'`,
     );
 
     expect(idx.rows).toHaveLength(1);
+    // Asserting the NAME alone let a non-partial index pass a test that claims
+    // "partial". The predicate IS the point: it is what keeps the scan's
+    // candidate query off a full scan of every workspace ever created, and it
+    // must stay in lockstep with `loadCandidates`' own WHERE.
+    const def = (idx.rows[0].indexdef as string).toLowerCase();
+
+    expect(def).toContain("using btree (project_id)");
+    expect(def).toContain(
+      "where ((pr_url is not null) and ((pr_state is null) or (pr_state = 'open'::text)))",
+    );
   });
 
   it("accepts open/merged/closed and NULL, rejects an illegal pr_state (23514)", async () => {
