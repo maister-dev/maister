@@ -649,6 +649,55 @@ describe("reopenRun — refusals", () => {
       reopenRun({ runId: review.runId, actor: actor() }),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
+
+  // The eligibility read is lock-free and network I/O runs between it and the
+  // transaction, while `pr_state_scan`'s merged edge writes these very columns.
+  // The tx re-asserted only `status='Done'` and the workspace UPDATE carried no PR
+  // predicate, so a PR that merged inside that window was reopened onto anyway —
+  // and re-promotion opens a SECOND PR, defeating the terminal-PR refusal.
+  it("refuses when the PR merges between the eligibility read and the transaction", async () => {
+    const { projectId, flowId } = await seedGraph("/repos/demo");
+    const { runId, workspaceId } = await seedRun({
+      projectId,
+      flowId,
+      branch: "maister/raced",
+      worktreePath: "/wt/raced",
+      parentRepoPath: "/repos/demo",
+      status: "Done",
+      prState: "open",
+      prHasConflicts: true,
+    });
+
+    // Land the concurrent merge in the exact window: a real second connection
+    // writes the row after reopen has read it and while it is mid-flight.
+    const racingDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "transaction") {
+          return async (fn: unknown) => {
+            await pool.query(
+              `update workspaces
+                  set pr_state = 'merged', pr_has_conflicts = false
+                where id = $1`,
+              [workspaceId],
+            );
+
+            return (target as any).transaction(fn);
+          };
+        }
+
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    await expect(
+      reopenRun({ runId, actor: actor(), db: racingDb }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    // The run must be untouched — reopening onto a merged PR is the defect.
+    const [row] = await db.select().from(runs).where(eq(runs.id, runId));
+
+    expect(row.status).toBe("Done");
+  });
 });
 
 // ===========================================================================

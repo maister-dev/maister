@@ -555,6 +555,12 @@ describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
     expect(sessionRow).toBeDefined();
     expect(sessionRow.runnerId).toBe(runnerId);
     expect(sessionRow.runnerSnapshot).toMatchObject({ id: runnerId });
+    // The PRODUCER of the handle reconcile's W2 arm keys on. The row is inserted
+    // null in the CAS tx, and nothing else ever writes this column — every
+    // existing recovery test FEEDS liveSessionId in, so they prove the consumer
+    // and never this. Null here makes a live resolver look session-less, and
+    // activeRunSessionsFor would then hand W2 the run's OLD flow-session handle.
+    expect(sessionRow.acpSessionId).toBe(`acp-${runId}`);
 
     // Attempt finalized; run back to Review; session torn down; slot released.
     const row = await attemptRow(runId);

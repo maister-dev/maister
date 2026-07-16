@@ -189,6 +189,32 @@ export async function reopenRun(args: {
   }
 
   await db.transaction(async (tx: Db) => {
+    // Re-assert the PR facts UNDER the workspace lock, on fresh data. The
+    // eligibility decision above was made on a lock-free read, and network I/O
+    // (fetchRemote + addWorktreeForBranch) has run since — a wide window in which
+    // `pr_state_scan`'s merged edge writes these very columns. `markReopenFromDone`
+    // re-asserts ONLY `status='Done'` and the workspace UPDATE below carries no PR
+    // predicate, so a PR that merged during that window was reopened onto anyway:
+    // re-promotion then opens a SECOND PR (`createOrUpdatePr` finds OPEN PRs only),
+    // which is exactly what the terminal-PR refusal above exists to prevent.
+    // Re-running the pure gate keeps ONE definition of "reusable PR" — a
+    // hand-written WHERE would have to re-encode it, and `pr_state` is nullable so
+    // an `eq()` predicate would silently never match on the conflicted-only case.
+    const [live] = await tx
+      .select({
+        prState: workspaces.prState,
+        prHasConflicts: workspaces.prHasConflicts,
+      })
+      .from(workspaces)
+      .where(eq(workspaces.id, ws.id))
+      .for("update");
+
+    if (!live) {
+      throw new MaisterError("PRECONDITION", `run has no workspace: ${runId}`);
+    }
+
+    assertReopenEligible(run, live);
+
     const cas = await markReopenFromDone(runId, { db: tx });
 
     if (!cas.ok) {
