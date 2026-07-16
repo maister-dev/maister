@@ -8,7 +8,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -68,7 +68,7 @@ export function classifyTaskLaunchability(
     flowId: string | null;
     triageStatus: "triaged" | "flagged" | null;
   },
-  latestRun: { status: RunStatus } | null,
+  latestRun: { status: RunStatus; workspaceRemoved?: boolean } | null,
   relationGate?: RelationGate,
 ): TaskLaunchability {
   if (task.status === "Done" || task.status === "Abandoned") {
@@ -80,7 +80,10 @@ export function classifyTaskLaunchability(
       ? task.status === "Backlog"
         ? "launchable"
         : "busy"
-      : RUN_STATUS_LAUNCHABILITY[latestRun.status];
+      : latestRun.workspaceRemoved === true &&
+          (latestRun.status === "Review" || latestRun.status === "Crashed")
+        ? "launchable"
+        : RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
   // Precedence: target_terminal > crashed > busy > flagged > blocked >
   // unconfigured > launchable (M34 ADR-089; flagged ADR-112) — relations gate
@@ -173,7 +176,7 @@ export function classifyForceRelaunchLaunchability(
 export async function getLatestFlowRun(
   taskId: string,
   db?: Db,
-): Promise<Run | null> {
+): Promise<(Run & { workspaceRemoved: boolean }) | null> {
   // FIXME(any): dual drizzle-orm peer-dep variants.
   const _db = (db ?? getDb()) as unknown as { select: any };
   const rows = (await _db
@@ -183,5 +186,18 @@ export async function getLatestFlowRun(
     .orderBy(desc(runs.startedAt))
     .limit(1)) as Run[];
 
-  return rows[0] ?? null;
+  const latestRun = rows[0];
+
+  if (!latestRun) return null;
+
+  const workspaceRows = (await _db
+    .select({ removedAt: workspaces.removedAt })
+    .from(workspaces)
+    .where(eq(workspaces.runId, latestRun.id))
+    .limit(1)) as Array<{ removedAt: Date | null }>;
+
+  return {
+    ...latestRun,
+    workspaceRemoved: workspaceRows[0]?.removedAt != null,
+  };
 }

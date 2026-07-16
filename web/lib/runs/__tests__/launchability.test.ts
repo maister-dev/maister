@@ -66,6 +66,18 @@ describe("classifyTaskLaunchability — no latest flow run", () => {
 });
 
 describe("classifyTaskLaunchability — latest flow run drives the verdict", () => {
+  it.each(["Review", "Crashed"] as const)(
+    "releases %s history once its workspace is removed",
+    (status) => {
+      expect(
+        classifyTaskLaunchability(task("InFlight"), {
+          status,
+          workspaceRemoved: true,
+        }),
+      ).toBe("launchable");
+    },
+  );
+
   it.each<TaskStatus>(["Backlog", "InFlight"])(
     "latest run Failed (task %s) → launchable (board retry rule, attempt N+1)",
     (taskStatus) => {
