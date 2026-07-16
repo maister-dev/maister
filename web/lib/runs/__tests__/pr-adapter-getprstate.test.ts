@@ -313,7 +313,11 @@ describe("getPrState — github (gh CLI)", () => {
     expect(res).toMatchObject({ kind: "skip", transient: true });
   });
 
-  it("PR not found (gh could-not-resolve) → terminal skip (transient:false)", async () => {
+  // GitHub answers permission-denied with this SAME "could not resolve" it uses
+  // for a deleted PR, deliberately — so it may never be read as "deleted". The
+  // caller writes pr_state only from a successful read; classifying this as
+  // terminal is what let one rotated GH_TOKEN mark every live PR closed.
+  it("PR not found (gh could-not-resolve) → retryable skip (transient:true)", async () => {
     execImpls["gh"] = async () => {
       throw Object.assign(new Error("gh exited 1"), {
         stderr:
@@ -329,10 +333,10 @@ describe("getPrState — github (gh CLI)", () => {
       prNumber: 999,
     });
 
-    expect(res).toMatchObject({ kind: "skip", transient: false });
+    expect(res).toMatchObject({ kind: "skip", transient: true });
   });
 
-  it("unparseable remote URL → terminal skip (transient:false)", async () => {
+  it("unparseable remote URL → deterministic skip (transient:false)", async () => {
     execImpls["gh"] = async () => ({ stdout: "{}", stderr: "" });
 
     const { getPrState } = await loadAdapter();
@@ -525,7 +529,8 @@ describe("getPrState — gitlab (glab CLI)", () => {
     expect(res).toMatchObject({ kind: "skip", transient: true });
   });
 
-  it("MR not found (glab 404) → terminal skip (transient:false)", async () => {
+  // Same ambiguity as gh: GitLab returns 404 for a private/no-access project.
+  it("MR not found (glab 404) → retryable skip (transient:true)", async () => {
     execImpls["glab"] = async () => {
       throw Object.assign(new Error("glab exited 1"), {
         stderr: "404 Not Found",
@@ -540,7 +545,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       prNumber: 404,
     });
 
-    expect(res).toMatchObject({ kind: "skip", transient: false });
+    expect(res).toMatchObject({ kind: "skip", transient: true });
   });
 });
 
@@ -699,7 +704,8 @@ describe("getPrState — gitea / gitverse (REST)", () => {
     expect(fetchCalls).toHaveLength(0);
   });
 
-  it("HTTP 404 → terminal skip (transient:false)", async () => {
+  // Same ambiguity as gh/glab: Gitea 404s a repo the token cannot see.
+  it("HTTP 404 → retryable skip (transient:true)", async () => {
     process.env.GITEA_TOKEN = "tkn-gitea";
     fetchHandler = () => ({ status: 404, json: { message: "Not Found" } });
 
@@ -710,7 +716,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       prNumber: 404,
     });
 
-    expect(res).toMatchObject({ kind: "skip", transient: false });
+    expect(res).toMatchObject({ kind: "skip", transient: true });
   });
 
   it("HTTP 500 → transient skip", async () => {

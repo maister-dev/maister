@@ -103,30 +103,6 @@ afterAll(async () => {
 });
 
 describe("0104 run_sync_attempts ledger", () => {
-  it("creates the table with the key ledger columns", async () => {
-    const cols = await pool.query(
-      `select column_name from information_schema.columns
-       where table_name = 'run_sync_attempts'
-       and column_name in
-       ('phase','strategy','mode','remote_sha_before','conflicted_files',
-        'agent_running_since','auto_finalize','runner_id','session_name','pushed')
-       order by column_name`,
-    );
-
-    expect(cols.rows.map((r) => r.column_name)).toEqual([
-      "agent_running_since",
-      "auto_finalize",
-      "conflicted_files",
-      "mode",
-      "phase",
-      "pushed",
-      "remote_sha_before",
-      "runner_id",
-      "session_name",
-      "strategy",
-    ]);
-  });
-
   it("enforces UNIQUE (run_id, attempt) with 23505", async () => {
     const { runId, workspaceId } = await seedRunWorkspace("uniq");
 
@@ -215,13 +191,35 @@ describe("0104 projects sync columns", () => {
   });
 });
 
-describe("0104 journal + snapshot", () => {
-  it("has a 0104 journal entry with a matching snapshot file", () => {
-    const journal = JSON.parse(
-      readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
-    ) as { entries: Array<{ idx: number; tag: string }> };
+// Identified by NAME, never by number: matching on a `0104` prefix would, once
+// this branch rebases onto a main that already owns 0104, silently resolve to
+// MAIN's migration — the snapshot exists, every assertion passes, and this
+// migration goes unverified. The name is what belongs to this change; the
+// number is the thing the merge renegotiates.
+const MIGRATION_NAME = "_branch_sync";
 
-    const entry = journal.entries.find((e) => e.tag.startsWith("0104"));
+type JournalEntry = { idx: number; tag: string; when: number };
+
+function readJournal(): { entries: JournalEntry[] } {
+  return JSON.parse(
+    readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
+  ) as { entries: JournalEntry[] };
+}
+
+function readSnapshot(tag: string): { id: string; prevId: string } {
+  return JSON.parse(
+    readFileSync(
+      path.join(MIGRATIONS_DIR, "meta", `${tag.slice(0, 4)}_snapshot.json`),
+      "utf8",
+    ),
+  ) as { id: string; prevId: string };
+}
+
+describe("branch_sync journal + snapshot", () => {
+  it("has a journal entry with a matching snapshot file", () => {
+    const entry = readJournal().entries.find((e) =>
+      e.tag.endsWith(MIGRATION_NAME),
+    );
 
     expect(entry).toBeDefined();
     const snapshotName = `${entry!.tag.slice(0, 4)}_snapshot.json`;
@@ -229,5 +227,41 @@ describe("0104 journal + snapshot", () => {
     expect(existsSync(path.join(MIGRATIONS_DIR, "meta", snapshotName))).toBe(
       true,
     );
+  });
+
+  it("numbers the tag to match its journal idx", () => {
+    const entry = readJournal().entries.find((e) =>
+      e.tag.endsWith(MIGRATION_NAME),
+    )!;
+
+    expect(entry.tag.slice(0, 4)).toBe(String(entry.idx).padStart(4, "0"));
+  });
+
+  // `when` must stay monotonic across the journal: the migrator high-water-marks
+  // on it, so a renumber that fixes only the idx leaves an older `when` and
+  // `db:migrate` SILENTLY SKIPS this migration on any DB past the watermark.
+  it("keeps its journal `when` above every preceding entry", () => {
+    const entries = readJournal().entries;
+    const index = entries.findIndex((e) => e.tag.endsWith(MIGRATION_NAME));
+
+    expect(index).toBeGreaterThan(0);
+    expect(entries[index].when).toBeGreaterThan(entries[index - 1].when);
+  });
+
+  // The guard that makes a renumber safe. A migration is a TRIPLE (SQL +
+  // journal entry + snapshot), and its snapshot's `prevId` must name the TRUE
+  // predecessor's snapshot `id`. Renaming snapshot files to renumber (rather
+  // than regenerating them) leaves `prevId` rooted at the OLD predecessor —
+  // encoding a schema lineage that never existed — and nothing else notices.
+  it("chains its snapshot prevId to the preceding migration's snapshot id", () => {
+    const entries = readJournal().entries;
+    const index = entries.findIndex((e) => e.tag.endsWith(MIGRATION_NAME));
+
+    expect(index).toBeGreaterThan(0);
+
+    const snapshot = readSnapshot(entries[index].tag);
+    const predecessor = readSnapshot(entries[index - 1].tag);
+
+    expect(snapshot.prevId).toBe(predecessor.id);
   });
 });

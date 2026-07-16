@@ -2277,18 +2277,16 @@ export const workspaces = pgTable(
     lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
     lifecycleOperationName: text("lifecycle_operation_name"),
     // ADR-139 (migration 0103): PR lifecycle tracking. `pr_state` NULL = never
-    // scanned. `pr_merge_commit_sha` is the PROVIDER merge commit (provenance
-    // only) — distinct from `runs.merge_commit_sha`, which stays owned by the
-    // repo_delivery_scan (ADR-134). `pr_state_checked_at` is stamped on EVERY scan
-    // attempt (success or failure) so one bad row cannot stall the per-project job.
+    // scanned, and is written ONLY from a SUCCESSFUL provider read — a failed
+    // read leaves it untouched, because no writer here could ever undo a wrong
+    // `closed` (the scan's candidate query selects NULL/'open' only).
+    // `pr_merge_commit_sha` is the PROVIDER merge commit (provenance only) —
+    // distinct from `runs.merge_commit_sha`, which stays owned by the
+    // repo_delivery_scan (ADR-134).
     prState: text("pr_state", { enum: ["open", "merged", "closed"] }),
     prHasConflicts: boolean("pr_has_conflicts"),
     prMergedAt: timestamp("pr_merged_at", { withTimezone: true, mode: "date" }),
     prMergeCommitSha: text("pr_merge_commit_sha"),
-    prStateCheckedAt: timestamp("pr_state_checked_at", {
-      withTimezone: true,
-      mode: "date",
-    }),
   },
   (t) => ({
     prStateCheck: check(

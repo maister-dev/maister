@@ -16911,7 +16911,10 @@ components:
     SyncRunResponse:
       type: object
       description: (ADR-140 — Implemented) Result of a branch sync.
-      required: [attemptId, outcome]
+      # Every field is always present — `SyncRunOutcome` types all four non-null
+      # — so the ext twin (`ExtRunSyncResult`) requires the same set plus its
+      # echoed `runId`.
+      required: [attemptId, outcome, behind, pushed]
       additionalProperties: false
       properties:
         attemptId:

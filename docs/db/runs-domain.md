@@ -209,7 +209,6 @@ erDiagram
         boolean pr_has_conflicts "NULL=unknown"
         timestamp pr_merged_at
         text pr_merge_commit_sha "provider merge commit — NOT runs.merge_commit_sha"
-        timestamp pr_state_checked_at "stamped every scan attempt"
         timestamp promoted_at "M18 0021"
         text promotion_state "M18 0021 none|claiming|done|failed|reopened (reopened: ADR-140 reopen path, app-level, no CHECK) (NOT NULL DEFAULT none)"
         text promotion_lane "ADR-126 0089: auto lane class docs|tests|deps|config, nullable (NULL = manual)"

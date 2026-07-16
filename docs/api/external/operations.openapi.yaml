@@ -1780,8 +1780,13 @@ paths:
               properties:
                 runId:
                   type: string
-                  format: uuid
-                  description: The Done run to reopen.
+                  minLength: 1
+                  description: |
+                    The Done run to reopen. NOT declared `format: uuid` — the
+                    handler validates the identical `z.string().min(1)` its sync
+                    sibling does and resolves the run by lookup, so a non-UUID is
+                    an existence-hidden 404, never a 422. Declaring uuid would
+                    promise a validation the server does not perform.
       responses:
         "200":
           description: Run reopened; it is now `Review`.
@@ -1793,7 +1798,7 @@ paths:
                 properties:
                   runId:
                     type: string
-                    format: uuid
+                    minLength: 1
                   status:
                     type: string
                     enum: [Review]
@@ -3279,15 +3284,21 @@ components:
     ExtRunSyncResult:
       type: object
       description: Result of an ext branch-sync operation (ADR-140).
-      required: [runId, outcome]
+      required: [runId, attemptId, outcome, behind, pushed]
       additionalProperties: false
       properties:
         runId:
           type: string
-          format: uuid
+          minLength: 1
+          description: |
+            Echoes the requested run. NOT declared `format: uuid`, for the same
+            reason as the request field above: the handler validates
+            `z.string().min(1)` and resolves the run by lookup.
         attemptId:
           type: string
-          nullable: true
+          description: |
+            The `run_sync_attempts` row id for this attempt. NEVER null — a
+            result exists only once the attempt row has been minted.
         outcome:
           type: string
           enum: [noop, synced, conflict, agent_launched]
@@ -3300,7 +3311,9 @@ components:
             (including the 202 `agent_launched` cut) carries the real count.
         pushed:
           type: boolean
-          nullable: true
+          description: |
+            Whether the branch was force-with-lease pushed. NEVER null — the
+            push decision is resolved on every outcome.
 
     ReadinessDTO:
       type: object

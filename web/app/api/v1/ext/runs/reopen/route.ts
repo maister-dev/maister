@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -31,17 +31,11 @@ type ReopenBody = z.infer<typeof bodySchema>;
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const db = getDb() as Db;
 
-  let body: ReopenBody;
-
-  try {
-    body = bodySchema.parse(await req.json());
-  } catch (err) {
-    return NextResponse.json(
-      { code: "CONFIG", message: `invalid body: ${(err as Error).message}` },
-      { status: 422 },
-    );
-  }
-
+  // AUTH FIRST — see the note in the sibling sync route: keying
+  // `resolveProjectId` off a body field forced the parse above `handleExt`, so a
+  // valid token sending a malformed body was answered 422 with NO
+  // `token_audit_log` row. The project comes from the TOKEN, and the run is
+  // existence-hidden against it below.
   return handleExt(
     req,
     {
@@ -49,17 +43,38 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       endpoint: ENDPOINT,
       method: "POST",
       requireScope: true,
-      resolveProjectId: async ({ db }) => {
-        const rows = await db
-          .select({ projectId: runs.projectId })
-          .from(runs)
-          .where(eq(runs.id, body.runId));
-
-        return rows[0]?.projectId ?? null;
-      },
       db,
     },
     async (ctx) => {
+      let body: ReopenBody;
+
+      try {
+        body = bodySchema.parse(await req.json());
+      } catch (err) {
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: `invalid body: ${(err as Error).message}`,
+          },
+          { status: 422 },
+        );
+      }
+
+      // Load-bearing, NOT belt-and-braces: `reopenRun` takes no projectId, so
+      // this is the ONLY thing standing between a project-A token and a run in
+      // project B. A foreign run is existence-hidden as 404.
+      const rows = await db
+        .select({ id: runs.id })
+        .from(runs)
+        .where(and(eq(runs.id, body.runId), eq(runs.projectId, ctx.projectId)));
+
+      if (rows.length === 0) {
+        return NextResponse.json(
+          { code: "NOT_FOUND", message: "run not found" },
+          { status: 404 },
+        );
+      }
+
       // Canonical mapper — see the note in the sibling sync route: a hand-rolled
       // mapping records an ownerless PROJECT token as `{user, id: null}` rather
       // than `{system, null}`, corrupting the lifecycle-op audit trail.

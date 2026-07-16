@@ -218,7 +218,7 @@ describe("POST /api/v1/ext/runs/sync", () => {
     expect(rows[0]).toMatchObject({ result: "error", status_code: 404 });
   });
 
-  it("malformed body (missing runId) → 422", async () => {
+  it("malformed body (missing runId) → 422, audit row", async () => {
     const { projectId, executorId } = await seedProject(
       `ext-sync-422-${randomUUID().slice(0, 8)}`,
     );
@@ -237,6 +237,26 @@ describe("POST /api/v1/ext/runs/sync", () => {
 
     expect(res.status).toBe(422);
     expect((await res.json()).code).toBe("CONFIG");
+
+    // The point of the assertion: a VALID token's request is audited even when
+    // its body is rejected. `handleExt` is the sole `token_audit_log` writer, so
+    // parsing above it made this row vanish — the token's use went unrecorded.
+    expect(await auditRows()).toHaveLength(1);
+  });
+
+  // AUTH FIRST: an unidentified caller must be turned away BEFORE the body is
+  // parsed, so a malformed body can never turn a 401 into a 422 (which would
+  // both leak that the endpoint parsed the body and skip the audit trail).
+  it("invalid token + malformed body → 401 (never 422), no audit row", async () => {
+    const req = makeReq("sync", { strategy: "rebase" });
+
+    req.headers.set("authorization", "Bearer invalid");
+
+    const res = await syncPOST(req);
+
+    expect(res.status).toBe(401);
+    expect(await auditRows()).toHaveLength(0);
+    expect(syncRunTargetMock).not.toHaveBeenCalled();
   });
 
   it("unknown runnerId → 422, audit row", async () => {
@@ -412,6 +432,42 @@ describe("POST /api/v1/ext/runs/reopen", () => {
     });
   });
 
+  // AUTH FIRST — see the sync twin. Also guards the audit trail: `handleExt` is
+  // the sole `token_audit_log` writer, so returning 422 above it lost the row.
+  it("invalid token + malformed body → 401 (never 422), no audit row", async () => {
+    const req = makeReq("reopen", {});
+
+    req.headers.set("authorization", "Bearer invalid");
+
+    const res = await reopenPOST(req);
+
+    expect(res.status).toBe(401);
+    expect(await auditRows()).toHaveLength(0);
+    expect(reopenRunMock).not.toHaveBeenCalled();
+  });
+
+  it("malformed body (missing runId) → 422, audit row", async () => {
+    const { projectId } = await seedProject(
+      `ext-reopen-422-${randomUUID().slice(0, 8)}`,
+    );
+    const token = await issueToken(
+      { projectId, name: "ok", scopes: ["runs:sync"] },
+      db,
+    );
+    const req = makeReq("reopen", {});
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await reopenPOST(req);
+
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("CONFIG");
+    expect(await auditRows()).toHaveLength(1);
+  });
+
+  // The existence-check inside the handler is the ONLY cross-project boundary
+  // for reopen — `reopenRun` takes no projectId — so this asserts the refusal
+  // reaches it, not merely that the status is 404.
   it("wrong-project runId → existence-hidden 404", async () => {
     const { projectId: proj1 } = await seedProject(
       `ext-reopen-x1-${randomUUID().slice(0, 8)}`,

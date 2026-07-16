@@ -149,16 +149,13 @@ describe("runPrStateScanJob", () => {
     expect(mergedWs.prState).toBe("merged");
     expect(mergedWs.prMergedAt?.toISOString()).toBe("2026-07-14T00:00:00.000Z");
     expect(mergedWs.prMergeCommitSha).toBe("merge-sha-101");
-    expect(mergedWs.prStateCheckedAt).not.toBeNull();
 
     expect(closedWs.prState).toBe("closed");
-    expect(closedWs.prStateCheckedAt).not.toBeNull();
 
-    // An open PR is only stamped — pr_state stays as-is (NULL here), keeping the
+    // An open PR writes no state — pr_state stays as-is (NULL here), keeping the
     // row a candidate; the conflicts edge is what flips pr_has_conflicts.
     expect(conflictWs.prState).toBeNull();
     expect(conflictWs.prHasConflicts).toBe(true);
-    expect(conflictWs.prStateCheckedAt).not.toBeNull();
 
     const events = await webhooks(projectId);
 
@@ -284,10 +281,16 @@ describe("runPrStateScanJob", () => {
     expect(activity).toHaveLength(1);
   });
 
-  it("stamps a transient skip in place and closes a terminal skip without a webhook", async () => {
+  // C2: a FAILED READ MAY NOT GUESS AT PR STATE. Providers answer
+  // permission-denied with the same 404 they use for a deleted PR, so a skip
+  // cannot tell "deleted" from "the token lost access" — and writing 'closed'
+  // is unrecoverable here: the candidate query selects NULL/'open' only, so the
+  // row would never be re-read, and nothing else writes pr_state. One rotated
+  // GH_TOKEN would silently mark every live PR closed and block reopen.
+  it("never writes pr_state for a failed read, and keeps the row a candidate", async () => {
     const projectId = await seedProject();
     const transient = await seedCandidate({ projectId, prNumber: 301 });
-    const terminal = await seedCandidate({ projectId, prNumber: 302 });
+    const unreadable = await seedCandidate({ projectId, prNumber: 302 });
 
     const summary = await runPrStateScanJob({
       projectId,
@@ -297,31 +300,24 @@ describe("runPrStateScanJob", () => {
         302: {
           kind: "skip",
           transient: false,
-          reason: "gh pull request not found",
+          reason: "cannot derive owner/repo from remote URL",
         },
       }),
     });
 
     expect(summary).toMatchObject({ scanned: 2, updated: 0, skipped: 2 });
 
-    const transientWs = await workspace(transient.workspaceId);
-    const terminalWs = await workspace(terminal.workspaceId);
-
-    // Transient: checked_at stamped, state untouched — stays a candidate.
-    expect(transientWs.prState).toBeNull();
-    expect(transientWs.prStateCheckedAt).not.toBeNull();
-
-    // Terminal: closed so it leaves the candidate set, but NO webhook.
-    expect(terminalWs.prState).toBe("closed");
-    expect(terminalWs.prStateCheckedAt).not.toBeNull();
+    expect((await workspace(transient.workspaceId)).prState).toBeNull();
+    expect((await workspace(unreadable.workspaceId)).prState).toBeNull();
 
     expect(await webhooks(projectId)).toHaveLength(0);
 
-    // The transient row is still eligible next tick; the terminal one is not.
+    // BOTH stay eligible: an unreadable PR is retried at cursor rate, never
+    // abandoned — recovery must not require hand-written SQL.
     const stillCandidate = await eligibleWorkspaceIds(projectId);
 
     expect(stillCandidate).toContain(transient.workspaceId);
-    expect(stillCandidate).not.toContain(terminal.workspaceId);
+    expect(stillCandidate).toContain(unreadable.workspaceId);
   });
 
   // ADR-139/140: a TERMINAL PR has no meaningful mergeability, and providers
@@ -444,9 +440,13 @@ describe("runPrStateScanJob", () => {
   // two unfenced scanners on the same rows, and enough repeated failures to
   // poison-disable the job.
   it("(#C8) stops at its lease budget and resumes from the last candidate it ACTUALLY processed", async () => {
-    // Floor the budget: scanBudgetMs() = max(1_000, lease - callBudget - 10_000),
-    // so any small lease pins it at the 1s floor.
-    vi.stubEnv("MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS", "1");
+    // A lease that leaves a REAL ~1s budget: scanBudgetMs() is
+    // `lease - callBudget(60s) - 10s`, so 71s ⇒ 1_000ms. This must not be
+    // constructed by starving the lease (e.g. "1"): the budget is deliberately
+    // unfloored, so a lease too short to fit ONE worst-case provider call starts
+    // ZERO candidates rather than one it cannot finish — a different contract,
+    // asserted separately below.
+    vi.stubEnv("MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS", "71");
 
     const projectId = await seedProject();
 
@@ -492,6 +492,33 @@ describe("runPrStateScanJob", () => {
     expect(resumed).toHaveBeenCalledTimes(50 - processed);
   });
 
+  // The budget is deliberately UNFLOORED. A floor (`max(1_000, …)`) would license
+  // starting a candidate the lease cannot fit: the attempt is then reaped as
+  // LEASE_EXPIRED while the call is still writing, and the replacement scan runs
+  // unfenced against the same rows. Starting zero is the only safe answer, and
+  // the cursor must HOLD so the next tick re-reads the same window.
+  it("starts ZERO candidates when the lease cannot fit one provider call", async () => {
+    vi.stubEnv("MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS", "1");
+
+    const projectId = await seedProject();
+
+    await ensurePrStateScanSeed();
+    await seedFullBatch(projectId);
+
+    const reader = vi.fn(async () => OPEN);
+    const summary = await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: reader as unknown as typeof getPrState,
+    });
+
+    expect(reader).not.toHaveBeenCalled();
+    expect(summary.updated).toBe(0);
+    expect(summary.cursor).toBeNull();
+
+    vi.stubEnv("MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS", "300");
+  });
+
   it("returns unsupported_provider for a generic remote without stamping any candidate", async () => {
     const projectId = await seedProject({
       repoUrl: "https://git.internal.example/acme/app.git",
@@ -516,8 +543,7 @@ describe("runPrStateScanJob", () => {
 
     const ws = await workspace(candidate.workspaceId);
 
-    // A generic project carries no PR tracking — do not stamp.
-    expect(ws.prStateCheckedAt).toBeNull();
+    // A generic project carries no PR tracking — write nothing.
     expect(ws.prState).toBeNull();
     expect(await webhooks(projectId)).toHaveLength(0);
   });

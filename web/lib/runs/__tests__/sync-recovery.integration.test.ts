@@ -135,11 +135,20 @@ async function seedRunAttempt(opts: {
   phase: string;
   agentRunningSince?: Date | null;
   headShaBefore?: string | null;
-}): Promise<{ runId: string; workspaceId: string; attemptId: string }> {
+}): Promise<{
+  runId: string;
+  workspaceId: string;
+  attemptId: string;
+  lifecycleAttemptId: string;
+}> {
   const { projectId, taskId } = await seedGraph();
   const runId = newId();
   const workspaceId = newId();
   const attemptId = newId();
+  // The claim's fence token. `syncRunTarget` ALWAYS mints one alongside the
+  // claim, so a seed without it is a state production cannot produce — and it
+  // would silently exempt these rows from the fenced release under test.
+  const lifecycleAttemptId = newId();
 
   await pool.query(
     `insert into runs (id, project_id, task_id, run_kind, status, flow_version, flow_revision, started_at)
@@ -147,9 +156,15 @@ async function seedRunAttempt(opts: {
     [runId, projectId, taskId, opts.status],
   );
   await pool.query(
-    `insert into workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, lifecycle_operation_name, lifecycle_operation_state)
-     values ($1, $2, $3, 'maister/rec', $4, '/tmp/repo', 'sync', 'claiming')`,
-    [workspaceId, runId, projectId, `/tmp/wt-${workspaceId.slice(0, 8)}`],
+    `insert into workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, lifecycle_operation_name, lifecycle_operation_state, lifecycle_operation_attempt_id)
+     values ($1, $2, $3, 'maister/rec', $4, '/tmp/repo', 'sync', 'claiming', $5)`,
+    [
+      workspaceId,
+      runId,
+      projectId,
+      `/tmp/wt-${workspaceId.slice(0, 8)}`,
+      lifecycleAttemptId,
+    ],
   );
   await pool.query(
     `insert into run_sync_attempts (id, run_id, workspace_id, attempt, strategy, mode, phase, agent_running_since, head_sha_before)
@@ -165,7 +180,35 @@ async function seedRunAttempt(opts: {
     ],
   );
 
-  return { runId, workspaceId, attemptId };
+  return { runId, workspaceId, attemptId, lifecycleAttemptId };
+}
+
+// A SECOND attempt on an existing run — the shape `loadActiveAttempt`'s
+// `orderBy(desc(attempt))` exists for, which a single-attempt seed can never
+// distinguish from "pick the only row".
+async function seedExtraAttempt(opts: {
+  runId: string;
+  workspaceId: string;
+  attempt: number;
+  phase: string;
+  mode?: "mechanical" | "agent";
+}): Promise<string> {
+  const attemptId = newId();
+
+  await pool.query(
+    `insert into run_sync_attempts (id, run_id, workspace_id, attempt, strategy, mode, phase)
+     values ($1, $2, $3, $4, 'rebase', $5, $6)`,
+    [
+      attemptId,
+      opts.runId,
+      opts.workspaceId,
+      opts.attempt,
+      opts.mode ?? "agent",
+      opts.phase,
+    ],
+  );
+
+  return attemptId;
 }
 
 async function readRunStatus(runId: string): Promise<string> {
@@ -326,13 +369,85 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
       agentRunningSince: past,
     });
 
+    // A LIVE paused resolver — which is what this contract is about — still has
+    // its in-process driver registered (it is held for the WHOLE backgrounded
+    // resolve). Without it the row is indistinguishable from a post-restart
+    // orphan, which the W7 arm is now REQUIRED to sweep.
+    registerSyncDriver(runId);
+
+    try {
+      const summary = await runSyncRecoverySweep({
+        db,
+        listSessions: noSessions,
+      });
+
+      expect(summary.durationCapKilled).toBe(0);
+      expect(await readRunStatus(runId)).toBe("NeedsInput");
+    } finally {
+      unregisterSyncDriver(runId);
+    }
+  });
+
+  // Multi-attempt: a run may accrue several `run_sync_attempts` rows over its
+  // life, so the sweep must act on the LIVE one and leave a settled older one
+  // alone. With only ever one row seeded, `notInArray(phase, TERMINAL)` +
+  // `orderBy(desc(attempt))` is indistinguishable from "take the only row".
+  it("acts on the NEWER live attempt and leaves an older terminal one untouched", async () => {
+    const {
+      runId,
+      workspaceId,
+      attemptId: older,
+    } = await seedRunAttempt({
+      status: "NeedsInput",
+      mode: "agent",
+      // Already settled — the sweep must not rewrite this.
+      phase: "succeeded",
+    });
+    const newer = await seedExtraAttempt({
+      runId,
+      workspaceId,
+      attempt: 2,
+      phase: "agent_running",
+    });
+
     const summary = await runSyncRecoverySweep({
       db,
       listSessions: noSessions,
     });
 
-    expect(summary.durationCapKilled).toBe(0);
-    expect(await readRunStatus(runId)).toBe("NeedsInput");
+    expect(summary.orphanOperationsAborted).toBe(1);
+    expect(await readAttemptPhase(newer)).toBe("failed");
+    expect(await readAttemptPhase(older)).toBe("succeeded");
+    expect(await readRunStatus(runId)).toBe("Review");
+  });
+
+  // W7 (ADR-140): the resolver parks in NeedsInput BY DESIGN — an ACP
+  // `requestPermission` puts it there — so after a restart the prompt has nobody
+  // to answer it: W5 is Running-only, reconcile owns only Running, and W1/W4 is
+  // mechanical-only. Unswept, the run holds a pool slot AND the sync claim
+  // forever, which also refuses promote and every other lifecycle op.
+  it("W7: aborts an agent resolver orphaned while parked on HITL, and releases the claim", async () => {
+    for (const status of ["NeedsInput", "NeedsInputIdle"] as const) {
+      const { runId, workspaceId, attemptId } = await seedRunAttempt({
+        status,
+        mode: "agent",
+        phase: "agent_running",
+        agentRunningSince: new Date(),
+      });
+
+      const summary = await runSyncRecoverySweep({
+        db,
+        listSessions: noSessions,
+      });
+
+      expect(summary.orphanOperationsAborted).toBeGreaterThan(0);
+      expect(await readRunStatus(runId)).toBe("Review");
+      expect(await readAttemptPhase(attemptId)).toBe("failed");
+      expect(await readClaim(workspaceId)).toEqual({
+        state: "none",
+        name: null,
+      });
+    }
   });
 
   // W5 deliberately does not consult `hasSyncDriver` — the cap MUST be able to

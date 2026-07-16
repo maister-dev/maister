@@ -5,6 +5,10 @@ import type { ReactElement } from "react";
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
+
+import { useFeedback } from "@/components/feedback/feedback-provider";
+import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 
 export interface PrReopenButtonProps {
   runId: string;
@@ -20,18 +24,28 @@ export function PrReopenButton({
   label,
 }: PrReopenButtonProps): ReactElement {
   const router = useRouter();
+  const feedback = useFeedback();
+  const t = useTranslations("run");
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
 
+  // Failure goes through the shared feedback provider, not a `title` suffix: a
+  // title is invisible to a screen reader (the aria-label never changed) and to
+  // anyone not hovering — and the COMMONEST failure here is a viewer's 403.
   async function reopen(): Promise<void> {
     setBusy(true);
-    setFailed(false);
     try {
       const res = await fetch(`/api/runs/${runId}/reopen`, { method: "POST" });
 
       if (!res.ok) {
-        setFailed(true);
+        const data = (await res.json().catch(() => null)) as {
+          code?: string;
+        } | null;
+
+        feedback.error({
+          mutationId: `run-reopen:${runId}:failure`,
+          message: t(resolveUiErrorMessageKey(data?.code)),
+        });
         setBusy(false);
 
         return;
@@ -39,7 +53,10 @@ export function PrReopenButton({
       startTransition(() => router.refresh());
       setBusy(false);
     } catch {
-      setFailed(true);
+      feedback.error({
+        mutationId: `run-reopen:${runId}:failure`,
+        message: t(resolveUiErrorMessageKey(undefined)),
+      });
       setBusy(false);
     }
   }
@@ -53,7 +70,7 @@ export function PrReopenButton({
       className="relative z-10 ml-0.5 inline-flex items-center hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
       data-testid="pr-reopen"
       disabled={busy}
-      title={failed ? `${label} ✗` : label}
+      title={label}
       type="button"
       onClick={(e) => {
         // The chip usually sits inside a card-level link; keep the click local.

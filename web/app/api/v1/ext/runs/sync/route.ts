@@ -36,20 +36,13 @@ type SyncBody = z.infer<typeof bodySchema>;
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const db = getDb() as Db;
 
-  // Parse+validate the body once, up front, so `resolveProjectId` can key on
-  // `runId` (a body field, not a path segment). The stream is consumed here and
-  // reused inside `work` — never re-read.
-  let body: SyncBody;
-
-  try {
-    body = bodySchema.parse(await req.json());
-  } catch (err) {
-    return NextResponse.json(
-      { code: "CONFIG", message: `invalid body: ${(err as Error).message}` },
-      { status: 422 },
-    );
-  }
-
+  // AUTH FIRST — exactly like every sibling run-action route (promote, cancel,
+  // rework, …): the token is verified, scoped, and AUDITED before this request's
+  // body is ever touched. Keying `resolveProjectId` off a body field forced the
+  // parse above `handleExt`, so a valid token sending a malformed body was
+  // answered 422 with NO `token_audit_log` row — handleExt is that table's sole
+  // writer. The project comes from the TOKEN; the run is then existence-hidden
+  // against it below, which is the same boundary resolveProjectId was drawing.
   return handleExt(
     req,
     {
@@ -57,21 +50,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       endpoint: ENDPOINT,
       method: "POST",
       requireScope: true,
-      // Server-derive projectId from the run row; cross-project mismatch is
-      // existence-hidden as 404 by handleExt. projectId is NEVER a body field.
-      resolveProjectId: async ({ db }) => {
-        const rows = await db
-          .select({ projectId: runs.projectId })
-          .from(runs)
-          .where(eq(runs.id, body.runId));
-
-        return rows[0]?.projectId ?? null;
-      },
       db,
     },
     async (ctx) => {
-      // Existence-hide within the token's project (belt-and-suspenders: handleExt
-      // already enforced ownership via resolveProjectId + mismatch → 404).
+      let body: SyncBody;
+
+      try {
+        body = bodySchema.parse(await req.json());
+      } catch (err) {
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: `invalid body: ${(err as Error).message}`,
+          },
+          { status: 422 },
+        );
+      }
+
+      // Existence-hide within the token's project: a run in ANOTHER project is
+      // indistinguishable from one that does not exist. projectId is NEVER a
+      // body field.
       const rows = await db
         .select({ id: runs.id })
         .from(runs)

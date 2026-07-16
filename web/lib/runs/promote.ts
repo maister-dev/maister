@@ -117,6 +117,17 @@ function resolvePromotionOwnerUserId(ctx: PromoteRunContext): string | null {
   return isHumanPromotion(ctx) ? ctx.sessionUser.id : null;
 }
 
+// Whether a promotion runs unattended (nobody at the keyboard). Auto delivery
+// (`deliverRunIfAutoReady`) and the token/orchestrator auto-promoter set NO
+// `ctx.actor` — they identify ONLY by these flags — so every authority decision
+// must read this, not `ctx.actor` alone, or it mistakes a machine for the
+// session user.
+function isUnattendedPromotion(input: PromoteRunInput): boolean {
+  return (
+    input.autoOnReady === true || input.attribution?.source === "auto_promotion"
+  );
+}
+
 // ADR-140: WHO to record on the branch-sync attempt when an `ai_rebase_merge`
 // promotion delegates to the resolver. `ctx.actor` is the canonical authority —
 // hardcoding `{user, sessionUser.id}` stamped a phantom human on the ledger of a
@@ -127,11 +138,14 @@ function resolvePromotionOwnerUserId(ctx: PromoteRunContext): string | null {
 // `run_sync_attempts.actor_id` has no FK, so those placeholders wrote silently.
 // Both placeholders' own comments state they are never dereferenced for a
 // non-user actor. Mirrors `socialActorForToken`, the ext routes' mapper.
-function syncActorForPromotion(ctx: PromoteRunContext): SyncActor {
+function syncActorForPromotion(
+  ctx: PromoteRunContext,
+  input: PromoteRunInput,
+): SyncActor {
   if (ctx.actor?.kind === "agent") {
     return { type: "agent", id: ctx.actor.agentId };
   }
-  if (ctx.actor?.kind === "system") {
+  if (ctx.actor?.kind === "system" || isUnattendedPromotion(input)) {
     return { type: "system", id: null };
   }
 
@@ -158,6 +172,23 @@ export type PromoteRunResult = {
 // ADR-140 (Task 12): a reopened Done run (promotion_state='reopened') is
 // re-promotable — its claim is reclaimable just like a fresh/failed one.
 const RECLAIMABLE_STATES = new Set(["none", "failed", "reopened"]);
+
+// Whether a HELD lifecycle claim (sync/stop/archive/…) has gone stale — the same
+// timeout `canReclaimLifecycle` reclaims on, so the reverse fence below and the
+// lifecycle service can never disagree about who still owns the slot.
+function lifecycleClaimIsStale(workspace: {
+  lifecycleOperationClaimedAt?: Date | null;
+}): boolean {
+  const claimedAt = workspace.lifecycleOperationClaimedAt
+    ? new Date(workspace.lifecycleOperationClaimedAt)
+    : null;
+
+  if (!claimedAt) return true;
+
+  return (
+    claimedAt.getTime() < Date.now() - promotionClaimTimeoutSeconds() * 1000
+  );
+}
 
 function canReclaim(workspace: {
   promotionState?: string | null;
@@ -556,11 +587,10 @@ async function promoteWorkspaceRun(
   // allowed. (`promoteScratchRun` is the other apply site but needs no guard —
   // `experiment_runs` rows are inserted only in launchRun, so a scratch run can
   // never be a member.)
-  const isUnattendedPromotion =
-    input.autoOnReady === true ||
-    input.attribution?.source === "auto_promotion";
-
-  if (isUnattendedPromotion && (await isExperimentMemberRun(db, runId))) {
+  if (
+    isUnattendedPromotion(input) &&
+    (await isExperimentMemberRun(db, runId))
+  ) {
     throw new MaisterError(
       "PRECONDITION",
       "experiment-member run cannot auto-promote — conclude the experiment and promote the winner explicitly",
@@ -769,9 +799,16 @@ async function promoteWorkspaceRun(
     // branch sync holds the shared workspace lifecycle slot. The forward fence
     // lives in syncRunTarget (refuses when promotion_state is claiming/done), so
     // the two are mutually exclusive under the same FOR UPDATE workspace lock.
+    //
+    // The staleness carve-out mirrors `canReclaimLifecycle` (and `canReclaim`
+    // below), and is the belt-and-braces recovery for a claim that was stranded
+    // rather than held: an unbounded fence turns one crash between a sync's
+    // terminal-phase write and its claim release into a PERMANENT refusal of
+    // promotion and every other lifecycle op, with no exit but hand-written SQL.
     if (
       workspace.lifecycleOperationName === "sync" &&
-      workspace.lifecycleOperationState === "claiming"
+      workspace.lifecycleOperationState === "claiming" &&
+      !lifecycleClaimIsStale(workspace)
     ) {
       throw new MaisterError(
         "CONFLICT",
@@ -894,7 +931,6 @@ async function promoteWorkspaceRun(
         "recovered target merge before promotion finalization",
       );
     }
-    await maybePushTargetBranch({ db, claim, commit });
     diffStat = recoveredCommit
       ? await deliveryCommitStats({
           projectRepoPath: claim.workspace.parentRepoPath,
@@ -925,11 +961,24 @@ async function promoteWorkspaceRun(
           agent: true,
           push: false,
           autoFinalize: input.autoFinalize ?? false,
-          actor: syncActorForPromotion(ctx),
+          actor: syncActorForPromotion(ctx, input),
           // Pass the INJECTED db through — omitting it silently fell back to
           // getDb(), so the delegation escaped the caller's (and every test's) seam.
           db,
         });
+
+        // Only `agent_launched` DEFERS the promotion. `noop`/`synced` mean no
+        // resolver is coming and this merge never landed, so the conflict stays
+        // the caller's answer (run remains `Review` for a human — §8 no
+        // auto-resolve); the claim is already released above, so a re-promote
+        // reclaims cleanly.
+        if (sync.outcome !== "agent_launched") {
+          log.warn(
+            { runId, attemptId: claim.attemptId, syncOutcome: sync.outcome },
+            "ai_rebase_merge delegation launched no resolver — promotion not deferred",
+          );
+          throw err;
+        }
 
         log.info(
           { runId, attemptId: claim.attemptId, syncOutcome: sync.outcome },
@@ -940,7 +989,7 @@ async function promoteWorkspaceRun(
           ok: true,
           mode: "ai_rebase_merge",
           pullRequestUrl: null,
-          resolverLaunched: sync.outcome === "agent_launched",
+          resolverLaunched: true,
         };
       }
 
@@ -979,6 +1028,14 @@ async function promoteWorkspaceRun(
 
     throw err;
   }
+
+  // Pushing the target is a FOLLOW-UP to an already-landed merge and owns its
+  // degrade-to-manual handling, so it stays OUTSIDE the catch above:
+  // `GitPushRejectedError` carries code `CONFLICT`, which that catch reads as
+  // "the rebase conflicted" — routing a merely rejected push into a
+  // merge-conflict assignment, or into an AI resolver for a conflict that does
+  // not exist.
+  await maybePushTargetBranch({ db, claim, commit });
 
   // ---- Finalize tx: assert the attempt token still matches (§3.2 step 3).
   const result = await db.transaction(async (tx: Db) => {

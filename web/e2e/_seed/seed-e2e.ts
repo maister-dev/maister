@@ -1834,10 +1834,9 @@ async function seedReopenFixture(
     `INSERT INTO workspaces
        (id, run_id, project_id, branch, worktree_path, parent_repo_path,
         base_branch, base_commit, target_branch, promotion_mode,
-        promotion_state, pr_url, pr_number, pr_state, pr_has_conflicts,
-        pr_state_checked_at)
+        promotion_state, pr_url, pr_number, pr_state, pr_has_conflicts)
      VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main', 'pull_request',
-        'done', $8, 42, 'open', true, now())`,
+        'done', $8, 42, 'open', true)`,
     [
       ids.workspace,
       ids.run,

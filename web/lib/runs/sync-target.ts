@@ -433,45 +433,98 @@ async function settleAttempt(
     now: () => Date;
   },
 ): Promise<void> {
-  await setAttemptPhase(db, claim.attemptId, "succeeded", {
-    ...(args.headShaAfter !== undefined
-      ? { headShaAfter: args.headShaAfter }
-      : {}),
-    ...(args.pushed !== undefined ? { pushed: args.pushed } : {}),
+  // ONE transaction — the terminal phase and the claim release may never
+  // half-apply. Every recovery arm FILTERS OUT terminal phases, so a crash
+  // between the two writes leaves a claim that no sweep can ever see, and
+  // promote's reverse fence (unlike `canReclaimLifecycle`) has no staleness
+  // carve-out: promotion and all six other lifecycle ops are then refused
+  // permanently, with no exit but hand-written SQL.
+  await db.transaction(async (tx: Db) => {
+    await setAttemptPhase(tx, claim.attemptId, "succeeded", {
+      ...(args.headShaAfter !== undefined
+        ? { headShaAfter: args.headShaAfter }
+        : {}),
+      ...(args.pushed !== undefined ? { pushed: args.pushed } : {}),
+    });
+    if (args.headMoved) {
+      await tx
+        .update(runs)
+        .set({ reviewEnteredAt: args.now() })
+        .where(eq(runs.id, args.runId));
+    }
+    await releaseSyncClaim(tx, claim);
   });
-  if (args.headMoved) {
-    await db
-      .update(runs)
-      .set({ reviewEnteredAt: args.now() })
-      .where(eq(runs.id, args.runId));
-  }
-  await releaseSyncClaim(db, claim);
 }
 
 // Terminal write for an aborted attempt (divergence / clean conflict abort):
 // record `aborted`, then release the claim. No run mutation — status stays Review.
+// ONE transaction — see `settleAttempt`: a half-applied terminal strands the claim
+// beyond every recovery arm's reach.
 async function abortAttempt(
   db: Db,
   claim: Claim,
   extra: Record<string, unknown> = {},
 ): Promise<void> {
-  await setAttemptPhase(db, claim.attemptId, "aborted", extra);
-  await releaseSyncClaim(db, claim);
+  await db.transaction(async (tx: Db) => {
+    await setAttemptPhase(tx, claim.attemptId, "aborted", extra);
+    await releaseSyncClaim(tx, claim);
+  });
 }
 
 // Terminal write for a failed attempt (verify-fail / lease-fail): record `failed`
 // + error, then release the claim. The local rebase result is left untouched.
+// ONE transaction — see `settleAttempt`.
 async function failAttempt(
   db: Db,
   claim: Claim,
   errorCode: string,
   errorMessage: string,
 ): Promise<void> {
-  await setAttemptPhase(db, claim.attemptId, "failed", {
-    errorCode,
-    errorMessage,
+  await db.transaction(async (tx: Db) => {
+    await setAttemptPhase(tx, claim.attemptId, "failed", {
+      errorCode,
+      errorMessage,
+    });
+    await releaseSyncClaim(tx, claim);
   });
-  await releaseSyncClaim(db, claim);
+}
+
+// Terminalize this attempt ONLY while it is still non-terminal, reporting whether
+// we won it. Unlike `failAttempt`'s unguarded write, losing here is meaningful:
+// it says another owner (the W5 duration-cap sweep, or an in-flight finalize)
+// already terminalized this attempt, so the caller must not run the side effects
+// that follow. The guard is the terminal SET rather than an exact phase because
+// the resolver's failure points span `agent_running`/`verifying`/`pushing` and one
+// of them is a catch-all — and unlike the sweep, this driver is the attempt's own
+// owner, so it only ever needs to detect that someone else ended it.
+async function failAttemptIfActive(
+  db: Db,
+  claim: Claim,
+  errorCode: string,
+  errorMessage: string,
+): Promise<boolean> {
+  // ONE transaction — see `settleAttempt`.
+  return db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runSyncAttempts)
+      .set({ phase: "failed", errorCode, errorMessage, updatedAt: new Date() })
+      .where(
+        and(
+          eq(runSyncAttempts.id, claim.attemptId),
+          notInArray(
+            runSyncAttempts.phase,
+            RUN_SYNC_TERMINAL_PHASES as unknown as string[],
+          ),
+        ),
+      )
+      .returning({ id: runSyncAttempts.id });
+
+    if (rows.length === 0) return false;
+
+    await releaseSyncClaim(tx, claim);
+
+    return true;
+  });
 }
 
 // Safety net for an UNHANDLED throw between the claim commit and an explicit
@@ -983,8 +1036,31 @@ async function failResolver(args: {
       errorCode: args.errorCode,
       errorMessage: args.errorMessage,
     },
-    "sync resolver failed — restoring pre-sync HEAD, returning run to Review",
+    "sync resolver failed — returning run to Review",
   );
+
+  // CAS BEFORE the restore (claim-before-side-effect) — the rule the recovery
+  // twin `sync-recovery.ts#failAgentAttemptToReview` documents. The W5
+  // duration-cap sweep races this driver BY DESIGN: it may already have
+  // terminalized this attempt, restored the worktree, released the claim and
+  // returned the run to Review. Restoring after that point re-runs a git side
+  // effect against a worktree this attempt no longer owns.
+  const won = await failAttemptIfActive(
+    args.db,
+    args.claim,
+    args.errorCode,
+    args.errorMessage,
+  );
+
+  if (!won) {
+    log.info(
+      { runId: args.runId, attemptId: args.claim.attemptId },
+      "sync resolver failure skipped — attempt already terminalized by a racer",
+    );
+
+    return;
+  }
+
   await restoreWorktreeToCommit(args.worktree, args.headShaBefore).catch(
     (err: unknown) => {
       log.error(
@@ -996,7 +1072,6 @@ async function failResolver(args: {
       );
     },
   );
-  await failAttempt(args.db, args.claim, args.errorCode, args.errorMessage);
   await markSyncReviewFromRunning(args.runId, { db: args.db });
   await promoteNextPending({ db: args.db, pool: args.pool });
 }

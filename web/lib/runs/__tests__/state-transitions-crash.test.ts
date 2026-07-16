@@ -53,13 +53,19 @@ function mockDb(returningRows: Array<{ id: string }>): {
 
   const db: Record<string, unknown> = {
     update() {
+      // Capture the FIRST update only — the run's terminal write, which is what
+      // these tests assert. `crashRunningRun` also releases any stranded
+      // branch-sync claim in the SAME tx (ADR-140), and one shared capture slot
+      // would otherwise report that later write in its place.
+      const isFirst = captured.setArg === null;
+
       return {
         set(arg: Record<string, unknown>) {
-          captured.setArg = arg;
+          if (isFirst) captured.setArg = arg;
 
           return {
             where(arg2: unknown) {
-              captured.whereArg = arg2;
+              if (isFirst) captured.whereArg = arg2;
 
               return {
                 async returning() {

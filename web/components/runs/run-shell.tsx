@@ -27,6 +27,7 @@ export interface RunShellProps {
   prState?: RunHeaderProps["prState"];
   prHasConflicts?: RunHeaderProps["prHasConflicts"];
   runId?: RunHeaderProps["runId"];
+  canReopen?: RunHeaderProps["canReopen"];
   changeSummary?: RunHeaderProps["changeSummary"];
   budgetStatus?: RunHeaderProps["budgetStatus"];
   reviewHref?: RunHeaderProps["reviewHref"];
@@ -51,6 +52,7 @@ export function RunShell({
   prState,
   prHasConflicts,
   runId,
+  canReopen,
   changeSummary,
   budgetStatus,
   reviewHref,
@@ -71,6 +73,7 @@ export function RunShell({
       <RunHeader
         branch={branch}
         budgetStatus={budgetStatus}
+        canReopen={canReopen}
         changeSummary={changeSummary}
         inspectorOpen={inspectorOpen}
         keyRef={keyRef}

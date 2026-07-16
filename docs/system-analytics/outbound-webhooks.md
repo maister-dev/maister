@@ -212,6 +212,9 @@ cheap). (All Implemented.)
 | `run.failed` | `→ Failed` | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `runs/keepalive-sweeper.ts` (watchdog), `services/hitl.ts` |
 | `run.crashed` | `→ Crashed` (reconcile / GC / runner crash paths) | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `flows/runner-agent.ts`, `scratch-runs/events.ts`, `scratch-runs/service.ts`, `services/hitl.ts` |
 | `run.abandoned` | `→ Abandoned` (user, workbench drop, and idle-TTL sweep) | `runs/state-transitions.ts` (`markAbandoned`), `workbench-lifecycle/service.ts` (`dropWorkbench`), `runs/keepalive-sweeper.ts` (TTL pass, `source: "ttl"` — ADR-086 gap closure) |
+| `run.pr_merged` | `workspaces.pr_state` none/open → `merged` (ADR-139 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`mergedEdge`) |
+| `run.pr_closed` | `workspaces.pr_state` none/open → `closed` (ADR-139 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`closedEdge`) |
+| `run.pr_conflicts` | `workspaces.pr_has_conflicts` false/null → `true`, non-terminal PR only (ADR-139 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`conflictsEdge`) |
 | `gate.decided` | `gate_results` reaching `passed | failed | overridden` | `flows/graph/gate-store.ts` (insert-at-terminal + all terminal transitions) |
 | `ping` | synthetic test ping — NOT persisted, NOT fanned out | `webhooks/ping.ts` |
 
@@ -287,6 +290,9 @@ the 12), `occurredAt` (ISO-8601 UTC), `deliveryId`, `attempt` (int `≥1`),
 | `run.failed` | `{ errorCode: string \| null }` |
 | `run.crashed` | `{ errorCode: string \| null }` |
 | `run.abandoned` | `{ source: "user" \| "workbench" \| "ttl" }` |
+| `run.pr_merged` | `{ prNumber: number, prUrl: string \| null, mergeCommitSha: string \| null }` |
+| `run.pr_closed` | `{ prNumber: number, prUrl: string \| null }` |
+| `run.pr_conflicts` | `{ prNumber: number, prUrl: string \| null }` |
 | `gate.decided` | `{ gateId: string, kind: "command_check" \| "skill_check" \| "ai_judgment" \| "artifact_required" \| "external_check" \| "human_review", mode: "blocking" \| "advisory", status: "passed" \| "failed" \| "overridden", nodeAttemptId: string \| null }` |
 | `ping` | `{ message: string }` |
 

@@ -260,9 +260,13 @@ export function ProjectGitSettingsControl(
               className="rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
               data-testid="branch-sync-strategy"
               value={syncStrategy}
-              onChange={(e) =>
-                setSyncStrategy(e.target.value as "rebase" | "merge")
-              }
+              onChange={(e) => {
+                // The ✓ describes what was SAVED, so any edit retires it —
+                // otherwise it sits there asserting that a now-dirty form is
+                // persisted.
+                setSyncSaved(false);
+                setSyncStrategy(e.target.value as "rebase" | "merge");
+              }}
             >
               <option value="rebase">{t("git.syncStrategyRebase")}</option>
               <option value="merge">{t("git.syncStrategyMerge")}</option>
@@ -276,7 +280,10 @@ export function ProjectGitSettingsControl(
               className="rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[12.5px]"
               data-testid="branch-sync-runner"
               value={syncRunner}
-              onChange={(e) => setSyncRunner(e.target.value)}
+              onChange={(e) => {
+                setSyncSaved(false);
+                setSyncRunner(e.target.value);
+              }}
             >
               <option value="">{t("git.syncRunnerDefault")}</option>
               {props.syncRunnerOptions.map((opt) => (
@@ -296,7 +303,7 @@ export function ProjectGitSettingsControl(
           </button>
           {syncSaved ? (
             <span
-              className="text-[16px] text-success"
+              className="text-[16px] text-good"
               data-testid="branch-sync-saved"
               role="status"
               title={t("git.syncSaved")}

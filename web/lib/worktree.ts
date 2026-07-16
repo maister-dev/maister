@@ -3298,51 +3298,63 @@ export async function ffUpdateLocalBranch(
   const br = validate(branchNameSchema, branch, "branch");
   const target = validate(gitCommitSchema, toSha, "toSha");
 
-  const checkedOut = (await currentBranch(repoPath)) === br;
+  // The mutation is on the SHARED parent repo, but every claim upstream of here
+  // is per-WORKSPACE: two runs of one project each hold a valid sync claim and
+  // would race `.git/index.lock` in the same checkout. Take the same repo-scoped
+  // lock promotion takes — held here, at the choke point, so it covers every
+  // caller rather than one call site.
+  return withRepoPromotionLock(repoPath, async () => {
+    const currentHead = await localBranchHead({
+      projectRepoPath: repoPath,
+      branch: br,
+    });
 
-  if (checkedOut) {
-    try {
-      await runGit(repoPath, ["merge", "--ff-only", "--", target]);
-
-      return;
-    } catch (err) {
-      // `--ff-only` refuses a non-fast-forward (divergence) — surface it typed.
+    if (currentHead === null) {
       throw new MaisterError(
         "PRECONDITION",
-        `cannot fast-forward checked-out branch ${br} to ${target}: ${errorText(err) || asError(err).message}`,
+        `local branch does not exist: ${br}`,
+      );
+    }
+
+    // PROVE divergence before claiming it — for BOTH arms. `merge --ff-only`
+    // exits non-zero for a dirty working tree just as it does for a real
+    // non-fast-forward, so reading its failure as "diverged" reported a provably
+    // false divergence: it named two SHAs that are in a perfect fast-forward
+    // relationship, and settled the sync `aborted`.
+    if (!(await isAncestor(repoPath, currentHead, target))) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `refusing non-fast-forward update of ${br}: ${currentHead} is not an ancestor of ${target}`,
+      );
+    }
+
+    if ((await currentBranch(repoPath)) === br) {
+      try {
+        await runGit(repoPath, ["merge", "--ff-only", "--", target]);
+
+        return;
+      } catch (err) {
+        // FF-able (proven above) and it STILL refused — so this is not
+        // divergence. The usual cause is uncommitted work in the parent
+        // checkout, which the run-worktree dirty check upstream cannot see.
+        throw new MaisterError(
+          "PRECONDITION",
+          `cannot fast-forward the checked-out branch ${br} to ${target} even though it is a fast-forward — the parent checkout ${repoPath} may have uncommitted changes: ${errorText(err) || asError(err).message}`,
+          { cause: asError(err) },
+        );
+      }
+    }
+
+    try {
+      await runGit(repoPath, ["branch", "-f", "--", br, target]);
+    } catch (err) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git branch -f ${br} failed: ${errorText(err) || asError(err).message}`,
         { cause: asError(err) },
       );
     }
-  }
-
-  const currentHead = await localBranchHead({
-    projectRepoPath: repoPath,
-    branch: br,
   });
-
-  if (currentHead === null) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `local branch does not exist: ${br}`,
-    );
-  }
-
-  if (!(await isAncestor(repoPath, currentHead, target))) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `refusing non-fast-forward update of ${br}: ${currentHead} is not an ancestor of ${target}`,
-    );
-  }
-
-  try {
-    await runGit(repoPath, ["branch", "-f", "--", br, target]);
-  } catch (err) {
-    throw new MaisterError(
-      "CONFLICT",
-      `git branch -f ${br} failed: ${errorText(err) || asError(err).message}`,
-      { cause: asError(err) },
-    );
-  }
 }
 
 // Rebase the worktree's current branch onto `ref`. A conflict is reported with

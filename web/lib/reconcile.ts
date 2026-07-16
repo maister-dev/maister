@@ -249,13 +249,13 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   //         - no live session → W2/W3 recover (idempotent re-verify → finalize or
   //           abort).
   if (input.activeSyncAttempt) {
-    // The REGISTRY is the discriminant, and it must be consulted FIRST — it is the
-    // only signal that means "a driver in THIS process owns this run". It cannot be
-    // nested under `liveSession`: a resolver's `run_sessions` row is written with
-    // `acp_session_id: null` (the supervisor handle is never persisted for sync), so
-    // `liveSession` is ALWAYS false for a live resolver. Nesting it made this skip
-    // unreachable and classified every live resolver as an orphan — the sweep then
-    // hard-reset the worktree under the running agent and released its claim.
+    // The REGISTRY is the discriminant, and it must be consulted FIRST — it is
+    // the only signal that means "a driver in THIS process owns this run".
+    // `liveSession` cannot gate it: that answers "does a supervisor session
+    // exist", which is a different question, and nesting this skip under it once
+    // made the skip unreachable — every live resolver classified as an orphan,
+    // and the sweep hard-reset the worktree under the running agent and released
+    // its claim.
     if (input.syncDriverActive) {
       return { action: "skip", reason: "sync-driver-live" };
     }

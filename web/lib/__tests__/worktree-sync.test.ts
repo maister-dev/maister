@@ -198,6 +198,33 @@ describe("branch-sync worktree helpers", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
+  // H4: a DIRTY parent checkout also makes `merge --ff-only` exit non-zero. The
+  // refusal must not be reported as divergence — that named two SHAs in a perfect
+  // fast-forward relationship as "diverged" and settled the sync `aborted`. The
+  // run's own worktree can be spotless while the parent checkout is dirty, so the
+  // upstream dirty check never sees this.
+  it("ffUpdateLocalBranch does not report divergence when the parent checkout is merely dirty", async () => {
+    await git(repo, ["branch", "ahead", "main"]);
+    await git(repo, ["checkout", "ahead"]);
+    await writeFile(join(repo, "ff.txt"), "ff\n");
+    await git(repo, ["add", "ff.txt"]);
+    await git(repo, ["commit", "-m", "ahead commit"]);
+    const target = await headSha(repo);
+
+    await git(repo, ["checkout", "main"]);
+    // Uncommitted work on the very file the fast-forward would bring in.
+    await writeFile(join(repo, "ff.txt"), "dirty local edit\n");
+
+    const err = await ffUpdateLocalBranch(repo, "main", target).catch(
+      (e: unknown) => e as { code?: string; message?: string },
+    );
+
+    // main IS an ancestor of target, so a divergence claim would be provably false.
+    expect(err?.code).toBe("PRECONDITION");
+    expect(err?.message).not.toContain("is not an ancestor of");
+    expect(err?.message).toContain("uncommitted changes");
+  });
+
   it("ffUpdateLocalBranch fast-forwards a branch that is not checked out", async () => {
     const base = await headSha(repo);
 

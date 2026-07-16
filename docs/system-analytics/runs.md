@@ -467,9 +467,10 @@ paths, and status at parity with the current merge-conflict surface.
 
 `ai_rebase_merge` is separable but runs on the same durable promotion substrate:
 the policy mode is preserved for audit/API responses, the git side effect uses
-the existing rebase-merge lane, and conflicts appear as the existing
-`merge_conflict` assignment kind in the standard inbox/needs-you surfaces unless
-a future autonomous resolver introduces additional standard HITL rows.
+the existing rebase-merge lane, and on conflict it no longer dead-ends at a
+`merge_conflict` assignment (ADR-140, Implemented) — the promotion claim
+releases and delegates to the branch-sync AI resolver under the sync
+lifecycle claim instead. See [branch-sync.md](branch-sync.md) (R7).
 
 ### Phase A audit and QA matrix (Designed, ADR-085)
 

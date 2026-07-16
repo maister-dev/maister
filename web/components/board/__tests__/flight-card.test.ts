@@ -13,6 +13,12 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
+// A member-scoped chip mounts the LIVE reopen button, which reads the shared
+// feedback provider — absent in a provider-less static render.
+vi.mock("@/components/feedback/feedback-provider", () => ({
+  useFeedback: () => ({ success: vi.fn(), error: vi.fn() }),
+}));
+
 import {
   FlightCard,
   type FlightCardLabels,
@@ -116,9 +122,12 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
   };
 }
 
-function render(card: FlightCardData): string {
+// `canAct` defaults to FALSE — a viewer — because that is this board's weakest
+// caller (`readBoard` is `viewer`). Any test claiming a LIVE action must opt in,
+// or it is really asserting that a viewer is offered a control the route 403s.
+function render(card: FlightCardData, canAct = false): string {
   return renderToStaticMarkup(
-    createElement(FlightCard, { canAct: false, card, labels, slug: "proj" }),
+    createElement(FlightCard, { canAct, card, labels, slug: "proj" }),
   );
 }
 
@@ -526,7 +535,12 @@ describe("FlightCard — PR-state chip (ADR-139)", () => {
   });
 
   it("renders the conflicts variant with a LIVE reopen action when prHasConflicts (ADR-140 Task 17)", () => {
-    const html = render(baseCard({ prState: "open", prHasConflicts: true }));
+    const html = render(
+      baseCard({ prState: "open", prHasConflicts: true }),
+      // Reopen is a `promoteRun` (member) route — only a member gets the wired
+      // control.
+      true,
+    );
 
     expect(html).toContain('data-pr-conflicts="true"');
     expect(html).toContain("Conflicts");
@@ -541,6 +555,24 @@ describe("FlightCard — PR-state chip (ADR-139)", () => {
     );
 
     expect(el).not.toContain('disabled=""');
+  });
+
+  // The board is `readBoard` (viewer) but reopen is `promoteRun` (member), so a
+  // viewer must get the chip's DISABLED affordance rather than a control whose
+  // only possible outcome is a 403.
+  it("offers a viewer the disabled reopen affordance, not a live one", () => {
+    const html = render(baseCard({ prState: "open", prHasConflicts: true }));
+
+    expect(html).toContain('data-pr-conflicts="true"');
+    expect(html).toContain('data-testid="pr-reopen"');
+
+    const idx = html.indexOf('data-testid="pr-reopen"');
+    const el = html.slice(
+      html.lastIndexOf("<button", idx),
+      html.indexOf(">", idx),
+    );
+
+    expect(el).toContain('disabled=""');
   });
 
   it("omits the PR chip when there is no PR state and no conflict", () => {

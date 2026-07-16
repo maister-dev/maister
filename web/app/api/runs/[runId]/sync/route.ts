@@ -86,16 +86,21 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runId } = await params;
-  let body: SyncBody;
-
-  try {
-    body = syncBodySchema.parse(await req.json());
-  } catch (err) {
-    return validationResponse(`invalid POST body: ${(err as Error).message}`);
-  }
 
   try {
     const sessionUser = await requireActiveSession();
+
+    // Parsed AFTER the authentication gate — an anonymous caller must never
+    // reach this request's body (its sibling `reopen/route.ts` is the model).
+    // Still ABOVE `runProjectId`, so an authenticated caller's malformed body is
+    // answered 422 rather than the run's 404.
+    let body: SyncBody;
+
+    try {
+      body = syncBodySchema.parse(await req.json());
+    } catch (err) {
+      return validationResponse(`invalid POST body: ${(err as Error).message}`);
+    }
 
     // projectId is server-derived from the run row, never a body field.
     const projectId = await runProjectId(runId);

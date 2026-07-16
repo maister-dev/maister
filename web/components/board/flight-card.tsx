@@ -344,11 +344,14 @@ export function FlightCard({
             ⚡ auto
           </span>
         ) : null}
+        {/* Reopen is `promoteRun` (member) while this board is `readBoard`
+            (viewer): withholding the runId selects the chip's disabled
+            affordance instead of offering a viewer a guaranteed 403. */}
         <PrStateChip
           labels={labels.prChip}
           prHasConflicts={card.prHasConflicts}
           prState={card.prState}
-          runId={card.runId}
+          runId={canAct ? card.runId : undefined}
         />
         {card.runCount > 0 ? (
           <span

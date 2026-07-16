@@ -35,7 +35,7 @@ reconciliation on host or process restart.
   this slice.
 - **Durable promotion claim (Implemented, M18)** — the serialization point for
   idempotent promotion, held on the workspace row (1:1 with the run):
-  - `promotion_state` — `none | claiming | done | failed`. CAS'd to `claiming`
+  - `promotion_state` — `none | claiming | done | failed | reopened`. CAS'd to `claiming`
     in a short tx **committed BEFORE any side-effect**; the single concurrency
     gate (not a held row lock).
   - `promotion_attempt_id` — a fresh opaque token (e.g. `crypto.randomUUID()`)
@@ -70,8 +70,9 @@ reconciliation on host or process restart.
   agent tokens): `pr_state` (`open | merged | closed`, NULL = never checked),
   `pr_has_conflicts` (NULL = unknown), `pr_merged_at`, `pr_merge_commit_sha`
   (the **provider** merge commit — provenance only, NEVER `runs.merge_commit_sha`,
-  which stays owned by the ADR-134 delivery scan), and `pr_state_checked_at`
-  (stamped on every scan attempt, success or failure). Each state edge emits a
+  which stays owned by the ADR-134 delivery scan). `pr_state` is written ONLY from
+  a SUCCESSFUL read — a failed one (including a 404, which may be a permission
+  denial rather than a deleted PR) leaves it untouched. Each state edge emits a
   webhook and the merged edge also writes a `run_pr_merged` task-activity entry;
   the conflict flag raises the reopen affordance. Scan cadence, edge guards, and
   provider reads live in [`branch-sync.md`](branch-sync.md) (R7).
@@ -131,6 +132,7 @@ stateDiagram-v2
     Archived --> Pruned: removeOwnedWorktree<br/>removed_at set
     Countdown --> Pruned: clean + merged<br/>nothing to preserve
     Pruned --> [*]
+    Pruned --> [*]: reopen (Done only, ADR-140)<br/>re-attach worktree, clear scheduled_removal_at/archived_at/removed_at
 ```
 
 ## Process flows

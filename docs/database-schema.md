@@ -737,6 +737,7 @@ scheduler_jobs {
          | 'auto_launch_triaged'    // ADR-112 — singleton dispatcher
          | 'auto_promote'           // ADR-126 — singleton dispatcher
          | 'repo_delivery_scan',    // ADR-134 — per-project scanner
+         | 'pr_state_scan',         // ADR-139 — per-project scanner
   target,                         // jsonb; validated per jobKind
   cadenceIntervalSeconds,          // fixed-interval only in M24
   nextRunAt, lastFiredAt?,
@@ -1661,8 +1662,6 @@ numerator.
   prMergeCommitSha?,             // ADR-139 (Implemented, migration 0103) PROVIDER
                                  //   merge commit (provenance only; NOT the
                                  //   delivery scanner's runs.mergeCommitSha)
-  prStateCheckedAt?,             // ADR-139 (Implemented, migration 0103) last scan
-                                 //   attempt, stamped on success or failure
   promotedAt?,                   // M18 (timestamptz, migration 0021)
   promotionState,                // M18 (text NOT NULL DEFAULT 'none', migration
                                  //   0021) none | claiming | done | failed;
@@ -1722,7 +1721,7 @@ promotion completion.
 **(ADR-139/140 — Implemented, migrations `0103`/`0104`, additive.)** PR-lifecycle
 columns close the loop on MAIster-created PRs: `prState` (`open`/`merged`/
 `closed`, NULL until first scanned), `prHasConflicts` (NULL = unknown),
-`prMergedAt`, `prMergeCommitSha`, and `prStateCheckedAt` are stamped by the
+`prMergedAt`, and `prMergeCommitSha` are written by the
 per-project `pr_state_scan` scheduler job (zero LLM tokens, provider CLI/REST
 reads only). Existing rows keep NULL state and are adopted by the first scan —
 no backfill. `prMergeCommitSha` records the **provider** merge commit as

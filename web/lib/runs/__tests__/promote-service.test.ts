@@ -19,6 +19,7 @@ import {
   deliveryCommitStats,
   deliveryHistoryStats,
   findTargetMergeByRunId,
+  GitPushRejectedError,
   promoteLocalMerge,
   promoteRebaseMerge,
   pushBranch,
@@ -108,7 +109,13 @@ vi.mock("@/lib/webhooks/outbox", () => ({
   emitWebhookEvent: (...args: unknown[]) => emitWebhookEventMock(...args),
 }));
 
-vi.mock("@/lib/worktree", () => ({
+vi.mock("@/lib/worktree", async () => ({
+  // The REAL class: its `super("CONFLICT")` is the entire defect under test, and
+  // `isMaisterError` is an `instanceof` check — a look-alike stub declared here
+  // would be a different class and would not reproduce the routing at all.
+  GitPushRejectedError: (
+    await vi.importActual<typeof import("@/lib/worktree")>("@/lib/worktree")
+  ).GitPushRejectedError,
   branchExists: vi.fn(async () => true),
   deliveryCommitStats: vi.fn(async () => ({
     files: 0,
@@ -810,6 +817,41 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     expect(dbState.tables.workspaces[0]).toMatchObject({
       promotionMode: "rebase_merge",
       promotionState: "done",
+    });
+  });
+
+  // C1: `GitPushRejectedError` extends MaisterError with `super("CONFLICT")`, so
+  // while the target push sat inside the merge's catch, a merely REJECTED PUSH —
+  // of an already-landed merge — was read as "the rebase conflicted" and spawned
+  // an AI resolver for a conflict that does not exist, burning a slot and tokens,
+  // and answered `ok: true` for a landed-but-unpushed merge.
+  it("does NOT spawn a resolver when the TARGET PUSH is rejected (ai_rebase_merge)", async () => {
+    const runId = seedFlowRun({
+      deliveryPolicySnapshot: {
+        strategy: "ai_rebase_merge",
+        // The push must actually run — that is the whole window.
+        push: "on_success",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    // The merge LANDS; only the follow-up push is refused.
+    vi.mocked(pushBranch).mockRejectedValueOnce(
+      new GitPushRejectedError("push rejected (non-fast-forward)"),
+    );
+    syncTargetMock.syncRunTarget.mockClear();
+
+    await expect(
+      callPromote(runId, { reviewedTargetCommit: "tip00000" }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    // The contract: a push rejection is NOT a rebase conflict.
+    expect(syncTargetMock.syncRunTarget).not.toHaveBeenCalled();
+    expect(createAssignment).not.toHaveBeenCalled();
+    // The promotion degraded to manual — never silently reported as done.
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionState: "failed",
     });
   });
 

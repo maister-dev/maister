@@ -23,7 +23,7 @@ conflict signal, and it explicitly excludes scratch runs, shared-tree runs
   single plain-`text` `phase` column, no DB CHECK), UNIQUE `(run_id, attempt)`. Persisted;
   see [runs-domain ERD](../db/runs-domain.md).
 - **`workspaces` PR + claim columns** — `pr_state`/`pr_has_conflicts`/`pr_merged_at`/
-  `pr_merge_commit_sha`/`pr_state_checked_at` (ADR-139) and the shared
+  `pr_merge_commit_sha` (ADR-139) and the shared
   `lifecycle_operation_name='sync'` claim slot (ADR-140), plus
   `promotion_state='reopened'` (app-level value, no CHECK).
 - **`projects.sync_strategy_default`** (`rebase`|`merge`, default `rebase`) and
@@ -81,6 +81,7 @@ sequenceDiagram
     participant Git as worktree/git
     Op->>Route: sync {strategy, agent, push}
     Route->>Svc: eligibility + double fence
+    Svc->>Git: ls-remote origin refs/heads/<branch> (capture remote_sha_before, published branch only)
     Svc->>Svc: one tx {attempt#, starting row, "sync" claim}
     Svc->>Git: fetch origin (all refs — refreshes origin/<branch> too)
     Svc->>Git: ff local target from origin/<target>
@@ -123,10 +124,10 @@ sequenceDiagram
     participant Git as worktree
     Op->>Route: reopen, open or conflicted PR
     Route->>Svc: eligibility, top-level flow or agent, PR open or conflicted
-    Svc->>Svc: one tx Done to Review CAS, promotion_state=reopened, review_entered_at=now, run.review webhook
     opt workspace GCed
         Svc->>Git: addWorktreeForBranch, existing branch, no -b
     end
+    Svc->>Svc: one tx Done to Review CAS, promotion_state=reopened, review_entered_at=now, task InFlight, run.review webhook
     Svc-->>Op: 200, card derives to OnReview, relations re-gate
 ```
 
@@ -158,41 +159,30 @@ sequenceDiagram
   published, and leave `runs.status='Review'`.
 - The local target MUST fast-forward from `origin/<target>` when FF-able; any
   divergence MUST refuse with `PRECONDITION` naming both SHAs.
-- The attempt-number allocation, the `starting` row, and the `"sync"` lifecycle
-  claim MUST be exactly ONE `FOR UPDATE` transaction; a concurrent double-launch
-  MUST yield exactly one attempt row and a `CONFLICT` for the loser.
+- The attempt-number allocation, the durable `starting` row (`run_sync_attempts.phase`
+  advances before each side effect), and the `"sync"` lifecycle claim MUST be exactly
+  ONE `FOR UPDATE` transaction; a concurrent double-launch MUST yield exactly one
+  attempt row and a `CONFLICT` for the loser.
 - The agent path's `Review→Running` CAS MUST be a SECOND locked transaction, taken
-  only after the rebase has conflicted. It cannot join the claim tx: which path a
-  sync takes is unknowable until the rebase runs, and a mechanical sync MUST never
-  flip the run to `Running`. That tx re-checks the cap and the promotion fence
-  under the same lock, so the split costs no serialization.
+  only after the rebase has conflicted, that re-checks the cap and the promotion
+  fence under the same lock (see ADR-140).
 - While a `"sync"` claim is active, `promote/archive/drop/exportBranch/snapshotCommit/
   handoffBranch` MUST refuse, and `promoteRun` MUST refuse while a sync claim is
   active (double fence, both directions).
 - The resolver session MUST be fresh (never resume), work inside the run worktree,
-  and be recorded as a `run_sessions` `sync-<attempt>` row. It is **instructed** not
-  to push (prompt-level, not seam-enforced in v1 — the resolver is read-write in the
-  worktree); the ENFORCED push safety net is the web-side verification gate + the
-  explicit-SHA `--force-with-lease`. A resolver self-push can only touch its OWN run
-  branch (never the target); the bounded blast radius is documented in ADR-140.
+  be recorded as a `run_sessions` `sync-<attempt>` row, and — even on a self-push —
+  can only touch its OWN run branch, never the target; the bounded blast radius is
+  documented in ADR-140.
 - The verification gate MUST require: no rebase/merge in progress, clean tree,
   zero `git diff --check` conflict markers across the whole worktree, and target is
   an ancestor of the new HEAD — before any push or finalize.
 - `agent=false` + conflict MUST abort cleanly, restore the pre-sync SHA, and return
   `outcome:'conflict'` with no change.
-- `--force-with-lease` MUST use the run branch's remote SHA obtained via
-  `git ls-remote origin refs/heads/<branch>` captured **before** the fetch (NOT
-  the local `refs/remotes/origin/<branch>` tracking ref). The fetch is
-  `git fetch origin` with no refspec, so it refreshes EVERY ref including
-  `origin/<branch>` — a bare `--force-with-lease` issued after it would lease
-  against the just-refreshed ref and pass even though the branch moved. The
-  ordering (capture, THEN fetch) is the whole safety property: it is not
-  incidental and must not be "optimized away". If that SHA is indeterminate while
-  `pr_url` is set the push MUST refuse (never fall back to a bare lease). A lease
-  rejection MUST fail the attempt (`CONFLICT`) and keep the local rebase result.
-- Every sync attempt MUST be a durable `run_sync_attempts` row whose `phase` advances
-  before each side effect; crash windows W1–W6 MUST each recover to a stable state by
-  reconcile/sweep (W6 is a benign clean-`Review` degradation).
+- `--force-with-lease` MUST use the run branch's remote SHA captured via
+  `git ls-remote origin refs/heads/<branch>` BEFORE the fetch (never the post-fetch
+  local tracking ref); an indeterminate SHA with `pr_url` set MUST refuse the push,
+  and a lease rejection MUST fail the attempt (`CONFLICT`) while keeping the local
+  rebase result (see ADR-140).
 - The agent path MUST hold its run-kind slot while `Running` or `NeedsInput`, MUST be
   cap-gated on `Review→Running` (refuse `CONFLICT` at cap, no queue), and MUST call
   `promoteNextPending` on finalize.
@@ -219,8 +209,9 @@ sequenceDiagram
 - **Verification failure** (markers, incomplete rebase, non-ancestor) → attempt
   `failed`; deterministic abort.
 - **Push lease rejected** (branch moved remotely) → `CONFLICT`; local result kept.
-- **W1–W6 crash windows** → recovered by reconcile/sweep per the predicate table in
-  ADR-140; a sync row never enters the flow reattach/redispatch arms.
+- **W1–W7 crash windows** → recovered by reconcile/sweep per the predicate table in
+  ADR-140; a sync row never enters the flow reattach/redispatch arms, and is
+  classified before the `worktree-gone → Crashed` arm.
 - **Duration runaway** (30 min continuous `Running`) → W5 sweep kills session, aborts,
   `failed`, returns to `Review`.
 

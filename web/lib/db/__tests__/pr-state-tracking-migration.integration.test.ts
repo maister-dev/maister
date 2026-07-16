@@ -100,11 +100,11 @@ describe("0103 pr_state_tracking schema shape", () => {
   // real invariant: `pr_state` is owned exclusively by `pr_state_scan`, so a
   // DEFAULT (or a backfill UPDATE) added later would silently manufacture PR
   // state for every workspace that never had a PR.
-  it("adds the five workspaces PR columns, all nullable with NO default (no backfill)", async () => {
+  it("adds the four workspaces PR columns, all nullable with NO default (no backfill)", async () => {
     const cols = await pool.query(
       `select column_name, is_nullable, column_default from information_schema.columns
        where table_name = 'workspaces'
-       and column_name in ('pr_state','pr_has_conflicts','pr_merged_at','pr_merge_commit_sha','pr_state_checked_at')
+       and column_name in ('pr_state','pr_has_conflicts','pr_merged_at','pr_merge_commit_sha')
        order by column_name`,
     );
 
@@ -121,11 +121,6 @@ describe("0103 pr_state_tracking schema shape", () => {
       },
       { column_name: "pr_merged_at", is_nullable: "YES", column_default: null },
       { column_name: "pr_state", is_nullable: "YES", column_default: null },
-      {
-        column_name: "pr_state_checked_at",
-        is_nullable: "YES",
-        column_default: null,
-      },
     ]);
   });
 
@@ -176,14 +171,13 @@ describe("0103 pr_state_tracking schema shape", () => {
   it("leaves a freshly inserted workspace with NULL PR state", async () => {
     const { workspaceId } = await seedRunWorkspace("nullstate");
     const row = await pool.query(
-      `select pr_state, pr_has_conflicts, pr_state_checked_at from workspaces where id = $1`,
+      `select pr_state, pr_has_conflicts from workspaces where id = $1`,
       [workspaceId],
     );
 
     expect(row.rows[0]).toEqual({
       pr_state: null,
       pr_has_conflicts: null,
-      pr_state_checked_at: null,
     });
   });
 });
@@ -225,20 +219,67 @@ describe("0103 run_pr_merged event kind", () => {
   });
 });
 
-describe("0103 journal + snapshot", () => {
-  it("has a 0103 journal entry with a matching snapshot file", () => {
-    const journal = JSON.parse(
-      readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
-    ) as { entries: Array<{ idx: number; tag: string }> };
+// Identified by NAME, never by number: matching on a `0103` prefix would, once
+// this branch rebases onto a main that already owns 0103, silently resolve to
+// MAIN's migration — the snapshot exists, every assertion passes, and this
+// migration goes unverified. The name is what belongs to this change; the
+// number is the thing the merge renegotiates.
+const MIGRATION_NAME = "_pr_state_tracking";
 
-    const entry = journal.entries.find((e) => e.tag.startsWith("0103"));
+type JournalEntry = { idx: number; tag: string; when: number };
+
+function readJournal(): { entries: JournalEntry[] } {
+  return JSON.parse(
+    readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
+  ) as { entries: JournalEntry[] };
+}
+
+function readSnapshot(tag: string): { id: string; prevId: string } {
+  // Snapshot files use the zero-padded 4-digit tag prefix, not the raw idx.
+  return JSON.parse(
+    readFileSync(
+      path.join(MIGRATIONS_DIR, "meta", `${tag.slice(0, 4)}_snapshot.json`),
+      "utf8",
+    ),
+  ) as { id: string; prevId: string };
+}
+
+describe("pr_state_tracking journal + snapshot", () => {
+  it("has a journal entry with a matching snapshot file", () => {
+    const entry = readJournal().entries.find((e) =>
+      e.tag.endsWith(MIGRATION_NAME),
+    );
 
     expect(entry).toBeDefined();
-    // Snapshot files use the zero-padded 4-digit tag prefix, not the raw idx.
     const snapshotName = `${entry!.tag.slice(0, 4)}_snapshot.json`;
 
     expect(existsSync(path.join(MIGRATIONS_DIR, "meta", snapshotName))).toBe(
       true,
     );
+  });
+
+  it("numbers the tag to match its journal idx", () => {
+    const entry = readJournal().entries.find((e) =>
+      e.tag.endsWith(MIGRATION_NAME),
+    )!;
+
+    expect(entry.tag.slice(0, 4)).toBe(String(entry.idx).padStart(4, "0"));
+  });
+
+  // The guard that makes a renumber safe. A migration is a TRIPLE (SQL +
+  // journal entry + snapshot), and its snapshot's `prevId` must name the TRUE
+  // predecessor's snapshot `id`. Renaming snapshot files to renumber (rather
+  // than regenerating them) leaves `prevId` rooted at the OLD predecessor —
+  // encoding a schema lineage that never existed — and nothing else notices.
+  it("chains its snapshot prevId to the preceding migration's snapshot id", () => {
+    const entries = readJournal().entries;
+    const index = entries.findIndex((e) => e.tag.endsWith(MIGRATION_NAME));
+
+    expect(index).toBeGreaterThan(0);
+
+    const snapshot = readSnapshot(entries[index].tag);
+    const predecessor = readSnapshot(entries[index - 1].tag);
+
+    expect(snapshot.prevId).toBe(predecessor.id);
   });
 });

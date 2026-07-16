@@ -67,6 +67,10 @@ export interface RunHeaderProps {
   // `promotionOperation` — that is only built for a promotable Review run, and
   // reopen exists precisely for a DONE one.
   runId?: string;
+  // Whether the viewer may reopen (= canAct). Reopen is a `promoteRun` (member)
+  // route while this header renders for `readBoard` (viewer), so a viewer must
+  // get the chip's disabled affordance rather than a button that 403s.
+  canReopen?: boolean;
   changeSummary?: RunHeaderChangeSummary | null;
   // Derived run-scope budget warn signal (null = no badge).
   budgetStatus?: { warn: boolean; pct: number } | null;
@@ -115,6 +119,7 @@ export function RunHeader({
   prState,
   prHasConflicts,
   runId,
+  canReopen,
   changeSummary,
   budgetStatus,
   inspectorOpen,
@@ -203,7 +208,7 @@ export function RunHeader({
               labels={labels.prChip}
               prHasConflicts={prHasConflicts ?? null}
               prState={prState ?? null}
-              runId={runId}
+              runId={canReopen === false ? undefined : runId}
             />
           ) : null}
         </div>

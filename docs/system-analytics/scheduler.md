@@ -127,11 +127,11 @@ without turning recovery sweeps into live-path polling.
   ADR-134). On each detected PR-state edge it writes the `workspaces` PR columns
   and emits a webhook in one edge-guarded single transaction, idempotent across
   re-scans: merged → `run.pr_merged` + a `run_pr_merged` `task_activity`; closed
-  → `run.pr_closed`; conflicts → `run.pr_conflicts`. `pr_state_checked_at` is
-  stamped on EVERY attempt (success or failure). Poison policy: a deterministic
-  per-item failure (404 / deleted PR) is a recorded terminal skip; a transient
-  one (missing CLI / network / 5xx) skips the item this tick and advances the
-  cursor, while `recordJobAttemptResult` max-failures/backoff protects the job —
+  → `run.pr_closed`; conflicts → `run.pr_conflicts`. Poison policy: EVERY failed
+  read — missing CLI / network / 5xx, and 404/not-found alike — skips the item
+  this tick and leaves `pr_state` untouched (a 404 may be a permission denial,
+  not a deleted PR), while the keyset cursor advances past it so no row can stall
+  the job and `recordJobAttemptResult` max-failures/backoff protects the job —
   one bad row can never stall the per-project job.
   - Registration fan-out (this kind is `systemManaged` and non-creatable, so it
     is wired, not authored): the `SchedulerJobKind` union plus the
@@ -303,11 +303,11 @@ flowchart TD
   `Succeeded`.
 - `system_sweep` MUST remain a recovery/cleanup sweep and NEVER a live
   state-transition poller.
-- `pr_state_scan` (**Implemented, ADR-139**) MUST stamp
-  `workspaces.pr_state_checked_at` on EVERY attempt (success or failure), MUST
-  NEVER launch an ACP session or call the supervisor client, and MUST run on a
-  per-project cadence of `PR_STATE_SCAN_CADENCE_SECONDS` (300s) rather than as a
-  global singleton.
+- `pr_state_scan` (**Implemented, ADR-139**) MUST write `workspaces.pr_state`
+  ONLY from a successful provider read (a failed read — including 404/not-found —
+  MUST leave it untouched), MUST NEVER launch an ACP session or call the
+  supervisor client, and MUST run on a per-project cadence of
+  `PR_STATE_SCAN_CADENCE_SECONDS` (300s) rather than as a global singleton.
 - The fallback timer MUST be off unless `MAISTER_SCHEDULER_TIMER_ENABLED=true`.
 - `/api/cron/gc` MUST keep its existing auth and response contract and run the
   shared GC bundle (workspace + revision GC + capabilities cleanup +

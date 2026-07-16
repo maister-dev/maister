@@ -3,8 +3,6 @@ import "server-only";
 import type { Provider } from "@/lib/repo-source";
 import type { PrStateReadResult } from "@/lib/runs/pr-adapter";
 
-import { randomUUID } from "node:crypto";
-
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
@@ -19,6 +17,7 @@ import {
   prStateScanJobId,
   schedulerAttemptTimeoutSeconds,
 } from "@/lib/scheduler/jobs";
+import { recordTaskActivity } from "@/lib/social/activity";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // One bounded batch per tick; the durable keyset cursor (this job's
@@ -36,10 +35,16 @@ const PR_STATE_SCAN_CALL_BUDGET_MS = EXEC_TIMEOUT_MS;
 // env-tunable value the reaper uses) so the two can never drift apart: reserve
 // one worst-case provider call plus a margin for the cursor write, because a
 // candidate started just under the deadline may still burn its full budget.
+// Deliberately UNFLOORED, and may go non-positive: a lease too short to fit one
+// worst-case provider call must start ZERO candidates (the loop's deadline guard
+// then breaks on the first iteration and the cursor holds), never the one it
+// cannot finish. A floor would license exactly that — the attempt gets reaped as
+// LEASE_EXPIRED while the call is still writing, and the replacement scan runs
+// unfenced against the same rows.
 function scanBudgetMs(): number {
   const leaseMs = schedulerAttemptTimeoutSeconds() * 1_000;
 
-  return Math.max(1_000, leaseMs - PR_STATE_SCAN_CALL_BUDGET_MS - 10_000);
+  return leaseMs - PR_STATE_SCAN_CALL_BUDGET_MS - 10_000;
 }
 
 const log = pino({
@@ -52,6 +57,10 @@ type QueryResult = { rows?: unknown[] };
 type PrStateScanDb = {
   execute(query: SQL): Promise<QueryResult>;
   transaction<T>(transaction: (tx: PrStateScanDb) => Promise<T>): Promise<T>;
+  // Declared because `recordTaskActivity` — the ONLY task_activity writer — is a
+  // query-builder call, so this seam must carry it rather than raw SQL.
+  // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/social/activity.ts).
+  insert: any;
 };
 
 type GetPrStateFn = typeof defaultGetPrState;
@@ -78,14 +87,17 @@ export type PrStateScanSummary = {
   scanned: number;
   updated: number;
   skipped: number;
+  failed?: number;
   cursor: string | null;
   reason?: string;
 };
 
 // ADR-139: the per-project PR-state poll. A pure provider-read + DB job — it
 // NEVER spawns a session, mutates git, or writes `runs.merge_commit_sha` (that
-// column stays owned by repo_delivery_scan). It stamps `pr_state_checked_at` on
-// every attempt and applies three edge-guarded, exactly-once state transitions.
+// column stays owned by repo_delivery_scan). It applies three edge-guarded,
+// exactly-once state transitions, and writes state ONLY from a successful read.
+// The durable keyset cursor is what bounds a bad row: it advances past anything
+// that fails, so no row can stall the per-project job.
 export async function runPrStateScanJob(input: {
   projectId: string | null;
   now?: Date;
@@ -141,48 +153,76 @@ export async function runPrStateScanJob(input: {
 
   let updated = 0;
   let skipped = 0;
+  let failed = 0;
   let lastProcessedId: string | null = null;
   let deadlineHit = false;
   const deadline = Date.now() + scanBudgetMs();
 
-  for (const candidate of candidates) {
-    // Never START a candidate we cannot finish inside the lease. A full batch of
-    // slow providers (50 × the adapter's 60s budget) would otherwise run ~10x
-    // past the lease: the scheduler would reap this attempt as LEASE_EXPIRED and
-    // start a REPLACEMENT scan while this one is still writing — two unfenced
-    // scanners on the same rows, and enough repeated failures to disable the job.
-    if (Date.now() >= deadline) {
-      deadlineHit = true;
-      break;
-    }
-
-    const outcome = await processCandidate({
-      db,
-      getPrState,
-      provider,
-      remoteUrl,
-      projectId,
-      candidate,
-    });
-
-    lastProcessedId = candidate.id;
-
-    if (outcome === "updated") updated += 1;
-    else if (outcome === "skipped") skipped += 1;
-  }
-
-  // The cursor must name the last candidate we ACTUALLY processed, never the
-  // window end — advancing past unvisited rows would silently skip them until
-  // the cursor wrapped. On a deadline stop we resume exactly where we left off
-  // (and hold the incoming cursor if we processed nothing at all).
+  // The cursor must name the last candidate we VISITED, never the window end —
+  // advancing past unvisited rows would silently skip them until the cursor
+  // wrapped. On a deadline stop we resume exactly where we left off (and hold
+  // the incoming cursor if we visited nothing at all).
   // Otherwise: a full window advances; a short (tail) batch resets so the next
   // tick wraps to the head — every candidate is visited within ceil(N / batch)
-  // ticks regardless of never-moving rows.
-  const nextCursor = deadlineHit
-    ? (lastProcessedId ?? cursor)
-    : candidates.length === PR_STATE_SCAN_BATCH
-      ? candidates[candidates.length - 1].id
-      : null;
+  // ticks regardless of never-moving rows. THIS is the mechanism that keeps one
+  // bad row from stalling the job.
+  const nextCursorNow = (): string | null =>
+    deadlineHit || failed > 0
+      ? (lastProcessedId ?? cursor)
+      : candidates.length === PR_STATE_SCAN_BATCH
+        ? candidates[candidates.length - 1].id
+        : null;
+
+  try {
+    for (const candidate of candidates) {
+      // Never START a candidate we cannot finish inside the lease. A full batch of
+      // slow providers (50 × the adapter's 60s budget) would otherwise run ~10x
+      // past the lease: the scheduler would reap this attempt as LEASE_EXPIRED and
+      // start a REPLACEMENT scan while this one is still writing — two unfenced
+      // scanners on the same rows, and enough repeated failures to disable the job.
+      if (Date.now() >= deadline) {
+        deadlineHit = true;
+        break;
+      }
+
+      try {
+        const outcome = await processCandidate({
+          db,
+          getPrState,
+          provider,
+          remoteUrl,
+          projectId,
+          candidate,
+        });
+
+        if (outcome === "updated") updated += 1;
+        else if (outcome === "skipped") skipped += 1;
+      } catch (err) {
+        // One poison row may not take the scan down with it. Letting it throw
+        // would abandon the cursor write, reload the identical window next tick,
+        // throw again, and after max_failures DISABLE the job — which
+        // `ensurePrStateScanJobs` only re-enables while
+        // `consecutive_failures < max_failures`, i.e. never again.
+        failed += 1;
+        log.error(
+          {
+            projectId,
+            prNumber: candidate.pr_number,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "pr state candidate failed — advancing the cursor past it",
+        );
+      }
+
+      lastProcessedId = candidate.id;
+    }
+  } finally {
+    // Always durable, even on an unexpected throw: an abandoned cursor is what
+    // turns a single bad row into permanently dead PR tracking.
+    await writeCursor(db, projectId, nextCursorNow());
+  }
+
+  const nextCursor = nextCursorNow();
 
   if (deadlineHit) {
     log.warn(
@@ -196,12 +236,11 @@ export async function runPrStateScanJob(input: {
     );
   }
 
-  await writeCursor(db, projectId, nextCursor);
-
   const summary: PrStateScanSummary = {
     scanned: candidates.length,
     updated,
     skipped,
+    failed,
     cursor: nextCursor,
   };
 
@@ -275,6 +314,14 @@ async function processCandidate(args: {
   });
 
   if (result.kind === "skip") {
+    // A FAILED READ NEVER WRITES `pr_state`. Providers answer permission-denied
+    // with the same 404/"could not resolve" they use for a deleted PR, so this
+    // path cannot tell "deleted" from "the token lost access" — and `pr_state`
+    // has no writer that could later undo a wrong `closed` (loadCandidates only
+    // selects NULL/'open', so the row would never be re-read). Leaving the state
+    // untouched costs one re-read per cursor cycle; guessing 'closed' costs a
+    // silently untracked live PR and a refused reopen. The CURSOR — not any
+    // per-row stamp — is what keeps one bad row from stalling the job.
     log.warn(
       {
         projectId,
@@ -285,24 +332,12 @@ async function processCandidate(args: {
       "pr state candidate skipped",
     );
 
-    if (result.transient) {
-      // Retryable — stamp only, stays in the candidate set for the next tick.
-      await stampChecked(db, candidate.id);
-    } else {
-      // Terminal (404/deleted/invalid): close so it leaves the candidate set
-      // and is never retried forever. NOT a webhook edge — a deleted PR is not
-      // a real "closed" transition.
-      await closeTerminal(db, candidate.id);
-    }
-
     return "skipped";
   }
 
   // Defensive — step 1 already returns early for a generic provider, so a live
-  // `unsupported` should not reach here. Stamp and move on.
+  // `unsupported` should not reach here.
   if (result.kind === "unsupported") {
-    await stampChecked(db, candidate.id);
-
     return "skipped";
   }
 
@@ -334,11 +369,16 @@ async function applyStateEdges(args: {
   if (state.hasConflicts === true && !terminalPr) {
     changed = await conflictsEdge({ db, projectId, candidate });
   } else if (state.hasConflicts === false || terminalPr) {
-    // Silent clear — no webhook.
+    // Silent clear — no webhook. Guarded on the previous value like every other
+    // edge, so a re-scan of an already-clear row is a no-op rather than a write.
+    // (This does NOT fence a clear against a CONCURRENT scanner's alarm: the
+    // guard is evaluated against the row as it is NOW, not as it was when this
+    // tick read the provider.)
     await db.execute(sql`
       UPDATE workspaces
       SET pr_has_conflicts = false
       WHERE id = ${candidate.id}
+        AND pr_has_conflicts IS DISTINCT FROM false
     `);
   }
   // hasConflicts === null on a still-OPEN PR → leave as-is (unknown ≠ resolved).
@@ -349,10 +389,8 @@ async function applyStateEdges(args: {
       (await mergedEdge({ db, projectId, candidate, state })) || changed;
   } else if (state.state === "closed") {
     changed = (await closedEdge({ db, projectId, candidate })) || changed;
-  } else {
-    // open — stamp progress; the row stays in the candidate set.
-    await stampChecked(db, candidate.id);
   }
+  // open — nothing to write; the row stays in the candidate set.
 
   return changed ? "updated" : "stamped";
 }
@@ -369,7 +407,7 @@ async function conflictsEdge(args: {
       rowsOf(
         await tx.execute(sql`
           UPDATE workspaces
-          SET pr_has_conflicts = true, pr_state_checked_at = now()
+          SET pr_has_conflicts = true
           WHERE id = ${candidate.id}
             AND (pr_has_conflicts IS NULL OR pr_has_conflicts = false)
           RETURNING id
@@ -406,8 +444,7 @@ async function mergedEdge(args: {
           SET
             pr_state = 'merged',
             pr_merged_at = ${state.mergedAt}::timestamptz,
-            pr_merge_commit_sha = ${state.mergeCommitSha},
-            pr_state_checked_at = now()
+            pr_merge_commit_sha = ${state.mergeCommitSha}
           WHERE id = ${candidate.id}
             AND (pr_state IS NULL OR pr_state = 'open')
           RETURNING id
@@ -428,21 +465,13 @@ async function mergedEdge(args: {
       });
 
       if (candidate.task_id) {
-        await tx.execute(sql`
-          INSERT INTO task_activity (
-            id, task_id, project_id, actor_type, actor_id, event_kind, payload, created_at
-          )
-          VALUES (
-            ${randomUUID()},
-            ${candidate.task_id},
-            ${projectId},
-            'system',
-            NULL,
-            'run_pr_merged',
-            ${JSON.stringify({ prNumber: candidate.pr_number })}::jsonb,
-            now()
-          )
-        `);
+        await recordTaskActivity(tx, {
+          taskId: candidate.task_id,
+          projectId,
+          actor: { type: "system", id: null },
+          eventKind: "run_pr_merged",
+          payload: { prNumber: candidate.pr_number },
+        });
       }
     }
 
@@ -462,7 +491,7 @@ async function closedEdge(args: {
       rowsOf(
         await tx.execute(sql`
           UPDATE workspaces
-          SET pr_state = 'closed', pr_state_checked_at = now()
+          SET pr_state = 'closed'
           WHERE id = ${candidate.id}
             AND (pr_state IS NULL OR pr_state = 'open')
           RETURNING id
@@ -481,29 +510,6 @@ async function closedEdge(args: {
 
     return fired;
   });
-}
-
-async function stampChecked(
-  db: PrStateScanDb,
-  workspaceId: string,
-): Promise<void> {
-  await db.execute(sql`
-    UPDATE workspaces
-    SET pr_state_checked_at = now()
-    WHERE id = ${workspaceId}
-  `);
-}
-
-async function closeTerminal(
-  db: PrStateScanDb,
-  workspaceId: string,
-): Promise<void> {
-  await db.execute(sql`
-    UPDATE workspaces
-    SET pr_state = 'closed', pr_state_checked_at = now()
-    WHERE id = ${workspaceId}
-      AND (pr_state IS NULL OR pr_state = 'open')
-  `);
 }
 
 async function readCursor(

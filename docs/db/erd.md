@@ -488,7 +488,7 @@ erDiagram
     SCHEDULER_JOBS {
         text id PK
         text project_id FK
-        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged|auto_promote|repo_delivery_scan"
+        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged|auto_promote|repo_delivery_scan|pr_state_scan"
         jsonb target
         integer cadence_interval_seconds
         timestamp next_run_at
@@ -900,7 +900,6 @@ erDiagram
         boolean pr_has_conflicts "ADR-139 0103 provider mergeability, nullable"
         timestamp pr_merged_at "ADR-139 0103 provider merge time"
         text pr_merge_commit_sha "ADR-139 0103 provider merge commit — distinct from runs.merge_commit_sha (local promotion)"
-        timestamp pr_state_checked_at "ADR-139 0103 stamped on every scan attempt"
     }
 
     RUN_SYNC_ATTEMPTS {

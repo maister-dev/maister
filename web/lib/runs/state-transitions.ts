@@ -1,12 +1,13 @@
 import "server-only";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { nextKeepaliveAt } from "./keepalive-config";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
@@ -14,7 +15,10 @@ import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
+const { runs, workspaces, runSyncAttempts } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -27,6 +31,64 @@ const log = pino({
 export type StateTransitionResult =
   | { ok: true }
   | { ok: false; reason: "status-guard-mismatch" | "not-found" };
+
+// ADR-140: a run that terminalizes MUST NOT strand a live branch-sync claim.
+// `run_sync_attempts` and the workspace lifecycle slot outlive `runs.status`, and
+// every sync recovery arm keys on a NON-terminal run — so a claim still held at
+// crash time is invisible to all of them and refuses promotion (and all six other
+// lifecycle ops) forever, with no exit but hand-written SQL. Runs in the SAME
+// transaction as the terminal flip, so the pair can never half-apply.
+//
+// `name='sync'` is a sufficient guard HERE (unlike in the recovery sweeps, which
+// must fence on the claim token): this runs inside the tx that just terminalized
+// the run's only non-terminal attempt, and a sync can only ever be claimed by a
+// `Review` run — so no newer sync can hold this slot.
+async function releaseSyncClaimOnTerminal(
+  tx: Db,
+  runId: string,
+  errorCode: string,
+): Promise<void> {
+  const attempts = await tx
+    .update(runSyncAttempts)
+    .set({
+      phase: "failed",
+      errorCode,
+      errorMessage: "run terminalized while a branch sync was in flight",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(runSyncAttempts.runId, runId),
+        notInArray(
+          runSyncAttempts.phase,
+          RUN_SYNC_TERMINAL_PHASES as unknown as string[],
+        ),
+      ),
+    )
+    .returning({ workspaceId: runSyncAttempts.workspaceId });
+
+  if (attempts.length === 0) return;
+
+  await tx
+    .update(workspaces)
+    .set({
+      lifecycleOperationState: "none",
+      lifecycleOperationClaimedAt: null,
+      lifecycleOperationAttemptId: null,
+      lifecycleOperationName: null,
+    })
+    .where(
+      and(
+        eq(workspaces.id, attempts[0].workspaceId),
+        eq(workspaces.lifecycleOperationName, "sync"),
+      ),
+    );
+
+  log.warn(
+    { runId, attemptId: attempts[0].workspaceId },
+    "released a branch-sync claim stranded by a terminal run",
+  );
+}
 
 export type StateTransitionOptions = {
   db?: Db;
@@ -374,6 +436,41 @@ export async function markSyncReviewFromRunning(
   log.info(
     { runId, from: "Running", to: "Review" },
     "run-state transition — sync AI resolver returned the run to Review",
+  );
+
+  return { ok: true };
+}
+
+// ADR-140 W7: {NeedsInput, NeedsInputIdle} → Review. A sync resolver parks HERE by
+// design (an ACP `requestPermission` moves the run to NeedsInput), so once its
+// in-process driver is gone the prompt is unanswerable and the run would hold a
+// pool slot and the sync claim forever. Status-guarded on the EXACT observed
+// status so this cannot clobber a run that answered its prompt and resumed to
+// `Running` concurrently — that row is W2/W5's, not this arm's.
+export async function markSyncReviewFromNeedsInput(
+  runId: string,
+  fromStatus: "NeedsInput" | "NeedsInputIdle",
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Review", keepaliveUntil: null, checkpointAt: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, fromStatus)))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: fromStatus, to: "Review" },
+      "markSyncReviewFromNeedsInput: status-guard mismatch",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: fromStatus, to: "Review" },
+    "run-state transition — orphaned sync resolver abandoned its HITL prompt",
   );
 
   return { ok: true };
@@ -727,6 +824,8 @@ export async function markAbandoned(
 
     if (rows.length === 0) return false;
 
+    await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
+
     await syncExperimentStatusForRun({ db: tx, runId });
 
     // M19 Phase 1 (T1.C): stamp the GC removal deadline on the run's
@@ -815,6 +914,8 @@ export async function crashResumedRun(
       });
 
     if (rows.length === 0) return false;
+
+    await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
 
     await syncExperimentStatusForRun({ db: tx, runId });
 
@@ -917,6 +1018,8 @@ export async function crashRunningRun(
 
     if (rows.length === 0) return false;
 
+    await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
+
     await syncExperimentStatusForRun({ db: tx, runId });
 
     await emitWebhookEvent({
@@ -1004,6 +1107,8 @@ export async function crashWaitingOnChildren(
       });
 
     if (rows.length === 0) return false;
+
+    await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
 
     await syncExperimentStatusForRun({ db: tx, runId });
 

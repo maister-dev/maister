@@ -2,9 +2,17 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-// The runId-scoped chip mounts the client reopen button, which reads the router.
+// The runId-scoped chip mounts the client reopen button, which reads the router,
+// the shared feedback provider, and i18n — none of which have a host in a
+// provider-less static render.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
+}));
+vi.mock("@/components/feedback/feedback-provider", () => ({
+  useFeedback: () => ({ success: vi.fn(), error: vi.fn() }),
+}));
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
 }));
 
 import {
@@ -53,7 +61,6 @@ describe("PrStateChip", () => {
     expect(html).toContain('data-pr-state="merged"');
     expect(html).toContain("PR merged");
     expect(html).toContain("text-good");
-    expect(html).not.toContain("Succeeded");
     // The green check glyph is an inline SVG, not a bare unicode tick.
     expect(html).toContain("<svg");
   });

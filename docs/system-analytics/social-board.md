@@ -34,10 +34,11 @@ inbox substrate. (Implemented)
 - **Activity event** — `task_activity` append-only row with
   `event_kind ∈ {task_created, comment_added, task_mentioned,
   relation_added, relation_removed, run_launched, triage_set,
-  triage_requeued, agent_quarantined}` and a jsonb `payload` (the last
-  three added by M34 platform agents). Written only by the domain layer
-  (`web/lib/social/*` via `recordTaskActivity` plus the named service
-  write-sites).
+  triage_requeued, agent_quarantined, run_pr_merged}` and a jsonb `payload`
+  (`triage_set`/`triage_requeued`/`agent_quarantined` added by M34 platform
+  agents; `run_pr_merged` added by ADR-139/140's `pr_state_scan` merged
+  edge). Written only by the domain layer (`web/lib/social/*` via
+  `recordTaskActivity` plus the named service write-sites).
 - **Subscriber** — `task_subscribers` row: `(task_id, subscriber_type,
   subscriber_id, reason)` with `reason ∈ {creator, commenter, mentioned,
   manual}` and `subscriber_type ∈ {user, agent}` (`system` never

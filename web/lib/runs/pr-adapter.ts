@@ -628,12 +628,17 @@ export function selectPrAdapter(
 // A provider-read capability the pr_state_scan job (ADR-139) calls per row.
 // Unlike createOrUpdatePr (open-PR-only, throws on failure), getPrState reports
 // merge state and NEVER throws — a throw would fail the whole scan job. Every
-// failure path returns a typed `skip`:
-//   * transient=true  → retryable, retry next tick (missing CLI/token, network,
-//                       provider 5xx, timeout, malformed payload).
-//   * transient=false → deterministic terminal (404/not-found/deleted, invalid
-//                       or unparseable remote) — the caller stamps checked_at
-//                       and stops.
+// failure path returns a typed `skip`, and NO skip may ever be read as "the PR
+// is closed": every provider deliberately answers permission-denied with the
+// same 404/"could not resolve" it uses for a deleted PR (so private-repo
+// existence cannot be probed), which makes an unreadable PR indistinguishable
+// from a deleted one. `transient` is therefore diagnostic only — it says
+// whether retrying could plausibly help, never what the PR's state is:
+//   * transient=true  → retrying may help (missing CLI/token, network, provider
+//                       5xx, timeout, malformed payload, 404/not-found — which
+//                       may be a rotated token rather than a deleted PR).
+//   * transient=false → deterministic until config changes (invalid or
+//                       unparseable remote). Still not a statement about the PR.
 // `generic` has no PR-state support → `unsupported` (mirrors selectPrAdapter's
 // unsupported-provider path as a typed result, not a throw).
 
@@ -732,9 +737,10 @@ function deriveOwnerRepo(
   }
 }
 
-// Classify a gh/glab exec failure into a typed skip. A missing PR is a
-// deterministic terminal; a missing CLI, auth hiccup, timeout, or network blip
-// is transient (retry next tick). The reason is scrubbed of the token AND any
+// Classify a gh/glab exec failure into a typed skip. A missing CLI, auth
+// hiccup, timeout, or network blip is transient (retry next tick), and so is a
+// not-found — the CLIs report a permission-denied repo as 404, so "not found"
+// cannot be read as "deleted". The reason is scrubbed of the token AND any
 // credential-bearing URL before it can surface in a log or a stored skip.
 function classifyCliFailure(
   bin: string,
@@ -759,7 +765,10 @@ function classifyCliFailure(
     lower.includes("not found") ||
     lower.includes("404")
   ) {
-    return skip(false, reason || `${bin} pull request not found`);
+    return skip(
+      true,
+      reason || `${bin} pull request unreadable (deleted, or no access)`,
+    );
   }
 
   return skip(true, reason || `${bin} PR-state read failed`);
@@ -819,7 +828,7 @@ async function githubPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
   return {
     kind: "state",
     state,
-    mergedAt: nonEmptyString(payload.mergedAt),
+    mergedAt: isoTimestamp(payload.mergedAt),
     mergeCommitSha: nonEmptyString(payload.mergeCommit?.oid),
     hasConflicts: githubConflicts(payload.mergeable, payload.mergeStateStatus),
   };
@@ -907,7 +916,7 @@ async function gitlabPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
   return {
     kind: "state",
     state,
-    mergedAt: nonEmptyString(payload.merged_at),
+    mergedAt: isoTimestamp(payload.merged_at),
     mergeCommitSha: nonEmptyString(payload.merge_commit_sha),
     hasConflicts: gitlabConflicts(payload),
   };
@@ -975,7 +984,9 @@ async function giteaPrState(
   }
 
   if (!res.ok) {
-    if (res.status === 404) return skip(false, "Gitea PR-state HTTP 404");
+    if (res.status === 404) {
+      return skip(true, "Gitea PR-state HTTP 404 (deleted, or no access)");
+    }
 
     return skip(true, `Gitea PR-state failed with HTTP ${res.status}`);
   }
@@ -1004,7 +1015,7 @@ async function giteaPrState(
   return {
     kind: "state",
     state,
-    mergedAt: nonEmptyString(payload.merged_at),
+    mergedAt: isoTimestamp(payload.merged_at),
     mergeCommitSha: nonEmptyString(payload.merge_commit_sha),
     hasConflicts:
       typeof payload.mergeable === "boolean" ? !payload.mergeable : null,
@@ -1024,4 +1035,17 @@ function mapGiteaState(state: string | undefined): "open" | "closed" | null {
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// `mergedAt` is the one read field that flows into a `::timestamptz` cast, so a
+// provider string that merely IS a string would abort the writing transaction
+// server-side. Parse it here, at the boundary the payload enters through — an
+// unparseable timestamp degrades to null (the PR is still merged) rather than
+// poisoning the scan.
+function isoTimestamp(value: unknown): string | null {
+  const raw = nonEmptyString(value);
+
+  if (raw === null) return null;
+
+  return Number.isNaN(Date.parse(raw)) ? null : raw;
 }

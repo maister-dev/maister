@@ -1337,6 +1337,7 @@ export default async function RunDetailLayout({
       <RunShell
         branch={detail.branch}
         budgetStatus={detail.budgetStatus}
+        canReopen={canAct}
         changeSummary={changeSummary}
         inspector={
           <LiveRunInspector

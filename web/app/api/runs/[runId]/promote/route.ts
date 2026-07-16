@@ -72,22 +72,25 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runId } = await params;
-  let body: PromoteBody;
-
-  try {
-    body = promoteBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${(err as Error).message}`,
-      ),
-      runId,
-    );
-  }
 
   try {
     const sessionUser = await requireActiveSession();
+
+    // Parsed AFTER the authentication gate — an anonymous caller must never
+    // reach this request's body (its sibling `reopen/route.ts` is the model).
+    let body: PromoteBody;
+
+    try {
+      body = promoteBodySchema.parse(await req.json());
+    } catch (err) {
+      return errorResponse(
+        new MaisterError(
+          "CONFIG",
+          `invalid POST body: ${(err as Error).message}`,
+        ),
+        runId,
+      );
+    }
 
     const result = await promoteRun(runId, body, {
       sessionUser,

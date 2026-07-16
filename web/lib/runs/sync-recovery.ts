@@ -9,7 +9,10 @@ import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { isBranchPublished } from "@/lib/runs/branch-published";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import { SYNC_STEP_ID } from "@/lib/runs/sync-resolver";
-import { markSyncReviewFromRunning } from "@/lib/runs/state-transitions";
+import {
+  markSyncReviewFromNeedsInput,
+  markSyncReviewFromRunning,
+} from "@/lib/runs/state-transitions";
 import { pushWithLease, verifySyncGate } from "@/lib/runs/sync-target";
 import { poolForRunKind, promoteNextPending } from "@/lib/scheduler";
 import {
@@ -55,6 +58,11 @@ type AttemptRow = {
   headShaBefore: string | null;
   remoteShaBefore: string | null;
   agentRunningSince: Date | null;
+  // The lifecycle slot's fence token AS OBSERVED when this attempt was loaded: a
+  // separate uuid minted with the claim (NOT this row's id), readable only from
+  // the workspace. `releaseClaim` fences on it so a pass can only free the claim
+  // it actually saw — never one a newer sync has since taken.
+  lifecycleAttemptId: string | null;
 };
 
 type RunContext = {
@@ -80,8 +88,10 @@ async function loadActiveAttempt(
       headShaBefore: runSyncAttempts.headShaBefore,
       remoteShaBefore: runSyncAttempts.remoteShaBefore,
       agentRunningSince: runSyncAttempts.agentRunningSince,
+      lifecycleAttemptId: workspaces.lifecycleOperationAttemptId,
     })
     .from(runSyncAttempts)
+    .innerJoin(workspaces, eq(workspaces.id, runSyncAttempts.workspaceId))
     .where(
       and(
         eq(runSyncAttempts.runId, runId),
@@ -94,7 +104,14 @@ async function loadActiveAttempt(
     .orderBy(desc(runSyncAttempts.attempt))
     .limit(1);
 
-  return rows[0] ?? null;
+  const row = rows[0];
+
+  if (!row) return null;
+
+  return {
+    ...row,
+    lifecycleAttemptId: (row.lifecycleAttemptId ?? null) as string | null,
+  } as AttemptRow;
 }
 
 async function loadRunContext(
@@ -184,10 +201,24 @@ async function casPhaseSucceeded(
   return rows.length > 0;
 }
 
-// Free the shared lifecycle slot this attempt holds — idempotent (guarded on
-// `sync`, so a second call after release matches no row) and never releases
-// another op's claim. Mirrors sync-target.ts `releaseSyncClaim`.
-async function releaseClaim(db: Db, workspaceId: string): Promise<void> {
+// Free the shared lifecycle slot this attempt holds, FENCED on the slot's own
+// attempt id (the token observed when this sweep loaded the candidate), so it is
+// idempotent and can only ever release the claim it actually saw.
+//
+// A `lifecycle_operation_name='sync'` guard is NOT a fence — the twin
+// `sync-target.ts#releaseSyncClaim` was fixed for exactly this: between load and
+// write, this sweep's own recovery may free a stranded claim and a NEW sync take
+// the slot; `name='sync'` still matches, so the release frees the new sync's
+// claim out from under it, dropping the promotion fence mid-rebase. A null token
+// means no claim is held — the fenced write then matches nothing, which is the
+// correct no-op.
+async function releaseClaim(
+  db: Db,
+  workspaceId: string,
+  lifecycleAttemptId: string | null,
+): Promise<void> {
+  if (lifecycleAttemptId === null) return;
+
   await db
     .update(workspaces)
     .set({
@@ -199,7 +230,7 @@ async function releaseClaim(db: Db, workspaceId: string): Promise<void> {
     .where(
       and(
         eq(workspaces.id, workspaceId),
-        eq(workspaces.lifecycleOperationName, "sync"),
+        eq(workspaces.lifecycleOperationAttemptId, lifecycleAttemptId),
       ),
     );
 }
@@ -257,7 +288,11 @@ async function failAgentAttemptToReview(
   if (args.restore) {
     await restoreWorktree(args.ctx.worktree, args.attempt.headShaBefore);
   }
-  await releaseClaim(db, args.attempt.workspaceId);
+  await releaseClaim(
+    db,
+    args.attempt.workspaceId,
+    args.attempt.lifecycleAttemptId,
+  );
   await markSyncReviewFromRunning(args.attempt.runId, { db });
   await promoteNextPending({ db, pool: poolForRunKind(args.ctx.runKind) });
 
@@ -321,7 +356,7 @@ export async function recoverSyncAttemptOnReconcile(args: {
     if (!won) {
       return { window: args.liveSessionId ? "w2" : "w3", outcome: "noop" };
     }
-    await releaseClaim(db, attempt.workspaceId);
+    await releaseClaim(db, attempt.workspaceId, attempt.lifecycleAttemptId);
 
     return { window: args.liveSessionId ? "w2" : "w3", outcome: "aborted" };
   }
@@ -446,7 +481,7 @@ export async function recoverSyncAttemptOnReconcile(args: {
       .set({ reviewEnteredAt: now() })
       .where(eq(runs.id, runId));
   }
-  await releaseClaim(db, attempt.workspaceId);
+  await releaseClaim(db, attempt.workspaceId, attempt.lifecycleAttemptId);
   await markSyncReviewFromRunning(runId, { db });
   await promoteNextPending({ db, pool: poolForRunKind(ctx.runKind) });
   log.info(
@@ -498,6 +533,7 @@ async function loadSweepCandidates(db: Db): Promise<SweepCandidate[]> {
       runStatus: runs.status,
       runKind: runs.runKind,
       worktree: workspaces.worktreePath,
+      lifecycleAttemptId: workspaces.lifecycleOperationAttemptId,
     })
     .from(runSyncAttempts)
     .innerJoin(runs, eq(runs.id, runSyncAttempts.runId))
@@ -519,6 +555,7 @@ async function loadSweepCandidates(db: Db): Promise<SweepCandidate[]> {
       headShaBefore: (row.headShaBefore ?? null) as string | null,
       remoteShaBefore: (row.remoteShaBefore ?? null) as string | null,
       agentRunningSince: (row.agentRunningSince ?? null) as Date | null,
+      lifecycleAttemptId: (row.lifecycleAttemptId ?? null) as string | null,
     },
     runStatus: row.runStatus as string,
     runKind: row.runKind as string,
@@ -631,13 +668,61 @@ export async function runSyncRecoverySweep(
 
       if (live) await del(live.sessionId).catch(() => undefined);
       await restoreWorktree(cand.worktree, attempt.headShaBefore);
-      await releaseClaim(db, attempt.workspaceId);
+      await releaseClaim(db, attempt.workspaceId, attempt.lifecycleAttemptId);
       await markSyncReviewFromRunning(attempt.runId, { db });
       await promoteNextPending({ db, pool: poolForRunKind(cand.runKind) });
       durationCapKilled += 1;
       log.warn(
         { window: "w5", runId: attempt.runId, attempt: attempt.id },
         "sync recovery: killed runaway resolver past active-time cap, returned run to Review",
+      );
+
+      continue;
+    }
+
+    // W7: an agent resolver PARKED ON HITL whose driver is gone. This is where
+    // the resolver waits BY DESIGN — an ACP `requestPermission` moves the run to
+    // `NeedsInput` — so post-restart the prompt has no one to answer it: W5 is
+    // `Running`-only, reconcile owns only `Running`, and the W1/W4 arm below is
+    // `mechanical`-only. Left unswept the run holds a pool slot AND the sync
+    // claim forever (which also refuses promote and every other lifecycle op).
+    if (
+      attempt.phase === "agent_running" &&
+      (cand.runStatus === "NeedsInput" ||
+        cand.runStatus === "NeedsInputIdle") &&
+      !hasSyncDriver(attempt.runId)
+    ) {
+      // CAS the phase FIRST, on the exact observed value: a resume racing this
+      // sweep flips the run back to `Running` and drives on, and the loser must
+      // not tear that session down mid-flight.
+      const won = await casPhaseFailed(
+        db,
+        attempt.id,
+        "agent_running",
+        "CRASH",
+        "sync resolver orphaned while parked on a HITL prompt",
+      );
+
+      if (!won) {
+        log.info(
+          { window: "w7", runId: attempt.runId, attempt: attempt.id },
+          "sync recovery: resolver advanced or settled concurrently — orphan abort skipped",
+        );
+
+        continue;
+      }
+
+      const live = liveSyncSessionFor(records, attempt.runId);
+
+      if (live) await del(live.sessionId).catch(() => undefined);
+      await restoreWorktree(cand.worktree, attempt.headShaBefore);
+      await releaseClaim(db, attempt.workspaceId, attempt.lifecycleAttemptId);
+      await markSyncReviewFromNeedsInput(attempt.runId, cand.runStatus, { db });
+      await promoteNextPending({ db, pool: poolForRunKind(cand.runKind) });
+      orphanOperationsAborted += 1;
+      log.warn(
+        { window: "w7", runId: attempt.runId, attempt: attempt.id },
+        "sync recovery: aborted an orphaned resolver parked on HITL, returned run to Review",
       );
 
       continue;
@@ -695,7 +780,11 @@ export async function runSyncRecoverySweep(
         });
 
         if (settled) {
-          await releaseClaim(db, attempt.workspaceId);
+          await releaseClaim(
+            db,
+            attempt.workspaceId,
+            attempt.lifecycleAttemptId,
+          );
           orphanOperationsAborted += 1;
           log.warn(
             {
@@ -727,7 +816,7 @@ export async function runSyncRecoverySweep(
       if (attempt.phase !== "pushing") {
         await restoreWorktree(cand.worktree, attempt.headShaBefore);
       }
-      await releaseClaim(db, attempt.workspaceId);
+      await releaseClaim(db, attempt.workspaceId, attempt.lifecycleAttemptId);
       orphanOperationsAborted += 1;
       log.warn(
         {

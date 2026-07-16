@@ -150,8 +150,10 @@ part of this milestone.
 
 **Known M9 deferrals (do not implement without explicit instruction):**
 
-- The PRs board tab exists in the UI as a placeholder; there is no backend
-  for it. (The MCPs board tab is the real M27 project MCP catalog; the
+- The PRs board tab placeholder was superseded by a real PR-state surface:
+  `board.ts`'s `prState`/`prHasConflicts` DTO fields, populated by the
+  `pr_state_scan` job (ADR-139), drive a PR-state chip on Done/InDelivery/
+  OnReview cards. (The MCPs board tab is the real M27 project MCP catalog; the
   platform MCP catalog is now reachable at admin `/mcps`, and the Inbox nav
   now reaches a real `/inbox` — both unlocked by the web-shell nav-unlock
   work, which also moved supervisor status to the footer only and added a

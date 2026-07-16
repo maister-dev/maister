@@ -12139,8 +12139,8 @@ report merge state. This blocks the M20 "ship non-trivial PRs end-to-end" goal.
 - Persist PR facts on `workspaces` (no new `pull_requests` table), extending the
   existing `pr_url`/`pr_number` pair: `pr_state` (`open|merged|closed`, NULL =
   never checked), `pr_has_conflicts` (boolean, NULL = unknown), `pr_merged_at`,
-  `pr_merge_commit_sha`, `pr_state_checked_at`. Existing rows keep NULL state and
-  are adopted by the first scan — no backfill guessing.
+  `pr_merge_commit_sha`. Existing rows keep NULL state and are adopted by the
+  first scan — no backfill guessing.
 - `pr_merge_commit_sha` records the **provider** merge commit as provenance only.
   It is distinct from `runs.merge_commit_sha`, which stays owned by the shipped
   `repo_delivery_scan` (ADR-134): a provider "merged" flag is not proof the commit
@@ -12150,14 +12150,23 @@ report merge state. This blocks the M20 "ship non-trivial PRs end-to-end" goal.
   keyset cursor like `auto_promote`) polls open/unknown PRs at a fixed
   `PR_STATE_SCAN_CADENCE_SECONDS = 300` code constant. It is programmatic-only:
   provider CLI/REST reads (`gh`/`glab`/Gitea REST), zero LLM/agent tokens, and it
-  NEVER calls the supervisor client or mutates git. `pr_state_checked_at` is
-  stamped on every attempt (success or failure) so one bad row cannot stall the
-  job.
+  NEVER calls the supervisor client or mutates git. The **keyset cursor** is what
+  keeps one bad row from stalling the job: it advances past any candidate that
+  skips or throws, so every candidate is visited within `ceil(N / batch)` ticks
+  regardless of never-moving rows.
 - Provider reads extend the existing 4-provider adapter family
   (`github`/`gitlab`/`gitea`/`gitverse`) with a `getPrState` capability. `generic`
   is not an adapter — it is a typed per-item skip, never a job failure. Missing
-  CLI/token or provider 5xx is a transient per-item skip; a deleted/404 PR is a
-  deterministic terminal skip. Poison items never retry forever.
+  CLI/token, provider 5xx, AND a 404/not-found are all per-item skips that leave
+  `pr_state` UNTOUCHED: every provider answers permission-denied with the same
+  404/"could not resolve" it uses for a deleted PR (deliberately — so private-repo
+  existence cannot be probed), so a failed read cannot tell "deleted" from "the
+  token lost access". Writing `closed` on that guess is unrecoverable — the
+  candidate query selects `NULL`/`open` only, so the row is never re-read, and no
+  other writer touches `pr_state` — which would let one rotated `GH_TOKEN`
+  silently mark every live PR closed and refuse reopen. Only a SUCCESSFUL read
+  writes state; the cursor (above) is what bounds the cost of retrying an
+  unreadable row.
 - Each detected state edge fires in one edge-guarded transaction (previous
   `pr_state`/`pr_has_conflicts` is the guard → exactly-once across re-scans; the
   webhook emit is a transactional-outbox insert): **merged** sets
@@ -12256,8 +12265,10 @@ bring a `Done` run whose PR now conflicts back into review.
   SHA BEFORE the fetch and push
   `--force-with-lease=refs/heads/<branch>:<captured-sha>` — a bare
   `--force-with-lease` after any fetch that touched `origin/<branch>` would lease
-  against the refreshed value and defeat the check. Lease failure → attempt
-  `failed`, typed `CONFLICT` with both SHAs; the local rebase result is kept.
+  against the refreshed value and defeat the check. When that pre-fetch capture is
+  itself indeterminate (e.g. a transient `ls-remote` failure) and `pr_url` is set,
+  the push MUST refuse rather than fall back to a bare lease. Lease failure →
+  attempt `failed`, typed `CONFLICT` with both SHAs; the local rebase result is kept.
 - **`run_sync_attempts` append-only ledger** (`node_attempts`-shaped: plain-text
   phase/status, TS-only enum, no DB CHECK): `(run_id, attempt)` UNIQUE; durable
   `phase` (`starting → rebasing → agent_running → verifying → pushing →
@@ -12269,7 +12280,9 @@ bring a `Done` run whose PR now conflicts back into review.
   are ONE transaction — the claim serializes concurrent launches to exactly one
   attempt row. The agent path's `markSyncFromReview` CAS is a SECOND locked tx,
   taken only once the rebase has conflicted: the claim must commit before the
-  rebase, and the rebase is what decides whether a resolver is needed.
+  rebase, and the rebase is what decides whether a resolver is needed. That
+  second tx re-checks the cap and the promotion fence under its own lock, so
+  splitting the transaction costs no extra serialization.
 - **Concurrency**: the agent path holds a kind-pool slot while `Running` (a
   `NeedsInput` resolver still holds it). `Review→Running` reclaims a slot and is
   cap-gated — launch at cap → typed `CONFLICT`, no queueing. Finalize back to
@@ -12309,15 +12322,34 @@ bring a `Done` run whose PR now conflicts back into review.
   lifecycle claim, never the promotion claim, so no new promotion crash window is
   introduced; a chained-finalize failure degrades to the clean-`Review` two-step
   outcome (benign). A plain `rebase_merge` promotion is unchanged.
-- **Crash windows W1–W6** each have a durable discriminant (the attempt row phase)
-  and a recovery predicate; the reconcile classifier gains an `activeSyncAttempt`
-  signal and branches BEFORE the flow reattach/redispatch arms (a sync session must
-  never be driven as a graph session). Startup reconcile treats a live sync session
-  as orphaned (no in-process driver post-restart → W2 deterministic abort); the
-  periodic sweep skips a healthy in-flight sync owned by an in-process driver. v1
-  recovery is deterministic abort; resolver reattach is a recorded future
-  enhancement. W6 (`autoFinalize=true` chained-finalize crash) is benign — the run
-  is a normal clean `Review`.
+- **Crash windows W1–W7** each have a durable discriminant (the attempt row phase)
+  and a recovery predicate — enumerated in the table below, which is normative: a
+  `(runs.status, attempt phase)` pair absent from it is a GAP, not a licence to
+  improvise. The reconcile classifier gains an `activeSyncAttempt` signal and
+  branches BEFORE the flow reattach/redispatch arms (a sync session must never be
+  driven as a graph session), and before the `worktree-gone → Crashed` arm (which
+  would otherwise mask a recoverable sync row as a crash). Startup reconcile treats
+  a live sync session as orphaned (no in-process driver post-restart → W2
+  deterministic abort); the periodic sweep skips a healthy in-flight sync owned by
+  an in-process driver. v1 recovery is deterministic abort; resolver reattach is a
+  recorded future enhancement.
+
+  | Window | Durable state | Recovery (exact predicate) |
+  | --- | --- | --- |
+  | W1: after claim+attempt (`starting`/`rebasing`), before session | attempt phase ∈ {`starting`,`rebasing`}, no live session, status `Review` | System sweep: abort in-worktree operation if present, attempt→`failed`, release claim. |
+  | W2: agent running, web restarts | attempt `agent_running`, status `Running`, live session for (runId, `sync-<n>`), **no in-process driver** | Startup reconcile (post-restart there is never an in-process driver): deterministic v1 — `deleteSession`, abort, attempt→`failed`, CAS `Running→Review`, `promoteNextPending`. |
+  | W3: session gone, web died before verify/push/finalize | attempt ∈ {`agent_running` with no session, `verifying`, `pushing`}, status `Running` | Sweep re-runs verification idempotently; push `--force-with-lease` to the recorded SHA is idempotent; finalize or abort per verify result. A `pushing` attempt settles FORWARD (origin is probed) — never restore past a landed push. |
+  | W4: mechanical sync interrupted (route process death) | attempt `rebasing`, status `Review`, sequencer state on disk | Sweep: abort, attempt→`failed`. |
+  | W5: active-time duration cap exceeded | status `Running`, attempt `agent_running`, `agent_running_since < now()-30min` (human-wait time in `NeedsInput` is excluded; each HITL resume re-stamps `agent_running_since`) | Sweep: kill session, abort, `failed`, back to `Review`. |
+  | W6: `ai_rebase_merge autoFinalize=true`, resolver verified but chained finalize not done | attempt `succeeded`, `auto_finalize=true`, status `Review`, branch clean/rebased | **Benign** — no auto-recovery required: the run is a normal clean `Review` (identical to two-step); the operator re-promotes manually. |
+  | W7: resolver parked on HITL, web restarts | attempt `agent_running`, status ∈ {`NeedsInput`,`NeedsInputIdle`}, **no in-process driver** | Sweep: kill session if live, abort, attempt→`failed`, release claim, CAS →`Review`. The resolver's permission prompt is unanswerable once its driver is gone, so the run would otherwise hold a slot and the sync claim forever. |
+
+  W7 is where the resolver parks BY DESIGN (an ACP `requestPermission` moves the
+  run to `NeedsInput`), so it is a normal window, not an exotic one. A run may
+  NEVER reach a terminal status (`Abandoned`/`Crashed`) while a non-terminal sync
+  attempt is live: `abandonRun` refuses (`CONFLICT`) rather than stranding the
+  claim, which is what keeps `(Abandoned|Crashed, {agent_running,verifying,pushing})`
+  off this table instead of being an unrecovered cell.
 - **Ext + MCP**: one new scope `runs:sync` covering `POST /api/v1/ext/runs/sync`
   and `.../reopen` (NOT in `AGENT_TOKEN_SCOPES` nor `ORCHESTRATOR_TOKEN_SCOPES` —
   manual-only), run-bound (project derived from the run row, existence-hidden 404).

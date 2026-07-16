@@ -3,6 +3,7 @@
 import type { ReadinessDTO } from "@/lib/queries/readiness";
 import type { Key, ReactElement } from "react";
 
+import { ArrowPathIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { Button, Input, ListBox, Select } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
@@ -200,6 +201,8 @@ export function ReviewPanel({
         : null,
     );
   const modeLabelId = useId();
+  const syncStrategyLabelId = useId();
+  const syncRunnerLabelId = useId();
   const readinessReady = readiness?.readiness === "ready";
   const promotionInput = {
     targetBranch,
@@ -363,7 +366,10 @@ export function ReviewPanel({
           <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-line bg-amber-soft px-2.5 py-1 font-mono text-[10.5px] font-bold text-amber">
             {labels.behindAhead}
           </span>
-          {sync && !syncClaimed ? (
+          {/* Gated at the ROUTE's granularity: sync is `promoteRun` (member),
+              while this surface is `readBoard` (viewer). Offering it to a viewer
+              only buys them a 403. */}
+          {sync && !syncClaimed && canPromote ? (
             <Button
               className="font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
               data-testid="review-sync-open"
@@ -372,6 +378,7 @@ export function ReviewPanel({
               variant="outline"
               onClick={() => openSyncDialog(true)}
             >
+              <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {labels.syncBranch}
             </Button>
           ) : null}
@@ -402,36 +409,81 @@ export function ReviewPanel({
             <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
               {labels.syncStrategy}
             </span>
-            <select
-              className="h-9 rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+            <span className="sr-only" id={syncStrategyLabelId}>
+              {labels.syncStrategy}
+            </span>
+            <Select
+              aria-labelledby={syncStrategyLabelId}
+              className="w-full max-w-[260px]"
               data-testid="review-sync-strategy"
-              value={syncStrategy}
-              onChange={(e) =>
-                setSyncStrategy(e.target.value as "rebase" | "merge")
+              selectedKey={syncStrategy}
+              variant="secondary"
+              onSelectionChange={(key) =>
+                setSyncStrategy(
+                  key === null
+                    ? syncStrategy
+                    : (String(key) as "rebase" | "merge"),
+                )
               }
             >
-              <option value="rebase">{labels.syncStrategyRebase}</option>
-              <option value="merge">{labels.syncStrategyMerge}</option>
-            </select>
+              <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
+                <ListBox aria-label={labels.syncStrategy}>
+                  <ListBox.Item
+                    id="rebase"
+                    textValue={labels.syncStrategyRebase}
+                  >
+                    {labels.syncStrategyRebase}
+                  </ListBox.Item>
+                  <ListBox.Item id="merge" textValue={labels.syncStrategyMerge}>
+                    {labels.syncStrategyMerge}
+                  </ListBox.Item>
+                </ListBox>
+              </Select.Popover>
+            </Select>
           </label>
           {sync.runnerOptions.length > 0 ? (
             <label className="flex flex-col gap-1">
               <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
                 {labels.syncRunner}
               </span>
-              <select
-                className="h-9 rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+              <span className="sr-only" id={syncRunnerLabelId}>
+                {labels.syncRunner}
+              </span>
+              <Select
+                aria-labelledby={syncRunnerLabelId}
+                className="w-full max-w-[260px]"
                 data-testid="review-sync-runner"
-                value={syncRunnerId}
-                onChange={(e) => setSyncRunnerId(e.target.value)}
+                selectedKey={syncRunnerId}
+                variant="secondary"
+                onSelectionChange={(key) =>
+                  setSyncRunnerId(key === null ? "" : String(key))
+                }
               >
-                <option value="">{labels.syncRunnerDefault}</option>
-                {sync.runnerOptions.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
+                  <ListBox aria-label={labels.syncRunner}>
+                    <ListBox.Item id="" textValue={labels.syncRunnerDefault}>
+                      {labels.syncRunnerDefault}
+                    </ListBox.Item>
+                    {sync.runnerOptions.map((opt) => (
+                      <ListBox.Item
+                        key={opt.id}
+                        id={opt.id}
+                        textValue={opt.label}
+                      >
+                        {opt.label}
+                      </ListBox.Item>
+                    ))}
+                  </ListBox>
+                </Select.Popover>
+              </Select>
             </label>
           ) : null}
           <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
@@ -471,6 +523,7 @@ export function ReviewPanel({
               variant="primary"
               onClick={() => void startSync()}
             >
+              <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {labels.syncStart}
             </Button>
             <Button
@@ -481,6 +534,7 @@ export function ReviewPanel({
               variant="outline"
               onClick={() => setSyncOpen(false)}
             >
+              <XMarkIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {labels.syncCancel}
             </Button>
           </div>
