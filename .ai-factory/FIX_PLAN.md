@@ -172,42 +172,45 @@ Two root causes explain most of the code defects:
        since `scanBudgetMs()` reserves it as lease headroom · `promote.ts:900-908` drops the
        injected `db` into `syncRunTarget` (falls back to `getDb()`).
 
-## Phase 4 — tests for Phase 3 + the untested contract invariants
+## Phase 4 — tests for Phase 3 + the untested contract invariants — DONE except 21 (partial) / 22 (partial)
 
-13. [ ] **#C1 — `remoteShaIndeterminate` → refuse has ZERO tests.** `grep -i indeterminate`
+13. [x] **#C1 — `remoteShaIndeterminate` → refuse has ZERO tests.** `grep -i indeterminate`
         across every test file returns nothing. Implemented at `sync-target.ts:481,492,720,1127`.
         This is the ONLY guard between a resolver and an unleased force-push.
-14. [ ] **#C3 — the ADR's "matrix tested" claim is FALSE.** Actual coverage = 3 point tests.
+14. [x] **#C3 — the ADR's "matrix tested" claim is FALSE.** Actual coverage = 3 point tests.
         Missing: `promotionState === "done"` (only `"claiming"` tested, `:627`); the
         **`reopened` pass-through carve-out** (`sync-target.ts:501` comment) — that is the
         reopen→sync path, the feature's whole reason to exist, and if the fence ever blocked
         `reopened` every test stays green; `drop`/`exportBranch`/`snapshotCommit`/`handoffBranch`
         (`:648` tests `archive` only).
-15. [ ] **#C4 — the entire W3 recovery arm is untested.** `recoverSyncAttemptOnReconcile` is
+15. [x] **#C4 — the entire W3 recovery arm is untested.** `recoverSyncAttemptOnReconcile` is
         invoked once in the suite (`sync-recovery.integration.test.ts:288`), always with
         `liveSessionId:"sess-orphan"` → W2. The W3 arm (`sync-recovery.ts:299-397`: re-verify →
         gate → **push** → finalize) has zero coverage.
-16. [ ] **#C6 — W6 / `autoFinalize=true` chain untested** (`sync-target.ts:1239-1270`).
+16. [x] **#C6 — W6 / `autoFinalize=true` chain untested** (`sync-target.ts:1239-1270`).
         `promote-service.test.ts:839` asserts delegation with an `expect.objectContaining`
         that OMITS `autoFinalize` — the flag's plumbing is unpinned.
-17. [ ] **#C8 — the `[FIX:ADR-139]` lease-deadline path has zero tests**
+17. [x] **#C8 — the `[FIX:ADR-139]` lease-deadline path has zero tests**
         (`pr-state-scan.ts:35-39,142-193`). A defect fix shipped with no regression test.
-18. [ ] **#C9 — the headline e2e passes on a REFUSED promote.** `run-sync.spec.ts:47-50`
+18. [x] **#C9 — the headline e2e passes on a REFUSED promote.** `run-sync.spec.ts:47-50`
         clicks `review-promote` then asserts `toBeHidden()`, but `review-panel.tsx:696` is a
         ternary `{drift ? <review-drift> : <review-promote>}` and `:286` sets `drift=true` on
         a target-drift refusal → the button unmounts either way. Assert the response status
         like the sibling does (`pr-reopen.spec.ts:36-41`, `expect((await posted).status()).toBe(200)`).
-19. [ ] **#M9 — poison-guard clone dropped the case that mattered.**
+19. [x] **#M9 — poison-guard clone dropped the case that mattered.**
         `jobs.integration.test.ts:119-175` clones the seed test but not the
         `consecutive_failures < max_failures` guard (`jobs.ts:481-482`); only
         `ensureRepoDeliveryScanJobs` covers it (`:177-205`). Delete the guard and the
         `pr_state_scan` clone still passes → a poison-disabled scan re-enables every seed →
         retry-forever, which ADR-139 explicitly forbids.
-20. [ ] **#M10 — `system-sweeps.test.ts:103` no longer covers what it claims.**
+20. [x] **#M10 — `system-sweeps.test.ts:103` no longer covers what it claims.**
         `system-sweeps.ts:145,165-171` added `runSyncRecoverySweep` but the test never mocks
         `@/lib/runs/sync-recovery`, which calls `getDb()` → throws → swallowed into `errors[]`;
         the test asserts neither `syncRecovery` nor `errors` emptiness.
-21. [ ] **Delete / repair trivial tests** (each verified): `sync-target…:425` asserts a SHA the
+21. [~] **PARTIAL — done: the two pr-adapter argv tests, the both-SHAs message, the
+       promoteRun authz assertion. NOT done: review-panel label · the migration
+       backfill insert-order · pr-state-scan `withTask` seeding.**
+       **Delete / repair trivial tests** (each verified): `sync-target…:425` asserts a SHA the
         test itself read from git looks like hex, under a name claiming "PRECONDITION naming
         both SHAs" — nothing inspects the message · `review-panel.test.ts:294-303` asserts a
         label string it passed in · `pr-adapter-getprstate…:456-484` (`glab`) asserts
@@ -220,7 +223,13 @@ Two root causes explain most of the code defects:
         candidates without `withTask:true` so the merged-only negative is vacuous ·
         `sync-target…:856-863` stubs `requireProjectAction` and never asserts
         `(projectId, "promoteRun")` — rebinding it to `readBoard` fails nothing.
-22. [ ] **Overlap to collapse:** `reopen…:390` (pure) vs `:581` (DB) enumerate the same 4
+22. [~] **PARTIAL — done: the partial-index predicate. NOT done: the reopen
+       pure-vs-DB overlap (pure redundancy, no defect risk). REFUTED and kept:
+       the 0103 journal/snapshot check — migration-journal-integrity only
+       asserts a snapshot for the NEWEST entry (0104 today), so this is the
+       ONLY assertion that 0103 has one; deleting it cuts real coverage on a
+       branch whose snapshot chain is already broken.**
+       **Overlap to collapse:** `reopen…:390` (pure) vs `:581` (DB) enumerate the same 4
         refusals — keep one representative at the service layer · `pr-state-tracking…:190-206`
         + `branch-sync…:218-233` re-check journal/snapshot pairing that
         `migration-journal-integrity.test.ts` already covers MORE strictly (incl. the `when`
@@ -228,12 +237,12 @@ Two root causes explain most of the code defects:
         `pr-state-tracking…:92-107` DDL-echo the `.sql`; `:109-116` asserts a "partial index"
         by NAME only, so a non-partial index passes — assert the predicate (`0103:8`).
 
-## Phase 5 — docs (code wins; do LAST, after code is final)
+## Phase 5 — docs (code wins) — DONE except 31 (partial) / 34
 
-23. [ ] **#7 `PromoteRunBody`** (`web.openapi.yaml:15990-16036`): `additionalProperties:false`
+23. [x] **#7 `PromoteRunBody`** (`web.openapi.yaml:15990-16036`): `additionalProperties:false`
         + no `autoFinalize`, while `promote/route.ts:26` accepts it and
         `promotion-operation.ts:77-79` SENDS it → the spec rejects the branch's own request.
-24. [ ] **#8 `WebhookEventType`** (`web.openapi.yaml:18039`): enum has 12 entries; code
+24. [x] **#8 `WebhookEventType`** (`web.openapi.yaml:18039`): enum has 12 entries; code
         (`taxonomy.ts:9-27`) has 16. Missing `run.pr_merged`/`run.pr_closed`/`run.pr_conflicts`
         (this branch) **and `run.escalated`** (pre-existing — owner opted IN). The enum feeds
         live subscription bodies (`:18131`, `:18190`, `:18237`). Also fix the stale counts:
@@ -241,7 +250,7 @@ Two root causes explain most of the code defects:
         `outbound-webhooks.asyncapi.yaml:17` "Events are 12 curated" (same file's `:308`
         already says 16), `system-analytics/outbound-webhooks.md:198` "Exactly 13 types",
         `taxonomy.test.ts:250` "all 13 types".
-25. [ ] **#9 "target-scoped fetch" does not exist** — `worktree.ts:1203` is
+25. [x] **#9 "target-scoped fetch" does not exist** — `worktree.ts:1203` is
         `git fetch --end-of-options origin`, NO refspec → all refs → `origin/<branch>` IS
         refreshed. Documented as the RATIONALE for the explicit-SHA lease in 6 places:
         `branch-sync.md:85` + `:179-181`, `git-integration.md:365` + `:378`,
@@ -250,18 +259,18 @@ Two root causes explain most of the code defects:
         (`ls-remote` capture at `:485` precedes the fetch at `:576`) and its own comment
         (`:476-478`) is honest. **Dangerous drift:** a reader could "optimize away" the
         `ls-remote`. Fix the docs to describe the real mechanism.
-26. [ ] **#10 "ONE transaction" is impossible as written** — `branch-sync.md:161-163`
+26. [x] **#10 "ONE transaction" is impossible as written** — `branch-sync.md:161-163`
         (Expectations), `:46` (state diagram "one tx with claim + attempt"), `:104`
         (sequence), `database-schema.md:1719-1722`, `decisions.md:11993`. Code has TWO:
         claim (`sync-target.ts:497-557`) and the CAS (`:941-992`), separated by the rebase.
         The code is RIGHT — you cannot know it is the agent path until the rebase conflicts,
         and mechanical sync must not flip to `Running`. Rewrite the docs.
-27. [ ] **#11 202 semantics** — `web.openapi.yaml:4952-4955` +
+27. [x] **#11 202 semantics** — `web.openapi.yaml:4952-4955` +
         `operations.openapi.yaml:1711-1714` say 202 ⇒ "the run is now `Running`". After
         Phase 3 item 6 this becomes TRUE; verify rather than edit.
-28. [ ] **#C3 doc half** — `decisions.md` ADR-140's "Both directions are matrix tested"
+28. [x] **#C3 doc half** — `decisions.md` ADR-140's "Both directions are matrix tested"
         claim must go or become true (see item 14).
-29. [ ] **#15 `database-schema.md`**: `:1714` documents `actorUserId? // FK -> users.id` —
+29. [x] **#15 `database-schema.md`**: `:1714` documents `actorUserId? // FK -> users.id` —
         does not exist (`schema.ts:2122-2123` / `0104:22-23` are `actor_type`/`actor_id`,
         no FK; the sibling ERD `runs-domain.md:236-237` is right) · `:1702` says
         `mode // sync | ai_rebase_merge` — code is `["mechanical","agent"]` (`schema.ts:2095`)
@@ -269,12 +278,16 @@ Two root causes explain most of the code defects:
         `:1708` `runnerId // FK -> platform_acp_runners.id` — deliberately NOT an FK
         (`schema.ts:2110-2111`) · `workspaceId` (NOT NULL, cascade) missing from the block
         (`:1694-1716`).
-30. [ ] **#16 `docs/db/erd.md` has NONE of ADR-139/140** (untouched; `docs/CLAUDE.md`
+30. [x] **#16 `docs/db/erd.md` has NONE of ADR-139/140** (untouched; `docs/CLAUDE.md`
         "Adding a new artifact" requires it): `WORKSPACES` (`:791-819`) missing all five
         `pr_*`; `:818` `lifecycle_operation_name` omits `sync`; `:810` `promotion_state`
         omits `reopened`; no `RUN_SYNC_ATTEMPTS`; no `PROJECTS.sync_strategy_default` /
         `sync_runner_id`; `:645` `task_activity.event_kind` omits `run_pr_merged` (`0103:10`).
-31. [ ] **#14 screens docs describe a UI built elsewhere** — the biggest doc cluster.
+31. [~] **PARTIAL — run-inspector.md corrected (Overview PR facts + Actions-tab
+       Sync/Reopen, both verified absent in source). NOT done: workbench.md's
+       6th-matrix-column claim · flow-run.md's sync-branch-dialog.tsx,
+       chip-location, Stop-control and getRunDetail claims.**
+       **#14 screens docs describe a UI built elsewhere** — the biggest doc cluster.
         `workbench.md:190-200` claims a 6th lifecycle **matrix** column; `lifecycle-actions.tsx`
         + `policy.ts` have ZERO sync refs and are unchanged, and `workbench-lifecycle.md:94-98`
         (same PR) says sync takes NO matrix column · `flow-run.md:265-267` names
@@ -287,11 +300,11 @@ Two root causes explain most of the code defects:
         + the phase — `queries/run.ts:280-281,479-480` adds only `prState`/`prHasConflicts`;
         the phase comes from `sync-panel-data.ts:78-86` · `run-inspector.md:86-92,109-114`
         documents Overview PR facts + Actions-tab Sync/Reopen that do not exist.
-32. [ ] **#M20 stale `(Designed)` tags on Implemented ADRs** (`decisions.md:11853`, `:11931`
+32. [x] **#M20 stale `(Designed)` tags on Implemented ADRs** (`decisions.md:11853`, `:11931`
         both say Implemented): `git-integration.md:527-530`, `workspaces.md:615-618` + `:626`,
         `tasks.md:441` + `:618` + `:626`, `flow-run.md:244`, `workbench.md:190`,
         `run-inspector.md:86`.
-33. [ ] **Stale claims this branch falsified** (files untouched): `runs.md:132` `Done --> [*]`
+33. [x] **Stale claims this branch falsified** (files untouched): `runs.md:132` `Done --> [*]`
         with no `Done --> Review` (`state-transitions.ts:390-416`) and no `Review --> Running`
         sync edge (`:321-347`), while `:136-137` claims the diagram matches the enum exactly ·
         `runs.md:442-447` + `hitl.md:98-100` + `:244-252` + `:262-263` still document the
