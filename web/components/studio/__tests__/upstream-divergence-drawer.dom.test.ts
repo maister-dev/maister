@@ -8,12 +8,23 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next-intl", () => ({
-  useTranslations:
-    (namespace: string) =>
-    (key: string): string =>
-      `${namespace}.${key}`,
-}));
+vi.mock("next-intl", () => {
+  // Match use-intl's memoized translator identity across rerenders.
+  const translators = new Map<string, (key: string) => string>();
+
+  return {
+    useTranslations: (namespace: string): ((key: string) => string) => {
+      const existing = translators.get(namespace);
+
+      if (existing) return existing;
+      const translate = (key: string): string => `${namespace}.${key}`;
+
+      translators.set(namespace, translate);
+
+      return translate;
+    },
+  };
+});
 vi.mock("@/components/workbench/diff-view", () => ({
   DiffView: () => createElement("div", { "data-testid": "diff-view-stub" }),
 }));
@@ -88,6 +99,7 @@ describe("UpstreamDivergenceDrawer", () => {
 
     await flush();
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/studio/local-packages/lp1/divergence",
     );
@@ -133,6 +145,7 @@ describe("UpstreamDivergenceDrawer", () => {
 
     await flush();
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(host.querySelector('[data-testid="diff-view-stub"]')).not.toBeNull();
 
     const select = host.querySelector(
@@ -149,6 +162,7 @@ describe("UpstreamDivergenceDrawer", () => {
     });
     await flush();
 
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/studio/local-packages/lp1/divergence?cutInstallId=inst-c1",
     );
