@@ -228,10 +228,10 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
 
 ### Phase 5 — Verification
 
-- [ ] **T5.1 — Gates.** web unit+integration, mcp suite, `tsc --noEmit` (both), scoped
+- [x] **T5.1 — Gates.** web unit+integration, mcp suite, `tsc --noEmit` (both), scoped
   check-only eslint on touched files, `pnpm validate:docs`, `redocly lint`.
   → verify: AC8 green.
-- [ ] **T5.2 — Spec↔code conformance (AC1).** Execute the OpenAPI `verdict` example
+- [x] **T5.2 — Spec↔code conformance (AC1).** Execute the OpenAPI `verdict` example
   verbatim (`flowId: "bugfix"`) against a project owning `bugfix` → `200 triaged`,
   `tasks.flow_id` == UUID. The drift is closed.
   → verify: observed.
