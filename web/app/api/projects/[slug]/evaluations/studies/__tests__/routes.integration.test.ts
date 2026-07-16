@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import {
@@ -32,6 +40,7 @@ let participantsRoute: typeof import("../[studyId]/participants/route");
 let participantRoute: typeof import("../[studyId]/participants/[participantId]/route");
 let verdictsRoute: typeof import("../[studyId]/verdicts/route");
 let reviewRoute: typeof import("../../reviews/[reviewId]/route");
+let startRoute: typeof import("../[studyId]/evaluations/route");
 
 let projectId: string;
 let slug: string;
@@ -51,7 +60,9 @@ function req(
   path: string,
   init?: { method?: string; body?: unknown; ifMatch?: string },
 ): NextRequest {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
 
   if (init?.ifMatch) headers["if-match"] = init.ifMatch;
 
@@ -71,15 +82,30 @@ beforeAll(async () => {
   studiesRoute = await import("../route");
   studyRoute = await import("../[studyId]/route");
   participantsRoute = await import("../[studyId]/participants/route");
-  participantRoute = await import("../[studyId]/participants/[participantId]/route");
+  participantRoute = await import(
+    "../[studyId]/participants/[participantId]/route"
+  );
   verdictsRoute = await import("../[studyId]/verdicts/route");
   reviewRoute = await import("../../reviews/[reviewId]/route");
+  startRoute = await import("../[studyId]/evaluations/route");
 
   adminId = randomUUID();
   viewerId = randomUUID();
   await db.insert(schema.users).values([
-    { id: adminId, email: `${adminId}@t.com`, role: "admin", accountStatus: "active", passwordHash: "x" },
-    { id: viewerId, email: `${viewerId}@t.com`, role: "viewer", accountStatus: "active", passwordHash: "x" },
+    {
+      id: adminId,
+      email: `${adminId}@t.com`,
+      role: "admin",
+      accountStatus: "active",
+      passwordHash: "x",
+    },
+    {
+      id: viewerId,
+      email: `${viewerId}@t.com`,
+      role: "viewer",
+      accountStatus: "active",
+      passwordHash: "x",
+    },
   ]);
 
   projectId = randomUUID();
@@ -159,7 +185,9 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
     );
     const listBody = await listed.json();
 
-    expect(listBody.studies.map((s: { id: string }) => s.id)).toContain(studyId);
+    expect(listBody.studies.map((s: { id: string }) => s.id)).toContain(
+      studyId,
+    );
 
     const got = await studyRoute.GET(
       req(`/api/projects/${slug}/evaluations/studies/${studyId}`),
@@ -236,10 +264,10 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
     asAdmin();
 
     const added = await participantsRoute.POST(
-      req(
-        `/api/projects/${slug}/evaluations/studies/${studyId}/participants`,
-        { method: "POST", body: { runIds: [flowRunId] } },
-      ),
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/participants`, {
+        method: "POST",
+        body: { runIds: [flowRunId] },
+      }),
       { params: Promise.resolve({ slug, studyId }) },
     );
 
@@ -285,10 +313,10 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
 
     // A verdict needs an OPEN study — flip draft→open by adding a participant.
     await participantsRoute.POST(
-      req(
-        `/api/projects/${slug}/evaluations/studies/${studyId}/participants`,
-        { method: "POST", body: { runIds: [flowRunId] } },
-      ),
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/participants`, {
+        method: "POST",
+        body: { runIds: [flowRunId] },
+      }),
       { params: Promise.resolve({ slug, studyId }) },
     );
 
@@ -314,6 +342,33 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
     );
 
     expect((await listed.json()).verdicts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("guards the execution-start route (viewer 403, cross-project 404)", async () => {
+    // Viewer lacks launchEvaluationRuns (member-min) → 403 before any start.
+    asViewer();
+    const denied = await startRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/evaluations`, {
+        method: "POST",
+        body: { profileId: randomUUID() },
+      }),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+
+    expect(denied.status).toBe(403);
+
+    // A cross-project studyId is hidden as 404 (ownership guard before start).
+    asAdmin();
+    const foreign = randomUUID();
+    const notFound = await startRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies/${foreign}/evaluations`, {
+        method: "POST",
+        body: { profileId: randomUUID() },
+      }),
+      { params: Promise.resolve({ slug, studyId: foreign }) },
+    );
+
+    expect(notFound.status).toBe(404);
   });
 
   it("resolves a review with If-Match; hides a cross-project review as 404", async () => {
