@@ -61,7 +61,7 @@ function buildPackageRepo(): string {
   );
   writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
-    `schemaVersion: 1\nname: ${FLOW_ID}\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n`,
+    `schemaVersion: 1\nname: ${FLOW_ID}\ncompat:\n  engine_min: 3.0.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
   );
   writeFileSync(join(pkgDir, "docs/README.md"), "upstream readme v1\n");
   git(dir, "add", "-A");

@@ -5,6 +5,9 @@ import { join } from "node:path";
 
 import { test, expect, type Page } from "@playwright/test";
 
+import { singleValue, withE2EDb } from "./_seed/db";
+import { loadFixtures } from "./_seed/fixtures";
+
 // M36 Phase 2 — the editable-local-package walk: install a package, FORK it to a
 // local package from the viewer, and land in the /studio/edit editor. The fork
 // API + cut-version + the working-dir save/lock are exhaustively integration-
@@ -222,6 +225,200 @@ async function selectGraphNode(page: Page, nodeId: string): Promise<void> {
   await expect(node).toBeVisible();
   await node.dispatchEvent("click");
 }
+
+test("canonical Studio wizard creates a package Flow and adds another Flow in the same editor", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const packageName = `Canonical ${RUN_TAG}`;
+  const firstFlowId = `${RUN_TAG}-first`;
+  const secondFlowId = `${RUN_TAG}-second`;
+
+  await page.goto("/studio/packages?create=flow");
+  const create = page.getByTestId("create-flow-dialog");
+
+  await expect(create).toBeVisible();
+  await create.getByTestId("create-flow-package-name").fill(packageName);
+  await create.getByTestId("create-flow-id").fill(firstFlowId);
+  await create.getByTestId("create-flow-title").fill("First canonical Flow");
+  await create
+    .getByTestId("create-flow-summary")
+    .fill("Creates a usable Flow package.");
+  await create
+    .getByTestId("create-flow-route-when")
+    .fill("Use when creating a package.");
+  await create.getByTestId("create-flow-submit").click();
+
+  await page.waitForURL(
+    new RegExp(`/studio/edit/[^/]+/flows/${firstFlowId}/flow\\.yaml`),
+    { timeout: 30_000 },
+  );
+  await expect(page.getByTestId("flow-graph-editor")).toBeVisible();
+
+  const packageId = new URL(page.url()).pathname.split("/")[3];
+
+  expect(packageId).toBeTruthy();
+  await page.goto(`/studio/edit/${packageId}`);
+  await expect(page.getByTestId("package-home")).toBeVisible();
+  await page.getByTestId("composition-create-flow-open").click();
+
+  const add = page.getByTestId("create-flow-dialog");
+
+  await add.getByTestId("create-flow-id").fill(secondFlowId);
+  await add.getByTestId("create-flow-title").fill("Second canonical Flow");
+  await add.getByTestId("create-flow-summary").fill("A second usable Flow.");
+  await add
+    .getByTestId("create-flow-route-when")
+    .fill("Use when another Flow is required.");
+  await add.getByTestId("create-flow-submit").click();
+
+  await page.waitForURL(
+    new RegExp(`/studio/edit/${packageId}/flows/${secondFlowId}/flow\\.yaml`),
+    { timeout: 30_000 },
+  );
+  await expect(page.getByTestId("flow-graph-editor")).toBeVisible();
+
+  // Use the real lock/file/commit/cut API plumbing beneath the already-proven
+  // wizard UI, then launch the immutable attached package from the board. The
+  // test Flow is all-cli so the real engine reaches a terminal state without an
+  // ACP agent session.
+  const sessionId = `canonical-e2e-${Math.random().toString(36).slice(2, 10)}`;
+  const lock = await page.request.post(
+    `/api/studio/local-packages/${packageId}/lock-refresh`,
+    { data: { sessionId } },
+  );
+
+  expect(lock.ok()).toBeTruthy();
+  const cliFlow = [
+    "schemaVersion: 1",
+    `name: ${firstFlowId}`,
+    "metadata:",
+    "  title: First canonical Flow",
+    "  summary: Creates a usable Flow package.",
+    "  route_when: Use when creating a package.",
+    "compat:",
+    "  engine_min: 3.0.0",
+    "capabilities: []",
+    "artifacts: []",
+    "nodes:",
+    "  - id: start",
+    "    type: cli",
+    "    action:",
+    "      command: echo canonical-create-flow",
+    "    transitions:",
+    "      success: done",
+    "",
+  ].join("\n");
+  const write = await page.request.put(
+    `/api/studio/local-packages/${packageId}/files/flows/${firstFlowId}/flow.yaml`,
+    { data: { sessionId, content: cliFlow } },
+  );
+
+  expect(write.ok()).toBeTruthy();
+  const commit = await page.request.post(
+    `/api/studio/local-packages/${packageId}/commit`,
+    { data: { sessionId, message: "canonical Flow lifecycle" } },
+  );
+
+  expect(commit.ok()).toBeTruthy();
+  const fx = loadFixtures().byKey.board;
+  const cut = await page.request.post(
+    `/api/studio/local-packages/${packageId}/cut-version`,
+    { data: { attachToProjectId: fx.projectId } },
+  );
+
+  expect(cut.ok()).toBeTruthy();
+  expect(((await cut.json()) as { versionLabel: string }).versionLabel).toMatch(
+    /^local-[a-f0-9]+$/,
+  );
+  await page.request.post(
+    `/api/studio/local-packages/${packageId}/lock-release`,
+    { data: { sessionId } },
+  );
+
+  let flowRowId = "";
+
+  await withE2EDb(async (pool) => {
+    const { rows } = await pool.query<{ id: string }>(
+      `SELECT f.id
+       FROM flows f
+       JOIN projects p ON p.id = f.project_id
+       WHERE p.slug = $1 AND f.flow_ref_id = $2`,
+      [fx.projectSlug, firstFlowId],
+    );
+
+    flowRowId = rows[0]?.id ?? "";
+  });
+  expect(flowRowId).toBeTruthy();
+
+  const taskTitle = `Canonical lifecycle ${RUN_TAG}`;
+  const task = await page.request.post(
+    `/api/projects/${fx.projectSlug}/tasks`,
+    {
+      data: {
+        title: taskTitle,
+        prompt: "Run the canonical all-cli Flow.",
+        flowId: flowRowId,
+      },
+    },
+  );
+
+  expect(task.status()).toBe(201);
+  const { taskId } = (await task.json()) as { taskId: string };
+  await page.goto(`/projects/${fx.projectSlug}`);
+  const launch = page
+    .locator("[data-board]")
+    .getByText(taskTitle)
+    .locator("xpath=ancestor::article")
+    .getByRole("button", { name: "Launch", exact: true });
+
+  await expect(launch).toBeEnabled();
+  const launchResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/runs") &&
+      response.request().method() === "POST",
+  );
+  await launch.click();
+  const dialog = page.getByTestId("task-launch-dialog");
+
+  await dialog.getByRole("button", { name: "Create run", exact: true }).click();
+  expect((await launchResponse).status()).toBe(200);
+  await expect
+    .poll(
+      () =>
+        singleValue<string>(
+          `SELECT id AS value FROM runs WHERE task_id = $1 ORDER BY started_at DESC NULLS LAST LIMIT 1`,
+          [taskId],
+        ),
+      { timeout: 15_000, intervals: [200] },
+    )
+    .not.toBeNull();
+  const runId = await singleValue<string>(
+    `SELECT id AS value FROM runs WHERE task_id = $1 ORDER BY started_at DESC NULLS LAST LIMIT 1`,
+    [taskId],
+  );
+
+  await expect
+    .poll(
+      () =>
+        singleValue<string>(`SELECT status AS value FROM runs WHERE id = $1`, [
+          runId,
+        ]),
+      { timeout: 30_000, intervals: [400] },
+    )
+    .toBe("Review");
+  const attempts = await withE2EDb(async (pool) =>
+    pool.query<{ node_id: string; status: string }>(
+      `SELECT node_id, status FROM node_attempts WHERE run_id = $1`,
+      [runId],
+    ),
+  );
+
+  expect(attempts.rows).toContainEqual({
+    node_id: "start",
+    status: "Succeeded",
+  });
+});
 
 test("fork an installed package to local → land in the /studio/edit editor", async ({
   page,

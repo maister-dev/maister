@@ -62,12 +62,14 @@ vi.mock("@/lib/scheduler", () => ({
 
 import { closeDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { forkPackageToLocal } from "@/lib/local-packages/fork";
 import { gitCommitWorkingDir } from "@/lib/local-packages/git";
 import {
+  addFlowToLocalPackage,
+  createLocalPackageWithFlow,
   getLocalPackage,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
+import { acquireLock, releaseLock } from "@/lib/local-packages/lock";
 import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
 import { attachPackage, installPackageRevision } from "@/lib/packages/attach";
 import { launchRun } from "@/lib/services/runs";
@@ -201,8 +203,9 @@ async function createProject(): Promise<{
   return { id, slug, repoPath };
 }
 
-// Fork a local package from an installed source, cut v1, attach to the
-// project, cut v2 (the newer target) — the ADR-132 fixture chain.
+// Create the canonical local package and its first Flow, add another Flow,
+// commit/cut/attach v1, then cut v2. This deliberately exercises the real
+// Studio create contract instead of creating another DB-authored Flow path.
 async function forkAttachWithNewerCut(
   project: { id: string; slug: string; repoPath: string },
   sourceName: string,
@@ -213,15 +216,49 @@ async function forkAttachWithNewerCut(
   cut2InstallId: string;
   flowRowId: string;
 }> {
-  const sourceInstallId = await installSource(sourceName, flowId);
-  const { localPackageId } = await forkPackageToLocal({
-    sourceInstallId,
-    sourceRef: sourceName,
+  const { package: created } = await createLocalPackageWithFlow({
+    name: sourceName,
     createdBy: userId,
-    forceNew: true,
+    flow: {
+      id: flowId,
+      metadata: {
+        title: `${flowId} title`,
+        summary: "Canonical initial Flow.",
+        route_when: "A task needs this Flow.",
+      },
+    },
     db,
   });
-  const pkg = await getLocalPackage(localPackageId, db);
+  const pkg = await getLocalPackage(created.id, db);
+
+  await acquireLock(pkg!.id, userId, `canonical-${flowId}`, db);
+  try {
+    await addFlowToLocalPackage({
+      packageId: pkg!.id,
+      sessionId: `canonical-${flowId}`,
+      flow: {
+        id: `${flowId}-second`,
+        metadata: {
+          title: "Second Flow",
+          summary: "Additional canonical Flow.",
+          route_when: "A second route is needed.",
+        },
+      },
+      db,
+    });
+  } finally {
+    await releaseLock(pkg!.id, `canonical-${flowId}`, db);
+  }
+
+  // The starter graph is graph-valid and safely inert; use the all-CLI graph
+  // here so the attached immutable revision is also suitable for real launch
+  // coverage without introducing a Flow DSL extension.
+  await writeWorkingDirFile(
+    pkg!,
+    `flows/${flowId}/flow.yaml`,
+    FLOW_YAML(flowId, "v1"),
+  );
+  await gitCommitWorkingDir(pkg!.workingDir, "canonical initial package");
   const cut1 = await cutLocalPackageVersion(pkg!, { db });
   const attached = await attachPackage({
     projectId: project.id,
@@ -237,7 +274,7 @@ async function forkAttachWithNewerCut(
     FLOW_YAML(flowId, "v2"),
   );
   await gitCommitWorkingDir(pkg!.workingDir, "v2 edit");
-  const freshPkg = await getLocalPackage(localPackageId, db);
+  const freshPkg = await getLocalPackage(created.id, db);
   const cut2 = await cutLocalPackageVersion(freshPkg!, { db });
 
   const flowRows = await db

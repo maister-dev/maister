@@ -1,7 +1,14 @@
 import type { LocalPackage } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -134,9 +141,48 @@ describe("local-packages substrate (integration)", () => {
     expect(manifest).toContain("path: flows/first-flow");
     expect(flow).toContain("name: first-flow");
     expect(flow).toContain("title: First Flow");
-    expect((await stat(join(pkg.workingDir, ".git"))).isDirectory()).toBe(
-      true,
-    );
+    expect((await stat(join(pkg.workingDir, ".git"))).isDirectory()).toBe(true);
+  });
+
+  it("compensates the claimed row and working-dir artifact after a filesystem failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lp-create-failure-"));
+    const name = "Filesystem Failure Package";
+    const slug = "filesystem-failure-package";
+    const blocker = join(root, slug);
+    const previousRoot = process.env.MAISTER_LOCAL_PACKAGES_ROOT;
+
+    // A file occupies the exact future working-dir path. Journal creation fails
+    // before materialization, and compensation must remove only this operation's
+    // artifact and DB row — never another package's directory.
+    await writeFile(blocker, "block create");
+    process.env.MAISTER_LOCAL_PACKAGES_ROOT = root;
+    try {
+      await expect(
+        createLocalPackageWithFlow({
+          name,
+          createdBy: userId,
+          flow: {
+            id: "fails-cleanly",
+            metadata: {
+              title: "Fails cleanly",
+              summary: "Exercise filesystem compensation.",
+              route_when: "A filesystem write fails.",
+            },
+          },
+          db,
+        }),
+      ).rejects.toBeTruthy();
+    } finally {
+      if (previousRoot === undefined)
+        delete process.env.MAISTER_LOCAL_PACKAGES_ROOT;
+      else process.env.MAISTER_LOCAL_PACKAGES_ROOT = previousRoot;
+    }
+
+    await expect(stat(blocker)).rejects.toBeTruthy();
+    expect(
+      (await listAllLocalPackages(db)).some((pkg) => pkg.name === name),
+    ).toBe(false);
+    await rm(root, { recursive: true, force: true });
   });
 
   it("adds another Flow to an editable package without replacing existing membership", async () => {
@@ -145,7 +191,11 @@ describe("local-packages substrate (integration)", () => {
       createdBy: userId,
       flow: {
         id: "one",
-        metadata: { title: "One", summary: "First.", route_when: "First route." },
+        metadata: {
+          title: "One",
+          summary: "First.",
+          route_when: "First route.",
+        },
       },
       db,
     });
@@ -156,7 +206,11 @@ describe("local-packages substrate (integration)", () => {
       sessionId: "add-flow-session",
       flow: {
         id: "two",
-        metadata: { title: "Two", summary: "Second.", route_when: "Second route." },
+        metadata: {
+          title: "Two",
+          summary: "Second.",
+          route_when: "Second route.",
+        },
       },
       db,
     });
@@ -170,6 +224,29 @@ describe("local-packages substrate (integration)", () => {
     await expect(
       readFile(join(pkg.workingDir, "flows", "two", "flow.yaml"), "utf8"),
     ).resolves.toContain("name: two");
+
+    const beforeDuplicate = await readFile(
+      join(pkg.workingDir, "maister-package.yaml"),
+      "utf8",
+    );
+    await expect(
+      addFlowToLocalPackage({
+        packageId: pkg.id,
+        sessionId: "add-flow-session",
+        flow: {
+          id: "two",
+          metadata: {
+            title: "Duplicate",
+            summary: "Must not write.",
+            route_when: "Never.",
+          },
+        },
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      readFile(join(pkg.workingDir, "maister-package.yaml"), "utf8"),
+    ).resolves.toBe(beforeDuplicate);
   });
 
   it("reads the scaffolded manifest with a content hash", async () => {
