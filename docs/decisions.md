@@ -164,8 +164,8 @@
 | [ADR-137](#adr-137-typed-plan-review-artifacts-and-flow-native-decision-requests) | Typed Plan-review artifacts and Flow-native decision requests | Implemented | 2026-07-14 |
 | [ADR-138](#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery) | Flow Review Workspace — complete working-tree review and verified rework feedback delivery | Implemented | 2026-07-14 |
 | [ADR-139](#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry) | Project Automations: one-time task-launch reservation and truthful agent-binding telemetry | Implemented | 2026-07-15 |
-| [ADR-139](#adr-139-pr-lifecycle-tracking) | PR lifecycle tracking | Implemented | 2026-07-14 |
-| [ADR-140](#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen) | Branch sync with AI conflict resolver and reopen | Implemented | 2026-07-14 |
+| [ADR-140](#adr-140-pr-lifecycle-tracking) | PR lifecycle tracking | Implemented | 2026-07-14 |
+| [ADR-141](#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen) | Branch sync with AI conflict resolver and reopen | Implemented | 2026-07-14 |
 
 ---
 
@@ -5170,7 +5170,7 @@ board sync) subscribe to it later; none is built here.
   `run.promoted`, `run.done`, `run.failed`, `run.crashed`, `run.abandoned`,
   `gate.decided`, and a synthetic unpersisted `ping`.
   (Superseded — the taxonomy has since grown additively, exactly as this ADR's
-  "additive later" clause anticipated: `run.escalated`, plus ADR-139's
+  "additive later" clause anticipated: `run.escalated`, plus ADR-140's
   `run.pr_merged` / `run.pr_closed` / `run.pr_conflicts`, make 16 today.
   `lib/webhooks/taxonomy.ts` is the source of truth; the count above records
   what ADR-077 decided, not the current contract.) The not-emitted set
@@ -12122,7 +12122,7 @@ telemetry ambiguous.
   dispatch paths.
 - _Delete and reinsert agent bindings on each save_: rejected because it loses
   identity and telemetry and lets a stale full replacement erase unseen work.
-### ADR-139: PR lifecycle tracking
+### ADR-140: PR lifecycle tracking
 
 **Date:** 2026-07-14
 **Status:** Implemented
@@ -12175,10 +12175,10 @@ report merge state. This blocks the M20 "ship non-trivial PRs end-to-end" goal.
   `run.pr_closed`; **conflicts** sets `pr_has_conflicts` and emits `run.pr_conflicts`
   and raises the UI alarm surface. `task_activity` stays merged-only; closed and
   conflict surface via chip + webhook only. Conflict detection only raises the
-  alarm — it never launches a resolver (that is ADR-140 and always an explicit
+  alarm — it never launches a resolver (that is ADR-141 and always an explicit
   user action).
 - Surfaces: a PR-state chip on the run detail header/inspector and the task board
-  flight card, with a distinct conflicts affordance linking to reopen (ADR-140).
+  flight card, with a distinct conflicts affordance linking to reopen (ADR-141).
   Ext `run_get` exposes `prState`/`prHasConflicts`. EN + RU.
 - **Bitbucket (Cloud and Server/Data Center) is deferred tech debt.** The agreed
   shape when it lands: one REST adapter family with a configurable API base
@@ -12209,7 +12209,7 @@ report merge state. This blocks the M20 "ship non-trivial PRs end-to-end" goal.
 
 ---
 
-### ADR-140: Branch sync with AI conflict resolver and reopen
+### ADR-141: Branch sync with AI conflict resolver and reopen
 
 **Date:** 2026-07-14
 **Status:** Implemented

@@ -523,7 +523,7 @@ describe("FlightCard — compact identity-first contract", () => {
   });
 });
 
-describe("FlightCard — PR-state chip (ADR-139)", () => {
+describe("FlightCard — PR-state chip (ADR-140)", () => {
   it("renders the merged PR chip on a Done card when prState is merged", () => {
     const html = render(
       baseCard({ status: "done", prState: "merged", prHasConflicts: false }),
@@ -534,7 +534,7 @@ describe("FlightCard — PR-state chip (ADR-139)", () => {
     expect(html).toContain("PR merged");
   });
 
-  it("renders the conflicts variant with a LIVE reopen action when prHasConflicts (ADR-140 Task 17)", () => {
+  it("renders the conflicts variant with a LIVE reopen action when prHasConflicts (ADR-141 Task 17)", () => {
     const html = render(
       baseCard({ prState: "open", prHasConflicts: true }),
       // Reopen is a `promoteRun` (member) route — only a member gets the wired

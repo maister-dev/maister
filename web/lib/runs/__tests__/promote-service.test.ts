@@ -170,7 +170,7 @@ vi.mock("@/lib/instance-config", () => ({
   worktreesRoot: () => "/tmp/maister/worktrees",
 }));
 
-// ADR-140 (Task 13): the ai_rebase_merge conflict branch dynamic-imports
+// ADR-141: the ai_rebase_merge conflict branch dynamic-imports
 // syncRunTarget to delegate to the AI resolver.
 const syncTargetMock = vi.hoisted(() => ({
   // Takes its input, like the real one — otherwise the mock's call tuple types as
@@ -855,7 +855,7 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     });
   });
 
-  it("delegates an ai_rebase_merge conflict to the AI sync resolver (ADR-140 Task 13)", async () => {
+  it("delegates an ai_rebase_merge conflict to the AI sync resolver (ADR-141 Task 13)", async () => {
     const runId = seedFlowRun({
       deliveryPolicySnapshot: {
         strategy: "ai_rebase_merge",

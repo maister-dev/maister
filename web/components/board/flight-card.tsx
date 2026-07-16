@@ -37,7 +37,7 @@ export interface FlightCardLabels {
   readyToPromote: string;
   // ADR-126: the "auto" glyph tooltip on an auto-promoted Done card ({lane}).
   autoPromoted: (lane: string) => string;
-  // ADR-139 PR-state chip labels (open / merged / closed / conflicts / reopen).
+  // ADR-140 PR-state chip labels (open / merged / closed / conflicts / reopen).
   prChip: PrStateChipLabels;
   runsCount: (count: number) => string;
   launch: string;

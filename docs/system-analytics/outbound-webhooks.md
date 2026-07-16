@@ -212,9 +212,9 @@ cheap). (All Implemented.)
 | `run.failed` | `→ Failed` | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `runs/keepalive-sweeper.ts` (watchdog), `services/hitl.ts` |
 | `run.crashed` | `→ Crashed` (reconcile / GC / runner crash paths) | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `flows/runner-agent.ts`, `scratch-runs/events.ts`, `scratch-runs/service.ts`, `services/hitl.ts` |
 | `run.abandoned` | `→ Abandoned` (user, workbench drop, and idle-TTL sweep) | `runs/state-transitions.ts` (`markAbandoned`), `workbench-lifecycle/service.ts` (`dropWorkbench`), `runs/keepalive-sweeper.ts` (TTL pass, `source: "ttl"` — ADR-086 gap closure) |
-| `run.pr_merged` | `workspaces.pr_state` none/open → `merged` (ADR-139 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`mergedEdge`) |
-| `run.pr_closed` | `workspaces.pr_state` none/open → `closed` (ADR-139 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`closedEdge`) |
-| `run.pr_conflicts` | `workspaces.pr_has_conflicts` false/null → `true`, non-terminal PR only (ADR-139 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`conflictsEdge`) |
+| `run.pr_merged` | `workspaces.pr_state` none/open → `merged` (ADR-140 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`mergedEdge`) |
+| `run.pr_closed` | `workspaces.pr_state` none/open → `closed` (ADR-140 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`closedEdge`) |
+| `run.pr_conflicts` | `workspaces.pr_has_conflicts` false/null → `true`, non-terminal PR only (ADR-140 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`conflictsEdge`) |
 | `gate.decided` | `gate_results` reaching `passed | failed | overridden` | `flows/graph/gate-store.ts` (insert-at-terminal + all terminal transitions) |
 | `ping` | synthetic test ping — NOT persisted, NOT fanned out | `webhooks/ping.ts` |
 

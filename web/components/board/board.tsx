@@ -113,7 +113,7 @@ export async function Board({
     // M18 (T4.4): ready-to-promote / PR badge label.
     readyToPromote: t("readyToPromote"),
     autoPromoted: (lane: string) => t("autoPromoted", { lane }),
-    // ADR-139 PR-state chip labels — sourced from the shared `run` namespace.
+    // ADR-140 PR-state chip labels — sourced from the shared `run` namespace.
     prChip: {
       open: tRun("prOpen"),
       merged: tRun("prMerged"),

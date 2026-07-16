@@ -32,7 +32,7 @@ export type StateTransitionResult =
   | { ok: true }
   | { ok: false; reason: "status-guard-mismatch" | "not-found" };
 
-// ADR-140: a run that terminalizes MUST NOT strand a live branch-sync claim.
+// ADR-141: a run that terminalizes MUST NOT strand a live branch-sync claim.
 // `run_sync_attempts` and the workspace lifecycle slot outlive `runs.status`, and
 // every sync recovery arm keys on a NON-terminal run — so a claim still held at
 // crash time is invisible to all of them and refuses promotion (and all six other
@@ -374,7 +374,7 @@ export async function markReworkFromReview(
   return { ok: true };
 }
 
-// ADR-140: Review → Running. The branch-sync AI resolver opens a Review run for
+// ADR-141: Review → Running. The branch-sync AI resolver opens a Review run for
 // a conflicted rebase/merge. Bare status-guarded CAS (mirrors
 // markReworkFromReview): a concurrent promote (Review → Done) or another sync
 // converges to ONE winner (loser → CONFLICT at the caller). Touches NO runs
@@ -408,7 +408,7 @@ export async function markSyncFromReview(
   return { ok: true };
 }
 
-// ADR-140: Running → Review. The branch-sync AI resolver finalizes (success or
+// ADR-141: Running → Review. The branch-sync AI resolver finalizes (success or
 // failure) by returning the run to the status the sync started from. Status-
 // guarded on Running (the markSyncFromReview flip); clears keepalive/checkpoint.
 // Does NOT touch review_entered_at — the success finalize resets it only when
@@ -441,7 +441,7 @@ export async function markSyncReviewFromRunning(
   return { ok: true };
 }
 
-// ADR-140 W7: {NeedsInput, NeedsInputIdle} → Review. A sync resolver parks HERE by
+// ADR-141 W7: {NeedsInput, NeedsInputIdle} → Review. A sync resolver parks HERE by
 // design (an ACP `requestPermission` moves the run to NeedsInput), so once its
 // in-process driver is gone the prompt is unanswerable and the run would hold a
 // pool slot and the sync claim forever. Status-guarded on the EXACT observed
@@ -476,7 +476,7 @@ export async function markSyncReviewFromNeedsInput(
   return { ok: true };
 }
 
-// ADR-140 (decision 14): Done → Review. `reopen` pulls a finished run back to
+// ADR-141 (decision 14): Done → Review. `reopen` pulls a finished run back to
 // Review when its PR is still open or has fallen into conflict, so the branch can
 // be synced and re-promoted against the moved target. `Done` is otherwise
 // TERMINAL — this is the sole exact-allow-list CAS off it. Status-guarded on

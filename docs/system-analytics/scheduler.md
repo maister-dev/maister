@@ -111,7 +111,7 @@ without turning recovery sweeps into live-path polling.
   unarchive idempotently re-enables/seeds archive-style disabled jobs, but
   never clears a native threshold-poisoned job. This is the sole Git-fetch
   path for agentization—Observatory reads never fetch.
-- **`pr_state_scan` job kind** (**Implemented, ADR-139**) — one system-managed job
+- **`pr_state_scan` job kind** (**Implemented, ADR-140**) — one system-managed job
   per non-archived project (NOT a global singleton), seeded like
   `repo_delivery_scan` via `ensurePrStateScanJobs` invoked from
   `ensureDefaultSchedulerJobs` on every tick; archived projects are disabled via
@@ -303,7 +303,7 @@ flowchart TD
   `Succeeded`.
 - `system_sweep` MUST remain a recovery/cleanup sweep and NEVER a live
   state-transition poller.
-- `pr_state_scan` (**Implemented, ADR-139**) MUST write `workspaces.pr_state`
+- `pr_state_scan` (**Implemented, ADR-140**) MUST write `workspaces.pr_state`
   ONLY from a successful provider read (a failed read — including 404/not-found —
   MUST leave it untouched), MUST NEVER launch an ACP session or call the
   supervisor client, and MUST run on a per-project cadence of
@@ -369,7 +369,7 @@ flowchart TD
   kind and never consumes a different kind's cap.
 - Handler failure records `Failed` with bounded error context and contributes to
   the route's 207 summary.
-- `pr_state_scan` poison item (**Implemented, ADR-139**): a deterministic per-item
+- `pr_state_scan` poison item (**Implemented, ADR-140**): a deterministic per-item
   failure (404 / deleted PR, or a `generic`/unsupported provider) is absorbed
   INSIDE the handler — the item is stamped and counted in the summary's `skipped`
   (with `reason: "unsupported_provider"` for a generic remote) and the JOB still
@@ -407,8 +407,8 @@ flowchart TD
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Implemented: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance)
   and [`observatory.md`](observatory.md).
-- PR lifecycle tracking (Implemented, ADR-139):
-  [ADR-139](../decisions.md#adr-139-pr-lifecycle-tracking) — the per-project
+- PR lifecycle tracking (Implemented, ADR-140):
+  [ADR-140](../decisions.md#adr-140-pr-lifecycle-tracking) — the per-project
   `pr_state_scan` jobKind.
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,

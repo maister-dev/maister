@@ -440,9 +440,9 @@ flowchart TD
     Card --> Evidence[show current/stale<br/>evidence summary]
 ```
 
-### Reopen effect on board state and relations (Implemented, ADR-140)
+### Reopen effect on board state and relations (Implemented, ADR-141)
 
-**Reopen** (ADR-140) pulls a top-level `flow`/`agent` run from `Done` back to
+**Reopen** (ADR-141) pulls a top-level `flow`/`agent` run from `Done` back to
 `Review` when its PR is still open or conflicted — the PR was in fact never
 merged (the run-level machine is owned by [`branch-sync.md`](branch-sync.md)).
 Its board-axis consequences:
@@ -510,7 +510,7 @@ Review | Crashed`.
   remains `InFlight`; the latest-run classifier exposes retry placement and the
   Launch affordance without recreating the task.
 - `Done` tasks NEVER return to `Backlog`. `Done` is otherwise terminal EXCEPT
-  via ADR-140 reopen, which returns the task to `InFlight` (never `Backlog`)
+  via ADR-141 reopen, which returns the task to `InFlight` (never `Backlog`)
   together with its run's `Done → Review` flip.
 - Title and prompt are non-empty at creation.
 - **(M34 — Implemented)** A task without `flow_id` MUST classify as
@@ -632,7 +632,7 @@ observe a silent rewrite.
 
 - ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
   [ADR-083 Social board substrate](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
-  [ADR-140 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
+  [ADR-141 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
   (Implemented — reopen board/relation effect).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),

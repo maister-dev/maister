@@ -128,9 +128,9 @@ stateDiagram-v2
     Review --> Review: local promotion conflict<br/>(stays in Review)
     Review --> Abandoned: Abandon click
 
-    Review --> Running: markSyncFromReview<br/>(ADR-140 AI conflict resolver, cap-gated)
+    Review --> Running: markSyncFromReview<br/>(ADR-141 AI conflict resolver, cap-gated)
     Running --> Review: markSyncReviewFromRunning<br/>(resolver finalized or recovered)
-    Done --> Review: markReopenFromDone<br/>(ADR-140 reopen; promotion_state=reopened)
+    Done --> Review: markReopenFromDone<br/>(ADR-141 reopen; promotion_state=reopened)
 
     Failed --> [*]: task returns to Backlog
     Done --> [*]: unless reopened
@@ -138,7 +138,7 @@ stateDiagram-v2
 ```
 
 Status names exactly match the `runs.status` enum in
-`web/lib/db/schema.ts`. `Done` is therefore NOT a terminal node: ADR-140's reopen
+`web/lib/db/schema.ts`. `Done` is therefore NOT a terminal node: ADR-141's reopen
 returns a `Done` run to `Review` so its stale or conflicted PR can be re-synced
 and re-promoted (`markReopenFromDone`).
 
@@ -468,7 +468,7 @@ paths, and status at parity with the current merge-conflict surface.
 `ai_rebase_merge` is separable but runs on the same durable promotion substrate:
 the policy mode is preserved for audit/API responses, the git side effect uses
 the existing rebase-merge lane, and on conflict it no longer dead-ends at a
-`merge_conflict` assignment (ADR-140, Implemented) — the promotion claim
+`merge_conflict` assignment (ADR-141, Implemented) — the promotion claim
 releases and delegates to the branch-sync AI resolver under the sync
 lifecycle claim instead. See [branch-sync.md](branch-sync.md) (R7).
 

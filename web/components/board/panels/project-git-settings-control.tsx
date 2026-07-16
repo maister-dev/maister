@@ -23,7 +23,7 @@ export interface ProjectGitSettingsControlProps {
   mainBranch: string;
   remotes: RemoteItem[];
   needsPersist: boolean;
-  // ADR-140 (Task 17): branch-sync defaults + resolver-runner picker options.
+  // ADR-141: branch-sync defaults + resolver-runner picker options.
   syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
   syncRunnerOptions: SyncRunnerOption[];
@@ -49,7 +49,7 @@ export function ProjectGitSettingsControl(
   const [push, setPush] = useState(false);
   const [persistNote, setPersistNote] = useState<string | null>(null);
 
-  // ADR-140 (Task 17): branch-sync defaults form (own local state + save).
+  // ADR-141: branch-sync defaults form (own local state + save).
   const [syncStrategy, setSyncStrategy] = useState<"rebase" | "merge">(
     props.syncStrategyDefault,
   );

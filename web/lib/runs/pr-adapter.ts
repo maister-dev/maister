@@ -625,7 +625,7 @@ export function selectPrAdapter(
 
 // ---- provider PR-state reads (getPrState) ---------------------------------
 //
-// A provider-read capability the pr_state_scan job (ADR-139) calls per row.
+// A provider-read capability the pr_state_scan job (ADR-140) calls per row.
 // Unlike createOrUpdatePr (open-PR-only, throws on failure), getPrState reports
 // merge state and NEVER throws — a throw would fail the whole scan job. Every
 // failure path returns a typed `skip`, and NO skip may ever be read as "the PR

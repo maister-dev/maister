@@ -146,7 +146,7 @@ export const projects = pgTable("projects", {
   // maister.yaml on disk; the manifest is optional at manual registration).
   maisterYamlPath: text("maister_yaml_path"),
   defaultRunnerId: text("default_runner_id"),
-  // ADR-140 (migration 0104): branch-sync defaults. `sync_strategy_default` is
+  // ADR-141 (migration 0106): branch-sync defaults. `sync_strategy_default` is
   // the project's default rebase|merge strategy; `sync_runner_id` is the resolver
   // runner (nullable FK, SET NULL on runner delete — mirrors
   // flowRevisions.defaultRunnerId, NOT the plain-text projects.default_runner_id).
@@ -943,7 +943,7 @@ export const agentProjectLinks = pgTable(
     // opens retain, the memory-poisoning guard). can_propose_brain = Sub-project C.
     canReadBrain: boolean("can_read_brain").notNull().default(false),
     canWriteBrain: boolean("can_write_brain").notNull().default(false),
-    // ADR-139: fences full-replacement binding saves so a stale editor cannot
+    // ADR-140: fences full-replacement binding saves so a stale editor cannot
     // erase telemetry or bindings added after it loaded the attachment.
     schedulesRevision: integer("schedules_revision").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -2080,7 +2080,7 @@ export const runSessions = pgTable(
         // M34 (ADR-089) standalone agent chain tiers.
         "agentLinkOverride",
         "agentDefault",
-        // ADR-140: branch-sync AI-resolver default (projects.sync_runner_id).
+        // ADR-141: branch-sync AI-resolver default (projects.sync_runner_id).
         "syncDefault",
       ],
     }),
@@ -2276,7 +2276,7 @@ export const workspaces = pgTable(
     }),
     lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
     lifecycleOperationName: text("lifecycle_operation_name"),
-    // ADR-139 (migration 0103): PR lifecycle tracking. `pr_state` NULL = never
+    // ADR-140 (migration 0105): PR lifecycle tracking. `pr_state` NULL = never
     // scanned, and is written ONLY from a SUCCESSFUL provider read — a failed
     // read leaves it untouched, because no writer here could ever undo a wrong
     // `closed` (the scan's candidate query selects NULL/'open' only).
@@ -2302,7 +2302,7 @@ export const workspaces = pgTable(
   }),
 );
 
-// ADR-140 (migration 0104): append-only branch-sync attempt ledger, one row per
+// ADR-141 (migration 0106): append-only branch-sync attempt ledger, one row per
 // sync/resolver attempt on a run. Shaped like node_attempts — `phase` is the
 // single plain-text lifecycle column (TS-only enum, NO DB CHECK), written BEFORE
 // each side effect.
@@ -4513,7 +4513,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "triage_requeued",
   "agent_quarantined",
   "experiment_concluded",
-  // ADR-139 (migration 0103): PR merged onto target — merged-only board feed
+  // ADR-140 (migration 0105): PR merged onto target — merged-only board feed
   // (closed/conflict surface via chip + webhook, not task_activity).
   "run_pr_merged",
 ] as const;

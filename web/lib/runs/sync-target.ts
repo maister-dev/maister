@@ -101,7 +101,7 @@ export type SyncRunOutcome = {
 export type SyncRunInput = {
   runId: string;
   strategy?: SyncStrategy;
-  // ADR-140: on a conflict the AI resolver launches by DEFAULT
+  // ADR-141: on a conflict the AI resolver launches by DEFAULT
   // (`outcome:"agent_launched"`) — the contract default is agent-on (matches
   // the OpenAPI `agent` "(default)" and the UI "resolve with AI" checkbox
   // default ON). ONLY an explicit `agent:false` keeps the mechanical behavior:
@@ -109,7 +109,7 @@ export type SyncRunInput = {
   agent?: boolean;
   push?: boolean;
   runnerId?: string;
-  // ADR-140 (Task 13): set by the resolver-backed `ai_rebase_merge` promotion.
+  // ADR-141: set by the resolver-backed `ai_rebase_merge` promotion.
   // Persisted on the attempt; on a verified agent resolution the resolver
   // best-effort chains `promoteRun(rebase_merge)` to Done (default OFF).
   autoFinalize?: boolean;
@@ -559,7 +559,7 @@ async function terminalizeSafetyNet(
 }
 
 /**
- * The MECHANICAL branch-sync service (ADR-140, Task 9) — and the reusable shared
+ * The MECHANICAL branch-sync service (ADR-141, Task 9) — and the reusable shared
  * core (`assertSyncEligible` / `verifySyncGate` / `pushWithLease`) Tasks 10/13
  * build on. Rebases (or merges) a Review run's branch onto its promotion target
  * inside the run's worktree, fast-forwarding the local target from origin first,
@@ -646,7 +646,7 @@ export async function syncRunTarget(
     const ws = await loadWorkspaceForUpdate(tx, runId);
 
     // (a) promotion↔sync fence — a promotion in progress or already done blocks a
-    // sync. `reopened` is neither, so a reopened run passes through (Task 13).
+    // sync. `reopened` is neither, so a reopened run passes through.
     if (ws.promotionState === "claiming" || ws.promotionState === "done") {
       throw new MaisterError(
         "CONFLICT",
@@ -708,7 +708,7 @@ export async function syncRunTarget(
     return { attemptId, attempt, workspaceId: ws.id, lifecycleAttemptId };
   });
 
-  // ADR-140 (Task 11): THIS call is the in-process sync driver — for the
+  // ADR-141: THIS call is the in-process sync driver — for the
   // mechanical rebase AND, transitively, the agent resolver it awaits below.
   // Acquisition MUST live here, not in the resolver: the recovery sweeps treat a
   // non-terminal attempt with no registered driver as a post-restart ORPHAN and
@@ -1116,7 +1116,7 @@ type PreparedSyncResolver = {
 };
 
 /**
- * The AI conflict resolver's PRE-SESSION phase (ADR-140, Task 10). Called from
+ * The AI conflict resolver's PRE-SESSION phase (ADR-141, Task 10). Called from
  * `syncRunTarget`'s conflict branch with `agent:true` and the LEFT-in-place
  * conflicted rebase: cap-gate + runner resolution + promotion fence + the
  * `Review→Running` CAS (one locked tx). It runs on the REQUEST's stack so every
@@ -1258,7 +1258,7 @@ async function prepareSyncResolver(
 }
 
 /**
- * The AI conflict resolver's SESSION phase (ADR-140, Task 10). Spawns a FRESH
+ * The AI conflict resolver's SESSION phase (ADR-141, Task 10). Spawns a FRESH
  * resolver session in the worktree (mocked at the supervisor boundary in tests),
  * drives one blocking turn, then applies the SAME Task-9 verify gate + push policy
  * before finalizing back to `Review`. Every path after a spawned session tears it
@@ -1334,7 +1334,7 @@ async function driveSyncResolver(
     );
   }
 
-  // ADR-140: everything from the verify gate through the finalize runs inside a
+  // ADR-141: everything from the verify gate through the finalize runs inside a
   // try/catch. The handled failures below terminalize explicitly (and set
   // `settled`), but an UNHANDLED throw here — `forceWithLeasePush` raises
   // EXECUTOR_UNAVAILABLE for every non-lease push failure (network blip, auth
@@ -1499,7 +1499,7 @@ async function driveSyncResolver(
           headShaAfter,
           err: err instanceof Error ? err.message : String(err),
         },
-        "[FIX:ADR-140] sync push LANDED but finalization failed — worktree and remote agree and were NOT rolled back; releasing the run best-effort, attempt ledger may lag",
+        "[FIX:ADR-141] sync push LANDED but finalization failed — worktree and remote agree and were NOT rolled back; releasing the run best-effort, attempt ledger may lag",
       );
       // The push landed and the tree matches it, so the run's work is done: free
       // it and its slot best-effort rather than hold a sync claim that would
@@ -1514,7 +1514,7 @@ async function driveSyncResolver(
     throw err;
   }
 
-  // ADR-140 (Task 13): autoFinalize opt-in — the resolver resolved and the run
+  // ADR-141: autoFinalize opt-in — the resolver resolved and the run
   // is back in Review, cleanly rebased on the target. Best-effort chain
   // promoteRun(rebase_merge) → Done. ANY failure degrades to the clean two-step
   // Review state (benign W6 — no new stuck state / promotion crash window). The

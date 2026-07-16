@@ -1,6 +1,6 @@
 # Branch sync + AI conflict resolver
 
-> Status: **Implemented** (ADR-140).
+> Status: **Implemented** (ADR-141).
 
 ## Purpose
 
@@ -11,8 +11,8 @@ worktree, the **reopen** path that pulls a `Done` run back to `Review` when its
 PR conflicts, and the **resolver-backed `ai_rebase_merge`** promotion mode. The
 boundary is the run-finishing path built on the shipped promotion substrate
 (ADR-049/058/087) and delivery scanner (ADR-134); it does **not** cover PR-state
-polling (that is [PR lifecycle tracking](../decisions.md#adr-139-pr-lifecycle-tracking),
-ADR-139) beyond consuming the
+polling (that is [PR lifecycle tracking](../decisions.md#adr-140-pr-lifecycle-tracking),
+ADR-140) beyond consuming the
 conflict signal, and it explicitly excludes scratch runs, shared-tree runs
 (`runs.workspace_mode='shared'`), experiment members, and orchestrator children
 (`parent_run_id` set) in v1.
@@ -23,8 +23,8 @@ conflict signal, and it explicitly excludes scratch runs, shared-tree runs
   single plain-`text` `phase` column, no DB CHECK), UNIQUE `(run_id, attempt)`. Persisted;
   see [runs-domain ERD](../db/runs-domain.md).
 - **`workspaces` PR + claim columns** — `pr_state`/`pr_has_conflicts`/`pr_merged_at`/
-  `pr_merge_commit_sha` (ADR-139) and the shared
-  `lifecycle_operation_name='sync'` claim slot (ADR-140), plus
+  `pr_merge_commit_sha` (ADR-140) and the shared
+  `lifecycle_operation_name='sync'` claim slot (ADR-141), plus
   `promotion_state='reopened'` (app-level value, no CHECK).
 - **`projects.sync_strategy_default`** (`rebase`|`merge`, default `rebase`) and
   **`projects.sync_runner_id`** (nullable `text` FK → `platform_acp_runners`, ON
@@ -165,14 +165,14 @@ sequenceDiagram
   attempt row and a `CONFLICT` for the loser.
 - The agent path's `Review→Running` CAS MUST be a SECOND locked transaction, taken
   only after the rebase has conflicted, that re-checks the cap and the promotion
-  fence under the same lock (see ADR-140).
+  fence under the same lock (see ADR-141).
 - While a `"sync"` claim is active, `promote/archive/drop/exportBranch/snapshotCommit/
   handoffBranch` MUST refuse, and `promoteRun` MUST refuse while a sync claim is
   active (double fence, both directions).
 - The resolver session MUST be fresh (never resume), work inside the run worktree,
   be recorded as a `run_sessions` `sync-<attempt>` row, and — even on a self-push —
   can only touch its OWN run branch, never the target; the bounded blast radius is
-  documented in ADR-140.
+  documented in ADR-141.
 - The verification gate MUST require: no rebase/merge in progress, clean tree,
   zero `git diff --check` conflict markers across the whole worktree, and target is
   an ancestor of the new HEAD — before any push or finalize.
@@ -182,7 +182,7 @@ sequenceDiagram
   `git ls-remote origin refs/heads/<branch>` BEFORE the fetch (never the post-fetch
   local tracking ref); an indeterminate SHA with `pr_url` set MUST refuse the push,
   and a lease rejection MUST fail the attempt (`CONFLICT`) while keeping the local
-  rebase result (see ADR-140).
+  rebase result (see ADR-141).
 - The agent path MUST hold its run-kind slot while `Running` or `NeedsInput`, MUST be
   cap-gated on `Review→Running` (refuse `CONFLICT` at cap, no queue), and MUST call
   `promoteNextPending` on finalize.
@@ -210,15 +210,15 @@ sequenceDiagram
   `failed`; deterministic abort.
 - **Push lease rejected** (branch moved remotely) → `CONFLICT`; local result kept.
 - **W1–W7 crash windows** → recovered by reconcile/sweep per the predicate table in
-  ADR-140; a sync row never enters the flow reattach/redispatch arms, and is
+  ADR-141; a sync row never enters the flow reattach/redispatch arms, and is
   classified before the `worktree-gone → Crashed` arm.
 - **Duration runaway** (30 min continuous `Running`) → W5 sweep kills session, aborts,
   `failed`, returns to `Review`.
 
 ## Linked artifacts
 
-- ADRs: [ADR-139](../decisions.md#adr-139-pr-lifecycle-tracking),
-  [ADR-140](../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen).
+- ADRs: [ADR-140](../decisions.md#adr-140-pr-lifecycle-tracking),
+  [ADR-141](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen).
 - API: [`web.openapi.yaml`](../api/web.openapi.yaml) (`/api/runs/{runId}/sync`,
   `/reopen`), [`operations.openapi.yaml`](../api/external/operations.openapi.yaml)
   (ext sync/reopen + run DTO fields),

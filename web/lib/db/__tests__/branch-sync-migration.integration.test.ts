@@ -1,10 +1,10 @@
-// ADR-140 migration 0104_branch_sync coverage (Task 4).
+// ADR-141 migration 0106_branch_sync coverage.
 //
 // Asserts the run_sync_attempts ledger shape + constraints (UNIQUE (run_id,
 // attempt); the plain-text `phase` column has NO DB CHECK — node_attempts
 // convention; auto_finalize/pushed default false), and the two projects
 // columns (sync_strategy_default default 'rebase'; sync_runner_id FK SET NULL
-// on runner delete), plus the 0104 journal/snapshot pair.
+// on runner delete), plus the 0106 journal/snapshot pair.
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -102,7 +102,7 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("0104 run_sync_attempts ledger", () => {
+describe("0106 run_sync_attempts ledger", () => {
   it("enforces UNIQUE (run_id, attempt) with 23505", async () => {
     const { runId, workspaceId } = await seedRunWorkspace("uniq");
 
@@ -150,7 +150,7 @@ describe("0104 run_sync_attempts ledger", () => {
   });
 });
 
-describe("0104 projects sync columns", () => {
+describe("0106 projects sync columns", () => {
   it("defaults sync_strategy_default to 'rebase'", async () => {
     const { projectId } = await seedRunWorkspace("strat");
     const row = await pool.query(
@@ -191,11 +191,12 @@ describe("0104 projects sync columns", () => {
   });
 });
 
-// Identified by NAME, never by number: matching on a `0104` prefix would, once
-// this branch rebases onto a main that already owns 0104, silently resolve to
-// MAIN's migration — the snapshot exists, every assertion passes, and this
-// migration goes unverified. The name is what belongs to this change; the
-// number is the thing the merge renegotiates.
+// Identified by NAME, never by number. This is not hypothetical: this migration
+// was authored as 0101, renumbered to 0104, and is 0106 only after rebasing onto
+// a main that had meanwhile taken 0104 for its own (`0104_optimal_captain_america`).
+// A `startsWith("0104")` match would have silently resolved to MAIN's migration —
+// its snapshot exists, every assertion passes, and THIS migration goes unverified.
+// The name is what belongs to this change; the number is what the merge renegotiates.
 const MIGRATION_NAME = "_branch_sync";
 
 type JournalEntry = { idx: number; tag: string; when: number };

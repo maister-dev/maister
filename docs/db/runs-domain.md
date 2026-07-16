@@ -46,7 +46,7 @@ erDiagram
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (M42 Implemented)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (M42 Implemented, SET NULL)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
-    RUNS ||--o{ RUN_SYNC_ATTEMPTS : "sync attempts (ADR-140, 0104)"
+    RUNS ||--o{ RUN_SYNC_ATTEMPTS : "sync attempts (ADR-141, 0106)"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
@@ -68,8 +68,8 @@ erDiagram
     TASKS ||--o{ INBOX_ITEMS : "inbox fanout (ADR-078)"
 
     PROJECTS {
-        text sync_strategy_default "rebase|merge, default rebase (ADR-140, 0104)"
-        text sync_runner_id FK "platform_acp_runners(id) ON DELETE SET NULL, nullable (ADR-140)"
+        text sync_strategy_default "rebase|merge, default rebase (ADR-141, 0106)"
+        text sync_runner_id FK "platform_acp_runners(id) ON DELETE SET NULL, nullable (ADR-141)"
     }
 
     TASKS {
@@ -205,12 +205,12 @@ erDiagram
         text promotion_mode "M18 0021 local_merge|pull_request"
         text pr_url "M18 0021 populated on PR-mode promotion"
         integer pr_number "M18 0021"
-        text pr_state "open|merged|closed, NULL=never checked (ADR-139, 0103)"
+        text pr_state "open|merged|closed, NULL=never checked (ADR-140, 0105)"
         boolean pr_has_conflicts "NULL=unknown"
         timestamp pr_merged_at
         text pr_merge_commit_sha "provider merge commit — NOT runs.merge_commit_sha"
         timestamp promoted_at "M18 0021"
-        text promotion_state "M18 0021 none|claiming|done|failed|reopened (reopened: ADR-140 reopen path, app-level, no CHECK) (NOT NULL DEFAULT none)"
+        text promotion_state "M18 0021 none|claiming|done|failed|reopened (reopened: ADR-141 reopen path, app-level, no CHECK) (NOT NULL DEFAULT none)"
         text promotion_lane "ADR-126 0089: auto lane class docs|tests|deps|config, nullable (NULL = manual)"
         timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
         text promotion_owner_user_id FK "M18 0021 users.id, nullable"
@@ -218,7 +218,7 @@ erDiagram
         text lifecycle_operation_state "M27 0032 none|claiming|failed (NOT NULL DEFAULT none)"
         timestamp lifecycle_operation_claimed_at "M27 0032 durable lifecycle claim timestamp"
         text lifecycle_operation_attempt_id "M27 0032 per-attempt CAS token"
-        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch|sync (sync: ADR-140 sync claim, app-level, no CHECK)"
+        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch|sync (sync: ADR-141 sync claim, app-level, no CHECK)"
     }
 
     RUN_SYNC_ATTEMPTS {
@@ -426,7 +426,7 @@ erDiagram
         text project_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
-        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|run_pr_merged (run_pr_merged: ADR-139, 0103; expands both task_activity_event_kind_check and inbox_items_event_kind_check)"
+        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|run_pr_merged (run_pr_merged: ADR-140, 0105; expands both task_activity_event_kind_check and inbox_items_event_kind_check)"
         jsonb payload "DEFAULT {}"
         timestamp created_at
     }
@@ -541,11 +541,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `scratch_capability_profiles.run_id` UNIQUE — run-scoped capability snapshot
   lookup.
 - `workspaces.worktree_path` UNIQUE — globally unique across the host.
-- **(ADR-139, migration 0103, Implemented)** `workspaces_pr_state_scan_idx` partial index
+- **(ADR-140, migration 0105, Implemented)** `workspaces_pr_state_scan_idx` partial index
   on `(project_id) WHERE pr_url IS NOT NULL AND (pr_state IS NULL OR pr_state =
   'open')` — the `pr_state_scan` candidate query (open / never-checked PRs per
   project).
-- **(ADR-140, migration 0104, Implemented)** `run_sync_attempts_run_attempt_uq` on
+- **(ADR-141, migration 0106, Implemented)** `run_sync_attempts_run_attempt_uq` on
   `(run_id, attempt)` UNIQUE — append-only, one row per sync attempt; the sync
   claim tx allocates `max(attempt)+1` so concurrent launches converge to one row.
 - **(M11a)** `node_attempts_run_step_attempt_uq` on `(run_id, node_id,

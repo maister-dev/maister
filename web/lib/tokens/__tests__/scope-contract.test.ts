@@ -36,7 +36,7 @@ describe("external token scope contract", () => {
 
   it("maps runs:sync to promoteRun so ext == internal authz (never readBoard)", () => {
     expect(TOKEN_SCOPES).toContain("runs:sync");
-    // ADR-140 blocker B1: runs:sync must NOT fall through to the readBoard
+    // ADR-141 blocker B1: runs:sync must NOT fall through to the readBoard
     // default — a user token acting cross-project clears the promote bar.
     expect(PROJECT_ACTION_BY_SCOPE["runs:sync"]).toBe("promoteRun");
     // NOT an ephemeral-agent capability — sync/reopen are human/project-token ops.
@@ -45,7 +45,7 @@ describe("external token scope contract", () => {
     // above: it only lacks `runs:sync` because it spreads AGENT_TOKEN_SCOPES and
     // then adds four scopes explicitly. Appending "runs:sync" to that explicit
     // list would fail nothing, and would hand a machine actor the force-push that
-    // ADR-140's manual-only stance reserves for a deliberate human click.
+    // ADR-141's manual-only stance reserves for a deliberate human click.
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:sync");
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:reopen");
   });

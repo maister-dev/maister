@@ -25,7 +25,7 @@ export interface PrStateChipProps {
   prState: PrState | null;
   prHasConflicts: boolean | null;
   labels: PrStateChipLabels;
-  // ADR-140 (Task 17): when present, the conflicts variant carries a LIVE reopen
+  // ADR-141: when present, the conflicts variant carries a LIVE reopen
   // action for this run. Omitted → the affordance stays disabled (read-only
   // surfaces with no run scope).
   runId?: string;
@@ -50,10 +50,10 @@ const STATE_TONE: Record<PrState, string> = {
     "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
 };
 
-// Shared PR-lifecycle chip (ADR-139). Self-hiding: renders nothing until a scan
+// Shared PR-lifecycle chip (ADR-140). Self-hiding: renders nothing until a scan
 // records a PR state or a conflict. Conflicts take visual precedence — an
 // unmergeable PR is the operator's most urgent signal — and carry the reopen
-// affordance (live when a `runId` scopes the chip, ADR-140 Task 17).
+// affordance (live when a `runId` scopes the chip, ADR-141 Task 17).
 export function PrStateChip({
   prState,
   prHasConflicts,

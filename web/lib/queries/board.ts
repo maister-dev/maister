@@ -185,7 +185,7 @@ export interface FlightCard {
   // M18 (T4.4): the pre-seeded PR number for a `pull_request`-mode run (display
   // only); null when no PR has been recorded.
   prNumber: number | null;
-  // ADR-139 PR lifecycle: provider PR state + conflict flag from the workspace
+  // ADR-140 PR lifecycle: provider PR state + conflict flag from the workspace
   // row, driving the PR-state chip on Done/InDelivery/OnReview cards. Null until
   // the pr_state_scan records them.
   prState: "open" | "merged" | "closed" | null;

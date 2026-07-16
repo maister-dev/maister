@@ -86,7 +86,7 @@ const dbState: {
     gate_chat_turns: [],
     workspaces: [],
     run_sessions: [],
-    // ADR-140: the permission-respond path re-stamps an active branch-sync
+    // ADR-141: the permission-respond path re-stamps an active branch-sync
     // resolver attempt. Empty here → the guard no-ops for every non-resolver run.
     run_sync_attempts: [],
     tasks: [],

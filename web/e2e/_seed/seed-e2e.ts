@@ -332,7 +332,7 @@ const M12_MANIFEST = {
   ],
 };
 
-// --- ADR-140 fixtures: branch sync + PR reopen -------------------------------
+// --- ADR-141 fixtures: branch sync + PR reopen -------------------------------
 // syncBehind: a Review run whose branch is BOTH ahead 1 (its own commit) and
 // behind 1 (target moved) — the mechanical rebase has real work to do and the
 // post-sync promote has a real commit to merge.
@@ -1624,7 +1624,7 @@ async function provisionWorktree(
   ]);
 }
 
-// ADR-140 (Task 18): provision a run branch that is ahead 1 AND behind 1 of its
+// ADR-141: provision a run branch that is ahead 1 AND behind 1 of its
 // target, so `aheadBehindCounts` reports a real drift, the mechanical rebase has
 // work, and the post-sync promote still merges a real commit. Returns the base
 // commit the worktree branched from.
@@ -1652,7 +1652,7 @@ async function provisionDivergedWorktree(
   return base;
 }
 
-// ADR-140 (Task 18) — Review run behind its target, ready to Sync then Promote.
+// ADR-141 — Review run behind its target, ready to Sync then Promote.
 async function seedSyncFixture(
   pool: Pool,
   userId: string,
@@ -1755,7 +1755,7 @@ async function seedSyncFixture(
   };
 }
 
-// ADR-140 (Task 18) — Done run whose PR is open + unmergeable (reopen entry).
+// ADR-141 — Done run whose PR is open + unmergeable (reopen entry).
 async function seedReopenFixture(
   pool: Pool,
   userId: string,

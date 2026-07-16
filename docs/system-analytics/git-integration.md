@@ -329,7 +329,7 @@ Status: **Implemented (M27)** — `web/lib/workbench-lifecycle/service.ts` +
 `web/lib/worktree.ts`. Branch/remote/path inputs are validated by typed helper
 schemas, and secret-bearing remote output is redacted before errors surface.
 
-### PR-state reads (Implemented, ADR-139)
+### PR-state reads (Implemented, ADR-140)
 
 PR lifecycle tracking adds a `getPrState({ remoteUrl, prNumber })` capability to
 the existing 4-provider `PrAdapter` family. Where `createOrUpdatePr` is
@@ -354,10 +354,10 @@ flowchart TD
     Norm --> Out([normalized PR state])
 ```
 
-Status: **Implemented (ADR-139)** — `getPrState` on the `PrAdapter` family in
+Status: **Implemented (ADR-140)** — `getPrState` on the `PrAdapter` family in
 `web/lib/runs/pr-adapter.ts`.
 
-### Push surface with force-with-lease (Implemented, ADR-140)
+### Push surface with force-with-lease (Implemented, ADR-141)
 
 Branch sync publishes the rebased/merged run branch back to its remote with
 `git push --force-with-lease=refs/heads/<branch>:<remote_sha_before>` — an
@@ -387,15 +387,15 @@ sequenceDiagram
     end
 ```
 
-Status: **Implemented (ADR-140)** — the sync push path in
+Status: **Implemented (ADR-141)** — the sync push path in
 `web/lib/runs/sync-target.ts` over `web/lib/worktree.ts`; see
 [`branch-sync.md`](branch-sync.md).
 
-### `ai_rebase_merge` promotion is now resolver-backed (Implemented, ADR-140)
+### `ai_rebase_merge` promotion is now resolver-backed (Implemented, ADR-141)
 
 The `ai_rebase_merge` promotion mode previously existed only as a label: it
 collapsed to a plain `rebase_merge` and did nothing extra on conflict (a no-op).
-ADR-140 makes it real by reusing the sync **rebase + AI-resolver core**. A clean
+ADR-141 makes it real by reusing the sync **rebase + AI-resolver core**. A clean
 rebase finalizes exactly as `rebase_merge` (→ `Done`); a conflict delegates to
 the sync resolver under the **sync** lifecycle claim (never the promotion claim,
 so no new promotion crash window), which returns the run to `Review` cleanly
@@ -404,7 +404,7 @@ rebased for a manual re-promote, or — with the opt-in `autoFinalize` flag
 promotion is unchanged. The full state machine and crash windows live in
 [`branch-sync.md`](branch-sync.md).
 
-Status: **Implemented (ADR-140)** — `ai_rebase_merge` in `web/lib/runs/promote.ts`
+Status: **Implemented (ADR-141)** — `ai_rebase_merge` in `web/lib/runs/promote.ts`
 delegating to the shared sync resolver core (`web/lib/runs/sync-target.ts`).
 
 ## Expectations
@@ -525,9 +525,9 @@ metadata fails closed.
   (Implemented, M18),
   [ADR-093 Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
   (Implemented),
-  [ADR-139 PR lifecycle tracking](../decisions.md#adr-139-pr-lifecycle-tracking)
+  [ADR-140 PR lifecycle tracking](../decisions.md#adr-140-pr-lifecycle-tracking)
   (Implemented),
-  [ADR-140 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
+  [ADR-141 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
   (Implemented).
 - Clone-failure `{ reason, detail }` shape + UI contract:
   [`../error-taxonomy.md`](../error-taxonomy.md).
@@ -548,6 +548,6 @@ metadata fails closed.
   `createBranchAtHead`); **(Implemented, ADR-093)** `web/lib/repo-source.ts`
   (`classifyGitError`, token/askpass clone, `detectGhAuth`),
   `web/lib/git-remotes.ts`, `web/app/api/projects/[slug]/remotes/route.ts`;
-  **(Implemented, ADR-139)** `web/lib/runs/pr-adapter.ts` (`getPrState`);
-  **(Implemented, ADR-140)** `web/lib/runs/sync-target.ts`,
+  **(Implemented, ADR-140)** `web/lib/runs/pr-adapter.ts` (`getPrState`);
+  **(Implemented, ADR-141)** `web/lib/runs/sync-target.ts`,
   `web/lib/runs/promote.ts` (`ai_rebase_merge`).

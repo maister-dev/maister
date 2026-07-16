@@ -320,7 +320,7 @@ describe("runPrStateScanJob", () => {
     expect(stillCandidate).toContain(unreadable.workspaceId);
   });
 
-  // ADR-139/140: a TERMINAL PR has no meaningful mergeability, and providers
+  // ADR-140/141: a TERMINAL PR has no meaningful mergeability, and providers
   // report it as unknown (`hasConflicts: null`). Without an explicit clear, the
   // "unknown ⇒ leave as-is" rule preserves a `true` from the PR's OPEN days, and
   // that stale flag is load-bearing: reopen accepts a conflicted PR, but
@@ -433,7 +433,7 @@ describe("runPrStateScanJob", () => {
     expect(second.scanned).toBe(0);
   });
 
-  // #C8: the `[FIX:ADR-139]` lease-deadline path shipped with no regression test.
+  // #C8: the `[FIX:ADR-140]` lease-deadline path shipped with no regression test.
   // Without it, a full batch of slow providers (50 × the adapter's 60s ceiling)
   // runs ~10x past the scheduler lease: the reaper marks this attempt
   // LEASE_EXPIRED and starts a REPLACEMENT scan while this one is still writing —

@@ -75,7 +75,7 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 const { hitlRequests, nodeAttempts, projects, runs, runSyncAttempts } =
   schemaModule as unknown as Record<string, any>;
 
-// ADR-140 (Task 11): a run with a non-terminal `run_sync_attempts` row is owned
+// ADR-141: a run with a non-terminal `run_sync_attempts` row is owned
 // by the branch-sync recovery path — NO keepalive pass may idle, checkpoint, or
 // kill it. This correlated `NOT EXISTS` excludes such runs.
 //

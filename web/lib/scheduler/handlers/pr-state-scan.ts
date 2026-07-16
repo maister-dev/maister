@@ -92,7 +92,7 @@ export type PrStateScanSummary = {
   reason?: string;
 };
 
-// ADR-139: the per-project PR-state poll. A pure provider-read + DB job — it
+// ADR-140: the per-project PR-state poll. A pure provider-read + DB job — it
 // NEVER spawns a session, mutates git, or writes `runs.merge_commit_sha` (that
 // column stays owned by repo_delivery_scan). It applies three edge-guarded,
 // exactly-once state transitions, and writes state ONLY from a successful read.
@@ -232,7 +232,7 @@ export async function runPrStateScanJob(input: {
         processed: (updated + skipped) as number,
         cursor: nextCursor,
       },
-      "[FIX:ADR-139] pr state scan stopped at its lease budget — resuming from the cursor next tick",
+      "[FIX:ADR-140] pr state scan stopped at its lease budget — resuming from the cursor next tick",
     );
   }
 

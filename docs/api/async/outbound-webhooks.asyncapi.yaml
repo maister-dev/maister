@@ -559,7 +559,7 @@ components:
 
     DataRunPrMerged:
       type: object
-      description: "`run.pr_merged` — the run's PR reached provider state `merged` (ADR-139). Edge-guarded, exactly-once across re-scans."
+      description: "`run.pr_merged` — the run's PR reached provider state `merged` (ADR-140). Edge-guarded, exactly-once across re-scans."
       required: [prNumber, prUrl, mergeCommitSha]
       additionalProperties: false
       properties:
@@ -577,7 +577,7 @@ components:
 
     DataRunPrClosed:
       type: object
-      description: "`run.pr_closed` — the run's PR reached provider state `closed` (unmerged) (ADR-139). Edge-guarded, exactly-once."
+      description: "`run.pr_closed` — the run's PR reached provider state `closed` (unmerged) (ADR-140). Edge-guarded, exactly-once."
       required: [prNumber, prUrl]
       additionalProperties: false
       properties:
@@ -589,7 +589,7 @@ components:
 
     DataRunPrConflicts:
       type: object
-      description: "`run.pr_conflicts` — the run's PR became mergeable=false / conflicted against target (ADR-139). Raises the alarm surface only; the resolver is launched exclusively by an explicit user action (ADR-140)."
+      description: "`run.pr_conflicts` — the run's PR became mergeable=false / conflicted against target (ADR-140). Raises the alarm surface only; the resolver is launched exclusively by an explicit user action (ADR-141)."
       required: [prNumber, prUrl]
       additionalProperties: false
       properties:

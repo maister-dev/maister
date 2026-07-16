@@ -58,7 +58,7 @@ export type ReviewPanelLabels = {
   promotionRebaseMerge: string;
   promotionPullRequest: string;
   promotionAiRebaseMerge: string;
-  // ADR-140 (Task 16): branch-sync dialog + behind/ahead chip + resolver copy.
+  // ADR-141: branch-sync dialog + behind/ahead chip + resolver copy.
   // `behindAhead` / `syncInProgress` are PRE-RESOLVED server-side (their values
   // are known there): this is a client component, and RSC cannot serialize a
   // function across the boundary — every label here must stay a plain string.
@@ -80,7 +80,7 @@ export type ReviewPanelLabels = {
   autoFinalizeHint: string;
 };
 
-// ADR-140 (Task 16): the branch-sync dialog seed data (project defaults + the
+// ADR-141: the branch-sync dialog seed data (project defaults + the
 // resolver runner chain) plus the live in-progress state off the latest attempt.
 export type ReviewPanelSync = {
   strategyDefault: "rebase" | "merge";
@@ -124,7 +124,7 @@ export interface ReviewPanelProps {
   // gated. The server `requireProjectAction(…,"promoteRun")` is the real
   // boundary — this is UI consistency / defense-in-depth.
   canPromote?: boolean;
-  // ADR-140 (Task 16): behind/ahead of the run branch vs its target (null when
+  // ADR-141: behind/ahead of the run branch vs its target (null when
   // the count could not be derived); branch-sync dialog seed + in-progress state.
   aheadBehind?: { ahead: number; behind: number } | null;
   sync?: ReviewPanelSync | null;
@@ -176,7 +176,7 @@ export function ReviewPanel({
   const [drift, setDrift] = useState(driftDetected);
   const [truncationAck, setTruncationAck] = useState(false);
   const [autoFinalize, setAutoFinalize] = useState(false);
-  // ADR-140 (Task 16): branch-sync dialog. Agent-on is the default (matches the
+  // ADR-141: branch-sync dialog. Agent-on is the default (matches the
   // syncRunTarget contract + the OpenAPI `agent` "(default)").
   const [syncOpen, setSyncOpen] = useState(syncDialogOpen);
   const [syncStrategy, setSyncStrategy] = useState<"rebase" | "merge">(
@@ -357,7 +357,7 @@ export function ReviewPanel({
         ) : null}
       </div>
 
-      {/* ADR-140: behind/ahead chip + branch-sync affordance */}
+      {/* ADR-141: behind/ahead chip + branch-sync affordance */}
       {aheadBehind && (aheadBehind.behind > 0 || aheadBehind.ahead > 0) ? (
         <div
           className="mb-4 flex flex-wrap items-center gap-2"
@@ -385,7 +385,7 @@ export function ReviewPanel({
         </div>
       ) : null}
 
-      {/* ADR-140: a live sync claim — promote + a second sync launch are frozen */}
+      {/* ADR-141: a live sync claim — promote + a second sync launch are frozen */}
       {syncClaimed ? (
         <p
           className="mb-4 rounded-[10px] border border-accent-4/40 bg-accent-4-soft p-3 font-mono text-[11px] text-accent-4"
@@ -396,7 +396,7 @@ export function ReviewPanel({
         </p>
       ) : null}
 
-      {/* ADR-140: branch-sync dialog (inline, deterministic for SSR tests) */}
+      {/* ADR-141: branch-sync dialog (inline, deterministic for SSR tests) */}
       {syncOpen && sync ? (
         <div
           className="mb-4 flex flex-col gap-3 rounded-[10px] border border-line bg-paper p-4"
@@ -729,7 +729,7 @@ export function ReviewPanel({
             </Select>
           </label>
 
-          {/* ADR-140 (decision 19): ai_rebase_merge one-click chaining — OFF by
+          {/* ADR-141 (decision 19): ai_rebase_merge one-click chaining — OFF by
               default (two-step: the resolver returns the run to Review). */}
           {mode === "ai_rebase_merge" ? (
             <div data-testid="review-auto-finalize">

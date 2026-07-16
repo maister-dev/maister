@@ -1668,9 +1668,9 @@ paths:
   /api/v1/ext/runs/sync:
     post:
       tags: [runs]
-      summary: (ADR-140 — Implemented) Sync a Review run's branch onto its target
+      summary: (ADR-141 — Implemented) Sync a Review run's branch onto its target
       description: |
-        (ADR-140 — Implemented.) Scope `runs:sync`. Rebases (default) or merges the
+        (ADR-141 — Implemented.) Scope `runs:sync`. Rebases (default) or merges the
         run branch onto its promotion target inside the run's worktree and, when
         published, force-with-lease pushes. On conflict with `agent=true` a fresh
         resolver ACP session is launched to resolve; with `agent=false` the
@@ -1754,9 +1754,9 @@ paths:
   /api/v1/ext/runs/reopen:
     post:
       tags: [runs]
-      summary: (ADR-140 — Implemented) Reopen a Done run whose PR is open/conflicted
+      summary: (ADR-141 — Implemented) Reopen a Done run whose PR is open/conflicted
       description: |
-        (ADR-140 — Implemented.) Scope `runs:sync`. Flips `Done → Review` for a
+        (ADR-141 — Implemented.) Scope `runs:sync`. Flips `Done → Review` for a
         top-level `flow|agent` run whose workspace has an open or conflicted PR,
         re-arming review + auto-promotion exclusion and reviving a GC'd worktree
         if needed. Re-promotion in `pull_request` mode reuses the SAME provider PR.
@@ -3253,15 +3253,15 @@ components:
           type: string
           nullable: true
           enum: [open, merged, closed]
-          description: Provider PR state (ADR-139); `null` = never checked or no PR.
+          description: Provider PR state (ADR-140); `null` = never checked or no PR.
         prHasConflicts:
           type: boolean
           nullable: true
-          description: Whether the PR conflicts against its target; `null` = unknown (ADR-139).
+          description: Whether the PR conflicts against its target; `null` = unknown (ADR-140).
         syncAttempt:
           type: object
           nullable: true
-          description: The latest branch-sync attempt for this run (ADR-140); `null` when never synced.
+          description: The latest branch-sync attempt for this run (ADR-141); `null` when never synced.
           additionalProperties: false
           properties:
             attempt:
@@ -3283,7 +3283,7 @@ components:
 
     ExtRunSyncResult:
       type: object
-      description: Result of an ext branch-sync operation (ADR-140).
+      description: Result of an ext branch-sync operation (ADR-141).
       required: [runId, attemptId, outcome, behind, pushed]
       additionalProperties: false
       properties:

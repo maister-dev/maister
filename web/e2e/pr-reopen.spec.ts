@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
-// ADR-140 (Task 18) — PR reopen composition proof against the seeded harness.
+// ADR-141 — PR reopen composition proof against the seeded harness.
 // The fixture is a Done run whose PR is open + unmergeable (exactly what
 // pr_state_scan records). The board surfaces the conflicts chip; reopening
 // returns the run to Review, where the sync dialog is reachable to resolve it.
@@ -12,7 +12,7 @@ import { loadFixtures } from "./_seed/fixtures";
 // COLD compile alone can outrun the 30s default when specs race it in parallel.
 test.describe.configure({ timeout: 90_000 });
 
-test.describe("PR reopen (ADR-140)", () => {
+test.describe("PR reopen (ADR-141)", () => {
   test("a conflicted-PR Done run reopens from the board and lands back on review with sync reachable", async ({
     page,
   }) => {

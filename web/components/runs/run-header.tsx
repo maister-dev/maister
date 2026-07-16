@@ -40,7 +40,7 @@ export interface RunHeaderLabels {
   promote?: string;
   promotionStarted?: string;
   targetDrift?: string;
-  // ADR-139 PR-state chip labels. Optional so non-run-detail consumers (no PR
+  // ADR-140 PR-state chip labels. Optional so non-run-detail consumers (no PR
   // signal) keep compiling; the chip renders only when present.
   prChip?: PrStateChipLabels;
 }
@@ -60,10 +60,10 @@ export interface RunHeaderProps {
   status: string;
   branch?: string | null;
   targetBranch?: string | null;
-  // ADR-139 PR lifecycle: provider PR state + conflict flag for the header chip.
+  // ADR-140 PR lifecycle: provider PR state + conflict flag for the header chip.
   prState?: PrState | null;
   prHasConflicts?: boolean | null;
-  // ADR-140: the chip's reopen affordance is disabled without it. NOT taken from
+  // ADR-141: the chip's reopen affordance is disabled without it. NOT taken from
   // `promotionOperation` — that is only built for a promotable Review run, and
   // reopen exists precisely for a DONE one.
   runId?: string;

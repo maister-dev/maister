@@ -50,7 +50,7 @@ describe("promotion operation", () => {
     expect(promotionBlockReason({ ...input, ...override })).toBe(reason);
   });
 
-  it("carries autoFinalize only for ai_rebase_merge (ADR-140 decision 19)", () => {
+  it("carries autoFinalize only for ai_rebase_merge (ADR-141 decision 19)", () => {
     const aiOn = buildPromotionRequestBody({
       ...input,
       mode: "ai_rebase_merge",

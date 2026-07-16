@@ -3161,7 +3161,7 @@ export async function readBlob(args: ReadBlobArgs): Promise<RepoBlobResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Branch sync (ADR-140): rebase / merge / fast-forward helpers over the same
+// Branch sync (ADR-141): rebase / merge / fast-forward helpers over the same
 // git-exec seam. Sync ops act on a run's worktree and its local branch; a
 // conflict is reported structurally and LEFT in place for the caller to resolve
 // or abort — never silently aborted mid-flight.
@@ -3451,7 +3451,7 @@ export async function abortSyncOperation(worktree: string): Promise<void> {
   if (mergeHead) await abortMerge(wt);
 }
 
-// ADR-140 sync AI-resolver failure restore: abort any in-progress rebase/merge,
+// ADR-141 sync AI-resolver failure restore: abort any in-progress rebase/merge,
 // then hard-reset the worktree branch to `sha` with a clean tree. Covers both a
 // mid-flight conflicted rebase (abort restores HEAD) AND a resolver that already
 // completed the rebase (HEAD moved) but failed verification — the hard reset
@@ -3471,7 +3471,7 @@ export async function restoreWorktreeToCommit(
 // worktree. `--check` also flags whitespace errors and exits non-zero for both,
 // so the report (forced to a stable C locale) is scanned to single out conflict
 // markers; a `fatal:` diagnostic is a real failure and is surfaced typed.
-// ADR-140: `range` (e.g. `<targetSha>...HEAD`) is REQUIRED by the sync gate.
+// ADR-141: `range` (e.g. `<targetSha>...HEAD`) is REQUIRED by the sync gate.
 // A bare `git diff --check` compares the WORKING TREE to the index, so it is
 // empty — and therefore always "clean" — for any committed conflict marker. The
 // sync gate only reaches this after proving the tree clean, which made the bare
@@ -3537,7 +3537,7 @@ export type ForceWithLeaseResult =
   | { pushed: true }
   | { pushed: false; leaseFailed: true };
 
-// ADR-140 (branch sync): push `branch` from its worktree with an EXPLICIT-SHA
+// ADR-141 (branch sync): push `branch` from its worktree with an EXPLICIT-SHA
 // force-with-lease (`refs/heads/<branch>:<expectedSha>`), so the lease authority
 // is the SHA captured BEFORE any fetch — independent of a possibly-updated
 // remote-tracking ref (that is why the sync path can fetch all refs safely). A
@@ -3611,7 +3611,7 @@ export async function forceWithLeasePush(args: {
 // branch. Refuses (PRECONDITION) when the branch is missing (the caller decides
 // whether to fetch + recreate — this never fetches) or already checked out in
 // another worktree (git refuses; surfaced typed).
-// ADR-140 (Task 12): create a local branch at a start-point. Used by reopen's
+// ADR-141: create a local branch at a start-point. Used by reopen's
 // GC'd-worktree revival when the local branch was pruned but the remote-tracking
 // ref survived a fetch — recreate it, then `addWorktreeForBranch` can attach.
 export async function createLocalBranchAt(

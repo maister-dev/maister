@@ -209,7 +209,7 @@ describe("scheduler job SQL integration", () => {
   // re-enable, which is the SAME `ON CONFLICT DO UPDATE` minus the guard that
   // matters. Delete `consecutive_failures < max_failures` from jobs.ts and the
   // pr_state_scan clone still passes, while every seed tick silently re-enables a
-  // poison-disabled scan: retry-forever, which ADR-139 explicitly forbids.
+  // poison-disabled scan: retry-forever, which ADR-140 explicitly forbids.
   it("(#M9) preserves a poison-disabled PR-state scan while seeding active projects", async () => {
     const now = new Date("2026-06-05T10:00:00.000Z");
     const projectId = randomUUID();

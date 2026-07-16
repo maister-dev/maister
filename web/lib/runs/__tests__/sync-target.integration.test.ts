@@ -1099,7 +1099,7 @@ describe("verifySyncGate", () => {
     expect(res.ok).toBe(false);
   });
 
-  // --- ADR-140 adversarial-review regressions (2026-07-15) -------------------
+  // --- ADR-141 adversarial-review regressions (2026-07-15) -------------------
   // The resolver is only PROMPT-instructed not to push; this gate + the lease are
   // the only ENFORCEMENT. Each case below force-pushed (and, with autoFinalize,
   // merged to the target) before these fixes.

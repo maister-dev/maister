@@ -1,7 +1,7 @@
-// ADR-139 migration 0103_pr_state_tracking coverage (Task 3).
+// ADR-140 migration 0105_pr_state_tracking coverage.
 //
 // The shared harness applies every migration ALL-AT-ONCE in beforeAll, so a
-// fresh DB carries 0103 and NO row here predates it. That bounds what this file
+// fresh DB carries 0105 and NO row here predates it. That bounds what this file
 // can honestly claim: "no backfill" is proven from the column SHAPE (nullable +
 // no default ⇒ any pre-existing row necessarily reads NULL after ADD COLUMN),
 // never from inserting a row and finding NULL. We assert: the five workspaces PR
@@ -9,7 +9,7 @@
 // open/merged/closed/NULL and rejects an illegal value, BOTH event_kind CHECKs
 // (task_activity + inbox_items) accept the new run_pr_merged kind, a new row
 // starts NULL, the scan index is genuinely PARTIAL (predicate asserted, not just
-// its name), and the newest journal entry (0103) has a matching snapshot file.
+// its name), and its journal entry has a matching snapshot file.
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -91,10 +91,10 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("0103 pr_state_tracking schema shape", () => {
+describe("0105 pr_state_tracking schema shape", () => {
   // `column_default` is asserted, not just nullability, because it is what makes
   // "no backfill" PROVABLE from a fresh DB. The harness applies every migration
-  // at once, so no row here predates 0103 — a test that inserts a row and finds
+  // at once, so no row here predates 0105 — a test that inserts a row and finds
   // NULL only shows the column is nullable. Nullable + no default means a
   // pre-existing row necessarily reads NULL after `ADD COLUMN`, which is the
   // real invariant: `pr_state` is owned exclusively by `pr_state_scan`, so a
@@ -182,7 +182,7 @@ describe("0103 pr_state_tracking schema shape", () => {
   });
 });
 
-describe("0103 run_pr_merged event kind", () => {
+describe("0105 run_pr_merged event kind", () => {
   it("both event_kind CHECKs accept run_pr_merged", async () => {
     const { projectId, taskId } = await seedRunWorkspace("evt");
     const activityId = newId();
@@ -219,11 +219,13 @@ describe("0103 run_pr_merged event kind", () => {
   });
 });
 
-// Identified by NAME, never by number: matching on a `0103` prefix would, once
-// this branch rebases onto a main that already owns 0103, silently resolve to
-// MAIN's migration — the snapshot exists, every assertion passes, and this
-// migration goes unverified. The name is what belongs to this change; the
-// number is the thing the merge renegotiates.
+// Identified by NAME, never by number. This is not hypothetical: this migration
+// was authored as 0100, renumbered to 0103, and is 0105 only after rebasing onto
+// a main that had meanwhile taken 0103 for its own
+// (`0103_repair_trusted_package_flow_enablement`). A `startsWith("0103")` match
+// would have silently resolved to MAIN's migration — its snapshot exists, every
+// assertion passes, and THIS migration goes unverified. The name is what belongs
+// to this change; the number is what the merge renegotiates.
 const MIGRATION_NAME = "_pr_state_tracking";
 
 type JournalEntry = { idx: number; tag: string; when: number };

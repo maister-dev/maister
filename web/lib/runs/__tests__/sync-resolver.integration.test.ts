@@ -457,7 +457,7 @@ async function waitFor(
 
 // ---------------------------------------------------------------------------
 
-// ADR-140 (#4): the resolver turn is BACKGROUNDED. `syncRunTarget` returns at the
+// ADR-141 (#4): the resolver turn is BACKGROUNDED. `syncRunTarget` returns at the
 // cut — the CAS has committed, so the run is `Running` and the attempt is
 // `agent_running` — and the resolve (30min of active time, plus arbitrarily long
 // HITL pauses) continues after the response. Injecting the scheduler lets a test
@@ -479,7 +479,7 @@ function backgrounded(): {
   };
 }
 
-describe("syncRunTarget — agent resolver (ADR-140 Task 10)", () => {
+describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
   it("conflict + agent=true → resolver session launched, run Running, agent_launched", async () => {
     const { parent, wt } = await seedConflictWorktree("sync/agent-a", {
       publish: true,

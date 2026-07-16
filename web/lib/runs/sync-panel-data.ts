@@ -26,7 +26,7 @@ export type RunSyncPanelData = {
   };
 };
 
-// ADR-140 (Task 16): assemble the ReviewPanel branch-sync props — the
+// ADR-141: assemble the ReviewPanel branch-sync props — the
 // behind/ahead of the run branch vs its target (git), the dialog seed (project
 // strategy default + resolver runner options + published-ness), and the live
 // in-progress phase off the latest attempt. Git failures degrade to null/false

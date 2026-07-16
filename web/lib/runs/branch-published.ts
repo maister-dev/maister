@@ -2,7 +2,7 @@ import "server-only";
 
 import { branchHasUpstream } from "@/lib/worktree";
 
-// THE published predicate (ADR-140). A run branch is published iff origin
+// THE published predicate (ADR-141). A run branch is published iff origin
 // already carries it — which is exactly the condition under which a sync must
 // force-with-lease push, and therefore exactly what the UI's "push" checkbox
 // must be seeded from (`input.push ?? published`).

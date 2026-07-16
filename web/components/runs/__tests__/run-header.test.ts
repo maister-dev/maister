@@ -140,7 +140,7 @@ describe("RunHeader — budget warn badge (AC-BADGE-1)", () => {
   });
 });
 
-describe("RunHeader — PR-state chip (ADR-139)", () => {
+describe("RunHeader — PR-state chip (ADR-140)", () => {
   const prLabels: RunHeaderLabels = {
     ...labels,
     prChip: {

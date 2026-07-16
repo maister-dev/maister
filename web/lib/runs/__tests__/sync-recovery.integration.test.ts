@@ -1,4 +1,4 @@
-// ADR-140 (Task 11): branch-sync crash-window recovery — reconcile arms (W2/W3),
+// ADR-141: branch-sync crash-window recovery — reconcile arms (W2/W3),
 // the system-sweep W1/W4 orphan-op + W5 active-time duration cap, and the
 // in-process driver registry (the skip-vs-abort discriminant). The supervisor
 // boundary is injected via opts (deleteSession/listSessions); no live agent.
@@ -421,7 +421,7 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
     expect(await readRunStatus(runId)).toBe("Review");
   });
 
-  // W7 (ADR-140): the resolver parks in NeedsInput BY DESIGN — an ACP
+  // W7 (ADR-141): the resolver parks in NeedsInput BY DESIGN — an ACP
   // `requestPermission` puts it there — so after a restart the prompt has nobody
   // to answer it: W5 is Running-only, reconcile owns only Running, and W1/W4 is
   // mechanical-only. Unswept, the run holds a pool slot AND the sync claim

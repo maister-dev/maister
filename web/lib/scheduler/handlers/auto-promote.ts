@@ -120,7 +120,7 @@ export async function runAutoPromoteJob(
         isNotNull(runs.taskId),
         isNull(runs.parentRunId),
         ne(workspaces.promotionState, "done"),
-        // ADR-140 (Task 12): a reopened Done run must be re-promoted MANUALLY —
+        // ADR-141: a reopened Done run must be re-promoted MANUALLY —
         // never auto-promoted by a lane the instant it returns to Review.
         ne(workspaces.promotionState, "reopened"),
         isNull(runs.promotionHold),

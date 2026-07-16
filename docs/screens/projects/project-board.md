@@ -94,10 +94,10 @@ The board is a horizontally scrollable set of columns:
   be added later without changing the current read flow.
 - **Flight cards** show active or latest runs, readiness, assignment/takeover
   state, HITL hints, and lifecycle actions. When PR lifecycle tracking ships
-  (Implemented, ADR-139), a card in `Done` / `InDelivery` / `OnReview` also shows a
+  (Implemented, ADR-140), a card in `Done` / `InDelivery` / `OnReview` also shows a
   **PR-state chip** (`open` / `merged` / `closed`) derived from the latest run's
   workspace `pr_state`; a conflicted PR (`pr_has_conflicts`) renders a distinct
-  conflicts affordance with a **Reopen** action (`Done → Review`, ADR-140). Chip
+  conflicts affordance with a **Reopen** action (`Done → Review`, ADR-141). Chip
   and action copy come from the `board` / `run` namespaces in
   `web/components/board/flight-card.tsx`; behavior lives in
   [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
@@ -192,7 +192,7 @@ to server-stored mode. The board never renders a stale question as answerable.
 - Project Automations (Implemented, ADR-139): `GET /api/projects/{slug}/automations`
   and the project-scoped scheduled-launch routes; recurring APIs and the
   Project Settings → Agents PATCH remain authoritative for their row types.
-- PR-state chip + reopen (Implemented, ADR-139/140): the board read model
+- PR-state chip + reopen (Implemented, ADR-140/141): the board read model
   (`web/lib/queries/board.ts`) carries `prState` / `prHasConflicts` from the
   latest run's workspace, and the Reopen affordance posts to
   `POST /api/runs/{runId}/reopen`.
@@ -215,7 +215,7 @@ Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, `tokens`,
 and planned `automations` namespaces from `web/messages/{locale}.json`.
 Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, and
 `tokens` namespaces from `web/messages/{locale}.json`. The PR-state chip and
-Reopen labels (Implemented, ADR-139/140) live under the existing `board` / `run`
+Reopen labels (Implemented, ADR-140/141) live under the existing `board` / `run`
 namespaces; EN + RU parity required.
 
 ## Linked Artifacts
@@ -224,9 +224,9 @@ namespaces; EN + RU parity required.
   [#adr-083](../../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
   [#adr-132](../../decisions.md#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
   (local-cut attach picker + name-collision explainer),
-  [#adr-139](../../decisions.md#adr-139-pr-lifecycle-tracking) (PR-state chip on
+  [#adr-139](../../decisions.md#adr-140-pr-lifecycle-tracking) (PR-state chip on
   flight cards),
-  [#adr-140](../../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
+  [#adr-140](../../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
   (reopen affordance).
 - Source: `web/components/board/board.tsx`,
   `web/components/board/task-card.tsx`,

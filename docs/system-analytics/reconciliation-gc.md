@@ -57,7 +57,7 @@ GC is the deferred removal that never destroys un-committed work.
 - **Workspace** — `workspaces` row / git worktree. GC entities added by
   migration 0015 (**Designed, M19**):
   - `scheduled_removal_at` (timestamptz, null) — GC deadline (cleared on
-    reopen, ADR-140), stamped at the `Abandoned`/`Done` transition.
+    reopen, ADR-141), stamped at the `Abandoned`/`Done` transition.
   - `archived_branch` (text, null) — name of the preserved archive ref
     (`maister/archive/<runId>`).
   - `archived_at` (timestamptz, null) — when preservation completed.
@@ -103,7 +103,7 @@ stateDiagram-v2
         Archived --> Pruned: removeOwnedWorktree<br/>(removed_at set)
         Countdown --> Pruned: nothing to preserve<br/>(clean + merged)
         Pruned --> [*]
-        Pruned --> [*]: reopen (Done only, ADR-140)<br/>re-attach worktree, clear scheduled_removal_at/archived_at/removed_at
+        Pruned --> [*]: reopen (Done only, ADR-141)<br/>re-attach worktree, clear scheduled_removal_at/archived_at/removed_at
     }
 ```
 

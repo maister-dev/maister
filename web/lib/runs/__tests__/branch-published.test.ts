@@ -1,4 +1,4 @@
-// ADR-140: THE published predicate. It decides whether a sync force-pushes
+// ADR-141: THE published predicate. It decides whether a sync force-pushes
 // (`input.push ?? published`) AND seeds the review panel's "push" checkbox, so
 // the two must read the same rule — they did not, and the panel's narrower copy
 // silently dropped the push for a run with an open PR but no tracking ref.

@@ -21,7 +21,7 @@ const promoteBodySchema = z
     targetBranch: z.string().min(1).max(255).optional(),
     reviewedTargetCommit: z.string().min(7).max(64).optional(),
     allowTargetDrift: z.boolean().optional(),
-    // ADR-140 (Task 13): opt-in one-click chaining for a resolver-backed
+    // ADR-141: opt-in one-click chaining for a resolver-backed
     // ai_rebase_merge conflict (default OFF → two-step).
     autoFinalize: z.boolean().optional(),
   })

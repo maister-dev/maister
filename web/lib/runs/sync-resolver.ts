@@ -58,7 +58,7 @@ const defaultSyncResolverApi: SyncResolverSupervisorApi = {
 // the task intent (NULL-SAFE for a taskless agent run). NEVER logged (may echo
 // task content). Explicit prohibitions bound the resolver's blast radius; the
 // no-push instruction is prompt-level (the enforced safety net is the web-side
-// verification gate + explicit-SHA force-with-lease, per ADR-140).
+// verification gate + explicit-SHA force-with-lease, per ADR-141).
 export function buildResolverPrompt(args: {
   targetRef: string;
   strategy: "rebase" | "merge";
@@ -202,7 +202,7 @@ function startResolverConsumer(args: {
 
 // Spawn a FRESH resolver ACP session in the run worktree, drive one blocking
 // prompt turn, and return the terminal stop reason. Deferred-release is MANDATORY
-// (ADR-140): every path AFTER a successful `createSession` — a sendPrompt throw or
+// (ADR-141): every path AFTER a successful `createSession` — a sendPrompt throw or
 // a surfaced HITL persistence failure — tears the session down before rethrowing.
 // The happy path leaves the session LIVE for the caller to verify+push then
 // delete. NEVER logs prompt/output content.
@@ -251,7 +251,7 @@ export async function runResolverSession(args: {
     );
   }
 
-  // ADR-140 (Task 11): mark this run as owned by a LIVE in-process resolver
+  // ADR-141: mark this run as owned by a LIVE in-process resolver
   // driver — the skip-vs-abort discriminant for the periodic reconcile sweep.
   // Registration is owned by `syncRunTarget`, which spans this session AND the
   // mechanical rebase before it, and the verify/push after it. It is deliberately

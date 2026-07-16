@@ -36,7 +36,7 @@ inbox substrate. (Implemented)
   relation_added, relation_removed, run_launched, triage_set,
   triage_requeued, agent_quarantined, run_pr_merged}` and a jsonb `payload`
   (`triage_set`/`triage_requeued`/`agent_quarantined` added by M34 platform
-  agents; `run_pr_merged` added by ADR-139/140's `pr_state_scan` merged
+  agents; `run_pr_merged` added by ADR-140/141's `pr_state_scan` merged
   edge). Written only by the domain layer (`web/lib/social/*` via
   `recordTaskActivity` plus the named service write-sites).
 - **Subscriber** — `task_subscribers` row: `(task_id, subscriber_type,

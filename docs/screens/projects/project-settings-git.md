@@ -44,7 +44,7 @@ registration bootstraps `maister.yaml` immediately and does not show this CTA.
 - **Persist config action** (legacy rows with `maisterYamlPath == null` only) —
   confirm dialog → `POST …/persist-config`; on success the action and any banner
   clear, and the toast surfaces `usedDefaultAuthor` / `pushWarning` when present.
-- **Sync defaults** (Implemented, ADR-140) — two branch-sync fields beside the
+- **Sync defaults** (Implemented, ADR-141) — two branch-sync fields beside the
   existing runner/delivery-policy controls: a **Sync strategy default** select
   (`rebase` | `merge`, default `rebase`, persisting `projects.sync_strategy_default`)
   and a **Resolver runner** picker populated from the platform ACP runner catalog
@@ -73,7 +73,7 @@ stateDiagram-v2
   `op` discriminator, reusing host-ambient auth.
 - Persist: `POST /api/projects/{slug}/persist-config` (body `push?`; response
   `usedDefaultAuthor?` / `pushWarning?`).
-- Sync defaults (Implemented, ADR-140): `syncStrategyDefault` and `syncRunnerId`
+- Sync defaults (Implemented, ADR-141): `syncStrategyDefault` and `syncRunnerId`
   are written through the aggregate `PATCH /api/projects/{slug}/settings`
   (`ProjectSettingsPatchBody`), the same choke point as the runner/delivery-policy
   defaults. Behavior:
@@ -88,13 +88,13 @@ stateDiagram-v2
 
 `projects` / `settings` (Git section title, remotes table columns, add/edit/remove
 + push/fetch labels, persist dialog + banner strings). The Sync strategy default
-and Resolver runner field labels (Implemented, ADR-140) live under `settings`; EN + RU
+and Resolver runner field labels (Implemented, ADR-141) live under `settings`; EN + RU
 parity required.
 
 ## Linked artifacts
 
 - ADRs: [#adr-093](../../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons),
-  [#adr-140](../../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
+  [#adr-140](../../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
   (sync strategy default + resolver runner).
 - Behavior: [`../../system-analytics/git-integration.md`](../../system-analytics/git-integration.md),
   [`../../system-analytics/projects.md`](../../system-analytics/projects.md),

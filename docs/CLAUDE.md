@@ -89,7 +89,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/instance-config.md`](system-analytics/instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
 | [`system-analytics/git-integration.md`](system-analytics/git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
 | [`system-analytics/workbench.md`](system-analytics/workbench.md) | Workbench visibility (M22): flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, authored layout in `flow.yaml` (ADR-064). |
-| [`system-analytics/workbench-lifecycle.md`](system-analytics/workbench-lifecycle.md) | Workbench lifecycle actions (M27): stop, archive, drop, snapshot commit, export, handoff branch, and the sync lifecycle-claim interaction (ADR-140). |
+| [`system-analytics/workbench-lifecycle.md`](system-analytics/workbench-lifecycle.md) | Workbench lifecycle actions (M27): stop, archive, drop, snapshot commit, export, handoff branch, and the sync lifecycle-claim interaction (ADR-141). |
 | [`system-analytics/project-membership.md`](system-analytics/project-membership.md) | Project membership management: roster, add/change-role/remove, manageMembers action, no last-owner guard (M-admin-surface). |
 | [`system-analytics/acp-runners.md`](system-analytics/acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
 | [`system-analytics/run-schedules.md`](system-analytics/run-schedules.md) | User-facing cron schedules: `run_schedules` table, the seeded `run_schedule.dispatcher` job on the M24 tick, overlap policy × cap matrix, trigger-now, launchability classifier (M28). |
@@ -107,7 +107,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/project-brain.md`](system-analytics/project-brain.md) | Project Brain A/B/C (ADR-122/127/128, Implemented): owned-tier memory, Consultant indexed sources/chunks, cross-tier recall and snapshots, source reindex consumer, clusters/proposals, autonomy counters, docs-as-code projection, `memory_recall`/`memory_retain`/`memory_clusters`/`memory_propose` MCP tools, P7 ambient, and 4-layer enablement. |
 | [`system-analytics/experiments.md`](system-analytics/experiments.md) | Experiment Comparison Studio (ADR-124, Implemented): task-bound pinned-base variant runs, membership, overlays, comparison evidence, human verdicts, advisory judge, and retention holds; package-pin variant axis + per-run provenance (ADR-132). |
 | [`system-analytics/test-infrastructure.md`](system-analytics/test-infrastructure.md) | Test database infrastructure (ADR-135, Implemented): Testcontainers ownership, bare/main/Brain lineages, and E2E lifecycle. |
-| [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md) | Branch sync + AI conflict resolver (ADR-139/140, Implemented): operator-driven sync-with-target, resolver-backed `ai_rebase_merge`, PR-lifecycle polling, and `Done→Review` reopen when a PR conflicts. |
+| [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md) | Branch sync + AI conflict resolver (ADR-140/141, Implemented): operator-driven sync-with-target, resolver-backed `ai_rebase_merge`, PR-lifecycle polling, and `Done→Review` reopen when a PR conflicts. |
 
 ### Screen reference (`screens/`)
 

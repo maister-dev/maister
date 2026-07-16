@@ -92,7 +92,7 @@ The matrix is implemented as an allow-list in
 actions until deliberately added. Commit and handoff branch creation are not
 policy-level read-model actions; they are sub-actions inside the Export dialog
 and routes, gated by handoff metadata and lifecycle claims. Branch **sync**
-(Implemented, ADR-140) is likewise not a policy-level read-model action and takes no
+(Implemented, ADR-141) is likewise not a policy-level read-model action and takes no
 matrix column — it is a `Review`-run operation (top-level `flow`/`agent`,
 `workspace_mode <> 'shared'`, non-experiment) launched from the ReviewPanel,
 target-drift, and PR-conflict surfaces and gated by the shared lifecycle claim;
@@ -197,7 +197,7 @@ effects and finalized only by the same attempt token. Stale `claiming` rows are
 reclaimable using the same timeout as promotion claims. Transient push failures
 leave the claim retryable; non-transient failures finalize as `failed`.
 
-**(Implemented, ADR-140)** Branch **sync** adds a sixth `lifecycle_operation_name`
+**(Implemented, ADR-141)** Branch **sync** adds a sixth `lifecycle_operation_name`
 value `"sync"` (TS-only — `lifecycle_operation_name` is plain `text` with no
 CHECK). It claims the SAME `lifecycle_operation_*` slot, so it is mutually
 exclusive with `archive | drop | exportBranch | snapshotCommit | handoffBranch`

@@ -670,7 +670,7 @@ async function markScratchPermissionDelivered(
   await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
 }
 
-// ADR-140: a branch-sync AI-resolver run parks in NeedsInput on a resolver
+// ADR-141: a branch-sync AI-resolver run parks in NeedsInput on a resolver
 // permission_request; the respond path (NOT the driver) owns NeedsInput → Running
 // and re-stamps `agent_running_since` so the Task-11 active-time cap measures only
 // continuous Running time. Guarded on an active `agent_running` sync attempt, so it
