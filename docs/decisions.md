@@ -12322,8 +12322,9 @@ bring a `Done` run whose PR now conflicts back into review.
   and `.../reopen` (NOT in `AGENT_TOKEN_SCOPES` nor `ORCHESTRATOR_TOKEN_SCOPES` —
   manual-only), run-bound (project derived from the run row, existence-hidden 404).
   MCP tools `run_sync` + `run_reopen`. No new error codes: reuse
-  `PRECONDITION`/`CONFLICT`/`EXECUTOR_UNAVAILABLE`/`CRASH`; `docs/error-taxonomy.md`
-  gains cell entries, not new rows.
+  `PRECONDITION`/`CONFLICT`/`EXECUTOR_UNAVAILABLE`/`CRASH`/`CONFIG` (the last for
+  body validation and an unknown `runnerId` → HTTP 422, kept distinct from the 409
+  domain surface); `docs/error-taxonomy.md` gains cell entries, not new rows.
 - **Manual-only stance**: resolver launch is always an explicit user action (a sync
   click or the conscious `ai_rebase_merge` mode choice). No trigger-driven or
   automatic resolver launch in v1.

@@ -60,7 +60,7 @@ stateDiagram-v2
     starting --> rebasing
     rebasing --> succeeded: clean + verified + pushed (mechanical)
     rebasing --> agent_running: conflict + agent=true
-    rebasing --> aborted: conflict + agent=false (restore pre-sync SHA)
+    rebasing --> aborted: conflict + agent=false (restore pre-sync SHA)<br/>or ANY pre-session refusal with agent=true (cap, runner, fence, CAS)
     agent_running --> verifying: agent end_turn
     verifying --> pushing: gate passed
     verifying --> failed: gate failed → abort restore

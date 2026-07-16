@@ -578,7 +578,13 @@ describe("reopenRun — GC'd revival", () => {
 // ===========================================================================
 
 describe("reopenRun — refusals", () => {
-  it("refuses a non-PR Done run, a child run, a shared-tree run, and an already-Review run", async () => {
+  // ONE representative, deliberately. The refusal TRUTH TABLE (8 cases, a
+  // superset of the 4 this used to re-seed) is owned by the pure
+  // `assertReopenEligible` describe above; re-enumerating it against a database
+  // proves nothing extra, because `reopenRun` reaches the gate through a single
+  // call site. What THIS layer must prove is that the wiring exists at all — a
+  // service that forgot to call the gate would pass every pure test.
+  it("calls the eligibility gate — a non-PR Done run is refused PRECONDITION", async () => {
     const { projectId, flowId } = await seedGraph("/repos/demo");
 
     const noPr = await seedRun({
@@ -594,59 +600,6 @@ describe("reopenRun — refusals", () => {
 
     await expect(
       reopenRun({ runId: noPr.runId, actor: actor() }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
-
-    const parent = await seedRun({
-      projectId,
-      flowId,
-      branch: "maister/parent",
-      worktreePath: "/wt/parent",
-      parentRepoPath: "/repos/demo",
-      status: "Done",
-      prState: "open",
-    });
-    const child = await seedRun({
-      projectId,
-      flowId,
-      branch: "maister/child",
-      worktreePath: "/wt/child",
-      parentRepoPath: "/repos/demo",
-      status: "Done",
-      prState: "open",
-      parentRunId: parent.runId,
-    });
-
-    await expect(
-      reopenRun({ runId: child.runId, actor: actor() }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
-
-    const shared = await seedRun({
-      projectId,
-      flowId,
-      branch: "maister/shared",
-      worktreePath: "/wt/shared",
-      parentRepoPath: "/repos/demo",
-      status: "Done",
-      prState: "open",
-      workspaceMode: "shared",
-    });
-
-    await expect(
-      reopenRun({ runId: shared.runId, actor: actor() }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
-
-    const review = await seedRun({
-      projectId,
-      flowId,
-      branch: "maister/review",
-      worktreePath: "/wt/review",
-      parentRepoPath: "/repos/demo",
-      status: "Review",
-      prState: "open",
-    });
-
-    await expect(
-      reopenRun({ runId: review.runId, actor: actor() }),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 

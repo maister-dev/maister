@@ -209,10 +209,12 @@ The landing focus follows state:
 - Workbench routes are listed in [`workbench.md`](workbench.md).
 - Branch sync + PR lifecycle (Implemented, ADR-139/140): `POST /api/runs/{runId}/sync`
   and `POST /api/runs/{runId}/reopen` back the Sync branch and Reopen actions;
-  `getRunDetail(runId)` additionally supplies the workspace PR facts (`prState`,
-  `prHasConflicts`, `prMergedAt`, `prMergeCommitSha`) and the current
-  `run_sync_attempts` phase that feed the header chips and the sync-in-progress
-  panel. Behavior:
+  `getRunDetail(runId)` additionally supplies `prState` and `prHasConflicts` (which
+  feed the header PR chip) — NOT `prMergedAt` / `prMergeCommitSha`, which are
+  persisted on `workspaces` but exposed by no query and no screen. The current
+  `run_sync_attempts` phase does not come from `getRunDetail` either: the review
+  panel's sync bundle is assembled separately by `lib/runs/sync-panel-data.ts`.
+  Behavior:
   [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 
 Behavior belongs in [`../../system-analytics/runs.md`](../../system-analytics/runs.md),
@@ -250,26 +252,32 @@ paths, the verification gate, and reopen live in
 [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md);
 this screen owns only the surface. All copy comes from the `run` namespace.
 
-- **Behind/ahead chip** — the run-header drift indicator (ahead N / behind N)
-  against the promotion target; behind > 0 is what makes Sync branch actionable.
-  Rendered in `web/components/runs/run-header.tsx`.
+- **Behind/ahead chip** — the drift indicator (ahead N / behind N) against the
+  promotion target; behind > 0 is what makes Sync branch actionable. Rendered on
+  the REVIEW PANEL (`web/components/runs/review-panel.tsx`, `review-ahead-behind`),
+  not the run header. Its copy is PRE-RESOLVED server-side by
+  `buildRunSyncPanelData` — the panel never formats the counts itself.
 - **PR-state chip** — a header/inspector chip reflecting persisted
   `workspaces.pr_state` (`open` / `merged` / `closed`). A conflicted PR
   (`pr_has_conflicts`) renders a distinct conflicts affordance that links to the
   Reopen action documented in [`run-inspector.md`](run-inspector.md).
-- **Sync branch dialog** — opened from the run header or the drift card; a modal
-  (`web/components/runs/sync-branch-dialog.tsx`) with a strategy select
+- **Sync branch dialog** — opened from the behind/ahead chip or the drift card.
+  There is NO `sync-branch-dialog.tsx`: it is inline in
+  `web/components/runs/review-panel.tsx` (`review-sync-dialog`), with a strategy select
   (`rebase` / `merge`, defaulting to the project `sync_strategy_default`), a
   resolver-runner select (defaulting through the sync-runner chain), a **push**
   toggle, and a "resolve conflicts with AI agent" checkbox **default ON**.
 - **Sync-in-progress panel** — while an attempt runs it shows the durable
   `run_sync_attempts` phase (`starting → rebasing → agent_running → verifying →
-  pushing`) and a **Stop** control. A resolver requesting permission surfaces
-  through the normal HITL / `NeedsInput` path, not this panel.
+  pushing`), resolved server-side by `buildRunSyncPanelData`. It is TEXT ONLY —
+  there is no Stop control (a runaway resolver is bounded by the
+  `SYNC_ATTEMPT_MAX_MINUTES` active-time cap, not by a UI action). A resolver
+  requesting permission surfaces through the normal HITL / `NeedsInput` path, not
+  this panel.
 - **Drift card action** — the existing target-drift card (`run.targetDrift`,
   today offering only **Promote anyway**) gains **Sync branch** as a primary
-  action beside **Promote anyway** in `web/components/runs/review-panel.tsx` and
-  `run-header-promotion-action.tsx`.
+  action beside **Promote anyway** in `web/components/runs/review-panel.tsx`.
+  `run-header-promotion-action.tsx` carries NO sync affordance.
 - **`ai_rebase_merge` promote dialog** — when the resolved promotion mode is
   `ai_rebase_merge`, the promote dialog gains an **auto-finalize after resolve**
   checkbox, **default OFF** (two-step default: a resolved conflict returns the run

@@ -1,12 +1,15 @@
 // ADR-139 migration 0103_pr_state_tracking coverage (Task 3).
 //
 // The shared harness applies every migration ALL-AT-ONCE in beforeAll, so a
-// fresh DB carries 0103. We assert: the five workspaces PR columns exist, the
-// workspaces_pr_state CHECK accepts open/merged/closed/NULL and rejects an
-// illegal value, BOTH event_kind CHECKs (task_activity + inbox_items) accept
-// the new run_pr_merged kind, pre-existing-shape rows keep NULL PR state, the
-// partial scan index exists, and the newest journal entry (0103) has a
-// matching snapshot file.
+// fresh DB carries 0103 and NO row here predates it. That bounds what this file
+// can honestly claim: "no backfill" is proven from the column SHAPE (nullable +
+// no default ⇒ any pre-existing row necessarily reads NULL after ADD COLUMN),
+// never from inserting a row and finding NULL. We assert: the five workspaces PR
+// columns exist nullable with no default, the workspaces_pr_state CHECK accepts
+// open/merged/closed/NULL and rejects an illegal value, BOTH event_kind CHECKs
+// (task_activity + inbox_items) accept the new run_pr_merged kind, a new row
+// starts NULL, the scan index is genuinely PARTIAL (predicate asserted, not just
+// its name), and the newest journal entry (0103) has a matching snapshot file.
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -89,20 +92,40 @@ afterAll(async () => {
 });
 
 describe("0103 pr_state_tracking schema shape", () => {
-  it("adds the five workspaces PR columns, all nullable", async () => {
+  // `column_default` is asserted, not just nullability, because it is what makes
+  // "no backfill" PROVABLE from a fresh DB. The harness applies every migration
+  // at once, so no row here predates 0103 — a test that inserts a row and finds
+  // NULL only shows the column is nullable. Nullable + no default means a
+  // pre-existing row necessarily reads NULL after `ADD COLUMN`, which is the
+  // real invariant: `pr_state` is owned exclusively by `pr_state_scan`, so a
+  // DEFAULT (or a backfill UPDATE) added later would silently manufacture PR
+  // state for every workspace that never had a PR.
+  it("adds the five workspaces PR columns, all nullable with NO default (no backfill)", async () => {
     const cols = await pool.query(
-      `select column_name, is_nullable from information_schema.columns
+      `select column_name, is_nullable, column_default from information_schema.columns
        where table_name = 'workspaces'
        and column_name in ('pr_state','pr_has_conflicts','pr_merged_at','pr_merge_commit_sha','pr_state_checked_at')
        order by column_name`,
     );
 
     expect(cols.rows).toEqual([
-      { column_name: "pr_has_conflicts", is_nullable: "YES" },
-      { column_name: "pr_merge_commit_sha", is_nullable: "YES" },
-      { column_name: "pr_merged_at", is_nullable: "YES" },
-      { column_name: "pr_state", is_nullable: "YES" },
-      { column_name: "pr_state_checked_at", is_nullable: "YES" },
+      {
+        column_name: "pr_has_conflicts",
+        is_nullable: "YES",
+        column_default: null,
+      },
+      {
+        column_name: "pr_merge_commit_sha",
+        is_nullable: "YES",
+        column_default: null,
+      },
+      { column_name: "pr_merged_at", is_nullable: "YES", column_default: null },
+      { column_name: "pr_state", is_nullable: "YES", column_default: null },
+      {
+        column_name: "pr_state_checked_at",
+        is_nullable: "YES",
+        column_default: null,
+      },
     ]);
   });
 
@@ -145,7 +168,12 @@ describe("0103 pr_state_tracking schema shape", () => {
     ).rejects.toMatchObject({ code: "23514" });
   });
 
-  it("leaves a freshly inserted workspace with NULL PR state (no backfill)", async () => {
+  // Companion to the column_default assertion above: that one proves the SHAPE
+  // cannot manufacture PR state, this one proves the INSERT path does not either
+  // (no trigger, no ORM default). It deliberately does NOT claim to prove "no
+  // backfill" — this row is created after every migration has run, so a backfill
+  // UPDATE could never have touched it.
+  it("leaves a freshly inserted workspace with NULL PR state", async () => {
     const { workspaceId } = await seedRunWorkspace("nullstate");
     const row = await pool.query(
       `select pr_state, pr_has_conflicts, pr_state_checked_at from workspaces where id = $1`,

@@ -295,11 +295,29 @@ describe("ReviewPanel — branch sync (ADR-140)", () => {
     const html = render({ sync: SYNC, aheadBehind: { ahead: 2, behind: 3 } });
 
     expect(html).toContain('data-testid="review-ahead-behind"');
-    // The formatted count carries both numbers (behind:3, ahead:2).
-    expect(html).toContain("run.behindAhead:3:2");
     // The chip exposes the Sync-branch entry point when a sync bundle is present.
     expect(html).toContain('data-testid="review-sync-open"');
     expect(html).toContain("run.syncBranch");
+  });
+
+  // `labels.behindAhead` is PRE-RESOLVED server-side (see ReviewPanelProps): the
+  // panel renders it verbatim and never formats the counts itself. Asserting the
+  // fixture's own "run.behindAhead:3:2" against `{behind:3, ahead:2}` looked like
+  // it proved the numbers were formatted in the right order, but the string is a
+  // constant — the same assertion passes for ANY counts. Render mismatched
+  // numbers so only the real contract can satisfy it.
+  it("renders the SERVER-RESOLVED label verbatim, never formatting the counts itself", () => {
+    const html = render({
+      sync: SYNC,
+      aheadBehind: { ahead: 9, behind: 9 },
+      labels: { ...LABELS, behindAhead: "3 behind, 2 ahead" },
+    });
+
+    expect(html).toContain('data-testid="review-ahead-behind"');
+    expect(html).toContain("3 behind, 2 ahead");
+    // The client-side counts appear nowhere: a panel that formatted them would
+    // render "9" and this would fail.
+    expect(html).not.toContain("9 behind");
   });
 
   it("omits the behind/ahead chip when up to date (0 behind, 0 ahead)", () => {

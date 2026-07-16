@@ -1794,7 +1794,10 @@ auto-incrementing per `run_id`.
 }
 ```
 
-UNIQUE `(run_id, attempt)`. The attempt-number allocation, the `starting` row,
+UNIQUE `(run_id, attempt)`, plus `run_sync_attempts_run_idx` on `run_id` — the
+ledger is append-only and every reader (recovery's active-attempt lookup, the
+review panel's in-progress phase, the attempt-number `max()`) filters by
+`run_id`. The attempt-number allocation, the `starting` row,
 and the `"sync"` lifecycle claim are ONE `FOR UPDATE` transaction, so a
 concurrent double-launch yields exactly one attempt row and a `CONFLICT` for the
 loser. The agent path's `markSyncFromReview` `Review→Running` CAS is a SECOND

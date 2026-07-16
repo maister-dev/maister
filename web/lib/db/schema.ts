@@ -146,7 +146,7 @@ export const projects = pgTable("projects", {
   // maister.yaml on disk; the manifest is optional at manual registration).
   maisterYamlPath: text("maister_yaml_path"),
   defaultRunnerId: text("default_runner_id"),
-  // ADR-140 (migration 0101): branch-sync defaults. `sync_strategy_default` is
+  // ADR-140 (migration 0104): branch-sync defaults. `sync_strategy_default` is
   // the project's default rebase|merge strategy; `sync_runner_id` is the resolver
   // runner (nullable FK, SET NULL on runner delete — mirrors
   // flowRevisions.defaultRunnerId, NOT the plain-text projects.default_runner_id).
@@ -2276,7 +2276,7 @@ export const workspaces = pgTable(
     }),
     lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
     lifecycleOperationName: text("lifecycle_operation_name"),
-    // ADR-139 (migration 0100): PR lifecycle tracking. `pr_state` NULL = never
+    // ADR-139 (migration 0103): PR lifecycle tracking. `pr_state` NULL = never
     // scanned. `pr_merge_commit_sha` is the PROVIDER merge commit (provenance
     // only) — distinct from `runs.merge_commit_sha`, which stays owned by the
     // repo_delivery_scan (ADR-134). `pr_state_checked_at` is stamped on EVERY scan
@@ -2304,7 +2304,7 @@ export const workspaces = pgTable(
   }),
 );
 
-// ADR-140 (migration 0101): append-only branch-sync attempt ledger, one row per
+// ADR-140 (migration 0104): append-only branch-sync attempt ledger, one row per
 // sync/resolver attempt on a run. Shaped like node_attempts — `phase` is the
 // single plain-text lifecycle column (TS-only enum, NO DB CHECK), written BEFORE
 // each side effect.
@@ -4515,7 +4515,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "triage_requeued",
   "agent_quarantined",
   "experiment_concluded",
-  // ADR-139 (migration 0100): PR merged onto target — merged-only board feed
+  // ADR-139 (migration 0103): PR merged onto target — merged-only board feed
   // (closed/conflict surface via chip + webhook, not task_activity).
   "run_pr_merged",
 ] as const;

@@ -5092,10 +5092,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: |
-            `PRECONDITION` — run not `Done`, not top-level `flow|agent`, no
-            open/conflicted PR, or the run branch is gone from both local and
-            remote. Or `CONFLICT` — a competing claim is active. Both map to
-            HTTP 409.
+            `PRECONDITION` — run not `Done`, not top-level `flow|agent`, a
+            SHARED-tree run (the tree is one branch), no open/conflicted PR, a
+            terminal (`merged`/`closed`) PR — re-promotion would open a SECOND
+            one, since `createOrUpdatePr` finds OPEN PRs only — or the run branch
+            is gone from both local and remote. Or `CONFLICT` — a competing claim
+            is active, or the run left `Done` concurrently. Both map to HTTP 409.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -16920,8 +16922,11 @@ components:
           enum: [noop, synced, conflict, agent_launched]
         behind:
           type: integer
-          nullable: true
-          description: Commits the run branch was behind target before the sync.
+          description: |
+            Commits the run branch was behind target before the sync. NEVER null:
+            it is measured before any decision is made, so every outcome
+            (including the 202 `agent_launched` cut, which returns while the
+            resolver is still running) carries the real count.
         pushed:
           type: boolean
           description: Whether the branch was force-with-lease pushed.

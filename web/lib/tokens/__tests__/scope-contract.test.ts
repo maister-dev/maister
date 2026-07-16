@@ -4,6 +4,7 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 
 import { PROJECT_ACTION_MIN } from "@/lib/authz";
 import { PROJECT_ACTION_BY_SCOPE } from "@/lib/tokens/ext-handler";
+import { ORCHESTRATOR_TOKEN_SCOPES } from "@/lib/agents/tokens";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 
 describe("external token scope contract", () => {
@@ -40,5 +41,12 @@ describe("external token scope contract", () => {
     expect(PROJECT_ACTION_BY_SCOPE["runs:sync"]).toBe("promoteRun");
     // NOT an ephemeral-agent capability — sync/reopen are human/project-token ops.
     expect(AGENT_TOKEN_SCOPES).not.toContain("runs:sync");
+    // The ORCHESTRATOR set must be checked SEPARATELY, not inferred from the one
+    // above: it only lacks `runs:sync` because it spreads AGENT_TOKEN_SCOPES and
+    // then adds four scopes explicitly. Appending "runs:sync" to that explicit
+    // list would fail nothing, and would hand a machine actor the force-push that
+    // ADR-140's manual-only stance reserves for a deliberate human click.
+    expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:sync");
+    expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:reopen");
   });
 });

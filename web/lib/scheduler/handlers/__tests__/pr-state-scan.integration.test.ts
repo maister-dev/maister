@@ -2,7 +2,7 @@ import type { PrStateReadResult } from "@/lib/runs/pr-adapter";
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
@@ -97,8 +97,20 @@ describe("runPrStateScanJob", () => {
       prNumber: 101,
       withTask: true,
     });
-    const closed = await seedCandidate({ projectId, prNumber: 102 });
-    const conflicting = await seedCandidate({ projectId, prNumber: 103 });
+    // `withTask` on the non-merged candidates too: task_activity requires a
+    // task_id, so seeding them taskless made the merged-ONLY assertion below
+    // vacuous — closed/conflicting could not have emitted activity even if the
+    // code tried. Now they can, so the count is a real negative.
+    const closed = await seedCandidate({
+      projectId,
+      prNumber: 102,
+      withTask: true,
+    });
+    const conflicting = await seedCandidate({
+      projectId,
+      prNumber: 103,
+      withTask: true,
+    });
 
     const summary = await runPrStateScanJob({
       projectId,
@@ -170,6 +182,24 @@ describe("runPrStateScanJob", () => {
       actorId: null,
       payload: { prNumber: 101 },
     });
+
+    // MERGED-ONLY, asserted project-wide. Scoping the query to `merged.taskId`
+    // could never have observed a stray closed/conflicts activity row; both of
+    // those tasks now exist, so the total proves the merged edge is the only one
+    // that writes the board feed.
+    const allActivity = await db
+      .select()
+      .from(schema.taskActivity)
+      .where(
+        inArray(schema.taskActivity.taskId, [
+          merged.taskId as string,
+          closed.taskId as string,
+          conflicting.taskId as string,
+        ]),
+      );
+
+    expect(allActivity).toHaveLength(1);
+    expect(allActivity[0].taskId).toBe(merged.taskId);
 
     // FR-A5: the provider merge commit lives on the workspace ONLY; the run's
     // repo_delivery_scan-owned merge_commit_sha is never written here.

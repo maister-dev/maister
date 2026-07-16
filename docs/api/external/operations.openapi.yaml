@@ -1698,8 +1698,13 @@ paths:
               properties:
                 runId:
                   type: string
-                  format: uuid
-                  description: The Review run whose branch to sync.
+                  minLength: 1
+                  description: |
+                    The Review run whose branch to sync. NOT declared
+                    `format: uuid` — the handler validates `z.string().min(1)`
+                    and resolves the run by lookup, so a non-UUID is a run-not-
+                    found (existence-hidden 404), never a 422. Declaring uuid
+                    would promise a validation the server does not perform.
                 strategy:
                   type: string
                   enum: [rebase, merge]
@@ -3289,8 +3294,10 @@ components:
           description: "`noop` = already up to date; `synced` = clean mechanical sync; `conflict` = aborted (agent=false); `agent_launched` = resolver session started."
         behind:
           type: integer
-          nullable: true
-          description: Commits the run branch was behind the target before the sync.
+          description: |
+            Commits the run branch was behind the target before the sync. NEVER
+            null: it is measured before any decision is made, so every outcome
+            (including the 202 `agent_launched` cut) carries the real count.
         pushed:
           type: boolean
           nullable: true

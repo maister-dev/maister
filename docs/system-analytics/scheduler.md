@@ -370,12 +370,18 @@ flowchart TD
 - Handler failure records `Failed` with bounded error context and contributes to
   the route's 207 summary.
 - `pr_state_scan` poison item (**Implemented, ADR-139**): a deterministic per-item
-  failure (404 / deleted PR, or a `generic`/unsupported provider) is recorded as
-  a terminal `Skipped`, never a job `Failed`; a transient one (missing CLI /
-  token, network, provider 5xx) skips the item this tick and advances the keyset
-  cursor, while the native `consecutive_failures >= max_failures` backoff
-  isolates a genuinely broken project — one bad row never stalls the per-project
-  job or fails the tick.
+  failure (404 / deleted PR, or a `generic`/unsupported provider) is absorbed
+  INSIDE the handler — the item is stamped and counted in the summary's `skipped`
+  (with `reason: "unsupported_provider"` for a generic remote) and the JOB still
+  records `Succeeded`. A transient one (missing CLI / token, network, provider
+  5xx) skips the item this tick and advances the keyset cursor, while the native
+  `consecutive_failures >= max_failures` backoff isolates a genuinely broken
+  project — one bad row never stalls the per-project job or fails the tick.
+  Note the job status `Skipped` is unreachable for this kind: `pr_state_scan` is
+  deliberately EXCLUDED from the tick's `isSkip` predicate, so a project-scoped
+  `PRECONDITION` (an unconfigured origin remote) records `Failed` and consumes
+  the bounded retry budget rather than degrading silently forever. The per-item
+  `skipped` counter and the terminal job status are different things.
 - Invalid per-kind admin target payloads return `MaisterError("CONFIG")` as a
   422 route response. The typed editor should prevent common shape errors, but
   `web/lib/scheduler/job-admin.ts` remains the server boundary.
