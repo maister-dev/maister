@@ -31,6 +31,7 @@ export interface WorkbenchLifecycleActionsProps {
   taskKey?: string | null;
   taskNumber?: number | null;
   runLabel?: string;
+  workspaceAvailable?: boolean;
 }
 
 type UiActionId =
@@ -163,10 +164,7 @@ function endpointFor(input: {
   }
 
   if (input.action === "stopDrop") {
-    // Scratch Stop & drop reuses the single-transaction discard route.
-    return input.runKind === "scratch"
-      ? `/api/scratch-runs/${input.runId}/discard`
-      : `/api/runs/${input.runId}/stop-drop`;
+    return `/api/runs/${input.runId}/stop-drop`;
   }
 
   return `/api/runs/${input.runId}/${ACTION_PATH[input.action]}`;
@@ -182,10 +180,12 @@ function renderActions(
 
 // Rail `menu` variant: the ordered action-sheet items per run state. Plain Stop
 // stops the run and leaves the worktree; snapshot/push/handoff stay in the run
-// card. Combined Stop & * are flow + scratch only (agent gets plain Stop only).
+// card. Writable agent workspaces use the same combined actions; no-workspace
+// agents keep plain Stop because there is no worktree to preserve or remove.
 function railMenuItems(
   actions: WorkbenchLifecycleActionId[],
   runKind: RunKind,
+  workspaceAvailable: boolean,
 ): UiActionId[] {
   const items: UiActionId[] = ["open"];
 
@@ -194,7 +194,11 @@ function railMenuItems(
   if (actions.includes("stop")) {
     items.push("stop");
 
-    if (runKind === "flow" || runKind === "scratch") {
+    if (
+      runKind === "flow" ||
+      runKind === "scratch" ||
+      (runKind === "agent" && workspaceAvailable)
+    ) {
       items.push("stopArchive", "stopDrop");
     }
 
@@ -429,6 +433,7 @@ export function WorkbenchLifecycleActions({
   taskKey,
   taskNumber,
   runLabel,
+  workspaceAvailable = false,
 }: WorkbenchLifecycleActionsProps): ReactElement | null {
   const t = useTranslations("workbenchLifecycle");
   // The rename modal reuses the existing portfolio.rename copy.
@@ -699,7 +704,7 @@ export function WorkbenchLifecycleActions({
   }
 
   const displayActions = variant === "menu" ? [] : renderActions(actions);
-  const menuItems = railMenuItems(actions, runKind);
+  const menuItems = railMenuItems(actions, runKind, workspaceAvailable);
   const error = compactErrorText(t, errorState);
   const handoffBranchValid = isValidHandoffBranch(handoffBranch);
   const remoteValid = isValidRemoteName(remote);

@@ -9,8 +9,9 @@ import type {
 } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
+import { access } from "node:fs/promises";
 
-import { and, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
@@ -20,6 +21,7 @@ import { MaisterError } from "@/lib/errors";
 import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
+import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
   promotionClaimTimeoutSeconds,
@@ -98,6 +100,9 @@ export type LifecycleRun = {
   runKind: "flow" | "scratch" | "agent";
   status: WorkbenchRunStatus;
   currentStepId: string | null;
+  workspaceMode?: "own" | "shared" | null;
+  agentWorkspace?: "none" | "repo_read" | "worktree" | null;
+  rootRunId?: string | null;
 };
 
 export type LifecycleWorkspace = {
@@ -124,6 +129,7 @@ export type LifecycleContext = {
 };
 
 export type RecordArchiveInput = {
+  database?: NodePgDatabase<typeof schema>;
   workspaceId: string;
   attemptId: string;
   archivedBranch: string | null;
@@ -133,6 +139,7 @@ export type RecordArchiveInput = {
 };
 
 export type RecordDropInput = {
+  database?: NodePgDatabase<typeof schema>;
   runId: string;
   runKind: "flow" | "scratch" | "agent";
   workspaceId: string;
@@ -159,6 +166,22 @@ export type WorkbenchLifecycleDeps = {
     reason: string;
   }) => Promise<void>;
   promoteNextPending: () => Promise<void>;
+  finalizeAgentRun: (args: {
+    runId: string;
+    reason: string;
+  }) => Promise<{ finalized: boolean }>;
+  cleanupAgentMaterializations: (args: {
+    runId: string;
+    worktreePath: string;
+  }) => Promise<void>;
+  stopScratchWorkbench: (runId: string) => Promise<{
+    runStatus: WorkbenchRunStatus;
+    supervisorStopped: boolean;
+  }>;
+  assertWorkspaceRemovalAllowed: (args: {
+    run: LifecycleRun;
+    workspace: LifecycleWorkspace;
+  }) => Promise<void>;
   preserveWorktree: (args: {
     worktreePath: string;
     parentRepoPath: string;
@@ -166,6 +189,7 @@ export type WorkbenchLifecycleDeps = {
     baseRef: string;
     runId: string;
   }) => Promise<PreserveResult>;
+  worktreeExists: (worktreePath: string) => Promise<boolean>;
   recordArchive: (args: RecordArchiveInput) => Promise<void>;
   recordDrop: (args: RecordDropInput) => Promise<void>;
   removeOwnedWorktree: (args: {
@@ -515,6 +539,27 @@ function baseRefFor(
   return workspace.baseCommit ?? workspace.baseBranch ?? ctx.project.mainBranch;
 }
 
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
+}
+
+async function worktreeExists(worktreePath: string): Promise<boolean> {
+  try {
+    await access(worktreePath);
+
+    return true;
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+
+    throw error;
+  }
+}
+
 async function preservePresentWorkspace(
   runId: string,
   ctx: LifecycleContext,
@@ -551,6 +596,36 @@ function requirePreservationOutcome(
   if (result.archivedBranch !== undefined) return "ref_created";
 
   return "not_needed";
+}
+
+type PersistedPreservation = {
+  archivedAt: Date;
+  archivedBranch: string | null;
+  archivedCommit: string | null;
+  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
+};
+
+function requirePersistedPreservation(
+  workspace: LifecycleWorkspace,
+): PersistedPreservation {
+  if (
+    workspace.archivedAt === null ||
+    workspace.preservationOutcome === null ||
+    workspace.preservationOutcome === undefined ||
+    workspace.preservationOutcome === "legacy_unknown"
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      `missing worktree cannot be finalized without durable preservation evidence: ${workspace.id}`,
+    );
+  }
+
+  return {
+    archivedAt: workspace.archivedAt,
+    archivedBranch: workspace.archivedBranch,
+    archivedCommit: workspace.archivedCommit ?? null,
+    preservationOutcome: workspace.preservationOutcome,
+  };
 }
 
 async function markLifecycleClaimFailed(args: {
@@ -590,12 +665,7 @@ async function recordPreservation(
   result: PreserveResult,
   attemptId: string,
   deps: WorkbenchLifecycleDeps,
-): Promise<{
-  archivedAt: Date;
-  archivedBranch: string | null;
-  archivedCommit: string | null;
-  preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
-}> {
+): Promise<PersistedPreservation> {
   const archivedAt = result.archivedAt ?? new Date();
   const archivedBranch = result.archivedBranch ?? workspace.archivedBranch;
   const archivedCommit =
@@ -617,6 +687,89 @@ async function recordPreservation(
     archivedCommit,
     preservationOutcome,
   };
+}
+
+async function prepareWorkspaceRemoval(args: {
+  runId: string;
+  ctx: LifecycleContext;
+  workspace: LifecycleWorkspace;
+  attemptId: string;
+  deps: WorkbenchLifecycleDeps;
+}): Promise<{
+  worktreePresent: boolean;
+  preservation: PersistedPreservation;
+}> {
+  const worktreePresent = await args.deps.worktreeExists(
+    args.workspace.worktreePath,
+  );
+
+  if (!worktreePresent) {
+    return {
+      worktreePresent: false,
+      preservation: requirePersistedPreservation(args.workspace),
+    };
+  }
+
+  const preserveResult = await preservePresentWorkspace(
+    args.runId,
+    args.ctx,
+    args.deps,
+  );
+  const preservation = await recordPreservation(
+    args.workspace,
+    preserveResult,
+    args.attemptId,
+    args.deps,
+  );
+
+  return { worktreePresent: true, preservation };
+}
+
+async function assertWorkspaceRemovalAllowed(args: {
+  run: LifecycleRun;
+  workspace: LifecycleWorkspace;
+}): Promise<void> {
+  if (
+    args.run.runKind !== "agent" ||
+    args.run.workspaceMode !== "shared" ||
+    args.run.agentWorkspace !== "worktree" ||
+    !args.run.rootRunId
+  ) {
+    return;
+  }
+
+  const blockingSiblings = await db()
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.rootRunId, args.run.rootRunId),
+        eq(runs.workspaceMode, "shared"),
+        eq(runs.agentWorkspace, "worktree"),
+        notInArray(runs.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
+      ),
+    );
+
+  const otherBlockingSiblings = blockingSiblings.filter(
+    (sibling) => sibling.id !== args.run.id,
+  );
+
+  if (otherBlockingSiblings.length === 0) return;
+
+  log.warn(
+    {
+      runId: args.run.id,
+      rootRunId: args.run.rootRunId,
+      workspaceId: args.workspace.id,
+      blockingSiblingCount: otherBlockingSiblings.length,
+    },
+    "workbench lifecycle shared workspace removal blocked by actionable siblings",
+  );
+
+  throw new MaisterError(
+    "CONFLICT",
+    `shared workspace has ${otherBlockingSiblings.length} actionable sibling run(s)`,
+  );
 }
 
 function isReplayableRemoval(
@@ -688,6 +841,15 @@ async function archiveWorkbenchForCtx(
   requireActionAllowed(ctx, "archive", options);
 
   const workspace = workspaceRecord;
+  log.info(
+    {
+      runId,
+      workspaceId: workspace.id,
+      operation: "archive",
+      expectedRunStatus: ctx.run.status,
+    },
+    "workbench lifecycle removal started",
+  );
   const claim = await deps.claimLifecycleOperation({
     runId,
     workspaceId: workspace.id,
@@ -696,24 +858,37 @@ async function archiveWorkbenchForCtx(
   });
 
   try {
-    const preserveResult = await preservePresentWorkspace(runId, ctx, deps);
-    const preservation = await recordPreservation(
+    const removal = await prepareWorkspaceRemoval({
+      runId,
+      ctx,
       workspace,
-      preserveResult,
-      claim.attemptId,
+      attemptId: claim.attemptId,
       deps,
-    );
+    });
+
+    await deps.assertWorkspaceRemovalAllowed({
+      run: ctx.run,
+      workspace,
+    });
 
     await deps.renewLifecycleOperationLease({
       workspaceId: workspace.id,
       attemptId: claim.attemptId,
     });
-    await deps.removeOwnedWorktree({
-      projectRepoPath: workspace.parentRepoPath,
-      worktreePath: workspace.worktreePath,
-      allowedRoot: deps.worktreesRoot(),
-      force: true,
-    });
+
+    if (removal.worktreePresent) {
+      await deps.removeOwnedWorktree({
+        projectRepoPath: workspace.parentRepoPath,
+        worktreePath: workspace.worktreePath,
+        allowedRoot: deps.worktreesRoot(),
+        force: true,
+      });
+    } else {
+      log.info(
+        { runId, workspaceId: workspace.id, operation: "archive" },
+        "workbench lifecycle finalized removal after filesystem recovery",
+      );
+    }
 
     const removedAt = new Date();
 
@@ -724,13 +899,24 @@ async function archiveWorkbenchForCtx(
       removedAt,
       expectedRunStatus: ctx.run.status,
       nextRunStatus: null,
-      archivedBranch: preservation.archivedBranch,
-      archivedAt: preservation.archivedAt,
-      archivedCommit: preservation.archivedCommit,
-      preservationOutcome: preservation.preservationOutcome,
+      archivedBranch: removal.preservation.archivedBranch,
+      archivedAt: removal.preservation.archivedAt,
+      archivedCommit: removal.preservation.archivedCommit,
+      preservationOutcome: removal.preservation.preservationOutcome,
       removalKind: "archive",
       attemptId: claim.attemptId,
     });
+
+    log.info(
+      {
+        runId,
+        workspaceId: workspace.id,
+        operation: "archive",
+        attemptId: claim.attemptId,
+        preservationOutcome: removal.preservation.preservationOutcome,
+      },
+      "workbench lifecycle removal completed",
+    );
 
     return {
       ok: true,
@@ -739,12 +925,23 @@ async function archiveWorkbenchForCtx(
       runStatus: ctx.run.status,
       workspaceRemoved: true,
       idempotent: false,
-      preservationOutcome: preservation.preservationOutcome,
-      archived: preservation.preservationOutcome !== "not_needed",
-      archivedBranch: preservation.archivedBranch,
-      snapshotted: preserveResult.snapshotted === true,
+      preservationOutcome: removal.preservation.preservationOutcome,
+      archived: removal.preservation.preservationOutcome !== "not_needed",
+      archivedBranch: removal.preservation.archivedBranch,
+      snapshotted:
+        removal.preservation.preservationOutcome === "snapshot_created",
     };
   } catch (err) {
+    log.warn(
+      {
+        runId,
+        workspaceId: workspace.id,
+        operation: "archive",
+        attemptId: claim.attemptId,
+        errorCode: err instanceof MaisterError ? err.code : "unknown",
+      },
+      "workbench lifecycle removal failed",
+    );
     await markLifecycleClaimFailed({
       deps,
       workspaceId: workspace.id,
@@ -1116,6 +1313,15 @@ async function dropWorkbenchForCtx(
   await deps.cascadeOrchestratorIfNeeded(ctx.run);
 
   const workspace = workspaceRecord;
+  log.info(
+    {
+      runId,
+      workspaceId: workspace.id,
+      operation: "drop",
+      expectedRunStatus: ctx.run.status,
+    },
+    "workbench lifecycle removal started",
+  );
   const claim = await deps.claimLifecycleOperation({
     runId,
     workspaceId: workspace.id,
@@ -1124,25 +1330,37 @@ async function dropWorkbenchForCtx(
   });
 
   try {
-    const preserveResult = await preservePresentWorkspace(runId, ctx, deps);
-    const preservation = await recordPreservation(
+    const removal = await prepareWorkspaceRemoval({
+      runId,
+      ctx,
       workspace,
-      preserveResult,
-      claim.attemptId,
+      attemptId: claim.attemptId,
       deps,
-    );
+    });
+
+    await deps.assertWorkspaceRemovalAllowed({
+      run: ctx.run,
+      workspace,
+    });
 
     await deps.renewLifecycleOperationLease({
       workspaceId: workspace.id,
       attemptId: claim.attemptId,
     });
 
-    await deps.removeOwnedWorktree({
-      projectRepoPath: workspace.parentRepoPath,
-      worktreePath: workspace.worktreePath,
-      allowedRoot: deps.worktreesRoot(),
-      force: true,
-    });
+    if (removal.worktreePresent) {
+      await deps.removeOwnedWorktree({
+        projectRepoPath: workspace.parentRepoPath,
+        worktreePath: workspace.worktreePath,
+        allowedRoot: deps.worktreesRoot(),
+        force: true,
+      });
+    } else {
+      log.info(
+        { runId, workspaceId: workspace.id, operation: "drop" },
+        "workbench lifecycle finalized removal after filesystem recovery",
+      );
+    }
 
     const nextRunStatus = ctx.run.status === "Done" ? null : "Abandoned";
     const removedAt = new Date();
@@ -1154,13 +1372,24 @@ async function dropWorkbenchForCtx(
       removedAt,
       expectedRunStatus: ctx.run.status,
       nextRunStatus,
-      archivedBranch: preservation.archivedBranch,
-      archivedAt: preservation.archivedAt,
-      archivedCommit: preservation.archivedCommit,
-      preservationOutcome: preservation.preservationOutcome,
+      archivedBranch: removal.preservation.archivedBranch,
+      archivedAt: removal.preservation.archivedAt,
+      archivedCommit: removal.preservation.archivedCommit,
+      preservationOutcome: removal.preservation.preservationOutcome,
       removalKind: "drop",
       attemptId: claim.attemptId,
     });
+
+    log.info(
+      {
+        runId,
+        workspaceId: workspace.id,
+        operation: "drop",
+        attemptId: claim.attemptId,
+        preservationOutcome: removal.preservation.preservationOutcome,
+      },
+      "workbench lifecycle removal completed",
+    );
 
     return {
       ok: true,
@@ -1169,10 +1398,20 @@ async function dropWorkbenchForCtx(
       runStatus: nextRunStatus ?? ctx.run.status,
       workspaceRemoved: true,
       idempotent: false,
-      preservationOutcome: preservation.preservationOutcome,
-      archivedBranch: preservation.archivedBranch,
+      preservationOutcome: removal.preservation.preservationOutcome,
+      archivedBranch: removal.preservation.archivedBranch,
     };
   } catch (err) {
+    log.warn(
+      {
+        runId,
+        workspaceId: workspace.id,
+        operation: "drop",
+        attemptId: claim.attemptId,
+        errorCode: err instanceof MaisterError ? err.code : "unknown",
+      },
+      "workbench lifecycle removal failed",
+    );
     await markLifecycleClaimFailed({
       deps,
       workspaceId: workspace.id,
@@ -1413,20 +1652,13 @@ async function stopAgentAfterAuth(
     requireActionAllowed(ctx, "stop");
   }
 
-  // Imported lazily so this module's eval graph stays free of next-auth (pulled
-  // transitively via authz) — the unit suite loads the real service module.
-  const { finalizeAgentRun } = await import("@/lib/agents/launch");
-  const { cleanupRunMaterializations } = await import(
-    "@/lib/capabilities/cleanup"
-  );
-
   // finalizeAgentRun flips status + nulls acpSessionId + frees the agent pool
   // slot, but it does NOT delete the supervisor session — kill it here.
   const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
 
-  const finalize = await finalizeAgentRun(runId, "Abandoned", {
+  const finalize = await deps.finalizeAgentRun({
+    runId,
     reason: "operator",
-    closeAssignments: { kind: "system", reason: "run stopped by operator" },
   });
 
   if (!finalize.finalized) {
@@ -1440,10 +1672,9 @@ async function stopAgentAfterAuth(
   }
 
   if (ctx.workspace && ctx.workspace.removedAt === null) {
-    await cleanupRunMaterializations({
+    await deps.cleanupAgentMaterializations({
       runId,
       worktreePath: ctx.workspace.worktreePath,
-      db: db(),
     });
   }
 
@@ -1467,10 +1698,7 @@ async function stopRunByKind(
       };
     }
     case "scratch": {
-      const { stopScratchWorkbench } = await import(
-        "@/lib/scratch-runs/service"
-      );
-      const result = await stopScratchWorkbench(runId);
+      const result = await deps.stopScratchWorkbench(runId);
 
       return {
         ok: true,
@@ -1525,8 +1753,8 @@ export async function stopWorkbenchRunForToken(
   return stopRunByKind(runId, ctx, deps);
 }
 
-// POST /api/runs/{runId}/stop-archive — flow + scratch. Stop commits the parked
-// status first; an archive failure leaves the run in Review, retryable.
+// POST /api/runs/{runId}/stop-archive — all workspace-backed run kinds. Stop
+// commits the parked status first; an archive failure leaves the run retryable.
 export async function stopThenArchive(
   runId: string,
   options?: WorkbenchLifecycleOptions,
@@ -1539,13 +1767,6 @@ export async function stopThenArchive(
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
-  if (ctx.run.runKind !== "flow" && ctx.run.runKind !== "scratch") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `stop-archive supports flow and scratch runs only: ${runId}`,
-    );
-  }
-
   const stop = await stopRunByKind(runId, ctx, deps);
   const parkedCtx = await deps.loadContext(runId);
   const archive = await archiveWorkbenchForCtx(runId, parkedCtx, deps);
@@ -1553,8 +1774,7 @@ export async function stopThenArchive(
   return { ...archive, supervisorStopped: stop.supervisorStopped };
 }
 
-// POST /api/runs/{runId}/stop-drop — flow only. Scratch Stop & drop reuses the
-// scratch /discard route.
+// POST /api/runs/{runId}/stop-drop — all workspace-backed run kinds.
 export async function stopThenDrop(
   runId: string,
   options?: WorkbenchLifecycleOptions,
@@ -1567,14 +1787,7 @@ export async function stopThenDrop(
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
-  if (ctx.run.runKind !== "flow") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `stop-drop supports flow runs only: ${runId}`,
-    );
-  }
-
-  const stop = await stopFlowAfterAuth(runId, ctx, deps);
+  const stop = await stopRunByKind(runId, ctx, deps);
   const parkedCtx = await deps.loadContext(runId);
   const drop = await dropWorkbenchForCtx(runId, parkedCtx, deps);
 
@@ -1600,7 +1813,40 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     promoteNextPending: async () => {
       await promoteNextPending();
     },
+    finalizeAgentRun: async ({ runId, reason }) => {
+      const { finalizeAgentRun } = await import("@/lib/agents/launch");
+      const result = await finalizeAgentRun(runId, "Abandoned", {
+        reason,
+        closeAssignments: { kind: "system", reason: "run stopped by operator" },
+      });
+
+      return { finalized: result.finalized };
+    },
+    cleanupAgentMaterializations: async ({ runId, worktreePath }) => {
+      const { cleanupRunMaterializations } = await import(
+        "@/lib/capabilities/cleanup"
+      );
+
+      await cleanupRunMaterializations({
+        runId,
+        worktreePath,
+        db: db(),
+      });
+    },
+    stopScratchWorkbench: async (runId) => {
+      const { stopScratchWorkbench } = await import(
+        "@/lib/scratch-runs/service"
+      );
+      const result = await stopScratchWorkbench(runId);
+
+      return {
+        runStatus: result.runStatus === "Review" ? "Review" : "Abandoned",
+        supervisorStopped: result.supervisorStopped,
+      };
+    },
+    assertWorkspaceRemovalAllowed,
     preserveWorktree,
+    worktreeExists,
     recordArchive,
     recordDrop,
     removeOwnedWorktree,
@@ -1630,6 +1876,9 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
       runKind: runs.runKind,
       status: runs.status,
       currentStepId: runs.currentStepId,
+      workspaceMode: runs.workspaceMode,
+      agentWorkspace: runs.agentWorkspace,
+      rootRunId: runs.rootRunId,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -1686,8 +1935,9 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
   };
 }
 
-async function recordArchive(args: RecordArchiveInput): Promise<void> {
-  const rows = await db()
+export async function recordArchive(args: RecordArchiveInput): Promise<void> {
+  const client = args.database ?? db();
+  const rows = await client
     .update(workspaces)
     .set({
       archivedBranch: args.archivedBranch,
@@ -1714,7 +1964,9 @@ async function recordArchive(args: RecordArchiveInput): Promise<void> {
 }
 
 export async function recordDrop(args: RecordDropInput): Promise<void> {
-  await db().transaction(async (tx) => {
+  const client = args.database ?? db();
+
+  await client.transaction(async (tx) => {
     const runRows = await tx
       .select({ status: runs.status })
       .from(runs)
@@ -1870,7 +2122,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
 
   if (args.nextRunStatus !== null) {
     await captureExperimentDiffSnapshotForRun({
-      db: db(),
+      db: client,
       runId: args.runId,
       force: true,
     });
@@ -1927,12 +2179,15 @@ async function markRunStoppedAndCloseAssignments(args: {
 }
 
 export async function claimLifecycleOperation(args: {
+  database?: NodePgDatabase<typeof schema>;
   runId: string;
   workspaceId: string;
   operation: LifecycleOperationName;
   expectedRunStatus: WorkbenchRunStatus;
 }): Promise<LifecycleOperationClaim> {
-  return db().transaction(async (tx) => {
+  const client = args.database ?? db();
+
+  return client.transaction(async (tx) => {
     const rows = await tx
       .select({
         id: workspaces.id,
@@ -1992,13 +2247,15 @@ export async function claimLifecycleOperation(args: {
 }
 
 export async function renewLifecycleOperationLease(args: {
+  database?: NodePgDatabase<typeof schema>;
   workspaceId: string;
   attemptId: string;
 }): Promise<LifecycleOperationClaim> {
+  const client = args.database ?? db();
   const leaseExpiresAt = new Date(
     Date.now() + promotionClaimTimeoutSeconds() * 1000,
   );
-  const rows = await db()
+  const rows = await client
     .update(workspaces)
     .set({ lifecycleOperationLeaseExpiresAt: leaseExpiresAt })
     .where(
@@ -2022,10 +2279,12 @@ export async function renewLifecycleOperationLease(args: {
 }
 
 export async function finalizeLifecycleOperation(args: {
+  database?: NodePgDatabase<typeof schema>;
   workspaceId: string;
   attemptId: string;
   state: LifecycleOperationState;
 }): Promise<void> {
+  const client = args.database ?? db();
   const update =
     args.state === "done"
       ? {
@@ -2043,7 +2302,7 @@ export async function finalizeLifecycleOperation(args: {
           lifecycleOperationAttemptId: args.attemptId,
         };
 
-  const rows = await db()
+  const rows = await client
     .update(workspaces)
     .set(update)
     .where(

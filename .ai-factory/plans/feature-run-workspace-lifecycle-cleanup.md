@@ -878,7 +878,7 @@ pnpm --filter maister-web typecheck
     not misclassified, and code can reconstruct a completed lifecycle result
     without filesystem access.
 
-- [ ] **Task 10: RED — encode preservation, lease, historicalization, and crash windows.**
+- [x] **Task 10: RED — encode preservation, lease, historicalization, and crash windows.**
   - **Files:** `web/lib/workbench-lifecycle/__tests__/service.test.ts`,
     `race.test.ts`, `lifecycle-claim.integration.test.ts`,
     `real-git.integration.test.ts`, scratch/run discard route tests, and
@@ -897,7 +897,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** focused tests are runnable and fail only because the old
     Archive/scratch/claim behavior is still present.
 
-- [ ] **Task 11: GREEN — implement the modular claimed removal protocol.**
+- [x] **Task 11: GREEN — implement the modular claimed removal protocol.**
   - **Files:** focused modules under `web/lib/workbench-lifecycle/` for policy,
     claims/heartbeat, preservation, ownership/removal, finalization, and
     orchestration; run/scratch discard services/routes; existing Git helpers;
@@ -917,7 +917,7 @@ pnpm --filter maister-web typecheck
     direct unconfined recursive worktree deletion. A stale owner cannot remove
     or finalize after lease loss.
 
-- [ ] **Task 12: GREEN — generalize safe combined actions for writable agents.**
+- [x] **Task 12: GREEN — generalize safe combined actions for writable agents.**
   - **Files:** lifecycle orchestrators, agent stop/cascade
     helpers, shared-tree ownership helpers, combined-action routes, and agent
     integration tests.
@@ -932,7 +932,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** an agent action cannot pull a shared tree out from another
     run, and supported actions use the same coordinator as Flow/scratch.
 
-- [ ] **Task 13: REFACTOR — enforce single-purpose lifecycle boundaries.**
+- [x] **Task 13: REFACTOR — enforce single-purpose lifecycle boundaries.**
   - **Files:** modules touched by Tasks 9-12 and their tests.
   - **Change:** remove duplicate operation sequencing and status sets, keep
     discriminated unions exhaustive, isolate side-effect ports, and reduce the

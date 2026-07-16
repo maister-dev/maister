@@ -238,6 +238,7 @@ export function ActiveWorkspaceRow({
           runId={row.runId}
           runKind={row.runKind}
           runLabel={row.name}
+          workspaceAvailable
           taskKey={row.taskKey}
           taskNumber={row.taskNumber}
           variant="menu"

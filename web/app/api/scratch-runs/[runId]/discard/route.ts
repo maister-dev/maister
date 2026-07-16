@@ -14,6 +14,7 @@ import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
+import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { localPackages, runs, scratchRuns, workspaces } =
@@ -177,6 +178,15 @@ export async function POST(
         runStatus: run.status,
         supervisorStopped: false,
         workspaceRemoved: false,
+      });
+    }
+
+    if (run.projectId && workspace && !workspace.removedAt) {
+      const result = await stopThenDrop(runId);
+
+      return NextResponse.json({
+        ...result,
+        dialogStatus: result.runStatus === "Done" ? "Done" : "Abandoned",
       });
     }
 

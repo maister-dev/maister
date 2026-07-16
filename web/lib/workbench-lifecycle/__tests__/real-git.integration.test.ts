@@ -144,7 +144,15 @@ function realGitDeps(
     deleteSession: vi.fn(async () => undefined),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
+    finalizeAgentRun: vi.fn(async () => ({ finalized: true })),
+    cleanupAgentMaterializations: vi.fn(async () => undefined),
+    stopScratchWorkbench: vi.fn(async () => ({
+      runStatus: "Review" as const,
+      supervisorStopped: false,
+    })),
+    assertWorkspaceRemovalAllowed: vi.fn(async () => undefined),
     preserveWorktree,
+    worktreeExists: vi.fn(async () => true),
     recordArchive: vi.fn(async (args) => {
       records.archives.push(args);
     }),

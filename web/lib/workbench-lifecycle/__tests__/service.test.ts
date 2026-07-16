@@ -53,6 +53,13 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
     deleteSession: vi.fn(async () => undefined),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
+    finalizeAgentRun: vi.fn(async () => ({ finalized: true })),
+    cleanupAgentMaterializations: vi.fn(async () => undefined),
+    stopScratchWorkbench: vi.fn(async () => ({
+      runStatus: "Review" as const,
+      supervisorStopped: false,
+    })),
+    assertWorkspaceRemovalAllowed: vi.fn(async () => undefined),
     preserveWorktree: vi.fn(async () => ({
       ok: true,
       archivedBranch: "maister/archive/run-1",
@@ -61,6 +68,7 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
     })),
     recordArchive: vi.fn(async () => undefined),
     recordDrop: vi.fn(async () => undefined),
+    worktreeExists: vi.fn(async () => true),
     removeOwnedWorktree: vi.fn(async () => undefined),
     worktreesRoot: vi.fn(() => "/tmp/maister/worktrees"),
     statusPorcelain: vi.fn(async () => ""),
@@ -214,6 +222,120 @@ describe("workbench lifecycle service", () => {
       worktreePath: "/tmp/maister/worktrees/run-1",
       allowedRoot: "/tmp/maister/worktrees",
       force: true,
+    });
+  });
+
+  it("finalizes a retried drop after the worktree was removed before DB finalization", async () => {
+    const recovered = context({
+      workspace: {
+        ...context().workspace!,
+        archivedAt: new Date("2026-06-09T08:00:00.000Z"),
+        archivedBranch: "maister/archive/run-1",
+        archivedCommit: "f00dbabe",
+        preservationOutcome: "snapshot_created",
+      },
+    });
+    const d = deps(recovered);
+
+    vi.mocked(d.worktreeExists).mockResolvedValueOnce(false);
+
+    const result = await dropWorkbench("run-1", { deps: d });
+
+    expect(result).toMatchObject({
+      ok: true,
+      runStatus: "Abandoned",
+      workspaceRemoved: true,
+      idempotent: false,
+      preservationOutcome: "snapshot_created",
+    });
+    expect(d.preserveWorktree).not.toHaveBeenCalled();
+    expect(d.removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(d.recordArchive).not.toHaveBeenCalled();
+    expect(d.recordDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        archivedBranch: "maister/archive/run-1",
+        archivedCommit: "f00dbabe",
+        preservationOutcome: "snapshot_created",
+        removalKind: "drop",
+      }),
+    );
+  });
+
+  it("finalizes a retried archive without changing the historical run status", async () => {
+    const recovered = context({
+      workspace: {
+        ...context().workspace!,
+        archivedAt: new Date("2026-06-09T08:00:00.000Z"),
+        archivedBranch: null,
+        archivedCommit: null,
+        preservationOutcome: "not_needed",
+      },
+    });
+    const d = deps(recovered);
+
+    vi.mocked(d.worktreeExists).mockResolvedValueOnce(false);
+
+    const result = await archiveWorkbench("run-1", { deps: d });
+
+    expect(result).toMatchObject({
+      ok: true,
+      runStatus: "Review",
+      workspaceRemoved: true,
+      preservationOutcome: "not_needed",
+    });
+    expect(d.preserveWorktree).not.toHaveBeenCalled();
+    expect(d.removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(d.recordDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nextRunStatus: null,
+        removalKind: "archive",
+      }),
+    );
+  });
+
+  it("refuses to finalize a missing worktree without durable preservation evidence", async () => {
+    const d = deps(context());
+
+    vi.mocked(d.worktreeExists).mockResolvedValueOnce(false);
+
+    await expect(dropWorkbench("run-1", { deps: d })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+
+    expect(d.preserveWorktree).not.toHaveBeenCalled();
+    expect(d.removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(d.recordDrop).not.toHaveBeenCalled();
+  });
+
+  it("refuses shared writable agent workspace removal while an actionable sibling remains", async () => {
+    const shared = context({
+      run: {
+        ...context().run,
+        runKind: "agent",
+        workspaceMode: "shared",
+        agentWorkspace: "worktree",
+        rootRunId: "root-run-1",
+      },
+    });
+    const d = deps(shared);
+
+    vi.mocked(d.assertWorkspaceRemovalAllowed).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "shared workspace has 1 actionable sibling run(s)"),
+    );
+
+    await expect(dropWorkbench("run-1", { deps: d })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+
+    expect(d.assertWorkspaceRemovalAllowed).toHaveBeenCalledWith({
+      run: shared.run,
+      workspace: shared.workspace,
+    });
+    expect(d.removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(d.finalizeLifecycleOperation).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      attemptId: "lifecycle-attempt-1",
+      state: "failed",
     });
   });
 
@@ -584,17 +706,29 @@ describe("workbench lifecycle service", () => {
     expect(d.markStoppedAndCloseAssignments).toHaveBeenCalled();
   });
 
-  it("stopThenArchive refuses agent runs", async () => {
-    const d = deps(
-      context({
-        run: { ...context().run, runKind: "agent", status: "Running" },
-      }),
-    );
-
-    await expect(stopThenArchive("run-1", { deps: d })).rejects.toMatchObject({
-      code: "PRECONDITION",
+  it("stopThenArchive stops a writable agent then archives through the shared coordinator", async () => {
+    const running = context({
+      run: { ...context().run, runKind: "agent", status: "Running" },
     });
-    expect(d.markStoppedAndCloseAssignments).not.toHaveBeenCalled();
+    const abandoned = context({
+      run: { ...running.run, status: "Abandoned" },
+    });
+    const d = deps(running);
+
+    vi.mocked(d.loadContext)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce(abandoned);
+
+    const result = await stopThenArchive("run-1", { deps: d });
+
+    expect(d.finalizeAgentRun).toHaveBeenCalledWith({
+      runId: "run-1",
+      reason: "operator",
+    });
+    expect(d.recordDrop).toHaveBeenCalledWith(
+      expect.objectContaining({ removalKind: "archive" }),
+    );
+    expect(result).toMatchObject({ ok: true, workspaceRemoved: true });
   });
 
   it("stopThenDrop stops a live flow run then drops the worktree", async () => {
@@ -614,16 +748,23 @@ describe("workbench lifecycle service", () => {
     expect(result).toMatchObject({ ok: true, workspaceRemoved: true });
   });
 
-  it("stopThenDrop refuses scratch runs (they reuse /discard)", async () => {
-    const d = deps(
-      context({
-        run: { ...context().run, runKind: "scratch", status: "Running" },
-      }),
-    );
-
-    await expect(stopThenDrop("run-1", { deps: d })).rejects.toMatchObject({
-      code: "PRECONDITION",
+  it("stopThenDrop stops a scratch run then drops through the shared coordinator", async () => {
+    const running = context({
+      run: { ...context().run, runKind: "scratch", status: "Running" },
     });
-    expect(d.markStoppedAndCloseAssignments).not.toHaveBeenCalled();
+    const review = context({ run: { ...running.run, status: "Review" } });
+    const d = deps(running);
+
+    vi.mocked(d.loadContext)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce(review);
+
+    const result = await stopThenDrop("run-1", { deps: d });
+
+    expect(d.stopScratchWorkbench).toHaveBeenCalledWith("run-1");
+    expect(d.recordDrop).toHaveBeenCalledWith(
+      expect.objectContaining({ removalKind: "drop" }),
+    );
+    expect(result).toMatchObject({ ok: true, workspaceRemoved: true });
   });
 });

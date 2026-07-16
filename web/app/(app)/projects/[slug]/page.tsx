@@ -974,6 +974,7 @@ function ProjectActiveWorkspaces({
                   className="px-3 pb-2.5"
                   runId={workspace.runId}
                   runKind={workspace.runKind}
+                  workspaceAvailable
                 />
               ) : null}
             </li>

@@ -14,6 +14,7 @@ import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
+import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
 
 type Row = Record<string, unknown>;
 type Tables = {
@@ -31,7 +32,6 @@ type FakeDb = {
 const dbState: { tables: Tables } = {
   tables: { local_packages: [], runs: [], scratch_runs: [], workspaces: [] },
 };
-let transactionFailure: Error | null = null;
 
 function tableOf(t: unknown): keyof Tables {
   if (t === localPackagesTable) return "local_packages";
@@ -61,8 +61,6 @@ const fakeDb: FakeDb = {
   select: selectChain,
   update: updateChain,
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>): Promise<T> => {
-    if (transactionFailure) throw transactionFailure;
-
     return fn(fakeDb);
   },
 };
@@ -99,6 +97,20 @@ vi.mock("@/lib/gc/preserve", () => ({
   preserveWorktree: vi.fn(async () => ({
     ok: true,
     preservationOutcome: "not_needed",
+  })),
+}));
+
+vi.mock("@/lib/workbench-lifecycle/service", () => ({
+  stopThenDrop: vi.fn(async () => ({
+    ok: true,
+    runId: "run-discard",
+    operation: "drop",
+    runStatus: "Abandoned",
+    workspaceRemoved: true,
+    idempotent: false,
+    preservationOutcome: "not_needed",
+    archivedBranch: null,
+    supervisorStopped: false,
   })),
 }));
 
@@ -187,7 +199,6 @@ beforeEach(() => {
     scratch_runs: [],
     workspaces: [],
   };
-  transactionFailure = null;
   vi.mocked(deleteSession).mockClear();
   vi.mocked(removeOwnedWorktree).mockClear();
   vi.mocked(preserveWorktree).mockReset();
@@ -200,65 +211,67 @@ beforeEach(() => {
   vi.mocked(assertLocalPackageAssistantActor).mockClear();
   vi.mocked(assertLocalPackageAssistantActor).mockResolvedValue(undefined);
   vi.mocked(cleanupLocalPackageAssistantMaterialization).mockClear();
+  vi.mocked(stopThenDrop).mockClear();
+  vi.mocked(stopThenDrop).mockResolvedValue({
+    ok: true,
+    runId: "run-discard",
+    operation: "drop",
+    runStatus: "Abandoned",
+    workspaceRemoved: true,
+    idempotent: false,
+    preservationOutcome: "not_needed",
+    archivedBranch: null,
+    supervisorStopped: false,
+  });
 });
 
 describe("POST /api/scratch-runs/[runId]/discard", () => {
-  it("removes the owned worktree and marks the scratch run Abandoned", async () => {
+  it("delegates a project scratch workspace discard to the common lifecycle coordinator", async () => {
     const runId = seedScratchRun();
 
     const res = await invokePost(runId);
     const body = (await res.json()) as { workspaceRemoved?: boolean };
 
     expect(res.status).toBe(200);
+    expect(stopThenDrop).toHaveBeenCalledWith(runId);
     expect(deleteSession).not.toHaveBeenCalled();
-    expect(removeOwnedWorktree).toHaveBeenCalledWith({
-      projectRepoPath: "/repos/demo",
-      worktreePath: "/tmp/maister-worktrees/demo/run-discard",
-      allowedRoot: "/tmp/maister-worktrees",
-      force: true,
-    });
-    expect(preserveWorktree).toHaveBeenCalledWith({
-      worktreePath: "/tmp/maister-worktrees/demo/run-discard",
-      parentRepoPath: "/repos/demo",
-      branch: "maister/run-discard",
-      baseRef: "main",
-      runId,
-    });
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(preserveWorktree).not.toHaveBeenCalled();
     expect(body.workspaceRemoved).toBe(true);
-    expect(dbState.tables.workspaces[0].removedAt).toBeInstanceOf(Date);
+    expect(dbState.tables.workspaces[0].removedAt).toBeNull();
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
-      dialogStatus: "Abandoned",
+      dialogStatus: "Running",
       supervisorSessionId: null,
     });
     expect(dbState.tables.runs[0]).toMatchObject({
-      status: "Abandoned",
-      currentStepId: null,
+      status: "Running",
+      currentStepId: "scratch-dialog",
     });
   });
 
-  it("terminates a live supervisor session before discard", async () => {
+  it("leaves supervisor lifecycle ownership to the common coordinator", async () => {
     const runId = seedScratchRun({ supervisorSessionId: "sup-live" });
 
     const res = await invokePost(runId);
 
     expect(res.status).toBe(200);
-    expect(deleteSession).toHaveBeenCalledWith("sup-live");
-    expect(removeOwnedWorktree).toHaveBeenCalledTimes(1);
+    expect(stopThenDrop).toHaveBeenCalledWith(runId);
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
   });
 
-  it("treats a missing supervisor session as already stopped", async () => {
+  it("surfaces common coordinator failures without mutating the scratch rows", async () => {
     const runId = seedScratchRun({ supervisorSessionId: "sup-gone" });
 
-    vi.mocked(deleteSession).mockRejectedValueOnce(
-      new MaisterError("PRECONDITION", "unknown session"),
+    vi.mocked(stopThenDrop).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "lifecycle claim lost"),
     );
 
     const res = await invokePost(runId);
-    const body = (await res.json()) as { supervisorStopped?: boolean };
 
-    expect(res.status).toBe(200);
-    expect(body.supervisorStopped).toBe(false);
-    expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Abandoned");
+    expect(res.status).toBe(409);
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Running");
   });
 
   it("is idempotent when the workspace was already removed", async () => {
@@ -305,15 +318,17 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     expect(dbState.tables.workspaces[0].removedAt).toBeNull();
   });
 
-  it("reports a durable discard failure after the confirmed removal for retry convergence", async () => {
+  it("does not mutate project scratch rows when the common coordinator rejects", async () => {
     const runId = seedScratchRun();
 
-    transactionFailure = new Error("db write failed");
+    vi.mocked(stopThenDrop).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "preservation failed"),
+    );
 
     const res = await invokePost(runId);
 
-    expect(res.status).toBe(500);
-    expect(removeOwnedWorktree).toHaveBeenCalledOnce();
+    expect(res.status).toBe(409);
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
     expect(dbState.tables.workspaces[0].removedAt).toBeNull();
     expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Running");
   });

@@ -464,11 +464,31 @@ describe("WorkbenchLifecycleActions rail menu", () => {
     expect(sheet.querySelector('[data-testid="menu-stopDrop"]')).not.toBeNull();
   });
 
-  it("an agent run gets a plain Stop in the sheet (no combined stop & *)", async () => {
+  it("a writable agent run gets the same combined stop actions as flow and scratch", async () => {
     renderMenu({
       runKind: "agent",
       actions: ["stop"],
+      workspaceAvailable: true,
       runHref: "/runs/run-1",
+    });
+
+    await click(byTestId(document.body, "rail-menu-trigger"));
+
+    const sheet = byTestId(document.body, "rail-action-sheet");
+
+    expect(sheet.querySelector('[data-testid="menu-stop"]')).not.toBeNull();
+    expect(
+      sheet.querySelector('[data-testid="menu-stopArchive"]'),
+    ).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-stopDrop"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-rename"]')).toBeNull();
+  });
+
+  it("an agent without a writable workspace gets only plain Stop", async () => {
+    renderMenu({
+      runKind: "agent",
+      actions: ["stop"],
+      workspaceAvailable: false,
     });
 
     await click(byTestId(document.body, "rail-menu-trigger"));
@@ -478,7 +498,6 @@ describe("WorkbenchLifecycleActions rail menu", () => {
     expect(sheet.querySelector('[data-testid="menu-stop"]')).not.toBeNull();
     expect(sheet.querySelector('[data-testid="menu-stopArchive"]')).toBeNull();
     expect(sheet.querySelector('[data-testid="menu-stopDrop"]')).toBeNull();
-    expect(sheet.querySelector('[data-testid="menu-rename"]')).toBeNull();
   });
 
   it("menu Stop posts to the plain stop endpoint", async () => {
@@ -546,7 +565,7 @@ describe("WorkbenchLifecycleActions rail menu", () => {
     );
   });
 
-  it("scratch stop & drop reuses the discard endpoint", async () => {
+  it("scratch stop & drop uses the shared lifecycle endpoint", async () => {
     const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
 
     vi.stubGlobal("fetch", fetchMock);
@@ -559,7 +578,7 @@ describe("WorkbenchLifecycleActions rail menu", () => {
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/scratch-runs/run-1/discard",
+      "/api/runs/run-1/stop-drop",
       expect.objectContaining({ method: "POST" }),
     );
   });

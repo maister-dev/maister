@@ -304,6 +304,7 @@ export async function ProjectCard({
                     className="px-2.5 pb-2"
                     runId={ws.runId}
                     runKind={ws.runKind}
+                    workspaceAvailable
                   />
                 ) : null}
               </li>
