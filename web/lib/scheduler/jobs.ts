@@ -50,6 +50,14 @@ export type RecordJobAttemptResultInput = {
   db?: SchedulerDb;
 };
 
+export type RenewSchedulerJobAttemptLeaseInput = {
+  jobId: string;
+  attemptId: string;
+  now?: Date;
+  leaseSeconds?: number;
+  db?: SchedulerDb;
+};
+
 export type ReapStuckSchedulerAttemptsInput = {
   now?: Date;
   db?: SchedulerDb;
@@ -800,66 +808,90 @@ export async function recordJobAttemptStarted(input: {
   attemptId: string;
   now?: Date;
   db?: SchedulerDb;
-}): Promise<void> {
+}): Promise<boolean> {
   const now = input.now ?? new Date();
   const db = input.db ?? (getDb() as unknown as SchedulerDb);
 
-  await db.execute(sql`
+  const result = await db.execute(sql`
     UPDATE scheduler_job_runs
     SET status = 'Running', started_at = ${now}, updated_at = ${now}
     WHERE id = ${input.attemptId}
       AND status = 'Claimed'
+      AND lease_expires_at > ${now}
+    RETURNING id
   `);
+
+  return rowsOf<UpdatedAttemptRow>(result).length > 0;
+}
+
+export async function renewSchedulerJobAttemptLease(
+  input: RenewSchedulerJobAttemptLeaseInput,
+): Promise<boolean> {
+  const now = input.now ?? new Date();
+  const leaseSeconds = input.leaseSeconds ?? schedulerAttemptTimeoutSeconds();
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+  const leaseExpiresAt = new Date(now.getTime() + leaseSeconds * 1_000);
+
+  if (leaseSeconds <= 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `scheduler lease timeout must be positive: ${leaseSeconds}`,
+    );
+  }
+
+  const result = await db.execute(sql`
+    WITH renewed_attempt AS (
+      UPDATE scheduler_job_runs
+      SET lease_expires_at = ${leaseExpiresAt}, updated_at = ${now}
+      WHERE id = ${input.attemptId}
+        AND job_id = ${input.jobId}
+        AND status IN ('Claimed', 'Running')
+        AND lease_expires_at > ${now}
+      RETURNING id
+    )
+    UPDATE scheduler_jobs
+    SET lease_expires_at = ${leaseExpiresAt}, updated_at = ${now}
+    WHERE id = ${input.jobId}
+      AND EXISTS (SELECT 1 FROM renewed_attempt)
+    RETURNING id
+  `);
+
+  return rowsOf<UpdatedAttemptRow>(result).length > 0;
 }
 
 export async function recordJobAttemptResult(
   input: RecordJobAttemptResultInput,
-): Promise<void> {
+): Promise<boolean> {
   const now = input.now ?? new Date();
   const db = input.db ?? (getDb() as unknown as SchedulerDb);
   const summary = input.summary ?? {};
   const agentTickMaxFailures = schedulerAgentTickMaxFailures();
 
-  const updatedAttempt = await db.execute(sql`
-    UPDATE scheduler_job_runs
-    SET
-      status = ${input.status},
-      finished_at = ${now},
-      summary = ${summary},
-      error_code = ${input.errorCode ?? null},
-      error_message = ${input.errorMessage ?? null},
-      updated_at = ${now}
-    WHERE id = ${input.attemptId}
-      AND job_id = ${input.jobId}
-      AND status IN ('Claimed', 'Running')
-    RETURNING id
-  `);
-
-  if (rowsOf<UpdatedAttemptRow>(updatedAttempt).length === 0) {
-    log.warn(
-      { jobId: input.jobId, attemptId: input.attemptId, status: input.status },
-      "scheduler attempt result ignored after lease fencing",
-    );
-
-    return;
-  }
-
-  if (input.status === "Succeeded") {
-    await db.execute(sql`
-      UPDATE scheduler_jobs
-      SET consecutive_failures = 0, lease_expires_at = NULL, updated_at = ${now}
-      WHERE id = ${input.jobId}
-    `);
-
-    return;
-  }
-
-  await db.execute(sql`
+  const updated = await db.execute(sql`
+    WITH completed_attempt AS (
+      UPDATE scheduler_job_runs
+      SET
+        status = ${input.status},
+        finished_at = ${now},
+        summary = ${summary},
+        error_code = ${input.errorCode ?? null},
+        error_message = ${input.errorMessage ?? null},
+        updated_at = ${now}
+      WHERE id = ${input.attemptId}
+        AND job_id = ${input.jobId}
+        AND status IN ('Claimed', 'Running')
+        AND lease_expires_at > ${now}
+      RETURNING id
+    )
     UPDATE scheduler_jobs
     SET
-      consecutive_failures = consecutive_failures + 1,
+      consecutive_failures = CASE
+        WHEN ${input.status} = 'Succeeded' THEN 0
+        ELSE consecutive_failures + 1
+      END,
       lease_expires_at = NULL,
       disabled_at = CASE
+        WHEN ${input.status} = 'Succeeded' THEN disabled_at
         WHEN consecutive_failures + 1 >= CASE
           WHEN job_kind = 'agent_tick' THEN ${agentTickMaxFailures}
           ELSE max_failures
@@ -868,7 +900,20 @@ export async function recordJobAttemptResult(
       END,
       updated_at = ${now}
     WHERE id = ${input.jobId}
+      AND EXISTS (SELECT 1 FROM completed_attempt)
+    RETURNING id
   `);
+
+  if (rowsOf<UpdatedAttemptRow>(updated).length === 0) {
+    log.warn(
+      { jobId: input.jobId, attemptId: input.attemptId, status: input.status },
+      "scheduler attempt result ignored after lease fencing",
+    );
+
+    return false;
+  }
+
+  return true;
 }
 
 export async function reapStuckSchedulerAttempts(

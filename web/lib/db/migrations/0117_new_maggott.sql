@@ -1,0 +1,2 @@
+ALTER TABLE "workspace_reconciliation_findings" ADD CONSTRAINT "workspace_reconciliation_findings_attempt_count_check" CHECK ("workspace_reconciliation_findings"."attempt_count" >= 0);--> statement-breakpoint
+ALTER TABLE "workspace_reconciliation_findings" ADD CONSTRAINT "workspace_reconciliation_findings_resolved_shape_check" CHECK (("workspace_reconciliation_findings"."state" = 'resolved') = ("workspace_reconciliation_findings"."resolved_at" IS NOT NULL));

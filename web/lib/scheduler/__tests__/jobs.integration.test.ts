@@ -542,6 +542,7 @@ describe("scheduler job SQL integration", () => {
       worktreesRemoved: 0,
       revisionsRemoved: 0,
       errors: [],
+      bundleErrors: [],
     });
 
     const tick = await requestSystemSweep();
@@ -558,6 +559,105 @@ describe("scheduler job SQL integration", () => {
     expect(attempts[0].summary).toMatchObject({
       workspaceReconciliation: null,
       errors: [],
+    });
+  });
+
+  it("keeps a long system sweep claimed until its completion is durably fenced", async () => {
+    const previousTimeout =
+      process.env.MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS;
+    process.env.MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS = "1";
+    let releaseSweep = (): void => {
+      throw new Error("system sweep release callback was not initialized");
+    };
+
+    runSystemSweepMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSweep = () =>
+            resolve({
+              keepalive: null,
+              reconcile: null,
+              syncRecovery: null,
+              cost: null,
+              workspace: null,
+              workspaceReconciliation: null,
+              revision: null,
+              capabilities: null,
+              ephemeralAgent: null,
+              agentMaterialization: null,
+              plainAgentDirectory: null,
+              brain: null,
+              brainReindex: null,
+              worktreesPreserved: 0,
+              worktreesRemoved: 0,
+              revisionsRemoved: 0,
+              errors: [],
+              bundleErrors: [],
+            });
+        }),
+    );
+
+    try {
+      const tick = runSchedulerTick({ jobKind: "system_sweep" });
+
+      await vi.waitFor(() => expect(runSystemSweepMock).toHaveBeenCalledOnce());
+      await new Promise<void>((resolve) => setTimeout(resolve, 1_200));
+      await requestSchedulerJobNow({
+        jobId: DEFAULT_SYSTEM_SWEEP_JOB_ID,
+        now: new Date(),
+        db: schedulerDb,
+      });
+
+      const overlapping = await claimDueJobs({
+        jobKind: "system_sweep",
+        now: new Date(),
+        db: schedulerDb,
+      });
+
+      expect(overlapping).toHaveLength(0);
+      releaseSweep();
+      await expect(tick).resolves.toMatchObject({ succeededCount: 1 });
+    } finally {
+      restoreEnv("MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS", previousTimeout);
+    }
+  }, 10_000);
+
+  it("records a system sweep with bundle failures as a failed scheduler attempt", async () => {
+    runSystemSweepMock.mockResolvedValue({
+      keepalive: null,
+      reconcile: null,
+      syncRecovery: null,
+      cost: null,
+      workspace: null,
+      workspaceReconciliation: null,
+      revision: null,
+      capabilities: null,
+      ephemeralAgent: null,
+      agentMaterialization: null,
+      plainAgentDirectory: null,
+      brain: null,
+      brainReindex: null,
+      worktreesPreserved: 0,
+      worktreesRemoved: 0,
+      revisionsRemoved: 0,
+      errors: ["workspace reconciliation sweep failed: database unavailable"],
+      bundleErrors: [
+        "workspace reconciliation sweep failed: database unavailable",
+      ],
+    });
+
+    const tick = await requestSystemSweep();
+    const attempt = (
+      await db
+        .select()
+        .from(schema.schedulerJobRuns)
+        .where(eq(schema.schedulerJobRuns.jobId, DEFAULT_SYSTEM_SWEEP_JOB_ID))
+    )[0];
+
+    expect(tick).toMatchObject({ failedCount: 1, succeededCount: 0 });
+    expect(attempt).toMatchObject({
+      status: "Failed",
+      errorCode: "SYSTEM_SWEEP_FAILED",
     });
   });
 

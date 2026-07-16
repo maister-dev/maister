@@ -94,6 +94,7 @@ type MissingWorkspaceCandidate = {
 };
 
 type OwnedWorktreeRemover = typeof removeOwnedWorktree;
+type Clock = () => Date;
 
 export type WorkspaceReconciliationSummary = {
   scanned: number;
@@ -487,7 +488,7 @@ async function processTrustedCandidate(args: {
   root: string;
   candidate: ReconciliationCandidate;
   claim: ReconciliationFindingClaim;
-  now: Date;
+  now: Clock;
   summary: WorkspaceReconciliationSummary;
   remove: OwnedWorktreeRemover;
   afterOwnedWorktreeRemoval?: () => Promise<void>;
@@ -513,7 +514,7 @@ async function processTrustedCandidate(args: {
       claim: args.claim,
       errorCode: "git_or_project_mismatch",
       errorMessage: "candidate failed project and Git registry verification",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.quarantined += 1;
 
@@ -548,7 +549,7 @@ async function processTrustedCandidate(args: {
         claim: args.claim,
         errorCode: "workspace_mismatch",
         errorMessage: "candidate conflicts with existing workspace ownership",
-        now: args.now,
+        now: args.now(),
       });
       args.summary.quarantined += 1;
 
@@ -560,7 +561,7 @@ async function processTrustedCandidate(args: {
         database: args.database,
         claim: args.claim,
         resultCode: "workspace_present",
-        now: args.now,
+        now: args.now(),
       });
       args.summary.resolved += 1;
 
@@ -570,7 +571,7 @@ async function processTrustedCandidate(args: {
     const renewedClaim = await renewReconciliationFindingClaim({
       database: args.database,
       claim: args.claim,
-      now: args.now,
+      now: args.now(),
     });
 
     await args.remove({
@@ -584,7 +585,7 @@ async function processTrustedCandidate(args: {
       database: args.database,
       claim: renewedClaim,
       resultCode: "removed_already_removed_workspace",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.removed += 1;
     args.summary.resolved += 1;
@@ -605,7 +606,7 @@ async function processTrustedCandidate(args: {
         claim: args.claim,
         errorCode: "run_project_mismatch",
         errorMessage: "candidate run does not belong to provenance project",
-        now: args.now,
+        now: args.now(),
       });
       args.summary.quarantined += 1;
 
@@ -624,7 +625,7 @@ async function processTrustedCandidate(args: {
       database: args.database,
       claim: args.claim,
       resultCode: "workspace_reconstructed",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.recovered += 1;
     args.summary.resolved += 1;
@@ -644,7 +645,7 @@ async function processTrustedCandidate(args: {
       database: args.database,
       claim: args.claim,
       resultCode: "live_supervisor_session",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.retained += 1;
 
@@ -655,12 +656,12 @@ async function processTrustedCandidate(args: {
     Date.parse(provenance.createdAt) + gcAgeDays() * 86_400_000,
   );
 
-  if (args.now < removalDueAt) {
+  if (args.now() < removalDueAt) {
     await holdReconciliationFinding({
       database: args.database,
       claim: args.claim,
       resultCode: "grace_period",
-      now: args.now,
+      now: args.now(),
       retryAt: removalDueAt,
     });
     args.summary.retained += 1;
@@ -688,7 +689,7 @@ async function processTrustedCandidate(args: {
       claim: args.claim,
       errorCode: "rescue_ref_conflict",
       errorMessage: "rescue ref exists at a different commit",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.quarantined += 1;
 
@@ -698,14 +699,14 @@ async function processTrustedCandidate(args: {
   const claimWithRescueEvidence = await renewReconciliationFindingClaim({
     database: args.database,
     claim: args.claim,
-    now: args.now,
+    now: args.now(),
   });
 
   await recordReconciliationRescueEvidence({
     database: args.database,
     claim: claimWithRescueEvidence,
     rescue: { ref: rescueRef, commit: rescueCommit },
-    now: args.now,
+    now: args.now(),
   });
 
   const finalRemovalCheck = await checkFinalOrphanRemovalPreconditions({
@@ -719,7 +720,7 @@ async function processTrustedCandidate(args: {
       claim: claimWithRescueEvidence,
       errorCode: "final_trust_check_failed",
       errorMessage: "candidate failed the final Git and project verification",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.quarantined += 1;
 
@@ -731,7 +732,7 @@ async function processTrustedCandidate(args: {
       database: args.database,
       claim: claimWithRescueEvidence,
       resultCode: "ownership_reappeared",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.resolved += 1;
 
@@ -743,7 +744,7 @@ async function processTrustedCandidate(args: {
       database: args.database,
       claim: claimWithRescueEvidence,
       resultCode: "live_supervisor_session",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.retained += 1;
 
@@ -753,7 +754,7 @@ async function processTrustedCandidate(args: {
   const renewedClaim = await renewReconciliationFindingClaim({
     database: args.database,
     claim: claimWithRescueEvidence,
-    now: args.now,
+    now: args.now(),
   });
 
   await args.remove({
@@ -767,7 +768,7 @@ async function processTrustedCandidate(args: {
     database: args.database,
     claim: renewedClaim,
     resultCode: "orphan_rescued_and_removed",
-    now: args.now,
+    now: args.now(),
   });
   args.summary.preserved += 1;
   args.summary.removed += 1;
@@ -778,7 +779,7 @@ async function processMissingWorkspaceCandidate(args: {
   database: Database;
   candidate: ReconciliationCandidate;
   claim: ReconciliationFindingClaim;
-  now: Date;
+  now: Clock;
   summary: WorkspaceReconciliationSummary;
 }): Promise<void> {
   const workspace = args.candidate.workspace;
@@ -795,7 +796,7 @@ async function processMissingWorkspaceCandidate(args: {
       database: args.database,
       claim: args.claim,
       resultCode: "removed_workspace_path_absent",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.resolved += 1;
 
@@ -814,7 +815,7 @@ async function processMissingWorkspaceCandidate(args: {
       database: args.database,
       claim: args.claim,
       resultCode: "live_supervisor_session",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.retained += 1;
 
@@ -828,7 +829,7 @@ async function processMissingWorkspaceCandidate(args: {
       errorCode: "missing_workspace_preservation_evidence",
       errorMessage:
         "workspace path is absent without a durable preservation result",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.quarantined += 1;
 
@@ -853,7 +854,7 @@ async function processMissingWorkspaceCandidate(args: {
       runId: workspace.runId,
       runKind: workspace.runKind,
       workspaceId: workspace.workspaceId,
-      removedAt: args.now,
+      removedAt: args.now(),
       expectedRunStatus: workspace.runStatus,
       nextRunStatus: null,
       archivedBranch: workspace.archivedBranch,
@@ -891,7 +892,7 @@ async function processMissingWorkspaceCandidate(args: {
     database: args.database,
     claim: args.claim,
     resultCode: "missing_workspace_recovered",
-    now: args.now,
+    now: args.now(),
   });
   args.summary.removed += 1;
   args.summary.resolved += 1;
@@ -902,7 +903,7 @@ async function processAbsentFinding(args: {
   finding: ReconciliationFinding;
   claim: ReconciliationFindingClaim;
   candidateAtRelativePath: ReconciliationCandidate | null;
-  now: Date;
+  now: Clock;
   summary: WorkspaceReconciliationSummary;
 }): Promise<void> {
   if (
@@ -915,7 +916,7 @@ async function processAbsentFinding(args: {
       database: args.database,
       claim: args.claim,
       resultCode: "workspace_marked_removed",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.resolved += 1;
 
@@ -927,7 +928,7 @@ async function processAbsentFinding(args: {
       database: args.database,
       claim: args.claim,
       resultCode: "candidate_identity_replaced",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.retained += 1;
 
@@ -947,7 +948,7 @@ async function processAbsentFinding(args: {
         ref: args.finding.rescueRef,
         commit: args.finding.rescueCommit,
       },
-      now: args.now,
+      now: args.now(),
     });
     args.summary.resolved += 1;
 
@@ -961,7 +962,7 @@ async function processAbsentFinding(args: {
       errorCode: "missing_candidate_without_rescue_evidence",
       errorMessage:
         "managed orphan disappeared before durable rescue evidence was recorded",
-      now: args.now,
+      now: args.now(),
     });
     args.summary.quarantined += 1;
 
@@ -972,7 +973,7 @@ async function processAbsentFinding(args: {
     database: args.database,
     claim: args.claim,
     resultCode: "candidate_absent",
-    now: args.now,
+    now: args.now(),
   });
   args.summary.resolved += 1;
 }
@@ -982,7 +983,7 @@ export async function runWorkspaceReconciliationSweep(
 ): Promise<WorkspaceReconciliationSummary> {
   const database = options.database ?? getDb();
   const root = options.root ?? worktreesRoot();
-  const now = options.now?.() ?? new Date();
+  const clock: Clock = options.now ?? (() => new Date());
   const summary: WorkspaceReconciliationSummary = {
     scanned: 0,
     retained: 0,
@@ -1013,7 +1014,7 @@ export async function runWorkspaceReconciliationSweep(
     const findingId = await observeReconciliationFinding({
       database,
       observation,
-      now,
+      now: clock(),
     });
 
     candidatesByFindingId.set(findingId, candidate);
@@ -1022,7 +1023,7 @@ export async function runWorkspaceReconciliationSweep(
 
   const dueFindings = await loadDueReconciliationFindings({
     database,
-    now,
+    now: clock(),
     limit: RECONCILIATION_BATCH_SIZE,
   });
 
@@ -1040,7 +1041,7 @@ export async function runWorkspaceReconciliationSweep(
     const claim = await claimReconciliationFinding({
       database,
       findingId: finding.id,
-      now,
+      now: clock(),
     });
 
     if (claim === null) {
@@ -1058,7 +1059,7 @@ export async function runWorkspaceReconciliationSweep(
           claim,
           candidateAtRelativePath:
             candidatesByRelativePath.get(finding.relativePath) ?? null,
-          now,
+          now: clock,
           summary,
         });
         continue;
@@ -1069,7 +1070,7 @@ export async function runWorkspaceReconciliationSweep(
           database,
           candidate,
           claim,
-          now,
+          now: clock,
           summary,
         });
         continue;
@@ -1081,7 +1082,7 @@ export async function runWorkspaceReconciliationSweep(
           claim,
           errorCode: candidate.reasonCode ?? "untrusted_candidate",
           errorMessage: "candidate is not a trusted version 2 managed worktree",
-          now,
+          now: clock(),
         });
         summary.quarantined += 1;
         continue;
@@ -1092,19 +1093,23 @@ export async function runWorkspaceReconciliationSweep(
         root: removalRoot,
         candidate,
         claim,
-        now,
+        now: clock,
         summary,
         remove: options.removeOwnedWorktree ?? removeOwnedWorktree,
         afterOwnedWorktreeRemoval: options.afterOwnedWorktreeRemoval,
       });
     } catch (error) {
-      if (isMaisterError(error) && error.code === "PRECONDITION") {
+      if (isMaisterError(error) && error.code === "CONFLICT") {
+        // A concurrent owner or expired lease is authoritative. Do not mutate
+        // a finding after losing its claim; the next due sweep may reclaim it.
+        summary.retained += 1;
+      } else if (isMaisterError(error) && error.code === "PRECONDITION") {
         await quarantineReconciliationFinding({
           database,
           claim,
           errorCode: "trust_refusal",
           errorMessage: "candidate failed a reconciliation trust precondition",
-          now,
+          now: clock(),
         });
         summary.quarantined += 1;
       } else {
@@ -1114,7 +1119,7 @@ export async function runWorkspaceReconciliationSweep(
           errorCode: "reconciliation_action_failed",
           errorMessage:
             "reconciliation action failed before durable completion",
-          now,
+          now: clock(),
         });
         summary.retryableFailed += 1;
       }

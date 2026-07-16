@@ -30,8 +30,11 @@ quarantined for operator review.
 One claimed `system_sweep` composes reconcile, row-backed GC, orphan
 reconciliation, and reconstructible-agent cleanup. Timer, tick, and
 `/api/cron/gc` request that same job; a losing contender reports
-`alreadyRunning`. Runtime JSONL, transcripts, evidence, and run rows are not GC
-targets.
+`alreadyRunning`. The claimed scheduler attempt renews and fences its lease for
+the complete bundle. A service-level bundle failure marks that attempt failed;
+candidate-level failures remain in its summary and use their individual durable
+retry or quarantine state. Runtime JSONL, transcripts, evidence, and run rows
+are not GC targets.
 
 ## M43 one-time cut-over versus recurring repair (Implemented)
 

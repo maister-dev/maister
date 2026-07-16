@@ -21,6 +21,7 @@ import {
 import {
   archiveWorkbench,
   createWorkbenchHandoffBranch,
+  discardWorkbench,
   dropWorkbench,
   exportWorkbenchBranch,
   snapshotWorkbenchCommit,
@@ -421,6 +422,37 @@ describe("workbench lifecycle real git integration", () => {
       workbench.repo,
       "show",
       `maister/archive/${workbench.runId}:drop-note.txt`,
+    );
+
+    expect(archived).toContain("preserve");
+  });
+
+  it("discard preserves dirty work and records discard as the durable removal intent", async () => {
+    const workbench = await createGitWorkbench("run-discard");
+    const store = records();
+    const crashedContext = lifecycleContext(workbench);
+    crashedContext.run.status = "Crashed";
+    const deps = realGitDeps(crashedContext, workbench.worktreesRoot, store);
+
+    await writeFile(join(workbench.worktree, "discard-note.txt"), "preserve\n");
+
+    const result = await discardWorkbench(workbench.runId, { deps });
+
+    expect(result).toMatchObject({
+      ok: true,
+      operation: "discard",
+      runStatus: "Abandoned",
+      workspaceRemoved: true,
+      archivedBranch: `maister/archive/${workbench.runId}`,
+    });
+    expect(store.drops).toHaveLength(1);
+    expect(store.drops[0]).toMatchObject({ removalKind: "discard" });
+    expect(await pathExists(workbench.worktree)).toBe(false);
+
+    const archived = await git(
+      workbench.repo,
+      "show",
+      `maister/archive/${workbench.runId}:discard-note.txt`,
     );
 
     expect(archived).toContain("preserve");

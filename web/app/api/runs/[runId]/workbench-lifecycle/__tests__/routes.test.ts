@@ -10,6 +10,7 @@ vi.mock("@/lib/workbench-lifecycle/service", () => ({
   stopThenDrop: vi.fn(),
   archiveWorkbench: vi.fn(),
   dropWorkbench: vi.fn(),
+  discardWorkbench: vi.fn(),
   exportWorkbenchBranch: vi.fn(),
   getWorkbenchHandoffMetadata: vi.fn(),
   snapshotWorkbenchCommit: vi.fn(),
@@ -162,6 +163,31 @@ describe("workbench lifecycle route wrappers", () => {
       workspaceRemoved: true,
     });
     expect(lifecycleService.dropWorkbench).toHaveBeenCalledWith("run-1");
+  });
+
+  it("POST /api/runs/[runId]/discard delegates to the common discard coordinator", async () => {
+    vi.mocked(lifecycleService.discardWorkbench).mockResolvedValueOnce({
+      ok: true,
+      runId: "run-1",
+      operation: "discard",
+      runStatus: "Abandoned",
+      workspaceRemoved: true,
+      idempotent: false,
+      preservationOutcome: "snapshot_created",
+      archivedBranch: "maister/archive/run-1",
+    });
+
+    const { POST } = await import("@/app/api/runs/[runId]/discard/route");
+    const res = await POST(postRequest(), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await json(res)).toMatchObject({
+      operation: "discard",
+      workspaceRemoved: true,
+    });
+    expect(lifecycleService.discardWorkbench).toHaveBeenCalledWith("run-1");
   });
 
   it("POST /api/runs/[runId]/export-branch parses the export body", async () => {

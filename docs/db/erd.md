@@ -28,7 +28,7 @@ the new `PLATFORM_MCP_SERVERS` table, the **M28 (Implemented, migration
 **ADR-139 (Implemented, migration `0104`)** `SCHEDULED_TASK_LAUNCHES`,
 `SCHEDULED_TASK_LAUNCH_ATTEMPTS`, and `SCHEDULED_TASK_LAUNCH_EVENTS` ledger
 for recoverable one-time task launches plus nullable Run provenance links, the
-**ADR-142 (Implemented, migration `0107`)** workspace lifecycle lease/result
+**ADR-142 (Implemented, migrations `0107` and `0108`)** workspace lifecycle lease/result
 fields plus `WORKSPACE_RECONCILIATION_FINDINGS` diagnostic ledger, the
 **ADR-072 (Implemented, migration `0039`)** `REVIEW_COMMENTS`
 review-thread table, the **(Implemented, migration `0040`)**
@@ -1569,8 +1569,8 @@ history survives source-run and HITL cleanup.
 | `scheduler_jobs` | `scheduler_jobs_project_kind_idx` | `(project_id, job_kind)` | **(M24 Implemented, migration `0027`)** Project-scoped scheduler read model. |
 | `scheduler_job_runs` | `scheduler_job_runs_job_idx` | `(job_id)` | **(M24 Implemented, migration `0027`)** Job attempt history. |
 | `scheduler_job_runs` | `scheduler_job_runs_lease_idx` | `(status, lease_expires_at)` | **(M24 Implemented, migration `0027`)** Stuck-attempt reaper. |
-| `workspace_reconciliation_findings` | `workspace_reconciliation_findings_due_idx` | `(state, next_retry_at)` | **(ADR-142 Implemented, migration `0107`)** Bounded due/retry claim scan. |
-| `workspace_reconciliation_findings` | `workspace_reconciliation_findings_provenance_idx` | `(provenance_run_id, state)` | **(ADR-142 Implemented, migration `0107`)** Correlation and safe-resolution lookup. |
+| `workspace_reconciliation_findings` | `workspace_reconciliation_findings_due_idx` | `(state, next_retry_at, first_seen_at)` | **(ADR-142 Implemented, migration `0107`)** Bounded due/retry claim scan. |
+| `workspace_reconciliation_findings` | `workspace_reconciliation_findings_provenance_run_idx` | `(provenance_run_id)` | **(ADR-142 Implemented, migration `0107`)** Correlation and safe-resolution lookup. |
 | `agent_schedules` | `agent_schedules_project_agent_idx` | `(project_id, agent_id)` | **(M34, migration `0049` rework)** Project agent trigger-binding lookup (was `(project_id, agent_ref)` from the dead M24 shape). |
 | `agent_schedules` | `agent_schedules_due_cron_idx` | `(trigger_type, enabled, next_fire_at)` | **(M34)** Due-cron scan for the `agent_tick.dispatcher`. |
 | `agents` | `agents_flow_ref_idx` | `(flow_ref_id)` | **(M34, migration `0051` rework)** Providing-package lookup (registration/resync, attach available-list). |

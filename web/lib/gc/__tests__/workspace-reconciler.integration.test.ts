@@ -110,6 +110,43 @@ afterEach(async () => {
 });
 
 describe("runWorkspaceReconciliationSweep", () => {
+  it("enforces non-negative attempts and the resolved timestamp shape in the database", async () => {
+    const now = new Date("2026-07-16T12:00:00.000Z");
+    const findingId = await observeReconciliationFinding({
+      database: db,
+      observation: {
+        candidateKind: "untrusted",
+        relativePath: "invalid-shape",
+        provenanceVersion: null,
+        provenanceFingerprint: null,
+        provenanceRunId: null,
+        projectId: null,
+        runId: null,
+        workspaceId: null,
+      },
+      now,
+    });
+
+    await expect(
+      db
+        .update(schema.workspaceReconciliationFindings)
+        .set({ attemptCount: -1 })
+        .where(eq(schema.workspaceReconciliationFindings.id, findingId)),
+    ).rejects.toThrow("workspace_reconciliation_findings_attempt_count_check");
+    await expect(
+      db
+        .update(schema.workspaceReconciliationFindings)
+        .set({ state: "resolved" })
+        .where(eq(schema.workspaceReconciliationFindings.id, findingId)),
+    ).rejects.toThrow("workspace_reconciliation_findings_resolved_shape_check");
+    await expect(
+      db
+        .update(schema.workspaceReconciliationFindings)
+        .set({ state: "resolved", resolvedAt: now })
+        .where(eq(schema.workspaceReconciliationFindings.id, findingId)),
+    ).resolves.toBeDefined();
+  });
+
   it("reconstructs the exact workspace row for a v2-managed rowless worktree whose run still exists", async () => {
     const runId = randomUUID();
     const worktreePath = path.join(worktreesRoot, projectSlug, runId);
@@ -349,5 +386,51 @@ describe("runWorkspaceReconciliationSweep", () => {
       rescueRef: afterCrash.rescueRef,
       rescueCommit: afterCrash.rescueCommit,
     });
+  });
+
+  it("does not remove a trusted orphan after its reconciliation lease expires", async () => {
+    const runId = randomUUID();
+    const worktreePath = path.join(worktreesRoot, projectSlug, runId);
+    const claimedAt = new Date("2026-07-16T12:00:00.000Z");
+    const expiredAt = new Date(claimedAt.getTime() + 6 * 60_000);
+    let clockCalls = 0;
+    const now = () => {
+      clockCalls += 1;
+
+      return clockCalls <= 3 ? claimedAt : expiredAt;
+    };
+    const remove = vi.fn(async () => undefined);
+
+    await addWorktree({
+      projectRepoPath: repoPath,
+      branch: `maister/${runId}`,
+      worktreePath,
+      startPoint: "main",
+      provenance: {
+        version: 2,
+        runId,
+        parentRepoPath: repoPath,
+        projectId,
+        branch: `maister/${runId}`,
+        workspaceKind: "flow",
+        createdAt: "2026-06-01T12:00:00.000Z",
+      },
+    });
+
+    const summary = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now,
+      removeOwnedWorktree: remove,
+    });
+    const finding = (
+      await db.select().from(schema.workspaceReconciliationFindings)
+    )[0];
+
+    expect(summary).toMatchObject({ retained: 1, removed: 0 });
+    expect(remove).not.toHaveBeenCalled();
+    expect(finding.leaseExpiresAt).toEqual(
+      new Date(claimedAt.getTime() + 5 * 60_000),
+    );
   });
 });

@@ -199,4 +199,26 @@ describe("main migration snapshot integrity", () => {
       'CREATE TABLE IF NOT EXISTS "workspace_reconciliation_findings"',
     );
   });
+
+  it("registers the follow-up reconciliation integrity checks", () => {
+    const integrityMigration = journalEntries(MAIN_MIGRATIONS_DIR).find(
+      (entry) => entry.tag === "0117_new_maggott",
+    );
+
+    if (!integrityMigration) {
+      throw new Error("expected ADR-148 reconciliation integrity migration");
+    }
+
+    const migration = readFileSync(
+      join(MAIN_MIGRATIONS_DIR, `${integrityMigration.tag}.sql`),
+      "utf8",
+    );
+
+    expect(migration).toContain(
+      '"workspace_reconciliation_findings_attempt_count_check"',
+    );
+    expect(migration).toContain(
+      '"workspace_reconciliation_findings_resolved_shape_check"',
+    );
+  });
 });

@@ -7884,7 +7884,7 @@ paths:
   /api/runs/{runId}/archive:
     post:
       tags: [runs]
-      summary: Implemented (ADR-140) — preserve then remove a stopped or terminal workbench
+      summary: Implemented (ADR-142) — preserve then remove a stopped or terminal workbench
       description: |
         Requires `recoverRun` membership and an empty body. After actionable
         HITL/assignment/takeover and status preflight, it preserves recoverable
@@ -7920,7 +7920,7 @@ paths:
   /api/runs/{runId}/drop:
     post:
       tags: [runs]
-      summary: Implemented (ADR-140) — preserve then discard an owned worktree
+      summary: Implemented (ADR-142) — preserve then discard an owned worktree
       description: |
         Calls `preserveWorktree`, then removes the worktree through
         `removeOwnedWorktree({ allowedRoot: worktreesRoot(), force: true })`,
@@ -8904,9 +8904,9 @@ paths:
   /api/cron/gc:
     get:
       tags: [reconciliation-gc, scheduler]
-      summary: Implemented (ADR-140) — request the canonical system sweep
+      summary: Implemented (ADR-142) — request the canonical system sweep
       description: |
-        (Implemented, ADR-140.)
+        (Implemented, ADR-142.)
 
         Token-guarded immediate request for the canonical `system_sweep.default`
         job. It does not call a GC bundle directly and does not own a second
@@ -8915,7 +8915,10 @@ paths:
         cleanup. The detailed system-sweep result is persisted in
         `scheduler_job_runs.summary`. The bundle includes reconciliation, protected
         `{Done, Abandoned}` row-backed GC, disk-only findings, and
-        reconstructible-agent cleanup.
+        reconstructible-agent cleanup. The attempt lease is renewed and fenced
+        through the complete sweep. A service-level bundle failure produces a
+        failed scheduler attempt; candidate-level failures stay in the summary
+        and use their individual retry/quarantine state.
         Auth is by the `X-Maister-Cron-Token` header, compared in constant time
         to `MAISTER_CRON_TOKEN` — NOT an Auth.js session. **No body / query
         cross-resource identifiers**: the sweep derives its candidate set from
@@ -8936,8 +8939,8 @@ paths:
               schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
         "207":
           description: |
-            The scheduler job itself failed. Per-service cleanup failures are
-            isolated and persisted inside the successful job's detailed summary.
+            A service-level bundle failure made the scheduler job fail. Candidate
+            cleanup failures remain isolated in the persisted detailed summary.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
@@ -8956,7 +8959,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     post:
       tags: [reconciliation-gc, scheduler]
-      summary: Implemented (ADR-140) — request the canonical system sweep
+      summary: Implemented (ADR-142) — request the canonical system sweep
       description: |
         POST variant of `GET /api/cron/gc` with identical canonical-job
         contention and summary semantics. Auth is the same constant-time token
@@ -8977,8 +8980,8 @@ paths:
               schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
         "207":
           description: |
-            The scheduler job itself failed. Per-service cleanup failures are
-            persisted inside the successful job's detailed summary.
+            A service-level bundle failure made the scheduler job fail. Candidate
+            cleanup failures remain isolated in the persisted detailed summary.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
@@ -15691,7 +15694,7 @@ components:
     WorkspaceLifecycleRemovalResponse:
       type: object
       description: |
-        Implemented (ADR-140) common success envelope for Archive, Drop, Discard,
+        Implemented (ADR-142) common success envelope for Archive, Drop, Discard,
         and their stopped variants. The run status is retained history; the
         workspace fact is represented independently by `workspaceRemoved`.
       required:
@@ -15710,7 +15713,7 @@ components:
     WorkspaceReconciliationFinding:
       type: object
       description: |
-        Implemented (ADR-140) redacted, read-only operational projection. Absolute
+        Implemented (ADR-142) redacted, read-only operational projection. Absolute
         paths, raw provenance, file contents, and mutation controls are absent.
       required: [id, state, candidateKind, relativePath, firstSeenAt, lastSeenAt]
       properties:

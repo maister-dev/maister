@@ -811,7 +811,9 @@ See [`db/agents-domain.md`](db/agents-domain.md).
 `scheduler_jobs` is indexed on `(disabled_at, next_run_at)` and
 `(job_kind, next_run_at)`. `scheduler_job_runs` is indexed on
 `(status, lease_expires_at)` so the tick can reap expired attempts before
-claiming new work. `agent_schedules` is indexed on `(project_id, agent_id)` and
+claiming new work. A running `system_sweep` renews and fences both durable
+lease rows; it persists a successful result only while it still owns the
+attempt. `agent_schedules` is indexed on `(project_id, agent_id)` and
 `(trigger_type, enabled, next_fire_at)` for project lookups and the cron
 dispatcher scan.
 
@@ -1904,7 +1906,7 @@ that `canReclaim` admits and the auto-promote prefilter excludes. See
 [ADR-140](decisions.md#adr-140-pr-lifecycle-tracking),
 [ADR-141](decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen),
 and [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md).
-**(ADR-148 — Implemented, migration `0116`, additive.)** Lifecycle claims become
+**(ADR-148 — Implemented, migrations `0116` and `0117`, additive.)** Lifecycle claims become
 renewable leases. `lifecycleOperationLeaseExpiresAt` and
 `lifecycleOperationExpectedRunStatus` pair with the existing active attempt,
 name, and state; a failed/stale claim retains those fields until a new fenced
@@ -1931,9 +1933,9 @@ and `removed_at IS NOT NULL` has a non-null allowed `removal_kind`.
 index supporting stale-claim lease scans, backfills only existing removed rows,
 and has no filesystem/Git action.
 
-**(ADR-148 — Implemented, migration `0116`, additive.)** The same migration
-also creates
-`workspace_reconciliation_findings` is the durable, report-first observation
+**(ADR-148 — Implemented, migrations `0116` and `0117`, additive.)** Migration
+`0116` creates `workspace_reconciliation_findings`, the durable, report-first
+observation
 ledger for disk-only candidates. It records deterministic canonical-path /
 provenance identity, optional correlated run/project/workspace, candidate kind,
 state (`observed|held|retry_waiting|failed|quarantined|resolved`), first/last
@@ -1942,17 +1944,19 @@ ref/commit evidence. Due-state and provenance/correlation indexes make bounded
 claim/retry scans possible. It stores only safe root-relative display data in
 operator projections, never an arbitrary path cleanup capability.
 
-| `0116` group | Exact fields / invariant |
+| `0116` / `0117` group | Exact fields / invariant |
 | --- | --- |
 | identity and evidence | deterministic `id` from canonical relative path + provenance fingerprint; candidate kind; provenance version/fingerprint/run ID; safe relative display path; optional project/run/workspace correlation |
 | durable observation | `first_seen_at`, `last_seen_at`, `armed_at`, `next_retry_at`, `attempt_count`, retry generation, and `resolved_at`; resolved rows are retained |
 | ownership | `lease_expires_at` and server-minted `attempt_id`; every action rechecks its unexpired fence |
 | result | sanitized `last_error_code`/message, result code, rescue ref and commit written as an all-or-none pair |
-| state | closed `observed|held|retry_waiting|failed|quarantined|resolved`; only due non-resolved states can be claimed |
+| state and attempts | closed `observed|held|retry_waiting|failed|quarantined|resolved`; only due non-resolved states can be claimed; `attempt_count >= 0`; `resolved` is true exactly when `resolved_at` is non-null |
 
-`0116` has deterministic-identity uniqueness, due-state `(state, next_retry_at)`
-and provenance/correlation indexes, checks for allowed state/candidate values
-and paired rescue fields. It creates an empty ledger: it never scans the host,
+`0116` has deterministic-identity uniqueness, due-state
+`(state, next_retry_at, first_seen_at)` and provenance/correlation indexes,
+checks for allowed state/candidate values and paired rescue fields. `0117` adds
+the non-negative-attempt and resolved-state/timestamp pairing checks. The
+migrations create an empty ledger: they never scan the host,
 deletes a path, or converts legacy provenance into authority during migration.
 
 **(M19 — Designed, migration `0015`, additive.)** Three nullable GC columns

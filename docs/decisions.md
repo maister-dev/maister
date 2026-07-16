@@ -1836,7 +1836,7 @@ dangerous and is M18's job, not GC's.
 **Decision:** GC of terminal-run worktrees is **preserve-then-prune**. Age =
 `MAISTER_GC_AGE_DAYS` (default 14) with a `MAISTER_GC_WARNING_DAYS` (default 2)
 warning ramp surfaced as a TTL color ramp (green → amber → red). This
-historical dual-delivery wording is superseded by ADR-140: cleanup now runs only
+historical dual-delivery wording is superseded by ADR-142: cleanup now runs only
 through the claimed `system_sweep.default` job, while `GET`/`POST /api/cron/gc`
 make that existing job due (constant-time `X-Maister-Cron-Token` vs
 `MAISTER_CRON_TOKEN`; empty config → 503 disabled, mismatch → 401).
@@ -12748,6 +12748,10 @@ the user acts; runtime JSONL/evidence retention is deliberately out of scope.
 - Route timer, tick, and GC compatibility requests through one claimed
   `system_sweep` job. Persist its real bounded summary, retry/quarantine state,
   and expose platform-admin read-only findings with redacted relative paths.
+- Renew and fence the durable scheduler attempt lease for the entire sweep.
+  A service-level bundle failure records a failed scheduler attempt; isolated
+  candidate failures remain in the persisted summary and use their own durable
+  retry or quarantine state.
 
 This decision supersedes the dual-timer delivery wording in ADR-035. The
 `system_sweep.default` scheduler job is now the sole periodic owner; the cron
@@ -12755,9 +12759,9 @@ compatibility route merely makes that job due and attempts its existing claim.
 
 **Consequences:**
 
-- Migration `0116_keen_talisman` extends the workspace lifecycle claim/result
-  and introduces reconciliation findings atomically. Migration `0117` adds
-  reconciliation integrity checks. Existing removed rows are marked
+- Migrations `0116_keen_talisman` and `0117_new_maggott` extend the workspace
+  lifecycle claim/result, introduce reconciliation findings, and add their
+  database integrity checks. Existing removed rows are marked
   `legacy`/`legacy_unknown`; no historical intent is invented.
 - Public lifecycle actions retain empty bodies and use `recoverRun` membership.
   Their common success response includes operation, retained run status,

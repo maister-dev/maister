@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MaisterError } from "@/lib/errors";
 import {
   archiveWorkbench,
+  discardWorkbench,
   dropWorkbench,
   exportWorkbenchBranch,
   stopFlowWorkbench,
@@ -223,6 +224,31 @@ describe("workbench lifecycle service", () => {
       allowedRoot: "/tmp/maister/worktrees",
       force: true,
     });
+  });
+
+  it("discard uses the same fenced removal protocol while retaining discard intent", async () => {
+    const d = deps(context({ run: { ...context().run, status: "Crashed" } }));
+
+    const result = await discardWorkbench("run-1", { deps: d });
+
+    expect(result).toMatchObject({
+      ok: true,
+      operation: "discard",
+      runStatus: "Abandoned",
+      workspaceRemoved: true,
+    });
+    expect(d.claimLifecycleOperation).toHaveBeenCalledWith({
+      runId: "run-1",
+      workspaceId: "workspace-1",
+      operation: "discard",
+      expectedRunStatus: "Crashed",
+    });
+    expect(d.recordDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        removalKind: "discard",
+        nextRunStatus: "Abandoned",
+      }),
+    );
   });
 
   it("finalizes a retried drop after the worktree was removed before DB finalization", async () => {

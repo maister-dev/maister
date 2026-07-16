@@ -33,6 +33,10 @@ export type GcCompatibilitySummary = {
 };
 
 export type SystemSweepSummary = GcCompatibilitySummary & {
+  // Service-level failures mean the scheduler bundle did not complete and must
+  // consume the scheduler attempt's retry budget. Candidate failures remain in
+  // `errors` only because their own durable rows carry retry/quarantine state.
+  bundleErrors: string[];
   keepalive: Awaited<ReturnType<typeof runSweepTick>> | null;
   reconcile: Awaited<ReturnType<typeof runReconcileSweep>> | null;
   // ADR-141: branch-sync recovery sweep — W1/W4 orphan-operation
@@ -74,10 +78,12 @@ type GcBundleResult = {
   evaluationEvidence: EvidenceSweepSummary | null;
   plainAgentDirectory: PlainAgentDirectoryGcSummary | null;
   errors: string[];
+  bundleErrors: string[];
 };
 
 async function runGcBundle(): Promise<GcBundleResult> {
   const errors: string[] = [];
+  const bundleErrors: string[] = [];
   let workspace: WorkspaceGcSummary | null = null;
   let workspaceReconciliation: WorkspaceReconciliationSummary | null = null;
   let revision: RevisionGcSummary | null = null;
@@ -93,6 +99,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`workspace sweep failed: ${message}`);
+    bundleErrors.push(`workspace sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle workspace threw");
   }
 
@@ -102,6 +109,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`workspace reconciliation sweep failed: ${message}`);
+    bundleErrors.push(`workspace reconciliation sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle workspace reconciliation threw");
   }
 
@@ -111,6 +119,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`revision sweep failed: ${message}`);
+    bundleErrors.push(`revision sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle revision threw");
   }
 
@@ -120,6 +129,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`capabilities sweep failed: ${message}`);
+    bundleErrors.push(`capabilities sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle capabilities threw");
   }
 
@@ -129,6 +139,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`ephemeral agent sweep failed: ${message}`);
+    bundleErrors.push(`ephemeral agent sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle ephemeral agent threw");
   }
 
@@ -138,6 +149,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`agent materialization sweep failed: ${message}`);
+    bundleErrors.push(`agent materialization sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle agent materialization threw");
   }
 
@@ -147,6 +159,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`evaluation evidence sweep failed: ${message}`);
+    bundleErrors.push(`evaluation evidence sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle evaluation evidence threw");
   }
 
@@ -156,6 +169,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     const message = errorMessage(err);
 
     errors.push(`plain agent directory sweep failed: ${message}`);
+    bundleErrors.push(`plain agent directory sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle plain agent directory threw");
   }
 
@@ -196,11 +210,13 @@ async function runGcBundle(): Promise<GcBundleResult> {
     evaluationEvidence,
     plainAgentDirectory,
     errors,
+    bundleErrors,
   };
 }
 
 export async function runSystemSweep(): Promise<SystemSweepSummary> {
   const errors: string[] = [];
+  const bundleErrors: string[] = [];
   let keepalive: SystemSweepSummary["keepalive"] = null;
   let reconcile: SystemSweepSummary["reconcile"] = null;
   let syncRecovery: SystemSweepSummary["syncRecovery"] = null;
@@ -212,6 +228,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     const message = errorMessage(err);
 
     errors.push(`keepalive sweep failed: ${message}`);
+    bundleErrors.push(`keepalive sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep keepalive threw");
   }
 
@@ -221,6 +238,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     const message = errorMessage(err);
 
     errors.push(`reconcile sweep failed: ${message}`);
+    bundleErrors.push(`reconcile sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep reconcile threw");
   }
 
@@ -230,6 +248,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     const message = errorMessage(err);
 
     errors.push(`sync recovery sweep failed: ${message}`);
+    bundleErrors.push(`sync recovery sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep sync recovery threw");
   }
 
@@ -239,6 +258,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     const message = errorMessage(err);
 
     errors.push(`cost reconcile sweep failed: ${message}`);
+    bundleErrors.push(`cost reconcile sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep cost reconcile threw");
   }
 
@@ -251,6 +271,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     const message = errorMessage(err);
 
     errors.push(`brain decay sweep failed: ${message}`);
+    bundleErrors.push(`brain decay sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep brain decay threw");
   }
 
@@ -263,12 +284,14 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     const message = errorMessage(err);
 
     errors.push(`brain reindex sweep failed: ${message}`);
+    bundleErrors.push(`brain reindex sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep brain reindex threw");
   }
 
   const gc = await runGcBundle();
 
   errors.push(...gc.errors);
+  bundleErrors.push(...gc.bundleErrors);
 
   const summary = {
     keepalive,
@@ -289,6 +312,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     worktreesRemoved: gc.workspace?.pruned ?? 0,
     revisionsRemoved: gc.revision?.deleted ?? 0,
     errors,
+    bundleErrors,
   };
 
   log.info({ ...summary, errorCount: errors.length }, "system_sweep completed");

@@ -774,7 +774,7 @@ async function assertWorkspaceRemovalAllowed(args: {
 
 function isReplayableRemoval(
   workspace: LifecycleWorkspace,
-  expectedRemovalKind: "archive" | "drop",
+  expectedRemovalKind: "archive" | "drop" | "discard",
 ): workspace is LifecycleWorkspace & {
   preservationOutcome: Exclude<WorkspacePreservationOutcome, "legacy_unknown">;
 } {
@@ -1272,6 +1272,21 @@ export async function dropWorkbench(
   runId: string,
   options?: WorkbenchLifecycleOptions,
 ): Promise<DropWorkbenchResult> {
+  return removeWorkbench(runId, "drop", options);
+}
+
+export async function discardWorkbench(
+  runId: string,
+  options?: WorkbenchLifecycleOptions,
+): Promise<DropWorkbenchResult> {
+  return removeWorkbench(runId, "discard", options);
+}
+
+async function removeWorkbench(
+  runId: string,
+  operation: "drop" | "discard",
+  options?: WorkbenchLifecycleOptions,
+): Promise<DropWorkbenchResult> {
   const deps = depsFromOptions(options);
 
   await deps.requireActiveSession();
@@ -1280,22 +1295,23 @@ export async function dropWorkbench(
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
-  return dropWorkbenchForCtx(runId, ctx, deps);
+  return removeWorkbenchForCtx(runId, ctx, deps, operation);
 }
 
-async function dropWorkbenchForCtx(
+async function removeWorkbenchForCtx(
   runId: string,
   ctx: LifecycleContext,
   deps: WorkbenchLifecycleDeps,
+  operation: "drop" | "discard",
 ): Promise<DropWorkbenchResult> {
   const workspaceRecord = requireWorkspaceRecord(ctx);
 
   if (workspaceRecord.removedAt !== null) {
-    if (isReplayableRemoval(workspaceRecord, "drop")) {
+    if (isReplayableRemoval(workspaceRecord, operation)) {
       return {
         ok: true,
         runId,
-        operation: "drop",
+        operation,
         runStatus: ctx.run.status,
         workspaceRemoved: true,
         idempotent: true,
@@ -1319,7 +1335,7 @@ async function dropWorkbenchForCtx(
     {
       runId,
       workspaceId: workspace.id,
-      operation: "drop",
+      operation,
       expectedRunStatus: ctx.run.status,
     },
     "workbench lifecycle removal started",
@@ -1327,7 +1343,7 @@ async function dropWorkbenchForCtx(
   const claim = await deps.claimLifecycleOperation({
     runId,
     workspaceId: workspace.id,
-    operation: "drop",
+    operation,
     expectedRunStatus: ctx.run.status,
   });
 
@@ -1359,7 +1375,7 @@ async function dropWorkbenchForCtx(
       });
     } else {
       log.info(
-        { runId, workspaceId: workspace.id, operation: "drop" },
+        { runId, workspaceId: workspace.id, operation },
         "workbench lifecycle finalized removal after filesystem recovery",
       );
     }
@@ -1378,7 +1394,7 @@ async function dropWorkbenchForCtx(
       archivedAt: removal.preservation.archivedAt,
       archivedCommit: removal.preservation.archivedCommit,
       preservationOutcome: removal.preservation.preservationOutcome,
-      removalKind: "drop",
+      removalKind: operation,
       attemptId: claim.attemptId,
     });
 
@@ -1386,7 +1402,7 @@ async function dropWorkbenchForCtx(
       {
         runId,
         workspaceId: workspace.id,
-        operation: "drop",
+        operation,
         attemptId: claim.attemptId,
         preservationOutcome: removal.preservation.preservationOutcome,
       },
@@ -1396,7 +1412,7 @@ async function dropWorkbenchForCtx(
     return {
       ok: true,
       runId,
-      operation: "drop",
+      operation,
       runStatus: nextRunStatus ?? ctx.run.status,
       workspaceRemoved: true,
       idempotent: false,
@@ -1408,7 +1424,7 @@ async function dropWorkbenchForCtx(
       {
         runId,
         workspaceId: workspace.id,
-        operation: "drop",
+        operation,
         attemptId: claim.attemptId,
         errorCode: err instanceof MaisterError ? err.code : "unknown",
       },
@@ -1791,7 +1807,7 @@ export async function stopThenDrop(
 
   const stop = await stopRunByKind(runId, ctx, deps);
   const parkedCtx = await deps.loadContext(runId);
-  const drop = await dropWorkbenchForCtx(runId, parkedCtx, deps);
+  const drop = await removeWorkbenchForCtx(runId, parkedCtx, deps, "drop");
 
   return { ...drop, supervisorStopped: stop.supervisorStopped };
 }
