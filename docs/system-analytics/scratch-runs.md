@@ -1,5 +1,13 @@
 # Scratch runs domain
 
+## ADR-140 workspace removal (Designed)
+
+Scratch Discard joins the shared fenced preserve-first protocol and returns the
+common lifecycle-removal DTO. It removes an owned worktree only after durable
+preservation evidence and then retains the run as `Abandoned`; uploaded/runtime
+artifacts remain retained. A scratch run with `removed_at` has retained history
+but no Recover, Files/Diff, branch export, or other worktree-backed action.
+
 ## Purpose
 
 A **scratch run** is a manually started coding-agent workspace outside the task

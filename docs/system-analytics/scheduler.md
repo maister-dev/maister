@@ -1,5 +1,17 @@
 # Scheduler service domain
 
+## ADR-140 target contract (Designed)
+
+`system_sweep.default` becomes the single periodic owner of workspace cleanup.
+The timer, `/api/cron/tick`, and the immediate `/api/cron/gc` compatibility
+surface all request/claim the same durable job and execute only through the
+fenced scheduler attempt runner. A winner renews its lease while the bounded
+bundle runs and persists the exact aggregate summary; a loser returns
+`alreadyRunning` without running a duplicate service. The bundle composes
+reconciliation, row-backed GC, disk-only reconciliation, and reconstructible
+agent-directory cleanup with isolated per-item failures. No compatibility path
+may call a GC bundle directly or create a second scheduler state machine.
+
 ## Purpose
 
 This domain (**Implemented, M24**) covers MAIster's unified background clock: a

@@ -1,5 +1,13 @@
 # Active workspaces (left-rail block)
 
+## ADR-140 target state (Designed)
+
+Rows with `workspaceRemoved=true` are excluded from this active-workspace
+block. Their run remains reachable from history/detail but is rendered as a
+localized removed-workspace state with no File/Diff or lifecycle controls.
+`Review` and `Crashed` history after Archive must not strand the task in this
+block or board state; they become relaunchable through the shared classifier.
+
 - **Type:** block — the per-project list of live runs inside the left rail
   chrome (present on every `(app)` screen). Not a standalone route; the rail
   hosts it.

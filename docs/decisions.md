@@ -172,6 +172,7 @@
 | [ADR-145](#adr-145-multi-judge-execution-aggregation-disagreement-and-human-verdict) | Multi-judge execution aggregation disagreement and human verdict | Accepted | 2026-07-16 |
 | [ADR-146](#adr-146-controlled-evaluation-recipes-and-slot-keyed-execution-profiles) | Controlled Evaluation recipes and slot-keyed execution profiles | Accepted | 2026-07-16 |
 | [ADR-147](#adr-147-advanced-evaluation-suites-calibration-and-recipe-standardization) | Advanced evaluation suites calibration and recipe standardization | Accepted | 2026-07-16 |
+| [ADR-148](#adr-148-run-workspace-lifecycle-cleanup-and-reconciliation) | Run workspace lifecycle cleanup and reconciliation | Implemented | 2026-07-16 |
 
 ---
 
@@ -12706,6 +12707,70 @@ automatic winner promotion. Design locked now; implemented in M48.
   human-conclusive-verdict and no-auto-promotion invariants.
 - _A second scheduler clock for suites_: rejected — one polymorphic M24 tick
   owns all cron work.
+
+---
+
+### ADR-148: Run workspace lifecycle cleanup and reconciliation
+
+**Date:** 2026-07-16
+**Status:** Implemented
+
+**Context:** The existing M19/M27 contracts conflate a run's historical result
+with whether its writable worktree remains on disk. In particular, Archive only
+records a ref while retaining disk, independently triggered GC/reconcile paths
+can overlap, and a process loss between filesystem removal and database
+finalization leaves no durable convergence record. The product contract is that
+`Review`, `Crashed`, and `Failed` workbenches remain visible and on disk until
+the user acts; runtime JSONL/evidence retention is deliberately out of scope.
+
+**Decision:**
+
+- Treat run status and workspace presence as independent axes. Automatic GC may
+  preserve then remove only due `Done` and `Abandoned` workspaces. `Review`,
+  `Crashed`, `Failed`, live, and HITL states are never automatic candidates.
+- Make Archive preserve and remove the owned worktree while retaining the exact
+  historical run status. Drop/Discard use the same preserve-first protocol and
+  change every non-`Done` run to `Abandoned`. A removed `Review`/`Crashed` run
+  becomes relaunchable but remains in history; all worktree-backed reads and
+  Recover refuse it server-side.
+- Use one renewable, fenced lifecycle claim for explicit removal, discard,
+  retention GC, and row-backed recovery. Completed state records separate
+  `removal_kind` (`archive|drop|discard|retention_gc|reconciliation|legacy`)
+  and preservation outcome (`not_needed|ref_created|snapshot_created|legacy_unknown`).
+  The result is atomically finalised after confirmed removal and makes identical
+  retries idempotent while rejecting conflicting intents.
+- Add provenance v2 and a durable reconciliation-finding ledger. Autonomous
+  disk cleanup requires root/canonical-path checks, verified parent Git
+  registration, current v2 provenance, DB and live-session absence, grace,
+  a final fenced recheck, and a non-overwriting rescue ref. Legacy or ambiguous
+  evidence is held/quarantined, never deleted.
+- Route timer, tick, and GC compatibility requests through one claimed
+  `system_sweep` job. Persist its real bounded summary, retry/quarantine state,
+  and expose platform-admin read-only findings with redacted relative paths.
+
+**Consequences:**
+
+- Migration `0115` extends the workspace lifecycle claim/result and migration
+  `0116` introduces reconciliation findings. Existing removed rows are marked
+  `legacy`/`legacy_unknown`; no historical intent is invented.
+- Public lifecycle actions retain empty bodies and use `recoverRun` membership.
+  Their common success response includes operation, retained run status,
+  `workspaceRemoved`, idempotency, preservation outcome, and optional archive
+  ref. Error classes stay within the existing union (401/403/404/409/503).
+- This decision supersedes the conflicting workspace-retention portions of
+  ADR-034 and ADR-035, while preserving their crash-recovery and
+  preserve-before-delete safety intent. It does not archive, compact, or delete
+  run JSONL, transcripts, cost data, evidence, or run rows.
+
+**Alternatives Considered:**
+
+- _Introduce an Archived run status_: rejected because status is execution
+  history; workspace presence already expresses the lifecycle fact.
+- _Delete disk-only paths from provenance alone_: rejected because provenance
+  is evidence, not authority, and is insufficient against symlink, stale, or
+  foreign-path failures.
+- _Keep a standalone GC timer and direct GC route_: rejected because two
+  owners make bounded retry and truthful operational summaries impossible.
 
 ---
 

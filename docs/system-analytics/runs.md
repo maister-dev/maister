@@ -1,5 +1,16 @@
 # Runs domain
 
+## ADR-140 workspace-presence guard (Designed)
+
+`runs.status` remains the execution-history source of truth. If the associated
+workspace has `removed_at`, the retained run is historical only: Recover,
+respond/review, gate chat, takeover, rework, export, diff, and promotion must
+refuse server-side with `PRECONDITION` before any Git or supervisor access.
+Archive preserves the original `Review`, `Crashed`, or `Failed` status while
+removing the workspace; board/launchability then treats the task as relaunchable
+without hiding the historical run. Discard changes non-`Done` runs to
+`Abandoned`. This does not delete evidence, transcript, cost, or runtime JSONL.
+
 ## M43 upgrade terminalization (Implemented)
 
 Migration 0094 changes legacy Flow runs in Pending, Running, NeedsInput,

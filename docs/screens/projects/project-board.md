@@ -1,5 +1,12 @@
 # Project board
 
+## ADR-140 target state (Designed)
+
+The board receives workspace presence alongside latest-run status. An archived
+`Review` or `Crashed` run remains visible as history but no longer blocks a new
+launch. It never renders a worktree action for a removed workspace; direct
+server routes, not this visual state, enforce the guard.
+
 ## M43 incompatible task state (Implemented)
 
 A task bound to an incompatible revision stays visible and shows its typed

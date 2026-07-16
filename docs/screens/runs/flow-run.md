@@ -1,5 +1,13 @@
 # Flow run detail
 
+## ADR-140 target state (Designed)
+
+An explicitly removed workspace preserves flow-run history but disables
+Recover, Respond/Review, Gate Chat, Takeover, Rework, Export, Diff, and
+Promotion with one localized unavailable explanation. Archive and Drop remain
+distinct confirmations; their shared response reports retained status,
+idempotency, preservation outcome, and optional archive branch.
+
 ## M43 terminalized legacy run (Implemented)
 
 A migration-terminalized run shows a persistent Failed cut-over banner with

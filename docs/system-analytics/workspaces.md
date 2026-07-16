@@ -606,6 +606,18 @@ root metadata; entering a graph node may update only the optional Node pointer.
 GC can remove a worktree without removing persisted final evidence. Installation
 failure compensates the new branch/worktree before it returns a typed error.
 
+### ADR-140 provenance v2 (Designed)
+
+Every new writable Flow, scratch, own-agent, and shared allocator worktree will
+write an atomically replaced `.maister-managed/provenance` v2 document with
+`version`, `runId`, `projectId`, canonical `parentRepoPath`, branch, workspace
+kind, and `createdAt`. It is correlation evidence for reconciliation, not
+standalone deletion authority. The reader remains explicitly compatible with
+v1 for reporting/exact recovery only; v1 never gains autonomous deletion
+authority. Before a v2 candidate can be rescued or removed, the reconciler
+independently proves its root containment, canonical Git registration, database
+absence, no live session, grace expiry, and final lease fence.
+
 ## Linked artifacts
 
 - ADRs: [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),

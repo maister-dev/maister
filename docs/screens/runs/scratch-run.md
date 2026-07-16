@@ -1,5 +1,12 @@
 # Scratch run detail
 
+## ADR-140 target state (Designed)
+
+After Discard removes the workspace, the scratch detail remains a retained
+history view. Composer recovery and workspace-backed panels are unavailable;
+the UI does not issue Git/file requests for the removed path. The action result
+uses the same lifecycle outcome vocabulary as flow workbenches.
+
 - **Type:** screen.
 - **Route:** `/scratch-runs/{runId}` (session-required).
 - **Status:** Implemented. Scratch run detail is on the shared run shell: the

@@ -1,5 +1,29 @@
 # Reconciliation and GC domain
 
+## ADR-140 target contract (Designed)
+
+The M19 behavior below is the shipped baseline. ADR-140 changes only the
+workspace cleanup boundary: automatic row-backed GC selects the disposable
+set `{Done, Abandoned}` and never selects `Review`, `Crashed`, or `Failed`.
+All row-backed removal paths use a renewable lifecycle claim that fences every
+irreversible Git/filesystem step and the final transaction. A persisted result
+records `removal_kind` independently from `preservation_outcome`; a path absent
+after process death therefore converges from durable intent instead of guessing.
+
+Disk-only candidates first become durable `workspace_reconciliation_findings`.
+Autonomous action requires a root realpath/no-symlink check, verified parent
+Git registration, current provenance v2, no matching workspace/live session,
+the configured grace, a lease-fenced final recheck, and a CAS-created rescue
+ref. V1, malformed, ambiguous, or foreign candidates are held/quarantined and
+reported, never removed. Findings retain bounded retry/backoff, sanitized error
+codes, rescue evidence, and resolved history.
+
+One claimed `system_sweep` composes reconcile, row-backed GC, orphan
+reconciliation, and reconstructible-agent cleanup. Timer, tick, and
+`/api/cron/gc` request that same job; a losing contender reports
+`alreadyRunning`. Runtime JSONL, transcripts, evidence, and run rows are not GC
+targets.
+
 ## M43 one-time cut-over versus recurring repair (Implemented)
 
 Migration 0094 is the only owner of unfinished-linear-run terminalization. It

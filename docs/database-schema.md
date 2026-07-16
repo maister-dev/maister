@@ -1843,6 +1843,13 @@ numerator.
                                  //   archive | drop | exportBranch |
                                  //   snapshotCommit | handoffBranch |
                                  //   sync (ADR-141, Implemented; TS-only 6th op)
+  lifecycleOperationLeaseExpiresAt?, // ADR-148 (Implemented, migration 0115)
+  lifecycleOperationExpectedRunStatus?, // fenced finalization status
+  archivedCommit?,                // exact preservation snapshot/head evidence
+  preservationOutcome?,           // not_needed | ref_created | snapshot_created |
+                                 // legacy_unknown
+  removalKind?                    // archive | drop | discard | retention_gc |
+                                 // reconciliation | legacy; required when removedAt
 }
 ```
 
@@ -1897,6 +1904,55 @@ that `canReclaim` admits and the auto-promote prefilter excludes. See
 [ADR-140](decisions.md#adr-140-pr-lifecycle-tracking),
 [ADR-141](decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen),
 and [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md).
+**(ADR-148 — Implemented, migration `0115`, additive.)** Lifecycle claims become
+renewable leases. `lifecycleOperationLeaseExpiresAt` and
+`lifecycleOperationExpectedRunStatus` pair with the existing active attempt,
+name, and state; a failed/stale claim retains those fields until a new fenced
+owner replaces it. A successful finalization atomically clears the active claim
+and writes `removalKind`, `preservationOutcome`, optional `archivedCommit`, and
+`removedAt`. Checks constrain the closed values, active-field pairing, and the
+rule that a non-null `removedAt` has a completed removal kind. Existing removed
+rows are backfilled only as `legacy` / `legacy_unknown`; existing archive facts
+are retained without invented intent. This design distinguishes execution
+history from workspace presence and leaves JSONL/runtime artifacts unchanged.
+
+| `0115` field / invariant | Writer | Reader / retention owner |
+| --- | --- | --- |
+| `lifecycle_operation_lease_expires_at` | claim/heartbeat | irreversible-side-effect and finalization fence; cleared only on completed result |
+| `lifecycle_operation_expected_run_status` | claim | finalization CAS; retained with failed/stale intent until a new owner replaces it |
+| `archived_commit` | preservation persistence | replay/reconciliation evidence; nullable for clean `not_needed` |
+| `preservation_outcome` | preservation persistence | replay/read model; closed set `not_needed|ref_created|snapshot_created|legacy_unknown` |
+| `removal_kind` | successful finalization or legacy backfill | disposition/replay; closed set `archive|drop|discard|retention_gc|reconciliation|legacy` |
+
+`0115` checks require a `claiming` row to have operation name, attempt ID,
+unexpired lease value, and expected status; `none` has no active claim fields;
+and `removed_at IS NOT NULL` has a non-null allowed `removal_kind`.
+`preservation_outcome='legacy_unknown'` is migration-only. The migration adds an
+index supporting stale-claim lease scans, backfills only existing removed rows,
+and has no filesystem/Git action.
+
+**(ADR-148 — Implemented, migration `0116`, additive.)**
+`workspace_reconciliation_findings` is the durable, report-first observation
+ledger for disk-only candidates. It records deterministic canonical-path /
+provenance identity, optional correlated run/project/workspace, candidate kind,
+state (`observed|held|retry_waiting|failed|quarantined|resolved`), first/last
+seen, due/armed/retry/attempt/lease data, sanitized error, and optional rescue
+ref/commit evidence. Due-state and provenance/correlation indexes make bounded
+claim/retry scans possible. It stores only safe root-relative display data in
+operator projections, never an arbitrary path cleanup capability.
+
+| `0116` group | Exact fields / invariant |
+| --- | --- |
+| identity and evidence | deterministic `id` from canonical relative path + provenance fingerprint; candidate kind; provenance version/fingerprint/run ID; safe relative display path; optional project/run/workspace correlation |
+| durable observation | `first_seen_at`, `last_seen_at`, `armed_at`, `next_retry_at`, `attempt_count`, retry generation, and `resolved_at`; resolved rows are retained |
+| ownership | `lease_expires_at` and server-minted `attempt_id`; every action rechecks its unexpired fence |
+| result | sanitized `last_error_code`/message, result code, rescue ref and commit written as an all-or-none pair |
+| state | closed `observed|held|retry_waiting|failed|quarantined|resolved`; only due non-resolved states can be claimed |
+
+`0116` has deterministic-identity uniqueness, due-state `(state, next_retry_at)`
+and provenance/correlation indexes, checks for allowed state/candidate values
+and paired rescue fields. It creates an empty ledger: it never scans the host,
+deletes a path, or converts legacy provenance into authority during migration.
 
 **(M19 — Designed, migration `0015`, additive.)** Three nullable GC columns
 drive the worktree TTL lifecycle. `scheduledRemovalAt` (`timestamptz`) is the

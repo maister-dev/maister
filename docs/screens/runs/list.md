@@ -1,5 +1,12 @@
 # Runs ledger
 
+## ADR-140 target state (Designed)
+
+The ledger retains Archive/Drop/Discard rows at their historical status and
+shows a localized workspace-removed fact plus optional archive-ref evidence.
+It does not remove the run, transcript, cost, or evidence from history and does
+not attempt a worktree read to render an absent workspace.
+
 ## M43 terminalized legacy row (Implemented)
 
 The row is a terminal Failed result with an engine-3 cut-over reason and

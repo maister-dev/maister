@@ -1,5 +1,13 @@
 # HITL domain
 
+## ADR-140 removed-workspace boundary (Designed)
+
+Archive must preflight unanswered actionable HITL and refuse without a side
+effect. It never resolves, deletes, or fabricates a HITL response. After an
+explicit workspace removal, HITL/review/gate-chat/rework entry points repeat a
+server-side workspace-presence guard and return `PRECONDITION`; the retained
+run history and previously recorded HITL evidence remain readable.
+
 ## Purpose
 
 **HITL** — human-in-the-loop — covers every transition where a run

@@ -6,6 +6,47 @@
 > reusing the existing run status enum, workspace archive columns, supervisor
 > session model, and git worktree helpers.
 
+## ADR-140 target contract (Designed)
+
+ADR-140 replaces the conflicting M19/M27 workspace-retention behavior in this
+document. A run's status is immutable execution history; workspace presence is
+a separate axis. The existing sections below describe the shipped baseline until
+the implementation phases complete.
+
+| Status | Automatic cleanup | Archive | Drop / Discard |
+| --- | --- | --- | --- |
+| `Pending`, `Running`, `HumanWorking`, `NeedsInput`, `NeedsInputIdle` | never | refuse or use the existing Stop & Archive path | refuse or use Stop & Drop |
+| `WaitingOnChildren` | never | refuse; existing subtree abandon/cascade is the remediation | refuse; existing subtree abandon/cascade is the remediation |
+| `Review`, `Crashed`, `Failed` | never | preserve, remove, retain original status | preserve, remove, set `Abandoned` |
+| `Done`, `Abandoned` | due `MAISTER_GC_AGE_DAYS` only | preserve, remove, retain status | preserve, remove; `Done` stays `Done` |
+
+Archive preflights active assignment, takeover, and unanswered actionable HITL.
+It returns `409 PRECONDITION` without a Git side effect when any is active; it
+does not synthesize HITL responses or erase assignments/session history. On
+success `removed_at` makes Recover and every worktree-backed action refuse with
+`PRECONDITION`, while the run remains visible as non-actionable history.
+
+Every successful user removal (`archive`, `drop`, or `discard`) returns:
+
+```json
+{
+  "ok": true,
+  "runId": "uuid",
+  "operation": "archive|drop|discard",
+  "runStatus": "Review|Crashed|Failed|Done|Abandoned",
+  "workspaceRemoved": true,
+  "idempotent": false,
+  "preservationOutcome": "not_needed|ref_created|snapshot_created",
+  "archivedBranch": "optional-ref"
+}
+```
+
+The body is empty, authorization is derived from the run through
+`recoverRun`, and identical completed replay returns the established result
+with `idempotent: true`; a conflicting completed intent returns `409 CONFLICT`.
+`retention_gc` and `reconciliation` are internal dispositions, never request
+body values. JSONL and other runtime-artifact retention are unchanged.
+
 ## JTBD
 
 When an operator sees a stale, stopped, crashed, finished, or no-longer-useful

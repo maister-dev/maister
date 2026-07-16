@@ -69,6 +69,12 @@ flowchart TD
   project/task snapshot, state, safe outcome/error code, and attempt count. It
   links to Project Automations for member actions and never exposes reservation
   paths, branches, raw request data, or global mutation controls.
+- **Workspace reconciliation findings (ADR-140, Designed)** — a read-only,
+  cursor-paginated list of observed/held/retrying/failed/quarantined/resolved
+  cleanup findings. It shows only finding identity, state, root-relative safe
+  display path, correlated run/project identifiers, timestamps, rescue result,
+  and sanitized error/result codes. It has no re-arm, delete, or arbitrary-path
+  action; only global admins can call the backing API.
 
 ## States
 

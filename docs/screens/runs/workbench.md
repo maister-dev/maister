@@ -1,5 +1,11 @@
 # Run workbench
 
+## ADR-140 target state (Designed)
+
+The workbench is not mounted for a removed workspace. Its parent shows a
+localized historical/removal panel with preservation evidence instead; no
+fallback path, Git call, or client-controlled worktree identifier is used.
+
 - **Type:** block.
 - **Routes:** shared by `/runs/{runId}` and `/scratch-runs/{runId}`.
 - **Status:** Implemented for flow/agent and scratch run detail: Markdown

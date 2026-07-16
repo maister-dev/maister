@@ -1,5 +1,12 @@
 # Run inspector
 
+## ADR-140 target state (Designed)
+
+The inspector consumes one workspace-presence model. `removed_at` renders
+retained historical metadata and a localized unavailable state instead of
+attempting diff/file reads; server routes independently deny all worktree-backed
+mutations and recovery.
+
 ## M43 terminalized legacy state (Implemented)
 
 The page-level persistent Failed cut-over banner is visible with the run detail

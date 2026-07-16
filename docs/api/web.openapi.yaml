@@ -415,6 +415,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/workspace-reconciliation-findings:
+    get:
+      tags: [admin]
+      summary: ADR-140 (Designed) — list workspace reconciliation findings
+      description: |
+        Platform-admin-only, read-only operational projection. `state` is an
+        allow-listed filter; `cursor` is opaque and `limit` is bounded to 100.
+        Rows expose only safe root-relative display data, correlation IDs,
+        timestamps, retry/result fields, and sanitized error codes. This route
+        never exposes canonical absolute paths, raw provenance, rescue commands,
+        re-arm, deletion, or arbitrary-path mutation.
+      operationId: getAdminWorkspaceReconciliationFindings
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [observed, held, retry_waiting, failed, quarantined, resolved]
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 512 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Bounded redacted finding page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceReconciliationFindingPage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400":
+          description: Invalid state, cursor, or limit (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/admin/scheduler-jobs:
     get:
       tags: [admin]
@@ -5113,11 +5153,13 @@ paths:
   /api/scratch-runs/{runId}/discard:
     post:
       tags: [scratch-runs]
-      summary: Implemented — discard scratch workspace
+      summary: ADR-140 (Designed) — preserve then discard scratch workspace
       description: |
-        Stops any live supervisor session, removes only the worktree and
-        artifacts proven to belong to this scratch run, and transitions the run
-        to `Abandoned`.
+        Uses the common fenced lifecycle-removal protocol after any required
+        supervisor stop. It preserves recoverable Git state, removes only an
+        owned worktree, records durable disposition, and transitions the run to
+        `Abandoned`. The body is empty; run/project/path/session identity is
+        server-derived and authorization is `recoverRun` membership.
       operationId: discardScratchRun
       parameters:
         - name: runId
@@ -5126,13 +5168,23 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          $ref: "#/components/responses/OkResult"
+          description: Workspace removed after preservation, or an idempotent replay.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: Scratch run not found, not scratch, or cannot be discarded in its current state (`PRECONDITION` / `CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Transient supervisor, Git, filesystem, or post-removal finalization failure.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -7638,29 +7690,14 @@ paths:
   /api/runs/{runId}/discard:
     post:
       tags: [reconciliation-gc]
-      summary: (M19) Discard a run into the GC countdown
+      summary: ADR-140 (Designed) — preserve then discard a run workspace
       description: |
-        (Designed, M19 — ADR-034 / ADR-035. Code lands in Phase 3.)
-
-        Marks a run `Abandoned` and enters the workspace GC countdown. This is a
-        single terminal action — it does **NOT** synchronously remove the
-        worktree. The worktree is left in place showing the TTL color-ramp
-        countdown and is preserved-then-pruned by the GC sweep
-        (`MAISTER_GC_AGE_DAYS`), exactly like any other Abandoned run.
-
-        One tx: `markAbandoned` (allow-list incl. `Crashed`) stamps
-        `workspaces.scheduled_removal_at = endedAt + MAISTER_GC_AGE_DAYS`, then
-        `promoteNextPending` frees the slot. Idempotent on an already-terminal
-        run: a same-state retry returns 200; a conflicting non-terminal state
-        returns 409. No worktree side-effect means no removal-failure path.
-
-        Requires project membership at `member` or above
-        (`requireProjectAction("recoverRun")`). The `projectId` is derived from
-        the run row (`server-state`); `runId` is the URL parameter
-        (`url-param`). **Body is EMPTY.**
-
-        No new `MaisterError` code (ADR-008 closed union): conflicting
-        non-terminal state → `CONFLICT` (409).
+        Uses the common renewable, fenced removal protocol: preserve, durably
+        record the outcome, remove only an owned worktree, and then set a
+        non-`Done` run to `Abandoned`. It does not wait for the GC deadline.
+        The body is empty and `recoverRun` membership is derived from the run.
+        Identical completed replay returns the established removal result;
+        conflicting completed intent is `409 CONFLICT`.
       operationId: discardRun
       parameters:
         - name: runId
@@ -7671,29 +7708,25 @@ paths:
             format: uuid
       responses:
         "200":
-          description: |
-            Run marked `Abandoned` and entered the GC countdown (the worktree
-            stays for preserve-then-prune). Returned unchanged on an idempotent
-            same-state retry.
+          description: Workspace removed after preservation, or an idempotent replay.
           content:
             application/json:
-              schema:
-                type: object
-                required: [ok, runStatus]
-                properties:
-                  ok: { type: boolean, enum: [true] }
-                  runStatus:
-                    type: string
-                    enum: [Abandoned]
-                    description: Terminal AFTER-side status.
+              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: |
             Run is in a conflicting non-terminal state that is not discardable
             (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Transient Git, filesystem, or post-removal finalization failure.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -7743,6 +7776,7 @@ paths:
                   supervisorStopped: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Run is not in a stoppable live state, or run kind is unsupported.
           content:
@@ -7756,13 +7790,13 @@ paths:
   /api/runs/{runId}/stop-archive:
     post:
       tags: [runs]
-      summary: Implemented — stop a live flow or scratch run, then archive
+      summary: ADR-140 (Designed) — stop a live run, preserve, and remove its workspace
       description: |
         Combined live action: stop the run (commits a parked status first —
-        `Review` for flow, `Review` for scratch with a live worktree), then run
-        `archiveWorkbench` (preserve the worktree, record
-        `workspaces.archived_branch` / `archived_at`, leave it on disk). Returns
-        the archive result plus `supervisorStopped` from the stop step.
+        `Review` for flow/scratch), then uses the common preserve-first removal
+        protocol. Archive retains the parked historical run status while
+        removing the owned worktree. Returns the common removal DTO plus
+        `supervisorStopped`.
 
         Flow and scratch only. The stop commit is durable before the archive, so
         an archive failure leaves the run in `Review`, retryable through the
@@ -7778,29 +7812,19 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Run stopped and worktree preserved.
+          description: Run stopped and workspace removed after preservation.
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  [
-                    ok,
-                    runId,
-                    archived,
-                    archivedBranch,
-                    snapshotted,
-                    supervisorStopped,
-                  ]
-                properties:
-                  ok: { type: boolean, enum: [true] }
-                  runId: { type: string }
-                  archived: { type: boolean }
-                  archivedBranch: { type: string, nullable: true }
-                  snapshotted: { type: boolean }
-                  supervisorStopped: { type: boolean }
+                allOf:
+                  - $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse"
+                  - type: object
+                    required: [supervisorStopped]
+                    properties:
+                      supervisorStopped: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Not stoppable, unsupported run kind, or preserve failure (run left in `Review`).
           content:
@@ -7814,7 +7838,7 @@ paths:
   /api/runs/{runId}/stop-drop:
     post:
       tags: [runs]
-      summary: Implemented — stop a live flow run, then drop
+      summary: ADR-140 (Designed) — stop a live flow run, then discard its workspace
       description: |
         Combined live action for flow runs: stop the run (commits `Review`
         first), then run `dropWorkbench` (preserve, remove the owned worktree,
@@ -7839,23 +7863,12 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  [
-                    ok,
-                    runId,
-                    runStatus,
-                    workspaceRemoved,
-                    archivedBranch,
-                    supervisorStopped,
-                  ]
-                properties:
-                  ok: { type: boolean, enum: [true] }
-                  runId: { type: string }
-                  runStatus: { type: string, enum: [Abandoned] }
-                  workspaceRemoved: { type: boolean, enum: [true] }
-                  archivedBranch: { type: string, nullable: true }
-                  supervisorStopped: { type: boolean }
+                allOf:
+                  - $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse"
+                  - type: object
+                    required: [supervisorStopped]
+                    properties:
+                      supervisorStopped: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -7871,11 +7884,14 @@ paths:
   /api/runs/{runId}/archive:
     post:
       tags: [runs]
-      summary: Implemented — preserve a stopped or terminal workbench
+      summary: ADR-140 (Designed) — preserve then remove a stopped or terminal workbench
       description: |
-        Calls `preserveWorktree` for a non-live workbench and records
-        `workspaces.archived_branch` / `archived_at` when an archive ref is
-        created. The worktree remains on disk. Live write states are refused.
+        Requires `recoverRun` membership and an empty body. After actionable
+        HITL/assignment/takeover and status preflight, it preserves recoverable
+        state, durably records that outcome, removes only an owned worktree,
+        and retains the original run status as non-actionable history. Live and
+        HITL states are refused. A completed identical replay is idempotent;
+        a conflicting completed intent is `409 CONFLICT`.
       operationId: archiveRunWorkbench
       parameters:
         - name: runId
@@ -7884,29 +7900,27 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Preserve completed.
+          description: Workspace was removed after preservation, or an idempotent replay.
           content:
             application/json:
-              schema:
-                type: object
-                required: [ok, runId, archived, archivedBranch, snapshotted]
-                properties:
-                  ok: { type: boolean, enum: [true] }
-                  runId: { type: string }
-                  archived: { type: boolean }
-                  archivedBranch: { type: string, nullable: true }
-                  snapshotted: { type: boolean }
+              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Live state, missing/removed workspace, or preserve failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Transient Git, filesystem, or post-removal finalization failure.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/drop:
     post:
       tags: [runs]
-      summary: Implemented — preserve then remove an owned worktree
+      summary: ADR-140 (Designed) — preserve then discard an owned worktree
       description: |
         Calls `preserveWorktree`, then removes the worktree through
         `removeOwnedWorktree({ allowedRoot: worktreesRoot(), force: true })`,
@@ -7925,22 +7939,17 @@ paths:
           description: Worktree was removed after preservation.
           content:
             application/json:
-              schema:
-                type: object
-                required:
-                  [ok, runId, runStatus, workspaceRemoved, archivedBranch]
-                properties:
-                  ok: { type: boolean, enum: [true] }
-                  runId: { type: string }
-                  runStatus:
-                    type: string
-                    enum: [Done, Abandoned]
-                  workspaceRemoved: { type: boolean, enum: [true] }
-                  archivedBranch: { type: string, nullable: true }
+              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Live state, missing/removed workspace, preserve failure, stale run-status CAS, or unsafe removal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Transient Git, filesystem, or post-removal finalization failure.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -8895,23 +8904,17 @@ paths:
   /api/cron/gc:
     get:
       tags: [reconciliation-gc, scheduler]
-      summary: (M19/M24) Run the GC sweep compatibility route
+      summary: ADR-140 (Designed) — request the immediate system-sweep compatibility route
       description: |
         (Implemented, M19; compatibility wrapper Designed, M24 — ADR-060.)
 
-        Token-guarded HTTP entry point for the preserve-then-prune GC sweep —
-        the same work the background sweeper performs
-        (`MAISTER_GC_SWEEP_INTERVAL_SECONDS`), exposed for an external cron. The
-        sweep collects Abandoned/Done worktrees and unreferenced `Removed` flow
-        revisions past `MAISTER_GC_AGE_DAYS`, preserves dirty/divergent
-        worktrees to a `maister/archive/<runId>` branch (optionally pushed when
-        `MAISTER_GC_ARCHIVE_PUSH=true`), and only then prunes. The same bundle
-        retries retained agent-materialization ownership records for terminal
-        or missing runs; reopenable/live run statuses remain untouched. These
-        retry counts stay internal so the compatibility response shape is stable.
-
-        M24 keeps this route as a compatibility wrapper over the unified
-        `system_sweep` service while preserving the response shape and statuses.
+        Token-guarded immediate request for the canonical `system_sweep.default`
+        job. It does not call a GC bundle directly and does not own a second
+        timer/lease. The winner renews the canonical scheduler lease and returns
+        its persisted aggregate; a concurrent loser returns `alreadyRunning:true`
+        without duplicate cleanup. The bundle includes reconciliation, protected
+        `{Done, Abandoned}` row-backed GC, disk-only findings, and
+        reconstructible-agent cleanup.
         Auth is by the `X-Maister-Cron-Token` header, compared in constant time
         to `MAISTER_CRON_TOKEN` — NOT an Auth.js session. **No body / query
         cross-resource identifiers**: the sweep derives its candidate set from
@@ -8921,10 +8924,10 @@ paths:
         - cronToken: []
       responses:
         "200":
-          description: GC sweep completed; the summary reports per-sub-sweep counts.
+          description: System sweep completed, or another unexpired owner is already running.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
         "207":
           description: |
             A sub-sweep (worktree GC or revision GC) partially failed; the
@@ -8932,7 +8935,7 @@ paths:
             still committed.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
         "401":
           description: |
             Missing or mismatched `X-Maister-Cron-Token` (`UNAUTHENTICATED`).
@@ -8948,31 +8951,27 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     post:
       tags: [reconciliation-gc, scheduler]
-      summary: (M19/M24) Run the GC sweep compatibility route
+      summary: ADR-140 (Designed) — request the immediate system-sweep compatibility route
       description: |
-        (Implemented, M19; compatibility wrapper Designed, M24 — ADR-060.)
-
-        POST variant of `GET /api/cron/gc` — identical behavior, for cron
-        runners that prefer a non-idempotent verb. Auth is the same
-        `X-Maister-Cron-Token` header (constant-time compare to
-        `MAISTER_CRON_TOKEN`). **Body is EMPTY**; the sweep derives its
-        candidate set from server state only.
+        POST variant of `GET /api/cron/gc` with identical canonical-job
+        contention and summary semantics. Auth is the same constant-time token
+        check. **Body is EMPTY**; all candidate state is server-derived.
       operationId: runGcCronPost
       security:
         - cronToken: []
       responses:
         "200":
-          description: GC sweep completed; the summary reports per-sub-sweep counts.
+          description: System sweep completed, or another unexpired owner is already running.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
         "207":
           description: |
             A sub-sweep partially failed; the summary's `errors` array names what
             was skipped. Successful work was still committed.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+              schema: { $ref: "#/components/schemas/SystemSweepCompatibilityResponse" }
         "401":
           description: |
             Missing or mismatched `X-Maister-Cron-Token` (`UNAUTHENTICATED`).
@@ -15616,6 +15615,16 @@ components:
           type: array
           description: Per-row skip reasons when a sub-sweep partially failed (207).
           items: { type: string }
+    SystemSweepCompatibilityResponse:
+      type: object
+      description: |
+        ADR-140 (Designed) immediate compatibility result. A loser reports only
+        `alreadyRunning:true`; it neither starts a duplicate bundle nor invents
+        another owner's summary.
+      required: [alreadyRunning]
+      properties:
+        alreadyRunning: { type: boolean }
+        summary: { $ref: "#/components/schemas/GcSweepSummary" }
     SchedulerCommandHttpPingTarget:
       type: object
       additionalProperties: false
@@ -15680,6 +15689,59 @@ components:
         Per-kind scheduler target payload. `command` jobs use one of the
         command shapes, `flow_run` uses `SchedulerFlowRunTarget`, and
         no-target jobs use `{}`.
+    WorkspaceLifecycleRemovalResponse:
+      type: object
+      description: |
+        ADR-140 (Designed) common success envelope for Archive, Drop, Discard,
+        and their stopped variants. The run status is retained history; the
+        workspace fact is represented independently by `workspaceRemoved`.
+      required:
+        [ok, runId, operation, runStatus, workspaceRemoved, idempotent, preservationOutcome]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        runId: { type: string, format: uuid }
+        operation: { type: string, enum: [archive, drop, discard] }
+        runStatus: { type: string, enum: [Review, Crashed, Failed, Done, Abandoned] }
+        workspaceRemoved: { type: boolean, enum: [true] }
+        idempotent: { type: boolean }
+        preservationOutcome:
+          type: string
+          enum: [not_needed, ref_created, snapshot_created]
+        archivedBranch: { type: string, nullable: true }
+    WorkspaceReconciliationFinding:
+      type: object
+      description: |
+        ADR-140 (Designed) redacted, read-only operational projection. Absolute
+        paths, raw provenance, file contents, and mutation controls are absent.
+      required: [id, state, candidateKind, safeRelativePath, firstSeenAt, lastSeenAt]
+      properties:
+        id: { type: string }
+        state:
+          type: string
+          enum: [observed, held, retry_waiting, failed, quarantined, resolved]
+        candidateKind: { type: string, enum: [worktree, agent_workspace_none, agent_repo_read] }
+        safeRelativePath: { type: string }
+        projectId: { type: string, nullable: true }
+        runId: { type: string, format: uuid, nullable: true }
+        workspaceId: { type: string, nullable: true }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        armedAt: { type: string, format: date-time, nullable: true }
+        nextRetryAt: { type: string, format: date-time, nullable: true }
+        attemptCount: { type: integer, minimum: 0 }
+        rescueRef: { type: string, nullable: true }
+        rescueCommit: { type: string, nullable: true }
+        resultCode: { type: string, nullable: true }
+        lastErrorCode: { type: string, nullable: true }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+    WorkspaceReconciliationFindingPage:
+      type: object
+      required: [findings, nextCursor]
+      properties:
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/WorkspaceReconciliationFinding" }
+        nextCursor: { type: string, nullable: true }
     SchedulerTickSummary:
       type: object
       description: |

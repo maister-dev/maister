@@ -1,5 +1,14 @@
 # Platform ACP runner catalog domain
 
+## ADR-140 workspace lifecycle boundary (Designed)
+
+ACP/session operations remain live-execution concerns. Archive refuses a run
+with active assignment, takeover, or actionable HITL and never erases ACP
+handles or session history merely to make a historical workbench removable.
+After `removed_at`, runner/recovery entry points refuse before calling ACP. A
+combined Stop & Archive/Drop stops first; a later preservation/removal failure
+leaves the parked run and present worktree retryable rather than reviving ACP.
+
 > **M42 — Unified runner & session model (Implemented).** Runner bindings move from
 > the per-step `flow_runner_remaps` to **per-slot** > `(project_id, flow_revision_id, slot_key)` rows set at flow-connect / first
 > launch, covering every session and consensus slot (never deduped by intent);
