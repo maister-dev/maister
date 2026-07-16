@@ -134,27 +134,55 @@ async function loadRunContext(
   };
 }
 
-async function setPhaseFailed(
+// Terminalize an attempt, but ONLY while it still sits on the phase this sweep
+// observed. Every candidate here comes from a lock-free pre-read
+// (`loadSweepCandidates` / `loadActiveAttempt`), and the W5 arm deliberately does
+// not consult `hasSyncDriver` — the cap must be able to kill a LIVE in-process
+// resolver — so these writes genuinely race that resolver's own finalize.
+//
+// The predicate is the EXACT observed phase, not `notInArray(TERMINAL_PHASES)`: a
+// set guard still wins against a driver that has merely advanced (agent_running →
+// pushing) and would let the sweep tear down a resolver mid-push. `false` means the
+// row moved under us — the attempt is no longer ours and NO side effect may run.
+async function casPhaseFailed(
   db: Db,
   attemptId: string,
+  expectedPhase: string,
   errorCode: string,
   errorMessage: string,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(runSyncAttempts)
     .set({ phase: "failed", errorCode, errorMessage, updatedAt: new Date() })
-    .where(eq(runSyncAttempts.id, attemptId));
+    .where(
+      and(
+        eq(runSyncAttempts.id, attemptId),
+        eq(runSyncAttempts.phase, expectedPhase),
+      ),
+    )
+    .returning({ id: runSyncAttempts.id });
+
+  return rows.length > 0;
 }
 
-async function setPhaseSucceeded(
+async function casPhaseSucceeded(
   db: Db,
   attemptId: string,
+  expectedPhase: string,
   extra: { headShaAfter: string; pushed: boolean },
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(runSyncAttempts)
     .set({ phase: "succeeded", ...extra, updatedAt: new Date() })
-    .where(eq(runSyncAttempts.id, attemptId));
+    .where(
+      and(
+        eq(runSyncAttempts.id, attemptId),
+        eq(runSyncAttempts.phase, expectedPhase),
+      ),
+    )
+    .returning({ id: runSyncAttempts.id });
+
+  return rows.length > 0;
 }
 
 // Free the shared lifecycle slot this attempt holds — idempotent (guarded on
@@ -210,14 +238,31 @@ async function failAgentAttemptToReview(
     errorMessage: string;
     restore: boolean;
   },
-): Promise<void> {
+): Promise<boolean> {
+  // CAS BEFORE the restore (claim-before-side-effect). `args.attempt` is a
+  // lock-free pre-read, so the in-process resolver may have settled since — and a
+  // settle can mean a LANDED push. `restoreWorktree` past that point resets the
+  // local tree to pre-sync while origin keeps the resolved commit, which is the
+  // divergence `sync-target.ts`'s `pushCommitted` flag exists to forbid. Losing the
+  // CAS means the attempt is no longer ours and no side effect below may run.
+  const won = await casPhaseFailed(
+    db,
+    args.attempt.id,
+    args.attempt.phase,
+    args.errorCode,
+    args.errorMessage,
+  );
+
+  if (!won) return false;
+
   if (args.restore) {
     await restoreWorktree(args.ctx.worktree, args.attempt.headShaBefore);
   }
-  await setPhaseFailed(db, args.attempt.id, args.errorCode, args.errorMessage);
   await releaseClaim(db, args.attempt.workspaceId);
   await markSyncReviewFromRunning(args.attempt.runId, { db });
   await promoteNextPending({ db, pool: poolForRunKind(args.ctx.runKind) });
+
+  return true;
 }
 
 export type ReconcileSyncOutcome = {
@@ -266,12 +311,17 @@ export async function recoverSyncAttemptOnReconcile(args: {
 
   if (!ctx) {
     // No workspace — cannot act on git; just terminalize the ledger + claim.
-    await setPhaseFailed(
+    const won = await casPhaseFailed(
       db,
       attempt.id,
+      attempt.phase,
       "CRASH",
       "sync recovery: run context gone",
     );
+
+    if (!won) {
+      return { window: args.liveSessionId ? "w2" : "w3", outcome: "noop" };
+    }
     await releaseClaim(db, attempt.workspaceId);
 
     return { window: args.liveSessionId ? "w2" : "w3", outcome: "aborted" };
@@ -378,7 +428,16 @@ export async function recoverSyncAttemptOnReconcile(args: {
     }
   }
 
-  await setPhaseSucceeded(db, attempt.id, { headShaAfter, pushed });
+  const settled = await casPhaseSucceeded(db, attempt.id, attempt.phase, {
+    headShaAfter,
+    pushed,
+  });
+
+  if (!settled) {
+    // An in-process finalize terminalized this attempt between our pre-read and
+    // here. It owns the ledger and the claim — leave both alone.
+    return { window: "w3", outcome: "noop" };
+  }
   if (attempt.headShaBefore && headShaAfter !== attempt.headShaBefore) {
     // HEAD moved (decision 13) — restart the auto-promotion grace window.
     await db
@@ -540,16 +599,34 @@ export async function runSyncRecoverySweep(
       attempt.agentRunningSince !== null &&
       attempt.agentRunningSince.getTime() < cutoffMs
     ) {
+      // CAS FIRST, on the EXACT observed phase. This arm deliberately does not
+      // consult `hasSyncDriver` — the cap must be able to kill a LIVE in-process
+      // resolver — so it races that resolver's own finalize, and `attempt` is a
+      // lock-free pre-read. If the resolver has advanced to `verifying`/`pushing`
+      // (or already settled), the CAS loses and we must not touch it: tearing down
+      // a session mid-push, or restoring the worktree after the push LANDED, is the
+      // divergence `sync-target.ts`'s `pushCommitted` flag forbids.
+      const won = await casPhaseFailed(
+        db,
+        attempt.id,
+        "agent_running",
+        "CRASH",
+        `sync resolver exceeded the ${SYNC_ATTEMPT_MAX_MINUTES}min active-time cap`,
+      );
+
+      if (!won) {
+        log.info(
+          { window: "w5", runId: attempt.runId, attempt: attempt.id },
+          "sync recovery: resolver advanced or settled concurrently — cap kill skipped",
+        );
+
+        continue;
+      }
+
       const live = liveSyncSessionFor(records, attempt.runId);
 
       if (live) await del(live.sessionId).catch(() => undefined);
       await restoreWorktree(cand.worktree, attempt.headShaBefore);
-      await setPhaseFailed(
-        db,
-        attempt.id,
-        "CRASH",
-        `sync resolver exceeded the ${SYNC_ATTEMPT_MAX_MINUTES}min active-time cap`,
-      );
       await releaseClaim(db, attempt.workspaceId);
       await markSyncReviewFromRunning(attempt.runId, { db });
       await promoteNextPending({ db, pool: poolForRunKind(cand.runKind) });
@@ -565,25 +642,96 @@ export async function runSyncRecoverySweep(
     // W1/W4: a MECHANICAL sync orphaned by a restart — no in-proc driver owns it.
     // A live in-flight mechanical sync in THIS process IS registered, so
     // `hasSyncDriver` excludes it (the skip-vs-abort discriminant).
-    if (
-      cand.attempt.mode === "mechanical" &&
-      (attempt.phase === "starting" || attempt.phase === "rebasing") &&
-      !hasSyncDriver(attempt.runId)
-    ) {
-      await restoreWorktree(cand.worktree, attempt.headShaBefore);
-      await setPhaseFailed(
+    //
+    // EVERY non-terminal mechanical phase must reach this arm. The mechanical
+    // driver writes starting → rebasing → verifying → pushing, and a mechanical
+    // sync never leaves `Review` — so reconcile, which only owns `Running` rows,
+    // never classifies it, and every other `releaseSyncClaim` lives in
+    // `sync-target.ts` and dies with the process. This is its ONLY cross-restart
+    // release: a phase omitted here strands `lifecycle_operation_state='claiming'`
+    // forever, permanently refusing promote AND all six lifecycle ops with no exit
+    // but DB surgery. `loadSweepCandidates` already filters terminal phases, and
+    // `mode === "mechanical"` excludes `agent_running`, so the phase list is
+    // exactly "whatever is left" — never re-enumerate it here.
+    if (cand.attempt.mode === "mechanical" && !hasSyncDriver(attempt.runId)) {
+      // `pushing` is past the point of no return: `pushWithLease` may have LANDED
+      // before the crash and nothing records that durably, so the two outcomes need
+      // OPPOSITE recoveries. Ask origin. Restoring after a landed push resets the
+      // local tree to pre-sync while origin (and its PR) keep the rebased commit —
+      // manufacturing the divergence `sync-target.ts`'s `pushCommitted` flag exists
+      // to forbid. Phases below `pushing` are local-only and safe to abort.
+      let landedHeadSha: string | null = null;
+
+      if (attempt.phase === "pushing") {
+        const pushCtx = await loadRunContext(db, attempt.runId);
+        const head = await headCommit({ worktreePath: cand.worktree }).catch(
+          () => null,
+        );
+        const remoteHead = pushCtx
+          ? await remoteBranchHead({
+              projectRepoPath: pushCtx.repo,
+              remote: "origin",
+              branch: pushCtx.branch,
+            }).catch(() => null)
+          : null;
+
+        if (
+          head &&
+          remoteHead &&
+          remoteHead.toLowerCase() === head.toLowerCase()
+        ) {
+          landedHeadSha = head;
+        }
+      }
+
+      if (landedHeadSha) {
+        const settled = await casPhaseSucceeded(db, attempt.id, attempt.phase, {
+          headShaAfter: landedHeadSha,
+          pushed: true,
+        });
+
+        if (settled) {
+          await releaseClaim(db, attempt.workspaceId);
+          orphanOperationsAborted += 1;
+          log.warn(
+            {
+              window: "w4b",
+              runId: attempt.runId,
+              attempt: attempt.id,
+              headShaAfter: landedHeadSha,
+            },
+            "sync recovery: orphaned mechanical push had already LANDED — settled forward, released claim",
+          );
+        }
+
+        continue;
+      }
+
+      const won = await casPhaseFailed(
         db,
         attempt.id,
+        attempt.phase,
         "CRASH",
         "mechanical sync orphaned by restart (no in-proc driver)",
       );
+
+      if (!won) continue;
+
+      // Never restore out of `pushing`: an unproven push is not a missed push (the
+      // origin read may simply have failed), and the live path's own lease-rejected
+      // branch KEEPS the local rebase rather than restoring it.
+      if (attempt.phase !== "pushing") {
+        await restoreWorktree(cand.worktree, attempt.headShaBefore);
+      }
       await releaseClaim(db, attempt.workspaceId);
       orphanOperationsAborted += 1;
       log.warn(
         {
-          window: attempt.phase === "rebasing" ? "w4" : "w1",
+          window: attempt.phase === "starting" ? "w1" : "w4",
+          phase: attempt.phase,
           runId: attempt.runId,
           attempt: attempt.id,
+          restored: attempt.phase !== "pushing",
         },
         "sync recovery: aborted orphaned mechanical sync, released claim (run stays Review)",
       );
