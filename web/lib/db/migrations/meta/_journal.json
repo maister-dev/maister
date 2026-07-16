@@ -722,6 +722,13 @@
       "when": 1784200167000,
       "tag": "0106_branch_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1784208023042,
+      "tag": "0110_loud_champions",
+      "breakpoints": true
     }
   ]
 }

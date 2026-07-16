@@ -3119,6 +3119,94 @@ export const evaluationLaunchBatchItems = pgTable(
   }),
 );
 
+// M48 (ADR-144 T7.2): a versioned Evaluation Suite — the benchmark/regression
+// PARENT that sits OUTSIDE the one-task Study boundary. It names a task set +
+// profile; each scheduled scan generates ONE one-task Study per task (every
+// generated Study stays one project/task, D2). A `regression` suite is triggered
+// by a package-revision change; a `scheduled` suite by its cadence. The M24
+// scheduler drives it — no second clock.
+export const evaluationSuites = pgTable(
+  "evaluation_suites",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["scheduled", "regression"] })
+      .notNull()
+      .default("scheduled"),
+    // Immutable-per-version definition: { taskIds, profileId, trigger? }. Bumped
+    // (version+1) on any edit so longitudinal metrics can attribute drift to a
+    // definition revision (calibration/drift versioning).
+    definition: jsonb("definition")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    version: integer("version").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(true),
+    // For a `regression` suite: the package revision last scanned, so a scan only
+    // fires when the revision actually changed (package-revision-change trigger).
+    lastTriggerRevision: text("last_trigger_revision"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProject: index("evaluation_suites_project_idx").on(t.projectId),
+    kindCheck: check(
+      "evaluation_suites_kind_check",
+      sql`${t.kind} in ('scheduled', 'regression')`,
+    ),
+  }),
+);
+
+// M48 (ADR-144 T7.2): the immutable link from a suite scan round to the one-task
+// Study it generated. The (suite, task, scan_key) UNIQUE is the capped-scan dedup
+// unit — a re-scan of the same round never generates a duplicate Study (poison-
+// suite / at-least-once safe).
+export const evaluationSuiteStudies = pgTable(
+  "evaluation_suite_studies",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => evaluationSuites.id, { onDelete: "cascade" }),
+    studyId: text("study_id")
+      .notNull()
+      .references(() => evaluationStudies.id, { onDelete: "cascade" }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "restrict" }),
+    // The suite definition version this Study was generated under (drift attrib).
+    suiteVersion: integer("suite_version").notNull(),
+    // Deterministic scan-round key (e.g. `${suiteVersion}:${triggerRevision}`) —
+    // the idempotency unit for a capped scan.
+    scanKey: text("scan_key").notNull(),
+    generatedAt: timestamp("generated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxSuite: index("evaluation_suite_studies_suite_idx").on(t.suiteId),
+    uniqScan: unique("evaluation_suite_studies_scan_uq").on(
+      t.suiteId,
+      t.taskId,
+      t.scanKey,
+    ),
+  }),
+);
+
 // M42 (ADR-114): per-(run, session) runner state — the SOLE source of truth for
 // a run's runner(s). One row per logical session (`default` / solo / named) for a
 // flow run; exactly one `default` row for a scratch/agent run. The run-level
