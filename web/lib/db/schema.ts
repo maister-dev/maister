@@ -3207,6 +3207,71 @@ export const evaluationSuiteStudies = pgTable(
   }),
 );
 
+// M48 (ADR-144 T7.3): the append-only audit ledger of human-approved recipe
+// standardizations. NOT automatic Run promotion — a project admin copies a
+// winning immutable recipe into a project-default slot ONLY after a conclusive
+// human verdict + a fresh compatibility/trust preflight. Each row is a revision
+// (standardize or rollback); the CURRENT project default is the highest revision
+// for a slot. Rollback appends a revision restoring a prior definition — the two-
+// phase/supersede/rollback contract, fully audited (source study/recipe/verdict).
+export const evaluationStandardizedRecipes = pgTable(
+  "evaluation_standardized_recipes",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    // The project-default slot this revision targets (default `default`).
+    slot: text("slot").notNull().default("default"),
+    revision: integer("revision").notNull(),
+    action: text("action", { enum: ["standardize", "rollback"] }).notNull(),
+    // Provenance of the standardized recipe (nullable so history survives source
+    // deletion; the copied definition below is self-contained).
+    sourceStudyId: text("source_study_id").references(
+      () => evaluationStudies.id,
+      { onDelete: "set null" },
+    ),
+    sourceRecipeId: text("source_recipe_id").references(
+      () => evaluationRecipes.id,
+      { onDelete: "set null" },
+    ),
+    sourceVerdictId: text("source_verdict_id").references(
+      () => evaluationHumanVerdicts.id,
+      { onDelete: "set null" },
+    ),
+    // The copied immutable recipe definition + digest (self-contained snapshot).
+    definition: jsonb("definition")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    // For a `rollback` action: the revision whose definition was restored.
+    rolledBackToRevision: integer("rolled_back_to_revision"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProjectSlot: index("evaluation_standardized_recipes_project_slot_idx").on(
+      t.projectId,
+      t.slot,
+    ),
+    uniqRevision: unique("evaluation_standardized_recipes_revision_uq").on(
+      t.projectId,
+      t.slot,
+      t.revision,
+    ),
+    actionCheck: check(
+      "evaluation_standardized_recipes_action_check",
+      sql`${t.action} in ('standardize', 'rollback')`,
+    ),
+  }),
+);
+
 // M42 (ADR-114): per-(run, session) runner state — the SOLE source of truth for
 // a run's runner(s). One row per logical session (`default` / solo / named) for a
 // flow run; exactly one `default` row for a scratch/agent run. The run-level
