@@ -226,9 +226,16 @@ flowchart TD
   a `flag` also clears them — `triage_set` is authoritative for the enqueue
   intent), the `triage_status`, the `task_activity`, and the token audit in ONE
   `db.transaction`.
+- (Designed) A verdict `flowId` MUST resolve within the acting project against
+  `flows.id` OR `flows.flow_ref_id` (exact match — `flows_project_ref_uq` makes the
+  ref unique per project), the resolved `flows.id` — never the ref — MUST be what is
+  persisted to `tasks.flow_id`, and a value matching neither MUST be refused
+  `MaisterError("CONFIG")` (422) whose message names the expected forms, the received
+  value, and the project's valid refs.
 - `triage_set` MUST reject a verdict whose `flowId` is not launchable
   (`enablementState ∉ {Enabled, UpdateAvailable}` OR `trustStatus = untrusted`)
-  with `MaisterError("CONFIG")` (422) at triage time.
+  with `MaisterError("CONFIG")` (422) at triage time — the launchability gate runs on
+  the RESOLVED id, so a ref MUST NOT bypass it.
 - `flag` MUST be mutually exclusive with verdict fields (`flag` + any verdict →
   `MaisterError("CONFIG")`), and `enqueue:true` MUST require a resolvable `flowId`
   — from the body OR the task's existing `flow_id` (else 422 `CONFIG`).

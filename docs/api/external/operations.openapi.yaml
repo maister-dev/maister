@@ -113,8 +113,11 @@ paths:
         identified by `slug`. The `projectId` is derived server-side from the
         URL slug and compared against the token's project — mismatch → 404.
 
-        Validates that `flowId` belongs to the project; the check returns 422
-        on failure.
+        Validates that `flowId` belongs to the project — accepted as either the
+        `flows.id` UUID or the project's `flows.flow_ref_id`, both resolving to
+        the same flow (the resolved UUID is persisted). The check returns 422 on
+        failure, naming the expected forms, the received value, and the
+        project's valid refs.
 
         Writes a `token_audit_log` row with scope `tasks:create` after success.
       operationId: extCreateTask
@@ -406,7 +409,8 @@ paths:
         Scope `tasks:triage`. The triager's verdict op — ONE transactional
         update of the task's launch-verdict fields plus the triage-status
         stamp. At least one body field is required; every provided field is
-        validated against server state (`flowId` ∈ project flows, `runnerId`
+        validated against server state (`flowId` ∈ project flows — the
+        `flows.id` UUID **or** the project's `flows.flow_ref_id`, `runnerId`
         ∈ enabled runner catalog, `promotionMode` ∈ enum, `targetBranch` =
         git ref-name shape). Records a `triage_set` activity entry carrying
         the payload. Writes a `token_audit_log` row with scope `tasks:triage`;
@@ -494,8 +498,10 @@ paths:
             Request body failed schema validation, or a `CONFIG` precondition
             was violated (ADR-112, Implemented) — `flag` sent with a verdict field
             (mutually exclusive), `enqueue` with no resolvable `flowId` (or with
-            `flag`), or a verdict `flowId` that is disabled / untrusted /
-            pin-divergent.
+            `flag`), a verdict `flowId` matching neither `flows.id` nor the
+            project's `flows.flow_ref_id` (the message names the expected forms,
+            the received value, and the project's valid refs), or a verdict
+            `flowId` that is disabled / untrusted / pin-divergent.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -2493,8 +2499,13 @@ components:
           type: string
           minLength: 1
           description: |
-            Flow to run the task with; must belong to the project and (ADR-112,
-            Implemented) be launchable (enabled + trusted + not pin-divergent).
+            Flow to run the task with. Accepted as EITHER the flow's `flows.id`
+            UUID OR the project's human `flows.flow_ref_id` (e.g. `bugfix` — the
+            value returned as `ExtFlowSummary.ref`); both resolve to the same
+            flow, and the resolved UUID is what is persisted to `tasks.flow_id`.
+            Must belong to the project and (ADR-112, Implemented) be launchable
+            (enabled + trusted + not pin-divergent). A value matching neither
+            form is refused 422 `CONFIG`.
         runnerId:
           type: string
           minLength: 1
@@ -2559,12 +2570,16 @@ components:
       properties:
         id:
           type: string
-          description: The flow id (the value passed back as `ExtTriageBody.flowId`).
+          description: |
+            The flow's UUID (`flows.id`). EITHER this or `ref` may be passed
+            back as a request body's `flowId` (e.g. `ExtTriageBody.flowId`) —
+            both resolve to this flow.
         ref:
           type: string
           description: |
             Package-qualified flow reference (`<flowRefId>`), stable across the
-            package's revisions.
+            package's revisions. Accepted interchangeably with `id` wherever a
+            `flowId` is read from a request body.
         metadata:
           type: object
           description: |
@@ -3007,7 +3022,9 @@ components:
           description: Finer-grained stage within the task lifecycle.
         flowId:
           type: string
-          description: ID of the flow configured for this task.
+          description: |
+            The configured flow's UUID (`flows.id`) — always the resolved id,
+            even when the task was created or triaged using a `flow_ref_id`.
         latestRunId:
           type: string
           format: uuid

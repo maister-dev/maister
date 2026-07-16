@@ -81,7 +81,9 @@ examples pass `ref`. Phase 1 resolves that contradiction explicitly.
 - **AC7** — `ExtFlowSummary.id`/`ref` docs state that **either** may be passed as
   `ExtTriageBody.flowId`; no spec sentence contradicts the examples.
 - **AC8** — Full suites green: `maister-web` unit+integration, `@maister/mcp`, `tsc`,
-  scoped eslint; `pnpm validate:docs` + `npx @redocly/cli lint` clean.
+  scoped eslint; `pnpm validate:docs` clean; `npx @redocly/cli lint` reports **zero NEW
+  problems vs the pinned baseline** (see T1.1 — 1 pre-existing error + 2 warnings live
+  in the untouched experiments schema and are NOT in scope).
 
 ## Contract surfaces → spec file
 
@@ -113,24 +115,43 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
 
 ### Phase 1 — SPECS (SDD gate — no code before this is green)
 
-- [ ] **T1.1 — API contract.** `docs/api/external/operations.openapi.yaml`: apply
+- [x] **T1.1 — API contract.** `docs/api/external/operations.openapi.yaml`: apply
   every row of the table above marked as changing. Do **not** touch the runs-launch
   or delegate flowId prose. Keep `type: string` (R9).
-  → verify: `npx @redocly/cli lint docs/api/external/operations.openapi.yaml` → 0 errors;
-  the `verdict` examples are unchanged (they become *true* in Phase 3, AC1).
-- [ ] **T1.2 — System analytics.** `docs/system-analytics/triage.md` — rewrite the
-  line-184 sentence to describe UUID-or-ref resolution and add ONE Expectation:
-  *"A verdict `flowId` MUST resolve against `flows.id` OR `flows.flow_ref_id` within
-  the project; the resolved UUID (never the ref) is persisted to `tasks.flow_id`;
-  an unresolvable value MUST return `CONFIG` naming expected/received/validRefs."*
-  `docs/system-analytics/external-operations.md` — one mirroring bullet (R7:
-  cross-reference triage.md, do not duplicate). Tag `(Implemented)` at Phase 3 end,
-  `(Designed)` until then (R6).
-  → verify: `pnpm validate:docs` green; Expectations obey R5a (normative, testable, ≤12).
-- [ ] **T1.3 — Spec consistency gate.** Re-read the changed spec end-to-end: no
-  sentence may contradict the examples (AC7); every requirement R1-R9 is traceable to
-  a spec sentence.
-  → verify: checklist walked; AC7 satisfied.
+  → verify: `npx @redocly/cli lint docs/api/external/operations.openapi.yaml` reports
+  **zero NEW problems vs the pinned baseline**. "0 errors" is NOT achievable: the file
+  carries 1 pre-existing error + 2 warnings, all in the **untouched** experiments
+  schema — pinned by `{ruleId, pointer}`:
+  `nullable-type-sibling` @ `#/components/schemas/ExtExperimentDTO/properties/verdict/nullable`;
+  `no-unused-components` @ `#/components/schemas/ExtExperimentStatus`;
+  `no-unused-components` @ `#/components/schemas/ExtExperimentRubric`.
+  Do NOT fix the experiments schema here (R9 — unrelated section).
+  The `verdict` examples stay unchanged (they become *true* in Phase 3, AC1).
+- [x] **T1.2 — System analytics.** `docs/system-analytics/triage.md` — added ONE
+  Expectation (resolution + UUID-persistence + structured refusal) tagged `(Designed)`,
+  and amended the launchability bullet to state the gate runs on the **resolved** id, so
+  a ref cannot bypass it (AC6). Flip `(Designed)` → `(Implemented)` at T3.5 (R6).
+  **Corrections vs the original task:** (a) **no mirroring bullet** in
+  `external-operations.md` — duplicating one contract across two docs violates **R7**;
+  the wire contract is canonical in the OpenAPI (T1.1, per R3), the domain invariant in
+  `triage.md`. (b) `triage.md:184` left **alone** — it is ADR-112 historical rationale
+  ("today … only" describes the PRE-guard state), not a live contract statement;
+  retrofitting it is out of scope (R9).
+  **R5a cap note:** `triage.md` Expectations was already 14 bullets (and
+  `external-operations.md` 18) — both pre-existing over the ≤12 cap; splitting those
+  domains is not in this feature's scope.
+  → verify: `pnpm validate:docs` green (4/4 mermaid); grep proves the bullet landed AND
+  that `flow_ref_id` does NOT appear in `external-operations.md` (R7 respected).
+- [x] **T1.3 — Spec consistency gate.** Audited every `flowId` sentence in the ext
+  spec: none contradicts the `flowId: "bugfix"` examples (AC7 ✔). Traceability:
+  R1/R3/R4/R5 → `ExtTriageBody.flowId` + task-create prose + the 422 description;
+  R2 → `triage.md` Expectation ("exact match"); R7 → amended launchability bullet +
+  the OpenAPI enablement/trust re-validation prose; R9 → verified `flowId` carries no
+  `format: uuid` (type stayed `string`). R6's launch half (`PRECONDITION`) and R8 (DRY)
+  are code-level, NOT wire contracts — correctly absent from the spec, tracked here.
+  **Left alone (R9):** `RunDTO.flowId` (~3084) — a response echo of `runs.flow_id`;
+  the ext runs route never accepts a ref (ADR-085), so it contradicts nothing.
+  → verify: audit walked; AC7 satisfied.
 
 ### Phase 2 — Core primitive (TDD: RED → GREEN → refactor)
 
