@@ -32,22 +32,26 @@ Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 - Phase 2 T2.1 **partial** `6f88dd5f2` — migration **0104** (studies/recipes/
   participants) + 7 real-PG integration tests green.
 
-**▶ NEXT (resume here): PHASE 3 + PHASE 4 COMPLETE — next is PHASE 5.** T4.1
-agent-launch integration seam DONE this session (token scopes + evaluator MCP
-facade + ext routes + OpenAPI + facade readers + seal + launch/provisioning +
-aggregation worker making FSM `judging→aggregating→terminal` LIVE; 7-test
-`judge-seam.integration.test.ts` green, full eval slice green). Order: **Phase 5**
-(T5.1 admin Evaluations settings UI over the built config services; T5.2 full-page
-creation + N-way Study Lab + wires the T3.3 `evaluation_dispatch` scheduler arm +
-`GET .../{studyId}/stream` SSE route + T2.3 capture pipeline + T2.2/T3.1/T4.3 route
-surfaces + production judge token→MCP materialization; T5.3 E2E; T5.4 owner-gated
-deploy — SKIP) → **Phase 6** (M47) → **Phase 7** (M48). CO-EVOLVE debts to land
-with Phase 5: T2.3 capture+routes+GC; T2.2 HTTP routes + legacy `/experiments`
-adapters; T3.1 OpenAPI+route-authz E2E; T3.2 live ObjectiveFactSource reader +
-distribution UI; T3.3 dispatcher arm (enum+budget+CTE+tick) + SSE route +
-poison/backoff; T4.3 human-session verdict/review routes; T4.1 supervisor MCP
-materialization of the judge token + real checking→judging dispatcher call to
-`launchJudgePanel` + bounded-repair child spawn.
+**▶ NEXT (resume here): PHASE 3 + PHASE 4 COMPLETE; PHASE 5 IN PROGRESS.** Done this
+session: (1) T4.1 agent-launch seam `60c3f1d79` — token scopes + evaluator MCP facade +
+ext routes + OpenAPI + facade readers + seal + launch/provisioning + aggregation worker
+making FSM `judging→aggregating→terminal` LIVE (7-test `judge-seam.integration.test.ts`).
+(2) T2.2/T4.3 co-evolve session-auth route surface `5b4d386b9` —
+`/api/projects/[slug]/evaluations/*` study CRUD (list/create/get/patch If-Match) +
+participants (add-observed/list/remove) + verdicts (record/list, human-only, zero-citation
+ack) + review resolve (If-Match) over built services (+ new readers `listStudies`/
+`getStudyForProject`/`listParticipants`/`getReviewForProject` + `study-dtos.ts`); 6-test
+`routes.integration.test.ts` (RBAC 403 / stale 409 / missing-If-Match 422 / cross-project
+404). **NEXT ORDER (still Phase 5):** T3.3 `evaluation_dispatch` scheduler arm +
+execution-start service (create execution + `resolveEffectiveProfile` snapshot + drive
+queued→capturing→checking→judging→`launchJudgePanel`) + immediate kick + `GET
+.../{studyId}/stream` SSE route + poison/backoff → T2.3 capture pipeline + evidence routes +
+GC → T5.1 admin Evaluations settings UI → T5.2 full-page creation + N-way Study Lab (over
+the routes just landed) + production judge token→MCP materialization → T5.3 E2E → T5.4
+owner-gated deploy (SKIP) → **Phase 6** (M47) → **Phase 7** (M48). Remaining CO-EVOLVE
+debts: T2.2 legacy `/experiments` adapters; T3.1 OpenAPI + route-authz E2E; T3.2 live
+ObjectiveFactSource reader + distribution UI; T4.1 supervisor MCP materialization of the
+judge token + bounded-repair child spawn.
 
 **DONE this session (all green, committed on feature/evaluation-lab):**
 Phase 2 COMPLETE — T2.1 `888835b7c`, T2.2 `1f6f5b7ac`+`c06895b59`, T2.3 `9ae4a0775`.
