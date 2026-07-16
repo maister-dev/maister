@@ -2068,7 +2068,11 @@ paths:
         (`requireProjectAction("createTask")`). The `projectId` is
         resolved from the URL `slug` (server-state), never from the body.
 
-        Validates that `flowId` belongs to the project. Runner selection is not
+        Validates that `flowId` belongs to the project — accepted as either the
+        `flows.id` UUID or the project's `flows.flow_ref_id`, both resolving to
+        the same flow (the resolved UUID is persisted to `tasks.flow_id`). An
+        unresolvable value is refused `CONFIG` naming the expected forms, the
+        received value, and the project's valid refs. Runner selection is not
         part of task creation; one-run overrides belong to `POST /api/runs`.
 
         Source: `web/app/api/projects/[slug]/tasks/route.ts`.
@@ -2148,7 +2152,9 @@ paths:
         flow/runner/branch/policy edits here in ONE transaction before
         launching. Partial body, at least one field; an explicit `null`
         CLEARS a field (SET/CLEAR symmetric). `flowId` is validated against
-        the project's flows, `runnerId` against the enabled runner catalog,
+        the project's flows — accepted as either the `flows.id` UUID or the
+        project's `flows.flow_ref_id`, with the resolved UUID persisted —
+        `runnerId` against the enabled runner catalog,
         `targetBranch` against git ref-name shape. Does NOT touch
         `triage_status` — that is the triager's mark (ext triage op) or the
         send-to-triage action.
@@ -14201,9 +14207,12 @@ components:
           type: string
           minLength: 1
           description: |
-            Optional per-launch Flow override. The server derives the project
-            from `taskId` and refuses a Flow that is not enabled for that same
-            project. Omitted means the task's current Flow.
+            Optional per-launch Flow override, accepted as either the `flows.id`
+            UUID or the project's `flows.flow_ref_id` (both resolve to the same
+            Flow). The server derives the project from `taskId` and refuses a
+            Flow that is not enabled for that same project; a value matching
+            neither form is refused `PRECONDITION`. Omitted means the task's
+            current Flow.
         runnerId:
           type: string
           minLength: 1

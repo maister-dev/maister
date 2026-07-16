@@ -96,6 +96,9 @@ examples pass `ref`. Phase 1 resolves that contradiction explicitly.
 | `ExtTaskDto.flowId` (~3008) | same | clarify: always the **resolved UUID** |
 | `POST /api/v1/ext/runs` (~1092) | same | **no change** — correctly refuses `flowId` (ADR-085) |
 | delegate / plan `target.flowId` | same | **no change** — Phase-3 stub |
+| **`POST /api/projects/{slug}/tasks`** (createTask) | **`docs/api/web.openapi.yaml`** (~2071) | UUID-or-ref + structured `CONFIG` refusal |
+| **`PATCH …/tasks/{number}`** (updateTask verdict) | **`docs/api/web.openapi.yaml`** (~2150) | UUID-or-ref, resolved UUID persisted |
+| **`POST /api/runs`** → `PostRunBody.flowId` (launch override) | **`docs/api/web.openapi.yaml`** (~13922) | UUID-or-ref; miss → `PRECONDITION` |
 | Triage domain behavior (`validateVerdictRefs` at line 184; Expectations ~229/233) | `docs/system-analytics/triage.md` | describe ref-or-UUID resolution; add a testable Expectation (R5a: normative, verbatim ids, ≤12 bullets) |
 | ext facade contract | `docs/system-analytics/external-operations.md` | one Expectations bullet |
 | MCP tool descriptions (in-code SSOT shipped to agents) | `mcp/src/tools.ts` — **`triage_set.flowId` + `task_create.flowId` ONLY** | "UUID or ref (e.g. `aif-bugfix`), as returned by `flow_list`" |
@@ -247,6 +250,18 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
 Integration: rebase onto `main`, owner FF-merges. Ask before push.
 **Do not amend or rewrite existing `main` commits** (incl. `b95add686`) — this
 branch's own plan commit may be amended freely.
+
+## Verify finding (2026-07-14, `/aif-verify`)
+
+The contract-surface table above originally listed **only** the ext OpenAPI. The
+D2 decision (resolve at the shared service layer, incl. run-launch) widened the
+change to three **web-tier** operations, but the table was never re-derived from
+the diff — so `docs/api/web.openapi.yaml` still documented UUID-only validation
+while the code accepted refs. `/aif-verify` caught it by enumerating surfaces
+from the DIFF rather than the plan (the exact `code-lands-docs-lie` class this
+feature exists to fix). Fixed in the same pass; the three web rows are now in
+the table above. Lesson: a scope decision that widens the call sites MUST
+re-derive the contract-surface list.
 
 ## Non-goals
 
