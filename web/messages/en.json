@@ -4398,6 +4398,54 @@
     "noReadyMethods": "No ready methods",
     "noEnabledPanels": "No enabled panels"
   },
+  "evaluationsControlled": {
+    "preflight": {
+      "ok": "Preflight passed — the recipe is compatible with the selected Flow.",
+      "okWithWarnings": "Preflight passed with advisory warnings.",
+      "refusalsLabel": "Blocking preflight refusals",
+      "warningsLabel": "Advisory preflight warnings",
+      "refusal": {
+        "ownership_mismatch": "The selected Flow revision belongs to a different project or does not match the recipe pin.",
+        "flow_untrusted": "The selected Flow's package is not trusted.",
+        "flow_not_launchable": "The selected Flow is not in a launchable state.",
+        "engine_incompatible": "The Flow declares an engine range incompatible with this platform.",
+        "schema_version_unsupported": "The Flow manifest schema version is unsupported.",
+        "input_contract_drift": "The Flow input contract changed since the recipe was frozen (stale package revision).",
+        "artifact_contract_drift": "The Flow output contract changed since the recipe was frozen (stale package revision).",
+        "form_field_unknown": "The recipe supplies a form field the Flow does not declare.",
+        "form_required_missing": "A required Flow form field is missing from the recipe.",
+        "artifact_requirement_uncovered": "The Flow does not produce an evidence artifact the method requires.",
+        "slot_unknown": "The recipe binds a slot the Flow does not declare.",
+        "slot_unbound": "A required Flow slot has no runner binding.",
+        "slot_runner_unavailable": "A pinned runner is missing, disabled, or not ready.",
+        "slot_intent_unsatisfiable": "A runner intent has no compatible host runner.",
+        "overlay_ref_unknown": "A capability overlay reference is not in the project catalog."
+      },
+      "warning": {
+        "slot_intent_soft_mismatch": "A slot's requested model is unavailable; a same-capability runner will be used."
+      }
+    },
+    "preview": {
+      "slotsHeading": "Effective runners",
+      "softMismatch": "Requested model unavailable; a same-capability runner is used.",
+      "softMismatchBadge": "soft match",
+      "policy": "Execution policy",
+      "promotion": "Promotion",
+      "promotionHeld": "Held (evaluation)",
+      "overlay": "Capability overlay",
+      "overlayNone": "None",
+      "overlayCount": "{count} change(s)",
+      "evidence": "Method",
+      "coverage": "Evidence coverage",
+      "coverageNone": "Default",
+      "estimatedAttempts": "Est. judge attempts"
+    },
+    "policy": {
+      "supervised": "Supervised",
+      "assisted": "Assisted",
+      "unattended": "Unattended within policy"
+    }
+  },
   "evaluationsLab": {
     "title": "Evaluation Lab",
     "listIntro": "Compare 2..N runs of a task through reproducible, package-sourced evaluations.",
