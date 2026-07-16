@@ -6,6 +6,7 @@ import type { RevisionGcSummary } from "@/lib/gc/revision-gc";
 import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 import type { PlainAgentDirectoryGcSummary } from "@/lib/gc/plain-agent-directory-gc";
 import type { EvidenceSweepSummary } from "@/lib/evaluations/evidence/gc";
+import type { WorkspaceReconciliationSummary } from "@/lib/gc/workspace-reconciler";
 
 import pino from "pino";
 
@@ -18,6 +19,7 @@ import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { sweepEvaluationEvidence } from "@/lib/evaluations/evidence/gc";
 import { runPlainAgentDirectoryGcSweep } from "@/lib/gc/plain-agent-directory-gc";
+import { runWorkspaceReconciliationSweep } from "@/lib/gc/workspace-reconciler";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
@@ -39,6 +41,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   syncRecovery: Awaited<ReturnType<typeof runSyncRecoverySweep>> | null;
   cost: Awaited<ReturnType<typeof reconcileTerminalCostRollups>> | null;
   workspace: WorkspaceGcSummary | null;
+  workspaceReconciliation: WorkspaceReconciliationSummary | null;
   revision: RevisionGcSummary | null;
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
   ephemeralAgent: EphemeralAgentGcSummary | null;
@@ -63,6 +66,7 @@ const log = pino({
 
 type GcBundleResult = {
   workspace: WorkspaceGcSummary | null;
+  workspaceReconciliation: WorkspaceReconciliationSummary | null;
   revision: RevisionGcSummary | null;
   capabilities: SystemSweepSummary["capabilities"];
   ephemeralAgent: EphemeralAgentGcSummary | null;
@@ -75,6 +79,7 @@ type GcBundleResult = {
 async function runGcBundle(): Promise<GcBundleResult> {
   const errors: string[] = [];
   let workspace: WorkspaceGcSummary | null = null;
+  let workspaceReconciliation: WorkspaceReconciliationSummary | null = null;
   let revision: RevisionGcSummary | null = null;
   let capabilities: SystemSweepSummary["capabilities"] = null;
   let ephemeralAgent: EphemeralAgentGcSummary | null = null;
@@ -89,6 +94,15 @@ async function runGcBundle(): Promise<GcBundleResult> {
 
     errors.push(`workspace sweep failed: ${message}`);
     log.error({ err: message }, "gc bundle workspace threw");
+  }
+
+  try {
+    workspaceReconciliation = await runWorkspaceReconciliationSweep();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`workspace reconciliation sweep failed: ${message}`);
+    log.error({ err: message }, "gc bundle workspace reconciliation threw");
   }
 
   try {
@@ -146,6 +160,16 @@ async function runGcBundle(): Promise<GcBundleResult> {
   }
 
   errors.push(...gcFailureMessages(workspace, revision, capabilities));
+  if (workspaceReconciliation && workspaceReconciliation.retryableFailed > 0) {
+    errors.push(
+      `${workspaceReconciliation.retryableFailed} workspace reconciliation candidate(s) failed (left for retry)`,
+    );
+  }
+  if (workspaceReconciliation && workspaceReconciliation.quarantined > 0) {
+    errors.push(
+      `${workspaceReconciliation.quarantined} workspace reconciliation candidate(s) quarantined for operator review`,
+    );
+  }
   if (ephemeralAgent && ephemeralAgent.failed > 0) {
     errors.push(
       `${ephemeralAgent.failed} ephemeral -ro checkout(s) failed to remove (left for retry)`,
@@ -164,6 +188,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
 
   return {
     workspace,
+    workspaceReconciliation,
     revision,
     capabilities,
     ephemeralAgent,
@@ -253,6 +278,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     brain,
     brainReindex,
     workspace: gc.workspace,
+    workspaceReconciliation: gc.workspaceReconciliation,
     revision: gc.revision,
     capabilities: gc.capabilities,
     ephemeralAgent: gc.ephemeralAgent,

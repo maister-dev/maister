@@ -1075,7 +1075,7 @@ pnpm --filter maister-web typecheck
     allocation writes v2; v1 remains readable but cannot silently gain delete
     authority.
 
-- [ ] **Task 21: RED — encode trust, exact reconstruction, grace, and TOCTOU.**
+- [x] **Task 21: RED — encode trust, exact reconstruction, grace, and TOCTOU.**
   - **Files:** new `web/lib/gc/__tests__/workspace-reconciler.test.ts` and
     integration test, plus existing shared-orphan recovery tests.
   - **Change:** add failing cases for exact v2 reconstruction, ambiguous v1/run
@@ -1091,7 +1091,7 @@ pnpm --filter maister-web typecheck
     ambiguous existing-run observations are held rather than adopted; the
     historical disk-only shape is reportable without deletion.
 
-- [ ] **Task 22: GREEN — implement report-first reconciliation and safe rescue/prune.**
+- [x] **Task 22: GREEN — implement report-first reconciliation and safe rescue/prune.**
   - **Files:** new focused modules under `web/lib/gc/` for enumeration,
     classification, finding persistence, rescue, and action; reuse
     `readMaisterProvenance`, Git worktree helpers, and `removeOwnedWorktree`.
@@ -1110,7 +1110,7 @@ pnpm --filter maister-web typecheck
   - **Acceptance:** no code path can auto-delete on provenance alone; all eight
     gates are repeated immediately before removal.
 
-- [ ] **Task 23: REFACTOR — separate inventory, decision, evidence, and action.**
+- [x] **Task 23: REFACTOR — separate inventory, decision, evidence, and action.**
   - **Files:** modules introduced by Tasks 20-22.
   - **Change:** keep enumeration/read-only evidence, pure classification,
     finding persistence, Git rescue, and removal execution as separate typed
