@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   commitImport: vi.fn(),
   previewImport: vi.fn(),
   assertHoldsLock: vi.fn(),
+  withWorkingDirLock: vi.fn(
+    async (_id: string, operation: () => Promise<unknown>) => operation(),
+  ),
   importMaxBytes: vi.fn(),
   importMaxEntries: vi.fn(),
   importMaxFileBytes: vi.fn(),
@@ -27,6 +30,7 @@ vi.mock("@/lib/local-packages/import", () => ({
 }));
 vi.mock("@/lib/local-packages/lock", () => ({
   assertHoldsLock: mocks.assertHoldsLock,
+  withWorkingDirLock: mocks.withWorkingDirLock,
 }));
 vi.mock("@/lib/instance-config", () => ({
   importMaxBytes: mocks.importMaxBytes,

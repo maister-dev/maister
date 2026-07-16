@@ -829,6 +829,7 @@ export async function addFlowToLocalPackage(opts: {
       throw new MaisterError("PRECONDITION", "local package not found");
     }
     assertLocalPackageCreationReady(pkg);
+    await assertNoLiveLocalPackageAssistants(pkg.id, resolveDb(opts.db));
 
     const manifestPath = path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH);
     const currentManifest = await readTextIfPresent(manifestPath);

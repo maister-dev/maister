@@ -9,7 +9,10 @@ import {
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireGlobalRole } from "@/lib/authz";
-import { assertHoldsLock } from "@/lib/local-packages/lock";
+import {
+  assertHoldsLock,
+  withWorkingDirLock,
+} from "@/lib/local-packages/lock";
 import {
   deleteWorkingDirFile,
   getLocalPackage,
@@ -86,10 +89,8 @@ export async function PUT(
 
     // Lock first, then the file-system side (skill-context: guard before effect).
     await assertHoldsLock(id, parsed.data.sessionId);
-    const file = await writeWorkingDirFile(
-      pkg,
-      segments.join("/"),
-      parsed.data.content,
+    const file = await withWorkingDirLock(id, () =>
+      writeWorkingDirFile(pkg, segments.join("/"), parsed.data.content),
     );
 
     log.debug({ id, op: "put", path: file.path }, "[localPkg.files]");
@@ -120,7 +121,9 @@ export async function DELETE(
     }
 
     await assertHoldsLock(id, parsed.data.sessionId);
-    await deleteWorkingDirFile(pkg, segments.join("/"));
+    await withWorkingDirLock(id, () =>
+      deleteWorkingDirFile(pkg, segments.join("/")),
+    );
 
     log.debug(
       { id, op: "delete", path: segments.join("/") },

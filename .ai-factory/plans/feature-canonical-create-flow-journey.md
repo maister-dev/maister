@@ -519,7 +519,7 @@ path, package name, YAML, form values, Git output, and package bytes.
 
 ### Phase 2 — API, Authorization, and Error Contract
 
-- [ ] **T2.1 — GREEN: make collection create package-plus-Flow only.**
+- [x] **T2.1 — GREEN: make collection create package-plus-Flow only.**
   - Depends on: T1.3 and RED route tests.
   - Modify `web/app/api/studio/local-packages/route.ts` to parse required
     `{name, flow}` with the shared typed schema, derive creator identity
@@ -536,7 +536,7 @@ path, package name, YAML, form values, Git output, and package bytes.
   - Logging: one safe success event in the service; route errors use the
     existing structured handler without request content.
 
-- [ ] **T2.2 — GREEN: add lock-guarded existing-package Flow endpoint.**
+- [x] **T2.2 — GREEN: add lock-guarded existing-package Flow endpoint.**
   - Depends on: T1.3 and T2.1.
   - Add `web/app/api/studio/local-packages/[id]/flows/route.ts`.
   - Resolve `id` from URL to server package row and server working directory;
@@ -549,7 +549,7 @@ path, package name, YAML, form values, Git output, and package bytes.
   - Verify GREEN: nested route test command and integration operation command.
   - Logging: `localPackageId`, `flowId`, `operationId`, and outcome only.
 
-- [ ] **T2.3 — GREEN: expose deterministic recovery retry without widening repair authority.**
+- [x] **T2.3 — GREEN: expose deterministic recovery retry without widening repair authority.**
   - Depends on: T1.3 and RED recovery-route tests.
   - Add `web/app/api/studio/local-packages/[id]/creation-recovery/route.ts`.
     It rejects every non-empty request body with `422`, resolves `{id}` to the
@@ -565,7 +565,7 @@ path, package name, YAML, form values, Git output, and package bytes.
   - Verify GREEN: recovery route unit and recovery integration commands.
   - Logging: safe local-package/operation IDs and outcome only.
 
-- [ ] **T2.4 — GREEN: serialize all affected working-directory writers.**
+- [x] **T2.4 — GREEN: serialize all affected working-directory writers.**
   - Depends on: T1.3 and RED concurrency tests.
   - Extend `web/lib/local-packages/lock.ts` with one scoped mutation-lease
     helper/release discipline, reusing the existing database-backed lease rather

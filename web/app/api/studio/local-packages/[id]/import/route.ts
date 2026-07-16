@@ -21,7 +21,10 @@ import {
   commitImport,
   previewImport,
 } from "@/lib/local-packages/import";
-import { assertHoldsLock } from "@/lib/local-packages/lock";
+import {
+  assertHoldsLock,
+  withWorkingDirLock,
+} from "@/lib/local-packages/lock";
 import { getLocalPackage } from "@/lib/local-packages/service";
 
 const log = pino({
@@ -224,7 +227,9 @@ export async function POST(
     // import lib validates ALL entries before the first write — a reject leaves
     // the working dir unchanged.
     await assertHoldsLock(id, (sessionId as string).trim());
-    const plan = await commitImport(pkg, collected.entries);
+    const plan = await withWorkingDirLock(id, () =>
+      commitImport(pkg, collected.entries),
+    );
 
     log.info(
       { id, fileCount: plan.files.length, totalBytes: plan.totalBytes },

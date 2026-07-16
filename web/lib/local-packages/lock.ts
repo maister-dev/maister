@@ -261,6 +261,23 @@ export async function acquirePublishLock(id: string, db?: Db): Promise<Date> {
 export const acquireWorkingDirLock = acquirePublishLock;
 export const releaseWorkingDirLock = releasePublishLock;
 
+// Keep individual HTTP mutations small and correct: a caller first validates
+// its editor lock, then uses this separate package-wide lease for the entire
+// filesystem/git operation. The lease is deliberately not re-entrant.
+export async function withWorkingDirLock<T>(
+  id: string,
+  operation: () => Promise<T>,
+  db?: Db,
+): Promise<T> {
+  const claimedAt = await acquireWorkingDirLock(id, db);
+
+  try {
+    return await operation();
+  } finally {
+    await releaseWorkingDirLock(id, claimedAt, db);
+  }
+}
+
 // Release iff THIS claim still holds it (matched by the token): a stale-takeover by
 // a newer publish overwrote `publishing_started_at`, so a late release from the
 // superseded holder clears nothing instead of dropping the live claim.

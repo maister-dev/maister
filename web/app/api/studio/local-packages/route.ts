@@ -2,12 +2,12 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
-import { z } from "zod";
 
 import { errorResponse } from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireGlobalRole } from "@/lib/authz";
+import { createLocalPackageWithFlowSchema } from "@/lib/local-packages/create-flow-contract";
 import {
-  createLocalPackage,
+  createLocalPackageWithFlow,
   listLocalPackages,
   toLocalPackageDto,
 } from "@/lib/local-packages/service";
@@ -19,13 +19,6 @@ const log = pino({
   name: "api/studio/local-packages",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-const createBodySchema = z
-  .object({
-    name: z.string().min(1).max(120),
-    sourceInstallId: z.string().min(1).max(120).optional(),
-  })
-  .strict();
 
 export async function GET(): Promise<NextResponse> {
   try {
@@ -41,7 +34,7 @@ export async function GET(): Promise<NextResponse> {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const user = await requireGlobalRole("member");
-    const parsed = createBodySchema.safeParse(await req.json());
+    const parsed = createLocalPackageWithFlowSchema.safeParse(await req.json());
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -53,13 +46,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const row = await createLocalPackage({
+    const created = await createLocalPackageWithFlow({
       name: parsed.data.name,
       createdBy: user.id,
-      sourceInstallId: parsed.data.sourceInstallId ?? null,
+      flow: parsed.data.flow,
     });
 
-    return NextResponse.json(toLocalPackageDto(row), { status: 201 });
+    return NextResponse.json(
+      {
+        localPackage: toLocalPackageDto(created.package),
+        createdFlow: { id: parsed.data.flow.id, path: created.flowPath },
+      },
+      { status: 201 },
+    );
   } catch (err) {
     return errorResponse(err, log, "studio/local-packages POST");
   }

@@ -9,7 +9,10 @@ import {
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
 import { requireGlobalRole } from "@/lib/authz";
-import { assertHoldsLock } from "@/lib/local-packages/lock";
+import {
+  assertHoldsLock,
+  withWorkingDirLock,
+} from "@/lib/local-packages/lock";
 import {
   diffWorkingDir,
   discardWorkingDir,
@@ -59,9 +62,10 @@ export async function POST(
     }
 
     await assertHoldsLock(id, parsed.data.sessionId);
-    await discardWorkingDir(pkg, parsed.data.paths);
-
-    const diff = await diffWorkingDir(pkg);
+    const diff = await withWorkingDirLock(id, async () => {
+      await discardWorkingDir(pkg, parsed.data.paths);
+      return diffWorkingDir(pkg);
+    });
 
     log.info({ id, changedCount: diff.changedCount }, "[localPkg.discard]");
 

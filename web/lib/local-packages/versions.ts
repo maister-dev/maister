@@ -9,7 +9,11 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { gitHeadSha } from "./git";
-import { readLockState } from "./lock";
+import {
+  acquireWorkingDirLock,
+  readLockState,
+  releaseWorkingDirLock,
+} from "./lock";
 import {
   assertPackageCuttable,
   exportWorkingDir,
@@ -74,36 +78,42 @@ export async function cutLocalPackageVersion(
   pkg: LocalPackage,
   opts?: { db?: Db },
 ): Promise<{ installId: string; versionLabel: string }> {
-  let headSha: string | null = null;
+  const lockToken = await acquireWorkingDirLock(pkg.id, opts?.db);
 
   try {
-    headSha = await gitHeadSha(pkg.workingDir);
-  } catch (err) {
-    log.warn(
-      { slug: pkg.slug, err: (err as Error).message },
-      "gitHeadSha failed at cut — source_commit_sha omitted",
-    );
-  }
+    let headSha: string | null = null;
 
-  const exportDir = await exportWorkingDir(pkg);
+    try {
+      headSha = await gitHeadSha(pkg.workingDir);
+    } catch (err) {
+      log.warn(
+        { slug: pkg.slug, err: (err as Error).message },
+        "gitHeadSha failed at cut — source_commit_sha omitted",
+      );
+    }
 
-  try {
-    const install = await installPackageRevision({
-      source: exportDir,
-      version: "local",
-      trustStatus: "trusted_by_policy",
-      sourceLocalPackageId: pkg.id,
-      ...(headSha ? { sourceCommitSha: headSha } : {}),
-      db: opts?.db,
-    });
+    const exportDir = await exportWorkingDir(pkg);
 
-    await stampLastCutInstall(pkg.id, install.id, opts?.db);
+    try {
+      const install = await installPackageRevision({
+        source: exportDir,
+        version: "local",
+        trustStatus: "trusted_by_policy",
+        sourceLocalPackageId: pkg.id,
+        ...(headSha ? { sourceCommitSha: headSha } : {}),
+        db: opts?.db,
+      });
 
-    return { installId: install.id, versionLabel: install.versionLabel };
+      await stampLastCutInstall(pkg.id, install.id, opts?.db);
+
+      return { installId: install.id, versionLabel: install.versionLabel };
+    } finally {
+      await rm(exportDir, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    }
   } finally {
-    await rm(exportDir, { recursive: true, force: true }).catch(
-      () => undefined,
-    );
+    await releaseWorkingDirLock(pkg.id, lockToken, opts?.db);
   }
 }
 
