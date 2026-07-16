@@ -6,7 +6,19 @@ Created: 2026-07-15
 ## ⏯️ RESUME POINTER (updated 2026-07-16 — read this first)
 
 Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
-`[ ]` not started. This session ran M46 phase-gated; pick up at **NEXT** below.
+`[ ]` not started.
+
+> **★ STATUS 2026-07-16 (session C): ALL PLAN PHASES IMPLEMENTED.** M46 (Phase
+> 0–5), M47 (Phase 6 T6.1–T6.5), M48 (Phase 7 T7.1–T7.3) are all `[x]`/`[~]`
+> with tested cores; the only `[ ]` remaining are **owner-gated**: T5.3 E2E
+> (deferred — "UI check will be performed later") and T5.4 live-deploy. Each
+> task's inline note lists its co-evolve seam. Migrations 0104..0111 used
+> (0109 launch-batch, 0110 suites, 0111 standardization). Branch
+> `feature/evaluation-lab` head — LOCAL/UNPUSHED. Owner: `db:migrate`
+> 0108→0111 on dev, then owner-gated deploy + `core/v1.1.0` tag + `git push`.
+> Full detail: memory `evaluation-lab-m46-impl-state`.
+
+The historical **NEXT** below (M46 session B) is superseded by the status line above.
 
 **Owner-locked scope decisions (do not re-litigate):**
 - ⚠️ SCOPE OVERRIDE (2026-07-16, owner via `/aif-implement all the plan`):
