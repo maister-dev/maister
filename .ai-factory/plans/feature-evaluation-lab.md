@@ -884,7 +884,9 @@ Phase 3 exit: unit/integration/contract green; dispatcher wiring and SSE replay 
   - Logging: INFO algorithm/version/quorum/counts/digest; WARN disagreement/partial/exclusion; ERROR invariant violation; no rationales.
   - Depends on: T4.1, T3.2.
 
-- [ ] T4.3 RED/GREEN/REFACTOR disagreement review and append-only human verdict.
+- [~] T4.3 RED/GREEN/REFACTOR disagreement review and append-only human verdict.
+  - DONE (services, this session): `lib/evaluations/verdicts.ts` — `recordVerdict` append-only human verdict in ONE tx (study FOR UPDATE → verdict row + `verdict.recorded` event + open→decided flip; NO Run mutation/promotion/abandon): cites Completed/terminal-Partial executions only, zero-citation requires the no-evaluation-evidence ack (also DB CHECK), Partial citation requires acknowledged comparability warnings, cross-study citation refused, supersede requires a rationale; `listVerdicts`. `lib/evaluations/reviews.ts` — `openReview` (emits review.required) + `resolveReview` (status/version CAS → 409 on stale, emits review.resolved) + `listReviews`/`studyIdForExecution`. authz `concludeEvaluationStudy`(member)/`resolveEvaluationReview`(admin) already added. 7 tests green (verdict terminal-citation/ack/partial-warning/supersede + review CAS-409).
+  - CO-EVOLVE (with Phase 5 study routes): the human-session POST `.../{studyId}/verdicts` + POST `.../{evaluationId}/reviews` routes (route-level human-only + judge-token refusal + Idempotency-Key/If-Match); task-activity/domain-event mirror. The append-only tx + no-side-effect invariant is verified now.
   - Files: web/lib/evaluations/reviews.ts, verdicts.ts, session routes/server actions, task activity/domain events, authz.
   - RED: human-only, terminal Completed/Partial requirement, zero-citation verdict with no-evaluation-evidence acknowledgement (and refusal without it), warning acknowledgement, If-Match/idempotency, supersede-with-reason, judge/token refusal, no Run mutation/promotion/abandon.
   - GREEN: review resolution and conclusive human verdict history.
