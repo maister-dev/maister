@@ -106,6 +106,8 @@ erDiagram
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (M42 Implemented)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (M42 Implemented, SET NULL)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o{ RUN_SYNC_ATTEMPTS : "branch-sync attempt ledger (ADR-140)"
+    WORKSPACES ||--o{ RUN_SYNC_ATTEMPTS : "the synced workspace"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
@@ -244,6 +246,8 @@ erDiagram
         jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
         jsonb task_queue_settings "ADR-121 (0087): {edgeDrain?,maxInFlightAuto?}, nullable (NULL = env defaults)"
         jsonb auto_promotion "ADR-126 (0089): lane config, nullable (NULL = defaults+master OFF)"
+        text sync_strategy_default "ADR-140 (0104): rebase|merge project default"
+        text sync_runner_id "ADR-140 (0104): resolver runner default, nullable"
         text task_key UK "ADR-075 Implemented: platform-wide unique, immutable Stage 1"
         integer next_task_number "ADR-075 Implemented: allocation counter, DEFAULT 1"
         timestamp created_at
@@ -716,7 +720,7 @@ erDiagram
         text project_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
-        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|experiment_concluded"
+        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|experiment_concluded|run_pr_merged (ADR-139 0103)"
         jsonb payload "DEFAULT {}"
         timestamp created_at
     }
@@ -883,15 +887,47 @@ erDiagram
         text pr_url "M18 0021 populated on PR-mode promotion"
         integer pr_number "M18 0021"
         timestamp promoted_at "M18 0021"
-        text promotion_state "M18 0021 none|claiming|done|failed (NOT NULL DEFAULT none)"
+        text promotion_state "M18 0021 none|claiming|done|failed; ADR-140 adds reopened (NOT NULL DEFAULT none)"
         text promotion_lane "ADR-126 0089: auto lane class docs|tests|deps|config, nullable (NULL = manual)"
         timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
         text promotion_owner_user_id FK "M18 0021 users.id, nullable"
         text promotion_attempt_id "M18 0021 per-attempt CAS-identity token"
         text lifecycle_operation_state "M27 0032 none|claiming|failed (NOT NULL DEFAULT none)"
-        timestamp lifecycle_operation_claimed_at "M27 0032 durable lifecycle claim timestamp"
+        timestamp lifecycle_operation_claimed_at "M27 0032 durable lifecycle claim timestamp; ADR-140 heartbeats it while a sync driver is live"
         text lifecycle_operation_attempt_id "M27 0032 per-attempt CAS token"
-        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch"
+        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch|sync (ADR-140 shares the slot)"
+        text pr_state "ADR-139 0103 open|merged|closed, nullable; written ONLY by pr_state_scan"
+        boolean pr_has_conflicts "ADR-139 0103 provider mergeability, nullable"
+        timestamp pr_merged_at "ADR-139 0103 provider merge time"
+        text pr_merge_commit_sha "ADR-139 0103 provider merge commit — distinct from runs.merge_commit_sha (local promotion)"
+        timestamp pr_state_checked_at "ADR-139 0103 stamped on every scan attempt"
+    }
+
+    RUN_SYNC_ATTEMPTS {
+        text id PK
+        text run_id FK "runs(id) ON DELETE CASCADE"
+        text workspace_id FK "workspaces(id)"
+        integer attempt "UNIQUE (run_id, attempt)"
+        text strategy "rebase|merge"
+        text mode "mechanical|agent"
+        text phase "starting|rebasing|agent_running|verifying|pushing|succeeded|failed|aborted — the single lifecycle column (plain text, no CHECK — node_attempts convention)"
+        text target_ref
+        text target_sha "reserved — no code path writes it today"
+        text head_sha_before
+        text head_sha_after
+        text remote_sha_before "captured BEFORE the all-refs fetch; the force-with-lease expected value"
+        jsonb conflicted_files
+        text runner_id "platform_acp_runners(id) snapshot — deliberately NOT an FK"
+        text session_name "sync-<attempt>"
+        timestamp agent_running_since "active-time duration cap; re-stamped on HITL resume"
+        boolean auto_finalize "ai_rebase_merge toggle, default false"
+        boolean pushed
+        text error_code
+        text error_message
+        text actor_type "user|agent|system — polymorphic, NO FK"
+        text actor_id
+        timestamp created_at
+        timestamp updated_at
     }
 
     NODE_ATTEMPT_COST_ROLLUPS {
