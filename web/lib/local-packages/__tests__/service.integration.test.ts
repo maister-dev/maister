@@ -41,6 +41,7 @@ import {
   setLocalPackageStatus,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
+import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -144,16 +145,15 @@ describe("local-packages substrate (integration)", () => {
     expect((await stat(join(pkg.workingDir, ".git"))).isDirectory()).toBe(true);
   });
 
-  it("compensates the claimed row and working-dir artifact after a filesystem failure", async () => {
+  it("preserves a pre-existing working-dir path when initial Flow creation fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "lp-create-failure-"));
     const name = "Filesystem Failure Package";
     const slug = "filesystem-failure-package";
     const blocker = join(root, slug);
     const previousRoot = process.env.MAISTER_LOCAL_PACKAGES_ROOT;
 
-    // A file occupies the exact future working-dir path. Journal creation fails
-    // before materialization, and compensation must remove only this operation's
-    // artifact and DB row — never another package's directory.
+    // A file occupies the exact future working-dir path. Creation must fail and
+    // remove its claimed row, but it must never remove a path it did not create.
     await writeFile(blocker, "block create");
     process.env.MAISTER_LOCAL_PACKAGES_ROOT = root;
     try {
@@ -178,11 +178,33 @@ describe("local-packages substrate (integration)", () => {
       else process.env.MAISTER_LOCAL_PACKAGES_ROOT = previousRoot;
     }
 
-    await expect(stat(blocker)).rejects.toBeTruthy();
+    await expect(readFile(blocker, "utf8")).resolves.toBe("block create");
     expect(
       (await listAllLocalPackages(db)).some((pkg) => pkg.name === name),
     ).toBe(false);
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("refuses an uncommitted cut inside the shared version service", async () => {
+    const { package: pkg } = await createLocalPackageWithFlow({
+      name: "Cut service gate",
+      createdBy: userId,
+      flow: {
+        id: "cut-gate",
+        metadata: {
+          title: "Cut gate",
+          summary: "A valid Flow before the dirty-tree cut check.",
+          route_when: "A caller tries to cut uncommitted changes.",
+        },
+      },
+      db,
+    });
+
+    await writeWorkingDirFile(pkg, "rules/draft.md", "uncommitted");
+
+    await expect(cutLocalPackageVersion(pkg, { db })).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
   });
 
   it("adds another Flow to an editable package without replacing existing membership", async () => {

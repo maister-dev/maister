@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   errorResponse,
   notFoundResponse,
+  readJsonBody,
 } from "@/lib/api/project-route-helpers";
 import { requireGlobalRole } from "@/lib/authz";
 import { createFlowInPackageSchema } from "@/lib/local-packages/create-flow-contract";
@@ -39,11 +40,23 @@ export async function POST(
   try {
     await requireGlobalRole("member");
     const { id } = await params;
-    const parsed = bodySchema.safeParse(await req.json());
+    const body = await readJsonBody(req);
+
+    if (!body.ok) {
+      return NextResponse.json(
+        { code: "CONFIG", message: "request body must be valid JSON" },
+        { status: 422 },
+      );
+    }
+
+    const parsed = bodySchema.safeParse(body.body);
 
     if (!parsed.success) {
       return NextResponse.json(
-        { code: "CONFIG", message: parsed.error.issues[0]?.message ?? "bad body" },
+        {
+          code: "CONFIG",
+          message: parsed.error.issues[0]?.message ?? "bad body",
+        },
         { status: 422 },
       );
     }

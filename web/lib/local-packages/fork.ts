@@ -12,11 +12,13 @@ import pino from "pino";
 import { gitInitWithCommit } from "./git";
 import { localPackageWorkingDir, resolveWithinWorkingDir } from "./paths";
 import {
+  claimLocalPackageWorkingDir,
   cleanCopyExcludingGit,
   createLocalPackage,
   ensureDefaultLocalPackage,
   insertLocalPackageRow,
   registerFlowElementInManifest,
+  removeOwnedLocalPackageWorkingDir,
   rollbackLocalPackageRow,
   uniqueSlugForName,
 } from "./service";
@@ -164,9 +166,12 @@ export async function forkPackageToLocal(opts: {
     opts.db,
   );
 
-  // Row claimed — copy the source bundle. A failure rolls back ONLY this caller's
-  // own row + its uniquely-claimed dir (never a shared path).
+  // Row claimed — acquire exclusive filesystem ownership before copying bytes.
+  let ownsWorkingDir = false;
+
   try {
+    await claimLocalPackageWorkingDir(workingDir);
+    ownsWorkingDir = true;
     await cleanCopyExcludingGit(installedPath, workingDir);
     await gitInitWithCommit(
       workingDir,
@@ -174,7 +179,10 @@ export async function forkPackageToLocal(opts: {
       `maister: fork ${opts.sourceRef} to local package`,
     );
   } catch (err) {
-    await rollbackLocalPackageRow(row.id, workingDir, opts.db);
+    if (ownsWorkingDir) {
+      await removeOwnedLocalPackageWorkingDir(workingDir);
+    }
+    await rollbackLocalPackageRow(row.id, opts.db);
     throw err;
   }
 

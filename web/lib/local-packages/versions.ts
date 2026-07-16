@@ -17,6 +17,7 @@ import {
 import {
   assertPackageCuttable,
   exportWorkingDir,
+  getLocalPackage,
   stampLastCutInstall,
 } from "./service";
 
@@ -71,9 +72,9 @@ export type AvailablePackageVersion = {
 
 // The irreversible cut of a centralized local package (M39 Stream B): clean-export
 // the working dir, install it content-addressed WITH the source-link provenance,
-// then stamp `last_cut_install_id`. The caller MUST have passed
-// `assertPackageCuttable` first (clean, valid tree). Reused by the cut-version
-// route and the launch-time `cut_and_adopt` path.
+// then stamp `last_cut_install_id`. It takes the mutation lease, reloads, and
+// validates the package under that lease so no caller can cut a stale or dirty
+// working tree. Reused by the cut-version route and launch-time `cut_and_adopt`.
 export async function cutLocalPackageVersion(
   pkg: LocalPackage,
   opts?: { db?: Db },
@@ -81,30 +82,37 @@ export async function cutLocalPackageVersion(
   const lockToken = await acquireWorkingDirLock(pkg.id, opts?.db);
 
   try {
+    const freshPackage = await getLocalPackage(pkg.id, opts?.db);
+
+    if (!freshPackage || freshPackage.status !== "active") {
+      throw new MaisterError("PRECONDITION", "local package not found");
+    }
+
+    await assertPackageCuttable(freshPackage);
     let headSha: string | null = null;
 
     try {
-      headSha = await gitHeadSha(pkg.workingDir);
+      headSha = await gitHeadSha(freshPackage.workingDir);
     } catch (err) {
       log.warn(
-        { slug: pkg.slug, err: (err as Error).message },
+        { localPackageId: freshPackage.id, err: (err as Error).message },
         "gitHeadSha failed at cut — source_commit_sha omitted",
       );
     }
 
-    const exportDir = await exportWorkingDir(pkg);
+    const exportDir = await exportWorkingDir(freshPackage);
 
     try {
       const install = await installPackageRevision({
         source: exportDir,
         version: "local",
         trustStatus: "trusted_by_policy",
-        sourceLocalPackageId: pkg.id,
+        sourceLocalPackageId: freshPackage.id,
         ...(headSha ? { sourceCommitSha: headSha } : {}),
         db: opts?.db,
       });
 
-      await stampLastCutInstall(pkg.id, install.id, opts?.db);
+      await stampLastCutInstall(freshPackage.id, install.id, opts?.db);
 
       return { installId: install.id, versionLabel: install.versionLabel };
     } finally {
@@ -494,7 +502,6 @@ export async function applyPackageVersionChoices(opts: {
             `package "${lpRow.name}" is being edited (locked by ${lock.holderLabel ?? "another session"}) — cannot cut at launch`,
           );
         }
-        await assertPackageCuttable(lpRow);
         const cut = await cutLocalPackageVersion(lpRow, { db });
 
         targetInstallId = cut.installId;

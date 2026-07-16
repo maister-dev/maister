@@ -12,6 +12,7 @@ import { parse as parseYaml } from "yaml";
 import { requireGlobalRole } from "@/lib/authz";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { gitCommitWorkingDir } from "@/lib/local-packages/git";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -327,6 +328,7 @@ describe("fork-beside-upstream name uniqueness (integration)", () => {
       "maister-package.yaml",
       "schemaVersion: 1\nname: routepkg-fork\nflows:\n  - { id: route-flow-fork, path: flows/route-flow }\n",
     );
+    await gitCommitWorkingDir(pkg!.workingDir, "rename forked package");
     const renamedCut = await cutLocalPackageVersion(pkg!, { db });
 
     const res = await attachPOST(

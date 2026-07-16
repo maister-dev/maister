@@ -79,6 +79,7 @@ function baseProps(
     onDraftFilesChange: vi.fn(),
     onSaveDraft: vi.fn(),
     onCreateArtifact: vi.fn(),
+    onCreateFlow: vi.fn(),
     ...overrides,
   };
 }
@@ -150,6 +151,24 @@ describe("PackageComposition inline Save (ADR-116 §P3)", () => {
 });
 
 describe("PackageComposition create (ADR-116 §P5)", () => {
+  it("hides all create controls for a read-only package", () => {
+    nav.search = "tab=files";
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(PackageComposition, baseProps({ readOnly: true }) as never),
+    );
+
+    expect(
+      container.querySelector('[data-testid="composition-create-flow-open"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="composition-create-open"]'),
+    ).toBeNull();
+  });
+
   it("scaffolds a rule and persists it via onCreateArtifact", () => {
     nav.search = "tab=files";
     const onCreateArtifact = vi.fn();

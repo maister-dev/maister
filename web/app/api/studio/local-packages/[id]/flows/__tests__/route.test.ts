@@ -34,6 +34,16 @@ function req(body: unknown): NextRequest {
   );
 }
 
+function malformedJsonReq(): NextRequest {
+  return new NextRequest(
+    new Request("http://x/api/studio/local-packages/lp1/flows", {
+      method: "POST",
+      body: "{",
+      headers: { "content-type": "application/json" },
+    }),
+  );
+}
+
 function ctx() {
   return { params: Promise.resolve({ id: "lp1" }) };
 }
@@ -68,6 +78,13 @@ describe("POST /api/studio/local-packages/{id}/flows", () => {
       req({ sessionId: "editor-session", flow: { ...FLOW, id: "../escape" } }),
       ctx(),
     );
+
+    expect(res.status).toBe(422);
+    expect(mocks.addFlowToLocalPackage).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 for malformed JSON before the edit-lock operation", async () => {
+    const res = await POST(malformedJsonReq(), ctx());
 
     expect(res.status).toBe(422);
     expect(mocks.addFlowToLocalPackage).not.toHaveBeenCalled();

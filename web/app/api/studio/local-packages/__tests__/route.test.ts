@@ -40,6 +40,16 @@ function req(body: unknown): NextRequest {
   );
 }
 
+function malformedJsonReq(): NextRequest {
+  return new NextRequest(
+    new Request("http://x/api/studio/local-packages", {
+      method: "POST",
+      body: "{",
+      headers: { "content-type": "application/json" },
+    }),
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireGlobalRole.mockResolvedValue({ id: "u1", role: "member" });
@@ -68,6 +78,13 @@ describe("POST /api/studio/local-packages", () => {
 
   it("rejects the former empty-package body before any create operation", async () => {
     const res = await POST(req({ name: "Fixes" }));
+
+    expect(res.status).toBe(422);
+    expect(mocks.createLocalPackageWithFlow).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 for malformed JSON before any create operation", async () => {
+    const res = await POST(malformedJsonReq());
 
     expect(res.status).toBe(422);
     expect(mocks.createLocalPackageWithFlow).not.toHaveBeenCalled();

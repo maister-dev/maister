@@ -269,10 +269,12 @@ existing collection `sourceInstallId` fork contract is stale; package forks keep
 their dedicated endpoint. The documented file move endpoint has no route and
 will be removed from OpenAPI rather than represented as implemented.
 
-## M39 Stream A — first-class authoring (Implemented, ADR-105 — create wizards deferred)
+## M39 Stream A — first-class authoring (Implemented, ADR-105)
 
 Stream A is **web-only** (no migration, no new `MaisterError` code) and finishes
-the in-app authoring surface M36 started.
+the in-app authoring surface M36 started. The canonical Create Flow wizard now
+covers both a new local package plus its initial Flow and another Flow in an
+existing editable package; it never creates a DB-only authored Flow.
 
 **Centralized model + per-project version pins.** Packages stay **instance-level**
 and Studio-edited (M36 platform-scoping, ADR-096/097, stands — project-scoping was

@@ -9567,6 +9567,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LocalPackageCreateResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
@@ -19529,29 +19530,39 @@ components:
           }
     LocalPackageCreateBody:
       type: object
+      additionalProperties: false
       required: [name, flow]
       properties:
-        name: { type: string }
+        name: { type: string, minLength: 1, maxLength: 120 }
         flow: { $ref: "#/components/schemas/CreateFlowInput" }
     CreateFlowInput:
       type: object
+      additionalProperties: false
       required: [id, metadata]
       properties:
-        id: { type: string, minLength: 1, maxLength: 64 }
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^(?!.*\\.\\.)(?!\\.$)[A-Za-z0-9._-]+$"
         metadata:
           type: object
+          additionalProperties: false
           required: [title, summary, route_when]
           properties:
-            title: { type: string, minLength: 1 }
-            summary: { type: string, minLength: 1 }
-            route_when: { type: string, minLength: 1 }
+            title: { type: string, minLength: 1, maxLength: 200 }
+            summary: { type: string, minLength: 1, maxLength: 2000 }
+            route_when: { type: string, minLength: 1, maxLength: 2000 }
             labels:
               type: array
-              items: { type: string, minLength: 1 }
+              maxItems: 50
+              items: { type: string, minLength: 1, maxLength: 120 }
             links:
               type: array
+              maxItems: 50
               items:
                 type: object
+                additionalProperties: false
                 required: [title, url]
                 properties:
                   kind: { type: string, minLength: 1 }
@@ -19559,8 +19570,10 @@ components:
                   url: { type: string, format: uri }
             sources:
               type: array
+              maxItems: 50
               items:
                 type: object
+                additionalProperties: false
                 required: [component, origin]
                 properties:
                   component: { type: string, minLength: 1 }
@@ -19579,9 +19592,10 @@ components:
         createdFlow: { $ref: "#/components/schemas/CreatedFlow" }
     LocalPackageFlowCreateBody:
       type: object
+      additionalProperties: false
       required: [sessionId, flow]
       properties:
-        sessionId: { type: string, minLength: 1 }
+        sessionId: { type: string, minLength: 1, maxLength: 200 }
         flow: { $ref: "#/components/schemas/CreateFlowInput" }
     LocalPackageFlowCreateResult:
       type: object

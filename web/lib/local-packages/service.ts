@@ -137,12 +137,38 @@ export async function uniqueSlugForName(
   return `${base}-${randomUUID().slice(0, 8)}`;
 }
 
+// Claim filesystem ownership before any package artifact is written. A database
+// row owns an identity, not a path: an existing path must remain untouched.
+export async function claimLocalPackageWorkingDir(
+  workingDir: string,
+): Promise<void> {
+  await mkdir(path.dirname(workingDir), { recursive: true });
+
+  try {
+    await mkdir(workingDir);
+  } catch (err) {
+    if (isEexist(err)) {
+      throw new MaisterError(
+        "CONFLICT",
+        "a local package working directory is already in use",
+      );
+    }
+    throw err;
+  }
+}
+
+// Call only after claimLocalPackageWorkingDir succeeds in this same operation.
+export async function removeOwnedLocalPackageWorkingDir(
+  workingDir: string,
+): Promise<void> {
+  await rm(workingDir, { recursive: true, force: true });
+}
+
 async function scaffoldWorkingDir(
   workingDir: string,
   manifestName: string,
   title: string,
 ): Promise<void> {
-  await mkdir(workingDir, { recursive: true });
   for (const d of KIND_DIRS) {
     await mkdir(path.join(workingDir, d), { recursive: true });
   }
@@ -531,7 +557,7 @@ async function compensateFailedInitialCreation(
   db?: Db,
 ): Promise<void> {
   try {
-    await rm(pkg.workingDir, { recursive: true, force: true });
+    await removeOwnedLocalPackageWorkingDir(pkg.workingDir);
   } catch (err) {
     await markCreationRecoveryRequired(pkg.id, state, db);
     log.error(
@@ -605,6 +631,14 @@ function isEnoent(err: unknown): boolean {
   );
 }
 
+function isEexist(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as NodeJS.ErrnoException).code === "EEXIST"
+  );
+}
+
 // Insert-first (ADR-105 D1): claim the unique `slug` in the DB BEFORE any
 // filesystem work, so a concurrent same-slug create loses HERE (23505 → CONFLICT)
 // having touched nothing on disk — the winner's dir can never be deleted by the
@@ -636,18 +670,13 @@ export async function insertLocalPackageRow(
   return row;
 }
 
-// Roll back a claimed row + its uniquely-owned working dir after a post-insert
-// scaffold/copy/init failure. Touches ONLY this caller's slug/dir — never shared.
+// Roll back the DB identity after a post-insert failure. Filesystem cleanup is
+// deliberately separate and only callers that claimed the directory may remove it.
 export async function rollbackLocalPackageRow(
   id: string,
-  workingDir: string,
   db?: Db,
 ): Promise<void> {
-  await resolveDb(db)
-    .delete(lp)
-    .where(eq(lp.id, id))
-    .catch(() => undefined);
-  await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
+  await resolveDb(db).delete(lp).where(eq(lp.id, id));
 }
 
 // Recursively copy `src` into `dest` skipping internal working-dir metadata, so
@@ -709,9 +738,12 @@ export async function createLocalPackage(opts: {
     opts.db,
   );
 
-  // Row claimed — now scaffold. A failure rolls back ONLY this caller's own row
-  // + its uniquely-claimed dir (never a shared path).
+  // Row claimed — now take exclusive filesystem ownership before scaffolding.
+  let ownsWorkingDir = false;
+
   try {
+    await claimLocalPackageWorkingDir(workingDir);
+    ownsWorkingDir = true;
     await scaffoldWorkingDir(workingDir, slug, opts.name);
     await gitInitWithCommit(
       workingDir,
@@ -719,7 +751,19 @@ export async function createLocalPackage(opts: {
       "maister: init local package",
     );
   } catch (err) {
-    await rollbackLocalPackageRow(row.id, workingDir, opts.db);
+    try {
+      if (ownsWorkingDir) {
+        await removeOwnedLocalPackageWorkingDir(workingDir);
+      }
+      await rollbackLocalPackageRow(row.id, opts.db);
+    } catch (compensationErr) {
+      log.error({ packageId: row.id }, "local package creation cleanup failed");
+      throw new MaisterError(
+        "CRASH",
+        "creating the local package failed and cleanup requires recovery",
+        { cause: compensationErr, details: { packageId: row.id } },
+      );
+    }
     throw err;
   }
 
@@ -767,8 +811,11 @@ export async function createLocalPackageWithFlow(opts: {
     opts.db,
   );
   const lockToken = await acquireWorkingDirLock(row.id, opts.db);
+  let ownsWorkingDir = false;
 
   try {
+    await claimLocalPackageWorkingDir(row.workingDir);
+    ownsWorkingDir = true;
     await writeCreationJournal(row.workingDir, state.operationId, {
       flow: opts.flow,
     });
@@ -778,7 +825,15 @@ export async function createLocalPackageWithFlow(opts: {
 
     if (current?.creationState?.phase !== "recovery_required") {
       try {
-        await compensateFailedInitialCreation(row, state, opts.db);
+        if (ownsWorkingDir) {
+          await compensateFailedInitialCreation(row, state, opts.db);
+        } else {
+          log.warn(
+            { packageId: row.id, operationId: state.operationId },
+            "creation rollback preserved a working directory this operation did not own",
+          );
+          await rollbackLocalPackageRow(row.id, opts.db);
+        }
       } catch (compensationErr) {
         throw new MaisterError(
           "CRASH",
@@ -1084,12 +1139,19 @@ export async function ensureDefaultLocalPackage(opts: {
   const workingDir = localPackageWorkingDir(slug);
 
   log.info({ projectId: opts.projectId, slug }, "ensure default local package");
-  await scaffoldWorkingDir(workingDir, slug, name);
-  await gitInitWithCommit(
-    workingDir,
-    DEFAULT_BRANCH,
-    "maister: init default local package",
-  );
+  await claimLocalPackageWorkingDir(workingDir);
+
+  try {
+    await scaffoldWorkingDir(workingDir, slug, name);
+    await gitInitWithCommit(
+      workingDir,
+      DEFAULT_BRANCH,
+      "maister: init default local package",
+    );
+  } catch (err) {
+    await removeOwnedLocalPackageWorkingDir(workingDir);
+    throw err;
+  }
 
   const inserted = await resolveDb(opts.db)
     .insert(lp)
@@ -1115,7 +1177,7 @@ export async function ensureDefaultLocalPackage(opts: {
 
   // Lost the race: another concurrent caller created the default first. Roll
   // back this caller's now-orphan scaffold and return the winner's row.
-  await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
+  await removeOwnedLocalPackageWorkingDir(workingDir);
   const winner = await getDefaultLocalPackage(opts.projectId, opts.db);
 
   if (!winner) {

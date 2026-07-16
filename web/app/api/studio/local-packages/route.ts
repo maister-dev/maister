@@ -3,7 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { errorResponse } from "@/lib/api/project-route-helpers";
+import { errorResponse, readJsonBody } from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireGlobalRole } from "@/lib/authz";
 import { createLocalPackageWithFlowSchema } from "@/lib/local-packages/create-flow-contract";
 import {
@@ -34,7 +34,16 @@ export async function GET(): Promise<NextResponse> {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const user = await requireGlobalRole("member");
-    const parsed = createLocalPackageWithFlowSchema.safeParse(await req.json());
+    const body = await readJsonBody(req);
+
+    if (!body.ok) {
+      return NextResponse.json(
+        { code: "CONFIG", message: "request body must be valid JSON" },
+        { status: 422 },
+      );
+    }
+
+    const parsed = createLocalPackageWithFlowSchema.safeParse(body.body);
 
     if (!parsed.success) {
       return NextResponse.json(

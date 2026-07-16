@@ -15,6 +15,7 @@ import {
   forkElementToNewLocal,
   forkPackageToLocal,
 } from "@/lib/local-packages/fork";
+import { gitCommitWorkingDir } from "@/lib/local-packages/git";
 import {
   parsePackageManifest,
   validatePackageManifestYaml,
@@ -685,6 +686,7 @@ describe("cut version (integration)", () => {
       "flows/flow-a/flow.yaml",
       FLOW_YAML("adopt-round"),
     );
+    await gitCommitWorkingDir(pkg!.workingDir, "adopt round");
     const cut2 = await cutLocalPackageVersion(pkg!, { db });
 
     expect(cut2.installId).not.toBe(cut1.installId);

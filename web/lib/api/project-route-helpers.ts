@@ -12,6 +12,18 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/runs/route.ts).
 const { projects } = schemaModule as unknown as Record<string, any>;
 
+export type JsonBodyReadResult = { ok: true; body: unknown } | { ok: false };
+
+// JSON syntax errors are expected client validation failures, not route crashes.
+// The caller intentionally maps `ok: false` to its route-specific 422 response.
+export async function readJsonBody(req: Request): Promise<JsonBodyReadResult> {
+  try {
+    return { ok: true, body: await req.json() };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export function httpStatusForCode(code: string): number {
   switch (code) {
     case "UNAUTHENTICATED":
