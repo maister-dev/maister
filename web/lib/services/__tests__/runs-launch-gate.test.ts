@@ -110,6 +110,12 @@ const fakeDb: FakeDb = {
       if (getTableName(table as never) === "task_relations") {
         return relationJoinChain;
       }
+      if (getTableName(table as never) === "workspaces") {
+        return {
+          then: (onFulfilled) => Promise.resolve([]).then(onFulfilled),
+          where: async () => [],
+        };
+      }
 
       return {
         then: (onFulfilled) =>

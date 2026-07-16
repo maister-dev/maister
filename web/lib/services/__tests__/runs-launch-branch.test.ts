@@ -142,6 +142,19 @@ const fakeDb: FakeDb = {
       if (getTableName(table as never) === "task_relations") {
         return relationJoinChain;
       }
+      if (getTableName(table as never) === "workspaces") {
+        const workspaceResult: LockedResult = {
+          for: async () => [],
+          then: (onFulfilled, onRejected) =>
+            Promise.resolve([]).then(onFulfilled, onRejected),
+        };
+
+        return {
+          then: (onFulfilled, onRejected) =>
+            Promise.resolve([]).then(onFulfilled, onRejected),
+          where: () => workspaceResult,
+        };
+      }
 
       const lockedResult: LockedResult = {
         for: async () => nextSelectResult(),

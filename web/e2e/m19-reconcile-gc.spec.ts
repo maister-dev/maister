@@ -15,9 +15,9 @@
 //       WARNS that recovery re-runs the current node;
 //   (b) the board surfaces the Crashed run in its dedicated Crashed column
 //       (data-stage="crashed");
-//   (c) the left-rail TTL badge reflects warning vs due windows
-//       (data-testid="ttl-badge" / data-ttl-state);
-//   (d) the cron GC route auth-gate: wrong token → 401, valid token → 200|207.
+//   (c) the left-rail removal labels reflect warning vs due windows;
+//   (d) the cron GC route auth-gate: wrong token → 401, valid token → the
+//       scheduler tick summary (200|202|207).
 //
 // Why no live resume here: the e2e stub supervisor (e2e/_seed/stub-supervisor.ts)
 // answers ONLY /health and implements NOTHING else — no /sessions, no agent
@@ -164,7 +164,7 @@ test.describe("M19 reconcile + GC UI", () => {
     ).toBeVisible();
   });
 
-  test("(c) the left-rail TTL badge shows warning and due states for the two Abandoned runs", async ({
+  test("(c) the left rail shows warning and due removal states for the two Abandoned runs", async ({
     page,
   }) => {
     const fx = loadM19();
@@ -179,22 +179,18 @@ test.describe("M19 reconcile + GC UI", () => {
       .locator("aside li")
       .filter({ has: page.locator(`a[href$="/runs/${fx.warningRunId}"]`) });
 
-    await expect(
-      warningRow.locator('[data-testid="ttl-badge"][data-ttl-state="warning"]'),
-    ).toBeVisible();
+    await expect(warningRow).toContainText("Removing soon");
 
     const dueRow = page
       .locator("aside li")
       .filter({ has: page.locator(`a[href$="/runs/${fx.dueRunId}"]`) });
 
-    await expect(
-      dueRow.locator('[data-testid="ttl-badge"][data-ttl-state="due"]'),
-    ).toBeVisible();
+    await expect(dueRow).toContainText("Removal due");
   });
 });
 
 test.describe("M19 cron GC auth gate", () => {
-  test("(d) wrong token → 401, valid token → 200|207", async ({ request }) => {
+  test("(d) wrong token → 401, valid token → scheduler tick summary", async ({ request }) => {
     // Wrong token → 401 (the running webServer HAS MAISTER_CRON_TOKEN set, so a
     // mismatch is unauthorized, not "disabled"). The 503 disabled case (token
     // env unset) is covered by the route integration test.
@@ -209,29 +205,31 @@ test.describe("M19 cron GC auth gate", () => {
 
     expect(missing.status()).toBe(401);
 
-    // Valid token → both sweeps run → 200 (all ok) or 207 (a sub-sweep threw).
+    // A valid token makes the canonical durable system job due. It returns 200
+    // when claimed, 202 while another worker owns the claim, or 207 when the
+    // job attempt failed.
     const ok = await request.post("/api/cron/gc", {
       headers: { [CRON_HEADER]: CRON_TOKEN },
     });
 
-    expect([200, 207]).toContain(ok.status());
+    expect([200, 202, 207]).toContain(ok.status());
 
-    // The response is the flat GcSweepSummary contract (OpenAPI) and NEVER the
-    // token value.
+    // The response is the public scheduler tick summary; detailed GC outcomes
+    // remain in scheduler_job_runs.summary. The token must never be exposed.
     const text = await ok.text();
 
     expect(text).not.toContain(CRON_TOKEN);
 
     const body = JSON.parse(text) as {
-      worktreesPreserved?: unknown;
-      worktreesRemoved?: unknown;
-      revisionsRemoved?: unknown;
-      errors?: unknown;
+      claimedCount?: unknown;
+      succeededCount?: unknown;
+      failedCount?: unknown;
+      attempts?: unknown;
     };
 
-    expect(body).toHaveProperty("worktreesPreserved");
-    expect(body).toHaveProperty("worktreesRemoved");
-    expect(body).toHaveProperty("revisionsRemoved");
-    expect(Array.isArray(body.errors)).toBe(true);
+    expect(body).toHaveProperty("claimedCount");
+    expect(body).toHaveProperty("succeededCount");
+    expect(body).toHaveProperty("failedCount");
+    expect(Array.isArray(body.attempts)).toBe(true);
   });
 });

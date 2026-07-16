@@ -473,27 +473,31 @@ export function WorkbenchLifecycleActions({
   async function loadMetadata(): Promise<void> {
     setErrorState(null);
 
-    const res = await fetch(`/api/runs/${runId}/handoff-metadata`);
+    try {
+      const res = await fetch(`/api/runs/${runId}/handoff-metadata`);
 
-    if (!res.ok) {
-      const body = await readJson<LifecycleErrorBody>(res);
+      if (!res.ok) {
+        const body = await readJson<LifecycleErrorBody>(res);
 
-      setErrorState(errorStateFromBody(body));
+        setErrorState(errorStateFromBody(body));
 
-      return;
+        return;
+      }
+
+      const body = await readJson<HandoffMetadata>(res);
+
+      if (!body) {
+        setErrorState(errorStateFromBody(null));
+
+        return;
+      }
+
+      setMetadata(body);
+      setRemote(body.defaultRemote ?? "");
+      setHandoffBranch(body.suggestedHandoffBranch);
+    } catch {
+      setErrorState(networkErrorState());
     }
-
-    const body = await readJson<HandoffMetadata>(res);
-
-    if (!body) {
-      setErrorState(errorStateFromBody(null));
-
-      return;
-    }
-
-    setMetadata(body);
-    setRemote(body.defaultRemote ?? "");
-    setHandoffBranch(body.suggestedHandoffBranch);
   }
 
   function openDialog(action: UiActionId): void {
@@ -616,7 +620,7 @@ export function WorkbenchLifecycleActions({
       }
 
       setResult({ kind: "snapshot", data: body });
-      await loadMetadata();
+      void loadMetadata();
       router.refresh();
     } catch {
       setErrorState(networkErrorState());
@@ -658,7 +662,7 @@ export function WorkbenchLifecycleActions({
       }
 
       setResult({ kind: "export", data: body });
-      await loadMetadata();
+      void loadMetadata();
       router.refresh();
     } catch {
       setErrorState(networkErrorState());

@@ -193,8 +193,9 @@ export async function getLatestFlowRun(
   const workspaceRows = (await _db
     .select({ removedAt: workspaces.removedAt })
     .from(workspaces)
-    .where(eq(workspaces.runId, latestRun.id))
-    .limit(1)) as Array<{ removedAt: Date | null }>;
+    .where(eq(workspaces.runId, latestRun.id))) as Array<{
+    removedAt: Date | null;
+  }>;
 
   return {
     ...latestRun,

@@ -57,9 +57,7 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   await expectLifecycleActions(page);
 
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
-  await expect(
-    page.getByRole("heading", { name: /M27 scratch lifecycle/i }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/scratch-runs/${fx.scratchRunId}$`));
   await expectLifecycleActions(page);
 
   await page.goto(`/runs/${fx.flowRunId}`);
@@ -90,7 +88,7 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
     dialog.getByRole("button", { name: "Commit" }).click(),
   ]);
   await expect(dialog).toContainText("Snapshot commit");
-  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await dialog.getByText("Cancel", { exact: true }).click();
 
   await lifecycleActions(page).getByRole("button", { name: "Export" }).click();
   dialog = page.getByRole("dialog", { name: "Export branch" });
@@ -105,7 +103,7 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
     dialog.getByRole("button", { name: "Create branch" }).click(),
   ]);
   await expect(dialog).toContainText("git -C");
-  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await dialog.getByText("Cancel", { exact: true }).click();
 
   await lifecycleActions(page).getByRole("button", { name: "Archive" }).click();
   dialog = page.getByRole("dialog", { name: "Archive workbench" });

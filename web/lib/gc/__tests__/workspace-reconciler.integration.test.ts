@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -132,7 +132,7 @@ describe("runWorkspaceReconciliationSweep", () => {
     expect(workspaceRows[0]).toMatchObject({
       projectId,
       branch: `maister/${runId}`,
-      worktreePath,
+      worktreePath: await realpath(worktreePath),
       parentRepoPath: repoPath,
     });
     await expect(lstat(worktreePath)).resolves.toBeDefined();
