@@ -270,3 +270,14 @@ re-derive the contract-surface list.
 - No migration, no new error code, no ext OpenAPI type change (R9).
 - No ref support on ext run-launch (ADR-085 refuses `flowId` there) or delegate (stub).
 - No `MaisterError.details` field — the structured detail rides in `message` (owner-chosen).
+- **`validRefs` stays unfiltered** (installed refs, not launchable-only) — owner
+  decision 2026-07-14, do not re-litigate. A review flagged that the hint can name a
+  non-launchable flow. It cannot mislead the triager in practice: `flow_list` already
+  filters to launchable (`project.ts:235`) and D9 refuses a non-launchable verdict at
+  **write** time (`triage.ts:127`), so a disabled flow never reaches a task via triage —
+  only `createTask` (deliberately un-gated) can assign one, and that fails fast at
+  launch for manual re-flow/re-triage. Reaching the bad hint needs three coincidences
+  (agent sends a non-existent ref **and** ignores `flow_list` **and** picks a disabled
+  ref), and even then it gets a clear second refusal naming enablement/trust. Filtering
+  would not break anything — `validRefs` is only hint text — but it would make
+  `createTask`'s hint omit refs it legitimately accepts. Not worth the asymmetry.
