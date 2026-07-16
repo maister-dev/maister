@@ -204,6 +204,45 @@ describe("scheduler job SQL integration", () => {
     expect(job.consecutiveFailures).toBe(3);
   });
 
+  // #M9: `ensurePrStateScanJobs` was cloned from the repo_delivery_scan seeder,
+  // but its poison test was not — the clone above only covers the unarchive
+  // re-enable, which is the SAME `ON CONFLICT DO UPDATE` minus the guard that
+  // matters. Delete `consecutive_failures < max_failures` from jobs.ts and the
+  // pr_state_scan clone still passes, while every seed tick silently re-enables a
+  // poison-disabled scan: retry-forever, which ADR-139 explicitly forbids.
+  it("(#M9) preserves a poison-disabled PR-state scan while seeding active projects", async () => {
+    const now = new Date("2026-06-05T10:00:00.000Z");
+    const projectId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      slug: `scan-${projectId.slice(0, 8)}`,
+      name: "Poisoned pr-state scan project",
+      repoPath: `/repos/${projectId}`,
+      taskKey: `SCAN${projectId.replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+    });
+    await ensurePrStateScanJobs({ now, db: schedulerDb });
+
+    // Poisoned: disabled having burned its whole retry budget. The project is
+    // NOT archived, so every seed tick reconsiders this row.
+    await db
+      .update(schema.schedulerJobs)
+      .set({ disabledAt: now, consecutiveFailures: 3 })
+      .where(eq(schema.schedulerJobs.id, `pr_state_scan.${projectId}`));
+
+    await ensurePrStateScanJobs({ now, db: schedulerDb });
+
+    const job = (
+      await db
+        .select()
+        .from(schema.schedulerJobs)
+        .where(eq(schema.schedulerJobs.id, `pr_state_scan.${projectId}`))
+    )[0];
+
+    expect(job.disabledAt).toEqual(now);
+    expect(job.consecutiveFailures).toBe(3);
+  });
+
   it("two overlapping claims for one due job create exactly one attempt", async () => {
     const now = new Date("2026-06-05T10:00:00.000Z");
     const jobId = await insertSchedulerJob({

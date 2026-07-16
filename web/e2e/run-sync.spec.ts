@@ -44,7 +44,19 @@ test.describe("branch sync (ADR-140)", () => {
 
     // (5) The promote action is live again (no sync claim held) and succeeds —
     // the run leaves Review for a terminal Done.
+    //
+    // #C9: `review-promote` is rendered by a ternary against `drift`, and a
+    // target-drift REFUSAL sets drift=true — so the button unmounts whether the
+    // promote succeeded or was rejected, and `toBeHidden()` passed either way.
+    // That made this the headline sync e2e while proving nothing about the
+    // promote. Await the POST and assert its status, as the sibling reopen spec
+    // does.
+    const promoted = page.waitForResponse((r) =>
+      r.url().includes(`/api/runs/${fx.runId}/promote`),
+    );
+
     await page.getByTestId("review-promote").click();
+    expect((await promoted).status()).toBe(200);
     await expect(page.getByTestId("review-promote")).toBeHidden({
       timeout: 30_000,
     });

@@ -427,14 +427,31 @@ describe("syncRunTarget — mechanical outcomes", () => {
       baseCommit: baseSha,
     });
 
+    const originY = await remoteBranchHead({
+      projectRepoPath: parent,
+      remote: "origin",
+      branch: "main",
+    });
+
+    // The test is named "naming both SHAs" and used to assert only that a SHA it
+    // had read from git itself looked like hex — nothing inspected the message.
+    // Both SHAs are the whole point: the operator has to reconcile the target by
+    // hand, and cannot without knowing which two commits diverged.
     await expect(
       syncRunTarget({ runId, actor: actor(), db }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      message: expect.stringContaining(localX),
+    });
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining(originY as string),
+    });
 
     const [row] = await attemptRows(runId);
 
     expect(row.phase).toBe("aborted");
-    expect(localX).toMatch(/^[0-9a-f]{7,}$/);
   });
 
   it("(d) dirty worktree → PRECONDITION, no attempt row", async () => {
@@ -1144,13 +1161,19 @@ describe("verifySyncGate", () => {
 });
 
 describe("POST /api/runs/[runId]/sync route", () => {
+  // Captured so the authorization CONTRACT can be asserted. The stub used to be
+  // anonymous and nothing checked its arguments, so rebinding the route to
+  // `readBoard` — letting any viewer force-push a branch — failed nothing.
+  let requireProjectActionSpy: ReturnType<typeof vi.fn>;
+
   async function invokePost(runId: string, body: unknown): Promise<Response> {
+    requireProjectActionSpy = vi.fn(async () => undefined);
     vi.doMock("@/lib/authz", () => ({
       requireActiveSession: vi.fn(async () => ({
         id: "user-1",
         role: "member",
       })),
-      requireProjectAction: vi.fn(async () => undefined),
+      requireProjectAction: requireProjectActionSpy,
     }));
     const { POST } = await import("@/app/api/runs/[runId]/sync/route");
     const { NextRequest } = await import("next/server");
@@ -1187,6 +1210,12 @@ describe("POST /api/runs/[runId]/sync route", () => {
 
     expect(body).toMatchObject({ outcome: "synced", pushed: false });
     expect(typeof body.attemptId).toBe("string");
+    // A sync force-pushes a branch, so it is gated on `promoteRun`, not on a
+    // read action — and on the SERVER-DERIVED project id, never a body field.
+    expect(requireProjectActionSpy).toHaveBeenCalledWith(
+      projectId,
+      "promoteRun",
+    );
   });
 
   it("(j) 422 on an invalid body", async () => {

@@ -8,6 +8,9 @@ const runRevisionGcSweepMock = vi.hoisted(() => vi.fn());
 const runCapabilitiesCleanupSweepMock = vi.hoisted(() => vi.fn());
 const runEphemeralAgentGcSweepMock = vi.hoisted(() => vi.fn());
 const runAgentMaterializationCleanupSweepMock = vi.hoisted(() => vi.fn());
+const runSyncRecoverySweepMock = vi.hoisted(() => vi.fn());
+const runBrainDecaySweepMock = vi.hoisted(() => vi.fn());
+const runBrainReindexSweepMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -33,6 +36,22 @@ vi.mock("@/lib/gc/ephemeral-agent-gc", () => ({
 vi.mock("@/lib/gc/agent-materialization-gc", () => ({
   runAgentMaterializationCleanupSweep: runAgentMaterializationCleanupSweepMock,
 }));
+// #M10: this composition added `runSyncRecoverySweep` and never mocked it, so it
+// ran for real, hit getDb(), threw, and was swallowed into `errors[]` — which
+// nothing asserted. The sweep was effectively absent from its own test.
+vi.mock("@/lib/runs/sync-recovery", () => ({
+  runSyncRecoverySweep: runSyncRecoverySweepMock,
+}));
+// Same exposure, PRE-EXISTING (ADR-122, not this branch): both brain sweeps were
+// un-mocked too, so they threw on getDb() into the same swallowed `errors[]`.
+// Mocked here so `errors: []` below is a real guard for EVERY arm — otherwise
+// the next sweep to go silently broken hides behind them.
+vi.mock("@/lib/brain/decay", () => ({
+  runBrainDecaySweep: runBrainDecaySweepMock,
+}));
+vi.mock("@/lib/brain/reindex", () => ({
+  runBrainReindexSweep: runBrainReindexSweepMock,
+}));
 
 const workspaceSummary = {
   scanned: 0,
@@ -52,6 +71,15 @@ describe("scheduler system sweeps", () => {
   beforeEach(() => {
     vi.resetModules();
     runSweepTickMock.mockReset().mockResolvedValue({ idled: 0 });
+    runSyncRecoverySweepMock.mockReset().mockResolvedValue({
+      candidates: 0,
+      orphanOperationsAborted: 0,
+      durationCapKilled: 0,
+    });
+    // Both brain sweeps merge their own `errors` into the composition's, so the
+    // shape matters, not just the resolution.
+    runBrainDecaySweepMock.mockReset().mockResolvedValue({ errors: [] });
+    runBrainReindexSweepMock.mockReset().mockResolvedValue({ errors: [] });
     runReconcileSweepMock.mockReset().mockResolvedValue({ reconciled: 0 });
     reconcileTerminalCostRollupsMock
       .mockReset()
@@ -113,6 +141,40 @@ describe("scheduler system sweeps", () => {
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
+    expect(runSyncRecoverySweepMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Every arm is individually try/caught into `errors[]`, so a sweep that throws
+  // is INVISIBLE unless the composition asserts the summary is clean. That is how
+  // the un-mocked sync recovery sweep passed while never running.
+  it("(#M10) reports the sync recovery result and swallows nothing", async () => {
+    runSyncRecoverySweepMock.mockResolvedValueOnce({
+      candidates: 2,
+      orphanOperationsAborted: 1,
+      durationCapKilled: 0,
+    });
+
+    const { runSystemSweep } = await import("../system-sweeps");
+    const summary = await runSystemSweep();
+
+    expect(summary.errors).toEqual([]);
+    expect(summary.syncRecovery).toEqual({
+      candidates: 2,
+      orphanOperationsAborted: 1,
+      durationCapKilled: 0,
+    });
+  });
+
+  it("(#M10) surfaces a thrown sync recovery sweep as an error (207 contract)", async () => {
+    runSyncRecoverySweepMock.mockRejectedValueOnce(new Error("sync boom"));
+
+    const { runSystemSweep } = await import("../system-sweeps");
+    const summary = await runSystemSweep();
+
+    expect(
+      summary.errors.some((e) => e.includes("sync recovery sweep failed")),
+    ).toBe(true);
+    expect(summary.syncRecovery).toBeNull();
   });
 
   it("runGcCompatibilitySweep does NOT run the cost-rollup reconcile", async () => {

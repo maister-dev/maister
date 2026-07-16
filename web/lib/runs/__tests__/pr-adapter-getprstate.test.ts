@@ -270,11 +270,18 @@ describe("getPrState — github (gh CLI)", () => {
     expect(call).toBeDefined();
     const argv = call?.args as string[];
 
-    expect(Array.isArray(argv)).toBe(true);
     expect(argv).toContain("--repo");
     expect(argv[argv.indexOf("--repo") + 1]).toBe("org/repo");
     expect(argv).toContain("7");
     expect(argv.join(" ")).not.toContain("gh-secret-token");
+    // The field list IS the contract with gh: every one of these is read off the
+    // payload, and `mergeStateStatus === "DIRTY"` is half of conflict detection
+    // (`githubConflicts`). Asserting only `--repo`/`7` meant dropping a field
+    // silently disabled PR-conflict detection with every test still green.
+    expect(argv).toContain("--json");
+    expect(argv[argv.indexOf("--json") + 1]).toBe(
+      "state,mergedAt,mergeCommit,mergeable,mergeStateStatus",
+    );
 
     const env = (call?.opts as { env?: Record<string, string> }).env;
 
@@ -474,8 +481,19 @@ describe("getPrState — gitlab (glab CLI)", () => {
     expect(call).toBeDefined();
     const argv = call?.args as string[];
 
-    expect(Array.isArray(argv)).toBe(true);
-    expect(argv).toContain("3");
+    // `Array.isArray(argv)` + "contains the number I passed in" asserted nothing
+    // about the command. Pin the whole argv: `-R` with the FULL host URL is what
+    // carries a self-hosted host that a bare owner/repo would lose, and `-F json`
+    // is what makes the payload parseable at all.
+    expect(argv).toEqual([
+      "mr",
+      "view",
+      "3",
+      "-R",
+      "https://gitlab.com/org/repo",
+      "-F",
+      "json",
+    ]);
     expect(argv.join(" ")).not.toContain("gl-secret-token");
 
     const env = (call?.opts as { env?: Record<string, string> }).env;

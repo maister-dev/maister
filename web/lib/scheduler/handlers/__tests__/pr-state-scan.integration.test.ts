@@ -407,6 +407,61 @@ describe("runPrStateScanJob", () => {
     expect(second.scanned).toBe(0);
   });
 
+  // #C8: the `[FIX:ADR-139]` lease-deadline path shipped with no regression test.
+  // Without it, a full batch of slow providers (50 × the adapter's 60s ceiling)
+  // runs ~10x past the scheduler lease: the reaper marks this attempt
+  // LEASE_EXPIRED and starts a REPLACEMENT scan while this one is still writing —
+  // two unfenced scanners on the same rows, and enough repeated failures to
+  // poison-disable the job.
+  it("(#C8) stops at its lease budget and resumes from the last candidate it ACTUALLY processed", async () => {
+    // Floor the budget: scanBudgetMs() = max(1_000, lease - callBudget - 10_000),
+    // so any small lease pins it at the 1s floor.
+    vi.stubEnv("MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS", "1");
+
+    const projectId = await seedProject();
+
+    await ensurePrStateScanSeed();
+    await seedFullBatch(projectId);
+
+    // Each provider read burns more than half the budget, so the deadline trips
+    // after the second candidate — long before the 50-row batch is done.
+    const slow = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+
+      return OPEN;
+    });
+
+    const summary = await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: slow as unknown as typeof getPrState,
+    });
+
+    // It stopped early rather than running the whole batch past the lease.
+    expect(slow.mock.calls.length).toBeLessThan(50);
+    expect(summary.scanned).toBe(50);
+
+    // The cursor names the LAST PROCESSED row, never the window end: advancing
+    // past unvisited rows would silently skip them until the cursor wrapped.
+    const processed = slow.mock.calls.length;
+    const expectedCursor = `pr-batch-${String(processed - 1).padStart(3, "0")}`;
+
+    expect(summary.cursor).toBe(expectedCursor);
+    expect(await storedCursor(projectId)).toBe(expectedCursor);
+
+    // ...and the next tick resumes strictly after it rather than starting over.
+    const resumed = vi.fn(async () => OPEN);
+
+    vi.stubEnv("MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS", "300");
+    await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: resumed as unknown as typeof getPrState,
+    });
+
+    expect(resumed).toHaveBeenCalledTimes(50 - processed);
+  });
+
   it("returns unsupported_provider for a generic remote without stamping any candidate", async () => {
     const projectId = await seedProject({
       repoUrl: "https://git.internal.example/acme/app.git",
