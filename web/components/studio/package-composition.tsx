@@ -94,6 +94,7 @@ export function PackageComposition({
   onDraftFilesChange,
   onSaveDraft,
   onCreateArtifact,
+  onCreateFlow,
   onCompareElement,
 }: {
   packageId: string;
@@ -117,6 +118,9 @@ export function PackageComposition({
     files: AuthoredFlowPackageFile[],
     navigate: string,
   ) => void;
+  // Flow creation is intentionally not a generic file scaffold: it goes through
+  // the canonical metadata wizard and server-side operation journal.
+  onCreateFlow: () => void;
   // ADR-132 (T18): opens the divergence drawer scoped to one element path.
   // Absent when the package has no upstream lineage — compare entries degrade
   // silently to absent.
@@ -199,14 +203,34 @@ export function PackageComposition({
           />
         ) : null}
         {readOnly ? null : (
-          <CreateArtifactControl
-            draftFiles={draftFiles}
-            packageId={packageId}
-            t={t}
-            onCreateArtifact={onCreateArtifact}
-          />
+          <div className="ml-auto flex flex-wrap gap-2">
+            <button
+              className="rounded-[10px] border border-amber bg-amber px-3 py-1.5 font-mono text-[11px] font-semibold text-white transition-colors hover:bg-amber-2"
+              data-testid="composition-create-flow-open"
+              type="button"
+              onClick={onCreateFlow}
+            >
+              + {t("local.createFlow.addAction")}
+            </button>
+            <CreateArtifactControl
+              draftFiles={draftFiles}
+              packageId={packageId}
+              t={t}
+              onCreateArtifact={onCreateArtifact}
+            />
+          </div>
         )}
       </header>
+
+      {counts.flows === 0 ? (
+        <p
+          className="m-0 rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-ink-2"
+          data-testid="composition-empty-flows"
+          role="status"
+        >
+          {t("local.createFlow.emptyPackage")}
+        </p>
+      ) : null}
 
       <PackageTabs
         activeTab={activeTab}
@@ -564,7 +588,6 @@ function InlineEditor({
 }
 
 const CREATE_KINDS: ScaffoldKind[] = [
-  "flow",
   "skill",
   "subagent",
   "agent",
@@ -691,10 +714,8 @@ export function RenameControl({
   );
 }
 
-// The global "+ Add <kind>" create control (ADR-116 P5). A kind whose tab is
-// hidden (empty) is still creatable here. A flow opens the canvas, a skill its
-// screen, the rest inline — after the scaffold is saved (create = scaffold →
-// save → refresh), so the navigated target reads it off disk.
+// The generic "+ Add artifact" control keeps the existing non-Flow composer
+// behavior. Flows deliberately use the canonical metadata wizard above.
 function CreateArtifactControl({
   packageId,
   draftFiles,
@@ -710,7 +731,7 @@ function CreateArtifactControl({
   ) => void;
 }): ReactElement {
   const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState<ScaffoldKind>("flow");
+  const [kind, setKind] = useState<ScaffoldKind>("skill");
   const [name, setName] = useState("");
   const capabilities = useMemo(
     () => listCapabilities(draftFiles),

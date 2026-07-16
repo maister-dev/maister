@@ -37,6 +37,7 @@ import {
 } from "@/components/studio/package-composition";
 import { SkillScreen } from "@/components/studio/skill-screen";
 import { PackageFileNavigator } from "@/components/studio/package-file-navigator";
+import { CreateFlowDialog } from "@/components/studio/create-flow-dialog";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
   ChangeReviewDialog,
@@ -62,6 +63,7 @@ import {
   ImportDialog,
 } from "@/components/studio/import-dialog";
 import { readApiError } from "@/lib/api-error";
+import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
 import {
@@ -200,6 +202,7 @@ export function LocalPackageEditor({
   mcpCatalog,
   divergence,
   sync,
+  recoveryStatus = "ready",
 }: {
   packageId: string;
   canManage: boolean;
@@ -237,6 +240,7 @@ export function LocalPackageEditor({
   // ADR-132 §d (T20): non-null iff lineage exists — the sync target picker +
   // (when a sync is pending) the crash-window recovery banner state.
   sync: { pending: SyncPendingState | null; options: SyncOptions } | null;
+  recoveryStatus?: "ready" | "recovering" | "recovery_required";
 }): ReactElement {
   const locale = useLocale();
   const router = useRouter();
@@ -282,6 +286,11 @@ export function LocalPackageEditor({
   const [changedCount, setChangedCount] = useState<number | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [createFlowOpen, setCreateFlowOpen] = useState(false);
+  const [createFlowBusy, setCreateFlowBusy] = useState(false);
+  const [createFlowError, setCreateFlowError] = useState<string | null>(null);
+  const [recoveringCreation, setRecoveringCreation] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [divergenceOpen, setDivergenceOpen] = useState(false);
   const [divergenceElement, setDivergenceElement] = useState<string | null>(
     null,
@@ -644,10 +653,80 @@ export function LocalPackageEditor({
     return runSave(formData);
   }, [draftFiles, flowEditorDirty, initialTitle, packageFilesDirty, runSave]);
 
+  const submitNewFlow = useCallback(
+    async (flow: CreateFlowInput): Promise<void> => {
+      setCreateFlowBusy(true);
+      setCreateFlowError(null);
+
+      try {
+        const saved = await flushBeforeAssistant();
+
+        if (!saved) {
+          setCreateFlowError(tApiErrors("requestFailed"));
+          return;
+        }
+
+        const res = await fetch(`/api/studio/local-packages/${packageId}/flows`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId: sessionIdRef.current, flow }),
+        });
+
+        if (!res.ok) {
+          setCreateFlowError(await readApiError(res, tApiErrors));
+          return;
+        }
+
+        const created = (await res.json()) as {
+          createdFlow: { path: string };
+        };
+        const encodedPath = created.createdFlow.path
+          .split("/")
+          .map(encodeURIComponent)
+          .join("/");
+
+        setCreateFlowOpen(false);
+        router.push(`/studio/edit/${packageId}/${encodedPath}`);
+      } catch {
+        setCreateFlowError(tApiErrors("requestFailed"));
+      } finally {
+        setCreateFlowBusy(false);
+      }
+    },
+    [flushBeforeAssistant, packageId, router, tApiErrors],
+  );
+
+  const recoverCreation = useCallback(async (): Promise<void> => {
+    setRecoveringCreation(true);
+    setRecoveryError(null);
+
+    try {
+      const res = await fetch(
+        `/api/studio/local-packages/${packageId}/creation-recovery`,
+        { method: "POST" },
+      );
+
+      if (!res.ok) {
+        setRecoveryError(await readApiError(res, tApiErrors));
+        return;
+      }
+
+      router.refresh();
+    } catch {
+      setRecoveryError(tApiErrors("requestFailed"));
+    } finally {
+      setRecoveringCreation(false);
+    }
+  }, [packageId, router, tApiErrors]);
+
   // Editing is blocked when the lock is foreign/lost OR the assistant holds a
   // turn ("AI working"). The assistant writes as the lock holder; the human
   // editor steps back until the turn ends.
-  const readOnly = !canManage || !lockHeldByMe || assistantBusy;
+  const readOnly =
+    !canManage ||
+    !lockHeldByMe ||
+    assistantBusy ||
+    recoveryStatus !== "ready";
   const participantSources = useMemo<ReferenceSourceGroup[]>(() => {
     const consensusLabels = labels.editor.editor.nodeForm.consensus;
     const runnerGroup = {
@@ -884,6 +963,28 @@ export function LocalPackageEditor({
           sessionId={sessionIdRef.current}
         />
       ) : null}
+      {recoveryStatus !== "ready" ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[12px] text-danger"
+          data-testid="local-editor-creation-recovery"
+          role="alert"
+        >
+          <span>{tStudio("local.createFlow.recoveryRequired")}</span>
+          {canManage && lockHeldByMe ? (
+            <button
+              className="rounded-md border border-danger-line bg-paper px-2 py-1 font-mono text-[10px] font-semibold text-danger disabled:opacity-60"
+              disabled={recoveringCreation}
+              type="button"
+              onClick={() => void recoverCreation()}
+            >
+              {recoveringCreation
+                ? tStudio("local.createFlow.recovering")
+                : tStudio("local.createFlow.recover")}
+            </button>
+          ) : null}
+          {recoveryError ? <span>{recoveryError}</span> : null}
+        </div>
+      ) : null}
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
           <LockBanner
@@ -955,6 +1056,22 @@ export function LocalPackageEditor({
         <PublishDialog
           packageId={packageId}
           onClose={() => setPublishOpen(false)}
+        />
+      ) : null}
+
+      {createFlowOpen ? (
+        <CreateFlowDialog
+          busy={createFlowBusy}
+          mode="add-flow"
+          requestError={createFlowError}
+          onClose={() => {
+            setCreateFlowOpen(false);
+            setCreateFlowError(null);
+          }}
+          onSubmit={async (value) => {
+            if (value.mode !== "add-flow") return;
+            await submitNewFlow(value.flow);
+          }}
         />
       ) : null}
 
@@ -1034,6 +1151,10 @@ export function LocalPackageEditor({
                     : undefined
                 }
                 onCreateArtifact={createArtifact}
+                onCreateFlow={() => {
+                  setCreateFlowError(null);
+                  setCreateFlowOpen(true);
+                }}
                 onDraftFilesChange={handleDraftFilesChange}
                 onSaveDraft={saveDraft}
               />

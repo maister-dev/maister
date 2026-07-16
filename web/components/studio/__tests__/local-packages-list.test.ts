@@ -118,4 +118,25 @@ describe("LocalPackagesList", () => {
     expect(html).toContain("local.empty");
     expect(html).not.toContain('data-testid="local-list"');
   });
+
+  it("removes authoring and destructive controls for a global viewer", () => {
+    const html = renderToStaticMarkup(
+      createElement(LocalPackagesList, {
+        packages: [ACTIVE],
+        canManage: false,
+      }),
+    );
+
+    expect(html).not.toContain('data-testid="local-new"');
+    expect(html).not.toContain('data-testid="local-rename"');
+    expect(html).not.toContain('data-testid="local-cut"');
+    expect(html).not.toContain('data-testid="local-delete"');
+    expect(html).toContain("My Pack");
+  });
+
+  it("makes an unfinished creation visible rather than presenting the package as ready", () => {
+    const html = render([{ ...ACTIVE, recoveryStatus: "recovery_required" }]);
+
+    expect(html).toContain("local.createFlow.recoveryRequired");
+  });
 });

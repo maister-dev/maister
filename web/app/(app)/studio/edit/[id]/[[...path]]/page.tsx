@@ -11,7 +11,7 @@ import { notFound } from "next/navigation";
 import { parse as parseYaml } from "yaml";
 
 import { LocalPackageEditor } from "@/components/studio/local-package-editor";
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession } from "@/lib/authz";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
   buildChangeReviewLabels,
@@ -64,7 +64,7 @@ export default async function StudioEditPage({
 }: PageProps): Promise<ReactElement> {
   const { id, path: segments } = await params;
 
-  await requireSession();
+  const user = await requireActiveSession();
   const pkg = await getLocalPackage(id);
 
   if (!pkg || pkg.status !== "active") notFound();
@@ -217,7 +217,7 @@ export default async function StudioEditPage({
   return (
     <div className="flex h-[calc(100vh-130px)] min-h-[560px] w-full flex-col">
       <LocalPackageEditor
-        canManage
+        canManage={user.role !== "viewer"}
         blockingValidationMessage={blockingValidationMessage}
         bom={bom}
         canvasAvailable={canvasAvailable}
@@ -244,6 +244,13 @@ export default async function StudioEditPage({
         layout={layout}
         mcpCatalog={mcpCatalog}
         packageId={id}
+        recoveryStatus={
+          pkg.creationState?.phase === "recovery_required"
+            ? "recovery_required"
+            : pkg.creationState
+              ? "recovering"
+              : "ready"
+        }
         skillId={skillId || null}
         sync={sync}
         topology={topology}

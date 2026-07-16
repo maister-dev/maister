@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { readApiError } from "@/lib/api-error";
+import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 
 // Shared "create a fresh local package" flow for the two studio list surfaces
 // (`/studio/packages` central list + `/studio/local` management list). Both POST
@@ -15,24 +16,21 @@ import { readApiError } from "@/lib/api-error";
 export function useNewLocalPackage(): {
   creating: boolean;
   setCreating: (value: boolean) => void;
-  name: string;
-  setName: (value: string) => void;
   busy: boolean;
   error: string | null;
   setError: (value: string | null) => void;
-  create: () => Promise<void>;
+  create: (input: { name: string; flow: CreateFlowInput }) => Promise<void>;
 } {
   const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
   const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function create(): Promise<void> {
-    const trimmed = name.trim();
-
-    if (trimmed === "") return;
+  async function create(input: {
+    name: string;
+    flow: CreateFlowInput;
+  }): Promise<void> {
     setBusy(true);
     setError(null);
 
@@ -40,7 +38,7 @@ export function useNewLocalPackage(): {
       const res = await fetch("/api/studio/local-packages", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+        body: JSON.stringify(input),
       });
 
       if (!res.ok) {
@@ -49,9 +47,16 @@ export function useNewLocalPackage(): {
         return;
       }
 
-      const created = (await res.json()) as { id: string };
+      const created = (await res.json()) as {
+        localPackage: { id: string };
+        createdFlow: { path: string };
+      };
+      const encodedPath = created.createdFlow.path
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
 
-      router.push(`/studio/edit/${created.id}`);
+      router.push(`/studio/edit/${created.localPackage.id}/${encodedPath}`);
     } catch {
       setError(tApiErrors("requestFailed"));
     } finally {
@@ -62,8 +67,6 @@ export function useNewLocalPackage(): {
   return {
     creating,
     setCreating,
-    name,
-    setName,
     busy,
     error,
     setError,

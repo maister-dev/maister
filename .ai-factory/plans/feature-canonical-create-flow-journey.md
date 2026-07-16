@@ -500,7 +500,7 @@ path, package name, YAML, form values, Git output, and package bytes.
     reused Git/service logs that expose `workingDir`, paths, names, content, or
     Git output.
 
-- [ ] **T1.4 — Preserve existing empty package support while making it visible.**
+- [x] **T1.4 — Preserve existing empty package support while making it visible.**
   - Depends on: T1.3.
   - Add a server-safe `hasFlows`/`flowCount` projection through
     `web/lib/local-packages/bom.ts`, `web/app/(app)/studio/local/page.tsx`, and
@@ -584,7 +584,7 @@ path, package name, YAML, form values, Git output, and package bytes.
 
 ### Phase 3 — In-Place Studio Wizard and Direct Editor Landing
 
-- [ ] **T3.1 — GREEN: add one reusable Flow-specific dialog.**
+- [x] **T3.1 — GREEN: add one reusable Flow-specific dialog.**
   - Depends on: T2.1-T2.2 and RED component tests.
   - Create `web/components/studio/create-flow-dialog.tsx` and a client-safe
     form state helper if the component needs it. It supports `mode: "newPackage"
@@ -603,7 +603,7 @@ path, package name, YAML, form values, Git output, and package bytes.
   - Verify GREEN: dialog/component test command.
   - Logging: browser code logs nothing.
 
-- [ ] **T3.2 — Replace scratch creation affordances with the wizard.**
+- [x] **T3.2 — Replace scratch creation affordances with the wizard.**
   - Depends on: T3.1 and T2.4.
   - Modify `web/components/studio/use-new-local-package.ts`,
     `web/components/studio/local-packages-list.tsx`, and
@@ -624,7 +624,7 @@ path, package name, YAML, form values, Git output, and package bytes.
     creation/empty-state scenarios.
   - Logging: no client logs; server endpoint logs only safe operation fields.
 
-- [ ] **T3.3 — GREEN: align Studio UI authority with the existing RBAC contract.**
+- [x] **T3.3 — GREEN: align Studio UI authority with the existing RBAC contract.**
   - Depends on: T2.1-T2.4 and RED role/render tests.
   - Add a single server-derived active-member capability and pass it through
     `web/app/(app)/studio/packages/page.tsx`,
@@ -640,7 +640,7 @@ path, package name, YAML, form values, Git output, and package bytes.
 
 ### Phase 4 — Retire New Authored Draft Entry and Clarify Compatibility UI
 
-- [ ] **T4.1 — Redirect `/flows/new` to canonical Studio creation.**
+- [x] **T4.1 — Redirect `/flows/new` to canonical Studio creation.**
   - Depends on: T3.2-T3.3 and RED redirect test.
   - Replace `web/app/(app)/flows/new/page.tsx` DB-draft form with an authenticated
     redirect to `/studio/packages?create=flow`. Remove imports and form-only

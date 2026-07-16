@@ -4,10 +4,12 @@ import type { PackageGroup } from "@/lib/studio/group-packages";
 import type { ReactElement } from "react";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
+import { CreateFlowDialog } from "@/components/studio/create-flow-dialog";
 
 type TrustFilter = "all" | "trusted" | "untrusted";
 
@@ -23,10 +25,13 @@ const KIND_LABEL_KEYS: { key: keyof PackageGroup["counts"]; label: string }[] =
 
 export function PackagesList({
   groups,
+  canManage = true,
 }: {
   groups: PackageGroup[];
+  canManage?: boolean;
 }): ReactElement {
   const t = useTranslations("studio");
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
   const [trust, setTrust] = useState<TrustFilter>("all");
   // Create a fresh local package (same flow as /studio/local) and open the
@@ -34,13 +39,17 @@ export function PackagesList({
   const {
     creating,
     setCreating,
-    name,
-    setName,
     busy,
     error,
     setError,
     create,
   } = useNewLocalPackage();
+
+  useEffect(() => {
+    if (canManage && searchParams.get("create") === "flow") {
+      setCreating(true);
+    }
+  }, [canManage, searchParams, setCreating]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -79,45 +88,21 @@ export function PackagesList({
           <option value="trusted">{t("trustTrusted")}</option>
           <option value="untrusted">{t("trustUntrusted")}</option>
         </select>
-        {creating ? (
-          <span className="flex items-center gap-2">
-            <input
-              aria-label={t("local.newName")}
-              className="min-w-[200px] rounded-[10px] border border-line bg-paper px-3 py-2 text-[13px] text-ink placeholder:text-mute"
-              data-testid="studio-new-name"
-              placeholder={t("local.newNamePlaceholder")}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void create();
-                }
-                if (event.key === "Escape") setCreating(false);
-              }}
-            />
-            <button
-              className="rounded-[10px] border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
-              data-testid="studio-new-create"
-              disabled={busy || name.trim() === ""}
-              type="button"
-              onClick={() => void create()}
-            >
-              {t("local.create")}
-            </button>
-            <button
-              className="rounded-[10px] border border-line bg-paper px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2"
-              type="button"
-              onClick={() => {
-                setCreating(false);
-                setName("");
-                setError(null);
-              }}
-            >
-              {t("local.cancel")}
-            </button>
-          </span>
-        ) : (
+        {canManage && creating ? (
+          <CreateFlowDialog
+            busy={busy}
+            mode="new-package"
+            requestError={error}
+            onClose={() => {
+              setCreating(false);
+              setError(null);
+            }}
+            onSubmit={async (value) => {
+              if (value.mode !== "new-package") return;
+              await create({ name: value.name, flow: value.flow });
+            }}
+          />
+        ) : canManage ? (
           <button
             className="rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
             data-testid="studio-new-package"
@@ -126,7 +111,7 @@ export function PackagesList({
           >
             {t("local.newPackage")}
           </button>
-        )}
+        ) : null}
       </div>
 
       {error ? (

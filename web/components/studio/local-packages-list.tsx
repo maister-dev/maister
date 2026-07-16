@@ -23,6 +23,7 @@ import {
   buildImportDialogLabels,
   ImportDialog,
 } from "@/components/studio/import-dialog";
+import { CreateFlowDialog } from "@/components/studio/create-flow-dialog";
 import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
 import { readApiError } from "@/lib/api-error";
 
@@ -36,6 +37,8 @@ export type LocalPackageListItem = {
   slug: string;
   isDefault: boolean;
   status: "active" | "archived";
+  flowCount?: number;
+  recoveryStatus?: "ready" | "recovering" | "recovery_required";
   cutCompatibility: LocalPackageCutCompatibility;
   origin: LocalPackageOrigin;
   adoptTargets: CutAdoptTarget[];
@@ -50,8 +53,10 @@ const ICON_BTN =
 
 export function LocalPackagesList({
   packages,
+  canManage = true,
 }: {
   packages: LocalPackageListItem[];
+  canManage?: boolean;
 }): ReactElement {
   const t = useTranslations("studio");
   const tApiErrors = useTranslations("apiErrors");
@@ -61,8 +66,6 @@ export function LocalPackagesList({
   const {
     creating,
     setCreating,
-    name,
-    setName,
     busy,
     error,
     setError,
@@ -169,44 +172,21 @@ export function LocalPackagesList({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        {creating ? (
-          <>
-            <input
-              aria-label={t("local.newName")}
-              className="min-w-[220px] flex-1 rounded-[10px] border border-line bg-paper px-3 py-2 text-[13px] text-ink placeholder:text-mute"
-              data-testid="local-new-name"
-              placeholder={t("local.newNamePlaceholder")}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void create();
-                }
-              }}
-            />
-            <button
-              className="rounded-[10px] border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
-              data-testid="local-new-create"
-              disabled={busy || name.trim() === ""}
-              type="button"
-              onClick={() => void create()}
-            >
-              {t("local.create")}
-            </button>
-            <button
-              className="rounded-[10px] border border-line bg-paper px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2"
-              type="button"
-              onClick={() => {
-                setCreating(false);
-                setName("");
-                setError(null);
-              }}
-            >
-              {t("local.cancel")}
-            </button>
-          </>
-        ) : (
+        {canManage && creating ? (
+          <CreateFlowDialog
+            busy={busy}
+            mode="new-package"
+            requestError={error}
+            onClose={() => {
+              setCreating(false);
+              setError(null);
+            }}
+            onSubmit={async (value) => {
+              if (value.mode !== "new-package") return;
+              await create({ name: value.name, flow: value.flow });
+            }}
+          />
+        ) : canManage ? (
           <button
             className="rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
             data-testid="local-new"
@@ -215,7 +195,7 @@ export function LocalPackagesList({
           >
             {t("local.newPackage")}
           </button>
-        )}
+        ) : null}
         {archivedCount > 0 ? (
           <label className="ml-auto flex cursor-pointer items-center gap-2 text-[12px] text-ink-2">
             <input
@@ -336,12 +316,20 @@ export function LocalPackagesList({
                           {t("local.archivedBadge")}
                         </span>
                       ) : null}
+                      {(pkg.recoveryStatus ?? "ready") !== "ready" ? (
+                        <span className="rounded-full border border-danger-line bg-danger-soft px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-danger">
+                          {t("local.createFlow.recoveryRequired")}
+                        </span>
+                      ) : null}
                       <span className="ml-auto truncate font-mono text-[11.5px] text-mute">
                         {pkg.slug}
                       </span>
                     </span>
                     <span className="font-mono text-[11.5px] leading-[1.35] text-mute">
                       {localPackageOriginLabel(pkg.origin, t)}
+                    </span>
+                    <span className="font-mono text-[11px] leading-[1.35] text-mute">
+                      {t("viewer.tabFlows")} · {pkg.flowCount ?? 0}
                     </span>
                     {!pkg.cutCompatibility.compatible ? (
                       <span
@@ -353,7 +341,8 @@ export function LocalPackagesList({
                       </span>
                     ) : null}
                   </Link>
-                  <div className="flex items-center gap-1.5 px-2 py-2">
+                  {canManage ? (
+                    <div className="flex items-center gap-1.5 px-2 py-2">
                     <button
                       className="rounded-[9px] border border-line bg-ivory px-2.5 py-1.5 text-[12px] font-semibold text-ink transition-colors hover:border-amber"
                       data-testid="local-import"
@@ -433,7 +422,8 @@ export function LocalPackagesList({
                     >
                       <TrashIcon className="h-4 w-4" />
                     </button>
-                  </div>
+                    </div>
+                  ) : null}
                 </>
               )}
             </li>

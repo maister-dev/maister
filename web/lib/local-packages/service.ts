@@ -1133,6 +1133,11 @@ export async function renameLocalPackage(
   name: string,
   db?: Db,
 ): Promise<LocalPackage | null> {
+  const current = await getLocalPackage(id, db);
+
+  if (!current) return null;
+  assertLocalPackageCreationReady(current);
+
   const rows = await resolveDb(db)
     .update(lp)
     .set({ name, updatedAt: new Date() })
@@ -1148,6 +1153,10 @@ export async function setLocalPackageStatus(
   db?: Db,
 ): Promise<LocalPackage | null> {
   const database = resolveDb(db);
+  const current = await getLocalPackage(id, db);
+
+  if (!current) return null;
+  assertLocalPackageCreationReady(current);
 
   if (status === "archived") {
     await assertNoLiveLocalPackageAssistants(id, database);
@@ -1184,6 +1193,7 @@ export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
   const row = await getLocalPackage(id, db);
 
   if (!row) return;
+  assertLocalPackageCreationReady(row);
 
   if (row.projectId !== null || row.isDefault) {
     throw new MaisterError(

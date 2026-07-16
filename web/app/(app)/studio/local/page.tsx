@@ -12,13 +12,14 @@ import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 
 import { LocalPackagesList } from "@/components/studio/local-packages-list";
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import {
   listAllLocalPackages,
   listSourceInstallsForLocalPackages,
 } from "@/lib/local-packages/service";
 import { getLocalPackageCutCompatibility } from "@/lib/local-packages/cut-compatibility";
+import { getLocalPackageBom } from "@/lib/local-packages/bom";
 import {
   listAdoptTargetProjects,
   type AdoptTargetProject,
@@ -33,7 +34,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function StudioLocalPage(): Promise<ReactElement> {
-  await requireSession();
+  const user = await requireActiveSession();
   const t = await getTranslations("studio");
   const rows = await listAllLocalPackages();
   const sourceInstalls = await listSourceInstallsForLocalPackages(rows);
@@ -43,14 +44,20 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
 
   // Client-safe projection: `working_dir` + lock session stay server-side.
   const packages: LocalPackageListItem[] = await Promise.all(
-    rows.map(async (row) =>
-      toLocalPackageListItem(
+    rows.map(async (row) => {
+      const [cutCompatibility, bom] = await Promise.all([
+        getLocalPackageCutCompatibility(row),
+        getLocalPackageBom(row),
+      ]);
+
+      return toLocalPackageListItem(
         row,
         sourceInstalls,
-        await getLocalPackageCutCompatibility(row),
+        cutCompatibility,
+        bom.flows.length,
         adoptTargets,
-      ),
-    ),
+      );
+    }),
   );
 
   return (
@@ -70,7 +77,10 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
         </p>
       </header>
 
-      <LocalPackagesList packages={packages} />
+      <LocalPackagesList
+        canManage={user.role !== "viewer"}
+        packages={packages}
+      />
     </div>
   );
 }
@@ -79,6 +89,7 @@ function toLocalPackageListItem(
   row: LocalPackage,
   sourceInstalls: SourceInstallMap,
   cutCompatibility: LocalPackageCutCompatibility,
+  flowCount: number,
   adoptTargets: AdoptTargetProject[],
 ): LocalPackageListItem {
   return {
@@ -87,6 +98,13 @@ function toLocalPackageListItem(
     slug: row.slug,
     isDefault: row.isDefault,
     status: row.status,
+    flowCount,
+    recoveryStatus:
+      row.creationState?.phase === "recovery_required"
+        ? "recovery_required"
+        : row.creationState
+          ? "recovering"
+          : "ready",
     cutCompatibility,
     origin: localPackageOrigin(row, sourceInstalls),
     // Client-safe subset: repo paths + attachment ids stay server-side.

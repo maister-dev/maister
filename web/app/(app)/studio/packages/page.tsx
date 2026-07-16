@@ -5,7 +5,7 @@ import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 
 import { PackagesList } from "@/components/studio/packages-list";
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession } from "@/lib/authz";
 import { loadStudioPackages } from "@/lib/studio/load";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -15,7 +15,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function StudioPackagesPage(): Promise<ReactElement> {
-  const user = await requireSession();
+  const user = await requireActiveSession();
   const t = await getTranslations("studio");
   const groups = await loadStudioPackages(user.id, user.role);
 
@@ -36,7 +36,7 @@ export default async function StudioPackagesPage(): Promise<ReactElement> {
         </p>
       </header>
 
-      <PackagesList groups={groups} />
+      <PackagesList canManage={user.role !== "viewer"} groups={groups} />
     </div>
   );
 }

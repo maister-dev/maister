@@ -7,6 +7,7 @@ vi.mock("next-intl", () => ({
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, refresh: () => {} }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 import { PackagesList } from "@/components/studio/packages-list";
