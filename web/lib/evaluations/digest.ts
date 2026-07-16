@@ -9,6 +9,11 @@ export function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+// Content digest of raw bytes — the content-address for an evidence blob.
+export function sha256Bytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null";

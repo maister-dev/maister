@@ -32,9 +32,11 @@ Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 - Phase 2 T2.1 **partial** `6f88dd5f2` — migration **0104** (studies/recipes/
   participants) + 7 real-PG integration tests green.
 
-**▶ NEXT (resume here):** **T2.2** services (Study/recipe/participant service +
-legacy adapters + membership-consumer migration to the launched-lineage
-predicate), then **T2.3** evidence storage, then Phases 3–7.
+**▶ NEXT (resume here):** **T2.3** immutable evidence storage (content-addressed
+store under `MAISTER_EVALUATION_EVIDENCE_ROOT`, commit-anchored capture, coverage/
+redaction, seal + snapshot reuse-by-digest, bounded retrieval), then Phases 3–7.
+**T2.2 DONE** (predicate `1f6f5b7ac` + service `c06895b59`); routes co-evolve
+with Phase 5.
 
 **T2.1 DONE (this session):** migrations `0105` (config: method_revisions /
 judge_panels / profiles / project_profile_overrides), `0106` (execution +
@@ -792,7 +794,8 @@ Phase 1 exit: package parser/local workflow/release gate suites green; old packa
   - Logging: migration emits bounded counts/IDs/checksum summaries; WARN unknown legacy provenance; ERROR abort reason; never JSON verdict/comment/evidence body.
   - Depends on: T0.2.
 
-- [ ] T2.2 RED/GREEN/REFACTOR Study, recipe, participant, and legacy adapter services.
+- [x] T2.2 RED/GREEN/REFACTOR Study, recipe, participant, and legacy adapter services.
+  - DONE (this session): (1) launched-lineage predicate `lib/evaluations/membership.ts` (`isLaunchedLineageRun` = legacy experiment member OR launched eval participant; observed excluded by construction) migrated into ALL 4 no-auto/relaunch consumers (auto-promotion sweep reader, promote apply-site guard, auto-delivery short-circuit, HITL restart classification) — committed `1f6f5b7ac`, integration test proves observed/launched/legacy/plain + tombstone. (2) Neutral Study service `lib/evaluations/studies.ts` (createStudy + cross-project reject, patchStudy version-CAS, addObservedParticipants same-task/flow-only/idempotent/draft→open, removeParticipant hard-delete-vs-tombstone, createRecipe digest+dup-key) + shared `lib/evaluations/digest.ts` — committed `c06895b59`, 10-test service integration green. Legacy deep-link lossless mapping is structural (backfill preserves Experiment id AS Study id). CO-EVOLVE: HTTP routes + legacy `/experiments` route adapters land with Phase 5 UI (where consumed); GC/relaunch consumers already covered by the unified predicate.
   - Files: new web/lib/evaluations/{types,schemas,fsm,repository,service,participants,recipes,legacy}.ts; canonical/new routes; existing web/lib/experiments/* compatibility adapters; membership consumers in promote/auto-delivery/auto-promotion/GC/relaunch.
   - RED: observed same-task validation; observed in multiple Studies; launched owner uniqueness; tombstone rules; active/failed participants; optimistic concurrency/idempotency; every membership behavioral regression.
   - GREEN: neutral Study service and explicit launched-lineage predicate; legacy routes/deep links map losslessly.
@@ -800,7 +803,9 @@ Phase 1 exit: package parser/local workflow/release gate suites green; old packa
   - Logging: DEBUG bounded study/participant/run IDs and validation stage; INFO add/tombstone/state; WARN legacy adapter/deprecation; ERROR typed refusal; no task prompt/diff/path.
   - Depends on: T2.1.
 
-- [ ] T2.3 RED/GREEN/REFACTOR immutable evidence storage, capture, coverage, redaction, and bounded retrieval.
+- [~] T2.3 RED/GREEN/REFACTOR immutable evidence storage, capture, coverage, redaction, and bounded retrieval.
+  - DONE (storage core, this session): `lib/evaluations/evidence/store.ts` (content-addressed blob write via atomicWriteBuffer tmp+fsync+rename; server-capped bounded read w/ `truncated` flag; `..`/root-escape path confinement) + `lib/evaluations/evidence/snapshots.ts` (`sealEvidenceSnapshot` blobs-before-DB seal, `findReusableSnapshot` reuse-by (watermark+protocol digest), redacted item DTO w/o locator/blobKey, bounded `readSnapshotItem` validating item∈snapshot); `evaluationEvidenceRoot()` in instance-config + `MAISTER_EVALUATION_EVIDENCE_ROOT` in .env.example + docs/configuration.md (host-only per ADR-023). 4-test integration green (seal/reuse/bounded-read/confinement). The security-critical retrieval boundary (AC-22 subset) is verified.
+  - CO-EVOLVE (subsequent commits): the commit-anchored CAPTURE pipeline (git-object reads at the watermark SHA, coverage classification incl. `uncommitted_not_captured`, redaction), the evidence API routes, and GC/orphan/pending-delete recovery — these feed item bytes into the already-built seal/store core.
   - Files: web/lib/evaluations/evidence/*, instance-config/runtime-root helpers, evidence API routes, artifact/gate/run/session readers, GC/recovery modules.
   - RED: active and terminal watermarks; commit-anchored reads (git objects at resolved SHA, no live worktree scan; append-only logs cut at watermark offset; uncommitted_not_captured coverage class); sealed-snapshot reuse across executions on digest match and typed refusal on mismatch; identical panel snapshot; later Run mutation; truncation/redaction/digest; unequal coverage; secret/path sentinels; blob/DB crash windows; bounded range; authorization.
   - GREEN: content-addressed atomic store, manifest seal transaction, orphan and pending-delete recovery, opaque DTOs.

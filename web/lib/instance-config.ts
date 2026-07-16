@@ -61,6 +61,17 @@ export function localPackagesRoot(): string {
   );
 }
 
+// (ADR-141, M46) Host root for the content-addressed immutable Evaluation
+// evidence store. Blobs are written tmp+fsync+rename BEFORE the DB seal, so a
+// crash leaves an orphan blob (GC-eligible) but the DB never points at an absent
+// blob. Defaults under ~/.maister like the other host roots.
+export function evaluationEvidenceRoot(): string {
+  return (
+    process.env.MAISTER_EVALUATION_EVIDENCE_ROOT ??
+    path.join(os.homedir(), ".maister", "evaluations")
+  );
+}
+
 // (ADR-096) Session-scoped working-dir edit-lock TTL, in minutes.
 export function localPackageLockMinutes(): number {
   return positiveIntFromEnv("MAISTER_LOCAL_PACKAGE_LOCK_MINUTES", 30);
