@@ -166,7 +166,9 @@ vi.mock("@/lib/instance-config", () => ({
 // ADR-140 (Task 13): the ai_rebase_merge conflict branch dynamic-imports
 // syncRunTarget to delegate to the AI resolver.
 const syncTargetMock = vi.hoisted(() => ({
-  syncRunTarget: vi.fn(async () => ({
+  // Takes its input, like the real one — otherwise the mock's call tuple types as
+  // empty and the delegation input cannot be asserted at all.
+  syncRunTarget: vi.fn(async (_input: Record<string, unknown>) => ({
     attemptId: "sync-att-1",
     outcome: "agent_launched" as const,
     behind: 1,
@@ -836,14 +838,124 @@ describe("promoteRun — happy path (flow local_merge)", () => {
       mode: "ai_rebase_merge",
       resolverLaunched: true,
     });
+    // #C6: this used to be an objectContaining that named only runId/strategy/agent,
+    // so autoFinalize, push, the actor and the injected db were all unpinned —
+    // exactly the fields that were wrong. Assert the WHOLE delegation input.
     expect(syncTargetMock.syncRunTarget).toHaveBeenCalledWith(
-      expect.objectContaining({ runId, strategy: "rebase", agent: true }),
+      expect.objectContaining({
+        runId,
+        strategy: "rebase",
+        agent: true,
+        // The resolver must not push: `ai_rebase_merge` finalizes by merging
+        // locally, and this policy is push:"never".
+        push: false,
+        // Default OFF — the two-step Review is the default contract.
+        autoFinalize: false,
+        // A human promote records a real user on the force-push ledger.
+        actor: { type: "user", id: "user-1" },
+      }),
     );
+    // The injected db must reach the delegation; omitting it silently fell back
+    // to getDb() and escaped this test's seam entirely.
+    expect(syncTargetMock.syncRunTarget.mock.calls[0][0]).toHaveProperty("db");
     expect(createAssignment).not.toHaveBeenCalled();
     // The promotion claim is released before the resolver runs (no crash window).
     expect(dbState.tables.workspaces[0]).toMatchObject({
       promotionState: "failed",
     });
+  });
+
+  it("(#C6) rides autoFinalize:true through to the resolver", async () => {
+    const runId = seedFlowRun({
+      deliveryPolicySnapshot: {
+        strategy: "ai_rebase_merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    vi.mocked(promoteRebaseMerge).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "rebase conflict"),
+    );
+    syncTargetMock.syncRunTarget.mockClear();
+
+    await callPromote(runId, {
+      reviewedTargetCommit: "tip00000",
+      autoFinalize: true,
+    });
+
+    expect(syncTargetMock.syncRunTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ autoFinalize: true }),
+    );
+  });
+
+  // #6: `resolvedMode` comes from the project delivery policy, not `input.mode`,
+  // so a SYSTEM promote (the ADR-126 cron lane) reaches this delegation too — and
+  // its sessionUser.id is the synthetic `auto-promotion:<projectId>`. Recording
+  // that as a user invented a human on the ledger of a force-push.
+  it("(#6) records the canonical actor, not the placeholder sessionUser, for a system promote", async () => {
+    const runId = seedFlowRun({
+      deliveryPolicySnapshot: {
+        strategy: "ai_rebase_merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    vi.mocked(promoteRebaseMerge).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "rebase conflict"),
+    );
+    syncTargetMock.syncRunTarget.mockClear();
+
+    const { promoteRun } = await import("../promote");
+
+    await promoteRun(
+      runId,
+      { reviewedTargetCommit: "tip00000" } as never,
+      {
+        sessionUser: { id: "auto-promotion:proj-1" },
+        authorize,
+        actor: { kind: "system" },
+      } as never,
+    );
+
+    expect(syncTargetMock.syncRunTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: { type: "system", id: null } }),
+    );
+  });
+
+  it("(#6) records an agent actor by its agent id", async () => {
+    const runId = seedFlowRun({
+      deliveryPolicySnapshot: {
+        strategy: "ai_rebase_merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    vi.mocked(promoteRebaseMerge).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "rebase conflict"),
+    );
+    syncTargetMock.syncRunTarget.mockClear();
+
+    const { promoteRun } = await import("../promote");
+
+    await promoteRun(
+      runId,
+      { reviewedTargetCommit: "tip00000" } as never,
+      {
+        sessionUser: { id: "orchestrator:proj-1" },
+        authorize,
+        actor: { kind: "agent", agentId: "agent-7" },
+      } as never,
+    );
+
+    expect(syncTargetMock.syncRunTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: { type: "agent", id: "agent-7" } }),
+    );
   });
 
   it("promotes a Review flow run through rebase_merge", async () => {

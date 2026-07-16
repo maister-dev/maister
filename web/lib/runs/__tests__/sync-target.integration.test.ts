@@ -60,6 +60,9 @@ const { claimLifecycleOperation } = await import(
   "@/lib/workbench-lifecycle/service"
 );
 
+type LifecycleOperationName =
+  import("@/lib/workbench-lifecycle/service").LifecycleOperationName;
+
 const schema = fullSchema as unknown as Record<string, any>;
 const { runs, workspaces, tasks, runSyncAttempts } = schema;
 
@@ -654,6 +657,58 @@ describe("syncRunTarget — the double fence (both directions)", () => {
     expect(await attemptRows(runId)).toHaveLength(0);
   });
 
+  // #C3: the ADR claims "both directions are matrix tested"; the actual coverage was
+  // three point tests. `claiming` was tested and `done` was not — yet `done` is the
+  // state a COMPLETED promotion leaves behind, so this is the common one.
+  it("(f.2b) promotion_state='done' also makes syncRunTarget refuse CONFLICT", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/f2b");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/f2b",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      promotionState: "done",
+    });
+
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  // The carve-out the whole reopen→sync path depends on. `reopened` is neither
+  // `claiming` nor `done`, so it must PASS the fence — if it ever started blocking,
+  // every existing test would still be green while the feature's headline flow (a
+  // conflicted PR is reopened, then re-synced) was dead.
+  it("(f.2c) promotion_state='reopened' PASSES the fence — reopen→sync is the point", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/f2c");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/f2c",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      promotionState: "reopened",
+    });
+
+    const out = await syncRunTarget({ runId, actor: actor(), db });
+
+    expect(out.outcome).toBe("synced");
+    // It really ran: an attempt row exists and reached a terminal phase.
+    const [attempt] = await attemptRows(runId);
+
+    expect(attempt.phase).toBe("succeeded");
+  });
+
   it("(f.3) a shared-slot lifecycle op is refused while sync is claimed", async () => {
     const { parent, baseSha } = await initRepoWithRemote();
     const wt = await addRunWorktree(parent, "sync/f3");
@@ -671,6 +726,35 @@ describe("syncRunTarget — the double fence (both directions)", () => {
 
     await expect(
       claimLifecycleOperation({ runId, workspaceId, operation: "archive" }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  // (f.3) proved `archive` only. The slot is shared by SIX operations, and "sync is
+  // mutually exclusive with the other five" is the claim — so enumerate them. Table
+  // driven off the exported union, so a seventh operation cannot be added without
+  // either appearing here or failing the type.
+  it.each<LifecycleOperationName>([
+    "drop",
+    "exportBranch",
+    "snapshotCommit",
+    "handoffBranch",
+  ])("(f.3) a claimed sync also refuses %s", async (operation) => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, `sync/f3-${operation}`);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId, workspaceId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: `sync/f3-${operation}`,
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      lifecycleOperationState: "claiming",
+      lifecycleOperationName: "sync",
+    });
+
+    await expect(
+      claimLifecycleOperation({ runId, workspaceId, operation }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
@@ -858,6 +942,77 @@ describe("pushWithLease + published push", () => {
     });
 
     expect(remoteAfter).toBe((await headSha(wt)).toLowerCase());
+  });
+
+  // #C1: `grep -i indeterminate` across every test file returned NOTHING. This is
+  // the only guard between the resolver and an UNLEASED force-push: `remoteShaBefore`
+  // is captured BEFORE the all-refs fetch precisely so it can be the lease authority,
+  // and if that read failed there is no authority to lease against. Pushing anyway
+  // would mean `--force` with no `--force-with-lease`, silently overwriting whatever
+  // landed on the branch meanwhile.
+  it("(#C1) refuses the push when origin's head could not be read, and KEEPS the local rebase", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/indeterminate");
+
+    await git(wt, ["push", "-u", "origin", "sync/indeterminate"]);
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/indeterminate",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+    });
+
+    // The pre-fetch `ls-remote` capture fails → the lease authority is unknown.
+    // Only the FIRST call is stubbed: the assertions below re-read origin for real.
+    vi.mocked(remoteBranchHead).mockRejectedValueOnce(
+      new Error("network down"),
+    );
+
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      // The REASON must be the indeterminate remote, not a rejected lease. Both
+      // refuse with CONFLICT — deleting this guard still yields one, because an
+      // empty lease (`refs/heads/x:`) is itself unpushable — so a bare `code`
+      // assertion passes with the guard gone and proves nothing. This message is
+      // the only thing that distinguishes "we never learned the lease authority"
+      // from "the branch moved", and it is what the operator is told to act on.
+      message: expect.stringContaining("could not determine the remote head"),
+    });
+
+    const [attempt] = await attemptRows(runId);
+
+    expect(attempt.phase).toBe("failed");
+    expect(attempt.errorCode).toBe("CONFLICT");
+    expect(attempt.errorMessage).toContain("could not determine");
+    expect(attempt.pushed).not.toBe(true);
+    // Never reached `pushing`: the refusal is BEFORE the network call, so no
+    // force-push is attempted without an authority to lease against.
+    expect(attempt.phase).not.toBe("pushing");
+
+    // The rebase is KEPT (a refused push is not a reason to throw away the work —
+    // the live path's lease-rejected branch behaves the same), and origin is
+    // untouched: it still carries the pre-sync commit.
+    const remoteAfter = await remoteBranchHead({
+      projectRepoPath: parent,
+      remote: "origin",
+      branch: "sync/indeterminate",
+    });
+
+    expect(remoteAfter).not.toBe((await headSha(wt)).toLowerCase());
+    expect(await syncOperationInProgress(wt)).toBe(false);
+    // The claim is released, so the run is not wedged by a refusal.
+    const [ws] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId));
+
+    expect(ws.lifecycleOperationState).toBe("none");
   });
 
   it("(g) lease failure after fetch → CONFLICT, local rebase kept", async () => {

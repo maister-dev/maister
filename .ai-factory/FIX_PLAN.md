@@ -36,23 +36,36 @@ Two root causes explain most of the code defects:
 
 ---
 
-## Phase 2 — tests owed for Phase 1 (do FIRST; they are failing-first proofs)
+## Phase 2 — tests owed for Phase 1 — ✅ DONE (`83184e758`)
 
-1. [ ] `sync-recovery.integration.test.ts`: seed a **mechanical** attempt at
+1. [x] `sync-recovery.integration.test.ts`: seed a **mechanical** attempt at
        `phase='verifying'`, no driver → assert the sweep terminalizes it AND releases
        `lifecycle_operation_state`. Must FAIL against `167bc9b1e~1`.
-2. [ ] Same at `phase='pushing'` where the push did NOT land → assert `failed`, claim
+2. [x] Same at `phase='pushing'` where the push did NOT land → assert `failed`, claim
        released, and the worktree is **NOT** restored.
-3. [ ] Same at `phase='pushing'` where origin HEAD == worktree HEAD (push LANDED) →
+3. [x] Same at `phase='pushing'` where origin HEAD == worktree HEAD (push LANDED) →
        assert `succeeded` + `pushed=true` + claim released + **no** `git reset`.
-4. [ ] Two-racer for the W5 CAS: seed `agent_running` past the cap, advance the row to
+4. [x] Two-racer for the W5 CAS: seed `agent_running` past the cap, advance the row to
        `pushing` between the candidate pre-read and the arm (one-shot
        `vi.spyOn(db,'update')` or a 2nd pg connection) → assert the cap kill is SKIPPED.
        Project rule: a single-threaded test is NOT evidence for a race contract.
 
-## Phase 3 — remaining code defects
+## Phase 3 — remaining code defects — ✅ DONE (`7b40199db`, `b8eeb697b`, `c65e84276`, `fdd380071`)
 
-5. [ ] **#3 CRITICAL — 300s claim steal vs a 30-min sync.** `sync-target.ts:544-552`
+> Design notes where the fix DIVERGED from this plan's text (all verified in source):
+> **#3** — routing through `claimLifecycleOperation` cannot work (it IS the thief:
+> archive/drop call it), and no fixed window works because `agent_running_since` is
+> re-stamped on every HITL resume. Fixed by HEARTBEATING `lifecycle_operation_claimed_at`
+> so it means "last known alive" (what the reclaim window already assumes) +
+> fencing the release on the slot's own attempt id. `canReclaimLifecycle` untouched,
+> so its `Date.now()` testability blocker is moot.
+> **#4** — both routes ALREADY returned 202, so no route change was needed (see item 27).
+> **#12** — re-runs the pure gate under FOR UPDATE, not a WHERE: `pr_state` is nullable
+> and the conflicted-only case has it NULL, where `eq()` never matches.
+> **run-header runId** — from `detail.runId`, NOT `promotionOperation` (only built for a
+> promotable Review run; reopen exists for a DONE one).
+
+5. [x] **#3 CRITICAL — 300s claim steal vs a 30-min sync.** `sync-target.ts:544-552`
        bypasses `claimLifecycleOperation`; `canReclaimLifecycle`
        (`workbench-lifecycle/service.ts:453-470`) steals any `claiming` slot older than
        `promotionClaimTimeoutSeconds()` (default **300**, `instance-config.ts:106`) while
@@ -67,7 +80,7 @@ Two root causes explain most of the code defects:
        (≥ `SYNC_ATTEMPT_MAX_MINUTES`) + heartbeat `claimed_at`.
        *Testability blocker:* `canReclaimLifecycle` calls `Date.now()` directly
        (`service.ts:467`) — inject a clock or no test can prove this.
-6. [ ] **#4 CRITICAL — background the resolver.** `route.ts:122` awaits `syncRunTarget`
+6. [x] **#4 CRITICAL — background the resolver.** `route.ts:122` awaits `syncRunTarget`
        → awaits `sendPrompt` (`sync-resolver.ts:246`). Design settled during review:
        - **Cut-line = after the CAS tx (`sync-target.ts:992`) / after `sessionInput` is
          built (`:994-1003`), BEFORE `runResolverSession` (`:1015`).** NOT at the conflict
@@ -101,7 +114,7 @@ Two root causes explain most of the code defects:
          outlives the response; nginx sets `proxy_read_timeout 3600s` on `/api/runs/`.
        - Tests currently `await syncRunTarget` and assert final state — they WILL need to
          await the background task.
-7. [ ] **#13 MAJOR — W2 recovery arm is unreachable.** `sync-target.ts:977` inserts the
+7. [x] **#13 MAJOR — W2 recovery arm is unreachable.** `sync-target.ts:977` inserts the
        resolver's `run_sessions` row with `acpSessionId: null` and nothing ever updates it
        (only write in all 3 sync modules). `reconcile.ts:1065` resolves `liveSession` from
        it → always null (or, worse, the OLD flow session's handle via the fallback at
@@ -109,7 +122,7 @@ Two root causes explain most of the code defects:
        `createSession`. Note the review's test finding: `reconcile-classify.test.ts:557`
        and `sync-recovery.integration.test.ts:278` both FEED `liveSessionId` in — they
        prove the consumer, never the producer.
-8. [ ] **#12 MAJOR — reopen decides on a stale `pr_state`.** `reopen.ts:138-149` reads
+8. [x] **#12 MAJOR — reopen decides on a stale `pr_state`.** `reopen.ts:138-149` reads
        lock-free; `fetchRemote` (`:168`, network) + `addWorktreeForBranch` (`:187`) run;
        the tx at `:191` re-asserts ONLY `status='Done'` (`markReopenFromDone`) and the
        workspace UPDATE at `:206-215` carries no `prState` predicate. Concurrent writer =
@@ -117,7 +130,7 @@ Two root causes explain most of the code defects:
        opens a SECOND PR, defeating the refusal `reopen.ts:86-99` documents as
        load-bearing. *Fix:* re-assert `pr_state`/`pr_has_conflicts` inside the tx WHERE +
        `RETURNING`. Mirror `promote.ts:564-568`, already hardened against this exact class.
-9. [ ] **#6 MAJOR — machine promotions recorded as a phantom human.** `promote.ts:906`
+9. [x] **#6 MAJOR — machine promotions recorded as a phantom human.** `promote.ts:906`
        hardcodes `actor: { type:"user", id: ctx.sessionUser.id }` while `ctx.actor` (the
        canonical authority, declared `:97-99`) sits unread. `resolvedMode` comes from the
        project delivery policy (`:685` → `delivery-policy.ts:107-111`), not `input.mode`,
@@ -130,13 +143,13 @@ Two root causes explain most of the code defects:
        **Also** guard `sync-target.ts:1243`: `if (args.autoFinalize && args.actor.id)`
        does not check `type === "user"` and passes `authorize: async () => undefined` —
        unreachable today only because `autoFinalize` is absent from both sync body schemas.
-10. [ ] **#17 MAJOR — `published` re-implemented, diverges.** `sync-target.ts:478` and
+10. [x] **#17 MAJOR — `published` re-implemented, diverges.** `sync-target.ts:478` and
        `sync-recovery.ts:333` use `prUrl != null || branchHasUpstream(...)`;
        `sync-panel-data.ts:61` uses `branchHasUpstream(...)` ONLY. It seeds the `syncPush`
        checkbox (`review-panel.tsx:187`) consumed as `input.push ?? published` → a run with
        a `pr_url` but no upstream shows push OFF and silently isn't pushed. Extract one
        predicate; the flag must derive from the function that performs the capability.
-11. [ ] **Pre-existing (owner opted IN): `/api/runs/[runId]/activity` has NO auth.**
+11. [x] **Pre-existing (owner opted IN): `/api/runs/[runId]/activity` has NO auth.**
        `activity/route.ts:46` — POST, zero auth imports/calls, queries `runs` (`:62-65`) and
        calls `bumpKeepalive` (`:114`, a state-changing write). Unauthenticated caller with a
        leaked run id gets a status oracle (404/409/410/204 discriminate) and can extend
@@ -144,7 +157,7 @@ Two root causes explain most of the code defects:
        (~$0.28/respawn) and pinning slots against the cap of 6. Add `requireActiveSession`
        + `requireProjectAction(projectId, "readBoard")` with `projectId` server-derived,
        auth BEFORE any DB lookup.
-12. [ ] **Minors:** `sync-driver-registry.ts:52` `activeSyncDriverRunIds` — dead export, no
+12. [x] **Minors:** `sync-driver-registry.ts:52` `activeSyncDriverRunIds` — dead export, no
        importer incl. tests · `sync-target.ts:848` `project: any` — unflagged (convention
        requires `// FIXME(any):`); it only uses `syncRunnerId`/`defaultRunnerId` so type it ·
        `sync-target.ts:720`/`:1127` `published && remoteShaIndeterminate` — the flag is only

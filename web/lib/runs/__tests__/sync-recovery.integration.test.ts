@@ -50,6 +50,22 @@ vi.mock("@/lib/worktree", async (orig) => {
     }),
     restoreWorktreeToCommit: vi.fn(async () => undefined),
     abortSyncOperation: vi.fn(async () => undefined),
+    // W3 reads the target head and the branch's published-ness before deciding.
+    localBranchHead: vi.fn(async () => "7".repeat(40)),
+    branchHasUpstream: vi.fn(async () => false),
+  };
+});
+
+// The two things sync-recovery borrows from the live path. Stubbing them is what
+// makes the W3 arm reachable at all: it re-runs the REAL verify gate against a
+// worktree that does not exist here, and its push is a network call.
+vi.mock("@/lib/runs/sync-target", async (orig) => {
+  const actual = await orig<typeof import("@/lib/runs/sync-target")>();
+
+  return {
+    ...actual,
+    verifySyncGate: vi.fn(async () => ({ ok: true }) as const),
+    pushWithLease: vi.fn(async () => ({ pushed: true }) as const),
   };
 });
 
@@ -58,11 +74,18 @@ const {
   runSyncRecoverySweep,
   SYNC_ATTEMPT_MAX_MINUTES,
 } = await import("@/lib/runs/sync-recovery");
+const { verifySyncGate, pushWithLease } = await import(
+  "@/lib/runs/sync-target"
+);
 const { registerSyncDriver, unregisterSyncDriver, hasSyncDriver } =
   await import("@/lib/runs/sync-driver-registry");
-const { headCommit, remoteBranchHead, restoreWorktreeToCommit } = await import(
-  "@/lib/worktree"
-);
+const {
+  headCommit,
+  remoteBranchHead,
+  restoreWorktreeToCommit,
+  localBranchHead,
+  branchHasUpstream,
+} = await import("@/lib/worktree");
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -222,6 +245,10 @@ beforeEach(async () => {
   vi.mocked(remoteBranchHead)
     .mockReset()
     .mockRejectedValue(new Error("no remote"));
+  vi.mocked(localBranchHead).mockReset().mockResolvedValue("7".repeat(40));
+  vi.mocked(branchHasUpstream).mockReset().mockResolvedValue(false);
+  vi.mocked(verifySyncGate).mockReset().mockResolvedValue({ ok: true });
+  vi.mocked(pushWithLease).mockReset().mockResolvedValue({ pushed: true });
 });
 
 // Track registered ids so beforeEach can clear the module-level registry.
@@ -472,6 +499,170 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
     // A landed push is a point of no return: the remote and its PR already carry
     // the rebased commit, so resetting the worktree would manufacture divergence.
     expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
+  });
+});
+
+// #C4: `recoverSyncAttemptOnReconcile` was invoked exactly once in the whole suite,
+// always with `liveSessionId: "sess-orphan"` — i.e. always W2. The W3 arm (no live
+// session → idempotently re-verify → gate → push → finalize) had ZERO coverage,
+// including the branch that decides whether a crashed resolver's work survives.
+describe("recoverSyncAttemptOnReconcile — W3 no live session", () => {
+  async function seedW3(prUrl: string | null = null) {
+    const seeded = await seedRunAttempt({
+      status: "Running",
+      mode: "agent",
+      phase: "agent_running",
+      agentRunningSince: new Date(),
+      headShaBefore: "b".repeat(40),
+    });
+
+    if (prUrl) {
+      await pool.query(`update workspaces set pr_url = $1 where id = $2`, [
+        prUrl,
+        seeded.workspaceId,
+      ]);
+    }
+
+    return seeded;
+  }
+
+  it("gate FAILS → the crashed resolver's work is discarded: restore, fail, Review", async () => {
+    const { runId, workspaceId, attemptId } = await seedW3();
+
+    vi.mocked(verifySyncGate).mockResolvedValue({
+      ok: false,
+      reason: "the worktree is not clean",
+    });
+
+    const result = await recoverSyncAttemptOnReconcile({
+      runId,
+      liveSessionId: null,
+      db,
+    });
+
+    expect(result).toEqual({ window: "w3", outcome: "aborted" });
+    expect(await readAttemptPhase(attemptId)).toBe("failed");
+    expect(await readRunStatus(runId)).toBe("Review");
+    expect(await readClaim(workspaceId)).toEqual({ state: "none", name: null });
+    expect(restoreWorktreeToCommit).toHaveBeenCalledWith(
+      expect.any(String),
+      "b".repeat(40),
+    );
+  });
+
+  it("gate PASSES on an unpublished branch → finalize with no push", async () => {
+    const landed = "e".repeat(40);
+    const { runId, workspaceId, attemptId } = await seedW3();
+
+    vi.mocked(headCommit).mockResolvedValue(landed);
+
+    const result = await recoverSyncAttemptOnReconcile({
+      runId,
+      liveSessionId: null,
+      db,
+    });
+
+    expect(result).toEqual({ window: "w3", outcome: "finalized" });
+    expect(await readAttempt(attemptId)).toEqual({
+      phase: "succeeded",
+      pushed: false,
+      headShaAfter: landed,
+    });
+    expect(pushWithLease).not.toHaveBeenCalled();
+    expect(await readRunStatus(runId)).toBe("Review");
+    expect(await readClaim(workspaceId)).toEqual({ state: "none", name: null });
+    // The resolve completed before the crash — its work is KEPT, never restored.
+    expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
+  });
+
+  it("gate PASSES on a published branch → pushes and finalizes", async () => {
+    const landed = "f".repeat(40);
+    const { runId, attemptId } = await seedW3("https://github.com/x/y/pull/7");
+
+    vi.mocked(headCommit).mockResolvedValue(landed);
+
+    const result = await recoverSyncAttemptOnReconcile({
+      runId,
+      liveSessionId: null,
+      db,
+    });
+
+    expect(result).toEqual({ window: "w3", outcome: "finalized" });
+    expect(pushWithLease).toHaveBeenCalled();
+    expect(await readAttempt(attemptId)).toMatchObject({
+      phase: "succeeded",
+      pushed: true,
+    });
+    expect(await readRunStatus(runId)).toBe("Review");
+  });
+
+  it("lease rejected but origin ALREADY equals the local head → the push landed before the crash, treat as pushed", async () => {
+    const landed = "a".repeat(40);
+    const { runId, attemptId } = await seedW3("https://github.com/x/y/pull/7");
+
+    vi.mocked(headCommit).mockResolvedValue(landed);
+    vi.mocked(pushWithLease).mockResolvedValue({
+      pushed: false,
+      leaseFailed: true,
+    });
+    // Case-insensitively equal — the recovery compares lowercased.
+    vi.mocked(remoteBranchHead).mockResolvedValue(landed.toUpperCase());
+
+    const result = await recoverSyncAttemptOnReconcile({
+      runId,
+      liveSessionId: null,
+      db,
+    });
+
+    // A re-push of an already-landed commit fails the lease; that is not a
+    // conflict, and recording `failed` here would contradict a remote that
+    // demonstrably carries the resolved commit.
+    expect(result).toEqual({ window: "w3", outcome: "finalized" });
+    expect(await readAttempt(attemptId)).toMatchObject({
+      phase: "succeeded",
+      pushed: true,
+    });
+    expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
+  });
+
+  it("lease rejected and origin genuinely MOVED → CONFLICT, local result kept (no restore)", async () => {
+    const { runId, workspaceId, attemptId } = await seedW3(
+      "https://github.com/x/y/pull/7",
+    );
+
+    vi.mocked(headCommit).mockResolvedValue("a".repeat(40));
+    vi.mocked(pushWithLease).mockResolvedValue({
+      pushed: false,
+      leaseFailed: true,
+    });
+    vi.mocked(remoteBranchHead).mockResolvedValue("9".repeat(40));
+
+    const result = await recoverSyncAttemptOnReconcile({
+      runId,
+      liveSessionId: null,
+      db,
+    });
+
+    expect(result).toEqual({ window: "w3", outcome: "aborted" });
+    expect(await readAttemptPhase(attemptId)).toBe("failed");
+    expect(await readRunStatus(runId)).toBe("Review");
+    expect(await readClaim(workspaceId)).toEqual({ state: "none", name: null });
+    // The local rebase is KEPT so a retry has something to push — mirroring the
+    // live path's lease-rejected branch.
+    expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent — a concurrent in-process finalize leaves nothing to do", async () => {
+    const { runId, attemptId } = await seedW3();
+
+    await pool.query(
+      `update run_sync_attempts set phase = 'succeeded' where id = $1`,
+      [attemptId],
+    );
+
+    expect(
+      await recoverSyncAttemptOnReconcile({ runId, liveSessionId: null, db }),
+    ).toEqual({ window: "w3", outcome: "noop" });
   });
 });
 
