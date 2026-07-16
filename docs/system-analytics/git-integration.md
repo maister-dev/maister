@@ -526,9 +526,9 @@ metadata fails closed.
   [ADR-093 Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
   (Implemented),
   [ADR-139 PR lifecycle tracking](../decisions.md#adr-139-pr-lifecycle-tracking)
-  (Designed),
+  (Implemented),
   [ADR-140 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
-  (Designed).
+  (Implemented).
 - Clone-failure `{ reason, detail }` shape + UI contract:
   [`../error-taxonomy.md`](../error-taxonomy.md).
 - Screens (Implemented, ADR-093): [`../screens/projects/add-project.md`](../screens/projects/add-project.md)

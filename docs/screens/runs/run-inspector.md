@@ -83,13 +83,14 @@ inspector must not repeat branch/worktree facts already visible there.
    target branch, base branch, and worktree path stay in the header or dedicated
    action dialogs instead of being duplicated here; the scratch inspector keeps
    its branch/base/target facts and falls back to the scratch metadata when the
-   workspace row's columns are null. When PR lifecycle tracking ships (Designed,
-   ADR-139), Overview also lists the run's PR facts as read-only facts —
-   `prState` (`open` / `merged` / `closed`), the `prHasConflicts` flag, the
-   merged-at timestamp, and the provider merge-commit provenance
-   (`workspaces.pr_merge_commit_sha`, deliberately distinct from the delivery
-   scanner's `runs.merge_commit_sha`); the conflicts flag links to the Reopen
-   action in the Actions tab.
+   workspace row's columns are null. PR lifecycle state (ADR-139, Implemented) is
+   NOT surfaced here: `getRunDetail` carries `prState` and `prHasConflicts`, and
+   they render on the run HEADER's PR-state chip (`components/pr-state-chip.tsx`),
+   which also owns the Reopen affordance. `pr_merged_at` and
+   `pr_merge_commit_sha` are persisted on `workspaces` but are not exposed by
+   `getRunDetail` and appear on no screen (Phase 2 — the columns exist for the
+   scan and for provenance, deliberately distinct from the delivery scanner's
+   `runs.merge_commit_sha`).
 2. **Changes** - total additions/deletions, file count, dirty-state badge, scope
    selector summary, directory-grouped changed files, file status icons, comment
    badges, and generated/large/truncated indicators where available.
@@ -106,12 +107,14 @@ inspector must not repeat branch/worktree facts already visible there.
    composer's turn-interrupt Stop. The scratch promote shortcut exposes a
    merge-mode selector (`local_merge` / `rebase_merge` / `pull_request`). The
    inspector does not expose an arbitrary push-to-remote action in this slice.
-   Branch sync + reopen (Implemented, ADR-140) add two delivery-adjacent shortcuts:
-   **Sync branch** for an eligible `Review` run (opens the Sync branch dialog in
-   [`flow-run.md`](flow-run.md)) and **Reopen** for a `Done` run whose workspace
-   has an open or conflicted PR (`Done → Review`, reusing the SAME provider PR).
-   Both derive from server-side policy like every other action and show a
-   one-line disabled reason when ineligible.
+   Branch sync and reopen (ADR-140, Implemented) are NOT inspector actions:
+   `lifecycle-actions.tsx` and `workbench-lifecycle/policy.ts` carry no sync or
+   reopen reference, and sync deliberately takes no lifecycle-matrix column (see
+   [`workbench-lifecycle.md`](../../system-analytics/workbench-lifecycle.md)) even
+   though it shares the lifecycle claim. **Sync branch** lives inline on the
+   review panel for an eligible `Review` run (see [`flow-run.md`](flow-run.md)),
+   and **Reopen** lives on the PR-state chip for a `Done` run whose workspace has
+   an open or conflicted PR (`Done → Review`, reusing the SAME provider PR).
 
 The inspector should keep text compact and use icons for repeated controls. It
 must not duplicate the main Flow result, conversation, or full diff.

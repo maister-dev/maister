@@ -613,9 +613,9 @@ failure compensates the new branch/worktree before it returns a typed error.
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
   (Implemented, M18),
   [ADR-139 PR lifecycle tracking](../decisions.md#adr-139-pr-lifecycle-tracking)
-  (Designed),
+  (Implemented),
   [ADR-140 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
-  (Designed).
+  (Implemented).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
   target/promotion claim columns from M18, lifecycle operation claim columns
   from M27, and the Implemented ADR-139 PR-state columns + ADR-140
@@ -623,8 +623,8 @@ failure compensates the new branch/worktree before it returns a typed error.
 - Config reference: [`../configuration.md`](../configuration.md)
   (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).
 - Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
-  [`branch-sync.md`](branch-sync.md) (Designed — PR lifecycle scan, target sync,
-  AI conflict resolver, reopen; ADR-139/140),
+  [`branch-sync.md`](branch-sync.md) (Implemented — PR lifecycle scan, target
+  sync, AI conflict resolver, reopen; ADR-139/140),
   [`projects.md`](projects.md),
   [`git-integration.md`](git-integration.md) (push + provider PR dispatch),
   [`workbench-lifecycle.md`](workbench-lifecycle.md) (operator stop/archive/

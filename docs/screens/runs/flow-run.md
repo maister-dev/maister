@@ -241,7 +241,7 @@ snapshot/export mode labels, branch-name validation text, discard/drop
 confirmation, and staged-claim status text. The same strings are used by the
 Inbox card and the run-detail panel.
 
-## Branch sync & PR lifecycle (Designed)
+## Branch sync & PR lifecycle (Implemented)
 
 Branch sync (ADR-140) and PR lifecycle tracking (ADR-139) add run-finishing
 affordances for a `Review` run whose branch fell behind its target and for a

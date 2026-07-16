@@ -128,13 +128,19 @@ stateDiagram-v2
     Review --> Review: local promotion conflict<br/>(stays in Review)
     Review --> Abandoned: Abandon click
 
+    Review --> Running: markSyncFromReview<br/>(ADR-140 AI conflict resolver, cap-gated)
+    Running --> Review: markSyncReviewFromRunning<br/>(resolver finalized or recovered)
+    Done --> Review: markReopenFromDone<br/>(ADR-140 reopen; promotion_state=reopened)
+
     Failed --> [*]: task returns to Backlog
-    Done --> [*]
+    Done --> [*]: unless reopened
     Abandoned --> [*]: task returns to Backlog (or stays Abandoned)
 ```
 
 Status names exactly match the `runs.status` enum in
-`web/lib/db/schema.ts`.
+`web/lib/db/schema.ts`. `Done` is therefore NOT a terminal node: ADR-140's reopen
+returns a `Done` run to `Review` so its stale or conflicted PR can be re-synced
+and re-promoted (`markReopenFromDone`).
 
 ### M11a graph rework loop (Implemented)
 

@@ -454,7 +454,7 @@ Its board-axis consequences:
   exists and `Done` once it is GC'd; reopen supersedes both by returning the run
   to `Review`.
 - **Board status.** The task re-enters the `InFlight` bucket (its latest run is
-  `Review` again). Reopen is the one Designed path by which a `Done` task leaves
+  `Review` again). Reopen is the one path by which a `Done` task leaves
   the `Done` board status; it returns to `InFlight`, never to `Backlog` (the
   "Done never returns to Backlog" rule still holds).
 - **Relations re-gate.** `getOpenRelationBlockers`
@@ -509,7 +509,9 @@ Review | Crashed`.
 - Latest run terminates in `Failed | Crashed | Abandoned` → the persisted task
   remains `InFlight`; the latest-run classifier exposes retry placement and the
   Launch affordance without recreating the task.
-- `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
+- `Done` tasks NEVER return to `Backlog`. `Done` is otherwise terminal EXCEPT
+  via ADR-140 reopen, which returns the task to `InFlight` (never `Backlog`)
+  together with its run's `Done → Review` flip.
 - Title and prompt are non-empty at creation.
 - **(M34 — Implemented)** A task without `flow_id` MUST classify as
   `unconfigured` and MUST be refused launch (`PRECONDITION`) at every entry
@@ -631,7 +633,7 @@ observe a silent rewrite.
 - ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
   [ADR-083 Social board substrate](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
   [ADR-140 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-140-branch-sync-with-ai-conflict-resolver-and-reopen)
-  (Designed — reopen board/relation effect).
+  (Implemented — reopen board/relation effect).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`executors.md`](executors.md), [`social-board.md`](social-board.md)
@@ -639,7 +641,7 @@ observe a silent rewrite.
   [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked),
   [`triage.md`](triage.md) (Implemented — `flagged`, `auto_launch_triaged` tick,
   triager verdict/flag/enqueue ops), and
-  [`branch-sync.md`](branch-sync.md) (Designed — reopen `Done→Review` board and
-  relation re-gate effect).
+  [`branch-sync.md`](branch-sync.md) (Implemented — reopen `Done→Review` board
+  and relation re-gate effect).
 - Source: `web/lib/db/schema.ts` (tasks + runs tables),
   `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Implemented).

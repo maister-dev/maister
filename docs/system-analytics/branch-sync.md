@@ -205,8 +205,11 @@ sequenceDiagram
 
 ## Edge cases
 
-- **Non-FF local target divergence** → `PRECONDITION` (both SHAs) — no attempt row.
-- **Dirty worktree** → `PRECONDITION` with a snapshot-commit hint.
+- **Non-FF local target divergence** → `PRECONDITION` (both SHAs). The attempt row
+  EXISTS and settles `aborted`: the claim tx mints the `starting` row before the
+  fetch, and the fast-forward is what fails.
+- **Dirty worktree** → `PRECONDITION` with a snapshot-commit hint — and no attempt
+  row, since the dirty check runs BEFORE the claim.
 - **Ineligible run** (scratch / shared / experiment member / orchestrator child /
   wrong status/kind) → `PRECONDITION`.
 - **Claim lost** (promotion claiming/done, lifecycle busy, cap reached) → `CONFLICT`.

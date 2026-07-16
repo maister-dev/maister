@@ -1773,19 +1773,23 @@ auto-incrementing per `run_id`.
                                  //   verifying | pushing | succeeded | failed |
                                  //   aborted — written BEFORE each side effect
   strategy,                      // rebase | merge (effective)
-  mode,                          // sync | ai_rebase_merge (invocation kind)
-  targetRef, targetSha,          // promotion target and its resolved head
+  workspaceId,                   // NOT NULL, FK -> workspaces.id ON DELETE CASCADE
+  mode,                          // mechanical | agent (how the attempt resolved)
+  targetRef, targetSha?,         // promotion target; targetSha is RESERVED —
+                                 //   no code path writes it today
   headShaBefore, headShaAfter?,  // run branch tip before / after the attempt
   remoteShaBefore?,              // run branch remote SHA captured BEFORE the
                                  //   all-refs fetch (--force-with-lease expected value)
   conflictedFiles?,              // jsonb; captured on the conflict path
-  runnerId?,                     // resolver runner (FK -> platform_acp_runners.id)
+  runnerId?,                     // resolver runner; deliberately NOT an FK, so a
+                                 //   catalog delete cannot rewrite sync history
   sessionName?,                  // 'sync-<attempt>' run_sessions row identity
   agentRunningSince?,            // active-time cap anchor; re-stamped on HITL resume
   autoFinalize,                  // boolean; ai_rebase_merge one-click opt-in
   pushed,                        // boolean; true once the verified result is pushed
   errorCode?, errorMessage?,     // one of MaisterErrorCode literals on failure
-  actorUserId?,                  // FK -> users.id SET NULL; launcher
+  actorType, actorId?,           // polymorphic actor (user | agent | system); NO
+                                 //   FK — a system actor has no id to point at
   createdAt, updatedAt
 }
 ```
