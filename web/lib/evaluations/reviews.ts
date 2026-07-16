@@ -12,7 +12,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationReviews, evaluationExecutions } =
+const { evaluationReviews, evaluationExecutions, evaluationStudies } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): narrow this injected database seam to its operations.
@@ -133,6 +133,45 @@ export async function resolveReview(
 
     return { sequence };
   });
+}
+
+// Load a review scoped to a project (review → execution → study → project),
+// the ownership guard for the resolve route. A missing/cross-project reviewId is
+// hidden as PRECONDITION (404). Returns the review's studyId + current version so
+// the caller can pass them to resolveReview without a second query.
+export async function getReviewForProject(
+  args: { reviewId: string; projectId: string },
+  db?: Db,
+): Promise<{ studyId: string; version: number; status: string }> {
+  const d = db ?? getDb();
+  const [row] = (await d
+    .select({
+      studyId: evaluationExecutions.studyId,
+      version: evaluationReviews.version,
+      status: evaluationReviews.status,
+      projectId: evaluationStudies.projectId,
+    })
+    .from(evaluationReviews)
+    .innerJoin(
+      evaluationExecutions,
+      eq(evaluationReviews.executionId, evaluationExecutions.id),
+    )
+    .innerJoin(
+      evaluationStudies,
+      eq(evaluationExecutions.studyId, evaluationStudies.id),
+    )
+    .where(eq(evaluationReviews.id, args.reviewId))) as Array<{
+    studyId: string;
+    version: number;
+    status: string;
+    projectId: string;
+  }>;
+
+  if (!row || row.projectId !== args.projectId) {
+    throw new MaisterError("PRECONDITION", `review not found: ${args.reviewId}`);
+  }
+
+  return { studyId: row.studyId, version: row.version, status: row.status };
 }
 
 export async function listReviews(

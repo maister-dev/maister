@@ -82,6 +82,60 @@ export async function createStudy(
   });
 }
 
+// --- Readers -----------------------------------------------------------------
+
+export async function listStudies(
+  projectId: string,
+  db?: Db,
+): Promise<Record<string, unknown>[]> {
+  const d = db ?? getDb();
+
+  return d
+    .select()
+    .from(evaluationStudies)
+    .where(eq(evaluationStudies.projectId, projectId))
+    .orderBy(sql`${evaluationStudies.createdAt} desc`);
+}
+
+// Load one study scoped to a project — the ownership guard every study-scoped
+// route runs first, so a cross-project studyId is hidden as PRECONDITION (404),
+// never leaked (identifier trust: the slug derives the project, the body/URL id
+// is validated against it before any read/write).
+export async function getStudyForProject(
+  args: { studyId: string; projectId: string },
+  db?: Db,
+): Promise<Record<string, unknown>> {
+  const d = db ?? getDb();
+  const [study] = await d
+    .select()
+    .from(evaluationStudies)
+    .where(
+      and(
+        eq(evaluationStudies.id, args.studyId),
+        eq(evaluationStudies.projectId, args.projectId),
+      ),
+    );
+
+  if (!study) {
+    throw new MaisterError("PRECONDITION", `study not found: ${args.studyId}`);
+  }
+
+  return study;
+}
+
+export async function listParticipants(
+  studyId: string,
+  db?: Db,
+): Promise<Record<string, unknown>[]> {
+  const d = db ?? getDb();
+
+  return d
+    .select()
+    .from(evaluationParticipants)
+    .where(eq(evaluationParticipants.studyId, studyId))
+    .orderBy(sql`${evaluationParticipants.displayOrder} asc`);
+}
+
 // Optimistic-concurrency PATCH: the CAS on `version` is the mutual-exclusion
 // guard (skill rule: a transaction is atomicity, not mutual exclusion). A stale
 // version returns CONFLICT (409); a missing study returns PRECONDITION.
