@@ -155,7 +155,7 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
 
 ### Phase 2 — Core primitive (TDD: RED → GREEN → refactor)
 
-- [ ] **T2.1 — RED.** `web/lib/flows/__tests__/resolve-flow-ref.test.ts`
+- [x] **T2.1 — RED.** `web/lib/flows/__tests__/resolve-flow-ref.test.ts`
   (**web integration project**, testcontainers). Exactly 5 non-overlapping cases —
   this is the ONLY place resolver edge cases are enumerated:
   1. UUID hit → returns the UUID (R1)
@@ -166,13 +166,13 @@ PK. Flows-per-project is single-digit, so no new index is warranted. → No
   *(No trivial tests: empty/absent `flowId` is already rejected by route zod
   `minLength(1)` / skipped by `!= null` — not re-tested here.)*
   → verify: `vitest list` confirms the runner glob matches; all 5 **fail**.
-- [ ] **T2.2 — GREEN.** `web/lib/flows/resolve-flow-ref.ts` — minimal code to pass:
+- [x] **T2.2 — GREEN.** `web/lib/flows/resolve-flow-ref.ts` — minimal code to pass:
   `resolveFlowRef(projectId, ref, db?): Promise<{ok:true; flowId:string} | {ok:false; detail:{field:"flowId"; expected:string; received:string; validRefs:string[]}}>`.
   One project-scoped query `WHERE project_id = ? AND (id = ? OR flow_ref_id = ?) LIMIT 1`
   (mirror the prior-art predicate); on miss, one query for the project's refs → `detail`.
   Plus `formatFlowRefError(detail): string`. DEBUG log on entry + hit/miss.
   → verify: 5/5 green; no other suite regresses.
-- [ ] **T2.3 — Refactor.** Names, JSDoc for the non-obvious WHY (ref/UUID namespaces
+- [x] **T2.3 — Refactor.** Names, JSDoc for the non-obvious WHY (ref/UUID namespaces
   cannot collide — see the unique constraint). No behavior change; stay green.
   → verify: suite still green; `tsc` clean.
 
