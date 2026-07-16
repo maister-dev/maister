@@ -231,8 +231,10 @@ export function isRunRecoverable(input: {
   acpSessionId: string | null;
   currentNodeKind: NodeAttemptType | null;
   retrySafe: boolean;
+  workspaceRemoved?: boolean;
 }): boolean {
   return (
+    input.workspaceRemoved !== true &&
     input.status === "Crashed" &&
     classifyRecover(
       { acpSessionId: input.acpSessionId },
@@ -332,6 +334,7 @@ export const getRunDetail = cache(async function getRunDetail(
     acpSessionId: row.acpSessionId,
     currentNodeKind: recoverNodeKind,
     retrySafe,
+    workspaceRemoved: row.removedAt !== null,
   });
   const ttl = deriveTtlInfo({
     status: row.status,

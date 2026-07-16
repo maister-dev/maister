@@ -83,6 +83,15 @@ const IN_PRODUCTION_STATUSES: ReadonlySet<RunStatus> = new Set([
 export function deriveStage(input: DeriveStageInput): BoardColumn {
   const { taskStatus, taskStage, runStatus, workspaceRemoved } = input;
 
+  // A user-removed workspace turns a parked Review/Crashed result into
+  // historical evidence. It must not keep the task in a non-relaunchable lane.
+  if (
+    workspaceRemoved &&
+    (runStatus === "Review" || runStatus === "Crashed")
+  ) {
+    return "Backlog";
+  }
+
   // 1. Crashed run → its own column (owes recover/discard, M19). Checked
   // BEFORE the terminal-failed Backlog rule so it does not silently retry.
   if (runStatus === "Crashed") {

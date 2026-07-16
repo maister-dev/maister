@@ -124,6 +124,12 @@ describe("Review run → OnReview", () => {
   it("maps to OnReview", () => {
     expect(deriveStage(s("Review"))).toBe("OnReview");
   });
+
+  it("returns archived Review history to Backlog", () => {
+    expect(deriveStage(s("Review", { workspaceRemoved: true }))).toBe(
+      "Backlog",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -149,6 +155,12 @@ describe("Done run — InDelivery vs Done", () => {
 describe("Crashed → Crashed; Failed/Abandoned → Backlog (retry rule)", () => {
   it("Crashed → Crashed", () => {
     expect(deriveStage(s("Crashed"))).toBe("Crashed");
+  });
+
+  it("returns archived Crashed history to Backlog", () => {
+    expect(deriveStage(s("Crashed", { workspaceRemoved: true }))).toBe(
+      "Backlog",
+    );
   });
 
   it("Failed → Backlog", () => {

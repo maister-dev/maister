@@ -74,6 +74,7 @@ function statusForState(state: RecoverResult["state"]): number {
       return 202;
     case "discard-only":
     case "conflict":
+    case "workspace-removed":
       return 409;
     case "unresumable":
       return 410;
@@ -117,6 +118,11 @@ function errorBodyForState(state: RecoverErrorState): {
         code: "CONFLICT",
         message:
           "run is not in Crashed — already terminal or a concurrent recover won the CAS",
+      };
+    case "workspace-removed":
+      return {
+        code: "PRECONDITION",
+        message: "run workspace was removed; archived history cannot be recovered",
       };
     case "unresumable":
       return {

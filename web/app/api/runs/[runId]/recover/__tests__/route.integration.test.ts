@@ -289,6 +289,17 @@ describe("POST /api/runs/[runId]/recover — state → HTTP mapping", () => {
     expect((await res.json()).code).toBe("CONFLICT");
   }, 60_000);
 
+  it("workspace-removed → 409 PRECONDITION", async () => {
+    const runId = await seedRun();
+
+    resumeCrashedRunMock.mockResolvedValue({ state: "workspace-removed" });
+
+    const res = await invoke(runId);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRECONDITION");
+  }, 60_000);
+
   it("unresumable → 410", async () => {
     const runId = await seedRun();
 

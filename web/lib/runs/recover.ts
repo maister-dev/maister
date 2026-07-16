@@ -63,6 +63,7 @@ export type RecoverResult =
   | { state: "redispatched" }
   | { state: "queued" }
   | { state: "discard-only" }
+  | { state: "workspace-removed" }
   | { state: "conflict" }
   | { state: "unresumable" }
   | { state: "transient" };
@@ -125,6 +126,18 @@ export async function resumeCrashedRun(
       );
 
       return { state: "conflict" };
+    }
+
+    const workspaceRows = await tx
+      .select({ removedAt: workspaces.removedAt })
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId))
+      .limit(1);
+
+    if (workspaceRows[0]?.removedAt != null) {
+      log.info({ runId }, "resumeCrashedRun: workspace was removed");
+
+      return { state: "workspace-removed" };
     }
 
     // M42 (ADR-114): the resume handle lives on the run's ACTIVE session now.

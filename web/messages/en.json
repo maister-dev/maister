@@ -2897,6 +2897,16 @@
         }
       }
     },
+    "reconciliation": {
+      "title": "Workspace reconciliation",
+      "subtitle": "Read-only, redacted findings from the scheduler-owned workspace convergence sweep.",
+      "empty": "No reconciliation findings.",
+      "path": "Workspace",
+      "state": "State",
+      "attempts": "Attempts",
+      "error": "Last error",
+      "rescueRef": "Rescue ref"
+    },
     "newJob": "New job",
     "filterKindAll": "All kinds",
     "filterStateAll": "All states",
@@ -3431,9 +3441,9 @@
       },
       "body": {
         "stop": "Stop the run and keep its worktree for review.",
-        "archive": "Preserve recoverable work into an archive ref and keep the worktree on disk.",
+        "archive": "Preserve recoverable work, remove the MAIster-owned worktree, and retain run history.",
         "drop": "Preserve recoverable work, then remove only the MAIster-owned worktree.",
-        "stopArchive": "Stop the run, then preserve its worktree into an archive ref.",
+        "stopArchive": "Stop the run, then preserve recoverable work, remove its worktree, and retain run history.",
         "stopDrop": "Stop the run, then preserve recoverable work and remove the worktree."
       }
     }

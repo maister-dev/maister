@@ -6,6 +6,7 @@ import type { BrainIndexQueueViewData } from "@/types/scheduler";
 import { getTranslations } from "next-intl/server";
 
 import { SchedulerBrainIndexQueue } from "@/components/admin/scheduler-brain-index-queue";
+import { WorkspaceReconciliationFindings } from "@/components/admin/workspace-reconciliation-findings";
 import {
   SchedulerJobsTable,
   type SchedulerJobRow,
@@ -26,6 +27,7 @@ import {
   listSchedulerScheduledLaunchOverviewRows,
   listSchedulerStatusRows,
 } from "@/lib/queries/scheduler";
+import { listWorkspaceReconciliationFindings } from "@/lib/queries/workspace-reconciliation-findings";
 import { FILTERABLE_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
 
 const STATES = ["active", "disabled"] as const;
@@ -65,11 +67,12 @@ export default async function AdminSchedulerPage({
       : undefined;
 
   const clock = getSchedulerClockStatus();
-  const [all, schedules, scheduledLaunches, brainQueue] = await Promise.all([
+  const [all, schedules, scheduledLaunches, brainQueue, reconciliation] = await Promise.all([
     listSchedulerStatusRows({ limit: 200 }),
     listSchedulerRunScheduleOverviewRows({ limit: 200 }),
     listSchedulerScheduledLaunchOverviewRows({ limit: 200 }),
     listBrainIndexQueueRows({ limit: 50 }),
+    listWorkspaceReconciliationFindings({ limit: 50 }),
   ]);
   const filtered = all.filter((job) => {
     if (jobKind && job.jobKind !== jobKind) return false;
@@ -180,6 +183,19 @@ export default async function AdminSchedulerPage({
         jobs={rows}
       />
       <SchedulerBrainIndexQueue clock={clock} queue={brainQueueRows} />
+      <WorkspaceReconciliationFindings
+        findings={reconciliation.findings}
+        labels={{
+          title: t("reconciliation.title"),
+          subtitle: t("reconciliation.subtitle"),
+          empty: t("reconciliation.empty"),
+          path: t("reconciliation.path"),
+          state: t("reconciliation.state"),
+          attempts: t("reconciliation.attempts"),
+          error: t("reconciliation.error"),
+          rescueRef: t("reconciliation.rescueRef"),
+        }}
+      />
       <SchedulerRunSchedulesOverview schedules={scheduleRows} />
       <SchedulerScheduledLaunchesOverview
         labels={{

@@ -1203,7 +1203,7 @@ pnpm --filter maister-web typecheck
 
 ### Phase 6 — Read models, API, and user surfaces
 
-- [ ] **Task 27: RED — encode route, fan-out, removed-history, and user journeys.**
+- [x] **Task 27: RED — encode route, fan-out, removed-history, and user journeys.**
   - **Files:** board/launchability unit tests; portfolio, project, board,
     run-list, run-detail, active-workspace, scheduled dispatch, C2,
     launch-options, manual launch, and budget-restart integration tests;
@@ -1224,7 +1224,7 @@ pnpm --filter maister-web typecheck
     Archive copy; lower-level matrices remain in their focused integration
     owners rather than being copied into E2E.
 
-- [ ] **Task 28: GREEN — align all run-kind surfaces and exact route contracts.**
+- [x] **Task 28: GREEN — align all run-kind surfaces and exact route contracts.**
   - **Files:** `web/lib/board.ts`, `web/lib/runs/launchability.ts`,
     `web/lib/queries/{portfolio,project,board,run,runs-list}.ts`, scheduler
     C2/dispatch/launch-options/manual/budget-restart callers, shared lifecycle
@@ -1245,7 +1245,7 @@ pnpm --filter maister-web typecheck
     historical run, direct routes fail safely, exact OpenAPI examples match,
     and EN/RU ship together.
 
-- [ ] **Task 29: REFACTOR — consolidate workspace-presence policy and lifecycle DTOs.**
+- [x] **Task 29: REFACTOR — consolidate workspace-presence policy and lifecycle DTOs.**
   - **Files:** launchability/read-model helpers, action policy, route response
     builders, UI components, and locale keys touched by Tasks 27-28.
   - **Change:** retain one workspace-presence input model, one exhaustive

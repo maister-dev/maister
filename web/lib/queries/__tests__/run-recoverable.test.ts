@@ -80,6 +80,18 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
     ).toBe(false);
   });
 
+  it("Crashed history with a removed workspace is not recoverable", () => {
+    expect(
+      isRunRecoverable({
+        status: "Crashed",
+        acpSessionId: "acp-session-123",
+        currentNodeKind: "ai_coding",
+        retrySafe: true,
+        workspaceRemoved: true,
+      }),
+    ).toBe(false);
+  });
+
   it("Crashed + no resolvable target (null kind) → NOT recoverable regardless of retry_safe", () => {
     for (const retrySafe of [false, true]) {
       // null kind = session-less branch; retry_safe=true would redispatch, but a
