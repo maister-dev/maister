@@ -83,6 +83,20 @@ describe("POST /api/studio/local-packages/{id}/creation-recovery", () => {
     expect(mocks.recoverLocalPackageCreation).not.toHaveBeenCalled();
   });
 
+  it("documents and returns a malformed private-journal failure as CONFIG 400", async () => {
+    mocks.recoverLocalPackageCreation.mockRejectedValueOnce(
+      new MaisterError(
+        "CONFIG",
+        "local package creation recovery journal is invalid",
+      ),
+    );
+
+    const res = await POST(req(), ctx());
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ code: "CONFIG" });
+  });
+
   it("does not let another member recover a first-Flow operation", async () => {
     mocks.getLocalPackage.mockResolvedValueOnce({
       id: "lp1",

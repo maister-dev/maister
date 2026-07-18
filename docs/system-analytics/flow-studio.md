@@ -34,6 +34,11 @@ adds any additional Flow to an editable package, then uses the existing Commit
 Pre-existing local packages with zero Flows remain supported for their other
 package artifacts. Studio makes their lack of a launchable Flow explicit and
 offers Add Flow; no Flow can be launched from that package until one is added.
+Initial package creation builds in a private stage and atomically publishes the
+Git-backed directory only after its journal and initial commit exist. A recovery
+request with no durable journal safely removes just that incomplete stage and
+row (`rolled_back`), then returns the user to the same Studio wizard; it never
+adopts or removes a final package directory.
 
 The older `/flows/new` authored-capability entry is being retired to a Studio
 redirect. It is not a second launchable path. Current code proves a narrower

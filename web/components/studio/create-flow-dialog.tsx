@@ -30,6 +30,24 @@ function parseOptionalArray(value: string): unknown[] | undefined {
   return parsed;
 }
 
+export function createFlowValidationErrorKey(
+  path: readonly (string | number)[],
+):
+  | "invalidFlowId"
+  | "invalidDisplayTitle"
+  | "invalidSummary"
+  | "invalidRouteWhen"
+  | "invalidFields" {
+  const field = path.join(".");
+
+  if (field === "id") return "invalidFlowId";
+  if (field === "metadata.title") return "invalidDisplayTitle";
+  if (field === "metadata.summary") return "invalidSummary";
+  if (field === "metadata.route_when") return "invalidRouteWhen";
+
+  return "invalidFields";
+}
+
 // Shared canonical wizard for both package creation and the existing package
 // composition screen. It deliberately maps form labels to `metadata` in
 // flow.yaml; it never calls that metadata Markdown frontmatter.
@@ -90,7 +108,9 @@ export function CreateFlowDialog({
     });
 
     if (!flow.success) {
-      setValidationError(t("invalidFields"));
+      setValidationError(
+        t(createFlowValidationErrorKey(flow.error.issues[0]?.path ?? [])),
+      );
       return;
     }
 

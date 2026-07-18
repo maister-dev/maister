@@ -166,6 +166,7 @@ export async function assertHoldsLock(
     throw new MaisterError(
       "CONFLICT",
       "edit-lock not held by this session — acquire the editor lock first",
+      { details: { reason: "edit_lock_not_held" } },
     );
   }
 }
@@ -196,6 +197,7 @@ export async function assertUserHoldsLock(
     throw new MaisterError(
       "CONFLICT",
       "edit-lock not held — reopen the package editor to continue",
+      { details: { reason: "edit_lock_not_held" } },
     );
   }
 }
@@ -248,6 +250,7 @@ export async function acquirePublishLock(id: string, db?: Db): Promise<Date> {
     throw new MaisterError(
       "CONFLICT",
       "another operation on this package is already in progress — try again shortly",
+      { details: { reason: "operation_in_progress" } },
     );
   }
 

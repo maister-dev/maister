@@ -7,7 +7,7 @@ import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { parse as parseYaml } from "yaml";
 
 import { LocalPackageEditor } from "@/components/studio/local-package-editor";
@@ -68,6 +68,13 @@ export default async function StudioEditPage({
   const pkg = await getLocalPackage(id);
 
   if (!pkg || pkg.status !== "active") notFound();
+
+  // A first-Flow interruption can happen before a final working directory
+  // exists. Send it to the list-level recovery action before this page tries
+  // to read files from that intentionally unpublished directory.
+  if (pkg.creationState?.kind === "create_package_with_flow") {
+    redirect("/studio/local");
+  }
 
   const t = await getTranslations("flows");
   const te = await getTranslations("flowEditor");

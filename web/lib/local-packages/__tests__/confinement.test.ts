@@ -11,7 +11,10 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { resolveWithinWorkingDir } from "../paths";
+import {
+  localPackageCreationStagingDir,
+  resolveWithinWorkingDir,
+} from "../paths";
 
 // (ADR-096, D5) The path-confinement guard is the security boundary for every
 // working-dir file op — UNTRUSTED, url/body-controlled `relPath`.
@@ -121,5 +124,16 @@ describe("resolveWithinWorkingDir", () => {
         "a.txt",
       ),
     ).rejects.toMatchObject({ code: "CONFIG" });
+  });
+});
+
+describe("localPackageCreationStagingDir", () => {
+  it("rejects a persisted operation id that could escape the staging root", () => {
+    expect(() =>
+      localPackageCreationStagingDir(
+        "/var/lib/maister/local/demo",
+        "../outside",
+      ),
+    ).toThrow("invalid local package creation operation id");
   });
 });

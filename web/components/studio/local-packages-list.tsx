@@ -26,6 +26,7 @@ import {
 import { CreateFlowDialog } from "@/components/studio/create-flow-dialog";
 import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
 import { readApiError } from "@/lib/api-error";
+import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
 
 // Client-safe local-package list item. `working_dir` and the lock session are
 // server-only and intentionally absent (D1/D10); `isDefault`/`status` are flags.
@@ -39,6 +40,7 @@ export type LocalPackageListItem = {
   status: "active" | "archived";
   flowCount?: number;
   recoveryStatus?: "ready" | "recovering" | "recovery_required";
+  recoveryKind?: "create_package_with_flow" | "add_flow";
   cutCompatibility: LocalPackageCutCompatibility;
   origin: LocalPackageOrigin;
   adoptTargets: CutAdoptTarget[];
@@ -63,14 +65,8 @@ export function LocalPackagesList({
   const router = useRouter();
   // Create flow shared with the central /studio/packages list; `error`/`setError`
   // double as this list's row-action error channel.
-  const {
-    creating,
-    setCreating,
-    busy,
-    error,
-    setError,
-    create,
-  } = useNewLocalPackage();
+  const { creating, setCreating, busy, error, setError, create } =
+    useNewLocalPackage();
   const [notice, setNotice] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -159,6 +155,43 @@ export function LocalPackagesList({
     if (ok) {
       setConfirmDeleteId(null);
       router.refresh();
+    }
+  }
+
+  async function recoverInitialCreation(id: string): Promise<void> {
+    setRowBusyId(id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const res = await fetch(
+        `/api/studio/local-packages/${id}/creation-recovery`,
+        { method: "POST" },
+      );
+
+      if (!res.ok) {
+        setError(
+          await readCreateFlowApiError(res, tApiErrors, (key) =>
+            t(`local.createFlow.${key}`),
+          ),
+        );
+        return;
+      }
+
+      const recovered = (await res.json()) as {
+        recoveryStatus: "ready" | "rolled_back";
+      };
+
+      if (recovered.recoveryStatus === "rolled_back") {
+        router.push("/studio/packages?create=flow&recovery=rolled-back");
+        return;
+      }
+
+      router.refresh();
+    } catch {
+      setError(tApiErrors("requestFailed"));
+    } finally {
+      setRowBusyId(null);
     }
   }
 
@@ -343,85 +376,114 @@ export function LocalPackagesList({
                   </Link>
                   {canManage ? (
                     <div className="flex items-center gap-1.5 px-2 py-2">
-                    <button
-                      className="rounded-[9px] border border-line bg-ivory px-2.5 py-1.5 text-[12px] font-semibold text-ink transition-colors hover:border-amber"
-                      data-testid="local-import"
-                      type="button"
-                      onClick={() => setImportingId(pkg.id)}
-                    >
-                      ⤓ {t("import.action")}
-                    </button>
-                    <button
-                      aria-label={t("local.rename")}
-                      className={ICON_BTN}
-                      data-testid="local-rename"
-                      disabled={rowBusyId === pkg.id}
-                      title={t("local.rename")}
-                      type="button"
-                      onClick={() => {
-                        setRenamingId(pkg.id);
-                        setRenameValue(pkg.name);
-                      }}
-                    >
-                      <PencilSquareIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                      aria-describedby={
-                        pkg.cutCompatibility.compatible
-                          ? undefined
-                          : `local-cut-incompatibility-${pkg.id}`
-                      }
-                      aria-label={t("local.cutVersion")}
-                      className={ICON_BTN}
-                      data-testid="local-cut"
-                      disabled={
-                        rowBusyId === pkg.id || !pkg.cutCompatibility.compatible
-                      }
-                      title={
-                        pkg.cutCompatibility.incompatibilityReason ??
-                        t("local.cutVersion")
-                      }
-                      type="button"
-                      onClick={() => setCutDialogId(pkg.id)}
-                    >
-                      <ScissorsIcon className="h-4 w-4" />
-                    </button>
-                    {pkg.status === "active" ? (
                       <button
-                        aria-label={t("local.archive")}
-                        className={ICON_BTN}
-                        data-testid="local-archive"
-                        disabled={rowBusyId === pkg.id}
-                        title={t("local.archive")}
+                        className="rounded-[9px] border border-line bg-ivory px-2.5 py-1.5 text-[12px] font-semibold text-ink transition-colors hover:border-amber"
+                        data-testid="local-import"
+                        disabled={
+                          rowBusyId === pkg.id ||
+                          (pkg.recoveryStatus ?? "ready") !== "ready"
+                        }
                         type="button"
-                        onClick={() => void setStatus(pkg.id, "archived")}
+                        onClick={() => setImportingId(pkg.id)}
                       >
-                        <ArchiveBoxArrowDownIcon className="h-4 w-4" />
+                        ⤓ {t("import.action")}
                       </button>
-                    ) : (
+                      {pkg.recoveryKind === "create_package_with_flow" ? (
+                        <button
+                          className="rounded-[9px] border border-danger-line bg-danger-soft px-2.5 py-1.5 text-[12px] font-semibold text-danger transition-colors hover:bg-danger-soft disabled:opacity-50"
+                          data-testid="local-recover-creation"
+                          disabled={rowBusyId === pkg.id}
+                          type="button"
+                          onClick={() => void recoverInitialCreation(pkg.id)}
+                        >
+                          {t("local.createFlow.recover")}
+                        </button>
+                      ) : null}
                       <button
-                        aria-label={t("local.unarchive")}
+                        aria-label={t("local.rename")}
                         className={ICON_BTN}
-                        data-testid="local-unarchive"
-                        disabled={rowBusyId === pkg.id}
-                        title={t("local.unarchive")}
+                        data-testid="local-rename"
+                        disabled={
+                          rowBusyId === pkg.id ||
+                          (pkg.recoveryStatus ?? "ready") !== "ready"
+                        }
+                        title={t("local.rename")}
                         type="button"
-                        onClick={() => void setStatus(pkg.id, "active")}
+                        onClick={() => {
+                          setRenamingId(pkg.id);
+                          setRenameValue(pkg.name);
+                        }}
                       >
-                        <ArchiveBoxXMarkIcon className="h-4 w-4" />
+                        <PencilSquareIcon className="h-4 w-4" />
                       </button>
-                    )}
-                    <button
-                      aria-label={t("local.delete")}
-                      className="shrink-0 rounded-[9px] border border-danger-line bg-ivory p-2 text-danger transition-colors hover:bg-danger-soft disabled:opacity-50"
-                      data-testid="local-delete"
-                      disabled={rowBusyId === pkg.id}
-                      title={t("local.delete")}
-                      type="button"
-                      onClick={() => setConfirmDeleteId(pkg.id)}
-                    >
-                      <TrashIcon className="h-4 w-4" />
-                    </button>
+                      <button
+                        aria-describedby={
+                          pkg.cutCompatibility.compatible
+                            ? undefined
+                            : `local-cut-incompatibility-${pkg.id}`
+                        }
+                        aria-label={t("local.cutVersion")}
+                        className={ICON_BTN}
+                        data-testid="local-cut"
+                        disabled={
+                          rowBusyId === pkg.id ||
+                          !pkg.cutCompatibility.compatible ||
+                          (pkg.recoveryStatus ?? "ready") !== "ready"
+                        }
+                        title={
+                          pkg.cutCompatibility.incompatibilityReason ??
+                          t("local.cutVersion")
+                        }
+                        type="button"
+                        onClick={() => setCutDialogId(pkg.id)}
+                      >
+                        <ScissorsIcon className="h-4 w-4" />
+                      </button>
+                      {pkg.status === "active" ? (
+                        <button
+                          aria-label={t("local.archive")}
+                          className={ICON_BTN}
+                          data-testid="local-archive"
+                          disabled={
+                            rowBusyId === pkg.id ||
+                            (pkg.recoveryStatus ?? "ready") !== "ready"
+                          }
+                          title={t("local.archive")}
+                          type="button"
+                          onClick={() => void setStatus(pkg.id, "archived")}
+                        >
+                          <ArchiveBoxArrowDownIcon className="h-4 w-4" />
+                        </button>
+                      ) : (
+                        <button
+                          aria-label={t("local.unarchive")}
+                          className={ICON_BTN}
+                          data-testid="local-unarchive"
+                          disabled={
+                            rowBusyId === pkg.id ||
+                            (pkg.recoveryStatus ?? "ready") !== "ready"
+                          }
+                          title={t("local.unarchive")}
+                          type="button"
+                          onClick={() => void setStatus(pkg.id, "active")}
+                        >
+                          <ArchiveBoxXMarkIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button
+                        aria-label={t("local.delete")}
+                        className="shrink-0 rounded-[9px] border border-danger-line bg-ivory p-2 text-danger transition-colors hover:bg-danger-soft disabled:opacity-50"
+                        data-testid="local-delete"
+                        disabled={
+                          rowBusyId === pkg.id ||
+                          (pkg.recoveryStatus ?? "ready") !== "ready"
+                        }
+                        title={t("local.delete")}
+                        type="button"
+                        onClick={() => setConfirmDeleteId(pkg.id)}
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
                     </div>
                   ) : null}
                 </>

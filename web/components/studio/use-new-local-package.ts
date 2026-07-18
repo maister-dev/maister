@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { readApiError } from "@/lib/api-error";
+import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 
 // Shared "create a fresh local package" flow for the two studio list surfaces
@@ -22,6 +22,7 @@ export function useNewLocalPackage(): {
   create: (input: { name: string; flow: CreateFlowInput }) => Promise<void>;
 } {
   const tApiErrors = useTranslations("apiErrors");
+  const tCreateFlow = useTranslations("studio.local.createFlow");
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -42,7 +43,7 @@ export function useNewLocalPackage(): {
       });
 
       if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
+        setError(await readCreateFlowApiError(res, tApiErrors, tCreateFlow));
 
         return;
       }

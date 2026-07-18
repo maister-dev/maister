@@ -134,9 +134,18 @@ describe("LocalPackagesList", () => {
     expect(html).toContain("My Pack");
   });
 
-  it("makes an unfinished creation visible rather than presenting the package as ready", () => {
-    const html = render([{ ...ACTIVE, recoveryStatus: "recovery_required" }]);
+  it("makes an interrupted initial creation recoverable without enabling normal mutations", () => {
+    const html = render([
+      {
+        ...ACTIVE,
+        recoveryStatus: "recovery_required",
+        recoveryKind: "create_package_with_flow",
+      },
+    ]);
 
     expect(html).toContain("local.createFlow.recoveryRequired");
+    expect(html).toContain('data-testid="local-recover-creation"');
+    expect(html).toMatch(/data-testid="local-import"[^>]*disabled=""/);
+    expect(html).toMatch(/data-testid="local-cut"[^>]*disabled=""/);
   });
 });

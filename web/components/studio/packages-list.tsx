@@ -32,6 +32,7 @@ export function PackagesList({
 }): ReactElement {
   const t = useTranslations("studio");
   const searchParams = useSearchParams();
+  const recoveryRolledBack = searchParams.get("recovery") === "rolled-back";
   const [query, setQuery] = useState("");
   const [trust, setTrust] = useState<TrustFilter>("all");
   // Create a fresh local package (same flow as /studio/local) and open the
@@ -120,6 +121,14 @@ export function PackagesList({
           role="alert"
         >
           {error}
+        </p>
+      ) : null}
+      {recoveryRolledBack ? (
+        <p
+          className="rounded-[10px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-ink-2"
+          role="status"
+        >
+          {t("local.createFlow.recoveryRolledBack")}
         </p>
       ) : null}
 

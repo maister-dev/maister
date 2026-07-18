@@ -7,6 +7,8 @@ import { MaisterError } from "@/lib/errors";
 import { localPackagesRoot } from "@/lib/instance-config";
 
 const INTERNAL_WORKING_DIR_SEGMENTS = new Set([".git", ".maister", ".claude"]);
+const UUID_SEGMENT_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function isLocalPackageInternalPath(relPath: string): boolean {
   return relPath
@@ -23,6 +25,24 @@ export function isLocalPackageInternalEntryName(name: string): boolean {
 // symmetric with the flows/worktrees roots. NEVER projected to clients.
 export function localPackageWorkingDir(slug: string): string {
   return path.join(localPackagesRoot(), slug);
+}
+
+// A fresh package is assembled outside its final working directory. The
+// operation UUID is server-generated and is validated again before it becomes
+// a filesystem path, so a corrupted persisted state cannot escape the staging
+// root during recovery.
+export function localPackageCreationStagingDir(
+  workingDir: string,
+  operationId: string,
+): string {
+  if (!UUID_SEGMENT_PATTERN.test(operationId)) {
+    throw new MaisterError(
+      "CONFIG",
+      "invalid local package creation operation id",
+    );
+  }
+
+  return path.join(path.dirname(workingDir), ".maister-creation", operationId);
 }
 
 // (ADR-096) kebab a display name into a working-dir-safe slug stem.

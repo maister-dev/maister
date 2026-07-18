@@ -241,9 +241,15 @@ The feature adds nullable `local_packages.creation_state` JSONB. It contains
 only operation ID, kind, phase, Flow ID, and hashes; filesystem payloads and
 backups remain in a private, Git-excluded journal. This is operation recovery
 state, not another authored Flow store. A pending state serializes writers with
-the existing mutation lease. Deterministic recovery may finalize exact hashes or
-clear an exact original/compensated state; drift becomes a visible localized
-recovery-required state and is never overwritten.
+the existing mutation lease. A fresh package is assembled in an operation-owned
+private staging directory and atomically renamed into its final working
+directory only after the journal, package bytes, and initial Git commit exist.
+Deterministic recovery may finalize exact hashes or clear an exact
+original/compensated state. If a process dies after the DB claim but before the
+private journal is atomically written, recovery removes only the unfinished row
+and its private stage, returns `rolled_back`, and directs the user to restart;
+it never adopts or deletes a final working directory. Drift becomes a visible
+localized recovery-required state and is never overwritten.
 
 Normal writer order is member authorization/edit lock, mutation lease, reload,
 write/validate, release. Add Flow refuses while a local-package assistant can
@@ -262,9 +268,13 @@ internals can retain intentionally empty packages.
   derives creator, package ID, slug, working directory, branch, and operation.
 - `POST /api/studio/local-packages/{id}/flows` accepts only `{sessionId, flow}`;
   URL `{id}` resolves the server package and `sessionId` is checked against its
-  edit lock.
+  edit lock. Its localized Flow wizard consumes only a fixed safe refusal enum
+  for duplicate ID, lock, assistant, recovery, or mutation-lease conflicts;
+  generic clients never render a server error message.
 - `POST /api/studio/local-packages/{id}/creation-recovery` accepts no body and
   only retries deterministic reconciliation. It never accepts a repair payload.
+  It returns `200 {recoveryStatus:"rolled_back"}` for the safe pre-journal
+  compensation boundary and `400 CONFIG` for a malformed private journal.
 
 No response exposes a working directory, journal, or package content. The
 existing collection `sourceInstallId` fork contract is stale; package forks keep

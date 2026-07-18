@@ -105,6 +105,7 @@ function toLocalPackageListItem(
         : row.creationState
           ? "recovering"
           : "ready",
+    recoveryKind: row.creationState?.kind,
     cutCompatibility,
     origin: localPackageOrigin(row, sourceInstalls),
     // Client-safe subset: repo paths + attachment ids stay server-side.

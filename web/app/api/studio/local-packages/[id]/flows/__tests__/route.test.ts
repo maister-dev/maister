@@ -123,6 +123,26 @@ describe("POST /api/studio/local-packages/{id}/flows", () => {
     await expect(res.json()).resolves.toMatchObject({ code: "CONFLICT" });
   });
 
+  it("returns the safe duplicate-ID reason for the localized Flow wizard", async () => {
+    mocks.addFlowToLocalPackage.mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "Flow ID already exists", {
+        details: { reason: "duplicate_flow_id" },
+      }),
+    );
+
+    const res = await POST(
+      req({ sessionId: "editor-session", flow: FLOW }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      code: "CONFLICT",
+      message: "Flow ID already exists",
+      details: { reason: "duplicate_flow_id" },
+    });
+  });
+
   it("rejects an unsafe Flow ID before the edit-lock operation", async () => {
     const res = await POST(
       req({ sessionId: "editor-session", flow: { ...FLOW, id: "../escape" } }),

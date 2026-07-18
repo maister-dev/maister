@@ -9641,7 +9641,10 @@ paths:
         this exact URL package. The body supplies only `sessionId` and Flow
         metadata. A pending creation recovery, active local-package assistant,
         duplicate Flow ID/path, or mutation lease conflict is refused before a
-        filesystem write.
+        filesystem write. A `409` may include the safe UI-only
+        `details.reason` enum (`duplicate_flow_id`, `edit_lock_not_held`,
+        `assistant_active`, `creation_recovery_required`, or
+        `operation_in_progress`); clients must not render the server `message`.
       operationId: createStudioLocalPackageFlow
       requestBody:
         required: true
@@ -9673,7 +9676,10 @@ paths:
       description: |
         Requires an active global member. This body-less operation only performs
         hash-based reconciliation of the URL package's durable creation state;
-        it accepts no repair payload, path, or cross-resource identifier.
+        it accepts no repair payload, path, or cross-resource identifier. An
+        initial-create row without an atomically durable private journal is
+        safely compensated as a `200` `rolled_back` result; a malformed journal
+        is `400 CONFIG`.
       operationId: recoverStudioLocalPackageCreation
       responses:
         "200":
@@ -9681,6 +9687,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LocalPackageRecoveryResult" }
+        "400": { $ref: "#/components/responses/Config" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -19606,7 +19613,10 @@ components:
       type: object
       required: [recoveryStatus]
       properties:
-        recoveryStatus: { type: string, enum: [ready, recovering, recovery_required] }
+        recoveryStatus:
+          type: string
+          enum: [ready, recovering, recovery_required, rolled_back]
+          description: "rolled_back means no private creation journal was durably written, so recovery safely removed only the incomplete package row and private stage."
     LocalPackagePatchBody:
       type: object
       properties:

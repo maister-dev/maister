@@ -63,6 +63,7 @@ import {
   ImportDialog,
 } from "@/components/studio/import-dialog";
 import { readApiError } from "@/lib/api-error";
+import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
@@ -246,6 +247,7 @@ export function LocalPackageEditor({
   const router = useRouter();
   const tApiErrors = useTranslations("apiErrors");
   const tStudio = useTranslations("studio");
+  const tCreateFlow = useTranslations("studio.local.createFlow");
   const tPublish = useTranslations("publishDialog");
   const [importing, setImporting] = useState(false);
 
@@ -666,14 +668,19 @@ export function LocalPackageEditor({
           return;
         }
 
-        const res = await fetch(`/api/studio/local-packages/${packageId}/flows`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: sessionIdRef.current, flow }),
-        });
+        const res = await fetch(
+          `/api/studio/local-packages/${packageId}/flows`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sessionId: sessionIdRef.current, flow }),
+          },
+        );
 
         if (!res.ok) {
-          setCreateFlowError(await readApiError(res, tApiErrors));
+          setCreateFlowError(
+            await readCreateFlowApiError(res, tApiErrors, tCreateFlow),
+          );
           return;
         }
 
@@ -707,7 +714,18 @@ export function LocalPackageEditor({
       );
 
       if (!res.ok) {
-        setRecoveryError(await readApiError(res, tApiErrors));
+        setRecoveryError(
+          await readCreateFlowApiError(res, tApiErrors, tCreateFlow),
+        );
+        return;
+      }
+
+      const recovered = (await res.json()) as {
+        recoveryStatus: "ready" | "rolled_back";
+      };
+
+      if (recovered.recoveryStatus === "rolled_back") {
+        router.push("/studio/packages?create=flow&recovery=rolled-back");
         return;
       }
 
@@ -723,10 +741,7 @@ export function LocalPackageEditor({
   // turn ("AI working"). The assistant writes as the lock holder; the human
   // editor steps back until the turn ends.
   const readOnly =
-    !canManage ||
-    !lockHeldByMe ||
-    assistantBusy ||
-    recoveryStatus !== "ready";
+    !canManage || !lockHeldByMe || assistantBusy || recoveryStatus !== "ready";
   const participantSources = useMemo<ReferenceSourceGroup[]>(() => {
     const consensusLabels = labels.editor.editor.nodeForm.consensus;
     const runnerGroup = {

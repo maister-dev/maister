@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { stringify as stringifyYaml } from "yaml";
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -28,6 +29,16 @@ import {
   readLockState,
   releaseLock,
 } from "@/lib/local-packages/lock";
+import {
+  appendManifestFlow,
+  parsePackageManifest,
+  serializeScaffoldManifest,
+} from "@/lib/local-packages/manifest";
+import {
+  localPackageCreationStagingDir,
+  localPackageWorkingDir,
+} from "@/lib/local-packages/paths";
+import { buildStarterFlowManifest } from "@/lib/local-packages/create-flow-contract";
 import {
   assertPackageCuttable,
   addFlowToLocalPackage,
@@ -43,6 +54,7 @@ import {
   listLocalPackages,
   readFileContent,
   recoverLocalPackageCreation,
+  insertLocalPackageRow,
   setLocalPackageStatus,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
@@ -227,6 +239,66 @@ describe("local-packages substrate (integration)", () => {
     expect(flow).toContain("name: first-flow");
     expect(flow).toContain("title: First Flow");
     expect((await stat(join(pkg.workingDir, ".git"))).isDirectory()).toBe(true);
+  });
+
+  it("compensates a crash after the initial DB claim but before the private journal without touching a final package directory", async () => {
+    const name = "Unjournaled initial creation";
+    const slug = "unjournaled-initial-creation";
+    const flow = {
+      id: "first-flow",
+      metadata: {
+        title: "First Flow",
+        summary: "Recover only from durable Flow data.",
+        route_when: "A process died before the journal write.",
+      },
+    };
+    const seedManifest = serializeScaffoldManifest(slug, name);
+    const parsedManifest = parsePackageManifest(seedManifest);
+
+    if (!parsedManifest.ok) throw new Error("test seed manifest must parse");
+
+    const finalManifest = appendManifestFlow(parsedManifest.raw, {
+      id: flow.id,
+      path: `flows/${flow.id}`,
+    });
+    const finalFlow = stringifyYaml(buildStarterFlowManifest(flow));
+    const state: LocalPackageCreationState = {
+      operationId: randomUUID(),
+      kind: "create_package_with_flow",
+      phase: "claimed",
+      flowId: flow.id,
+      manifestHash: textHash(finalManifest),
+      flowHash: textHash(finalFlow),
+      startedAt: new Date().toISOString(),
+    };
+    const workingDir = localPackageWorkingDir(slug);
+    const stagingDir = localPackageCreationStagingDir(
+      workingDir,
+      state.operationId,
+    );
+    const pkg = await insertLocalPackageRow(
+      {
+        name,
+        slug,
+        workingDir,
+        status: "active",
+        branchName: "main",
+        createdBy: userId,
+        creationState: state,
+      },
+      db,
+    );
+
+    const recovered = await recoverLocalPackageCreation(pkg.id, db);
+
+    expect(recovered).toEqual({
+      package: null,
+      flowPath: null,
+      recoveryStatus: "rolled_back",
+    });
+    await expect(stat(workingDir)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(stagingDir)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(getLocalPackage(pkg.id, db)).resolves.toBeNull();
   });
 
   it("preserves a pre-existing working-dir path when initial Flow creation fails", async () => {

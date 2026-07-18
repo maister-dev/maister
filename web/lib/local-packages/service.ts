@@ -1,10 +1,7 @@
 import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type {
-  LocalPackage,
-  LocalPackageCreationState,
-} from "@/lib/db/schema";
+import type { LocalPackage, LocalPackageCreationState } from "@/lib/db/schema";
 
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -14,6 +11,7 @@ import {
   mkdtemp,
   readFile as fsReadFile,
   readdir,
+  rename,
   rm,
 } from "node:fs/promises";
 import os from "node:os";
@@ -49,6 +47,7 @@ import {
 import {
   isLocalPackageInternalEntryName,
   isLocalPackageInternalPath,
+  localPackageCreationStagingDir,
   localPackageWorkingDir,
   resolveWithinWorkingDir,
   slugifyName,
@@ -164,6 +163,24 @@ export async function removeOwnedLocalPackageWorkingDir(
   await rm(workingDir, { recursive: true, force: true });
 }
 
+async function claimInitialCreationStagingDir(
+  stagingDir: string,
+): Promise<void> {
+  await mkdir(path.dirname(stagingDir), { recursive: true });
+
+  try {
+    await mkdir(stagingDir);
+  } catch (err) {
+    if (isEexist(err)) {
+      throw new MaisterError(
+        "CONFLICT",
+        "a private local-package creation stage is already in use",
+      );
+    }
+    throw err;
+  }
+}
+
 async function scaffoldWorkingDir(
   workingDir: string,
   manifestName: string,
@@ -215,6 +232,7 @@ function createFlowArtifacts(
     throw new MaisterError(
       "CONFLICT",
       `Flow ID "${flow.id}" already belongs to this package`,
+      { details: { reason: "duplicate_flow_id" } },
     );
   }
 
@@ -273,6 +291,16 @@ async function readTextIfPresent(filePath: string): Promise<string | null> {
   }
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (err) {
+    if (isEnoent(err)) return false;
+    throw err;
+  }
+}
+
 function creationRecoveryStatus(
   row: LocalPackage,
 ): "ready" | "recovering" | "recovery_required" {
@@ -286,6 +314,7 @@ function creationConflict(): MaisterError {
   return new MaisterError(
     "CONFLICT",
     "this package has an incomplete Flow creation operation — recover it before editing",
+    { details: { reason: "creation_recovery_required" } },
   );
 }
 
@@ -387,28 +416,38 @@ async function materializeInitialFlow(
   state: LocalPackageCreationState,
   db?: Db,
 ): Promise<void> {
-  const journal = await readCreationJournal(pkg.workingDir, state.operationId);
+  const [currentManifest, currentFlow] = await Promise.all([
+    readTextIfPresent(path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH)),
+    readTextIfPresent(path.join(pkg.workingDir, flowYamlPath(state.flowId))),
+  ]);
+  const finalArtifactsMatch =
+    currentManifest !== null &&
+    currentFlow !== null &&
+    textHash(currentManifest) === state.manifestHash &&
+    textHash(currentFlow) === state.flowHash;
 
-  if (!journal) {
-    const [currentManifest, currentFlow] = await Promise.all([
-      readTextIfPresent(path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH)),
-      readTextIfPresent(path.join(pkg.workingDir, flowYamlPath(state.flowId))),
-    ]);
+  // `rename(stage, workingDir)` is atomic. A crash after that rename but before
+  // deleting the journal/DB marker has already produced the exact package; do
+  // not replay it or strand it merely because the staging directory is gone.
+  if (finalArtifactsMatch) {
+    const hasHead = await gitHeadSha(pkg.workingDir)
+      .then(() => true)
+      .catch(() => false);
 
-    // A process can die after the private journal is removed but before the
-    // DB marker is cleared. The two stored content hashes are sufficient to
-    // prove the working tree already contains exactly the completed result;
-    // do not strand an otherwise usable package in that narrow window.
-    if (
-      currentManifest !== null &&
-      currentFlow !== null &&
-      textHash(currentManifest) === state.manifestHash &&
-      textHash(currentFlow) === state.flowHash
-    ) {
+    if (hasHead) {
+      await removeCreationJournal(pkg.workingDir, state.operationId);
       await clearCreationState(pkg.id, db);
       return;
     }
+  }
 
+  const stagingDir = localPackageCreationStagingDir(
+    pkg.workingDir,
+    state.operationId,
+  );
+  const journal = await readCreationJournal(stagingDir, state.operationId);
+
+  if (!journal) {
     await markCreationRecoveryRequired(pkg.id, state, db);
     throw creationConflict();
   }
@@ -422,19 +461,19 @@ async function materializeInitialFlow(
 
   assertExpectedArtifacts(state, artifacts);
 
-  const manifestAbs = path.join(pkg.workingDir, PACKAGE_MANIFEST_PATH);
-  const flowAbs = path.join(pkg.workingDir, artifacts.flowPath);
-  const [currentManifest, currentFlow] = await Promise.all([
+  const manifestAbs = path.join(stagingDir, PACKAGE_MANIFEST_PATH);
+  const flowAbs = path.join(stagingDir, artifacts.flowPath);
+  const [stagedManifest, stagedFlow] = await Promise.all([
     readTextIfPresent(manifestAbs),
     readTextIfPresent(flowAbs),
   ]);
-  const manifestMatches = currentManifest === artifacts.manifestYaml;
-  const flowMatches = currentFlow === artifacts.flowYaml;
+  const manifestMatches = stagedManifest === artifacts.manifestYaml;
+  const flowMatches = stagedFlow === artifacts.flowYaml;
 
   if (!manifestMatches || !flowMatches) {
     const mayMaterialize =
-      (currentManifest === null || manifestMatches) &&
-      (currentFlow === null || flowMatches);
+      (stagedManifest === null || manifestMatches) &&
+      (stagedFlow === null || flowMatches);
 
     if (!mayMaterialize) {
       await markCreationRecoveryRequired(pkg.id, state, db);
@@ -449,19 +488,20 @@ async function materializeInitialFlow(
     state = await updateCreationPhase(pkg.id, state, "scaffolded", db);
   }
 
-  const hasHead = await gitHeadSha(pkg.workingDir)
+  const hasHead = await gitHeadSha(stagingDir)
     .then(() => true)
     .catch(() => false);
 
   if (!hasHead) {
     await gitInitWithCommit(
-      pkg.workingDir,
+      stagingDir,
       DEFAULT_BRANCH,
       "maister: initialize local package with Flow",
     );
   }
 
   await updateCreationPhase(pkg.id, state, "git_initialized", db);
+  await rename(stagingDir, pkg.workingDir);
   await removeCreationJournal(pkg.workingDir, state.operationId);
   await clearCreationState(pkg.id, db);
 }
@@ -554,15 +594,16 @@ async function materializeCreation(
 async function compensateFailedInitialCreation(
   pkg: LocalPackage,
   state: LocalPackageCreationState,
+  stagingDir: string,
   db?: Db,
 ): Promise<void> {
   try {
-    await removeOwnedLocalPackageWorkingDir(pkg.workingDir);
+    await rm(stagingDir, { recursive: true, force: true });
   } catch (err) {
     await markCreationRecoveryRequired(pkg.id, state, db);
     log.error(
       { packageId: pkg.id, operationId: state.operationId },
-      "initial Flow creation cleanup could not remove the working directory",
+      "initial Flow creation cleanup could not remove the private stage",
     );
     throw err;
   }
@@ -579,6 +620,24 @@ async function compensateFailedInitialCreation(
   }
 }
 
+async function compensateUnjournaledInitialCreation(
+  pkg: LocalPackage,
+  state: LocalPackageCreationState,
+  db?: Db,
+): Promise<void> {
+  const stagingDir = localPackageCreationStagingDir(
+    pkg.workingDir,
+    state.operationId,
+  );
+
+  await rm(stagingDir, { recursive: true, force: true });
+  await rollbackLocalPackageRow(pkg.id, db);
+  log.info(
+    { packageId: pkg.id, flowId: state.flowId, operationId: state.operationId },
+    "[FIX:create-flow-recovery] compensated an unjournaled initial Flow creation",
+  );
+}
+
 async function compensateFailedAdditionalFlow(
   pkg: LocalPackage,
   state: LocalPackageCreationState,
@@ -586,7 +645,8 @@ async function compensateFailedAdditionalFlow(
   db?: Db,
 ): Promise<void> {
   const journal = await readCreationJournal(pkg.workingDir, state.operationId);
-  const originalManifest = journal?.originalManifest ?? fallbackOriginalManifest;
+  const originalManifest =
+    journal?.originalManifest ?? fallbackOriginalManifest;
 
   if (!originalManifest) {
     await markCreationRecoveryRequired(pkg.id, state, db);
@@ -607,7 +667,11 @@ async function compensateFailedAdditionalFlow(
   } catch (err) {
     await markCreationRecoveryRequired(pkg.id, state, db);
     log.error(
-      { packageId: pkg.id, operationId: state.operationId, flowId: state.flowId },
+      {
+        packageId: pkg.id,
+        operationId: state.operationId,
+        flowId: state.flowId,
+      },
       "additional Flow creation compensation failed",
     );
     throw err;
@@ -811,26 +875,43 @@ export async function createLocalPackageWithFlow(opts: {
     opts.db,
   );
   const lockToken = await acquireWorkingDirLock(row.id, opts.db);
-  let ownsWorkingDir = false;
+  const stagingDir = localPackageCreationStagingDir(
+    row.workingDir,
+    state.operationId,
+  );
+  let ownsStagingDir = false;
 
   try {
-    await claimLocalPackageWorkingDir(row.workingDir);
-    ownsWorkingDir = true;
-    await writeCreationJournal(row.workingDir, state.operationId, {
+    await claimInitialCreationStagingDir(stagingDir);
+    ownsStagingDir = true;
+    await writeCreationJournal(stagingDir, state.operationId, {
       flow: opts.flow,
     });
+    log.info(
+      {
+        packageId: row.id,
+        flowId: opts.flow.id,
+        operationId: state.operationId,
+      },
+      "initial Flow creation stage ready",
+    );
     await materializeCreation(row, state, opts.db);
   } catch (err) {
     const current = await getLocalPackage(row.id, opts.db);
 
     if (current?.creationState?.phase !== "recovery_required") {
       try {
-        if (ownsWorkingDir) {
-          await compensateFailedInitialCreation(row, state, opts.db);
+        if (ownsStagingDir) {
+          await compensateFailedInitialCreation(
+            row,
+            state,
+            stagingDir,
+            opts.db,
+          );
         } else {
           log.warn(
             { packageId: row.id, operationId: state.operationId },
-            "creation rollback preserved a working directory this operation did not own",
+            "creation rollback preserved a private stage this operation did not own",
           );
           await rollbackLocalPackageRow(row.id, opts.db);
         }
@@ -904,6 +985,7 @@ export async function addFlowToLocalPackage(opts: {
       throw new MaisterError(
         "CONFLICT",
         `Flow ID "${opts.flow.id}" already exists in this package`,
+        { details: { reason: "duplicate_flow_id" } },
       );
     }
 
@@ -921,7 +1003,11 @@ export async function addFlowToLocalPackage(opts: {
 
     await claimCreationState(pkg.id, state, opts.db);
     log.info(
-      { packageId: pkg.id, flowId: opts.flow.id, operationId: state.operationId },
+      {
+        packageId: pkg.id,
+        flowId: opts.flow.id,
+        operationId: state.operationId,
+      },
       "add Flow to local package",
     );
 
@@ -980,9 +1066,9 @@ export async function recoverLocalPackageCreation(
   packageId: string,
   db?: Db,
 ): Promise<{
-  package: LocalPackage;
+  package: LocalPackage | null;
   flowPath: string | null;
-  recoveryStatus: "ready" | "recovering" | "recovery_required";
+  recoveryStatus: "ready" | "recovering" | "recovery_required" | "rolled_back";
 }> {
   const lockToken = await acquireWorkingDirLock(packageId, db);
 
@@ -1001,6 +1087,36 @@ export async function recoverLocalPackageCreation(
         flowPath: null,
         recoveryStatus: "ready",
       };
+    }
+
+    if (state.kind === "create_package_with_flow") {
+      const stagingDir = localPackageCreationStagingDir(
+        pkg.workingDir,
+        state.operationId,
+      );
+      const [finalWorkingDirExists, journal] = await Promise.all([
+        pathExists(pkg.workingDir),
+        readCreationJournal(stagingDir, state.operationId),
+      ]);
+
+      // Before the private journal is atomically written no Flow payload is
+      // durable by design. The final working directory has not been claimed,
+      // so compensation can delete only this operation's private stage and DB
+      // row. A pre-existing final path is never adopted or removed.
+      if (!journal && !finalWorkingDirExists) {
+        try {
+          await compensateUnjournaledInitialCreation(pkg, state, db);
+        } catch (err) {
+          await markCreationRecoveryRequired(packageId, state, db);
+          throw err;
+        }
+
+        return {
+          package: null,
+          flowPath: null,
+          recoveryStatus: "rolled_back",
+        };
+      }
     }
 
     try {
@@ -1326,6 +1442,7 @@ async function assertNoLiveLocalPackageAssistants(
     throw new MaisterError(
       "CONFLICT",
       `local package has a recoverable or live assistant run (${live.id}, ${live.status})`,
+      { details: { reason: "assistant_active" } },
     );
   }
 }

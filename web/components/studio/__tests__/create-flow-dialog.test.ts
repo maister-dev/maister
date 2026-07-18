@@ -21,7 +21,10 @@ vi.mock("next-intl", () => ({
       : translations.local,
 }));
 
-import { CreateFlowDialog } from "@/components/studio/create-flow-dialog";
+import {
+  CreateFlowDialog,
+  createFlowValidationErrorKey,
+} from "@/components/studio/create-flow-dialog";
 
 describe("CreateFlowDialog", () => {
   beforeEach(() => {
@@ -53,5 +56,18 @@ describe("CreateFlowDialog", () => {
     expect(translations.createFlow).not.toHaveBeenCalledWith("cancel");
     expect(translations.createFlow.raw).toHaveBeenCalledWith("linksHint");
     expect(translations.createFlow.raw).toHaveBeenCalledWith("sourcesHint");
+  });
+
+  it("maps each required Flow field to a localized actionable validation key", () => {
+    expect(createFlowValidationErrorKey(["id"])).toBe("invalidFlowId");
+    expect(createFlowValidationErrorKey(["metadata", "title"])).toBe(
+      "invalidDisplayTitle",
+    );
+    expect(createFlowValidationErrorKey(["metadata", "summary"])).toBe(
+      "invalidSummary",
+    );
+    expect(createFlowValidationErrorKey(["metadata", "route_when"])).toBe(
+      "invalidRouteWhen",
+    );
   });
 });
