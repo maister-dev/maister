@@ -422,7 +422,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: {
       type: "object",
       properties: {
-        runId: { type: "string" },
+        runId: { type: "string", minLength: 1 },
         strategy: { type: "string", enum: ["rebase", "merge"] },
         agent: { type: "boolean" },
         push: { type: "boolean" },
@@ -437,7 +437,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: {
       type: "object",
       properties: {
-        runId: { type: "string" },
+        runId: { type: "string", minLength: 1 },
       },
       required: ["runId"],
     },

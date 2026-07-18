@@ -1,21 +1,13 @@
 import "server-only";
 
 import type { ObjectiveFactSource } from "./providers";
+import type { Db } from "@/lib/evaluations/db";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/objective/execute.ts).
-const { gateResults, artifactInstances } = schemaModule as unknown as Record<
-  string,
-  any
->;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+import { artifactInstances, gateResults } from "@/lib/db/schema";
 
 const log = pino({
   name: "evaluations-objective-source",

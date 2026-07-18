@@ -1,27 +1,22 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationRecipeDefinition } from "@/lib/evaluations/types";
 
 import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-import { contentDigest } from "@/lib/evaluations/digest";
-
-// FIXME(any): schema-module bridge (matches lib/experiments/service.ts).
-const {
-  evaluationStudies,
-  evaluationRecipes,
-  evaluationParticipants,
+import {
   evaluationEvidenceItems,
+  evaluationParticipants,
+  evaluationRecipes,
+  evaluationStudies,
   runs,
   tasks,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { contentDigest } from "@/lib/evaluations/digest";
 
 const log = pino({
   name: "evaluations-studies",
@@ -43,7 +38,7 @@ export async function createStudy(
     createdByUserId?: string | null;
   },
   db?: Db,
-): Promise<Record<string, unknown>> {
+): Promise<{ id: string } & Record<string, unknown>> {
   const d = db ?? getDb();
 
   return d.transaction(async (tx: Db) => {

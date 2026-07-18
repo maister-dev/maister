@@ -23,7 +23,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 let otherProjectId: string;
 let flowId: string;
@@ -210,6 +210,109 @@ describe("createControlledLaunchBatch", () => {
     expect(second.batchId).toBe(first.batchId);
   });
 
+  it("rejects the same key reused for a different launch request (digest mismatch)", async () => {
+    const study = await createStudy({ projectId, taskId, title: "B4" }, db);
+    const recipeA = await newRecipe(study.id as string, "a");
+    const recipeB = await newRecipe(study.id as string, "b");
+    const key = randomUUID();
+
+    await createControlledLaunchBatch(
+      {
+        studyId: study.id as string,
+        projectId,
+        idempotencyKey: key,
+        items: [{ recipeId: recipeA }],
+      },
+      db,
+    );
+
+    await expect(
+      createControlledLaunchBatch(
+        {
+          studyId: study.id as string,
+          projectId,
+          idempotencyKey: key,
+          items: [{ recipeId: recipeB }],
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(
+        /already used for a different launch request/,
+      ),
+    });
+  });
+
+  it("scopes the idempotency key to the study (no cross-study dedup)", async () => {
+    const studyA = await createStudy({ projectId, taskId, title: "B5a" }, db);
+    const studyB = await createStudy({ projectId, taskId, title: "B5b" }, db);
+    const recipeA = await newRecipe(studyA.id as string, "a");
+    const recipeB = await newRecipe(studyB.id as string, "a");
+    const key = randomUUID();
+
+    const first = await createControlledLaunchBatch(
+      {
+        studyId: studyA.id as string,
+        projectId,
+        idempotencyKey: key,
+        items: [{ recipeId: recipeA }],
+      },
+      db,
+    );
+    const second = await createControlledLaunchBatch(
+      {
+        studyId: studyB.id as string,
+        projectId,
+        idempotencyKey: key,
+        items: [{ recipeId: recipeB }],
+      },
+      db,
+    );
+
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(false);
+    expect(second.batchId).not.toBe(first.batchId);
+  });
+
+  it("converges two concurrent same-key first submits on one batch (no raw 23505)", async () => {
+    const study = await createStudy({ projectId, taskId, title: "B6" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const key = randomUUID();
+    const args = {
+      studyId: study.id as string,
+      projectId,
+      idempotencyKey: key,
+      items: [{ recipeId }],
+    };
+
+    const settled = await Promise.allSettled([
+      createControlledLaunchBatch(args, db),
+      createControlledLaunchBatch(args, db),
+    ]);
+    const rejections = settled.filter((s) => s.status === "rejected");
+
+    // Never a raw unique-violation leak — both racers converge or replay.
+    expect(
+      rejections.map((r) => String((r as PromiseRejectedResult).reason)),
+    ).toEqual([]);
+
+    const results = settled.flatMap((s) =>
+      s.status === "fulfilled" ? [s.value] : [],
+    );
+
+    expect(results).toHaveLength(2);
+    expect(new Set(results.map((r) => r.batchId)).size).toBe(1);
+    expect(results.map((r) => r.deduped).sort()).toEqual([false, true]);
+
+    const batches = await db
+      .select()
+      .from(schema.evaluationLaunchBatches)
+      .where(eq(schema.evaluationLaunchBatches.studyId, study.id as string));
+
+    expect(batches).toHaveLength(1);
+  });
+
   it("rejects a recipe that does not belong to the study", async () => {
     const study = await createStudy({ projectId, taskId, title: "B3" }, db);
     const otherStudy = await createStudy(
@@ -364,5 +467,187 @@ describe("runControlledLaunchBatch", () => {
       .where(eq(schema.evaluationLaunchBatches.id, batchId));
 
     expect(batch.status).toBe("completed");
+  });
+
+  it("adopts a launching item whose participant already exists (crash window) without re-invoking the seam", async () => {
+    const study = await createStudy({ projectId, taskId, title: "R5" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+    const [item] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.batchId, batchId));
+
+    // Mimic a drive that died AFTER its participant transaction committed but
+    // never finalized the item: item stuck in `launching`, participant durable.
+    await db
+      .update(schema.evaluationLaunchBatchItems)
+      .set({ status: "launching" })
+      .where(eq(schema.evaluationLaunchBatchItems.id, item.id));
+
+    const orphanRunId = await makeRun();
+    const participantId = randomUUID();
+
+    await db.insert(schema.evaluationParticipants).values({
+      id: participantId,
+      studyId: study.id as string,
+      runId: orphanRunId,
+      sourceType: "launched",
+      recipeId,
+      batchItemId: item.id,
+      label: "Recipe a #1",
+      replicateGroup: "a",
+      replicateOrdinal: 1,
+      launchReason: "initial",
+    });
+
+    const seamCalls: string[] = [];
+    const seam: LaunchRunSeam = async ({ launchKey }) => {
+      seamCalls.push(launchKey);
+
+      return { runId: await makeRun() };
+    };
+
+    const outcome = await runControlledLaunchBatch(batchId, seam, db);
+
+    expect(outcome).toEqual({ launched: 0, failed: 0, skipped: 0 });
+    expect(seamCalls).toEqual([]);
+
+    const [adopted] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.id, item.id));
+
+    expect(adopted.status).toBe("launched");
+    expect(adopted.participantId).toBe(participantId);
+    expect(adopted.runId).toBe(orphanRunId);
+
+    const participants = await db
+      .select()
+      .from(schema.evaluationParticipants)
+      .where(eq(schema.evaluationParticipants.batchItemId, item.id));
+
+    expect(participants).toHaveLength(1);
+
+    const [batch] = await db
+      .select()
+      .from(schema.evaluationLaunchBatches)
+      .where(eq(schema.evaluationLaunchBatches.id, batchId));
+
+    expect(batch.status).toBe("completed");
+  });
+
+  it("re-queues a stuck launching item with no participant and re-drives it in the same pass", async () => {
+    const study = await createStudy({ projectId, taskId, title: "R6" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+    const [item] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.batchId, batchId));
+
+    // Mimic a drive that died between the claim and any participant write.
+    await db
+      .update(schema.evaluationLaunchBatchItems)
+      .set({ status: "launching" })
+      .where(eq(schema.evaluationLaunchBatchItems.id, item.id));
+
+    const seamCalls: string[] = [];
+    const seam: LaunchRunSeam = async ({ launchKey }) => {
+      seamCalls.push(launchKey);
+
+      return { runId: await makeRun() };
+    };
+
+    const outcome = await runControlledLaunchBatch(batchId, seam, db);
+
+    expect(outcome).toEqual({ launched: 1, failed: 0, skipped: 0 });
+    // The seam's dedup handle is the item id, stable across retries.
+    expect(seamCalls).toEqual([item.id]);
+
+    const [launchedItem] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.id, item.id));
+
+    expect(launchedItem.status).toBe("launched");
+
+    const participants = await db
+      .select()
+      .from(schema.evaluationParticipants)
+      .where(eq(schema.evaluationParticipants.batchItemId, item.id));
+
+    expect(participants).toHaveLength(1);
+  });
+
+  it("converges a re-driven item onto its existing participant (seam idempotency, re-adoption)", async () => {
+    const study = await createStudy({ projectId, taskId, title: "R7" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+
+    // Seam honoring the launchKey contract: the same key always returns the
+    // same run, never a second one.
+    const runByKey = new Map<string, string>();
+    const seamCalls: string[] = [];
+    const seam: LaunchRunSeam = async ({ launchKey }) => {
+      seamCalls.push(launchKey);
+      let runId = runByKey.get(launchKey);
+
+      if (!runId) {
+        runId = await makeRun();
+        runByKey.set(launchKey, runId);
+      }
+
+      return { runId };
+    };
+
+    await runControlledLaunchBatch(batchId, seam, db);
+
+    const [item] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.batchId, batchId));
+
+    expect(item.status).toBe("launched");
+    const originalParticipantId = item.participantId;
+    const originalRunId = item.runId;
+
+    // Mimic lost item bookkeeping: back to `launching`, ids cleared on the
+    // ITEM only — the participant row stays durable.
+    await db
+      .update(schema.evaluationLaunchBatchItems)
+      .set({ status: "launching", participantId: null, runId: null })
+      .where(eq(schema.evaluationLaunchBatchItems.id, item.id));
+
+    const outcome = await runControlledLaunchBatch(batchId, seam, db);
+
+    expect(outcome).toEqual({ launched: 0, failed: 0, skipped: 0 });
+    // Adopted via the durable participant — the seam is never re-invoked.
+    expect(seamCalls).toEqual([item.id]);
+
+    const [readopted] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.id, item.id));
+
+    expect(readopted.status).toBe("launched");
+    expect(readopted.participantId).toBe(originalParticipantId);
+    expect(readopted.runId).toBe(originalRunId);
+
+    const participants = await db
+      .select()
+      .from(schema.evaluationParticipants)
+      .where(eq(schema.evaluationParticipants.batchItemId, item.id));
+
+    expect(participants).toHaveLength(1);
   });
 });

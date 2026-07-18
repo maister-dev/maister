@@ -2918,7 +2918,8 @@
       "auto_promote": "auto_promote",
       "repo_delivery_scan": "repo_delivery_scan",
       "pr_state_scan": "pr_state_scan",
-      "evaluation_dispatch": "Evaluation dispatch"
+      "evaluation_dispatch": "Evaluation dispatch",
+      "evaluation_suite_scan": "Evaluation suite scan"
     },
     "state": {
       "active": "active",

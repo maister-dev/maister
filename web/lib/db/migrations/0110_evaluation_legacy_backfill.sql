@@ -1,9 +1,12 @@
 -- M46 (ADR-142) legacy Experiment -> Evaluation Study backfill.
 --
--- Lossless, idempotent, parity-asserting. Preserves every experiments /
+-- Idempotent, parity-asserting (row-count + per-Study member coverage; diff /
+-- materialization PAYLOADS are summarized as flags/sizes — the legacy tables
+-- stay the payload source of record). Preserves every experiments /
 -- experiment_runs row or RAISEs (rolling back the whole migration) — no lossy
 -- guess, no destructive drop (the legacy tables survive the M46 rollback
--- window; the deferred 0108 contract migration drops them after sign-off).
+-- window; a future reserved contract migration drops them after sign-off AND
+-- payload carry-over or an explicit owner waiver).
 --
 -- The logic lives in a retained idempotent function so the T5.4 rollout
 -- "verify parity" step can re-run it, and integration tests can seed a
@@ -110,7 +113,15 @@ BEGIN
           'runId', er.run_id,
           'taskId', exp.task_id,
           'baseCommit', er.base_commit,
-          'capturedAt', now()::text,
+          -- Provenance carries the ORIGINAL legacy capture time. now() is only
+          -- the fallback when the legacy row never captured one, and the
+          -- capturedAtSource marker records which case applied.
+          'capturedAt', COALESCE(er.diff_snapshot_captured_at, now())::text,
+          'capturedAtSource', CASE
+            WHEN er.diff_snapshot_captured_at IS NOT NULL
+              THEN 'diff_snapshot_captured_at'
+            ELSE 'backfill_now'
+          END,
           'legacyVariantKey', er.variant_key,
           'legacyReplicateOrdinal', er.replicate_ordinal,
           'legacyLaunchReason', er.launch_reason,
@@ -185,6 +196,14 @@ BEGIN
       v_winner_key := v_human->>'winnerVariantKey';
 
       IF v_outcome = 'winner' AND v_winner_key IS NOT NULL THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM evaluation_recipes
+           WHERE study_id = exp.id AND key = 'legacy:' || v_winner_key
+        ) THEN
+          RAISE EXCEPTION
+            'evaluation backfill: experiment % verdict cites unknown winner variant %',
+            exp.id, v_winner_key;
+        END IF;
         SELECT COALESCE(jsonb_agg(p.id), '[]'::jsonb) INTO v_participant_ids
           FROM evaluation_participants p
           JOIN evaluation_recipes r ON r.id = p.recipe_id

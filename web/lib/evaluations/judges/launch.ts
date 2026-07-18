@@ -1,22 +1,22 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import type { Db } from "@/lib/evaluations/db";
+
+import { randomUUID } from "node:crypto";
+
+import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { issueJudgeAttemptToken } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const {
+import {
   evaluationExecutions,
   evaluationJudgeAttempts,
   evaluationMethodRevisions,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+  evaluationStudies,
+  runs,
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "evaluations-judge-launch",
@@ -38,6 +38,10 @@ interface ResolvedRole {
 // duplicate-adoption logic is testable without a live agent; production wires the
 // real agent launcher + MCP materialization (the supervisor delivers the judge
 // token to the agent's evaluator-facade MCP config).
+// CONTRACT: `runId` is the crash-safe launch intent recorded on the attempt row
+// BEFORE this seam runs — the adapter MUST create the run with EXACTLY this id
+// (launchAgentRun accepts a caller-supplied runId), so a crashed spawn is
+// adopted or re-spawned convergently, never duplicated.
 export interface JudgeSpawn {
   runId: string;
   tokenId: string;
@@ -51,7 +55,16 @@ export type JudgeSpawnFn = (args: {
   attemptId: string;
   role: string;
   ordinal: number;
+  runId: string;
 }) => Promise<JudgeSpawn>;
+
+// Token-minting seam for the adoption path (the run already exists, only the
+// attempt bookkeeping is missing). Injectable alongside `spawn` for tests.
+export type JudgeTokenFn = (args: {
+  agentId: string;
+  projectId: string;
+  runId: string;
+}) => Promise<{ tokenId: string }>;
 
 interface ExecutionForLaunch {
   id: string;
@@ -72,8 +85,7 @@ async function loadExecutionForLaunch(
   executionId: string,
   d: Db,
 ): Promise<ExecutionForLaunch> {
-  const { evaluationStudies } = schemaModule as unknown as Record<string, any>;
-  const [row] = (await d
+  const [row] = await d
     .select({
       id: evaluationExecutions.id,
       studyId: evaluationExecutions.studyId,
@@ -87,7 +99,7 @@ async function loadExecutionForLaunch(
       evaluationStudies,
       eq(evaluationExecutions.studyId, evaluationStudies.id),
     )
-    .where(eq(evaluationExecutions.id, executionId))) as ExecutionForLaunch[];
+    .where(eq(evaluationExecutions.id, executionId));
 
   if (!row) {
     throw new MaisterError(
@@ -96,7 +108,13 @@ async function loadExecutionForLaunch(
     );
   }
 
-  return row;
+  return {
+    ...row,
+    // The snapshot column is an opaque jsonb Record; startEvaluationExecution is
+    // the only writer and it stores exactly this roleBindings shape.
+    judgePolicySnapshot:
+      row.judgePolicySnapshot as ExecutionForLaunch["judgePolicySnapshot"],
+  };
 }
 
 // Resolve the (role × ordinal) attempt matrix: each method judge role's declared
@@ -120,11 +138,10 @@ async function resolvePanel(
     .from(evaluationMethodRevisions)
     .where(eq(evaluationMethodRevisions.id, exec.methodRevisionId));
 
-  const roles = (rev?.normalizedDefinition?.definition?.judges?.roles ??
-    []) as Array<{
-    id: string;
-    count: number;
-  }>;
+  const definition = (rev?.normalizedDefinition?.definition ?? {}) as {
+    judges?: { roles?: Array<{ id: string; count: number }> };
+  };
+  const roles = definition.judges?.roles ?? [];
   const bindings = new Map(
     (exec.judgePolicySnapshot?.roleBindings ?? []).map((b) => [b.role, b]),
   );
@@ -164,6 +181,7 @@ export async function provisionJudgeAttempts(
     agentId: string;
     runnerId: string | null;
     agentRunId: string | null;
+    intendedRunId: string | null;
     status: string;
   }>
 > {
@@ -194,13 +212,14 @@ export async function provisionJudgeAttempts(
     }
   }
 
-  const rows = (await d
+  const rows = await d
     .select({
       id: evaluationJudgeAttempts.id,
       role: evaluationJudgeAttempts.role,
       ordinal: evaluationJudgeAttempts.ordinal,
       agentId: evaluationJudgeAttempts.agentId,
       agentRunId: evaluationJudgeAttempts.agentRunId,
+      intendedRunId: evaluationJudgeAttempts.intendedRunId,
       status: evaluationJudgeAttempts.status,
     })
     .from(evaluationJudgeAttempts)
@@ -209,31 +228,31 @@ export async function provisionJudgeAttempts(
         eq(evaluationJudgeAttempts.executionId, executionId),
         eq(evaluationJudgeAttempts.retryOrdinal, 0),
       ),
-    )) as Array<{
-    id: string;
-    role: string;
-    ordinal: number;
-    agentId: string;
-    agentRunId: string | null;
-    status: string;
-  }>;
+    );
 
   const byRole = new Map(panel.map((p) => [p.role, p]));
 
   return rows.map((r) => ({
     ...r,
+    // agent_id is nullable only through agents.onDelete "set null"; attempts
+    // are provisioned above with a concrete agent and consumed in the same
+    // judging window, so a null here is unreachable in practice.
+    agentId: r.agentId as string,
     runnerId: byRole.get(r.role)?.runnerId ?? null,
   }));
 }
 
 // Launch the judge panel: provision the attempt matrix, then spawn a dedicated
-// agent Run per not-yet-launched attempt (duplicate-launch adoption — an attempt
-// that already carries an agentRunId is adopted, never re-spawned). Each spawn
+// agent Run per not-yet-launched attempt. Crash-safe adoption boundary: a fresh
+// attempt first records a pre-generated `intendedRunId` via CAS (the launch
+// intent), THEN spawns with exactly that id. A crash between intent and
+// bookkeeping is recovered on the next drive — the run is adopted if the spawn
+// created it, or re-spawned with the SAME id — never duplicated. Each spawn
 // mints an attempt-bound judge token stored on the attempt row; the timeout clock
 // anchors at Running, never at enqueue (D12). Returns the launched/adopted count.
 export async function launchJudgePanel(
   executionId: string,
-  deps: { spawn: JudgeSpawnFn },
+  deps: { spawn: JudgeSpawnFn; issueToken?: JudgeTokenFn },
   db?: Db,
 ): Promise<{ launched: number; adopted: number }> {
   const d = db ?? getDb();
@@ -246,10 +265,34 @@ export async function launchJudgePanel(
     );
   }
 
+  const issueToken: JudgeTokenFn =
+    deps.issueToken ??
+    (async (args) => {
+      const token = await issueJudgeAttemptToken({ ...args, db });
+
+      return { tokenId: token.tokenId };
+    });
+
   const attempts = await provisionJudgeAttempts(executionId, d);
 
   let launched = 0;
   let adopted = 0;
+
+  const finalize = async (attemptId: string, spawn: JudgeSpawn) => {
+    const now = new Date();
+
+    await d
+      .update(evaluationJudgeAttempts)
+      .set({
+        agentRunId: spawn.runId,
+        tokenId: spawn.tokenId,
+        status: "running",
+        // The attempt timeout clock anchors here (session Running), never at
+        // enqueue — a cap-queued attempt never times out before it starts (D12).
+        runningAt: now,
+      })
+      .where(eq(evaluationJudgeAttempts.id, attemptId));
+  };
 
   for (const attempt of attempts) {
     if (attempt.agentRunId) {
@@ -257,7 +300,75 @@ export async function launchJudgePanel(
       continue;
     }
 
-    const now = new Date();
+    if (attempt.intendedRunId) {
+      // A prior claim crashed between the intent write and the bookkeeping.
+      // Adopt the run if the crashed spawn created it; otherwise re-spawn with
+      // the SAME id. A token minted by the crashed window stays orphaned on the
+      // token ledger (same attempt + run scope — no privilege widening); the
+      // attempt row records only the fresh one.
+      const [existingRun] = await d
+        .select({ id: runs.id })
+        .from(runs)
+        .where(eq(runs.id, attempt.intendedRunId));
+
+      if (existingRun) {
+        const token = await issueToken({
+          agentId: attempt.agentId,
+          projectId: exec.projectId,
+          runId: attempt.intendedRunId,
+        });
+
+        await finalize(attempt.id, {
+          runId: attempt.intendedRunId,
+          tokenId: token.tokenId,
+        });
+        adopted++;
+        log.warn(
+          { executionId, attemptId: attempt.id, runId: attempt.intendedRunId },
+          "adopted crashed judge launch intent",
+        );
+      } else {
+        const spawn = await deps.spawn({
+          agentId: attempt.agentId,
+          projectId: exec.projectId,
+          runnerId: attempt.runnerId,
+          executionId,
+          attemptId: attempt.id,
+          role: attempt.role,
+          ordinal: attempt.ordinal,
+          runId: attempt.intendedRunId,
+        });
+
+        await finalize(attempt.id, spawn);
+        launched++;
+        log.warn(
+          { executionId, attemptId: attempt.id, runId: attempt.intendedRunId },
+          "re-spawned crashed judge launch intent",
+        );
+      }
+      continue;
+    }
+
+    // Fresh attempt: record the launch intent BEFORE any spawn side effect.
+    // The CAS loses to a concurrent driver that already claimed this attempt.
+    const intendedRunId = randomUUID();
+    const claim = await d
+      .update(evaluationJudgeAttempts)
+      .set({ intendedRunId, enqueuedAt: new Date() })
+      .where(
+        and(
+          eq(evaluationJudgeAttempts.id, attempt.id),
+          eq(evaluationJudgeAttempts.status, "queued"),
+          isNull(evaluationJudgeAttempts.intendedRunId),
+        ),
+      )
+      .returning({ id: evaluationJudgeAttempts.id });
+
+    if (!claim.length) {
+      adopted++;
+      continue;
+    }
+
     const spawn = await deps.spawn({
       agentId: attempt.agentId,
       projectId: exec.projectId,
@@ -266,21 +377,10 @@ export async function launchJudgePanel(
       attemptId: attempt.id,
       role: attempt.role,
       ordinal: attempt.ordinal,
+      runId: intendedRunId,
     });
 
-    await d
-      .update(evaluationJudgeAttempts)
-      .set({
-        agentRunId: spawn.runId,
-        tokenId: spawn.tokenId,
-        status: "running",
-        enqueuedAt: now,
-        // The attempt timeout clock anchors here (session Running), never at
-        // enqueue — a cap-queued attempt never times out before it starts (D12).
-        runningAt: now,
-      })
-      .where(eq(evaluationJudgeAttempts.id, attempt.id));
-
+    await finalize(attempt.id, spawn);
     launched++;
   }
 
@@ -302,6 +402,9 @@ export function defaultJudgeSpawn(db?: Db): JudgeSpawnFn {
       launchOverrideRunnerId: args.runnerId,
       trigger: { source: "manual" },
       workspace: "none",
+      // The pre-recorded launch intent — the run MUST get exactly this id so
+      // a crashed window is adopted, never duplicated (seam contract above).
+      runId: args.runId,
       db,
     });
 

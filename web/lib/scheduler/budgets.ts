@@ -12,7 +12,8 @@ export type SchedulerBudgetKey =
   | "auto_promote"
   | "repo_delivery_scan"
   | "pr_state_scan"
-  | "evaluation_dispatch";
+  | "evaluation_dispatch"
+  | "evaluation_suite_scan";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
@@ -27,6 +28,7 @@ export type SchedulerBudgetLimits = {
   repoDeliveryScan: number;
   prStateScan: number;
   evaluationDispatch: number;
+  evaluationSuiteScan: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -59,6 +61,10 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     // at a time (run_schedule precedent). The singleton lease serializes ticks;
     // per-execution CAS + bounded per-tick scan bound the work inside a tick.
     evaluationDispatch: 1,
+    // T7.2 (ADR-147): the seeded singleton suite-scan tick — one attempt at a
+    // time (evaluation_dispatch precedent). Idempotency rides the per-round
+    // (suite, task, scanKey) UNIQUE dedup; the per-tick cap bounds each scan.
+    evaluationSuiteScan: 1,
   };
 }
 

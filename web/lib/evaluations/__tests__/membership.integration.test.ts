@@ -18,7 +18,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 
 let projectId: string;
 let executorId: string;

@@ -110,7 +110,9 @@ function snapshotSlot(
 
 function resolveOneSlot(
   decl: RecipeSlotDeclaration,
-  binding: EvaluationControlledRecipeDefinition["slotBindings"][string] | undefined,
+  binding:
+    | EvaluationControlledRecipeDefinition["slotBindings"][string]
+    | undefined,
   runners: readonly RunnerCatalogEntry[],
   defaultChain: SlotDefaultChain,
 ): { resolved?: RecipeResolvedSlot; refusal?: RecipeSlotRefusal } {
@@ -128,7 +130,8 @@ function resolveOneSlot(
     }
     // Optional / implicit slot: resolve via the default chain.
     const chainId =
-      defaultChain.projectDefaultRunnerId ?? defaultChain.platformDefaultRunnerId;
+      defaultChain.projectDefaultRunnerId ??
+      defaultChain.platformDefaultRunnerId;
     const runner = readyRunner(chainId, runners);
 
     if (!runner) {
@@ -156,7 +159,10 @@ function resolveOneSlot(
         },
       };
     }
-    if (decl.capabilityAgent && runner.capabilityAgent !== decl.capabilityAgent) {
+    if (
+      decl.capabilityAgent &&
+      runner.capabilityAgent !== decl.capabilityAgent
+    ) {
       return {
         refusal: {
           code: "slot_runner_capability_mismatch",

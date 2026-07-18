@@ -1,3 +1,7 @@
+import type {
+  JudgeSpawnFn,
+  JudgeTokenFn,
+} from "@/lib/evaluations/judges/launch";
 import type { TokenActor } from "@/lib/tokens/verify";
 
 import { randomUUID } from "node:crypto";
@@ -31,7 +35,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 let studyId: string;
 let methodRevisionId: string;
@@ -139,6 +143,20 @@ async function seedAttempt(
   });
 
   return { attemptId, tokenId };
+}
+
+// The runs row a spawn adapter would create (mirrors the launch test's spawn
+// stub); the seam contract requires the run to carry EXACTLY the caller's id.
+async function insertAgentRun(runId: string): Promise<void> {
+  await db.insert(schema.runs).values({
+    id: runId,
+    projectId,
+    runKind: "agent",
+    status: "Running",
+    flowVersion: "agent",
+    flowRevision: "agent",
+    startedAt: new Date(),
+  });
 }
 
 function scored(
@@ -537,5 +555,125 @@ describe("evaluator facade + seal + aggregation seam (T4.1)", () => {
 
     expect(relaunched).toEqual({ launched: 0, adopted: 2 });
     expect(spawnCount).toBe(2);
+  });
+});
+
+describe("crash-safe judge launch (intent claim + adopt/re-spawn)", () => {
+  const ROLE_BINDINGS = {
+    roleBindings: [{ role: "reviewer", agentId: "core:sdd-judge" }],
+  };
+
+  it("records the launch intent before spawning and re-drives with the SAME run id", async () => {
+    const executionId = await seedExecution("judging", {
+      judgePolicySnapshot: ROLE_BINDINGS,
+    });
+
+    const failingSpawn: JudgeSpawnFn = async () => {
+      throw new Error("simulated spawn crash");
+    };
+
+    await expect(
+      launchJudgePanel(executionId, { spawn: failingSpawn }, db),
+    ).rejects.toThrow(/simulated spawn crash/);
+
+    // The crashed attempt kept its durable intent: intendedRunId + enqueuedAt
+    // written by the CAS claim BEFORE the spawn side effect, status untouched.
+    const attempts = await db
+      .select()
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.executionId, executionId));
+    const crashed = attempts.filter(
+      (a: Record<string, unknown>) => a.intendedRunId !== null,
+    );
+
+    expect(crashed).toHaveLength(1);
+    expect(crashed[0].status).toBe("queued");
+    expect(crashed[0].agentRunId).toBeNull();
+    expect(crashed[0].enqueuedAt).not.toBeNull();
+    const intendedRunId = crashed[0].intendedRunId as string;
+
+    const spawnCalls: Array<{ attemptId: string; runId: string }> = [];
+    const spawn: JudgeSpawnFn = async (args) => {
+      spawnCalls.push({ attemptId: args.attemptId, runId: args.runId });
+      await insertAgentRun(args.runId);
+
+      return { runId: args.runId, tokenId: randomUUID() };
+    };
+
+    const result = await launchJudgePanel(executionId, { spawn }, db);
+
+    expect(result).toEqual({ launched: 2, adopted: 0 });
+
+    // The re-spawn reused the SAME pre-recorded run id — never a fresh one.
+    const respawn = spawnCalls.find((c) => c.attemptId === crashed[0].id);
+
+    expect(respawn?.runId).toBe(intendedRunId);
+
+    const [after] = await db
+      .select()
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.id, crashed[0].id));
+
+    expect(after.status).toBe("running");
+    expect(after.agentRunId).toBe(intendedRunId);
+  });
+
+  it("adopts a crashed spawn's existing run without re-spawning (token minted via seam)", async () => {
+    const executionId = await seedExecution("judging", {
+      judgePolicySnapshot: ROLE_BINDINGS,
+    });
+    const attempts = await provisionJudgeAttempts(executionId, db);
+    const target = attempts.find((a) => a.ordinal === 1)!;
+    const intendedRunId = randomUUID();
+
+    // Mimic spawn-then-crash: the intent was claimed AND the run got created,
+    // but the bookkeeping (agentRunId/tokenId/running) never landed.
+    await insertAgentRun(intendedRunId);
+    await db
+      .update(schema.evaluationJudgeAttempts)
+      .set({ intendedRunId, enqueuedAt: new Date() })
+      .where(eq(schema.evaluationJudgeAttempts.id, target.id));
+
+    const spawnCalls: string[] = [];
+    const spawn: JudgeSpawnFn = async (args) => {
+      spawnCalls.push(args.attemptId);
+      await insertAgentRun(args.runId);
+
+      return { runId: args.runId, tokenId: randomUUID() };
+    };
+    const adoptedTokenId = randomUUID();
+    const tokenCalls: Array<{
+      agentId: string;
+      projectId: string;
+      runId: string;
+    }> = [];
+    const issueToken: JudgeTokenFn = async (args) => {
+      tokenCalls.push(args);
+
+      return { tokenId: adoptedTokenId };
+    };
+
+    const result = await launchJudgePanel(
+      executionId,
+      { spawn, issueToken },
+      db,
+    );
+
+    expect(result).toEqual({ launched: 1, adopted: 1 });
+    // spawn ran ONLY for the fresh sibling attempt — never for the adoption.
+    expect(spawnCalls).toHaveLength(1);
+    expect(spawnCalls).not.toContain(target.id);
+    expect(tokenCalls).toEqual([
+      { agentId: "core:sdd-judge", projectId, runId: intendedRunId },
+    ]);
+
+    const [after] = await db
+      .select()
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.id, target.id));
+
+    expect(after.status).toBe("running");
+    expect(after.agentRunId).toBe(intendedRunId);
+    expect(after.tokenId).toBe(adoptedTokenId);
   });
 });

@@ -8,14 +8,45 @@ Created: 2026-07-15
 Progress markers use `[x]` done · `[~]` partial (see the task's inline note) ·
 `[ ]` not started.
 
-> **★ STATUS 2026-07-16 (session C): ALL PLAN PHASES IMPLEMENTED.** M46 (Phase
-> 0–5), M47 (Phase 6 T6.1–T6.5), M48 (Phase 7 T7.1–T7.3) are all `[x]`/`[~]`
-> with tested cores; the only `[ ]` remaining are **owner-gated**: T5.3 E2E
-> (deferred — "UI check will be performed later") and T5.4 live-deploy. Each
-> task's inline note lists its co-evolve seam. Migrations 0107..0114 used
-> (0112 launch-batch, 0113 suites, 0114 standardization). Branch
-> `feature/evaluation-lab` head — LOCAL/UNPUSHED. Owner: `db:migrate`
-> 0111→0114 on dev, then owner-gated deploy + `core/v1.1.0` tag + `git push`.
+> **★ STATUS 2026-07-17 (review remediation): CORES IMPLEMENTED + REVIEW-FIXED —
+> NOT "all phases done".** The 2026-07-16 "ALL PLAN PHASES IMPLEMENTED" line
+> overstated completion by counting co-evolve seams as done. Honest ledger:
+>
+> - **Implemented, wired, tested:** M46 Phase 0–5 cores; M47 T6.1–T6.3, T6.5;
+>   M48 suites (scheduler seam wired in remediation), standardization service,
+>   pairwise METHOD contract + tournament math. The 2026-07-17 remediation
+>   additionally fixed: study-scoped idempotency + request digests + 23505
+>   convergence (executions AND launch batches, header `Idempotency-Key`
+>   carrier with body fallback); crash-safe launch adoption (judge
+>   `intended_run_id` intent protocol + `launchAgentRun` caller-supplied runId;
+>   batch `participants.batch_item_id` anchor + atomic participant/item tx +
+>   stuck-`launching` reconcile; `LaunchRunSeam.launchKey` idempotency
+>   contract); suite-scan starvation (unlinked-first capping); auth-first
+>   ordering on all 9 project evaluation routes; atomic If-Match deletes
+>   (panels/profiles); standardization revision advisory lock; 0110 backfill
+>   `capturedAt` fidelity + unknown-winner-key RAISE.
+> - **Implemented core, NOT production-wired — owner-deferred to the UI batch
+>   (decision 2026-07-17):** pairwise EXECUTION path (no match-verdict
+>   persistence exists; `startEvaluationExecution` refuses pairwise profiles
+>   fail-closed with CONFIG); controlled-launch default `LaunchRunSeam` adapter
+>   (contract incl. launchKey idempotency is frozen); standardization HTTP
+>   routes + UI; evaluation-aware legacy `/experiments` adapters; T6.2
+>   run_sessions slot-binding threading.
+> - **Contract deviations (owner-accepted 2026-07-17, details in the API plan
+>   section):** as-built paths are `/evaluations/studies*`; list pagination,
+>   ETag response headers, and 202 semantics deferred; 8 routes deferred
+>   (recipes, recipe-launch, evidence-snapshots, evaluation detail GET, cancel,
+>   retry, catalog, preflight); verdict/study-create idempotency deferred.
+> - **Docs artifacts still owed (T0.2 co-evolve, unpaid):** system-analytics
+>   update, `web-evaluations.asyncapi.yaml`, screen contracts, internal
+>   OpenAPI for the session routes.
+> - **Owner-gated:** T5.3 E2E ("UI check will be performed later"), T5.4
+>   live-deploy, `core/v1.1.0` tag, `git push`.
+>
+> Migrations 0107..0114, amended IN PLACE during remediation (owner-approved;
+> nothing durable had applied them): 0109 +`request_digest` +`intended_run_id`;
+> 0112 study-scoped batch idem index + `request_digest` +
+> `participants.batch_item_id`; 0110 provenance fixes.
 > Full detail: memory `evaluation-lab-m46-impl-state`.
 
 The historical **NEXT** below (M46 session B) is superseded by the status line above.
@@ -461,7 +492,7 @@ At plan creation, local main ends at ADR-138 and migration journal idx/tag 103/0
 - 0111_evaluation_standardized_recipes (`0114_bright_doctor_spectrum`, Implemented — M48 T7.3; append-only human-approved recipe-standardization audit ledger).
 - 0112_evaluation_legacy_contract (RESERVED — deferred contract/drop migration after the rollback window; NOT implemented in M46/M47/M48; moved from 0114, which M48 T7.3 claimed for the standardization ledger).
 
-Before implementation, rebase on current main, recompute maxima from main HEAD and _journal.json, renumber this reservation block/ADR stubs/migration triples if necessary, and run the ADR-anchor and journal-integrity checks. Every migration is SQL + journal entry + matching snapshot.
+Before implementation, rebase on current main, recompute maxima from main HEAD and _journal.json, renumber this reservation block/ADR stubs/migration triples if necessary, and run the ADR-anchor and journal-integrity checks. Every migration is SQL + a journal entry; **snapshot rule (amended 2026-07-17, codifying the disclosed renumber-commit shortcut): only the NEWEST migration must carry a matching snapshot** — drizzle-kit reads only the latest snapshot, intermediate 0107–0113 snapshots were deliberately not regenerated, and `migration-journal-integrity.test.ts` enforces exactly this newest-snapshot invariant.
 
 ### Legacy backfill
 
@@ -478,45 +509,50 @@ Migration 0107 must preserve or loudly refuse:
 ### Compatibility window
 
 - The UI deep links remain /projects/{slug}/experiments and /projects/{slug}/experiments/{studyId}, but the label becomes Evaluation Lab.
-- Canonical new APIs use /evaluation-studies. Legacy /experiments APIs remain adapters for legacy-shaped controlled Studies and emit deprecation metadata.
+- Canonical new APIs use /api/projects/{slug}/evaluations/studies (as-built; amended 2026-07-17 from the original /evaluation-studies naming to match implementation — the branch never shipped, so no external consumer existed). Legacy /experiments APIs remain the PRE-EXISTING legacy routes; evaluation-aware adapters + deprecation metadata are owner-deferred to the UI batch.
 - experiment_get/experiment_advise remain for the old core judge and historical automation; new panels use attempt-bound evaluation tools.
 - The legacy conclude adapter keeps abandonLosers semantics on the legacy route only; the canonical verdict API has no run-stopping side effect (loser cleanup = existing per-run workbench stop/archive/drop, launched participants only).
 - All no-auto-promotion, auto-delivery, relaunch, and GC consumers move in one phase to the explicit launched-lineage predicate. Observed participants are excluded by construction.
 - Do not run old and new web binaries as concurrent writers. Deployment drains the old web process, takes a DB backup, runs expand migrations, starts the new web, then verifies backfill. Old code cannot understand new observed-only Studies.
 - Rollback before any new Study write: stop new web and restore backup/old binary. After new model writes, rollback to old binary is unsupported; roll forward or restore backup and accept loss of post-backup Evaluation data.
-- Keep legacy tables through at least one release/qualification window. 0110 drops or archives them only after parity queries, legacy-route tests, and operator sign-off.
+- Keep legacy tables through at least one release/qualification window. The RESERVED legacy-contract migration drops or archives them only after parity queries, legacy-route tests, operator sign-off, AND — rule added 2026-07-17 — only after the diff_snapshot / diff_files_summary / materialization_delta PAYLOADS are carried into canonical provenance (the 0110 backfill keeps flags/sizes only) or the owner explicitly waives that carry-over.
 
 ## API and Event Contract Plan
 
 ### Common rules
 
 - JSON DTOs are explicit projections; raw DB rows never cross the boundary.
-- List endpoints use opaque cursor pagination, stable created_at/id ordering, limit 1..100, and documented filters.
-- Mutable resources return ETag/revision; PATCH/DELETE/resolve operations require If-Match and return 409 on stale revisions.
-- Create/start/launch/verdict requests require Idempotency-Key. Same key + same digest returns the original response; same key + different digest returns 409.
+- List endpoints use opaque cursor pagination, stable created_at/id ordering, limit 1..100, and documented filters. **AS-BUILT DEVIATION (owner-accepted 2026-07-17): current list endpoints return the full collection; cursor pagination is an explicit deferred contract item (UI batch).**
+- Mutable resources return ETag/revision; PATCH/DELETE/resolve operations require If-Match and return 409 on stale revisions. **AS-BUILT: If-Match request headers ARE enforced (atomic revision CAS incl. deletes, remediation 2026-07-17); ETag RESPONSE headers are deferred — revisions travel in the DTO body.**
+- Create/start/launch/verdict requests require Idempotency-Key. Same key + same digest returns the original response; same key + different digest returns 409. **AS-BUILT (remediation 2026-07-17): implemented for evaluation start (`Idempotency-Key` header, body fallback; study-scoped; digest-checked; race-convergent) and the launch-batch service (lib-level, same semantics). Verdict + study-create idempotency is owner-deferred (Q3, 2026-07-17).**
 - Error mapping: malformed 400; unauthenticated 401; forbidden 403; missing/cross-project 404; stale/idempotency/state race 409; deleted evidence 410; semantic/schema/config 422; dependency/runner/store unavailable 503.
 - No route accepts a filesystem path, package installed_path, supervisor/session ID, adapter env, secret, or actor attribution.
 
 ### Project Study routes
 
-| Method/path | Request | Response / behavior |
-| --- | --- | --- |
-| GET /api/projects/{slug}/evaluation-studies | cursor, limit, taskId, status, participantSource, runStatus, profileId | Page of Study summaries and derived participant/evaluation status |
-| POST /api/projects/{slug}/evaluation-studies | taskId, title, purpose, optional groundTruth selection | 201 Study; taskId is body-controlled selection joined through slug-derived project |
-| GET /api/projects/{slug}/evaluation-studies/{studyId} | URL params only | Study detail, participants, recipes, evaluation summaries, latest human verdict |
-| PATCH /api/projects/{slug}/evaluation-studies/{studyId} | title/purpose/groundTruth while allowed, display metadata; If-Match | Updated Study; immutable ownership/provenance fields rejected |
-| POST .../{studyId}/participants/observed | runIds[1..N], labels/order | Idempotent selected participants; each run must be a flow Run for the same task/project |
-| DELETE .../{studyId}/participants/{participantId} | reason; If-Match | Hard delete only if unreferenced; otherwise tombstone |
-| POST .../{studyId}/recipes | typed recipe draft | Validated immutable recipe version; M46 supports legacy axes, M47 full recipe |
-| POST .../{studyId}/recipes/{recipeId}/launch | replicateCount, optional allowed overrides | 202 durable batch intent with per-item statuses; no all-or-nothing claim |
-| POST .../{studyId}/evidence-snapshots | participantIds, capture mode | 202 capture; returned snapshot may later be attached to one or more evaluations if method/profile digests match |
-| POST .../{studyId}/evaluations | profileId, participantIds, allowed overrides, optional preparedSnapshotId | 202 Evaluation Execution and progress URL |
-| GET .../{studyId}/evaluations/{evaluationId} | URL params only | Lifecycle, objective/panel progress, warnings, unsealed/sealed visibility by role |
-| POST .../{evaluationId}/cancel | reason | 202 cancellation intent; already terminal is idempotent |
-| POST .../{evaluationId}/retry | retry scope and reason | 202 new attempt/execution lineage, never overwrite |
-| POST .../{evaluationId}/reviews | resolution/rationale/adjudication; If-Match | Durable disagreement review |
-| POST .../{studyId}/verdicts | outcome, participantIds, evaluationIds (empty only with the no-evaluation-evidence acknowledgement), rationale, warning acknowledgements | 201 append-only human verdict; latest may supersede with reason |
-| GET .../{studyId}/stream | Last-Event-ID | Replayable text/event-stream over evaluation_events |
+**Amended 2026-07-17 to the as-built surface (owner decision): base path is
+`/api/projects/{slug}/evaluations/studies`. Rows marked DEFERRED have no HTTP
+route yet — they are explicit deferred contract items for the UI batch, not
+silent gaps.**
+
+| Method/path | Request | Response / behavior | As-built 2026-07-17 |
+| --- | --- | --- | --- |
+| GET /api/projects/{slug}/evaluations/studies | taskId/status filters | Study summaries and derived participant/evaluation status | Built (full list; cursor pagination deferred) |
+| POST /api/projects/{slug}/evaluations/studies | taskId, title, purpose | 201 Study; taskId is body-controlled selection joined through slug-derived project | Built (no idempotency key — deferred Q3) |
+| GET .../studies/{studyId} | URL params only | Study detail, participants, recipes, evaluation summaries, latest human verdict | Built |
+| PATCH .../studies/{studyId} | title/purpose, display metadata; If-Match | Updated Study; immutable ownership/provenance fields rejected | Built |
+| POST .../studies/{studyId}/participants | runIds, labels/order | Idempotent observed participants; each run must be a flow Run for the same task/project | Built (path is `/participants`, not `/participants/observed`) |
+| DELETE .../participants/{participantId} | reason; If-Match | Hard delete only if unreferenced; otherwise tombstone | Built |
+| POST .../{studyId}/recipes | typed recipe draft | Validated immutable recipe version | **DEFERRED** — recipes flow through the in-app creation path only |
+| POST .../recipes/{recipeId}/launch | replicateCount, overrides | 202 durable batch intent with per-item statuses | **DEFERRED** — `createControlledLaunchBatch`/`runControlledLaunchBatch` exist lib-side (idempotent, crash-safe); HTTP surface + seam adapter land with the UI batch |
+| POST .../{studyId}/evidence-snapshots | participantIds, capture mode | 202 capture | **DEFERRED** — capture runs inside the dispatcher pipeline |
+| POST .../{studyId}/evaluations | profileId, overrides, Idempotency-Key header (body fallback) | 201 queued / 200 idempotent replay (202 semantics deferred) | Built |
+| GET .../evaluations/{evaluationId} | URL params only | Lifecycle, progress, warnings, sealed visibility by role | **DEFERRED** — progress reads via Study detail + stream |
+| POST .../{evaluationId}/cancel | reason | 202 cancellation intent | **DEFERRED** |
+| POST .../{evaluationId}/retry | retry scope and reason | 202 new lineage, never overwrite | **DEFERRED** — `retryFailedExecution` exists lib-side |
+| PATCH /api/projects/{slug}/evaluations/reviews/{reviewId} | resolution/rationale; If-Match | Durable disagreement review resolution (reviews are dispatcher-created) | Built (as-built shape differs from the original POST-create row) |
+| POST .../{studyId}/verdicts | outcome, participantIds, evaluationIds (empty only with the no-evaluation-evidence acknowledgement), rationale, warning acknowledgements | 201 append-only human verdict; latest may supersede with reason | Built (idempotency key deferred Q3) |
+| GET .../{studyId}/stream | Last-Event-ID | Replayable text/event-stream over evaluation_events | Built |
 
 ### Platform and project configuration routes
 
@@ -524,8 +560,8 @@ Migration 0107 must preserve or loudly refuse:
 - GET/POST /api/admin/evaluations/judge-panels; GET/PATCH/DELETE /{panelId}.
 - GET/POST /api/admin/evaluations/profiles; GET/PATCH/DELETE /{profileId}.
 - GET/PUT/DELETE /api/projects/{slug}/evaluation-profiles/{profileId}/override.
-- GET /api/projects/{slug}/evaluation-catalog returns only selectable compatible Methods/Profiles/agents/runners/Flows/package revisions/MCPs and exact incompatibility reasons.
-- POST /api/projects/{slug}/evaluation-preflight validates a creation step without side effects and returns typed refusals/warnings/effective materialization preview.
+- GET /api/projects/{slug}/evaluation-catalog returns only selectable compatible Methods/Profiles/agents/runners/Flows/package revisions/MCPs and exact incompatibility reasons. **DEFERRED (2026-07-17)** — the catalog/preflight logic exists lib-side (T6.1); the HTTP surface lands with the creation UI.
+- POST /api/projects/{slug}/evaluation-preflight validates a creation step without side effects and returns typed refusals/warnings/effective materialization preview. **DEFERRED (2026-07-17)** — same as above.
 
 ### Identifier trust table
 

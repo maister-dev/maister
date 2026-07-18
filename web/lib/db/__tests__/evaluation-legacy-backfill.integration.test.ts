@@ -84,6 +84,8 @@ const VARIANTS_AB = [
   { key: "A", label: "Variant A", config: {} },
   { key: "B", label: "Variant B", config: {} },
 ];
+// A fixed legacy capture time, far from any test run's now().
+const LEGACY_CAPTURED_AT = new Date("2026-01-02T03:04:05.678Z");
 const RUBRIC = {
   criteria: [
     {
@@ -137,6 +139,7 @@ async function insertExperimentRun(
   variantKey: string,
   replicateOrdinal: number,
   launchReason = "initial",
+  diffSnapshotCapturedAt?: Date,
 ): Promise<string> {
   const runId = await makeRun();
 
@@ -150,6 +153,7 @@ async function insertExperimentRun(
     baseCommit: "abc123",
     diffSnapshotBytes: 1024,
     diffSnapshotTruncated: false,
+    diffSnapshotCapturedAt,
   });
 
   return runId;
@@ -223,6 +227,18 @@ describe("evaluation legacy backfill", () => {
     ids.budgetRestart = await insertExperiment({ status: "running" });
     await insertExperimentRun(ids.budgetRestart, "A", 2, "budget_restart");
 
+    // E8: capturedAt fidelity — run A has a legacy capture timestamp,
+    // run B never captured one (fallback path).
+    ids.capturedAt = await insertExperiment({ status: "running" });
+    await insertExperimentRun(
+      ids.capturedAt,
+      "A",
+      1,
+      "initial",
+      LEGACY_CAPTURED_AT,
+    );
+    await insertExperimentRun(ids.capturedAt, "B", 1);
+
     await backfill();
   });
 
@@ -237,7 +253,7 @@ describe("evaluation legacy backfill", () => {
       `SELECT count(*)::int AS n FROM evaluation_studies WHERE legacy_experiment_id IS NOT NULL`,
     );
 
-    expect(row.n).toBe(7);
+    expect(row.n).toBe(8);
     // Study id == Experiment id (deep-link parity).
     const same = await one(
       `SELECT id, legacy_experiment_id FROM evaluation_studies WHERE id = '${ids.concludedWithAdvisory}'`,
@@ -306,6 +322,36 @@ describe("evaluation legacy backfill", () => {
     expect(row.launch_reason).toBe("manual_relaunch");
   });
 
+  it("carries the ORIGINAL legacy capture timestamp in participant provenance", async () => {
+    const withTs = await one(
+      `SELECT p.run_identity->>'capturedAt' AS captured_at,
+              p.run_identity->>'capturedAtSource' AS source,
+              ((p.run_identity->>'capturedAt')::timestamptz
+                = er.diff_snapshot_captured_at) AS matches_legacy
+         FROM evaluation_participants p
+         JOIN experiment_runs er ON er.run_id = p.run_id
+        WHERE p.study_id = '${ids.capturedAt}' AND p.replicate_group = 'A'`,
+    );
+
+    expect(withTs.matches_legacy).toBe(true);
+    expect(withTs.source).toBe("diff_snapshot_captured_at");
+    // Not the migration run time — the legacy timestamp predates this test.
+    expect(new Date(withTs.captured_at as string).getTime()).toBe(
+      LEGACY_CAPTURED_AT.getTime(),
+    );
+
+    // No legacy capture timestamp -> now() fallback, honestly marked.
+    const fallback = await one(
+      `SELECT run_identity->>'capturedAt' AS captured_at,
+              run_identity->>'capturedAtSource' AS source
+         FROM evaluation_participants
+        WHERE study_id = '${ids.capturedAt}' AND replicate_group = 'B'`,
+    );
+
+    expect(fallback.source).toBe("backfill_now");
+    expect(fallback.captured_at).not.toBeNull();
+  });
+
   it("synthesizes a terminal Partial legacy_advisory execution with one attempt per advisory", async () => {
     const exec = await one(
       `SELECT id, status, terminal_reason, method_revision_id FROM evaluation_executions WHERE study_id = '${ids.concludedWithAdvisory}'`,
@@ -366,6 +412,31 @@ describe("evaluation legacy backfill", () => {
     );
 
     expect(after.n).toBe(before.n);
+  });
+
+  it("loudly aborts (and rolls back) when a concluded verdict cites an unknown winner variant", async () => {
+    const badId = await insertExperiment({
+      status: "concluded",
+      verdict: {
+        human: { outcome: "winner", winnerVariantKey: "GHOST" },
+      },
+      concludedAt: new Date(),
+    });
+
+    await insertExperimentRun(badId, "A", 1);
+
+    await expect(backfill()).rejects.toThrow(/unknown winner variant/);
+
+    // The bad experiment's Study insert rolled back with the raise.
+    const row = await one(
+      `SELECT count(*)::int AS n FROM evaluation_studies WHERE legacy_experiment_id = '${badId}'`,
+    );
+
+    expect(row.n).toBe(0);
+
+    // Remove the poison fixture so later backfill() calls stay green
+    // (experiment_runs cascades on delete).
+    await db.execute(sql.raw(`DELETE FROM experiments WHERE id = '${badId}'`));
   });
 
   it("loudly aborts (and rolls back) when an experiment_run cites an unknown variant", async () => {

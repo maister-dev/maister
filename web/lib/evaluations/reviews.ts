@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationReviewKind } from "@/lib/evaluations/types";
 
 import { and, eq } from "drizzle-orm";
@@ -8,15 +9,12 @@ import pino from "pino";
 import { appendEvaluationEvent } from "./dispatcher/events";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationExecutions,
+  evaluationReviews,
+  evaluationStudies,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationReviews, evaluationExecutions, evaluationStudies } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-reviews",
@@ -144,7 +142,7 @@ export async function getReviewForProject(
   db?: Db,
 ): Promise<{ studyId: string; version: number; status: string }> {
   const d = db ?? getDb();
-  const [row] = (await d
+  const [row] = await d
     .select({
       studyId: evaluationExecutions.studyId,
       version: evaluationReviews.version,
@@ -160,15 +158,13 @@ export async function getReviewForProject(
       evaluationStudies,
       eq(evaluationExecutions.studyId, evaluationStudies.id),
     )
-    .where(eq(evaluationReviews.id, args.reviewId))) as Array<{
-    studyId: string;
-    version: number;
-    status: string;
-    projectId: string;
-  }>;
+    .where(eq(evaluationReviews.id, args.reviewId));
 
   if (!row || row.projectId !== args.projectId) {
-    throw new MaisterError("PRECONDITION", `review not found: ${args.reviewId}`);
+    throw new MaisterError(
+      "PRECONDITION",
+      `review not found: ${args.reviewId}`,
+    );
   }
 
   return { studyId: row.studyId, version: row.version, status: row.status };

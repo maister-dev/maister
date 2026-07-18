@@ -1,24 +1,23 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { appendEvaluationEvent } from "./events";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationExecutions,
+  evaluationMethodRevisions,
+  evaluationStudies,
+} from "@/lib/db/schema";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { resolveEffectiveProfile } from "@/lib/evaluations/resolution";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationExecutions, evaluationMethodRevisions, evaluationStudies } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-dispatch-start",
@@ -82,8 +81,11 @@ export interface StartExecutionResult {
 // effective profile (D8), snapshot the objective/judge/aggregation policies from
 // the same method revision, and emit the `evaluation.queued` event. The
 // dispatcher then drives it (capture → check → judge → aggregate). An identical
-// `idempotencyKey` within the Study returns the original execution (never a
-// duplicate). Callers kick the dispatch tick after this returns for immediacy.
+// `idempotencyKey` within the Study replays the original execution when the
+// request digest matches; the same key with a DIFFERENT request is a CONFLICT
+// (never a silent replay of an unrelated request). Concurrent first submits
+// converge on the insert winner via the (study, key) partial unique index.
+// Callers kick the dispatch tick after this returns for immediacy.
 export async function startEvaluationExecution(
   args: StartExecutionArgs,
   db?: Db,
@@ -115,19 +117,56 @@ export async function startEvaluationExecution(
   );
   const methodDef = await loadMethodDefinition(profile.methodRevisionId, d);
 
+  // Pairwise execution is owner-deferred with the pairwise UI: the judge
+  // submission contract carries no A/B pick yet, so an execution would only
+  // die later at aggregation. Fail closed here with a typed refusal.
+  if (methodDef.aggregation?.algorithm === "pairwise_tournament@1") {
+    throw new MaisterError(
+      "CONFIG",
+      "pairwise_tournament methods are not executable yet — the pairwise execution path lands with the pairwise UI",
+    );
+  }
+
+  const requestDigest = contentDigest({
+    profileId: args.profileId,
+    studyOverrides: args.studyOverrides ?? null,
+  });
+
+  const replayOrConflict = (existing: {
+    id: string;
+    requestDigest: string | null;
+  }): StartExecutionResult => {
+    if (existing.requestDigest !== requestDigest) {
+      throw new MaisterError(
+        "CONFLICT",
+        `idempotency key "${args.idempotencyKey}" was already used for a different request in study ${args.studyId}`,
+      );
+    }
+
+    return { executionId: existing.id, deduped: true };
+  };
+
   return d.transaction(async (tx: Db) => {
     if (args.idempotencyKey) {
       const [existing] = await tx
-        .select({ id: evaluationExecutions.id })
+        .select({
+          id: evaluationExecutions.id,
+          requestDigest: evaluationExecutions.requestDigest,
+        })
         .from(evaluationExecutions)
-        .where(eq(evaluationExecutions.idempotencyKey, args.idempotencyKey));
+        .where(
+          and(
+            eq(evaluationExecutions.studyId, args.studyId),
+            eq(evaluationExecutions.idempotencyKey, args.idempotencyKey),
+          ),
+        );
 
       if (existing) {
-        return { executionId: existing.id, deduped: true };
+        return replayOrConflict(existing);
       }
     }
 
-    const [row] = await tx
+    const inserted = await tx
       .insert(evaluationExecutions)
       .values({
         studyId: args.studyId,
@@ -148,9 +187,45 @@ export async function startEvaluationExecution(
         },
         randomizationSeed: randomUUID(),
         idempotencyKey: args.idempotencyKey ?? null,
+        requestDigest,
         requestedByUserId: args.requestedByUserId ?? null,
       })
+      .onConflictDoNothing({
+        target: [
+          evaluationExecutions.studyId,
+          evaluationExecutions.idempotencyKey,
+        ],
+        where: sql`idempotency_key is not null`,
+      })
       .returning({ id: evaluationExecutions.id });
+
+    if (!inserted.length) {
+      // A concurrent same-key submit won the (study, key) unique race while
+      // this transaction was in flight — converge on the winner, never 23505.
+      const [winner] = await tx
+        .select({
+          id: evaluationExecutions.id,
+          requestDigest: evaluationExecutions.requestDigest,
+        })
+        .from(evaluationExecutions)
+        .where(
+          and(
+            eq(evaluationExecutions.studyId, args.studyId),
+            eq(evaluationExecutions.idempotencyKey, args.idempotencyKey ?? ""),
+          ),
+        );
+
+      if (!winner) {
+        throw new MaisterError(
+          "CONFLICT",
+          `execution insert conflicted but no winner row is visible (study ${args.studyId})`,
+        );
+      }
+
+      return replayOrConflict(winner);
+    }
+
+    const row = inserted[0];
 
     await appendEvaluationEvent(tx, {
       studyId: args.studyId,

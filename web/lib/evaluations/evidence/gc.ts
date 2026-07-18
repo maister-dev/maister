@@ -1,17 +1,15 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import { and, eq, lt, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const { evaluationEvidenceSnapshots, evaluationExecutions } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+import {
+  evaluationEvidenceSnapshots,
+  evaluationExecutions,
+} from "@/lib/db/schema";
 
 const log = pino({
   name: "evaluations-evidence-gc",

@@ -9,7 +9,9 @@ import {
 } from "@/lib/evaluations/materialization";
 import { parseControlledRecipe } from "@/lib/evaluations/recipe";
 
-function runner(overrides: Partial<RunnerCatalogEntry> = {}): RunnerCatalogEntry {
+function runner(
+  overrides: Partial<RunnerCatalogEntry> = {},
+): RunnerCatalogEntry {
   const base: RunnerCatalogEntry = {
     id: "runner-sonnet",
     adapter: "claude",
@@ -27,7 +29,12 @@ function runner(overrides: Partial<RunnerCatalogEntry> = {}): RunnerCatalogEntry
 const catalog: RunnerCatalogEntry[] = [
   runner(),
   runner({ id: "runner-opus", model: "claude-opus-4-8" }),
-  runner({ id: "runner-codex", capabilityAgent: "codex", adapter: "codex", model: "gpt-5" }),
+  runner({
+    id: "runner-codex",
+    capabilityAgent: "codex",
+    adapter: "codex",
+    model: "gpt-5",
+  }),
 ];
 
 function decl(
@@ -195,7 +202,10 @@ describe("resolveRecipeSlotBindings", () => {
 
   it("refuses an intent with no same-capability host runner", () => {
     const recipe = recipeWithSlots({
-      "session:main": { mode: "intent", config: { capability_agent: "gemini" } },
+      "session:main": {
+        mode: "intent",
+        config: { capability_agent: "gemini" },
+      },
     });
     const result = resolveRecipeSlotBindings({
       slotBindings: recipe.slotBindings,
@@ -237,7 +247,10 @@ describe("buildMaterializationSnapshot", () => {
       defaultChain,
     });
     const snapA = buildMaterializationSnapshot(recipe, a.resolved);
-    const snapB = buildMaterializationSnapshot(recipe, [...a.resolved].reverse());
+    const snapB = buildMaterializationSnapshot(
+      recipe,
+      [...a.resolved].reverse(),
+    );
 
     expect(snapB.digests.materializationDigest).toBe(
       snapA.digests.materializationDigest,
@@ -265,8 +278,12 @@ describe("buildMaterializationSnapshot", () => {
       defaultChain,
     });
 
-    expect(buildMaterializationSnapshot(recipe, withSonnet.resolved).digests.materializationDigest).not.toBe(
-      buildMaterializationSnapshot(opusRecipe, withOpus.resolved).digests.materializationDigest,
+    expect(
+      buildMaterializationSnapshot(recipe, withSonnet.resolved).digests
+        .materializationDigest,
+    ).not.toBe(
+      buildMaterializationSnapshot(opusRecipe, withOpus.resolved).digests
+        .materializationDigest,
     );
   });
 });

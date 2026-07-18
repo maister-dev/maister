@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type {
   EvaluationMethodCompat,
   EvaluationMethodHealth,
@@ -14,16 +15,9 @@ import { sha256, stableStringify } from "./digest";
 import { checkMethodEngineCompatibility, loadEvaluationMethod } from "./method";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import { evaluationMethodRevisions, packageInstalls } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationMethodRevisions, packageInstalls } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluation-methods-registry",
@@ -142,7 +136,7 @@ function methodRow(
     compat: EvaluationMethodCompat;
   },
   validationErrors: string[] | null,
-): Record<string, unknown> {
+): typeof evaluationMethodRevisions.$inferInsert {
   return {
     packageInstallId: install.id,
     methodId,
@@ -209,7 +203,7 @@ export async function registerPackageMethods(
 
   for (const entry of entries) {
     const qualifiedId = `${install.name}:${entry.id}`;
-    let row: Record<string, unknown>;
+    let row: typeof evaluationMethodRevisions.$inferInsert;
 
     try {
       const loaded = await loadEvaluationMethod(
@@ -308,12 +302,10 @@ export type MethodResyncSummary = {
 export async function resyncMethods(db?: Db): Promise<MethodResyncSummary> {
   const _db = db ?? getDb();
 
-  const installRows = (await _db
+  const installRows = await _db
     .select({ id: packageInstalls.id })
     .from(packageInstalls)
-    .where(eq(packageInstalls.packageStatus, "Installed"))) as Array<{
-    id: string;
-  }>;
+    .where(eq(packageInstalls.packageStatus, "Installed"));
 
   const invalid: MethodProjectionIssue[] = [];
   let projected = 0;
@@ -357,7 +349,7 @@ export async function listMethodologies(
 ): Promise<MethodologyListItem[]> {
   const _db = db ?? getDb();
 
-  const rows = (await _db
+  const rows = await _db
     .select({
       id: evaluationMethodRevisions.id,
       qualifiedId: evaluationMethodRevisions.qualifiedId,
@@ -376,7 +368,7 @@ export async function listMethodologies(
     .innerJoin(
       packageInstalls,
       eq(evaluationMethodRevisions.packageInstallId, packageInstalls.id),
-    )) as Array<Omit<MethodologyListItem, "health">>;
+    );
 
   return rows.map((r) => ({
     ...r,
@@ -397,7 +389,7 @@ export async function setMethodActivation(
 }> {
   const _db = db ?? getDb();
 
-  const rows = (await _db
+  const rows = await _db
     .select({
       id: evaluationMethodRevisions.id,
       compat: evaluationMethodRevisions.compat,
@@ -409,12 +401,7 @@ export async function setMethodActivation(
       packageInstalls,
       eq(evaluationMethodRevisions.packageInstallId, packageInstalls.id),
     )
-    .where(eq(evaluationMethodRevisions.id, args.methodRevisionId))) as Array<{
-    id: string;
-    compat: EvaluationMethodCompat;
-    validationErrors: string[] | null;
-    trustStatus: string;
-  }>;
+    .where(eq(evaluationMethodRevisions.id, args.methodRevisionId));
   const row = rows[0];
 
   if (!row) {

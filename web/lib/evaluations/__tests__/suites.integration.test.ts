@@ -18,7 +18,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 let otherProjectId: string;
 let flowId: string;
@@ -163,6 +163,54 @@ describe("runEvaluationSuiteScan", () => {
     );
 
     expect(scan.generatedStudyIds).toHaveLength(2);
+  });
+
+  it("drains tasks past the cap on later ticks of the same round (no starvation)", async () => {
+    const tasks = await Promise.all([makeTask(), makeTask(), makeTask()]);
+    const suite = await createSuite(
+      {
+        projectId,
+        name: "Drained",
+        definition: { taskIds: tasks, profileId: "p" },
+      },
+      db,
+    );
+
+    const first = await runEvaluationSuiteScan(
+      suite.id as string,
+      { cap: 2 },
+      db,
+    );
+
+    expect(first.generatedStudyIds).toHaveLength(2);
+
+    // The SAME round (same scanKey): the second tick must reach the third task
+    // instead of re-selecting and skipping the first capped slice forever.
+    const second = await runEvaluationSuiteScan(
+      suite.id as string,
+      { cap: 2 },
+      db,
+    );
+
+    expect(second.scanKey).toBe(first.scanKey);
+    expect(second.generatedStudyIds).toHaveLength(1);
+
+    const third = await runEvaluationSuiteScan(
+      suite.id as string,
+      { cap: 2 },
+      db,
+    );
+
+    expect(third.generatedStudyIds).toHaveLength(0);
+
+    const links = await db
+      .select({ taskId: schema.evaluationSuiteStudies.taskId })
+      .from(schema.evaluationSuiteStudies)
+      .where(eq(schema.evaluationSuiteStudies.suiteId, suite.id as string));
+
+    expect(links.map((l: { taskId: string }) => l.taskId).sort()).toEqual(
+      [...tasks].sort(),
+    );
   });
 
   it("is a no-op for a disabled suite", async () => {

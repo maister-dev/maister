@@ -21,12 +21,12 @@ CREATE TABLE IF NOT EXISTS "evaluation_launch_batches" (
 	"study_id" text NOT NULL,
 	"status" text DEFAULT 'queued' NOT NULL,
 	"idempotency_key" text,
+	"request_digest" text,
 	"requested_by_user_id" text,
 	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"completed_at" timestamp with time zone,
-	CONSTRAINT "evaluation_launch_batches_idempotency_uq" UNIQUE("idempotency_key"),
 	CONSTRAINT "evaluation_launch_batches_status_check" CHECK ("evaluation_launch_batches"."status" in ('queued', 'launching', 'completed', 'partial', 'failed'))
 );
 --> statement-breakpoint
@@ -68,4 +68,13 @@ END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "evaluation_launch_batch_items_batch_idx" ON "evaluation_launch_batch_items" USING btree ("batch_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "evaluation_launch_batch_items_status_idx" ON "evaluation_launch_batch_items" USING btree ("status");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "evaluation_launch_batches_study_idx" ON "evaluation_launch_batches" USING btree ("study_id");
+CREATE INDEX IF NOT EXISTS "evaluation_launch_batches_study_idx" ON "evaluation_launch_batches" USING btree ("study_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "evaluation_launch_batches_study_idem_uq" ON "evaluation_launch_batches" USING btree ("study_id","idempotency_key") WHERE "evaluation_launch_batches"."idempotency_key" is not null;--> statement-breakpoint
+ALTER TABLE "evaluation_participants" ADD COLUMN IF NOT EXISTS "batch_item_id" text;--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "evaluation_participants" ADD CONSTRAINT "evaluation_participants_batch_item_id_evaluation_launch_batch_items_id_fk" FOREIGN KEY ("batch_item_id") REFERENCES "public"."evaluation_launch_batch_items"("id") ON DELETE set null ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "evaluation_participants_batch_item_uq" ON "evaluation_participants" USING btree ("batch_item_id") WHERE "evaluation_participants"."batch_item_id" is not null;

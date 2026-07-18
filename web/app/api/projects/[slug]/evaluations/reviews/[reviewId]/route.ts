@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { resolveProject } from "@/lib/api/project-route-helpers";
 import { getReviewForProject, resolveReview } from "@/lib/evaluations/reviews";
 import { MaisterError } from "@/lib/errors";
@@ -37,6 +37,11 @@ export async function PATCH(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
+    // Auth-first (repo convention, see tasks route): establish the session
+    // BEFORE resolving the slug so unauthenticated callers cannot probe
+    // project existence. Project membership is enforced below.
+    await requireActiveSession();
+
     const { slug, reviewId } = await params;
     const project = await resolveProject(slug);
     const access = await requireProjectAction(

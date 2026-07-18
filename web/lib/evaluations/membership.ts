@@ -1,18 +1,11 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import { and, eq } from "drizzle-orm";
 
-import * as schemaModule from "@/lib/db/schema";
+import { evaluationParticipants } from "@/lib/db/schema";
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
-
-// FIXME(any): schema-module bridge (matches lib/experiments/membership.ts).
-const { evaluationParticipants } = schemaModule as unknown as Record<
-  string,
-  any
->;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 // A run is a launched evaluation participant iff a `launched`-source participant
 // references it. OBSERVED participants (`source_type = 'observed'`) are excluded

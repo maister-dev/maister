@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { ObjectiveCheckProvider } from "@/lib/evaluations/method-schema";
 
 import { and, asc, eq, isNull, lt } from "drizzle-orm";
@@ -9,7 +10,11 @@ import { advanceExecution } from "./advance";
 import { deriveEvidenceProtocolDigest, retryFailedExecution } from "./start";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationExecutions,
+  evaluationJudgeAttempts,
+  evaluationParticipants,
+} from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { evaluateAndAdvancePanel } from "@/lib/evaluations/aggregation/worker";
 import { captureEvidenceForExecution } from "@/lib/evaluations/evidence/capture";
@@ -22,16 +27,6 @@ import {
   type ParticipantFacts,
 } from "@/lib/evaluations/objective/execute";
 import { loadObjectiveFactSource } from "@/lib/evaluations/objective/source";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const {
-  evaluationExecutions,
-  evaluationJudgeAttempts,
-  evaluationParticipants,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-dispatch-tick",
@@ -298,10 +293,7 @@ function messageOf(err: unknown): string {
 }
 
 async function reapTimedOutAttempts(now: Date, d: Db): Promise<number> {
-  const judging: Array<{
-    id: string;
-    judgePolicySnapshot: { policy?: { timeoutMs?: number } } | null;
-  }> = await d
+  const judging = await d
     .select({
       id: evaluationExecutions.id,
       judgePolicySnapshot: evaluationExecutions.judgePolicySnapshot,
@@ -312,7 +304,9 @@ async function reapTimedOutAttempts(now: Date, d: Db): Promise<number> {
   let count = 0;
 
   for (const exec of judging) {
-    const timeoutMs = exec.judgePolicySnapshot?.policy?.timeoutMs;
+    const timeoutMs = (
+      exec.judgePolicySnapshot as { policy?: { timeoutMs?: number } } | null
+    )?.policy?.timeoutMs;
 
     if (!timeoutMs || timeoutMs <= 0) continue;
 

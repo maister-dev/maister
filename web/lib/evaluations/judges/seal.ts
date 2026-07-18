@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { TokenActor } from "@/lib/tokens/verify";
 
 import { eq } from "drizzle-orm";
@@ -13,20 +14,14 @@ import {
 } from "./result-validation";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationCriterionResults,
+  evaluationJudgeAttempts,
+  evaluationMethodRevisions,
+} from "@/lib/db/schema";
 import { sha256, stableStringify } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { revokeAgentRunToken } from "@/lib/agents/tokens";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const {
-  evaluationJudgeAttempts,
-  evaluationCriterionResults,
-  evaluationMethodRevisions,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-judge-seal",
@@ -68,12 +63,14 @@ async function loadCriterionSpecs(
     );
   }
 
-  const criteria = (rev.normalizedDefinition?.definition?.criteria ??
-    []) as Array<{
-    id: string;
-    scale: { min: number; max: number };
-    optional?: boolean;
-  }>;
+  const definition = (rev.normalizedDefinition?.definition ?? {}) as {
+    criteria?: Array<{
+      id: string;
+      scale: { min: number; max: number };
+      optional?: boolean;
+    }>;
+  };
+  const criteria = definition.criteria ?? [];
 
   return criteria.map((c) => ({
     id: c.id,

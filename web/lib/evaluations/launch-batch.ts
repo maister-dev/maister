@@ -1,26 +1,22 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationControlledRecipeDefinition } from "@/lib/evaluations/recipe-schema";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-import { parseControlledRecipe } from "@/lib/evaluations/recipe";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const {
-  evaluationLaunchBatches,
+import {
   evaluationLaunchBatchItems,
-  evaluationRecipes,
+  evaluationLaunchBatches,
   evaluationParticipants,
+  evaluationRecipes,
   evaluationStudies,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { contentDigest } from "@/lib/evaluations/digest";
+import { parseControlledRecipe } from "@/lib/evaluations/recipe";
 
 const log = pino({
   name: "evaluations-launch-batch",
@@ -32,6 +28,10 @@ const log = pino({
 // tests inject a stub so the durable batch FSM (crash/partial/dedup/retry +
 // launched-participant lineage) is verified without the whole run-launch stack —
 // the same injectable-seam discipline as the T4.1 judge-spawn seam.
+// CONTRACT: `launchKey` (the batch item id, stable across retries) is the
+// adapter's dedup handle — a re-driven item re-invokes the seam with the SAME
+// key and MUST get the same run back, never a second one. The crash-recovery
+// paths below are convergent only under this contract.
 export interface LaunchRunSeam {
   (args: {
     studyId: string;
@@ -40,6 +40,7 @@ export interface LaunchRunSeam {
     recipeId: string;
     recipeDefinition: EvaluationControlledRecipeDefinition;
     replicateOrdinal: number;
+    launchKey: string;
     requestedByUserId: string | null;
   }): Promise<{ runId: string }>;
 }
@@ -70,9 +71,10 @@ export function controlledRecipesEnabled(): boolean {
 }
 
 // Persist a durable controlled-launch batch intent BEFORE any run-launch side
-// effect (D17). Idempotency-keyed: a duplicate submit returns the original batch.
-// Validates every recipe belongs to the study and is not tombstoned; a bad recipe
-// on item B refuses the whole batch (no partial write).
+// effect (D17). Idempotency-keyed within the Study: a duplicate submit with the
+// same request digest returns the original batch; the same key with a DIFFERENT
+// request is a CONFLICT. Validates every recipe belongs to the study and is not
+// tombstoned; a bad recipe on item B refuses the whole batch (no partial write).
 export async function createControlledLaunchBatch(
   args: CreateLaunchBatchArgs,
   db?: Db,
@@ -91,6 +93,32 @@ export async function createControlledLaunchBatch(
       "launch batch requires at least one recipe",
     );
   }
+
+  const requestDigest = contentDigest({
+    items: args.items.map((i) => ({
+      recipeId: i.recipeId,
+      replicateCount: i.replicateCount ?? null,
+    })),
+  });
+
+  const replayOrConflict = async (
+    existing: { id: string; requestDigest: string | null },
+    tx: Db,
+  ): Promise<CreateLaunchBatchResult> => {
+    if (existing.requestDigest !== requestDigest) {
+      throw new MaisterError(
+        "CONFLICT",
+        `idempotency key "${args.idempotencyKey}" was already used for a different launch request in study ${args.studyId}`,
+      );
+    }
+
+    const items = await tx
+      .select({ id: evaluationLaunchBatchItems.id })
+      .from(evaluationLaunchBatchItems)
+      .where(eq(evaluationLaunchBatchItems.batchId, existing.id));
+
+    return { batchId: existing.id, deduped: true, itemCount: items.length };
+  };
 
   return d.transaction(async (tx: Db) => {
     const [study] = await tx
@@ -117,21 +145,20 @@ export async function createControlledLaunchBatch(
 
     if (args.idempotencyKey) {
       const [existing] = await tx
-        .select({ id: evaluationLaunchBatches.id })
+        .select({
+          id: evaluationLaunchBatches.id,
+          requestDigest: evaluationLaunchBatches.requestDigest,
+        })
         .from(evaluationLaunchBatches)
-        .where(eq(evaluationLaunchBatches.idempotencyKey, args.idempotencyKey));
+        .where(
+          and(
+            eq(evaluationLaunchBatches.studyId, args.studyId),
+            eq(evaluationLaunchBatches.idempotencyKey, args.idempotencyKey),
+          ),
+        );
 
       if (existing) {
-        const items = await tx
-          .select({ id: evaluationLaunchBatchItems.id })
-          .from(evaluationLaunchBatchItems)
-          .where(eq(evaluationLaunchBatchItems.batchId, existing.id));
-
-        return {
-          batchId: existing.id,
-          deduped: true,
-          itemCount: items.length,
-        };
+        return replayOrConflict(existing, tx);
       }
     }
 
@@ -145,9 +172,7 @@ export async function createControlledLaunchBatch(
       })
       .from(evaluationRecipes)
       .where(inArray(evaluationRecipes.id, recipeIds));
-    const recipeById = new Map<string, Record<string, any>>(
-      recipeRows.map((r: Record<string, any>) => [r.id as string, r]),
-    );
+    const recipeById = new Map(recipeRows.map((r) => [r.id, r]));
 
     for (const item of args.items) {
       const recipe = recipeById.get(item.recipeId);
@@ -169,17 +194,56 @@ export async function createControlledLaunchBatch(
       parseControlledRecipe(recipe.definition);
     }
 
-    const [batch] = await tx
+    const insertedBatch = await tx
       .insert(evaluationLaunchBatches)
       .values({
         studyId: args.studyId,
         status: "queued",
         idempotencyKey: args.idempotencyKey ?? null,
+        requestDigest,
         requestedByUserId: args.requestedByUserId ?? null,
+      })
+      .onConflictDoNothing({
+        target: [
+          evaluationLaunchBatches.studyId,
+          evaluationLaunchBatches.idempotencyKey,
+        ],
+        where: sql`idempotency_key is not null`,
       })
       .returning();
 
-    const itemRows: Array<Record<string, unknown>> = [];
+    if (!insertedBatch.length) {
+      // A concurrent same-key submit won the (study, key) unique race while
+      // this transaction was in flight — converge on the winner, never 23505.
+      const [winner] = await tx
+        .select({
+          id: evaluationLaunchBatches.id,
+          requestDigest: evaluationLaunchBatches.requestDigest,
+        })
+        .from(evaluationLaunchBatches)
+        .where(
+          and(
+            eq(evaluationLaunchBatches.studyId, args.studyId),
+            eq(
+              evaluationLaunchBatches.idempotencyKey,
+              args.idempotencyKey ?? "",
+            ),
+          ),
+        );
+
+      if (!winner) {
+        throw new MaisterError(
+          "CONFLICT",
+          `launch batch insert conflicted but no winner row is visible (study ${args.studyId})`,
+        );
+      }
+
+      return replayOrConflict(winner, tx);
+    }
+
+    const batch = insertedBatch[0];
+
+    const itemRows: Array<typeof evaluationLaunchBatchItems.$inferInsert> = [];
 
     for (const item of args.items) {
       // Validated present in the loop above; the `!` is the same invariant.
@@ -251,6 +315,75 @@ export async function runControlledLaunchBatch(
     .from(evaluationStudies)
     .where(eq(evaluationStudies.id, batch.studyId));
 
+  // Crash recovery: a drive that died mid-item leaves it in `launching`. The
+  // participant's batch_item_id is the adoption anchor — if it exists, finish
+  // the bookkeeping; otherwise return the item to `queued` so this pass
+  // re-drives it (the seam's launchKey contract converges onto the same run).
+  const stuck = await d
+    .select({
+      id: evaluationLaunchBatchItems.id,
+      version: evaluationLaunchBatchItems.version,
+    })
+    .from(evaluationLaunchBatchItems)
+    .where(
+      and(
+        eq(evaluationLaunchBatchItems.batchId, batchId),
+        eq(evaluationLaunchBatchItems.status, "launching"),
+      ),
+    );
+
+  for (const item of stuck) {
+    const [existingParticipant] = await d
+      .select({
+        id: evaluationParticipants.id,
+        runId: evaluationParticipants.runId,
+      })
+      .from(evaluationParticipants)
+      .where(eq(evaluationParticipants.batchItemId, item.id));
+
+    if (existingParticipant) {
+      await d
+        .update(evaluationLaunchBatchItems)
+        .set({
+          status: "launched",
+          runId: existingParticipant.runId,
+          participantId: existingParticipant.id,
+          errorReason: null,
+          updatedAt: new Date(),
+          version: sql`${evaluationLaunchBatchItems.version} + 1`,
+        })
+        .where(
+          and(
+            eq(evaluationLaunchBatchItems.id, item.id),
+            eq(evaluationLaunchBatchItems.status, "launching"),
+          ),
+        );
+      log.warn(
+        { batchId, itemId: item.id, participantId: existingParticipant.id },
+        "adopted stuck launching item via existing participant",
+      );
+    } else {
+      await d
+        .update(evaluationLaunchBatchItems)
+        .set({
+          status: "queued",
+          updatedAt: new Date(),
+          version: sql`${evaluationLaunchBatchItems.version} + 1`,
+        })
+        .where(
+          and(
+            eq(evaluationLaunchBatchItems.id, item.id),
+            eq(evaluationLaunchBatchItems.status, "launching"),
+            eq(evaluationLaunchBatchItems.version, item.version),
+          ),
+        );
+      log.warn(
+        { batchId, itemId: item.id },
+        "re-queued stuck launching item (no participant recorded)",
+      );
+    }
+  }
+
   const queued = await d
     .select({
       id: evaluationLaunchBatchItems.id,
@@ -313,17 +446,23 @@ export async function runControlledLaunchBatch(
         recipeId: item.recipeId,
         recipeDefinition: definition,
         replicateOrdinal: item.replicateOrdinal,
+        launchKey: item.id,
         requestedByUserId: batch.requestedByUserId ?? null,
       });
 
-      const participantId = await d.transaction(async (tx: Db) => {
-        const [participant] = await tx
+      // Participant creation, the draft→open flip, and the item bookkeeping
+      // commit ATOMICALLY — a crash never leaves a participant without its
+      // launched item record (or vice versa). The batch_item_id conflict path
+      // adopts a participant a crashed prior drive already created.
+      await d.transaction(async (tx: Db) => {
+        const insertedParticipant = await tx
           .insert(evaluationParticipants)
           .values({
             studyId: batch.studyId,
             runId,
             sourceType: "launched",
             recipeId: item.recipeId,
+            batchItemId: item.id,
             label: `${recipe.label} #${item.replicateOrdinal}`,
             replicateGroup: definition.replicatePolicy?.groupKey ?? recipe.key,
             replicateOrdinal: item.replicateOrdinal,
@@ -336,7 +475,34 @@ export async function runControlledLaunchBatch(
               capturedAt: new Date().toISOString(),
             },
           })
-          .returning({ id: evaluationParticipants.id });
+          .onConflictDoNothing({
+            target: [evaluationParticipants.batchItemId],
+            where: sql`batch_item_id is not null`,
+          })
+          .returning({
+            id: evaluationParticipants.id,
+            runId: evaluationParticipants.runId,
+          });
+
+        let participant = insertedParticipant[0];
+
+        if (!participant) {
+          const [adoptedRow] = await tx
+            .select({
+              id: evaluationParticipants.id,
+              runId: evaluationParticipants.runId,
+            })
+            .from(evaluationParticipants)
+            .where(eq(evaluationParticipants.batchItemId, item.id));
+
+          if (!adoptedRow) {
+            throw new MaisterError(
+              "CONFLICT",
+              `participant insert conflicted for batch item ${item.id} but no participant is visible`,
+            );
+          }
+          participant = adoptedRow;
+        }
 
         // First launched participant flips a draft study to open (guarded).
         await tx
@@ -349,24 +515,26 @@ export async function runControlledLaunchBatch(
             ),
           );
 
-        return participant.id as string;
+        await tx
+          .update(evaluationLaunchBatchItems)
+          .set({
+            status: "launched",
+            // The participant row is authoritative when adopting a crashed
+            // drive's work — its runId is the run that really got linked.
+            runId: participant.runId ?? runId,
+            participantId: participant.id,
+            errorReason: null,
+            updatedAt: new Date(),
+            version: sql`${evaluationLaunchBatchItems.version} + 1`,
+          })
+          .where(eq(evaluationLaunchBatchItems.id, item.id));
       });
-
-      await d
-        .update(evaluationLaunchBatchItems)
-        .set({
-          status: "launched",
-          runId,
-          participantId,
-          errorReason: null,
-          updatedAt: new Date(),
-          version: sql`${evaluationLaunchBatchItems.version} + 1`,
-        })
-        .where(eq(evaluationLaunchBatchItems.id, item.id));
       launched += 1;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
 
+      // Status-guarded: a slow concurrent drive that already finalized this
+      // item to `launched` must not be clobbered by a stale failure.
       await d
         .update(evaluationLaunchBatchItems)
         .set({
@@ -376,7 +544,12 @@ export async function runControlledLaunchBatch(
           updatedAt: new Date(),
           version: sql`${evaluationLaunchBatchItems.version} + 1`,
         })
-        .where(eq(evaluationLaunchBatchItems.id, item.id));
+        .where(
+          and(
+            eq(evaluationLaunchBatchItems.id, item.id),
+            eq(evaluationLaunchBatchItems.status, "launching"),
+          ),
+        );
       failed += 1;
       log.warn(
         { batchId, itemId: item.id, reason },
@@ -398,12 +571,10 @@ async function finalizeBatchStatus(batchId: string, d: Db): Promise<void> {
     .select({ status: evaluationLaunchBatchItems.status })
     .from(evaluationLaunchBatchItems)
     .where(eq(evaluationLaunchBatchItems.batchId, batchId));
-  const statuses = items.map((i: Record<string, unknown>) => i.status);
-  const pending = statuses.some(
-    (s: string) => s === "queued" || s === "launching",
-  );
-  const anyLaunched = statuses.some((s: string) => s === "launched");
-  const anyFailed = statuses.some((s: string) => s === "failed");
+  const statuses = items.map((i) => i.status);
+  const pending = statuses.some((s) => s === "queued" || s === "launching");
+  const anyLaunched = statuses.some((s) => s === "launched");
+  const anyFailed = statuses.some((s) => s === "failed");
 
   const status = pending
     ? "launching"

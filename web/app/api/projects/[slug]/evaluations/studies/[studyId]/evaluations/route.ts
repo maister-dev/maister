@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { resolveProject } from "@/lib/api/project-route-helpers";
 import { startEvaluationExecution } from "@/lib/evaluations/dispatcher/start";
 import { kickEvaluationDispatch } from "@/lib/evaluations/dispatcher/tick";
@@ -42,6 +42,11 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
+    // Auth-first (repo convention, see tasks route): establish the session
+    // BEFORE resolving the slug so unauthenticated callers cannot probe
+    // project existence. Project membership is enforced below.
+    await requireActiveSession();
+
     const { slug, studyId } = await params;
     const project = await resolveProject(slug);
     const access = await requireProjectAction(
@@ -61,12 +66,26 @@ export async function POST(
       );
     }
 
+    // Idempotency-Key header is the canonical carrier (repo convention, see
+    // scheduled-launches); the body field stays as a fallback.
+    const headerKey = req.headers.get("Idempotency-Key");
+
+    if (
+      headerKey !== null &&
+      (headerKey.length < 1 || headerKey.length > 200)
+    ) {
+      throw new MaisterError(
+        "CONFIG",
+        "Idempotency-Key header must be 1-200 characters",
+      );
+    }
+
     const result = await startEvaluationExecution({
       studyId,
       projectId: project.id,
       profileId: parsed.data.profileId,
       studyOverrides: parsed.data.studyOverrides,
-      idempotencyKey: parsed.data.idempotencyKey ?? null,
+      idempotencyKey: headerKey ?? parsed.data.idempotencyKey ?? null,
       requestedByUserId: access.user.id,
     });
 

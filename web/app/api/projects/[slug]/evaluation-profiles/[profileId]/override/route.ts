@@ -3,7 +3,7 @@ import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import pino from "pino";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { putOverrideBodySchema } from "@/lib/evaluations/config-schemas";
 import {
   clearProjectOverride,
@@ -43,6 +43,11 @@ export async function GET(
   { params }: { params: Promise<{ slug: string; profileId: string }> },
 ): Promise<NextResponse> {
   try {
+    // Auth-first (repo convention, see tasks route): establish the session
+    // BEFORE resolving the slug so unauthenticated callers cannot probe
+    // project existence. Project membership is enforced below.
+    await requireActiveSession();
+
     const { slug, profileId } = await params;
     const project = await resolveProject(slug);
 
@@ -66,6 +71,8 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; profileId: string }> },
 ): Promise<NextResponse> {
   try {
+    await requireActiveSession();
+
     const { slug, profileId } = await params;
     const project = await resolveProject(slug);
     const access = await requireProjectAction(
@@ -109,6 +116,8 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; profileId: string }> },
 ): Promise<NextResponse> {
   try {
+    await requireActiveSession();
+
     const { slug, profileId } = await params;
     const project = await resolveProject(slug);
 

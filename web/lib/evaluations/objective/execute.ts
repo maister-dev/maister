@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import pino from "pino";
 
 import { sha256, stableStringify } from "../digest";
@@ -13,14 +15,10 @@ import {
 } from "./providers";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationObjectiveCheckRuns, evaluationMetricResults } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+import {
+  evaluationMetricResults,
+  evaluationObjectiveCheckRuns,
+} from "@/lib/db/schema";
 
 const log = pino({
   name: "evaluations-objective",

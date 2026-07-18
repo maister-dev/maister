@@ -1,21 +1,17 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const {
-  evaluationExecutions,
+import {
   evaluationAggregateResults,
+  evaluationExecutions,
   evaluationMethodRevisions,
   evaluationProfiles,
   runs,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+} from "@/lib/db/schema";
 
 export interface StudyExecutionView {
   id: string;
@@ -40,7 +36,7 @@ export async function listStudyExecutions(
   db?: Db,
 ): Promise<StudyExecutionView[]> {
   const d = db ?? getDb();
-  const rows = (await d
+  const rows = await d
     .select({
       id: evaluationExecutions.id,
       status: evaluationExecutions.status,
@@ -54,14 +50,12 @@ export async function listStudyExecutions(
       eq(evaluationExecutions.methodRevisionId, evaluationMethodRevisions.id),
     )
     .where(eq(evaluationExecutions.studyId, studyId))
-    .orderBy(desc(evaluationExecutions.requestedAt))) as Array<
-    Record<string, any>
-  >;
+    .orderBy(desc(evaluationExecutions.requestedAt));
 
   const result: StudyExecutionView[] = [];
 
   for (const row of rows) {
-    const [agg] = (await d
+    const [agg] = await d
       .select({
         displayValues: evaluationAggregateResults.displayValues,
         dispersion: evaluationAggregateResults.dispersion,
@@ -70,7 +64,7 @@ export async function listStudyExecutions(
       .from(evaluationAggregateResults)
       .where(eq(evaluationAggregateResults.executionId, row.id))
       .orderBy(desc(evaluationAggregateResults.revision))
-      .limit(1)) as Array<Record<string, any>>;
+      .limit(1);
 
     result.push({
       id: row.id,
@@ -110,11 +104,11 @@ export async function listEnabledProfiles(
 ): Promise<EnabledProfileView[]> {
   const d = db ?? getDb();
 
-  return (await d
+  return d
     .select({ id: evaluationProfiles.id, name: evaluationProfiles.name })
     .from(evaluationProfiles)
     .where(eq(evaluationProfiles.enabled, true))
-    .orderBy(evaluationProfiles.name)) as EnabledProfileView[];
+    .orderBy(evaluationProfiles.name);
 }
 
 export interface ComparableRunView {
@@ -131,7 +125,7 @@ export async function listComparableTaskRuns(
   db?: Db,
 ): Promise<ComparableRunView[]> {
   const d = db ?? getDb();
-  const rows = (await d
+  const rows = await d
     .select({
       id: runs.id,
       status: runs.status,
@@ -139,7 +133,7 @@ export async function listComparableTaskRuns(
     })
     .from(runs)
     .where(and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")))
-    .orderBy(desc(runs.startedAt))) as Array<Record<string, any>>;
+    .orderBy(desc(runs.startedAt));
 
   return rows.map((r) => ({
     id: r.id,

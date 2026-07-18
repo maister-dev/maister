@@ -1,16 +1,11 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationEvents, evaluationStudies } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+import { evaluationEvents, evaluationStudies } from "@/lib/db/schema";
 
 export interface AppendEventArgs {
   studyId: string;
@@ -34,14 +29,12 @@ export async function appendEvaluationEvent(
     .where(eq(evaluationStudies.id, args.studyId))
     .for("update");
 
-  const [{ next }] = (await tx
+  const [{ next }] = await tx
     .select({
       next: sql<number>`coalesce(max(${evaluationEvents.sequence}), 0) + 1`,
     })
     .from(evaluationEvents)
-    .where(eq(evaluationEvents.studyId, args.studyId))) as Array<{
-    next: number;
-  }>;
+    .where(eq(evaluationEvents.studyId, args.studyId));
 
   const [row] = await tx
     .insert(evaluationEvents)
@@ -75,7 +68,7 @@ export async function readEvaluationEvents(
 ): Promise<EvaluationEventRow[]> {
   const d = db ?? getDb();
   const after = args.afterSequence ?? 0;
-  const rows = (await d
+  const rows = await d
     .select()
     .from(evaluationEvents)
     .where(
@@ -85,7 +78,7 @@ export async function readEvaluationEvents(
       ),
     )
     .orderBy(asc(evaluationEvents.sequence))
-    .limit(Math.min(args.limit ?? 500, 1000))) as Array<Record<string, any>>;
+    .limit(Math.min(args.limit ?? 500, 1000));
 
   return rows.map((r) => ({
     id: r.id,

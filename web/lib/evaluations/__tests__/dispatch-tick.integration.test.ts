@@ -21,7 +21,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 let studyId: string;
 let profileId: string;
@@ -377,5 +377,208 @@ describe("evaluation dispatch tick", () => {
     expect(summary.timedOutAttempts).toBeGreaterThanOrEqual(2);
     // All attempts terminal (timed_out), quorum unmet → partial.
     expect(await statusOf(executionId)).toBe("partial");
+  });
+});
+
+describe("startEvaluationExecution idempotency + start gates", () => {
+  it("replays the same key + same request onto the original execution", async () => {
+    const key = randomUUID();
+    const first = await startEvaluationExecution(
+      { studyId, projectId, profileId, idempotencyKey: key },
+      db,
+    );
+    const second = await startEvaluationExecution(
+      { studyId, projectId, profileId, idempotencyKey: key },
+      db,
+    );
+
+    expect(first.deduped).toBe(false);
+    expect(second).toEqual({ executionId: first.executionId, deduped: true });
+
+    const rows = await db
+      .select({ id: schema.evaluationExecutions.id })
+      .from(schema.evaluationExecutions)
+      .where(
+        and(
+          eq(schema.evaluationExecutions.studyId, studyId),
+          eq(schema.evaluationExecutions.idempotencyKey, key),
+        ),
+      );
+
+    expect(rows).toHaveLength(1);
+  });
+
+  it("rejects the same key reused for a different request (digest mismatch)", async () => {
+    const [profileRow] = await db
+      .select()
+      .from(schema.evaluationProfiles)
+      .where(eq(schema.evaluationProfiles.id, profileId));
+    const otherProfileId = randomUUID();
+
+    await db.insert(schema.evaluationProfiles).values({
+      id: otherProfileId,
+      name: "SDD Profile B",
+      methodRevisionId: profileRow.methodRevisionId,
+      panelId: profileRow.panelId,
+      allowedOverrides: {},
+      hardLimits: {},
+      enabled: true,
+    });
+
+    const key = randomUUID();
+
+    await startEvaluationExecution(
+      { studyId, projectId, profileId, idempotencyKey: key },
+      db,
+    );
+
+    await expect(
+      startEvaluationExecution(
+        { studyId, projectId, profileId: otherProfileId, idempotencyKey: key },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(/already used for a different request/),
+    });
+  });
+
+  it("scopes the idempotency key to the study (no cross-study dedup)", async () => {
+    const [studyRow] = await db
+      .select()
+      .from(schema.evaluationStudies)
+      .where(eq(schema.evaluationStudies.id, studyId));
+    const otherStudyId = randomUUID();
+
+    await db.insert(schema.evaluationStudies).values({
+      id: otherStudyId,
+      projectId,
+      taskId: studyRow.taskId,
+      title: "Study B",
+      status: "open",
+    });
+
+    const key = randomUUID();
+    const first = await startEvaluationExecution(
+      { studyId, projectId, profileId, idempotencyKey: key },
+      db,
+    );
+    const second = await startEvaluationExecution(
+      { studyId: otherStudyId, projectId, profileId, idempotencyKey: key },
+      db,
+    );
+
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(false);
+    expect(second.executionId).not.toBe(first.executionId);
+  });
+
+  it("converges two concurrent same-key first submits on one execution (no raw 23505)", async () => {
+    const key = randomUUID();
+    const args = { studyId, projectId, profileId, idempotencyKey: key };
+
+    const settled = await Promise.allSettled([
+      startEvaluationExecution(args, db),
+      startEvaluationExecution(args, db),
+    ]);
+    const rejections = settled.filter((s) => s.status === "rejected");
+
+    // Never a raw unique-violation leak — the loser converges on the winner.
+    expect(
+      rejections.map((r) => String((r as PromiseRejectedResult).reason)),
+    ).toEqual([]);
+
+    const results = settled.flatMap((s) =>
+      s.status === "fulfilled" ? [s.value] : [],
+    );
+
+    expect(results).toHaveLength(2);
+    expect(new Set(results.map((r) => r.executionId)).size).toBe(1);
+    expect(results.map((r) => r.deduped).sort()).toEqual([false, true]);
+
+    const rows = await db
+      .select({ id: schema.evaluationExecutions.id })
+      .from(schema.evaluationExecutions)
+      .where(
+        and(
+          eq(schema.evaluationExecutions.studyId, studyId),
+          eq(schema.evaluationExecutions.idempotencyKey, key),
+        ),
+      );
+
+    expect(rows).toHaveLength(1);
+  });
+
+  it("refuses to start a pairwise_tournament method (fail-closed CONFIG gate)", async () => {
+    const [profileRow] = await db
+      .select()
+      .from(schema.evaluationProfiles)
+      .where(eq(schema.evaluationProfiles.id, profileId));
+    const [methodRow] = await db
+      .select()
+      .from(schema.evaluationMethodRevisions)
+      .where(
+        eq(schema.evaluationMethodRevisions.id, profileRow.methodRevisionId),
+      );
+    const pairwiseMethodRevisionId = randomUUID();
+
+    await db.insert(schema.evaluationMethodRevisions).values({
+      id: pairwiseMethodRevisionId,
+      packageInstallId: methodRow.packageInstallId,
+      methodId: "pairwise-quality",
+      qualifiedId: "core:pairwise-quality",
+      packageName: "core",
+      versionLabel: "v1.1.0",
+      schemaVersion: 1,
+      normalizedDefinition: {
+        ...NORMALIZED_DEFINITION,
+        definition: {
+          ...NORMALIZED_DEFINITION.definition,
+          id: "pairwise-quality",
+          aggregation: { algorithm: "pairwise_tournament@1" },
+        },
+      },
+      definitionDigest: "dd-pairwise",
+      promptDigest: "pd",
+      schemaDigest: "sd",
+      compat: { engineMin: "3.2.0" },
+      activation: "enabled",
+    });
+    const pairwiseProfileId = randomUUID();
+
+    await db.insert(schema.evaluationProfiles).values({
+      id: pairwiseProfileId,
+      name: "Pairwise Profile",
+      methodRevisionId: pairwiseMethodRevisionId,
+      panelId: profileRow.panelId,
+      allowedOverrides: {},
+      hardLimits: {},
+      enabled: true,
+    });
+
+    await expect(
+      startEvaluationExecution(
+        { studyId, projectId, profileId: pairwiseProfileId },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringMatching(
+        /pairwise_tournament methods are not executable yet/,
+      ),
+    });
+
+    // Fail-closed at start: no execution row was created for the method.
+    const rows = await db
+      .select({ id: schema.evaluationExecutions.id })
+      .from(schema.evaluationExecutions)
+      .where(
+        eq(
+          schema.evaluationExecutions.methodRevisionId,
+          pairwiseMethodRevisionId,
+        ),
+      );
+
+    expect(rows).toHaveLength(0);
   });
 });

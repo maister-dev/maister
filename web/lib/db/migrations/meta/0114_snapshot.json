@@ -1,6 +1,6 @@
 {
-  "id": "a60e9eb2-232d-4247-972f-623760034be9",
-  "prevId": "404745b5-067b-4299-af28-3f2e6bff4d73",
+  "id": "655edae0-0e7f-4277-8446-2487a57ab24d",
+  "prevId": "a60e9eb2-232d-4247-972f-623760034be9",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3529,6 +3529,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "request_digest": {
+          "name": "request_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "terminal_reason": {
           "name": "terminal_reason",
           "type": "text",
@@ -3916,6 +3922,12 @@
         },
         "agent_run_id": {
           "name": "agent_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "intended_run_id": {
+          "name": "intended_run_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -4454,6 +4466,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "request_digest": {
+          "name": "request_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "requested_by_user_id": {
           "name": "requested_by_user_id",
           "type": "text",
@@ -4503,6 +4521,28 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "evaluation_launch_batches_study_idem_uq": {
+          "name": "evaluation_launch_batches_study_idem_uq",
+          "columns": [
+            {
+              "expression": "study_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"evaluation_launch_batches\".\"idempotency_key\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -4534,15 +4574,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "evaluation_launch_batches_idempotency_uq": {
-          "name": "evaluation_launch_batches_idempotency_uq",
-          "nullsNotDistinct": false,
-          "columns": [
-            "idempotency_key"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
         "evaluation_launch_batches_status_check": {
@@ -5079,6 +5111,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "batch_item_id": {
+          "name": "batch_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "run_identity": {
           "name": "run_identity",
           "type": "jsonb",
@@ -5157,6 +5195,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "evaluation_participants_batch_item_uq": {
+          "name": "evaluation_participants_batch_item_uq",
+          "columns": [
+            {
+              "expression": "batch_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"evaluation_participants\".\"batch_item_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -5192,6 +5246,19 @@
           "tableTo": "evaluation_recipes",
           "columnsFrom": [
             "recipe_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "evaluation_participants_batch_item_id_evaluation_launch_batch_items_id_fk": {
+          "name": "evaluation_participants_batch_item_id_evaluation_launch_batch_items_id_fk",
+          "tableFrom": "evaluation_participants",
+          "tableTo": "evaluation_launch_batch_items",
+          "columnsFrom": [
+            "batch_item_id"
           ],
           "columnsTo": [
             "id"

@@ -3,7 +3,7 @@ import "server-only";
 import { type NextRequest } from "next/server";
 import pino from "pino";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { resolveProject } from "@/lib/api/project-route-helpers";
 import {
   formatSseFrame,
@@ -50,6 +50,11 @@ export async function GET(
   let studyId: string;
 
   try {
+    // Auth-first (repo convention, see tasks route): establish the session
+    // BEFORE resolving the slug so unauthenticated callers cannot probe
+    // project existence. Project membership is enforced below.
+    await requireActiveSession();
+
     const resolved = await params;
 
     studyId = resolved.studyId;

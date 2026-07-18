@@ -31,7 +31,7 @@ const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const CORE_PKG = join(FIXTURES, "release-pkg", "packages", "core");
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 
 const POLICY: EvaluationPanelPolicy = {

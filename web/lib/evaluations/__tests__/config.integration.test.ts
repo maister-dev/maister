@@ -25,7 +25,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 let methodRevisionId: string;
 
@@ -127,21 +127,46 @@ describe("judge panels", () => {
 
     await createProfile({ name: "p", methodRevisionId, panelId }, db);
 
-    await expect(deletePanel({ panelId }, db)).rejects.toThrow(
-      /referenced by a profile/,
-    );
+    await expect(
+      deletePanel({ panelId, expectedRevision: 1 }, db),
+    ).rejects.toThrow(/referenced by a profile/);
   });
 
   it("hard-deletes an unreferenced panel", async () => {
     const panelId = await makePanel();
 
-    await deletePanel({ panelId }, db);
+    await deletePanel({ panelId, expectedRevision: 1 }, db);
     const rows = await db
       .select({ id: schema.evaluationJudgePanels.id })
       .from(schema.evaluationJudgePanels)
       .where(eq(schema.evaluationJudgePanels.id, panelId));
 
     expect(rows).toHaveLength(0);
+  });
+
+  it("rejects a delete with a stale revision after a patch bumped it", async () => {
+    const panelId = await makePanel();
+
+    await patchPanel({ panelId, expectedRevision: 1, name: "bumped" }, db);
+
+    await expect(
+      deletePanel({ panelId, expectedRevision: 1 }, db),
+    ).rejects.toThrow(/revision mismatch/);
+
+    const rows = await db
+      .select({ id: schema.evaluationJudgePanels.id })
+      .from(schema.evaluationJudgePanels)
+      .where(eq(schema.evaluationJudgePanels.id, panelId));
+
+    expect(rows).toHaveLength(1);
+
+    await deletePanel({ panelId, expectedRevision: 2 }, db);
+    const afterDelete = await db
+      .select({ id: schema.evaluationJudgePanels.id })
+      .from(schema.evaluationJudgePanels)
+      .where(eq(schema.evaluationJudgePanels.id, panelId));
+
+    expect(afterDelete).toHaveLength(0);
   });
 });
 
@@ -178,8 +203,41 @@ describe("profiles", () => {
     );
 
     await expect(
-      deleteProfile({ profileId: profile.id as string }, db),
+      deleteProfile(
+        { profileId: profile.id as string, expectedRevision: 2 },
+        db,
+      ),
     ).rejects.toThrow(/project overrides/);
+  });
+
+  it("rejects a delete with a stale revision after a patch bumped it", async () => {
+    const panelId = await makePanel();
+    const profile = await createProfile(
+      { name: "prof-del", methodRevisionId, panelId },
+      db,
+    );
+    const profileId = profile.id as string;
+
+    await patchProfile({ profileId, expectedRevision: 1, enabled: false }, db);
+
+    await expect(
+      deleteProfile({ profileId, expectedRevision: 1 }, db),
+    ).rejects.toThrow(/revision mismatch/);
+
+    const rows = await db
+      .select({ id: schema.evaluationProfiles.id })
+      .from(schema.evaluationProfiles)
+      .where(eq(schema.evaluationProfiles.id, profileId));
+
+    expect(rows).toHaveLength(1);
+
+    await deleteProfile({ profileId, expectedRevision: 2 }, db);
+    const afterDelete = await db
+      .select({ id: schema.evaluationProfiles.id })
+      .from(schema.evaluationProfiles)
+      .where(eq(schema.evaluationProfiles.id, profileId));
+
+    expect(afterDelete).toHaveLength(0);
   });
 });
 

@@ -1,27 +1,23 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type {
   EvaluationPanelPolicy,
   EvaluationPanelRoleBinding,
 } from "@/lib/evaluations/types";
+import type { AnyPgColumn, PgTable } from "drizzle-orm/pg-core";
 
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const {
+import {
   evaluationJudgePanels,
+  evaluationMethodRevisions,
   evaluationProfiles,
   evaluationProjectProfileOverrides,
-  evaluationMethodRevisions,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "evaluations-config",
@@ -33,7 +29,7 @@ const log = pino({
 // (409). Shared by every config PATCH so the contract can never drift.
 async function assertRevisionOrThrow(
   d: Db,
-  table: unknown,
+  table: PgTable & { id: AnyPgColumn },
   id: string,
   updated: unknown[],
   what: string,
@@ -42,9 +38,9 @@ async function assertRevisionOrThrow(
   if (updated.length) return;
 
   const [exists] = await d
-    .select({ id: (table as any).id })
+    .select({ id: table.id })
     .from(table)
-    .where(eq((table as any).id, id));
+    .where(eq(table.id, id));
 
   if (!exists) {
     throw new MaisterError("PRECONDITION", `${what} not found: ${id}`);
@@ -203,9 +199,11 @@ export async function patchPanel(
 
 // Usage-guarded hard delete: a Panel referenced by any Profile cannot be
 // deleted (historical executions use snapshots, so the Panel row must stay
-// referenceable). Returns CONFLICT rather than cascading.
+// referenceable). Returns CONFLICT rather than cascading. The revision
+// predicate lives in the DELETE's WHERE (same CAS shape as patchPanel) so a
+// concurrent PATCH between any pre-read and the delete can never be lost.
 export async function deletePanel(
-  args: { panelId: string },
+  args: { panelId: string; expectedRevision: number },
   db?: Db,
 ): Promise<void> {
   const d = db ?? getDb();
@@ -226,15 +224,22 @@ export async function deletePanel(
 
     const deleted = await tx
       .delete(evaluationJudgePanels)
-      .where(eq(evaluationJudgePanels.id, args.panelId))
+      .where(
+        and(
+          eq(evaluationJudgePanels.id, args.panelId),
+          eq(evaluationJudgePanels.revision, args.expectedRevision),
+        ),
+      )
       .returning({ id: evaluationJudgePanels.id });
 
-    if (!deleted.length) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `judge panel not found: ${args.panelId}`,
-      );
-    }
+    await assertRevisionOrThrow(
+      tx,
+      evaluationJudgePanels,
+      args.panelId,
+      deleted,
+      "judge panel",
+      args.expectedRevision,
+    );
   });
 }
 
@@ -348,7 +353,7 @@ export async function patchProfile(
 }
 
 export async function deleteProfile(
-  args: { profileId: string },
+  args: { profileId: string; expectedRevision: number },
   db?: Db,
 ): Promise<void> {
   const d = db ?? getDb();
@@ -369,15 +374,22 @@ export async function deleteProfile(
 
     const deleted = await tx
       .delete(evaluationProfiles)
-      .where(eq(evaluationProfiles.id, args.profileId))
+      .where(
+        and(
+          eq(evaluationProfiles.id, args.profileId),
+          eq(evaluationProfiles.revision, args.expectedRevision),
+        ),
+      )
       .returning({ id: evaluationProfiles.id });
 
-    if (!deleted.length) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `evaluation profile not found: ${args.profileId}`,
-      );
-    }
+    await assertRevisionOrThrow(
+      tx,
+      evaluationProfiles,
+      args.profileId,
+      deleted,
+      "evaluation profile",
+      args.expectedRevision,
+    );
   });
 }
 

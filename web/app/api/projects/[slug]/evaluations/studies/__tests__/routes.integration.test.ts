@@ -22,7 +22,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 
 const sessionRef: { value: unknown } = { value: null };
 
@@ -41,6 +41,8 @@ let participantRoute: typeof import("../[studyId]/participants/[participantId]/r
 let verdictsRoute: typeof import("../[studyId]/verdicts/route");
 let reviewRoute: typeof import("../../reviews/[reviewId]/route");
 let startRoute: typeof import("../[studyId]/evaluations/route");
+let streamRoute: typeof import("../[studyId]/stream/route");
+let overrideRoute: typeof import("../../../evaluation-profiles/[profileId]/override/route");
 
 let projectId: string;
 let slug: string;
@@ -88,6 +90,10 @@ beforeAll(async () => {
   verdictsRoute = await import("../[studyId]/verdicts/route");
   reviewRoute = await import("../../reviews/[reviewId]/route");
   startRoute = await import("../[studyId]/evaluations/route");
+  streamRoute = await import("../[studyId]/stream/route");
+  overrideRoute = await import(
+    "../../../evaluation-profiles/[profileId]/override/route"
+  );
 
   adminId = randomUUID();
   viewerId = randomUUID();
@@ -421,5 +427,206 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
     );
 
     expect(missing.status).toBe(404);
+  });
+
+  it("refuses unauthenticated requests 401-first without leaking project existence", async () => {
+    // beforeEach left the session unset. Auth-first ordering: every handler
+    // must return the SAME 401 for an existing and a missing slug — never a
+    // 404/existence oracle before authentication.
+    const missingSlug = `missing-${randomUUID().slice(0, 8)}`;
+    const anyId = randomUUID();
+
+    const existing = await studiesRoute.GET(
+      req(`/api/projects/${slug}/evaluations/studies`),
+      { params: Promise.resolve({ slug }) },
+    );
+    const missing = await studiesRoute.GET(
+      req(`/api/projects/${missingSlug}/evaluations/studies`),
+      { params: Promise.resolve({ slug: missingSlug }) },
+    );
+
+    expect(existing.status).toBe(401);
+    expect(missing.status).toBe(401);
+
+    const existingBody = await existing.json();
+
+    expect(existingBody.code).toBe("UNAUTHENTICATED");
+    expect(await missing.json()).toEqual(existingBody);
+
+    const p = { slug: missingSlug, studyId: anyId };
+    // Sequential on purpose: authz resolves the session via a dynamic
+    // import("@/auth"), and concurrent first-hit dynamic imports can race past
+    // the vi.mock registry into the real next-auth module.
+    const calls: Array<[string, () => Promise<Response>]> = [
+      [
+        "studies POST",
+        () =>
+          studiesRoute.POST(
+            req(`/api/projects/${missingSlug}/evaluations/studies`, {
+              method: "POST",
+              body: { taskId: anyId, title: "x" },
+            }),
+            { params: Promise.resolve({ slug: missingSlug }) },
+          ),
+      ],
+      [
+        "study GET",
+        () =>
+          studyRoute.GET(
+            req(`/api/projects/${missingSlug}/evaluations/studies/${anyId}`),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "study PATCH",
+        () =>
+          studyRoute.PATCH(
+            req(`/api/projects/${missingSlug}/evaluations/studies/${anyId}`, {
+              method: "PATCH",
+              ifMatch: "1",
+              body: { title: "x" },
+            }),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "participants GET",
+        () =>
+          participantsRoute.GET(
+            req(
+              `/api/projects/${missingSlug}/evaluations/studies/${anyId}/participants`,
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "participants POST",
+        () =>
+          participantsRoute.POST(
+            req(
+              `/api/projects/${missingSlug}/evaluations/studies/${anyId}/participants`,
+              { method: "POST", body: { runIds: [anyId] } },
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "participant DELETE",
+        () =>
+          participantRoute.DELETE(
+            req(
+              `/api/projects/${missingSlug}/evaluations/studies/${anyId}/participants/${anyId}`,
+              { method: "DELETE" },
+            ),
+            { params: Promise.resolve({ ...p, participantId: anyId }) },
+          ),
+      ],
+      [
+        "verdicts GET",
+        () =>
+          verdictsRoute.GET(
+            req(
+              `/api/projects/${missingSlug}/evaluations/studies/${anyId}/verdicts`,
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "verdicts POST",
+        () =>
+          verdictsRoute.POST(
+            req(
+              `/api/projects/${missingSlug}/evaluations/studies/${anyId}/verdicts`,
+              {
+                method: "POST",
+                body: { outcome: "tie", participantIds: [], executionIds: [] },
+              },
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "start POST",
+        () =>
+          startRoute.POST(
+            req(
+              `/api/projects/${missingSlug}/evaluations/studies/${anyId}/evaluations`,
+              { method: "POST", body: { profileId: anyId } },
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "stream GET",
+        () =>
+          streamRoute.GET(
+            req(
+              `/api/projects/${missingSlug}/evaluations/studies/${anyId}/stream`,
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "review PATCH",
+        () =>
+          reviewRoute.PATCH(
+            req(`/api/projects/${missingSlug}/evaluations/reviews/${anyId}`, {
+              method: "PATCH",
+              ifMatch: "1",
+              body: { resolution: "accept" },
+            }),
+            {
+              params: Promise.resolve({ slug: missingSlug, reviewId: anyId }),
+            },
+          ),
+      ],
+      [
+        "override GET",
+        () =>
+          overrideRoute.GET(
+            req(
+              `/api/projects/${missingSlug}/evaluation-profiles/${anyId}/override`,
+            ),
+            {
+              params: Promise.resolve({ slug: missingSlug, profileId: anyId }),
+            },
+          ),
+      ],
+      [
+        "override PUT",
+        () =>
+          overrideRoute.PUT(
+            req(
+              `/api/projects/${missingSlug}/evaluation-profiles/${anyId}/override`,
+              { method: "PUT", body: { overrides: {} } },
+            ),
+            {
+              params: Promise.resolve({ slug: missingSlug, profileId: anyId }),
+            },
+          ),
+      ],
+      [
+        "override DELETE",
+        () =>
+          overrideRoute.DELETE(
+            req(
+              `/api/projects/${missingSlug}/evaluation-profiles/${anyId}/override`,
+              { method: "DELETE" },
+            ),
+            {
+              params: Promise.resolve({ slug: missingSlug, profileId: anyId }),
+            },
+          ),
+      ],
+    ];
+
+    for (const [label, call] of calls) {
+      const res = await call();
+
+      expect(res.status, label).toBe(401);
+      expect(((await res.json()) as { code: string }).code, label).toBe(
+        "UNAUTHENTICATED",
+      );
+    }
   });
 });

@@ -194,6 +194,10 @@ export type LaunchAgentRunInput = {
   // this is recorded for parity — the value only drives ambient inject on flow
   // runs (writeRunContext is flow-only).
   brainContext?: boolean | null;
+  // Caller-supplied run id for crash-safe launch intents (evaluation judge
+  // attempts record the id BEFORE spawning, then adopt-or-respawn on recovery).
+  // The caller owns uniqueness; a reused id fails the run insert.
+  runId?: string | null;
   db?: Db;
 };
 
@@ -944,7 +948,7 @@ export async function launchAgentRun(
     input.workspace ?? ctx.effective.parsed.workspace,
   );
 
-  const runId = randomUUID();
+  const runId = input.runId ?? randomUUID();
   // M37 (ADR-100): an explicit delegation `workspace` overrides the agent-def
   // axis; absent ⇒ the agent's declared default.
   const workspace = input.workspace ?? ctx.effective.parsed.workspace;

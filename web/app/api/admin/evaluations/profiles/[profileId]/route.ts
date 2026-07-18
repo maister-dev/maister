@@ -25,20 +25,6 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-async function assertProfileRevision(
-  profileId: string,
-  expectedRevision: number,
-): Promise<void> {
-  const profile = await getProfile(profileId);
-
-  if ((profile.revision as number) !== expectedRevision) {
-    throw new MaisterError(
-      "CONFLICT",
-      `evaluation profile ${profileId} revision mismatch (expected ${expectedRevision})`,
-    );
-  }
-}
-
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ profileId: string }> },
@@ -99,8 +85,9 @@ export async function DELETE(
     const { profileId } = await params;
     const expectedRevision = requireIfMatchRevision(req);
 
-    await assertProfileRevision(profileId, expectedRevision);
-    await deleteProfile({ profileId });
+    // The If-Match revision is enforced atomically inside the delete's WHERE
+    // (stale → 409, missing → 404) — no read-then-delete race window.
+    await deleteProfile({ profileId, expectedRevision });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

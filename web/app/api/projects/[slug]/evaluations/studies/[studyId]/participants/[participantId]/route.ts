@@ -3,7 +3,7 @@ import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import pino from "pino";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { resolveProject } from "@/lib/api/project-route-helpers";
 import {
   getStudyForProject,
@@ -28,6 +28,11 @@ export async function DELETE(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
+    // Auth-first (repo convention, see tasks route): establish the session
+    // BEFORE resolving the slug so unauthenticated callers cannot probe
+    // project existence. Project membership is enforced below.
+    await requireActiveSession();
+
     const { slug, studyId, participantId } = await params;
     const project = await resolveProject(slug);
 

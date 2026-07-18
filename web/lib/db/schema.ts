@@ -676,7 +676,8 @@ export type SchedulerJobKind =
   | "auto_promote"
   | "repo_delivery_scan"
   | "pr_state_scan"
-  | "evaluation_dispatch";
+  | "evaluation_dispatch"
+  | "evaluation_suite_scan";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -705,6 +706,7 @@ export const schedulerJobs = pgTable(
         "repo_delivery_scan",
         "pr_state_scan",
         "evaluation_dispatch",
+        "evaluation_suite_scan",
       ],
     }).notNull(),
     target: jsonb("target")
@@ -768,6 +770,7 @@ export const schedulerJobRuns = pgTable(
         "repo_delivery_scan",
         "pr_state_scan",
         "evaluation_dispatch",
+        "evaluation_suite_scan",
       ],
     }).notNull(),
     status: text("status", {
@@ -1080,9 +1083,13 @@ export const scheduledTaskLaunches = pgTable(
       withTimezone: true,
       mode: "date",
     }).notNull(),
-    armedAt: timestamp("armed_at", { withTimezone: true, mode: "date" })
+    armedAt: timestamp("armed_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    launchRequest: jsonb("launch_request")
+      .$type<ScheduledLaunchRequest>()
       .notNull(),
-    launchRequest: jsonb("launch_request").$type<ScheduledLaunchRequest>().notNull(),
     requestHash: text("request_hash").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     state: text("state", {
@@ -1197,9 +1204,7 @@ export const scheduledTaskLaunchAttempts = pgTable(
   },
   (t) => ({
     uniqRun: unique("scheduled_task_launch_attempts_run_id_uq").on(t.runId),
-    uniqLiveLaunch: uniqueIndex(
-      "scheduled_task_launch_attempts_launch_live_uq",
-    )
+    uniqLiveLaunch: uniqueIndex("scheduled_task_launch_attempts_launch_live_uq")
       .on(t.scheduledLaunchId)
       .where(sql`${t.state} IN ('Reserved', 'Materialized')`),
     idxLaunch: index("scheduled_task_launch_attempts_launch_idx").on(
@@ -1242,10 +1247,9 @@ export const scheduledTaskLaunchEvents = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    idxLaunchCreated: index("scheduled_task_launch_events_launch_created_idx").on(
-      t.scheduledLaunchId,
-      t.createdAt,
-    ),
+    idxLaunchCreated: index(
+      "scheduled_task_launch_events_launch_created_idx",
+    ).on(t.scheduledLaunchId, t.createdAt),
   }),
 );
 
@@ -1683,14 +1687,7 @@ export const runs = pgTable(
       onDelete: "set null",
     }),
     triggerSource: text("trigger_source", {
-      enum: [
-        "manual",
-        "cron",
-        "domain_event",
-        "webhook",
-        "flow",
-        "scheduled",
-      ],
+      enum: ["manual", "cron", "domain_event", "webhook", "flow", "scheduled"],
     }),
     // domain_events.id claim key — partial UNIQUE (agent_id, trigger_event_id)
     // makes at-least-once redelivery converge to exactly one run.
@@ -2191,6 +2188,15 @@ export const evaluationParticipants = pgTable(
     launchReason: text("launch_reason", {
       enum: ["initial", "manual_relaunch", "replicate"],
     }),
+    // Crash-safe adoption anchor for controlled launches: the owning batch
+    // item. The partial unique below makes participant creation convergent —
+    // a re-driven item adopts its existing participant, never duplicates it.
+    batchItemId: text("batch_item_id").references(
+      (): AnyPgColumn => {
+        return evaluationLaunchBatchItems.id;
+      },
+      { onDelete: "set null" },
+    ),
     // Copied provenance so history survives Run deletion. Bounded, opaque —
     // never a private path, session id, adapter env, or credential.
     runIdentity: jsonb("run_identity").$type<EvaluationRunIdentitySnapshot>(),
@@ -2210,6 +2216,10 @@ export const evaluationParticipants = pgTable(
     uniqLiveStudyRun: uniqueIndex("evaluation_participants_live_run_uq")
       .on(t.studyId, t.runId)
       .where(sql`${t.runId} is not null and ${t.removedAt} is null`),
+    // One participant per launch-batch item (crash-safe adoption target).
+    uniqBatchItem: uniqueIndex("evaluation_participants_batch_item_uq")
+      .on(t.batchItemId)
+      .where(sql`${t.batchItemId} is not null`),
     sourceTypeCheck: check(
       "evaluation_participants_source_type_check",
       sql`${t.sourceType} in ('observed', 'launched')`,
@@ -2581,6 +2591,10 @@ export const evaluationExecutions = pgTable(
       Record<string, unknown>
     >(),
     idempotencyKey: text("idempotency_key"),
+    // Digest of the semantic request (profile + overrides). Same key + same
+    // digest replays the original execution; same key + different digest is a
+    // CONFLICT — a reused key never silently returns a different request's row.
+    requestDigest: text("request_digest"),
     // Terminal/failure reason (typed code), never a private body.
     terminalReason: text("terminal_reason"),
     retryOf: text("retry_of").references(
@@ -2752,6 +2766,11 @@ export const evaluationJudgeAttempts = pgTable(
     agentRunId: text("agent_run_id").references(() => runs.id, {
       onDelete: "set null",
     }),
+    // Crash-safe launch intent: the pre-generated run id recorded BEFORE the
+    // spawn side effect. On recovery, a queued attempt with an intent either
+    // adopts the run (if the crashed spawn created it) or re-spawns with the
+    // SAME id — never a duplicate Run. No FK: the run may not exist yet.
+    intendedRunId: text("intended_run_id"),
     // Ephemeral attempt-bound token id (revoked at terminal); opaque, no FK to
     // keep the token lifecycle independent of this ledger.
     tokenId: text("token_id"),
@@ -3030,6 +3049,9 @@ export const evaluationLaunchBatches = pgTable(
       .notNull()
       .default("queued"),
     idempotencyKey: text("idempotency_key"),
+    // Digest of the semantic request (items). Same key + same digest replays
+    // the original batch; same key + different digest is a CONFLICT.
+    requestDigest: text("request_digest"),
     requestedByUserId: text("requested_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -3048,10 +3070,11 @@ export const evaluationLaunchBatches = pgTable(
   },
   (t) => ({
     idxStudy: index("evaluation_launch_batches_study_idx").on(t.studyId),
-    // Nullable UNIQUE: many NULLs allowed, so only keyed submits dedup.
-    uniqIdempotency: unique("evaluation_launch_batches_idempotency_uq").on(
-      t.idempotencyKey,
-    ),
+    // Same idempotency key within a Study returns the original batch (scoped
+    // like evaluation_executions — a key reused in another Study is unrelated).
+    uniqStudyIdem: uniqueIndex("evaluation_launch_batches_study_idem_uq")
+      .on(t.studyId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} is not null`),
     statusCheck: check(
       "evaluation_launch_batches_status_check",
       sql`${t.status} in ('queued', 'launching', 'completed', 'partial', 'failed')`,
@@ -3141,9 +3164,7 @@ export const evaluationSuites = pgTable(
     // Immutable-per-version definition: { taskIds, profileId, trigger? }. Bumped
     // (version+1) on any edit so longitudinal metrics can attribute drift to a
     // definition revision (calibration/drift versioning).
-    definition: jsonb("definition")
-      .$type<Record<string, unknown>>()
-      .notNull(),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
     definitionDigest: text("definition_digest").notNull(),
     version: integer("version").notNull().default(1),
     enabled: boolean("enabled").notNull().default(true),
@@ -3242,9 +3263,7 @@ export const evaluationStandardizedRecipes = pgTable(
       { onDelete: "set null" },
     ),
     // The copied immutable recipe definition + digest (self-contained snapshot).
-    definition: jsonb("definition")
-      .$type<Record<string, unknown>>()
-      .notNull(),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
     definitionDigest: text("definition_digest").notNull(),
     // For a `rollback` action: the revision whose definition was restored.
     rolledBackToRevision: integer("rolled_back_to_revision"),
@@ -3256,10 +3275,9 @@ export const evaluationStandardizedRecipes = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    idxProjectSlot: index("evaluation_standardized_recipes_project_slot_idx").on(
-      t.projectId,
-      t.slot,
-    ),
+    idxProjectSlot: index(
+      "evaluation_standardized_recipes_project_slot_idx",
+    ).on(t.projectId, t.slot),
     uniqRevision: unique("evaluation_standardized_recipes_revision_uq").on(
       t.projectId,
       t.slot,

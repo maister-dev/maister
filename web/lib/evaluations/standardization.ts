@@ -1,28 +1,23 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { PreflightContractLoaders } from "@/lib/evaluations/recipes";
 
 import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationHumanVerdicts,
+  evaluationParticipants,
+  evaluationRecipes,
+  evaluationStandardizedRecipes,
+  evaluationStudies,
+} from "@/lib/db/schema";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { preflightControlledRecipe } from "@/lib/evaluations/preflight";
 import { parseControlledRecipe } from "@/lib/evaluations/recipe";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const {
-  evaluationStandardizedRecipes,
-  evaluationHumanVerdicts,
-  evaluationParticipants,
-  evaluationRecipes,
-  evaluationStudies,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-standardization",
@@ -42,7 +37,7 @@ export interface StandardizationEligibility {
 async function latestConclusiveVerdict(
   studyId: string,
   d: Db,
-): Promise<Record<string, any> | null> {
+): Promise<typeof evaluationHumanVerdicts.$inferSelect | null> {
   const rows = await d
     .select()
     .from(evaluationHumanVerdicts)
@@ -50,13 +45,11 @@ async function latestConclusiveVerdict(
     .orderBy(desc(evaluationHumanVerdicts.createdAt));
   const superseded = new Set(
     rows
-      .map((r: Record<string, unknown>) => r.supersedesId)
-      .filter((id: unknown): id is string => typeof id === "string"),
+      .map((r) => r.supersedesId)
+      .filter((id): id is string => typeof id === "string"),
   );
 
-  return (
-    rows.find((r: Record<string, unknown>) => !superseded.has(r.id)) ?? null
-  );
+  return rows.find((r) => !superseded.has(r.id)) ?? null;
 }
 
 // PHASE 1 (preview): is a Study's winning recipe eligible to standardize? NO side
@@ -106,7 +99,7 @@ export async function checkStandardizationEligible(
     return empty;
   }
 
-  const winnerParticipantId = (verdict.participantIds as string[])[0] ?? null;
+  const winnerParticipantId = verdict.participantIds[0] ?? null;
 
   if (!winnerParticipantId) {
     refusals.push("no_conclusive_winner");
@@ -184,6 +177,25 @@ export async function checkStandardizationEligible(
   };
 }
 
+// Per-(project, slot) advisory lock so concurrent standardize/rollback writers
+// are serialized: both allocate coalesce(max(revision),0)+1, so unserialized
+// racers compute the same next revision and one dies on the UNIQUE(project,
+// slot, revision) insert with a raw 23505. An advisory xact lock (vs a row
+// lock) also covers the first-ever revision, where no row exists to lock.
+// Held until the top-level tx ends. The namespace constant keeps this lock
+// space disjoint from the other advisory-lock users.
+const STANDARDIZATION_LOCK_NAMESPACE = 0x65767374;
+
+async function takeStandardizationSlotLock(
+  tx: Db,
+  projectId: string,
+  slot: string,
+): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(${STANDARDIZATION_LOCK_NAMESPACE}::int, hashtext(${`${projectId}:${slot}`})::int)`,
+  );
+}
+
 async function nextRevision(
   projectId: string,
   slot: string,
@@ -223,6 +235,8 @@ export async function standardizeRecipe(
   const slot = args.slot ?? "default";
 
   return d.transaction(async (tx: Db) => {
+    await takeStandardizationSlotLock(tx, args.projectId, slot);
+
     const eligibility = await checkStandardizationEligible(
       { studyId: args.studyId, projectId: args.projectId },
       loaders,
@@ -296,6 +310,8 @@ export async function rollbackStandardization(
   const slot = args.slot ?? "default";
 
   return d.transaction(async (tx: Db) => {
+    await takeStandardizationSlotLock(tx, args.projectId, slot);
+
     const history = await tx
       .select()
       .from(evaluationStandardizedRecipes)

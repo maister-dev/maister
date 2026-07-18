@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { EvidenceItemInput } from "@/lib/evaluations/evidence/snapshots";
 
 import { and, eq, isNull } from "drizzle-orm";
@@ -8,22 +9,16 @@ import pino from "pino";
 import { sealEvidenceSnapshot, findReusableSnapshot } from "./snapshots";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const {
+import {
   evaluationExecutions,
-  evaluationStudies,
   evaluationParticipants,
-  workspaces,
+  evaluationStudies,
   runs,
   tasks,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+  workspaces,
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 const log = pino({
   name: "evaluations-evidence-capture",

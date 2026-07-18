@@ -1,24 +1,20 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationExecutions,
+  evaluationSuiteStudies,
+  evaluationSuites,
+  tasks,
+} from "@/lib/db/schema";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { createStudy } from "@/lib/evaluations/studies";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const {
-  evaluationSuites,
-  evaluationSuiteStudies,
-  evaluationExecutions,
-  tasks,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-suites",
@@ -60,9 +56,7 @@ export async function createSuite(
       .select({ id: tasks.id, projectId: tasks.projectId })
       .from(tasks)
       .where(inArray(tasks.id, [...new Set(args.definition.taskIds)]));
-    const foreign = taskRows.find(
-      (t: Record<string, unknown>) => t.projectId !== args.projectId,
-    );
+    const foreign = taskRows.find((t) => t.projectId !== args.projectId);
 
     if (foreign) {
       throw new MaisterError(
@@ -144,7 +138,9 @@ export async function runEvaluationSuiteScan(
     };
   }
 
-  const definition = suite.definition as EvaluationSuiteDefinition;
+  // Stored as an opaque jsonb Record; createSuite is the only writer and it
+  // digest-pins this exact shape.
+  const definition = suite.definition as unknown as EvaluationSuiteDefinition;
   let triggerRevision = "scheduled";
 
   if (suite.kind === "regression" && definition.triggerPackageRef) {
@@ -167,25 +163,28 @@ export async function runEvaluationSuiteScan(
   const scanKey = `${suite.version}:${triggerRevision}`;
   const generatedStudyIds: string[] = [];
   const skippedTaskIds: string[] = [];
-  const taskIds = definition.taskIds.slice(0, cap);
+  // Filter out tasks already generated for THIS scan round BEFORE applying the
+  // cap (capped-scan / at-least-once dedup). Capping first would starve tasks
+  // past the cap forever: once the first `cap` tasks are linked, every later
+  // tick would re-select and skip the same slice.
+  const definitionTaskIds = [...new Set(definition.taskIds)];
+  const linkedRows = await d
+    .select({ taskId: evaluationSuiteStudies.taskId })
+    .from(evaluationSuiteStudies)
+    .where(
+      and(
+        eq(evaluationSuiteStudies.suiteId, suiteId),
+        eq(evaluationSuiteStudies.scanKey, scanKey),
+        inArray(evaluationSuiteStudies.taskId, definitionTaskIds),
+      ),
+    );
+  const linkedTaskIds = new Set(linkedRows.map((row) => row.taskId));
+  const taskIds = definitionTaskIds
+    .filter((taskId) => !linkedTaskIds.has(taskId))
+    .slice(0, cap);
 
   for (const taskId of taskIds) {
     try {
-      // Skip a task already generated for THIS scan round (capped-scan / at-least-
-      // once dedup — a re-scan of the same round is a no-op).
-      const [existing] = await d
-        .select({ id: evaluationSuiteStudies.id })
-        .from(evaluationSuiteStudies)
-        .where(
-          and(
-            eq(evaluationSuiteStudies.suiteId, suiteId),
-            eq(evaluationSuiteStudies.taskId, taskId),
-            eq(evaluationSuiteStudies.scanKey, scanKey),
-          ),
-        );
-
-      if (existing) continue;
-
       const study = await createStudy(
         {
           projectId: suite.projectId,
@@ -207,7 +206,7 @@ export async function runEvaluationSuiteScan(
         })
         .onConflictDoNothing();
 
-      generatedStudyIds.push(study.id as string);
+      generatedStudyIds.push(study.id);
     } catch (err) {
       // Poison task: record + continue (never abort the whole scan).
       skippedTaskIds.push(taskId);
@@ -242,6 +241,64 @@ export async function runEvaluationSuiteScan(
   return { scanned: true, scanKey, generatedStudyIds, skippedTaskIds };
 }
 
+export interface SuiteScanTickSummary {
+  scannedSuites: number;
+  skippedSuites: number;
+  generatedStudies: number;
+  skippedTasks: number;
+  failedSuites: number;
+}
+
+// The `evaluation_suite_scan` scheduler arm (T7.2's deferred seam): one M24 tick
+// scans every enabled suite. Poison-safe per suite — a suite whose scan throws is
+// counted and skipped, never aborting the tick (mirrors the per-task contract
+// inside runEvaluationSuiteScan). `resolveTrigger` stays injectable; the default
+// tick passes none, so a `regression` suite scans once per definition version
+// until a package-catalog resolver is threaded through.
+export async function runEvaluationSuiteScanTick(
+  deps: { resolveTrigger?: SuiteTriggerResolver; cap?: number } = {},
+  db?: Db,
+): Promise<SuiteScanTickSummary> {
+  const d = db ?? getDb();
+  const suites = await d
+    .select({ id: evaluationSuites.id })
+    .from(evaluationSuites)
+    .where(eq(evaluationSuites.enabled, true));
+
+  const summary: SuiteScanTickSummary = {
+    scannedSuites: 0,
+    skippedSuites: 0,
+    generatedStudies: 0,
+    skippedTasks: 0,
+    failedSuites: 0,
+  };
+
+  for (const suite of suites) {
+    try {
+      const result = await runEvaluationSuiteScan(suite.id, deps, d);
+
+      if (result.scanned) {
+        summary.scannedSuites += 1;
+        summary.generatedStudies += result.generatedStudyIds.length;
+        summary.skippedTasks += result.skippedTaskIds.length;
+      } else {
+        summary.skippedSuites += 1;
+      }
+    } catch (err) {
+      summary.failedSuites += 1;
+      log.warn(
+        {
+          suiteId: suite.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "suite scan tick skipped a suite",
+      );
+    }
+  }
+
+  return summary;
+}
+
 export interface SuiteLongitudinalRound {
   scanKey: string;
   suiteVersion: number;
@@ -270,9 +327,7 @@ export async function computeSuiteLongitudinal(
 
   if (links.length === 0) return [];
 
-  const studyIds = links.map(
-    (l: Record<string, unknown>) => l.studyId as string,
-  );
+  const studyIds = links.map((l) => l.studyId);
   const executions = await d
     .select({
       studyId: evaluationExecutions.studyId,
@@ -283,7 +338,7 @@ export async function computeSuiteLongitudinal(
 
   const statusByStudy = new Map<string, string[]>();
 
-  for (const exec of executions as Array<Record<string, string>>) {
+  for (const exec of executions) {
     const list = statusByStudy.get(exec.studyId) ?? [];
 
     list.push(exec.status);
@@ -292,19 +347,19 @@ export async function computeSuiteLongitudinal(
 
   const rounds = new Map<string, SuiteLongitudinalRound>();
 
-  for (const link of links as Array<Record<string, unknown>>) {
-    const key = link.scanKey as string;
+  for (const link of links) {
+    const key = link.scanKey;
     const round =
       rounds.get(key) ??
       ({
         scanKey: key,
-        suiteVersion: link.suiteVersion as number,
+        suiteVersion: link.suiteVersion,
         studyCount: 0,
         executionCounts: {},
       } satisfies SuiteLongitudinalRound);
 
     round.studyCount += 1;
-    for (const status of statusByStudy.get(link.studyId as string) ?? []) {
+    for (const status of statusByStudy.get(link.studyId) ?? []) {
       round.executionCounts[status] = (round.executionCounts[status] ?? 0) + 1;
     }
     rounds.set(key, round);

@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { AggregationAlgorithm } from "@/lib/evaluations/method-schema";
 
 import { eq } from "drizzle-orm";
@@ -16,20 +17,14 @@ import { persistAggregate } from "./persist";
 import { advanceExecution } from "@/lib/evaluations/dispatcher/advance";
 import { openReview } from "@/lib/evaluations/reviews";
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const {
+import {
+  evaluationCriterionResults,
   evaluationExecutions,
   evaluationJudgeAttempts,
-  evaluationCriterionResults,
   evaluationMethodRevisions,
   evaluationObjectiveCheckRuns,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "evaluations-aggregation-worker",
@@ -138,16 +133,13 @@ export async function loadAttemptResults(
   totalCount: number;
   terminalCount: number;
 }> {
-  const attemptRows = (await d
+  const attemptRows = await d
     .select({
       id: evaluationJudgeAttempts.id,
       status: evaluationJudgeAttempts.status,
     })
     .from(evaluationJudgeAttempts)
-    .where(eq(evaluationJudgeAttempts.executionId, executionId))) as Array<{
-    id: string;
-    status: string;
-  }>;
+    .where(eq(evaluationJudgeAttempts.executionId, executionId));
 
   const attempts: AttemptResult[] = [];
   const validConfidences: number[] = [];
@@ -160,7 +152,7 @@ export async function loadAttemptResults(
 
     if (valid) validCount++;
 
-    const critRows = (await d
+    const critRows = await d
       .select({
         criterionId: evaluationCriterionResults.criterionId,
         state: evaluationCriterionResults.state,
@@ -168,12 +160,7 @@ export async function loadAttemptResults(
         confidence: evaluationCriterionResults.confidence,
       })
       .from(evaluationCriterionResults)
-      .where(eq(evaluationCriterionResults.attemptId, a.id))) as Array<{
-      criterionId: string;
-      state: string;
-      score: string | null;
-      confidence: string | null;
-    }>;
+      .where(eq(evaluationCriterionResults.attemptId, a.id));
 
     const criteria: AttemptResult["criteria"] = {};
 
@@ -206,18 +193,13 @@ async function objectiveGatingFailed(
 ): Promise<boolean> {
   if (gateCheckIds.size === 0) return false;
 
-  const failed = (await d
+  const failed = await d
     .select({
       checkId: evaluationObjectiveCheckRuns.checkId,
       status: evaluationObjectiveCheckRuns.status,
     })
     .from(evaluationObjectiveCheckRuns)
-    .where(
-      eq(evaluationObjectiveCheckRuns.executionId, executionId),
-    )) as Array<{
-    checkId: string;
-    status: string;
-  }>;
+    .where(eq(evaluationObjectiveCheckRuns.executionId, executionId));
 
   return failed.some(
     (r) => gateCheckIds.has(r.checkId) && r.status === "failed",
@@ -236,7 +218,7 @@ async function loadExecution(
   executionId: string,
   d: Db,
 ): Promise<ExecutionRow> {
-  const [row] = (await d
+  const [row] = await d
     .select({
       id: evaluationExecutions.id,
       studyId: evaluationExecutions.studyId,
@@ -245,7 +227,7 @@ async function loadExecution(
       methodRevisionId: evaluationExecutions.methodRevisionId,
     })
     .from(evaluationExecutions)
-    .where(eq(evaluationExecutions.id, executionId))) as ExecutionRow[];
+    .where(eq(evaluationExecutions.id, executionId));
 
   if (!row) {
     throw new MaisterError(

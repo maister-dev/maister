@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { resolveProject } from "@/lib/api/project-route-helpers";
 import { getStudyForProject } from "@/lib/evaluations/studies";
 import { listVerdicts, recordVerdict } from "@/lib/evaluations/verdicts";
@@ -39,6 +39,11 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
+    // Auth-first (repo convention, see tasks route): establish the session
+    // BEFORE resolving the slug so unauthenticated callers cannot probe
+    // project existence. Project membership is enforced below.
+    await requireActiveSession();
+
     const { slug, studyId } = await params;
     const project = await resolveProject(slug);
 
@@ -61,6 +66,8 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
+    await requireActiveSession();
+
     const { slug, studyId } = await params;
     const project = await resolveProject(slug);
     const access = await requireProjectAction(

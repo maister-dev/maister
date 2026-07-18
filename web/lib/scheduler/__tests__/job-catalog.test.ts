@@ -23,6 +23,7 @@ const ALL_JOB_KINDS = [
   "repo_delivery_scan",
   "pr_state_scan",
   "evaluation_dispatch",
+  "evaluation_suite_scan",
 ] as const;
 
 describe("scheduler job catalog", () => {

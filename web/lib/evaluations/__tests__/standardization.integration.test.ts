@@ -32,7 +32,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 let flowId: string;
 let taskId: string;
@@ -325,5 +325,56 @@ describe("standardizeRecipe + rollback", () => {
         db,
       ),
     ).rejects.toThrow(/no prior standardized revision/);
+  });
+});
+
+describe("revision allocation race (per-(project, slot) serialization)", () => {
+  // Uses a dedicated slot so the default-slot revisions of the earlier tests
+  // never leak into the expected numbering.
+  const slot = "race-slot";
+
+  it("serializes two concurrent standardize calls into sequential revisions (no 23505)", async () => {
+    const a = await decidedStudyWithLaunchedWinner();
+    const b = await decidedStudyWithLaunchedWinner();
+
+    // Both racers read coalesce(max(revision),0)+1 for an EMPTY slot — without
+    // the advisory lock they collide on UNIQUE(project, slot, revision).
+    const [first, second] = await Promise.all([
+      standardizeRecipe(
+        { studyId: a.studyId, projectId, slot, actorUserId: userId },
+        loaders(),
+        db,
+      ),
+      standardizeRecipe(
+        { studyId: b.studyId, projectId, slot, actorUserId: userId },
+        loaders(),
+        db,
+      ),
+    ]);
+
+    expect(
+      [Number(first.revision), Number(second.revision)].sort((x, y) => x - y),
+    ).toEqual([1, 2]);
+  });
+
+  it("keeps a rollback racing a standardize serial", async () => {
+    const { studyId } = await decidedStudyWithLaunchedWinner();
+
+    // Two revisions exist from the racer test, so rollback is legal in either
+    // interleaving. Both must succeed with distinct sequential revisions.
+    const [standardized, rolled] = await Promise.all([
+      standardizeRecipe(
+        { studyId, projectId, slot, actorUserId: userId },
+        loaders(),
+        db,
+      ),
+      rollbackStandardization({ projectId, slot, actorUserId: userId }, db),
+    ]);
+
+    expect(
+      [Number(standardized.revision), Number(rolled.revision)].sort(
+        (x, y) => x - y,
+      ),
+    ).toEqual([3, 4]);
   });
 });

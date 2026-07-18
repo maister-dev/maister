@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { TokenActor } from "@/lib/tokens/verify";
 
 import { and, asc, count, eq, gt, isNotNull } from "drizzle-orm";
@@ -8,23 +9,17 @@ import pino from "pino";
 import { assignBlindLabels } from "./blinding";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationEvidenceItems,
+  evaluationExecutions,
+  evaluationJudgeAttempts,
+  evaluationMethodRevisions,
+  evaluationMetricResults,
+  evaluationObjectiveCheckRuns,
+  evaluationStudies,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { readSnapshotItem } from "@/lib/evaluations/evidence/snapshots";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const {
-  evaluationJudgeAttempts,
-  evaluationExecutions,
-  evaluationStudies,
-  evaluationEvidenceItems,
-  evaluationObjectiveCheckRuns,
-  evaluationMetricResults,
-  evaluationMethodRevisions,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-judge-facade",
@@ -156,7 +151,9 @@ async function deriveBlinding(bound: BoundAttempt, d: Db): Promise<BlindMap> {
     );
 
   const participantIds = rows
-    .map((r: { participantId: string }) => r.participantId)
+    .map((r) => r.participantId)
+    // isNotNull() in the WHERE guarantees non-null; the filter is the type proof.
+    .filter((id): id is string => id !== null)
     .sort();
   const randomize =
     (bound.judgePolicySnapshot?.randomizeOrder as boolean | undefined) ?? true;
@@ -235,12 +232,10 @@ export async function getEvaluatorContext(
   let itemCount = 0;
 
   if (bound.evidenceSnapshotId) {
-    const [row] = (await d
+    const [row] = await d
       .select({ value: count() })
       .from(evaluationEvidenceItems)
-      .where(
-        eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId),
-      )) as Array<{ value: number }>;
+      .where(eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId));
 
     itemCount = row?.value ?? 0;
   }
@@ -312,25 +307,16 @@ export async function listBoundEvidence(
   const page = rows.slice(0, limit);
 
   return {
-    items: page.map(
-      (r: {
-        id: string;
-        participantId: string | null;
-        kind: string;
-        digest: string;
-        bytes: number | null;
-        coverageClass: string;
-      }) => ({
-        id: r.id,
-        candidate: r.participantId
-          ? (blinding.labels[r.participantId] ?? null)
-          : null,
-        kind: r.kind,
-        digest: r.digest,
-        bytes: r.bytes,
-        coverageClass: r.coverageClass,
-      }),
-    ),
+    items: page.map((r) => ({
+      id: r.id,
+      candidate: r.participantId
+        ? (blinding.labels[r.participantId] ?? null)
+        : null,
+      kind: r.kind,
+      digest: r.digest,
+      bytes: r.bytes,
+      coverageClass: r.coverageClass,
+    })),
     nextCursor: hasMore ? page[page.length - 1].id : null,
   };
 }
@@ -439,37 +425,20 @@ export async function getBoundObjectiveResults(
   );
 
   return {
-    checks: checks.map(
-      (c: {
-        participantId: string | null;
-        checkId: string;
-        checkVersion: string;
-        status: string;
-        reason: string | null;
-      }) => ({
-        candidate: toCandidate(c.participantId),
-        checkId: c.checkId,
-        checkVersion: c.checkVersion,
-        status: c.status,
-        reason: c.reason,
-      }),
-    ),
-    metrics: metrics.map(
-      (m: {
-        participantId: string | null;
-        metricId: string;
-        metricVersion: string;
-        status: string;
-        value: Record<string, unknown> | null;
-        unit: string | null;
-      }) => ({
-        candidate: toCandidate(m.participantId),
-        metricId: m.metricId,
-        metricVersion: m.metricVersion,
-        status: m.status,
-        value: m.value,
-        unit: m.unit,
-      }),
-    ),
+    checks: checks.map((c) => ({
+      candidate: toCandidate(c.participantId),
+      checkId: c.checkId,
+      checkVersion: c.checkVersion,
+      status: c.status,
+      reason: c.reason,
+    })),
+    metrics: metrics.map((m) => ({
+      candidate: toCandidate(m.participantId),
+      metricId: m.metricId,
+      metricVersion: m.metricVersion,
+      status: m.status,
+      value: m.value,
+      unit: m.unit,
+    })),
   };
 }

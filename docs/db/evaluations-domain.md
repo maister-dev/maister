@@ -1,16 +1,23 @@
-# Evaluation Lab domain ERD (Implemented — ADR-142..145, migrations `0107`–`0110`)
+# Evaluation Lab domain ERD (Implemented — ADR-142..147, migrations `0107`–`0114`)
 
-The Evaluation Lab (M46) tables: the neutral Study/participant/recipe model,
-package-sourced Methodologies + admin Panels/Profiles, immutable evidence, and
-multi-judge execution → aggregation → human verdict. Narrative field detail and
-invariants live in [`../database-schema.md`](../database-schema.md) §Evaluation
-Lab tables; behavior co-evolves in `system-analytics/` per later M46 phases.
+The Evaluation Lab (M46–M48) tables: the neutral Study/participant/recipe
+model, package-sourced Methodologies + admin Panels/Profiles, immutable
+evidence, multi-judge execution → aggregation → human verdict, the M47
+controlled-launch batch intent (ADR-146), and the M48 suite / recipe-
+standardization ledgers (ADR-147). Narrative field detail and invariants live
+in [`../database-schema.md`](../database-schema.md) §Evaluation Lab tables;
+behavior co-evolves in `system-analytics/`.
 
 Ownership: a **Study** owns its participants, recipes, evidence snapshots,
-executions, and verdicts. An **Evaluation Execution** owns exactly one method +
-profile snapshot, its objective checks/metrics, judge attempts, and aggregate.
-**Method revisions** are immutable package content; **Panels/Profiles** are
-mutable admin config snapshotted at execution start.
+executions, launch batches, and verdicts. An **Evaluation Execution** owns
+exactly one method + profile snapshot, its objective checks/metrics, judge
+attempts, and aggregate. **Method revisions** are immutable package content;
+**Panels/Profiles** are mutable admin config snapshotted at execution start.
+A **launch batch** owns one item per (recipe × replicate); a launched item's
+participant adopts it through `batch_item_id`. A **Suite** sits OUTSIDE the
+one-task Study boundary and links each scan round to the one-task Studies it
+generated; **standardized recipes** are an append-only per-project audit
+ledger of human-approved standardize/rollback revisions.
 
 ```mermaid
 erDiagram
@@ -24,6 +31,22 @@ erDiagram
     evaluation_studies ||--o{ evaluation_events : streams
     evaluation_recipes ||--o{ evaluation_participants : launches
     runs ||--o{ evaluation_participants : sources
+
+    evaluation_studies ||--o{ evaluation_launch_batches : intends
+    evaluation_launch_batches ||--o{ evaluation_launch_batch_items : fans_out
+    evaluation_recipes ||--o{ evaluation_launch_batch_items : targets
+    runs ||--o{ evaluation_launch_batch_items : launched_as
+    evaluation_launch_batch_items |o--o| evaluation_participants : adopts
+
+    projects ||--o{ evaluation_suites : owns
+    evaluation_suites ||--o{ evaluation_suite_studies : scans
+    evaluation_studies ||--o{ evaluation_suite_studies : generated_as
+    tasks ||--o{ evaluation_suite_studies : targets
+
+    projects ||--o{ evaluation_standardized_recipes : standardizes
+    evaluation_studies ||--o{ evaluation_standardized_recipes : sourced_from
+    evaluation_recipes ||--o{ evaluation_standardized_recipes : copies
+    evaluation_human_verdicts ||--o{ evaluation_standardized_recipes : approves
 
     package_installs ||--o{ evaluation_method_revisions : projects
     evaluation_method_revisions ||--o{ evaluation_profiles : selected_by
@@ -64,6 +87,7 @@ erDiagram
         text run_id FK "SET NULL, nullable"
         text source_type "observed|launched"
         text recipe_id FK "launched only"
+        text batch_item_id FK "partial UNIQUE, adoption anchor"
         jsonb run_identity "survives Run delete"
         timestamptz removed_at "tombstone"
     }
@@ -122,6 +146,7 @@ erDiagram
         text status "11-state FSM"
         int version "CAS"
         text idempotency_key
+        text request_digest "key-reuse conflict guard"
         text retry_of FK "self, nullable"
     }
     evaluation_objective_check_runs {
@@ -147,6 +172,7 @@ erDiagram
         int ordinal "UNIQUE tuple"
         int retry_ordinal
         text agent_run_id FK
+        text intended_run_id "pre-spawn intent, no FK"
         text status "queued…error"
         jsonb sealed_result
     }
@@ -187,5 +213,57 @@ erDiagram
         int sequence "UNIQUE with study_id"
         text event_type
         jsonb payload "bounded, redacted"
+    }
+    evaluation_launch_batches {
+        text id PK
+        text study_id FK "CASCADE"
+        text status "queued|launching|completed|partial|failed"
+        text idempotency_key "partial UNIQUE with study_id"
+        text request_digest "key-reuse conflict guard"
+        int version "CAS"
+        timestamptz completed_at
+    }
+    evaluation_launch_batch_items {
+        text id PK
+        text batch_id FK "CASCADE"
+        text recipe_id FK "RESTRICT"
+        int replicate_ordinal "UNIQUE (batch,recipe,replicate)"
+        text status "queued|launching|launched|failed"
+        text run_id FK "SET NULL, nullable"
+        text participant_id FK "SET NULL, nullable"
+        int attempt "bounded retry count"
+        text error_reason
+        int version "CAS"
+    }
+    evaluation_suites {
+        text id PK
+        text project_id FK "CASCADE"
+        text name
+        text kind "scheduled|regression"
+        jsonb definition "immutable per version"
+        text definition_digest
+        int version "bumped per edit"
+        bool enabled
+        text last_trigger_revision "regression trigger"
+    }
+    evaluation_suite_studies {
+        text id PK
+        text suite_id FK "CASCADE"
+        text study_id FK "CASCADE"
+        text task_id FK "RESTRICT"
+        int suite_version "drift attribution"
+        text scan_key "UNIQUE (suite,task,scan_key)"
+    }
+    evaluation_standardized_recipes {
+        text id PK
+        text project_id FK "CASCADE"
+        text slot "default slot"
+        int revision "UNIQUE (project,slot,revision)"
+        text action "standardize|rollback"
+        text source_study_id FK "SET NULL, nullable"
+        text source_recipe_id FK "SET NULL, nullable"
+        text source_verdict_id FK "SET NULL, nullable"
+        jsonb definition "copied self-contained snapshot"
+        int rolled_back_to_revision
     }
 ```

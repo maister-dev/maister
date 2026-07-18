@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationVerdictOutcome } from "@/lib/evaluations/types";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -8,16 +9,13 @@ import pino from "pino";
 import { appendEvaluationEvent } from "./dispatcher/events";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  evaluationExecutions,
+  evaluationHumanVerdicts,
+  evaluationStudies,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationHumanVerdicts, evaluationExecutions, evaluationStudies } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-verdicts",
@@ -85,18 +83,14 @@ export async function recordVerdict(
         );
       }
     } else {
-      const cited = (await tx
+      const cited = await tx
         .select({
           id: evaluationExecutions.id,
           status: evaluationExecutions.status,
           studyId: evaluationExecutions.studyId,
         })
         .from(evaluationExecutions)
-        .where(inArray(evaluationExecutions.id, args.executionIds))) as Array<{
-        id: string;
-        status: string;
-        studyId: string;
-      }>;
+        .where(inArray(evaluationExecutions.id, args.executionIds));
 
       if (cited.length !== args.executionIds.length) {
         throw new MaisterError(

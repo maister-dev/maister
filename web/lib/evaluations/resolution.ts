@@ -1,7 +1,7 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type {
-  EvaluationMethodCompat,
   EvaluationPanelPolicy,
   EvaluationPanelRoleBinding,
 } from "@/lib/evaluations/types";
@@ -12,20 +12,14 @@ import pino from "pino";
 import { deriveMethodHealth } from "./methods-registry";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const {
-  evaluationProfiles,
+import {
   evaluationJudgePanels,
   evaluationMethodRevisions,
+  evaluationProfiles,
   evaluationProjectProfileOverrides,
   packageInstalls,
-} = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "evaluations-resolution",
@@ -236,12 +230,10 @@ export async function resolveEffectiveProfile(
 ): Promise<EffectiveProfileSnapshot> {
   const _db = db ?? getDb();
 
-  const profileRows = (await _db
+  const profileRows = await _db
     .select()
     .from(evaluationProfiles)
-    .where(eq(evaluationProfiles.id, args.profileId))) as Array<
-    Record<string, any>
-  >;
+    .where(eq(evaluationProfiles.id, args.profileId));
   const profile = profileRows[0];
 
   if (!profile) {
@@ -257,7 +249,7 @@ export async function resolveEffectiveProfile(
     );
   }
 
-  const methodRows = (await _db
+  const methodRows = await _db
     .select({
       id: evaluationMethodRevisions.id,
       qualifiedId: evaluationMethodRevisions.qualifiedId,
@@ -275,20 +267,7 @@ export async function resolveEffectiveProfile(
       packageInstalls,
       eq(evaluationMethodRevisions.packageInstallId, packageInstalls.id),
     )
-    .where(
-      eq(evaluationMethodRevisions.id, profile.methodRevisionId),
-    )) as Array<{
-    id: string;
-    qualifiedId: string;
-    activation: "enabled" | "disabled";
-    compat: EvaluationMethodCompat;
-    validationErrors: string[] | null;
-    definitionDigest: string;
-    promptDigest: string;
-    schemaDigest: string;
-    normalizedDefinition: Record<string, unknown>;
-    trustStatus: string;
-  }>;
+    .where(eq(evaluationMethodRevisions.id, profile.methodRevisionId));
   const method = methodRows[0];
 
   if (!method) {
@@ -307,12 +286,10 @@ export async function resolveEffectiveProfile(
     );
   }
 
-  const panelRows = (await _db
+  const panelRows = await _db
     .select()
     .from(evaluationJudgePanels)
-    .where(eq(evaluationJudgePanels.id, profile.panelId))) as Array<
-    Record<string, any>
-  >;
+    .where(eq(evaluationJudgePanels.id, profile.panelId));
   const panel = panelRows[0];
 
   if (!panel) {
@@ -339,7 +316,7 @@ export async function resolveEffectiveProfile(
   const hardLimits = asRecord(profile.hardLimits) as Record<string, Bound>;
   const applied: AppliedOverride[] = [];
 
-  const projectOverrideRows = (await _db
+  const projectOverrideRows = await _db
     .select({ overrides: evaluationProjectProfileOverrides.overrides })
     .from(evaluationProjectProfileOverrides)
     .where(
@@ -347,7 +324,7 @@ export async function resolveEffectiveProfile(
         eq(evaluationProjectProfileOverrides.projectId, args.projectId),
         eq(evaluationProjectProfileOverrides.profileId, args.profileId),
       ),
-    )) as Array<{ overrides: Record<string, unknown> }>;
+    );
 
   if (projectOverrideRows[0]) {
     applyOverrideTier(

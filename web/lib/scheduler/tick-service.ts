@@ -12,6 +12,7 @@ import {
   type SchedulerJobKind,
 } from "@/lib/scheduler/jobs";
 import { runEvaluationDispatchTick } from "@/lib/evaluations/dispatcher/tick";
+import { runEvaluationSuiteScanTick } from "@/lib/evaluations/suites";
 import { dispatchDueSchedules } from "@/lib/run-schedules/dispatch";
 import { dispatchDueScheduledLaunches } from "@/lib/scheduled-launches/dispatch";
 import { runAgentTickJob } from "@/lib/scheduler/handlers/agent-tick";
@@ -218,6 +219,18 @@ async function runClaimedJob(
           attemptId: job.attemptId,
           status: "Succeeded",
           summary: (await runEvaluationDispatchTick()) as unknown as Record<
+            string,
+            unknown
+          >,
+        });
+
+        return succeeded(job);
+      case "evaluation_suite_scan":
+        await recordJobAttemptResult({
+          jobId: job.id,
+          attemptId: job.attemptId,
+          status: "Succeeded",
+          summary: (await runEvaluationSuiteScanTick()) as unknown as Record<
             string,
             unknown
           >,

@@ -13,6 +13,7 @@ export const ALL_SCHEDULER_JOB_KINDS = [
   "repo_delivery_scan",
   "pr_state_scan",
   "evaluation_dispatch",
+  "evaluation_suite_scan",
 ] as const satisfies readonly SchedulerJobKind[];
 
 export const CREATABLE_SCHEDULER_JOB_KINDS = [
@@ -96,6 +97,11 @@ export const SCHEDULER_JOB_KIND_CATALOG: Record<
     filterable: true,
     systemManaged: true,
   },
+  evaluation_suite_scan: {
+    creatable: false,
+    filterable: true,
+    systemManaged: true,
+  },
 };
 
 const SEEDED_SINGLETON_IDS: Partial<Record<SchedulerJobKind, string>> = {
@@ -104,6 +110,7 @@ const SEEDED_SINGLETON_IDS: Partial<Record<SchedulerJobKind, string>> = {
   auto_promote: "auto_promote.default",
   domain_event_dispatch: "domain_event_dispatch.default",
   evaluation_dispatch: "evaluation_dispatch.dispatcher",
+  evaluation_suite_scan: "evaluation_suite_scan.dispatcher",
   run_schedule: "run_schedule.dispatcher",
   system_sweep: "system_sweep.default",
   webhook_delivery: "webhook_delivery.default",

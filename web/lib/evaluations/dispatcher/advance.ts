@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationExecutionStatus } from "@/lib/evaluations/types";
 
 import { and, eq } from "drizzle-orm";
@@ -9,14 +10,8 @@ import { appendEvaluationEvent } from "./events";
 import { assertTransition, eventTypeForTransition } from "./fsm";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import { evaluationExecutions } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationExecutions } = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-advance",
@@ -32,7 +27,7 @@ export interface AdvanceArgs {
   // Extra columns to write atomically with the terminal/step transition
   // (terminalReason, snapshot ids, seed) — never a separate post-transition
   // UPDATE (no write is sequenced after a terminal flip).
-  patch?: Record<string, unknown>;
+  patch?: Partial<typeof evaluationExecutions.$inferInsert>;
   // Bounded event payload (ids/status/counts only).
   payload?: Record<string, unknown>;
 }

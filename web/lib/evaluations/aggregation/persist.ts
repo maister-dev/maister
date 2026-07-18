@@ -2,22 +2,14 @@ import "server-only";
 
 import type { AggregateResult } from "./algorithms";
 import type { DisagreementResult } from "./disagreement";
+import type { Db } from "@/lib/evaluations/db";
 
 import { desc, eq } from "drizzle-orm";
 
 import { sha256, stableStringify } from "../digest";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/config.ts).
-const { evaluationAggregateResults } = schemaModule as unknown as Record<
-  string,
-  any
->;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
+import { evaluationAggregateResults } from "@/lib/db/schema";
 
 function splitAlgorithm(algorithm: string): { id: string; version: string } {
   const at = algorithm.lastIndexOf("@");
@@ -64,12 +56,12 @@ export async function persistAggregate(
     }),
   );
 
-  const [prev] = (await d
+  const [prev] = await d
     .select({ revision: evaluationAggregateResults.revision })
     .from(evaluationAggregateResults)
     .where(eq(evaluationAggregateResults.executionId, args.executionId))
     .orderBy(desc(evaluationAggregateResults.revision))
-    .limit(1)) as Array<{ revision: number }>;
+    .limit(1);
   const revision = (prev?.revision ?? 0) + 1;
 
   const [row] = await d

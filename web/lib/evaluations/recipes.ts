@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { RunnerCatalogEntry } from "@/lib/acp-runners/resolve";
+import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationControlledRecipeDefinition } from "@/lib/evaluations/recipe-schema";
 import type {
   PreflightFlowRevision,
@@ -13,18 +14,11 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import { evaluationRecipes, evaluationStudies } from "@/lib/db/schema";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { preflightControlledRecipe } from "@/lib/evaluations/preflight";
 import { parseControlledRecipe } from "@/lib/evaluations/recipe";
-
-// FIXME(any): schema-module bridge (matches lib/evaluations/studies.ts).
-const { evaluationRecipes, evaluationStudies } =
-  schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this injected database seam to its operations.
-type Db = any;
 
 const log = pino({
   name: "evaluations-recipes",
