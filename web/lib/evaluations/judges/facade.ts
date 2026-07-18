@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/evaluations/db";
+import type { EvaluationExecutionJudgePolicySnapshot } from "@/lib/evaluations/types";
 import type { TokenActor } from "@/lib/tokens/verify";
 
 import { and, asc, count, eq, gt, isNotNull } from "drizzle-orm";
@@ -48,7 +49,7 @@ export interface BoundAttempt {
   methodRevisionId: string | null;
   evidenceSnapshotId: string | null;
   randomizationSeed: string | null;
-  judgePolicySnapshot: Record<string, unknown> | null;
+  judgePolicySnapshot: EvaluationExecutionJudgePolicySnapshot | null;
 }
 
 // Resolve the token-bound judge attempt WITHOUT trusting any client id (D10). The
@@ -123,7 +124,10 @@ export async function resolveBoundAttempt(
     methodRevisionId: row.methodRevisionId,
     evidenceSnapshotId: row.evidenceSnapshotId,
     randomizationSeed: row.randomizationSeed,
-    judgePolicySnapshot: row.judgePolicySnapshot,
+    // The snapshot column is an opaque jsonb Record; startEvaluationExecution
+    // is the only writer and it stores exactly this typed shape.
+    judgePolicySnapshot:
+      row.judgePolicySnapshot as EvaluationExecutionJudgePolicySnapshot | null,
   };
 }
 
@@ -155,8 +159,9 @@ async function deriveBlinding(bound: BoundAttempt, d: Db): Promise<BlindMap> {
     // isNotNull() in the WHERE guarantees non-null; the filter is the type proof.
     .filter((id): id is string => id !== null)
     .sort();
-  const randomize =
-    (bound.judgePolicySnapshot?.randomizeOrder as boolean | undefined) ?? true;
+  // The writer (startEvaluationExecution) nests the resolved policy under
+  // `.policy` — the typed snapshot shape shared with start.ts (types.ts).
+  const randomize = bound.judgePolicySnapshot?.policy?.randomizeOrder ?? true;
   const seed = bound.randomizationSeed ?? bound.executionId;
 
   const { labels, order } = assignBlindLabels(participantIds, seed, {
@@ -195,8 +200,17 @@ export async function getEvaluatorContext(
   const blinding = await deriveBlinding(bound, d);
 
   let method: EvaluatorContext["method"] = null;
+  let promptDigest: string | null = null;
+  let schemaDigest: string | null = null;
 
   if (bound.methodRevisionId) {
+    // WHY a live revision read is acceptable HERE (and only here): the judge
+    // context (rubric names/prompt digests) is presentational guidance for the
+    // agent, not a validation/aggregation input — seal + worker read the
+    // start-time execution snapshots instead. A registry upsert mid-execution
+    // can therefore show a judge a slightly newer rubric wording (bounded
+    // staleness), but can never change what its submission is validated or
+    // aggregated against.
     const [rev] = await d
       .select({
         qualifiedId: evaluationMethodRevisions.qualifiedId,
@@ -208,6 +222,8 @@ export async function getEvaluatorContext(
       .where(eq(evaluationMethodRevisions.id, bound.methodRevisionId));
 
     if (rev) {
+      promptDigest = rev.promptDigest;
+      schemaDigest = rev.schemaDigest;
       const def = (rev.normalizedDefinition?.definition ?? {}) as {
         criteria?: Array<{
           id: string;
@@ -245,7 +261,7 @@ export async function getEvaluatorContext(
     method,
     candidates: blinding.order,
     evidence: { itemCount, readMaxBytes: 65_536 },
-    digests: { prompt: null, schema: null },
+    digests: { prompt: promptDigest, schema: schemaDigest },
   };
 }
 

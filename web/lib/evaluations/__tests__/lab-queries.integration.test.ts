@@ -227,4 +227,35 @@ describe("lab-queries", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0].id).toBe(flowRunId);
   });
+
+  it("surfaces the NEWEST aggregate revision on the scoreboard (append-only adjudication wins)", async () => {
+    // A review adjudication appends revision 2 for the same execution — the
+    // read model must reflect it, never the original revision-1 values.
+    await db.insert(schema.evaluationAggregateResults).values({
+      executionId: completedExecId,
+      algorithmId: "weighted_mean",
+      algorithmVersion: "1",
+      inputs: {},
+      calculations: {},
+      displayValues: {
+        displayTotal: 1.1,
+        perCriterion: [{ criterionId: "correctness", displayValue: 1.5 }],
+      },
+      dispersion: { level: "high" },
+      warnings: ["adjudicated"],
+      digest: "d2",
+      revision: 2,
+    });
+
+    const executions = await listStudyExecutions(studyId, db);
+    const completed = executions.find((e) => e.id === completedExecId);
+
+    // Revision 2's values, NOT revision 1's 4.2/4.5 — an asc-ordered (or
+    // unordered) revision pick would fail here.
+    expect(completed?.aggregate?.displayTotal).toBe(1.1);
+    expect(completed?.aggregate?.perCriterion).toEqual([
+      { criterionId: "correctness", displayValue: 1.5 },
+    ]);
+    expect(completed?.aggregate?.warnings).toEqual(["adjudicated"]);
+  });
 });

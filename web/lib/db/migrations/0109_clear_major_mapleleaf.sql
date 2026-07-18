@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS "evaluation_aggregate_results" (
 	"warnings" jsonb,
 	"digest" text NOT NULL,
 	"revision" integer DEFAULT 1 NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "evaluation_aggregate_results_execution_revision_uq" UNIQUE("execution_id","revision")
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "evaluation_criterion_results" (
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS "evaluation_criterion_results" (
 	"evidence_refs" jsonb,
 	"objective_refs" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "evaluation_criterion_results_attempt_criterion_uq" UNIQUE NULLS NOT DISTINCT("attempt_id","criterion_id","participant_id"),
 	CONSTRAINT "evaluation_criterion_results_state_check" CHECK ("evaluation_criterion_results"."state" in ('scored', 'insufficient_evidence', 'not_applicable')),
 	CONSTRAINT "evaluation_criterion_results_score_state_check" CHECK (("evaluation_criterion_results"."state" = 'scored' and "evaluation_criterion_results"."score" is not null) or ("evaluation_criterion_results"."state" <> 'scored' and "evaluation_criterion_results"."score" is null))
 );

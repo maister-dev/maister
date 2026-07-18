@@ -84,26 +84,36 @@ export function redactEvidenceText(
   );
 
   // 3. Secret-shaped tokens. Conservative, high-signal patterns only so real diff
-  //    content is not mangled.
-  const secretPatterns: Array<{ kind: string; re: RegExp }> = [
+  //    content is not mangled. Group-less patterns replace with the bare marker —
+  //    on a pattern without a capture group, a positional replacer arg is the
+  //    numeric match OFFSET, which must never be baked into sealed evidence.
+  const bareSecretPatterns: Array<{ kind: string; re: RegExp }> = [
     { kind: "aws_access_key", re: /\bAKIA[0-9A-Z]{16}\b/g },
     { kind: "openai_key", re: /\bsk-[A-Za-z0-9]{20,}\b/g },
     { kind: "slack_token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
     { kind: "github_token", re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g },
-    {
-      kind: "assigned_secret",
-      re: /((?:api[_-]?key|secret|token|password|passwd|authorization|bearer)["'\s:=]+)([A-Za-z0-9._\-]{16,})/gi,
-    },
   ];
 
-  for (const { kind, re } of secretPatterns) {
-    out = out.replace(re, (_full: string, prefix?: string) => {
+  for (const { kind, re } of bareSecretPatterns) {
+    out = out.replace(re, () => {
       redactions += 1;
       kinds.add(kind);
 
-      return prefix ? `${prefix}[REDACTED_SECRET]` : "[REDACTED_SECRET]";
+      return "[REDACTED_SECRET]";
     });
   }
+
+  // The one pattern WITH a capture group: the assignment prefix is preserved so
+  // the redacted evidence still shows WHAT was assigned.
+  out = out.replace(
+    /((?:api[_-]?key|secret|token|password|passwd|authorization|bearer)["'\s:=]+)([A-Za-z0-9._\-]{16,})/gi,
+    (_full: string, prefix: string) => {
+      redactions += 1;
+      kinds.add("assigned_secret");
+
+      return `${prefix}[REDACTED_SECRET]`;
+    },
+  );
 
   return { text: out, redactions, kinds: [...kinds].sort() };
 }

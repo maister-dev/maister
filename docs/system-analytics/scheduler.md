@@ -39,7 +39,8 @@ without turning recovery sweeps into live-path polling.
 - **GC compatibility route** (`GET`/`POST /api/cron/gc`, Implemented M19,
   compatibility extension Implemented M24) — keeps current response semantics and
   runs the GC bundle (workspace + revision GC + capabilities cleanup +
-  ephemeral-agent cleanup + terminal/missing-run agent-materialization retry)
+  ephemeral-agent cleanup + terminal/missing-run agent-materialization retry +
+  the ADR-142 evaluation-evidence sweep)
   only. It
   does NOT run the keepalive or reconcile sweeps, so the GC cron never transitions
   runs to `Crashed`; that live composition belongs to the `system_sweep` job kind.
@@ -99,7 +100,8 @@ without turning recovery sweeps into live-path polling.
   `console_ping` (`host`, optional `timeoutMs`). `flow_run` targets use a
   required task id plus optional `runnerId`, `baseBranch`, and `targetBranch`.
   `system_sweep`, `run_schedule`, `webhook_delivery`,
-  `domain_event_dispatch`, `agent_tick`, and `auto_launch_triaged` use `{}`
+  `domain_event_dispatch`, `agent_tick`, `auto_launch_triaged`,
+  `evaluation_dispatch`, and `evaluation_suite_scan` use `{}`
   in the seeded rows.
 - **`repo_delivery_scan` job kind** (**Implemented, ADR-134**) — one
   system-managed job per non-archived project, targeted at `{ projectId }` and
@@ -144,6 +146,42 @@ without turning recovery sweeps into live-path polling.
     special-case); and i18n `adminScheduler.kind.pr_state_scan` (EN + RU). The
     admin UI is data-driven (no hardcoded kind list). Handler:
     `web/lib/scheduler/handlers/pr-state-scan.ts`.
+- **`evaluation_dispatch` job kind** (**Implemented, ADR-142** — Evaluation Lab
+  T3.3) — the ONE seeded singleton evaluation dispatcher
+  (`evaluation_dispatch.dispatcher` job, 60s cadence, budget
+  `evaluationDispatch: 1`, `max_failures` 3, `systemManaged`, not
+  user-creatable). Its handler `runEvaluationDispatchTick`
+  (`web/lib/evaluations/dispatcher/tick.ts`) each tick: (1) reaps timed-out
+  judge attempts (`running` past the panel-policy `timeoutMs`, anchored at
+  `running_at`); (2) drives up to 20 queued `evaluation_executions` through the
+  intent-first CAS FSM `queued→capturing→checking→judging` — evidence capture,
+  objective checks over the live fact source, then idempotent judge-panel
+  launch (a lost `queued→capturing` CAS means another tick owns the row and is
+  left untouched); (3) re-checks up to 50 `judging` panels for
+  quorum/all-terminal advance (recovery for a judge submit that never fired
+  completion and for reaped timeouts). A capture/check step failure poisons the
+  execution to terminal `failed` and, within the method's `maxRetries` budget,
+  spawns a `retry_of` successor; a judging-phase transient is retried next tick,
+  never terminalized. An interactive execution start additionally fires an
+  immediate in-process kick (`kickEvaluationDispatch`, fire-and-forget) so the
+  FSM does not wait for the 60s cron — the durable singleton tick remains the
+  backstop.
+- **`evaluation_suite_scan` job kind** (**Implemented, ADR-147** — Evaluation
+  Lab T7.2) — the ONE seeded singleton suite scanner
+  (`evaluation_suite_scan.dispatcher` job, 60s cadence, budget
+  `evaluationSuiteScan: 1`, `max_failures` 3, `systemManaged`, not
+  user-creatable). Its handler `runEvaluationSuiteScanTick`
+  (`web/lib/evaluations/suites.ts`) scans every enabled `evaluation_suites`
+  row via `runEvaluationSuiteScan`: a capped per-tick scan that generates one
+  one-task Study per due definition task, idempotent per the
+  `(suite_id, task_id, scan_key)` UNIQUE dedup (already-linked tasks are
+  filtered BEFORE the cap so tasks past the cap are never starved by
+  re-selection), poison-safe per task AND per suite (a failing task/suite is
+  counted and skipped, never aborting the tick). A `regression` suite no-ops
+  while its watched trigger revision equals `last_trigger_revision`; the
+  default tick passes no `resolveTrigger`, so a regression suite scans once per
+  definition version until a package-catalog resolver is threaded through.
+  Suites ride the M24 clock — there is NO second scheduler.
 
 ## State machine
 
@@ -205,6 +243,7 @@ flowchart TD
     Sweep --> CostReconcile[reconcileTerminalCostRollups]
     Sweep --> Gc[workspace + revision GC]
     Sweep --> CapCleanup[runCapabilitiesCleanupSweep]
+    Sweep --> EvalEvidence[sweepEvaluationEvidence — ADR-142 orphan-capture + two-stage delete]
     Sweep --> BrainDecay[runBrainDecaySweep — ADR-122, hourly self-throttle]
     Sweep --> BrainReindex[runBrainReindexSweep — ADR-122 reindex worker]
     Keepalive --> Summary[aggregate result]
@@ -212,6 +251,7 @@ flowchart TD
     CostReconcile --> Summary
     Gc --> Summary
     CapCleanup --> Summary
+    EvalEvidence --> Summary
     BrainDecay --> Summary
     BrainReindex --> Summary
 ```
@@ -279,7 +319,9 @@ flowchart TD
   (60-second cadence; Implemented, ADR-086), `agent_tick.dispatcher`
   (60-second cadence; M34 — Implemented, ADR-089), and
   `auto_launch_triaged.default` (60-second cadence; Implemented, ADR-112), and
-  `auto_promote.default` (60-second cadence; Implemented, ADR-126).
+  `auto_promote.default` (60-second cadence; Implemented, ADR-126), and
+  `evaluation_dispatch.dispatcher` + `evaluation_suite_scan.dispatcher`
+  (60-second cadence each; Implemented, ADR-142/ADR-147).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
   budget of 1 (singleton dispatcher; M34 — Implemented — its former
@@ -291,7 +333,9 @@ flowchart TD
   is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-077);
   `domain_event_dispatch` is a hardcoded budget of 1 (singleton dispatcher;
   Implemented, ADR-086); `auto_launch_triaged` is a hardcoded budget of 1
-  (singleton launcher; Implemented, ADR-112).
+  (singleton launcher; Implemented, ADR-112); `evaluation_dispatch` and
+  `evaluation_suite_scan` are each a hardcoded budget of 1 (singleton
+  dispatchers; Implemented, ADR-142/ADR-147).
 - `agent_tick` MUST be the seeded `agent_tick.dispatcher` singleton only —
   `createSchedulerJobSchema` rejects the kind (M34 — Implemented; the M24
   "stub without a launcher records `Skipped`/`PRECONDITION`" seam is
@@ -311,7 +355,8 @@ flowchart TD
 - The fallback timer MUST be off unless `MAISTER_SCHEDULER_TIMER_ENABLED=true`.
 - `/api/cron/gc` MUST keep its existing auth and response contract and run the
   shared GC bundle (workspace + revision GC + capabilities cleanup +
-  ephemeral-agent cleanup + terminal/missing-run agent-materialization retry)
+  ephemeral-agent cleanup + terminal/missing-run agent-materialization retry +
+  the ADR-142 evaluation-evidence sweep)
   only; it MUST
   NOT run the keepalive or reconcile sweeps that `system_sweep` performs.
 - `/admin/scheduler` MUST treat `scheduler_jobs` and `run_schedules` as
@@ -331,11 +376,13 @@ flowchart TD
 - Scheduler job kind lists MUST share one catalog across parsing, filtering,
   creation, and editing. All DB-supported kinds are visible/filterable:
   `system_sweep`, `command`, `agent_tick`, `flow_run`, `run_schedule`,
-  `webhook_delivery`, `domain_event_dispatch`, and `auto_launch_triaged`
-  (the last Implemented, ADR-112).
+  `webhook_delivery`, `domain_event_dispatch`, `auto_launch_triaged`,
+  `auto_promote`, `repo_delivery_scan`, `pr_state_scan`,
+  `evaluation_dispatch`, and `evaluation_suite_scan`.
 - Custom job creation MUST match the admin API schema. The seeded singleton
-  kinds `agent_tick`, `run_schedule`, `domain_event_dispatch`, and
-  `auto_launch_triaged` are not creatable as duplicates. `webhook_delivery`
+  kinds `agent_tick`, `run_schedule`, `domain_event_dispatch`,
+  `auto_launch_triaged`, `auto_promote`, `evaluation_dispatch`, and
+  `evaluation_suite_scan` are not creatable as duplicates. `webhook_delivery`
   policy MUST stay consistent across schema, catalog, docs, and UI.
 - The admin editor MUST build `scheduler_jobs.target` from typed fields.
   Raw JSON MUST NOT be the primary write UI; a read-only advanced preview is
@@ -410,6 +457,11 @@ flowchart TD
 - PR lifecycle tracking (Implemented, ADR-140):
   [ADR-140](../decisions.md#adr-140-pr-lifecycle-tracking) — the per-project
   `pr_state_scan` jobKind.
+- Evaluation Lab dispatch + suites (Implemented, ADR-142/ADR-147): the
+  `evaluation_dispatch` and `evaluation_suite_scan` singleton jobKinds —
+  handlers `web/lib/evaluations/dispatcher/tick.ts` and
+  `web/lib/evaluations/suites.ts`; DB:
+  [`../db/evaluations-domain.md`](../db/evaluations-domain.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,
   `web/lib/runs/keepalive-sweeper.ts`,

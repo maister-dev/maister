@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/evaluations/db";
 import type { TokenActor } from "@/lib/tokens/verify";
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { resolveBoundAttempt, type BoundAttempt } from "./facade";
@@ -42,9 +42,27 @@ export type SealOutcome =
   | { valid: true; attemptId: string; panelAdvanced: boolean }
   | { valid: false; attemptId: string; violations: string[] };
 
-// Load the method's criterion specs (scale bounds + required policy) from the
-// snapshotted method revision — the SAME immutable definition the panel was
-// launched against, never a live re-read that could drift.
+// Criterion specs (scale bounds + required policy) for seal validation. The
+// primary source is the execution's start-time `judgePolicySnapshot.criteria` —
+// frozen when the execution was created, immune to the methods-registry
+// overwriting `normalizedDefinition` in place mid-execution. The method-revision
+// read below is ONLY the legacy fallback for executions that predate the
+// snapshot (it IS a live read and can drift — acceptable only for those rows).
+function specsFromSnapshot(bound: BoundAttempt): JudgeCriterionSpec[] | null {
+  const criteria = bound.judgePolicySnapshot?.criteria;
+
+  if (!criteria?.length) return null;
+
+  return criteria.map((c) => ({
+    id: c.id,
+    scaleMin: c.scaleMin,
+    scaleMax: c.scaleMax,
+    // A non-optional criterion is REQUIRED — an entirely-absent required
+    // criterion is an invalid attempt, never a silent zero (D12).
+    required: !c.optional,
+  }));
+}
+
 async function loadCriterionSpecs(
   methodRevisionId: string,
   d: Db,
@@ -97,14 +115,17 @@ export async function submitBoundJudgeResult(
   const d = db ?? getDb();
   const bound = await resolveBoundAttempt(actor, d);
 
-  if (!bound.methodRevisionId) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "bound execution has no method revision to validate against",
-    );
-  }
+  let specs = specsFromSnapshot(bound);
 
-  const specs = await loadCriterionSpecs(bound.methodRevisionId, d);
+  if (!specs) {
+    if (!bound.methodRevisionId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "bound execution has no method revision to validate against",
+      );
+    }
+    specs = await loadCriterionSpecs(bound.methodRevisionId, d);
+  }
 
   const submitted: Record<string, SubmittedCriterion> = {};
 
@@ -122,8 +143,21 @@ export async function submitBoundJudgeResult(
   const validation = validateJudgeResult(submitted, specs);
   const resultDigest = sha256(stableStringify(submission));
 
+  // Terminal seals re-assert liveness INSIDE the UPDATE (CAS): a reaper-flipped
+  // timed_out/cancelled attempt or a concurrent double submit must never be
+  // silently overwritten to a different terminal state. 0 rows → typed CONFLICT.
+  const liveStatusCas = and(
+    eq(evaluationJudgeAttempts.id, bound.attemptId),
+    inArray(evaluationJudgeAttempts.status, ["queued", "running"]),
+  );
+  const sealConflict = () =>
+    new MaisterError(
+      "CONFLICT",
+      `judge attempt ${bound.attemptId} is no longer live — seal refused`,
+    );
+
   if (!validation.valid) {
-    await d
+    const flipped = await d
       .update(evaluationJudgeAttempts)
       .set({
         status: "invalid",
@@ -132,7 +166,10 @@ export async function submitBoundJudgeResult(
         resultDigest,
         terminalAt: new Date(),
       })
-      .where(eq(evaluationJudgeAttempts.id, bound.attemptId));
+      .where(liveStatusCas)
+      .returning({ id: evaluationJudgeAttempts.id });
+
+    if (!flipped.length) throw sealConflict();
 
     await revokeAgentRunToken(actor.tokenId, d);
 
@@ -149,6 +186,23 @@ export async function submitBoundJudgeResult(
   }
 
   await d.transaction(async (tx: Db) => {
+    // CAS FIRST: the winner takes the row lock and terminalizes; a concurrent
+    // racer blocks here, then sees a non-live status, gets 0 rows, and rolls
+    // back BEFORE writing any criterion row. The (attempt, criterion,
+    // participant) unique index is the belt under this suspenders.
+    const claimed = await tx
+      .update(evaluationJudgeAttempts)
+      .set({
+        status: "completed",
+        sealedResult: submission as unknown as Record<string, unknown>,
+        resultDigest,
+        terminalAt: new Date(),
+      })
+      .where(liveStatusCas)
+      .returning({ id: evaluationJudgeAttempts.id });
+
+    if (!claimed.length) throw sealConflict();
+
     for (const c of validation.criteria) {
       await tx.insert(evaluationCriterionResults).values({
         attemptId: bound.attemptId,
@@ -164,16 +218,6 @@ export async function submitBoundJudgeResult(
         objectiveRefs: c.objectiveRefs,
       });
     }
-
-    await tx
-      .update(evaluationJudgeAttempts)
-      .set({
-        status: "completed",
-        sealedResult: submission as unknown as Record<string, unknown>,
-        resultDigest,
-        terminalAt: new Date(),
-      })
-      .where(eq(evaluationJudgeAttempts.id, bound.attemptId));
   });
 
   await revokeAgentRunToken(actor.tokenId, d);

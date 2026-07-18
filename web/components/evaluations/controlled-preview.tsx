@@ -1,5 +1,6 @@
 "use client";
 
+import type { ExecutionPreset } from "@/lib/runs/execution-policy";
 import type { ReactElement } from "react";
 
 import {
@@ -39,9 +40,7 @@ export interface MaterializationPreviewView {
     mcpsAdded: number;
     subagentsAdded: number;
   };
-  policyPreset: string;
-  // The always-on evaluation promotion hold (D15) — never removable by a recipe.
-  promotionHeld: true;
+  policyPreset: ExecutionPreset;
   evidenceMethodQualifiedId: string;
   evidenceCoverage: string[];
   estimatedJudgeAttempts: number;
@@ -56,8 +55,8 @@ function Row({
 }): ReactElement {
   return (
     <div className="flex items-center justify-between gap-3 py-1 text-sm">
-      <span className="text-forest-text-secondary">{label}</span>
-      <span className="text-forest-text-primary">{children}</span>
+      <span className="text-mute">{label}</span>
+      <span className="text-ink">{children}</span>
     </div>
   );
 }
@@ -74,7 +73,7 @@ export function PreflightVerdict({
   if (verdict.ok && verdict.warningCodes.length === 0) {
     return (
       <div
-        className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300"
+        className="flex items-center gap-2 rounded-md border border-good bg-good-soft px-3 py-2 text-sm text-good"
         role="status"
       >
         <CheckCircleIcon aria-hidden className="h-5 w-5" />
@@ -86,7 +85,7 @@ export function PreflightVerdict({
   return (
     <div className="flex flex-col gap-2" role="status">
       {verdict.ok ? (
-        <div className="flex items-center gap-2 text-sm text-amber-300">
+        <div className="flex items-center gap-2 text-sm text-attention">
           <ExclamationTriangleIcon aria-hidden className="h-5 w-5" />
           <span>{t("preflight.okWithWarnings")}</span>
         </div>
@@ -98,7 +97,7 @@ export function PreflightVerdict({
           {verdict.refusalCodes.map((code) => (
             <li
               key={code}
-              className="flex items-start gap-2 text-sm text-rose-300"
+              className="flex items-start gap-2 text-sm text-danger"
             >
               <NoSymbolIcon aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{t(`preflight.refusal.${code}`)}</span>
@@ -114,7 +113,7 @@ export function PreflightVerdict({
           {verdict.warningCodes.map((code) => (
             <li
               key={code}
-              className="flex items-start gap-2 text-sm text-amber-300"
+              className="flex items-start gap-2 text-sm text-attention"
             >
               <ExclamationTriangleIcon
                 aria-hidden
@@ -145,9 +144,9 @@ export function MaterializationPreview({
     preview.overlay.subagentsAdded;
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-forest-border p-3">
+    <div className="flex flex-col gap-3 rounded-md border border-line p-3">
       <div className="flex flex-col gap-1">
-        <h4 className="text-sm font-medium text-forest-text-primary">
+        <h4 className="text-sm font-medium text-ink">
           {t("preview.slotsHeading")}
         </h4>
         <ul className="flex flex-col gap-1">
@@ -156,17 +155,13 @@ export function MaterializationPreview({
               key={slot.slotLabel}
               className="flex items-center justify-between gap-2 text-sm"
             >
-              <span className="text-forest-text-secondary">
-                {slot.slotLabel}
-              </span>
-              <span className="flex items-center gap-2 text-forest-text-primary">
+              <span className="text-mute">{slot.slotLabel}</span>
+              <span className="flex items-center gap-2 text-ink">
                 <span>{slot.model}</span>
-                <span className="text-forest-text-secondary">
-                  ({slot.capabilityAgent})
-                </span>
+                <span className="text-mute">({slot.capabilityAgent})</span>
                 {slot.softMismatch ? (
                   <span
-                    className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-300"
+                    className="rounded bg-ivory px-1.5 py-0.5 text-xs text-attention"
                     title={t("preview.softMismatch")}
                   >
                     {t("preview.softMismatchBadge")}
@@ -178,12 +173,14 @@ export function MaterializationPreview({
         </ul>
       </div>
 
-      <div className="border-t border-forest-border pt-2">
+      <div className="border-t border-line pt-2">
         <Row label={t("preview.policy")}>
           {t(`policy.${preview.policyPreset}`)}
         </Row>
+        {/* The always-on evaluation promotion hold (D15) — never removable by a
+            recipe, so the row is constant rather than data-driven. */}
         <Row label={t("preview.promotion")}>
-          <span className="flex items-center gap-1 text-amber-300">
+          <span className="flex items-center gap-1 text-attention">
             <NoSymbolIcon aria-hidden className="h-4 w-4" />
             {t("preview.promotionHeld")}
           </span>

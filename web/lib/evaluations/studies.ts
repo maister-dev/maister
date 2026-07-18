@@ -309,6 +309,10 @@ export async function addObservedParticipants(
 
 // Hard delete only when unreferenced by a sealed evidence item; otherwise
 // tombstone so citing evidence keeps a queryable participant (ADR-142 D3).
+// LAUNCHED participants are the exception: they may ONLY be tombstoned, cited
+// or not — a hard delete would erase the launched-lineage exclusion
+// (`isLaunchedLineageRun` reads the row, tombstoned included) and make the run
+// auto-promotable/auto-deliverable mid-study (ADR-146 D15).
 export async function removeParticipant(
   args: { studyId: string; participantId: string },
   db?: Db,
@@ -317,7 +321,10 @@ export async function removeParticipant(
 
   return d.transaction(async (tx: Db) => {
     const [participant] = await tx
-      .select({ id: evaluationParticipants.id })
+      .select({
+        id: evaluationParticipants.id,
+        sourceType: evaluationParticipants.sourceType,
+      })
       .from(evaluationParticipants)
       .where(
         and(
@@ -331,6 +338,21 @@ export async function removeParticipant(
         "PRECONDITION",
         `participant not found: ${args.participantId}`,
       );
+    }
+
+    if (participant.sourceType === "launched") {
+      // Keep the FIRST tombstone timestamp on a repeat remove (idempotent).
+      await tx
+        .update(evaluationParticipants)
+        .set({ removedAt: new Date() })
+        .where(
+          and(
+            eq(evaluationParticipants.id, args.participantId),
+            isNull(evaluationParticipants.removedAt),
+          ),
+        );
+
+      return { tombstoned: true };
     }
 
     const [referenced] = await tx

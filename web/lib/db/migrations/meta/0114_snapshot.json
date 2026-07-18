@@ -2876,7 +2876,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "evaluation_aggregate_results_execution_revision_uq": {
+          "name": "evaluation_aggregate_results_execution_revision_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "execution_id",
+            "revision"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -2999,7 +3008,17 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "evaluation_criterion_results_attempt_criterion_uq": {
+          "name": "evaluation_criterion_results_attempt_criterion_uq",
+          "nullsNotDistinct": true,
+          "columns": [
+            "attempt_id",
+            "criterion_id",
+            "participant_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "evaluation_criterion_results_state_check": {

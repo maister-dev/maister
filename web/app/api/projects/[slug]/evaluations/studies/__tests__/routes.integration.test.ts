@@ -60,7 +60,13 @@ function asViewer(): void {
 
 function req(
   path: string,
-  init?: { method?: string; body?: unknown; ifMatch?: string },
+  init?: {
+    method?: string;
+    body?: unknown;
+    // Raw (possibly malformed) body bytes — bypasses JSON.stringify.
+    rawBody?: string;
+    ifMatch?: string;
+  },
 ): NextRequest {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -68,10 +74,17 @@ function req(
 
   if (init?.ifMatch) headers["if-match"] = init.ifMatch;
 
+  const body =
+    init?.rawBody !== undefined
+      ? init.rawBody
+      : init?.body === undefined
+        ? undefined
+        : JSON.stringify(init.body);
+
   return new NextRequest(`http://localhost${path}`, {
     method: init?.method ?? "GET",
     headers,
-    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+    body,
   });
 }
 
@@ -350,6 +363,118 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
     expect((await listed.json()).verdicts.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("surfaces a superseding verdict as current: newest-first, supersede pointer intact, history append-only", async () => {
+    asAdmin();
+
+    // The zero-citation test above decided the study with one standing
+    // verdict — the current head is the only verdict nothing supersedes.
+    const before = await verdictsRoute.GET(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/verdicts`),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+    const priorVerdicts = (
+      (await before.json()) as {
+        verdicts: Array<{ id: string; supersedesId: string | null }>;
+      }
+    ).verdicts;
+    const superseded = new Set(
+      priorVerdicts.map((v) => v.supersedesId).filter(Boolean),
+    );
+    const heads = priorVerdicts.filter((v) => !superseded.has(v.id));
+
+    expect(heads).toHaveLength(1);
+    const supersededId = heads[0].id;
+
+    // A decided study refuses a NEW verdict that does not supersede the
+    // standing one (mere recency can never win).
+    const noSupersede = await verdictsRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/verdicts`, {
+        method: "POST",
+        body: {
+          outcome: "inconclusive",
+          participantIds: [],
+          executionIds: [],
+          noEvaluationEvidenceAck: true,
+          rationale: "not a correction",
+        },
+      }),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+
+    expect(noSupersede.status).toBe(422);
+
+    // A correction without a rationale is refused (422 CONFIG).
+    const noRationale = await verdictsRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/verdicts`, {
+        method: "POST",
+        body: {
+          outcome: "tie",
+          participantIds: [],
+          executionIds: [],
+          noEvaluationEvidenceAck: true,
+          supersedesId: supersededId,
+        },
+      }),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+
+    expect(noRationale.status).toBe(422);
+
+    const second = await verdictsRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/verdicts`, {
+        method: "POST",
+        body: {
+          outcome: "tie",
+          participantIds: [],
+          executionIds: [],
+          noEvaluationEvidenceAck: true,
+          supersedesId: supersededId,
+          rationale: "corrected after re-reading the evidence",
+        },
+      }),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+
+    expect(second.status).toBe(201);
+    const supersedingId = (await second.json()).id as string;
+
+    const listed = await verdictsRoute.GET(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/verdicts`),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+    const { verdicts } = (await listed.json()) as {
+      verdicts: Array<{ id: string; supersedesId: string | null }>;
+    };
+
+    // Newest-first: the SUPERSEDING verdict is the current head — an
+    // asc-ordered read would surface the very first verdict instead.
+    expect(verdicts[0].id).toBe(supersedingId);
+    expect(verdicts[0].supersedesId).toBe(supersededId);
+
+    // Append-only: the superseded verdict stays in the history, and nothing
+    // supersedes the current head.
+    expect(verdicts.map((v) => v.id)).toContain(supersededId);
+    expect(verdicts.some((v) => v.supersedesId === supersedingId)).toBe(false);
+
+    // No forks: superseding the SAME verdict a second time is refused (409).
+    const fork = await verdictsRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/verdicts`, {
+        method: "POST",
+        body: {
+          outcome: "inconclusive",
+          participantIds: [],
+          executionIds: [],
+          noEvaluationEvidenceAck: true,
+          supersedesId: supersededId,
+          rationale: "competing correction",
+        },
+      }),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+
+    expect(fork.status).toBe(409);
+  });
+
   it("guards the execution-start route (viewer 403, cross-project 404)", async () => {
     // Viewer lacks launchEvaluationRuns (member-min) → 403 before any start.
     asViewer();
@@ -620,6 +745,107 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
       ],
     ];
 
+    for (const [label, call] of calls) {
+      const res = await call();
+
+      expect(res.status, label).toBe(401);
+      expect(((await res.json()) as { code: string }).code, label).toBe(
+        "UNAUTHENTICATED",
+      );
+    }
+  });
+
+  it("returns 401 (never 422/404) for an unauthenticated request with a MALFORMED body — auth precedes body parse", async () => {
+    // beforeEach left the session unset. If a handler read/parsed the body
+    // before authenticating, a malformed body would leak a 422 to an anonymous
+    // caller; the auth-first contract pins the 401.
+    const rawBody = "{definitely not json";
+    const anyId = randomUUID();
+    const p = { slug, studyId: anyId };
+
+    const calls: Array<[string, () => Promise<Response>]> = [
+      [
+        "studies POST",
+        () =>
+          studiesRoute.POST(
+            req(`/api/projects/${slug}/evaluations/studies`, {
+              method: "POST",
+              rawBody,
+            }),
+            { params: Promise.resolve({ slug }) },
+          ),
+      ],
+      [
+        "study PATCH",
+        () =>
+          studyRoute.PATCH(
+            req(`/api/projects/${slug}/evaluations/studies/${anyId}`, {
+              method: "PATCH",
+              ifMatch: "1",
+              rawBody,
+            }),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "participants POST",
+        () =>
+          participantsRoute.POST(
+            req(
+              `/api/projects/${slug}/evaluations/studies/${anyId}/participants`,
+              { method: "POST", rawBody },
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "verdicts POST",
+        () =>
+          verdictsRoute.POST(
+            req(`/api/projects/${slug}/evaluations/studies/${anyId}/verdicts`, {
+              method: "POST",
+              rawBody,
+            }),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "start POST",
+        () =>
+          startRoute.POST(
+            req(
+              `/api/projects/${slug}/evaluations/studies/${anyId}/evaluations`,
+              { method: "POST", rawBody },
+            ),
+            { params: Promise.resolve(p) },
+          ),
+      ],
+      [
+        "review PATCH",
+        () =>
+          reviewRoute.PATCH(
+            req(`/api/projects/${slug}/evaluations/reviews/${anyId}`, {
+              method: "PATCH",
+              ifMatch: "1",
+              rawBody,
+            }),
+            { params: Promise.resolve({ slug, reviewId: anyId }) },
+          ),
+      ],
+      [
+        "override PUT",
+        () =>
+          overrideRoute.PUT(
+            req(`/api/projects/${slug}/evaluation-profiles/${anyId}/override`, {
+              method: "PUT",
+              rawBody,
+            }),
+            { params: Promise.resolve({ slug, profileId: anyId }) },
+          ),
+      ],
+    ];
+
+    // Sequential on purpose (see the auth-first sweep above).
     for (const [label, call] of calls) {
       const res = await call();
 

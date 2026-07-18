@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PromotionHold } from "@/lib/auto-promotion/types";
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -11,12 +11,14 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { LIVE_EVALUATION_STUDY_STATUSES } from "@/lib/evaluations/membership";
 
 // ADR-126 §4.8: pause/resume a run's auto-promotion. Pure DB (no downstream
 // side-effect) — authz is the same project action that could promote manually
 // (D-9). No ext/MCP mirror in v1.
 
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { evaluationParticipants, evaluationStudies, runs } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-run-promotion-hold",
@@ -79,6 +81,48 @@ async function loadRunProjectId(db: any, runId: string): Promise<string> {
   return rows[0].projectId as string;
 }
 
+// ADR-146 D15: an `evaluation_study`-sourced hold is owned by the study, not the
+// user — refuse to overwrite (PUT would downgrade it to `user`, making a later
+// DELETE trivially clear it) or clear it while the owning study is still live.
+// The study is derived through the launched participant row (never trusted from
+// the hold payload); once every owning study is decided/archived the hold clears
+// like any other. Guards BOTH mutation verbs at their shared choke point.
+async function assertEvaluationHoldMutable(
+  db: any,
+  runId: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ promotionHold: runs.promotionHold })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const hold = row?.promotionHold as PromotionHold | null;
+
+  if (hold?.source !== "evaluation_study") return;
+
+  const [liveParticipant] = await db
+    .select({ studyId: evaluationParticipants.studyId })
+    .from(evaluationParticipants)
+    .innerJoin(
+      evaluationStudies,
+      eq(evaluationStudies.id, evaluationParticipants.studyId),
+    )
+    .where(
+      and(
+        eq(evaluationParticipants.runId, runId),
+        eq(evaluationParticipants.sourceType, "launched"),
+        inArray(evaluationStudies.status, [...LIVE_EVALUATION_STUDY_STATUSES]),
+      ),
+    )
+    .limit(1);
+
+  if (liveParticipant) {
+    throw new MaisterError(
+      "CONFLICT",
+      `promotion hold is owned by live evaluation study ${liveParticipant.studyId} — decide or archive the study before releasing the run`,
+    );
+  }
+}
+
 export async function PUT(
   req: NextRequest,
   { params }: RouteParams,
@@ -106,6 +150,8 @@ export async function PUT(
         `invalid PUT body: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+
+    await assertEvaluationHoldMutable(db, runId);
 
     // Idempotent: a re-PUT overwrites the reason but keeps source:'user'.
     const hold: PromotionHold = {
@@ -141,7 +187,10 @@ export async function DELETE(
 
     await requireProjectAction(projectId, "promoteRun");
 
-    // Clears a hold of ANY source; the run re-enters normal evaluation.
+    // Clears a user/system/launch hold; an `evaluation_study` hold is refused
+    // above while its owning study is live (ADR-146 D15).
+    await assertEvaluationHoldMutable(db, runId);
+
     await db
       .update(runs)
       .set({ promotionHold: null })

@@ -2,9 +2,9 @@ import "server-only";
 
 import type { Db } from "@/lib/evaluations/db";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
-import { evaluationParticipants } from "@/lib/db/schema";
+import { evaluationParticipants, evaluationStudies } from "@/lib/db/schema";
 import { isExperimentMemberRun } from "@/lib/experiments/membership";
 
 // A run is a launched evaluation participant iff a `launched`-source participant
@@ -47,4 +47,102 @@ export async function isLaunchedLineageRun(
   if (await isExperimentMemberRun(db, runId)) return true;
 
   return isLaunchedEvaluationRun(db, runId);
+}
+
+// Studies still accepting lineage decisions. `decided`/`archived` are terminal:
+// a restart of their participants launches as a PLAIN run (mirrors the
+// experiments rule where a non-running/comparable experiment stops inheriting).
+export const LIVE_EVALUATION_STUDY_STATUSES = ["draft", "open"] as const;
+
+export type InheritedEvaluationParticipation = {
+  studyId: string;
+  recipeId: string | null;
+  label: string;
+  replicateGroup: string | null;
+  replicateOrdinal: number | null;
+  // Mirrored onto the successor row: a restart of a TOMBSTONED launched
+  // participant still holds its replacement run (immutable hold, ADR-146 D15)
+  // without re-surfacing it as a live study participant.
+  sourceRemoved: boolean;
+};
+
+// The evaluation analogue of `deriveExperimentMembershipFromSource` (launch-side
+// inheritance for relaunch/budget-restart of a launched participant). Returns
+// the lineage fields the replacement run's SUCCESSOR participant row mirrors, or
+// null when the source run is not a launched participant of a live study. The
+// replicate ordinal is max+1 within the source's replicate group (falling back
+// to its recipe), mirroring the experiments per-variant allocation.
+export async function deriveEvaluationParticipationFromSource(
+  db: Db,
+  args: { sourceRunId: string; taskId: string },
+): Promise<InheritedEvaluationParticipation | null> {
+  const rows = await db
+    .select({
+      studyId: evaluationParticipants.studyId,
+      recipeId: evaluationParticipants.recipeId,
+      label: evaluationParticipants.label,
+      replicateGroup: evaluationParticipants.replicateGroup,
+      replicateOrdinal: evaluationParticipants.replicateOrdinal,
+      removedAt: evaluationParticipants.removedAt,
+    })
+    .from(evaluationParticipants)
+    .innerJoin(
+      evaluationStudies,
+      eq(evaluationStudies.id, evaluationParticipants.studyId),
+    )
+    .where(
+      and(
+        eq(evaluationParticipants.runId, args.sourceRunId),
+        eq(evaluationParticipants.sourceType, "launched"),
+        eq(evaluationStudies.taskId, args.taskId),
+        inArray(evaluationStudies.status, [...LIVE_EVALUATION_STUDY_STATUSES]),
+      ),
+    )
+    // Prefer the live row (partial unique guarantees at most one per study);
+    // a tombstoned row still inherits — its run stays held, so the replacement
+    // must too (otherwise the restart would be the escape hatch).
+    .orderBy(
+      sql`(${evaluationParticipants.removedAt} is null) desc`,
+      desc(evaluationParticipants.joinedAt),
+    )
+    .limit(1);
+  const source = rows[0];
+
+  if (!source) return null;
+
+  const ordinalScope = source.replicateGroup
+    ? eq(evaluationParticipants.replicateGroup, source.replicateGroup)
+    : source.recipeId
+      ? eq(evaluationParticipants.recipeId, source.recipeId)
+      : null;
+  let replicateOrdinal: number | null = null;
+
+  if (ordinalScope) {
+    const [maxRow] = await db
+      .select({
+        max: sql<number>`coalesce(max(${evaluationParticipants.replicateOrdinal}), 0)`,
+      })
+      .from(evaluationParticipants)
+      .where(
+        and(
+          eq(evaluationParticipants.studyId, source.studyId),
+          eq(evaluationParticipants.sourceType, "launched"),
+          ordinalScope,
+        ),
+      );
+
+    replicateOrdinal = Number(maxRow?.max ?? 0) + 1;
+  }
+
+  return {
+    studyId: source.studyId,
+    recipeId: source.recipeId ?? null,
+    label:
+      replicateOrdinal === null
+        ? `${source.label} (relaunch)`
+        : `${source.label.replace(/ #\d+$/, "")} #${replicateOrdinal}`,
+    replicateGroup: source.replicateGroup ?? null,
+    replicateOrdinal,
+    sourceRemoved: source.removedAt !== null,
+  };
 }

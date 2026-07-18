@@ -73,6 +73,21 @@ GC is the deferred removal that never destroys un-committed work.
   (M42 — no longer a `runs.acp_session_id` column join).
 - **Worktree set** — `listWorktrees(projectRepoPath)` paths, joined against
   `workspaces.worktree_path` (the "runs vs `git worktree list`" check).
+- **Evaluation evidence snapshot** (**Implemented, ADR-142/144** —
+  `evaluation_evidence_snapshots` rows; see
+  [`../db/evaluations-domain.md`](../db/evaluations-domain.md)) — the
+  Evaluation Lab arm of the shared GC bundle. `sweepEvaluationEvidence`
+  (`web/lib/evaluations/evidence/gc.ts`) runs on every `system_sweep` tick AND
+  through the `/api/cron/gc` compatibility wrapper: (1) a `preparing` snapshot
+  older than 1h never completed its seal transaction (crash between blob write
+  and DB seal) and is flipped to `pending_delete` (orphan recovery); (2) a
+  `pending_delete` snapshot past a 24h grace window that is cited by **no**
+  `evaluation_executions.evidence_snapshot_id` is finalized to `deleted`
+  (two-stage, reference-guarded — the not-referenced predicate is a safety net
+  over the RESTRICT FK, so a snapshot an execution still points at is never
+  finalized). Idempotent and bounded; blob pruning under
+  `MAISTER_EVALUATION_EVIDENCE_ROOT` is a separate generation-rotation
+  concern — this sweep owns only the DB lifecycle rows.
 
 ## State machine
 
@@ -214,7 +229,11 @@ guarded by a constant-time `X-Maister-Cron-Token` comparison.
 M24 keeps this route as a compatibility wrapper over the unified scheduler
 `system_sweep` service. The response shape and `200`/`207`/`401`/`503` behavior
 remain the M19 GC contract; new external cron integrations should prefer
-`/api/cron/tick`.
+`/api/cron/tick`. The shared GC bundle both entry points run includes the
+ADR-142 evaluation-evidence sweep (orphan `preparing` recovery + two-stage
+reference-guarded `pending_delete → deleted` finalize — see Domain entities
+above) alongside workspace/revision GC, capabilities cleanup, ephemeral-agent
+cleanup, and the agent-materialization retry.
 
 ```mermaid
 flowchart TD

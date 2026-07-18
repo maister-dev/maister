@@ -66,7 +66,7 @@ export default async function StudyDetailPage({
   const t = await getTranslations("evaluationsLab");
   const [
     participantRows,
-    executions,
+    executionRows,
     profiles,
     comparableRuns,
     verdictRows,
@@ -102,6 +102,22 @@ export default async function StudyDetailPage({
       row.createdAt instanceof Date ? row.createdAt.toISOString() : null,
   }));
 
+  // Explicit field mapping (like participants/verdicts): only what the lab
+  // renders crosses the RSC boundary — `dispersion`/`requestedAt` stay behind.
+  const executions: ExecutionView[] = executionRows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    terminalReason: row.terminalReason,
+    methodQualifiedId: row.methodQualifiedId,
+    aggregate: row.aggregate
+      ? {
+          displayTotal: row.aggregate.displayTotal,
+          perCriterion: row.aggregate.perCriterion,
+          warnings: row.aggregate.warnings,
+        }
+      : null,
+  }));
+
   return (
     <div className="w-full px-6 py-8">
       <ProjectTabs
@@ -124,7 +140,7 @@ export default async function StudyDetailPage({
         canConclude={canManage(role)}
         canManage={canManage(role)}
         comparableRuns={comparableRuns}
-        executions={executions as ExecutionView[]}
+        executions={executions}
         participants={participants}
         profiles={profiles}
         slug={slug}

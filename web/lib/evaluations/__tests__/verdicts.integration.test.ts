@@ -23,6 +23,8 @@ async function makeStudy(): Promise<{
   completed: string;
   partial: string;
   queued: string;
+  participantA: string;
+  participantB: string;
 }> {
   const projectId = randomUUID();
 
@@ -81,7 +83,14 @@ async function makeStudy(): Promise<{
     { id: queued, studyId, status: "queued" },
   ]);
 
-  return { studyId, completed, partial, queued };
+  const [participantA, participantB] = [randomUUID(), randomUUID()];
+
+  await db.insert(schema.evaluationParticipants).values([
+    { id: participantA, studyId, sourceType: "observed", label: "A" },
+    { id: participantB, studyId, sourceType: "observed", label: "B" },
+  ]);
+
+  return { studyId, completed, partial, queued, participantA, participantB };
 }
 
 beforeAll(async () => {
@@ -110,7 +119,7 @@ describe("recordVerdict (append-only, human-only)", () => {
       {
         studyId: s.studyId,
         outcome: "winner",
-        participantIds: ["p1"],
+        participantIds: [s.participantA],
         executionIds: [s.completed],
         createdByUserId: userId,
       },
@@ -197,7 +206,7 @@ describe("recordVerdict (append-only, human-only)", () => {
         {
           studyId: s.studyId,
           outcome: "winner",
-          participantIds: ["p1"],
+          participantIds: [s.participantA],
           executionIds: [s.queued],
           createdByUserId: userId,
         },
@@ -214,7 +223,7 @@ describe("recordVerdict (append-only, human-only)", () => {
         {
           studyId: s.studyId,
           outcome: "winner",
-          participantIds: ["p1"],
+          participantIds: [s.participantA],
           executionIds: [s.partial],
           createdByUserId: userId,
         },
@@ -227,7 +236,7 @@ describe("recordVerdict (append-only, human-only)", () => {
         {
           studyId: s.studyId,
           outcome: "winner",
-          participantIds: ["p1"],
+          participantIds: [s.participantA],
           executionIds: [s.partial],
           acknowledgedWarnings: ["incomplete_coverage"],
           createdByUserId: userId,
@@ -244,7 +253,7 @@ describe("recordVerdict (append-only, human-only)", () => {
       {
         studyId: s.studyId,
         outcome: "winner",
-        participantIds: ["p1"],
+        participantIds: [s.participantA],
         executionIds: [s.completed],
         createdByUserId: userId,
       },
@@ -256,7 +265,7 @@ describe("recordVerdict (append-only, human-only)", () => {
         {
           studyId: s.studyId,
           outcome: "tie",
-          participantIds: ["p1", "p2"],
+          participantIds: [s.participantA, s.participantB],
           executionIds: [s.completed],
           supersedesId: first.id,
           createdByUserId: userId,
@@ -269,7 +278,7 @@ describe("recordVerdict (append-only, human-only)", () => {
       {
         studyId: s.studyId,
         outcome: "tie",
-        participantIds: ["p1", "p2"],
+        participantIds: [s.participantA, s.participantB],
         executionIds: [s.completed],
         supersedesId: first.id,
         rationale: "re-reviewed the evidence",
@@ -281,6 +290,140 @@ describe("recordVerdict (append-only, human-only)", () => {
     const verdicts = await listVerdicts(s.studyId, db);
 
     expect(verdicts).toHaveLength(2);
+  });
+
+  it("refuses citing a nonexistent or foreign-study participant (typed CONFIG)", async () => {
+    const s = await makeStudy();
+    const other = await makeStudy();
+
+    await expect(
+      recordVerdict(
+        {
+          studyId: s.studyId,
+          outcome: "winner",
+          participantIds: [randomUUID()],
+          executionIds: [s.completed],
+          createdByUserId: userId,
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringMatching(/cited participants/),
+    });
+
+    await expect(
+      recordVerdict(
+        {
+          studyId: s.studyId,
+          outcome: "winner",
+          participantIds: [other.participantA],
+          executionIds: [s.completed],
+          createdByUserId: userId,
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringMatching(/cited participants/),
+    });
+  });
+
+  it("requires at least one cited participant for a winner verdict", async () => {
+    const s = await makeStudy();
+
+    await expect(
+      recordVerdict(
+        {
+          studyId: s.studyId,
+          outcome: "winner",
+          participantIds: [],
+          executionIds: [s.completed],
+          createdByUserId: userId,
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringMatching(/winner verdict requires/),
+    });
+  });
+
+  it("refuses a plain (non-superseding) second verdict on a decided study", async () => {
+    const s = await makeStudy();
+
+    await recordVerdict(
+      {
+        studyId: s.studyId,
+        outcome: "winner",
+        participantIds: [s.participantA],
+        executionIds: [s.completed],
+        createdByUserId: userId,
+      },
+      db,
+    );
+
+    await expect(
+      recordVerdict(
+        {
+          studyId: s.studyId,
+          outcome: "tie",
+          participantIds: [s.participantA, s.participantB],
+          executionIds: [s.completed],
+          createdByUserId: userId,
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringMatching(/must supersede/),
+    });
+  });
+
+  it("refuses superseding a verdict that is already superseded (no forks)", async () => {
+    const s = await makeStudy();
+
+    const first = await recordVerdict(
+      {
+        studyId: s.studyId,
+        outcome: "winner",
+        participantIds: [s.participantA],
+        executionIds: [s.completed],
+        createdByUserId: userId,
+      },
+      db,
+    );
+
+    await recordVerdict(
+      {
+        studyId: s.studyId,
+        outcome: "tie",
+        participantIds: [s.participantA, s.participantB],
+        executionIds: [s.completed],
+        supersedesId: first.id,
+        rationale: "first correction",
+        createdByUserId: userId,
+      },
+      db,
+    );
+
+    await expect(
+      recordVerdict(
+        {
+          studyId: s.studyId,
+          outcome: "inconclusive",
+          participantIds: [],
+          executionIds: [s.completed],
+          supersedesId: first.id,
+          rationale: "fork attempt",
+          createdByUserId: userId,
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(/already superseded/),
+    });
   });
 });
 

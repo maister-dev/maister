@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationControlledRecipeDefinition } from "@/lib/evaluations/recipe-schema";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -276,6 +276,53 @@ function launchReasonForOrdinal(ordinal: number): "initial" | "replicate" {
   return ordinal <= 1 ? "initial" : "replicate";
 }
 
+// Launch-time admission gate, re-checked per item at drive/retry time — NOT
+// only at batch create. A durable queued batch must not keep launching after a
+// platform freeze (kill switch), a study decision/archival, or a recipe
+// tombstone. `draft` stays launchable: the first launched participant is what
+// flips a draft study to open.
+type LaunchAdmission =
+  | { verdict: "launch" }
+  | { verdict: "halt_kill_switch" }
+  | {
+      verdict: "terminalize";
+      reason: "STUDY_NOT_LAUNCHABLE" | "RECIPE_TOMBSTONED";
+    };
+
+const LAUNCHABLE_STUDY_STATUSES = ["draft", "open"] as const;
+
+async function assessLaunchAdmission(
+  args: { studyId: string; recipeId: string },
+  d: Db,
+): Promise<LaunchAdmission> {
+  if (!controlledRecipesEnabled()) {
+    return { verdict: "halt_kill_switch" };
+  }
+
+  const [study] = await d
+    .select({ status: evaluationStudies.status })
+    .from(evaluationStudies)
+    .where(eq(evaluationStudies.id, args.studyId));
+
+  if (
+    !study ||
+    !(LAUNCHABLE_STUDY_STATUSES as readonly string[]).includes(study.status)
+  ) {
+    return { verdict: "terminalize", reason: "STUDY_NOT_LAUNCHABLE" };
+  }
+
+  const [recipe] = await d
+    .select({ tombstonedAt: evaluationRecipes.tombstonedAt })
+    .from(evaluationRecipes)
+    .where(eq(evaluationRecipes.id, args.recipeId));
+
+  if (!recipe || recipe.tombstonedAt) {
+    return { verdict: "terminalize", reason: "RECIPE_TOMBSTONED" };
+  }
+
+  return { verdict: "launch" };
+}
+
 // Drive a batch's queued items to terminal state (D17). Each item is claimed
 // with a CAS queued→launching (crash-safe: a claim that loses the race is an
 // idempotent skip), launched via the seam, then written launched|failed. Every
@@ -405,6 +452,51 @@ export async function runControlledLaunchBatch(
   let skipped = 0;
 
   for (const item of queued) {
+    // Governance re-check BEFORE any claim or seam call: kill switch off halts
+    // the drain (items stay queued); a closed study or tombstoned recipe
+    // terminalizes the item with a typed reason — no launch.
+    const admission = await assessLaunchAdmission(
+      { studyId: batch.studyId, recipeId: item.recipeId },
+      d,
+    );
+
+    if (admission.verdict === "halt_kill_switch") {
+      log.warn(
+        { batchId },
+        "[FIX] controlled recipes kill switch is off; batch drive halted, remaining items left queued",
+      );
+      break;
+    }
+    if (admission.verdict === "terminalize") {
+      const terminalized = await d
+        .update(evaluationLaunchBatchItems)
+        .set({
+          status: "failed",
+          errorReason: admission.reason,
+          updatedAt: new Date(),
+          version: sql`${evaluationLaunchBatchItems.version} + 1`,
+        })
+        .where(
+          and(
+            eq(evaluationLaunchBatchItems.id, item.id),
+            eq(evaluationLaunchBatchItems.status, "queued"),
+            eq(evaluationLaunchBatchItems.version, item.version),
+          ),
+        )
+        .returning({ id: evaluationLaunchBatchItems.id });
+
+      if (terminalized.length) {
+        failed += 1;
+        log.warn(
+          { batchId, itemId: item.id, reason: admission.reason },
+          "[FIX] launch batch item terminalized before launch",
+        );
+      } else {
+        skipped += 1;
+      }
+      continue;
+    }
+
     // CAS claim: queued → launching. A lost race means another worker owns it.
     const claim = await d
       .update(evaluationLaunchBatchItems)
@@ -532,6 +624,9 @@ export async function runControlledLaunchBatch(
       launched += 1;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
+      // The persisted reason is a bounded typed code, never raw error text
+      // (a message may embed host paths); the full error stays in the log.
+      const errorCode = err instanceof MaisterError ? err.code : "CRASH";
 
       // Status-guarded: a slow concurrent drive that already finalized this
       // item to `launched` must not be clobbered by a stale failure.
@@ -539,7 +634,7 @@ export async function runControlledLaunchBatch(
         .update(evaluationLaunchBatchItems)
         .set({
           status: "failed",
-          errorReason: reason,
+          errorReason: errorCode,
           attempt: sql`${evaluationLaunchBatchItems.attempt} + 1`,
           updatedAt: new Date(),
           version: sql`${evaluationLaunchBatchItems.version} + 1`,
@@ -552,7 +647,7 @@ export async function runControlledLaunchBatch(
         );
       failed += 1;
       log.warn(
-        { batchId, itemId: item.id, reason },
+        { batchId, itemId: item.id, reason, code: errorCode },
         "controlled launch batch item failed",
       );
     }
@@ -596,13 +691,67 @@ async function finalizeBatchStatus(batchId: string, d: Db): Promise<void> {
 }
 
 // Re-queue a batch's failed items for another drive pass, bounded by
-// `maxAttempts` (retry/adopt, D17). Returns how many were re-queued.
+// `maxAttempts` (retry/adopt, D17). Governance-gated like the drive loop:
+// refuses under the kill switch or a non-launchable study, and never
+// re-queues an item whose recipe was tombstoned. Returns how many were
+// re-queued.
 export async function retryFailedBatchItems(
   batchId: string,
   maxAttempts: number,
   db?: Db,
 ): Promise<{ requeued: number }> {
   const d = db ?? getDb();
+
+  if (!controlledRecipesEnabled()) {
+    log.warn(
+      { batchId },
+      "[FIX] controlled recipes kill switch is off; retry refused, items left failed",
+    );
+
+    return { requeued: 0 };
+  }
+
+  const [batch] = await d
+    .select({
+      id: evaluationLaunchBatches.id,
+      studyId: evaluationLaunchBatches.studyId,
+    })
+    .from(evaluationLaunchBatches)
+    .where(eq(evaluationLaunchBatches.id, batchId));
+
+  if (!batch) {
+    return { requeued: 0 };
+  }
+
+  const [study] = await d
+    .select({ status: evaluationStudies.status })
+    .from(evaluationStudies)
+    .where(eq(evaluationStudies.id, batch.studyId));
+
+  if (
+    !study ||
+    !(LAUNCHABLE_STUDY_STATUSES as readonly string[]).includes(study.status)
+  ) {
+    log.warn(
+      { batchId, studyStatus: study?.status ?? "missing" },
+      "[FIX] study is not launchable; retry refused",
+    );
+
+    return { requeued: 0 };
+  }
+
+  const tombstonedRecipeIds = (
+    await d
+      .select({ id: evaluationRecipes.id })
+      .from(evaluationRecipes)
+      .where(
+        and(
+          eq(evaluationRecipes.studyId, batch.studyId),
+          isNotNull(evaluationRecipes.tombstonedAt),
+        ),
+      )
+  ).map((r) => r.id);
+
   const requeued = await d
     .update(evaluationLaunchBatchItems)
     .set({
@@ -616,6 +765,14 @@ export async function retryFailedBatchItems(
         eq(evaluationLaunchBatchItems.batchId, batchId),
         eq(evaluationLaunchBatchItems.status, "failed"),
         sql`${evaluationLaunchBatchItems.attempt} < ${maxAttempts}`,
+        ...(tombstonedRecipeIds.length
+          ? [
+              notInArray(
+                evaluationLaunchBatchItems.recipeId,
+                tombstonedRecipeIds,
+              ),
+            ]
+          : []),
       ),
     )
     .returning({ id: evaluationLaunchBatchItems.id });

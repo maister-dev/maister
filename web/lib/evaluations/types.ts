@@ -96,6 +96,48 @@ export interface EvaluationPanelPolicy {
   poisonPolicy?: Record<string, unknown> | null;
 }
 
+// --- Execution policy snapshots (D8; 0109) ---------------------------------
+
+// One criterion spec frozen onto the execution at start: the exact slice of the
+// method definition that seal validation and aggregation consume mid-flight.
+// Snapshotted because the method registry upserts `normalizedDefinition` in
+// place — a live re-read mid-execution could validate/aggregate against a
+// definition the panel never scored under.
+export interface EvaluationCriterionSnapshotSpec {
+  id: string;
+  weight: number;
+  normalizedWeight: number;
+  scaleMin: number;
+  scaleMax: number;
+  optional: boolean;
+  itemCap?: number | null;
+}
+
+// The `judge_policy_snapshot` jsonb shape. startEvaluationExecution is the ONLY
+// writer; the judge launch/facade/seal paths read it. Every field is optional so
+// legacy rows written before a field existed parse honestly (readers fall back
+// per-field, never fabricate).
+export interface EvaluationExecutionJudgePolicySnapshot {
+  roleBindings?: EvaluationPanelRoleBinding[];
+  // The RESOLVED effective panel policy (base panel + project/study overrides).
+  policy?: Partial<EvaluationPanelPolicy>;
+  // Criterion specs the seal validates submissions against (start-time frozen).
+  criteria?: EvaluationCriterionSnapshotSpec[];
+}
+
+// The `aggregation_policy_snapshot` jsonb shape (same writer/reader contract).
+// Carries everything the aggregation worker needs so it never live-reads the
+// mutable method projection mid-execution.
+export interface EvaluationExecutionAggregationPolicySnapshot {
+  algorithm?: string | null;
+  // The RESOLVED quorum (profile policy), not the method floor.
+  quorum?: number;
+  totalMax?: number | null;
+  gateCheckIds?: string[];
+  definitionDigest?: string | null;
+  schemaDigest?: string | null;
+}
+
 // --- Evaluation Execution lifecycle (D4; 0109) -----------------------------
 
 // Persisted Evaluation Execution status. Exact allow-list transitions with

@@ -11,6 +11,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  buildVerdictPayload,
+  citedPartialWarnings,
   StudyLab,
   type ExecutionView,
   type ParticipantView,
@@ -44,7 +46,6 @@ const executions: ExecutionView[] = [
     status: "completed",
     terminalReason: null,
     methodQualifiedId: "core:sdd-quality",
-    requestedAt: null,
     aggregate: {
       displayTotal: 4.2,
       perCriterion: [{ criterionId: "correctness", displayValue: 4.5 }],
@@ -52,6 +53,18 @@ const executions: ExecutionView[] = [
     },
   },
 ];
+
+const partialExecution: ExecutionView = {
+  id: "e2",
+  status: "partial",
+  terminalReason: null,
+  methodQualifiedId: "core:sdd-quality",
+  aggregate: {
+    displayTotal: 3.1,
+    perCriterion: [],
+    warnings: ["incomplete_coverage"],
+  },
+};
 
 describe("StudyLab", () => {
   it("renders participants, the scoreboard, and manage actions for a member", () => {
@@ -77,6 +90,58 @@ describe("StudyLab", () => {
     expect(markup).toContain("humanVerdict");
     // An addable comparable run (not already a participant) is offered.
     expect(markup).toContain("addObserved");
+    // Run statuses are translated through the run.runStatus namespace, never raw.
+    expect(markup).toContain("runStatus.Done");
+    expect(markup).toContain("runStatus.Failed");
+  });
+
+  it("renders the winner participant picker for the default winner outcome", () => {
+    const markup = renderToStaticMarkup(
+      createElement(StudyLab, {
+        slug: "p",
+        study: { id: "s1", title: "My Study", status: "open", version: 1 },
+        participants,
+        executions,
+        profiles: [{ id: "pr1", name: "SDD Profile" }],
+        comparableRuns: [],
+        verdicts: [],
+        canManage: true,
+        canConclude: true,
+      }),
+    );
+
+    expect(markup).toContain("winnerParticipant");
+    expect(markup).toContain('type="radio"');
+    // Nothing is cited on the initial render, so no partial acknowledgement yet.
+    expect(markup).not.toContain("partialAck");
+  });
+
+  it("marks a failed execution with the danger tone and its terminal reason", () => {
+    const markup = renderToStaticMarkup(
+      createElement(StudyLab, {
+        slug: "p",
+        study: { id: "s1", title: "My Study", status: "open", version: 1 },
+        participants,
+        executions: [
+          {
+            id: "e9",
+            status: "failed",
+            terminalReason: "capture_failed",
+            methodQualifiedId: "core:sdd-quality",
+            aggregate: null,
+          },
+        ],
+        profiles: [],
+        comparableRuns: [],
+        verdicts: [],
+        canManage: false,
+        canConclude: false,
+      }),
+    );
+
+    expect(markup).toContain("text-danger");
+    expect(markup).toContain("terminalReason");
+    expect(markup).toContain("capture_failed");
   });
 
   it("hides manage/verdict actions for a viewer", () => {
@@ -98,6 +163,75 @@ describe("StudyLab", () => {
     expect(markup).not.toContain("recordVerdict");
     // A concluded verdict is still shown read-only.
     expect(markup).toContain("outcome_winner");
+  });
+});
+
+describe("citedPartialWarnings", () => {
+  it("requires acknowledgement and lists warnings when a partial execution is cited", () => {
+    const result = citedPartialWarnings(
+      [...executions, partialExecution],
+      new Set(["e2"]),
+    );
+
+    expect(result.hasCitedPartial).toBe(true);
+    expect(result.warnings).toEqual(["incomplete_coverage"]);
+  });
+
+  it("requires nothing when only completed executions are cited", () => {
+    const result = citedPartialWarnings(
+      [...executions, partialExecution],
+      new Set(["e1"]),
+    );
+
+    expect(result.hasCitedPartial).toBe(false);
+    expect(result.warnings).toEqual([]);
+  });
+});
+
+describe("buildVerdictPayload", () => {
+  it("sends the acknowledged comparability warnings when a partial is cited", () => {
+    const payload = buildVerdictPayload({
+      outcome: "winner",
+      executions: [...executions, partialExecution],
+      citedIds: new Set(["e2"]),
+      winnerId: "p1",
+      zeroCitationAck: false,
+      rationale: "",
+    });
+
+    expect(payload.acknowledgedWarnings).toEqual(["incomplete_coverage"]);
+    expect(payload.participantIds).toEqual(["p1"]);
+    expect(payload.noEvaluationEvidenceAck).toBeUndefined();
+  });
+
+  it("still sends a non-empty acknowledgement when the cited partial lists no warnings", () => {
+    const bare: ExecutionView = { ...partialExecution, aggregate: null };
+    const payload = buildVerdictPayload({
+      outcome: "tie",
+      executions: [bare],
+      citedIds: new Set(["e2"]),
+      winnerId: "",
+      zeroCitationAck: false,
+      rationale: "",
+    });
+
+    expect(payload.acknowledgedWarnings).toEqual(["partial"]);
+    expect(payload.participantIds).toEqual([]);
+  });
+
+  it("omits acknowledgements and carries the zero-citation ack when nothing is cited", () => {
+    const payload = buildVerdictPayload({
+      outcome: "inconclusive",
+      executions,
+      citedIds: new Set(),
+      winnerId: "",
+      zeroCitationAck: true,
+      rationale: "  why  ",
+    });
+
+    expect(payload.acknowledgedWarnings).toBeUndefined();
+    expect(payload.noEvaluationEvidenceAck).toBe(true);
+    expect(payload.rationale).toBe("why");
   });
 });
 

@@ -1037,8 +1037,9 @@ returns the full untruncated body. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
 **ADR-131 engine bump (Implemented).** The graph-only cut-over started with
 engine `3.0.0`. A manifest containing top-level `steps[]` is refused with the
 locked upgrade remediation; `nodes[]` is the sole executable Flow shape. The
-current host engine is `3.1.0` (ADR-137 adds typed plan review). A graph-shaped
-manifest whose declared `compat.engine_min..engine_max` excludes `3.1.0`
+current host engine is `3.2.0` (ADR-137 adds typed plan review; ADR-143 adds
+package-sourced Evaluation Methods). A graph-shaped
+manifest whose declared `compat.engine_min..engine_max` excludes `3.2.0`
 remains inspectable but is typed `engine_incompatible` and refused at
 stored/executable mutation boundaries. Existing graph manifests with an
 open-ended engine range remain compatible.
@@ -1197,6 +1198,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_WORKTREES_ROOT` | no | `~/.maister/worktrees` | Root for run worktrees (ADR-025). Resolved by `worktreesRoot()`. The deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Surfaced read-only on `/settings`. |
 | `MAISTER_LOCAL_PACKAGES_ROOT` | no | `~/.maister/local` | **(ADR-096 — Designed, Flow Studio Phase C.)** Root for editable local-package working directories (one git-backed dir per `local_packages` row). Resolved by `web/lib/instance-config.ts:localPackagesRoot()`. Host-only — like the flows/worktrees roots, `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
 | `MAISTER_EVALUATION_EVIDENCE_ROOT` | no | `~/.maister/evaluations` | **(ADR-144 — Implemented, M46.)** Root for the content-addressed immutable Evaluation Lab evidence store. Blobs are written tmp+fsync+rename BEFORE the DB seal, so a crash leaves an orphan blob (GC-eligible) but the DB never points at an absent blob. Resolved by `web/lib/instance-config.ts:evaluationEvidenceRoot()`. Host-only — `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
+| `MAISTER_CONTROLLED_RECIPES_ENABLED` | no | enabled (any value but `false`) | **(ADR-146 — Implemented, M47 T6.5.)** Platform-wide rollout kill switch for controlled (launched) Evaluation Recipes, independent of M46 observed Studies. Read by `web/lib/evaluations/launch-batch.ts:controlledRecipesEnabled()`; set to the literal `false` to freeze NEW controlled evaluation launches — batch-intent creation and queued-batch drains alike — with a typed `CONFIG` refusal. Observed participants, existing launched runs, and in-flight executions are unaffected. Host/service-env only. |
 | `MAISTER_IMPORT_MAX_BYTES` | no | `52428800` (50 MiB) | **(M36, ADR-096.)** Total-size cap for a `/studio/local-packages/:id/import` batch (folder or zip/tar.gz); the archive blob is also checked against this BEFORE parsing (zip-bomb defense). Over → `PRECONDITION`, nothing persisted. `web/lib/instance-config.ts:importMaxBytes()`. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. |
 | `MAISTER_IMPORT_MAX_ENTRIES` | no | `2000` | **(M36, ADR-096.)** Max file count per import batch; over → `PRECONDITION` pre-write. `importMaxEntries()`. Host/service-env only. |
 | `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(M36, ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |

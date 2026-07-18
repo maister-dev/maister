@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/evaluations/db";
+import type { EvaluationExecutionJudgePolicySnapshot } from "@/lib/evaluations/types";
 
 import { randomUUID } from "node:crypto";
 
@@ -45,6 +46,11 @@ interface ResolvedRole {
 export interface JudgeSpawn {
   runId: string;
   tokenId: string;
+  // The run's launch status. "Pending" = cap-queued by the agent scheduler —
+  // the attempt keeps its pre-running state (no runningAt) until the run is
+  // actually Running, so the timeout clock never starts before the session
+  // does (D12). Absent = assume Running (legacy seams).
+  runStatus?: "Running" | "Pending";
 }
 
 export type JudgeSpawnFn = (args: {
@@ -71,13 +77,7 @@ interface ExecutionForLaunch {
   studyId: string;
   status: string;
   methodRevisionId: string | null;
-  judgePolicySnapshot: {
-    roleBindings?: Array<{
-      role: string;
-      agentId: string;
-      runnerId?: string | null;
-    }>;
-  } | null;
+  judgePolicySnapshot: EvaluationExecutionJudgePolicySnapshot | null;
   projectId: string;
 }
 
@@ -275,28 +275,78 @@ export async function launchJudgePanel(
 
   const attempts = await provisionJudgeAttempts(executionId, d);
 
+  // Effective parallelism = the RESOLVED policy snapshotted at start (D8/D12).
+  // Absent (legacy execution) means unthrottled — the historical behavior.
+  const snapshotMax = exec.judgePolicySnapshot?.policy?.maxParallelAttempts;
+  const maxParallel =
+    typeof snapshotMax === "number" && snapshotMax > 0
+      ? snapshotMax
+      : Number.POSITIVE_INFINITY;
+
   let launched = 0;
   let adopted = 0;
+  // Attempts occupying a parallel slot: linked to a run and not yet terminal.
+  // A cap-queued (Pending-run) attempt still counts — it is already submitted
+  // to the agent scheduler.
+  let liveCount = attempts.filter(
+    (a) =>
+      a.agentRunId !== null &&
+      (a.status === "queued" || a.status === "running"),
+  ).length;
 
   const finalize = async (attemptId: string, spawn: JudgeSpawn) => {
-    const now = new Date();
+    const started = spawn.runStatus !== "Pending";
 
     await d
       .update(evaluationJudgeAttempts)
       .set({
         agentRunId: spawn.runId,
         tokenId: spawn.tokenId,
-        status: "running",
-        // The attempt timeout clock anchors here (session Running), never at
-        // enqueue — a cap-queued attempt never times out before it starts (D12).
-        runningAt: now,
+        // The attempt timeout clock anchors at session Running, never at
+        // enqueue (D12). A cap-queued (Pending) run leaves the attempt queued
+        // with runningAt null; a later pass promotes it once the run actually
+        // runs — so a queued judge is never reaped as timed_out unstarted.
+        ...(started
+          ? { status: "running" as const, runningAt: new Date() }
+          : {}),
       })
       .where(eq(evaluationJudgeAttempts.id, attemptId));
+  };
+
+  // Promote an already-linked attempt whose run has left Pending: stamp the
+  // timeout anchor exactly when the session is actually Running. CAS on
+  // status='queued' so a concurrent seal/reap is never clobbered.
+  const promoteIfRunning = async (attempt: {
+    id: string;
+    agentRunId: string;
+  }) => {
+    const [run] = await d
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, attempt.agentRunId));
+
+    if (run?.status !== "Running") return;
+
+    await d
+      .update(evaluationJudgeAttempts)
+      .set({ status: "running", runningAt: new Date() })
+      .where(
+        and(
+          eq(evaluationJudgeAttempts.id, attempt.id),
+          eq(evaluationJudgeAttempts.status, "queued"),
+        ),
+      );
   };
 
   for (const attempt of attempts) {
     if (attempt.agentRunId) {
       adopted++;
+      if (attempt.status === "queued") {
+        await promoteIfRunning({
+          id: attempt.id,
+          agentRunId: attempt.agentRunId,
+        });
+      }
       continue;
     }
 
@@ -307,7 +357,7 @@ export async function launchJudgePanel(
       // token ledger (same attempt + run scope — no privilege widening); the
       // attempt row records only the fresh one.
       const [existingRun] = await d
-        .select({ id: runs.id })
+        .select({ id: runs.id, status: runs.status })
         .from(runs)
         .where(eq(runs.id, attempt.intendedRunId));
 
@@ -321,13 +371,17 @@ export async function launchJudgePanel(
         await finalize(attempt.id, {
           runId: attempt.intendedRunId,
           tokenId: token.tokenId,
+          runStatus: existingRun.status === "Pending" ? "Pending" : "Running",
         });
         adopted++;
+        liveCount++;
         log.warn(
           { executionId, attemptId: attempt.id, runId: attempt.intendedRunId },
           "adopted crashed judge launch intent",
         );
       } else {
+        if (liveCount >= maxParallel) continue;
+
         const spawn = await deps.spawn({
           agentId: attempt.agentId,
           projectId: exec.projectId,
@@ -341,6 +395,7 @@ export async function launchJudgePanel(
 
         await finalize(attempt.id, spawn);
         launched++;
+        liveCount++;
         log.warn(
           { executionId, attemptId: attempt.id, runId: attempt.intendedRunId },
           "re-spawned crashed judge launch intent",
@@ -348,6 +403,11 @@ export async function launchJudgePanel(
       }
       continue;
     }
+
+    // Throttle (D12): leave the remainder queued (no intent claimed) — the
+    // next dispatch tick continues once live attempts terminalize and free
+    // parallel slots.
+    if (liveCount >= maxParallel) continue;
 
     // Fresh attempt: record the launch intent BEFORE any spawn side effect.
     // The CAS loses to a concurrent driver that already claimed this attempt.
@@ -382,6 +442,7 @@ export async function launchJudgePanel(
 
     await finalize(attempt.id, spawn);
     launched++;
+    liveCount++;
   }
 
   log.info({ executionId, launched, adopted }, "judge panel launched");
@@ -422,6 +483,10 @@ export function defaultJudgeSpawn(db?: Db): JudgeSpawnFn {
       db,
     });
 
-    return { runId: result.runId, tokenId: token.tokenId };
+    return {
+      runId: result.runId,
+      tokenId: token.tokenId,
+      runStatus: result.status,
+    };
   };
 }

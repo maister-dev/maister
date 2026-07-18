@@ -4,9 +4,17 @@ import type { JudgePanelRow, MethodologyRow, ProfileRow } from "./types";
 import type { ReactElement } from "react";
 
 import { XMarkIcon } from "@heroicons/react/24/outline";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+
+import {
+  evalErrorKey,
+  evalRequest,
+} from "@/components/evaluations/api-error";
+import { useFeedback } from "@/components/feedback/feedback-provider";
+import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
 
 type Props = {
   mode: "create" | "edit";
@@ -25,8 +33,10 @@ export function ProfileModal({
   methodologies,
   panels,
   onClose,
-}: Props): ReactElement {
+}: Props): ReactElement | null {
   const t = useTranslations("settingsEvaluations");
+  const tErr = useTranslations("evaluationsErrors");
+  const feedback = useFeedback();
   const router = useRouter();
   const [, startTransition] = useTransition();
   const readyMethods = methodologies.filter((m) => m.health === "ready");
@@ -40,43 +50,47 @@ export function ProfileModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  function requestClose(): void {
+    if (!saving) onClose();
+  }
+
+  useModalFocusTrap(dialogRef, requestClose);
 
   async function save(): Promise<void> {
     setSaving(true);
     setError(null);
     try {
-      const res =
-        mode === "create"
-          ? await fetch("/api/admin/evaluations/profiles", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                name: name.trim(),
-                methodRevisionId,
-                panelId,
-              }),
-            })
-          : await fetch(`/api/admin/evaluations/profiles/${profile!.id}`, {
-              method: "PATCH",
-              headers: {
-                "content-type": "application/json",
-                "if-match": String(profile!.revision),
-              },
-              body: JSON.stringify({ name: name.trim() }),
-            });
-
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as {
-          message?: string;
-        } | null;
-
-        throw new Error(payload?.message ?? `request failed: ${res.status}`);
+      if (mode === "create") {
+        await evalRequest("/api/admin/evaluations/profiles", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: name.trim(),
+            methodRevisionId,
+            panelId,
+          }),
+        });
+      } else {
+        await evalRequest(`/api/admin/evaluations/profiles/${profile!.id}`, {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            "if-match": String(profile!.revision),
+          },
+          body: JSON.stringify({ name: name.trim() }),
+        });
       }
 
+      feedback.success({
+        mutationId: `eval-profile:${mode}:${profile?.id ?? "new"}:${Date.now()}`,
+        message: t("toastSaved"),
+      });
       startTransition(() => router.refresh());
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(tErr(evalErrorKey(err)));
     } finally {
       setSaving(false);
     }
@@ -87,14 +101,25 @@ export function ProfileModal({
   const panelLabel = (id: string): string =>
     panels.find((p) => p.id === id)?.name ?? id;
 
-  return (
-    <div
-      aria-labelledby="profile-modal-title"
-      aria-modal="true"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
-      role="dialog"
-    >
-      <div className="w-full max-w-[520px] rounded-[12px] border border-line bg-paper p-6 shadow-xl">
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <button
+        aria-label={t("close")}
+        className="absolute inset-0 cursor-default bg-black/40"
+        disabled={saving}
+        tabIndex={-1}
+        type="button"
+        onClick={requestClose}
+      />
+      <div
+        ref={dialogRef}
+        aria-labelledby="profile-modal-title"
+        aria-modal="true"
+        className="relative w-full max-w-[520px] rounded-[12px] border border-line bg-paper p-6 shadow-xl"
+        role="dialog"
+      >
         <div className="mb-4 flex items-center justify-between">
           <h2
             className="m-0 text-[15px] font-semibold text-ink"
@@ -104,9 +129,10 @@ export function ProfileModal({
           </h2>
           <button
             aria-label={t("close")}
-            className="grid h-8 w-8 place-items-center rounded-[8px] text-mute hover:text-ink"
+            className="grid h-8 w-8 place-items-center rounded-[8px] text-mute hover:text-ink disabled:opacity-50"
+            disabled={saving}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
           >
             <XMarkIcon aria-hidden="true" className="h-5 w-5" />
           </button>
@@ -176,16 +202,17 @@ export function ProfileModal({
         </label>
 
         {error ? (
-          <p className="mb-3 text-[12px] text-red-700" role="alert">
+          <p className="mb-3 text-[12px] text-danger" role="alert">
             {error}
           </p>
         ) : null}
 
         <div className="flex justify-end gap-2">
           <button
-            className="h-10 rounded-[8px] border border-line px-4 text-[13px] font-semibold text-ink"
+            className="h-10 rounded-[8px] border border-line px-4 text-[13px] font-semibold text-ink disabled:opacity-50"
+            disabled={saving}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
           >
             {t("cancel")}
           </button>
@@ -203,6 +230,7 @@ export function ProfileModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

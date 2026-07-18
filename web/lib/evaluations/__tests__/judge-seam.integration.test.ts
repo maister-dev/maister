@@ -558,6 +558,82 @@ describe("evaluator facade + seal + aggregation seam (T4.1)", () => {
   });
 });
 
+describe("seal liveness CAS (reap-flip + double-submit protection)", () => {
+  it("two-racer seal: exactly one completes, the other is a typed CONFLICT, one criterion row set", async () => {
+    const executionId = await seedExecution("judging");
+    const a1 = await seedAttempt(executionId, 1, "running");
+
+    // A second live attempt keeps the panel below quorum so the race stays
+    // inside the seal path (no aggregation advance in this test).
+    await seedAttempt(executionId, 2, "running");
+
+    const outcomes = await Promise.allSettled([
+      submitBoundJudgeResult(judgeActor(a1.tokenId), scored(4, 4), db),
+      submitBoundJudgeResult(judgeActor(a1.tokenId), scored(2, 2), db),
+    ]);
+
+    const fulfilled = outcomes.filter((o) => o.status === "fulfilled");
+    const rejected = outcomes.filter((o) => o.status === "rejected");
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(
+      (fulfilled[0] as PromiseFulfilledResult<unknown>).value,
+    ).toMatchObject({ valid: true });
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: "CONFLICT",
+    });
+
+    const [attempt] = await db
+      .select({ status: schema.evaluationJudgeAttempts.status })
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.id, a1.attemptId));
+
+    expect(attempt.status).toBe("completed");
+
+    // Exactly ONE seal's worth of criterion rows (2 criteria) — never doubled.
+    const crit = await db
+      .select()
+      .from(schema.evaluationCriterionResults)
+      .where(eq(schema.evaluationCriterionResults.attemptId, a1.attemptId));
+
+    expect(crit).toHaveLength(2);
+  });
+
+  it("reap-flip protection: sealing a timed_out attempt is a CONFLICT and never overwrites the reap", async () => {
+    const executionId = await seedExecution("judging");
+    const a1 = await seedAttempt(executionId, 1, "running");
+
+    // The reaper flipped the attempt terminal before the (late) submit landed.
+    await db
+      .update(schema.evaluationJudgeAttempts)
+      .set({ status: "timed_out", terminalAt: new Date(), reason: "timeout" })
+      .where(eq(schema.evaluationJudgeAttempts.id, a1.attemptId));
+
+    await expect(
+      submitBoundJudgeResult(judgeActor(a1.tokenId), scored(4, 4), db),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const [after] = await db
+      .select({
+        status: schema.evaluationJudgeAttempts.status,
+        reason: schema.evaluationJudgeAttempts.reason,
+      })
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.id, a1.attemptId));
+
+    expect(after.status).toBe("timed_out");
+    expect(after.reason).toBe("timeout");
+
+    const crit = await db
+      .select()
+      .from(schema.evaluationCriterionResults)
+      .where(eq(schema.evaluationCriterionResults.attemptId, a1.attemptId));
+
+    expect(crit).toHaveLength(0);
+  });
+});
+
 describe("crash-safe judge launch (intent claim + adopt/re-spawn)", () => {
   const ROLE_BINDINGS = {
     roleBindings: [{ role: "reviewer", agentId: "core:sdd-judge" }],

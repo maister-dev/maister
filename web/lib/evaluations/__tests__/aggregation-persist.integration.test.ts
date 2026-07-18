@@ -18,6 +18,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof fullSchema>;
 let executionId: string;
+let studyId: string;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -60,7 +61,7 @@ beforeAll(async () => {
     flowId,
   });
 
-  const studyId = randomUUID();
+  studyId = randomUUID();
 
   await db.insert(schema.evaluationStudies).values({
     id: studyId,
@@ -156,5 +157,79 @@ describe("persistAggregate (append-only)", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].algorithmId).toBe("weighted_mean");
     expect(rows[0].algorithmVersion).toBe("1");
+  });
+
+  it("two concurrent persists yield sequential revisions (conflict-retry, never a raw 23505)", async () => {
+    const raceExecutionId = randomUUID();
+
+    await db.insert(schema.evaluationExecutions).values({
+      id: raceExecutionId,
+      studyId,
+      status: "aggregating",
+    });
+
+    const criteria = [
+      {
+        id: "correctness",
+        weight: 1,
+        normalizedWeight: 1,
+        scaleMin: 0,
+        scaleMax: 5,
+        optional: false,
+      },
+    ];
+    const attempts = [
+      {
+        attemptId: "a",
+        valid: true,
+        criteria: { correctness: { state: "scored" as const, score: 4 } },
+      },
+      {
+        attemptId: "b",
+        valid: true,
+        criteria: { correctness: { state: "scored" as const, score: 5 } },
+      },
+    ];
+    const result = computeAggregate({
+      algorithm: "weighted_mean@1",
+      quorum: 2,
+      criteria,
+      attempts,
+    });
+    const disagreement = classifyDisagreement({
+      perCriterion: result.perCriterion,
+      attemptConfidences: [],
+      validAttemptCount: 2,
+      expectedAttemptCount: 2,
+      objectiveGatingFailed: false,
+      topCriterionValue: result.perCriterion[0].displayValue,
+      criterionScaleMax: 5,
+    });
+    const args = {
+      executionId: raceExecutionId,
+      result,
+      disagreement,
+      methodDigests: { definitionDigest: "dd", schemaDigest: "sd" },
+    };
+
+    // Both racers read max=0 and try revision 1; the (execution, revision)
+    // unique makes the loser re-read and land revision 2.
+    const [first, second] = await Promise.all([
+      persistAggregate(args, db),
+      persistAggregate(args, db),
+    ]);
+
+    expect([first.revision, second.revision].sort()).toEqual([1, 2]);
+
+    const rows = await db
+      .select({ revision: schema.evaluationAggregateResults.revision })
+      .from(schema.evaluationAggregateResults)
+      .where(
+        eq(schema.evaluationAggregateResults.executionId, raceExecutionId),
+      );
+
+    expect(rows.map((r: { revision: number }) => r.revision).sort()).toEqual([
+      1, 2,
+    ]);
   });
 });

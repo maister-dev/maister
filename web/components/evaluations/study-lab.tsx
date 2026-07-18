@@ -3,9 +3,17 @@
 import type { ReactElement } from "react";
 
 import { PlayIcon, PlusIcon } from "@heroicons/react/24/outline";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+
+import {
+  evalErrorKey,
+  evalRequest,
+} from "@/components/evaluations/api-error";
+import { useStudyStream } from "@/components/evaluations/use-study-stream";
+import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
+import { RUN_STATUS_KEYS } from "@/lib/runs/run-status-tone";
 
 export interface ParticipantView {
   id: string;
@@ -20,7 +28,6 @@ export interface ExecutionView {
   status: string;
   terminalReason: string | null;
   methodQualifiedId: string | null;
-  requestedAt: string | null;
   aggregate: {
     displayTotal: number | null;
     perCriterion: Array<{ criterionId: string; displayValue: number | null }>;
@@ -57,6 +64,74 @@ const ACTIVE = new Set([
   "cancelling",
 ]);
 
+type VerdictOutcome = "winner" | "tie" | "inconclusive";
+
+// The comparability warnings of the CITED partial executions (deduped). A
+// non-empty citation of a partial execution requires the operator to
+// acknowledge these before the verdict route accepts the write.
+export function citedPartialWarnings(
+  executions: readonly ExecutionView[],
+  citedIds: ReadonlySet<string>,
+): { hasCitedPartial: boolean; warnings: string[] } {
+  const citedPartials = executions.filter(
+    (e) => citedIds.has(e.id) && e.status === "partial",
+  );
+  const warnings = [
+    ...new Set(citedPartials.flatMap((e) => e.aggregate?.warnings ?? [])),
+  ];
+
+  return { hasCitedPartial: citedPartials.length > 0, warnings };
+}
+
+// The POST /verdicts body. `acknowledgedWarnings` must be non-empty whenever a
+// partial execution is cited (server contract), so an empty warning list still
+// records the acknowledged fact; a winner names its participant(s).
+export function buildVerdictPayload(args: {
+  outcome: VerdictOutcome;
+  executions: readonly ExecutionView[];
+  citedIds: ReadonlySet<string>;
+  winnerId: string;
+  zeroCitationAck: boolean;
+  rationale: string;
+}): {
+  outcome: VerdictOutcome;
+  participantIds: string[];
+  executionIds: string[];
+  noEvaluationEvidenceAck: boolean | undefined;
+  acknowledgedWarnings: string[] | undefined;
+  rationale: string | null;
+} {
+  const { hasCitedPartial, warnings } = citedPartialWarnings(
+    args.executions,
+    args.citedIds,
+  );
+
+  return {
+    outcome: args.outcome,
+    participantIds: args.outcome === "winner" ? [args.winnerId] : [],
+    executionIds: [...args.citedIds],
+    noEvaluationEvidenceAck:
+      args.citedIds.size === 0 ? args.zeroCitationAck : undefined,
+    acknowledgedWarnings: hasCitedPartial
+      ? warnings.length > 0
+        ? warnings
+        : ["partial"]
+      : undefined,
+    rationale: args.rationale.trim() || null,
+  };
+}
+
+function runStatusLabel(
+  tRun: (key: string) => string,
+  status: string | null,
+): string {
+  if (!status) return "—";
+
+  return (RUN_STATUS_KEYS as readonly string[]).includes(status)
+    ? tRun(`runStatus.${status}`)
+    : status;
+}
+
 export function StudyLab({
   slug,
   study,
@@ -69,11 +144,10 @@ export function StudyLab({
   canConclude,
 }: Props): ReactElement {
   const t = useTranslations("evaluationsLab");
+  const tErr = useTranslations("evaluationsErrors");
+  const tRun = useTranslations("run");
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [live, setLive] = useState<"connecting" | "live" | "closed">(
-    "connecting",
-  );
   const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
   const [selectedRuns, setSelectedRuns] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
@@ -84,59 +158,46 @@ export function StudyLab({
 
   // Live SSE: the durable event log drives a debounced RSC refresh so the
   // scoreboard reflects each transition. No persisted state is mutated here
-  // (read model only, D17); reconnect is EventSource's own Last-Event-ID.
-  useEffect(() => {
-    const hasActive = executions.some((e) => ACTIVE.has(e.status));
+  // (read model only, D17); reconnect resumes via `?lastEventId=`.
+  const hasActive = executions.some((e) => ACTIVE.has(e.status));
+  const scheduleRefresh = useCallback((): void => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(
+      () => startTransition(() => router.refresh()),
+      400,
+    );
+  }, [router]);
 
-    if (!hasActive) {
-      setLive("closed");
-
-      return;
-    }
-    const url = `/api/projects/${slug}/evaluations/studies/${study.id}/stream`;
-    const source = new EventSource(url);
-
-    source.onopen = () => setLive("live");
-    source.onmessage = () => {
+  useEffect(
+    () => () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
-      refreshTimer.current = setTimeout(refresh, 400);
-    };
-    source.onerror = () => setLive("connecting");
+    },
+    [],
+  );
 
-    return () => {
-      source.close();
-      if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    };
-  }, [slug, study.id, executions]);
-
-  async function post(url: string, body: unknown): Promise<void> {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const payload = (await res.json().catch(() => null)) as {
-        message?: string;
-      } | null;
-
-      throw new Error(payload?.message ?? `request failed: ${res.status}`);
-    }
-  }
+  const { liveness, reconnect } = useStudyStream({
+    slug,
+    studyId: study.id,
+    active: hasActive,
+    onEvent: scheduleRefresh,
+  });
 
   async function addObserved(): Promise<void> {
     setBusy("add");
     setError(null);
     try {
-      await post(
+      await evalRequest(
         `/api/projects/${slug}/evaluations/studies/${study.id}/participants`,
-        { runIds: [...selectedRuns] },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ runIds: [...selectedRuns] }),
+        },
       );
       setSelectedRuns(new Set());
       refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(tErr(evalErrorKey(err)));
     } finally {
       setBusy(null);
     }
@@ -146,14 +207,17 @@ export function StudyLab({
     setBusy("start");
     setError(null);
     try {
-      await post(
+      await evalRequest(
         `/api/projects/${slug}/evaluations/studies/${study.id}/evaluations`,
-        { profileId },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ profileId }),
+        },
       );
-      setLive("connecting");
       refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(tErr(evalErrorKey(err)));
     } finally {
       setBusy(null);
     }
@@ -176,20 +240,28 @@ export function StudyLab({
           </h1>
           <span className="mt-1 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-mute">
             {t(`status_${study.status}`)}
-            <LivePill
-              labels={{
-                live: t("live"),
-                connecting: t("connecting"),
-                closed: t("idle"),
-              }}
-              live={live}
-            />
+            {hasActive ? (
+              <RunStreamLiveness
+                labels={{
+                  disconnected: tRun("streamDisconnected"),
+                  live: tRun("streamLive"),
+                  reconnect: tRun("streamReconnect"),
+                  reconnecting: tRun("streamReconnecting"),
+                }}
+                liveness={liveness}
+                onReconnect={reconnect}
+              />
+            ) : (
+              <span aria-live="polite" className="text-mute">
+                {t("idle")}
+              </span>
+            )}
           </span>
         </div>
       </div>
 
       {error ? (
-        <p className="mb-3 text-[12px] text-red-700" role="alert">
+        <p className="mb-3 text-[12px] text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -223,7 +295,7 @@ export function StudyLab({
                       {t(`source_${p.sourceType}`)}
                     </td>
                     <td className="px-3 py-2 font-mono text-ink-2">
-                      {p.runStatus ?? "—"}
+                      {runStatusLabel(tRun, p.runStatus)}
                     </td>
                   </tr>
                 ))}
@@ -258,7 +330,9 @@ export function StudyLab({
                     <span className="font-mono text-[11px] text-mute">
                       {run.id.slice(0, 8)}
                     </span>
-                    <span className="text-ink-2">{run.status}</span>
+                    <span className="text-ink-2">
+                      {runStatusLabel(tRun, run.status)}
+                    </span>
                   </label>
                 </li>
               ))}
@@ -332,7 +406,7 @@ export function StudyLab({
                       exec.status === "completed"
                         ? "text-good"
                         : exec.status === "failed"
-                          ? "text-attention"
+                          ? "text-danger"
                           : TERMINAL.has(exec.status)
                             ? "text-ink-2"
                             : "text-amber"
@@ -341,6 +415,12 @@ export function StudyLab({
                     {t(`exec_${exec.status}`)}
                   </span>
                 </div>
+                {TERMINAL.has(exec.status) && exec.terminalReason ? (
+                  <p className="mt-1 text-[11px] text-danger">
+                    {t("terminalReason")}:{" "}
+                    <span className="font-mono">{exec.terminalReason}</span>
+                  </p>
+                ) : null}
                 {exec.aggregate ? (
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px]">
                     <span className="font-semibold text-ink">
@@ -369,6 +449,7 @@ export function StudyLab({
       <VerdictPanel
         canConclude={canConclude}
         executions={executions}
+        participants={participants}
         slug={slug}
         studyId={study.id}
         studyStatus={study.status}
@@ -378,39 +459,12 @@ export function StudyLab({
   );
 }
 
-function LivePill({
-  live,
-  labels,
-}: {
-  live: "connecting" | "live" | "closed";
-  labels: { live: string; connecting: string; closed: string };
-}): ReactElement {
-  const tone =
-    live === "live"
-      ? "text-good"
-      : live === "connecting"
-        ? "text-amber"
-        : "text-mute";
-  const dot =
-    live === "live"
-      ? "bg-good"
-      : live === "connecting"
-        ? "bg-amber"
-        : "bg-mute";
-
-  return (
-    <span className={`inline-flex items-center gap-1 ${tone}`}>
-      <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
-      {labels[live]}
-    </span>
-  );
-}
-
 function VerdictPanel({
   slug,
   studyId,
   studyStatus,
   executions,
+  participants,
   verdicts,
   canConclude,
 }: {
@@ -418,53 +472,55 @@ function VerdictPanel({
   studyId: string;
   studyStatus: string;
   executions: ExecutionView[];
+  participants: ParticipantView[];
   verdicts: VerdictView[];
   canConclude: boolean;
 }): ReactElement {
   const t = useTranslations("evaluationsLab");
+  const tErr = useTranslations("evaluationsErrors");
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [outcome, setOutcome] = useState<"winner" | "tie" | "inconclusive">(
-    "winner",
-  );
+  const [outcome, setOutcome] = useState<VerdictOutcome>("winner");
+  const [winnerId, setWinnerId] = useState("");
   const [cited, setCited] = useState<Set<string>>(new Set());
   const [rationale, setRationale] = useState("");
   const [ack, setAck] = useState(false);
+  const [partialAck, setPartialAck] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const citable = executions.filter((e) =>
     ["completed", "partial"].includes(e.status),
   );
+  const { hasCitedPartial, warnings: partialWarnings } = citedPartialWarnings(
+    executions,
+    cited,
+  );
+  const winnerMissing = outcome === "winner" && winnerId === "";
 
   async function record(): Promise<void> {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
+      await evalRequest(
         `/api/projects/${slug}/evaluations/studies/${studyId}/verdicts`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            outcome,
-            participantIds: [],
-            executionIds: [...cited],
-            noEvaluationEvidenceAck: cited.size === 0 ? ack : undefined,
-            rationale: rationale.trim() || null,
-          }),
+          body: JSON.stringify(
+            buildVerdictPayload({
+              outcome,
+              executions,
+              citedIds: cited,
+              winnerId,
+              zeroCitationAck: ack,
+              rationale,
+            }),
+          ),
         },
       );
-
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as {
-          message?: string;
-        } | null;
-
-        throw new Error(payload?.message ?? `request failed: ${res.status}`);
-      }
       startTransition(() => router.refresh());
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(tErr(evalErrorKey(err)));
     } finally {
       setBusy(false);
     }
@@ -493,13 +549,42 @@ function VerdictPanel({
               aria-label={t("outcome")}
               className="h-9 rounded-[8px] border border-line bg-paper px-3 text-[13px] text-ink outline-none"
               value={outcome}
-              onChange={(e) => setOutcome(e.target.value as typeof outcome)}
+              onChange={(e) => setOutcome(e.target.value as VerdictOutcome)}
             >
               <option value="winner">{t("outcome_winner")}</option>
               <option value="tie">{t("outcome_tie")}</option>
               <option value="inconclusive">{t("outcome_inconclusive")}</option>
             </select>
           </div>
+
+          {outcome === "winner" ? (
+            <fieldset className="border-0 p-0">
+              <legend className="mb-1 text-[11px] text-mute">
+                {t("winnerParticipant")}
+              </legend>
+              {participants.length === 0 ? (
+                <p className="text-[12px] text-mute">{t("noParticipants")}</p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {participants.map((p) => (
+                    <label
+                      key={p.id}
+                      className="flex items-center gap-2 text-[12px] text-ink"
+                    >
+                      <input
+                        checked={winnerId === p.id}
+                        name="verdict-winner"
+                        type="radio"
+                        value={p.id}
+                        onChange={() => setWinnerId(p.id)}
+                      />
+                      {p.label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+          ) : null}
 
           {citable.length > 0 ? (
             <fieldset className="border-0 p-0">
@@ -536,6 +621,34 @@ function VerdictPanel({
             </fieldset>
           ) : null}
 
+          {hasCitedPartial ? (
+            <div className="rounded-[8px] border border-line bg-ivory p-3">
+              {partialWarnings.length > 0 ? (
+                <ul
+                  aria-label={t("partialCitedWarnings")}
+                  className="m-0 mb-2 grid list-none gap-1 p-0"
+                >
+                  {partialWarnings.map((warning) => (
+                    <li
+                      key={warning}
+                      className="font-mono text-[11px] text-attention"
+                    >
+                      ⚠ {warning}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <label className="flex items-center gap-2 text-[12px] text-ink">
+                <input
+                  checked={partialAck}
+                  type="checkbox"
+                  onChange={(e) => setPartialAck(e.target.checked)}
+                />
+                {t("partialAck")}
+              </label>
+            </div>
+          ) : null}
+
           {cited.size === 0 ? (
             <label className="flex items-center gap-2 text-[12px] text-ink">
               <input
@@ -555,14 +668,20 @@ function VerdictPanel({
           />
 
           {error ? (
-            <p className="text-[12px] text-red-700" role="alert">
+            <p className="text-[12px] text-danger" role="alert">
               {error}
             </p>
           ) : null}
 
           <button
             className="inline-flex h-10 w-fit items-center gap-1.5 rounded-[8px] border border-line bg-ink px-4 text-[13px] font-semibold text-paper disabled:opacity-50"
-            disabled={busy || (cited.size === 0 && !ack)}
+            disabled={
+              busy ||
+              winnerMissing ||
+              (cited.size === 0 && !ack) ||
+              (hasCitedPartial && !partialAck)
+            }
+            title={winnerMissing ? t("winnerRequiredHint") : undefined}
             type="button"
             onClick={() => void record()}
           >

@@ -4,9 +4,17 @@ import type { JudgePanelRow, PanelRoleBinding } from "./types";
 import type { ReactElement } from "react";
 
 import { PlusIcon, TrashIcon, XMarkIcon } from "@heroicons/react/24/outline";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+
+import {
+  evalErrorKey,
+  evalRequest,
+} from "@/components/evaluations/api-error";
+import { useFeedback } from "@/components/feedback/feedback-provider";
+import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
 
 type Props = {
   mode: "create" | "edit";
@@ -24,6 +32,16 @@ const NUMERIC_FIELDS = [
 
 type NumericField = (typeof NUMERIC_FIELDS)[number];
 
+// Client mirror of the server contract (lib/evaluations/config-schemas.ts
+// panelPolicySchema): ints within these bounds, plus quorum <= attempts.
+const NUMERIC_BOUNDS: Record<NumericField, { min: number; max: number }> = {
+  attempts: { min: 1, max: 64 },
+  maxParallelAttempts: { min: 1, max: 64 },
+  quorum: { min: 1, max: 64 },
+  timeoutMs: { min: 1, max: 3_600_000 },
+  maxRetries: { min: 0, max: 16 },
+};
+
 const DEFAULT_POLICY = {
   attempts: 3,
   maxParallelAttempts: 2,
@@ -34,8 +52,10 @@ const DEFAULT_POLICY = {
   randomizeOrder: true,
 };
 
-export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement {
+export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement | null {
   const t = useTranslations("settingsEvaluations");
+  const tErr = useTranslations("evaluationsErrors");
+  const feedback = useFeedback();
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [name, setName] = useState(panel?.name ?? "");
@@ -53,10 +73,34 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement {
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  function requestClose(): void {
+    if (!saving) onClose();
+  }
+
+  useModalFocusTrap(dialogRef, requestClose);
 
   function setNumeric(field: NumericField, value: string): void {
-    setPolicy((p) => ({ ...p, [field]: Number(value) }));
+    setPolicy((p) => ({
+      ...p,
+      [field]: value === "" ? Number.NaN : Number(value),
+    }));
   }
+
+  function fieldInvalid(field: NumericField): boolean {
+    const value = policy[field];
+    const bounds = NUMERIC_BOUNDS[field];
+
+    return (
+      !Number.isInteger(value) || value < bounds.min || value > bounds.max
+    );
+  }
+
+  const boundsInvalid = NUMERIC_FIELDS.some(fieldInvalid);
+  const quorumExceedsAttempts =
+    !boundsInvalid && policy.quorum > policy.attempts;
+  const policyInvalid = boundsInvalid || quorumExceedsAttempts;
 
   async function save(): Promise<void> {
     setSaving(true);
@@ -83,47 +127,58 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement {
     };
 
     try {
-      const res =
-        mode === "create"
-          ? await fetch("/api/admin/evaluations/judge-panels", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(body),
-            })
-          : await fetch(`/api/admin/evaluations/judge-panels/${panel!.id}`, {
-              method: "PATCH",
-              headers: {
-                "content-type": "application/json",
-                "if-match": String(panel!.revision),
-              },
-              body: JSON.stringify(body),
-            });
-
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as {
-          message?: string;
-        } | null;
-
-        throw new Error(payload?.message ?? `request failed: ${res.status}`);
+      if (mode === "create") {
+        await evalRequest("/api/admin/evaluations/judge-panels", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } else {
+        await evalRequest(
+          `/api/admin/evaluations/judge-panels/${panel!.id}`,
+          {
+            method: "PATCH",
+            headers: {
+              "content-type": "application/json",
+              "if-match": String(panel!.revision),
+            },
+            body: JSON.stringify(body),
+          },
+        );
       }
 
+      feedback.success({
+        mutationId: `eval-panel:${mode}:${panel?.id ?? "new"}:${Date.now()}`,
+        message: t("toastSaved"),
+      });
       startTransition(() => router.refresh());
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(tErr(evalErrorKey(err)));
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <div
-      aria-labelledby="judge-panel-modal-title"
-      aria-modal="true"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
-      role="dialog"
-    >
-      <div className="max-h-[90vh] w-full max-w-[620px] overflow-y-auto rounded-[12px] border border-line bg-paper p-6 shadow-xl">
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <button
+        aria-label={t("close")}
+        className="absolute inset-0 cursor-default bg-black/40"
+        disabled={saving}
+        tabIndex={-1}
+        type="button"
+        onClick={requestClose}
+      />
+      <div
+        ref={dialogRef}
+        aria-labelledby="judge-panel-modal-title"
+        aria-modal="true"
+        className="relative max-h-[90vh] w-full max-w-[620px] overflow-y-auto rounded-[12px] border border-line bg-paper p-6 shadow-xl"
+        role="dialog"
+      >
         <div className="mb-4 flex items-center justify-between">
           <h2
             className="m-0 text-[15px] font-semibold text-ink"
@@ -133,9 +188,10 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement {
           </h2>
           <button
             aria-label={t("close")}
-            className="grid h-8 w-8 place-items-center rounded-[8px] text-mute hover:text-ink"
+            className="grid h-8 w-8 place-items-center rounded-[8px] text-mute hover:text-ink disabled:opacity-50"
+            disabled={saving}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
           >
             <XMarkIcon aria-hidden="true" className="h-5 w-5" />
           </button>
@@ -220,15 +276,22 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement {
               <label key={field} className="flex flex-col gap-1">
                 <span className="text-[11px] text-mute">{t(field)}</span>
                 <input
-                  className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none"
-                  min={field === "maxRetries" ? 0 : 1}
+                  aria-invalid={fieldInvalid(field) || undefined}
+                  className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none aria-[invalid]:border-danger"
+                  max={NUMERIC_BOUNDS[field].max}
+                  min={NUMERIC_BOUNDS[field].min}
                   type="number"
-                  value={policy[field]}
+                  value={Number.isFinite(policy[field]) ? policy[field] : ""}
                   onChange={(e) => setNumeric(field, e.target.value)}
                 />
               </label>
             ))}
           </div>
+          {policyInvalid ? (
+            <p className="mt-2 text-[12px] text-danger" role="alert">
+              {quorumExceedsAttempts ? t("quorumBound") : t("policyBounds")}
+            </p>
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-4">
             <label className="flex items-center gap-2 text-[12px] text-ink">
               <input
@@ -263,22 +326,23 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement {
         </fieldset>
 
         {error ? (
-          <p className="mb-3 text-[12px] text-red-700" role="alert">
+          <p className="mb-3 text-[12px] text-danger" role="alert">
             {error}
           </p>
         ) : null}
 
         <div className="flex justify-end gap-2">
           <button
-            className="h-10 rounded-[8px] border border-line px-4 text-[13px] font-semibold text-ink"
+            className="h-10 rounded-[8px] border border-line px-4 text-[13px] font-semibold text-ink disabled:opacity-50"
+            disabled={saving}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
           >
             {t("cancel")}
           </button>
           <button
             className="h-10 rounded-[8px] border border-line bg-ink px-4 text-[13px] font-semibold text-paper disabled:opacity-50"
-            disabled={saving || name.trim().length === 0}
+            disabled={saving || name.trim().length === 0 || policyInvalid}
             type="button"
             onClick={() => void save()}
           >
@@ -286,6 +350,7 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

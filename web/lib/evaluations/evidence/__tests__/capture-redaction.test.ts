@@ -32,6 +32,35 @@ describe("redactEvidenceText", () => {
     expect(result.kinds).toContain("host_path");
   });
 
+  it("replaces group-less secret matches with the bare marker — never the match offset", () => {
+    const akia = redactEvidenceText("+AWS_KEY=AKIAIOSFODNN7EXAMPLE");
+
+    // Exact replacement: no stray digits (the regression baked the numeric
+    // regex match offset into sealed evidence, e.g. "9[REDACTED_SECRET]").
+    expect(akia.text).toBe("+AWS_KEY=[REDACTED_SECRET]");
+    expect(akia.text).not.toMatch(/\d\[REDACTED_SECRET\]/);
+    expect(akia.text).not.toContain("AKIA");
+    expect(akia.redactions).toBe(1);
+    expect(akia.kinds).toEqual(["aws_access_key"]);
+
+    const openai = redactEvidenceText(
+      "+client = connect(sk-abcdefghijklmnopqrstuvwx)",
+    );
+
+    expect(openai.text).toBe("+client = connect([REDACTED_SECRET])");
+    expect(openai.text).not.toMatch(/\d\[REDACTED_SECRET\]/);
+    expect(openai.text).not.toContain("sk-");
+    expect(openai.redactions).toBe(1);
+    expect(openai.kinds).toEqual(["openai_key"]);
+  });
+
+  it("keeps the assignment prefix for assigned_secret (the one capture-group pattern)", () => {
+    const result = redactEvidenceText("+password = supersecretvalue12345");
+
+    expect(result.text).toBe("+password = [REDACTED_SECRET]");
+    expect(result.kinds).toEqual(["assigned_secret"]);
+  });
+
   it("masks secret-shaped tokens without mangling ordinary diff content", () => {
     const result = redactEvidenceText(
       [

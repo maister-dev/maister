@@ -2,6 +2,10 @@ import "server-only";
 
 import type { Db } from "@/lib/evaluations/db";
 import type { AggregationAlgorithm } from "@/lib/evaluations/method-schema";
+import type {
+  EvaluationExecutionAggregationPolicySnapshot,
+  EvaluationExecutionJudgePolicySnapshot,
+} from "@/lib/evaluations/types";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
@@ -50,8 +54,63 @@ interface LoadedMethod {
   schemaDigest: string;
 }
 
-// Build the aggregation criteria + policy from the SNAPSHOTTED method revision —
-// the same immutable definition the panel scored against.
+// Build the aggregation criteria + policy from the execution's START-TIME
+// snapshots (judge_policy_snapshot.criteria + aggregation_policy_snapshot) —
+// the exact definition slices the panel was launched against. The methods
+// registry overwrites `normalizedDefinition` in place, so the live revision is
+// NOT immutable mid-execution; only pre-snapshot legacy rows fall back to it.
+function methodFromSnapshots(exec: ExecutionRow): LoadedMethod | null {
+  const judgeSnap = exec.judgePolicySnapshot;
+  const aggSnap = exec.aggregationPolicySnapshot;
+  const criteria = judgeSnap?.criteria;
+
+  if (
+    !criteria?.length ||
+    !aggSnap ||
+    typeof aggSnap.algorithm !== "string" ||
+    typeof aggSnap.quorum !== "number" ||
+    typeof aggSnap.definitionDigest !== "string" ||
+    typeof aggSnap.schemaDigest !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    criteria: criteria.map((c) => ({
+      id: c.id,
+      weight: c.weight,
+      normalizedWeight: c.normalizedWeight,
+      scaleMin: c.scaleMin,
+      scaleMax: c.scaleMax,
+      itemCap: c.itemCap ?? undefined,
+      optional: c.optional,
+    })),
+    algorithm: aggSnap.algorithm as AggregationAlgorithm,
+    // The RESOLVED quorum (profile policy), snapshotted at start — never the
+    // raw method floor (B: the snapshot was write-only before this).
+    quorum: aggSnap.quorum,
+    totalMax: aggSnap.totalMax ?? undefined,
+    criterionScaleMax: Math.max(...criteria.map((c) => c.scaleMax)),
+    gateCheckIds: new Set(aggSnap.gateCheckIds ?? []),
+    definitionDigest: aggSnap.definitionDigest,
+    schemaDigest: aggSnap.schemaDigest,
+  };
+}
+
+async function loadMethodConfig(
+  exec: ExecutionRow,
+  d: Db,
+): Promise<LoadedMethod | null> {
+  const snapshotted = methodFromSnapshots(exec);
+
+  if (snapshotted) return snapshotted;
+  if (!exec.methodRevisionId) return null;
+
+  // Legacy execution predating the start-time snapshot — the live revision is
+  // the only source (bounded drift accepted for those rows only).
+  return loadMethod(exec.methodRevisionId, d);
+}
+
 async function loadMethod(
   methodRevisionId: string,
   d: Db,
@@ -212,6 +271,8 @@ interface ExecutionRow {
   status: string;
   version: number;
   methodRevisionId: string | null;
+  judgePolicySnapshot: EvaluationExecutionJudgePolicySnapshot | null;
+  aggregationPolicySnapshot: EvaluationExecutionAggregationPolicySnapshot | null;
 }
 
 async function loadExecution(
@@ -225,6 +286,8 @@ async function loadExecution(
       status: evaluationExecutions.status,
       version: evaluationExecutions.version,
       methodRevisionId: evaluationExecutions.methodRevisionId,
+      judgePolicySnapshot: evaluationExecutions.judgePolicySnapshot,
+      aggregationPolicySnapshot: evaluationExecutions.aggregationPolicySnapshot,
     })
     .from(evaluationExecutions)
     .where(eq(evaluationExecutions.id, executionId));
@@ -236,7 +299,15 @@ async function loadExecution(
     );
   }
 
-  return row;
+  return {
+    ...row,
+    // Opaque jsonb Records; startEvaluationExecution is the only writer and it
+    // stores exactly these typed shapes.
+    judgePolicySnapshot:
+      row.judgePolicySnapshot as EvaluationExecutionJudgePolicySnapshot | null,
+    aggregationPolicySnapshot:
+      row.aggregationPolicySnapshot as EvaluationExecutionAggregationPolicySnapshot | null,
+  };
 }
 
 // Panel-completion gate (D4): `judging -> aggregating` fires when the valid
@@ -251,9 +322,11 @@ export async function evaluateAndAdvancePanel(
   const exec = await loadExecution(executionId, d);
 
   if (exec.status !== "judging") return false;
-  if (!exec.methodRevisionId) return false;
 
-  const method = await loadMethod(exec.methodRevisionId, d);
+  const method = await loadMethodConfig(exec, d);
+
+  if (!method) return false;
+
   const loaded = await loadAttemptResults(executionId, d);
 
   const quorumMet = loaded.validCount >= method.quorum;
@@ -297,14 +370,16 @@ export async function runAggregationForExecution(
       `execution ${executionId} is ${exec.status}, not aggregating`,
     );
   }
-  if (!exec.methodRevisionId) {
+
+  const method = await loadMethodConfig(exec, d);
+
+  if (!method) {
     throw new MaisterError(
       "PRECONDITION",
-      `execution ${executionId} has no method revision`,
+      `execution ${executionId} has no aggregation config (no policy snapshot and no method revision)`,
     );
   }
 
-  const method = await loadMethod(exec.methodRevisionId, d);
   const loaded = await loadAttemptResults(executionId, d);
 
   const result = computeAggregate({
@@ -360,36 +435,41 @@ export async function runAggregationForExecution(
 
   const fresh = await loadExecution(executionId, d);
 
-  await advanceExecution(
-    {
-      studyId: exec.studyId,
-      executionId,
-      from: "aggregating",
-      to,
-      expectedVersion: fresh.version,
-      patch:
-        to === "partial" ? { terminalReason: "quorum_not_met" } : undefined,
-      payload: {
-        level: disagreement.level,
-        quorumMet: result.quorumMet,
-      },
-    },
-    d,
-  );
-
-  if (disagreement.reviewRequired) {
-    await openReview(
+  // ONE transaction for the terminal edge + its review row: a crash between
+  // them must never leave a review_required execution with no review to
+  // resolve. openReview accepts the tx as its db parameter (savepoint-nested).
+  await d.transaction(async (tx: Db) => {
+    await advanceExecution(
       {
         studyId: exec.studyId,
         executionId,
-        kind: disagreement.signals.objectiveContradiction
-          ? "escalation"
-          : "disagreement",
-        flags: disagreement.signals as unknown as Record<string, unknown>,
+        from: "aggregating",
+        to,
+        expectedVersion: fresh.version,
+        patch:
+          to === "partial" ? { terminalReason: "quorum_not_met" } : undefined,
+        payload: {
+          level: disagreement.level,
+          quorumMet: result.quorumMet,
+        },
       },
-      d,
+      tx,
     );
-  }
+
+    if (disagreement.reviewRequired) {
+      await openReview(
+        {
+          studyId: exec.studyId,
+          executionId,
+          kind: disagreement.signals.objectiveContradiction
+            ? "escalation"
+            : "disagreement",
+          flags: disagreement.signals as unknown as Record<string, unknown>,
+        },
+        tx,
+      );
+    }
+  });
 
   log.info(
     {

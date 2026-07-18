@@ -117,7 +117,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `webhook_delivery_attempts`   | **(Implemented, ADR-077, migration `0041`)** Append-only per-attempt audit. `attempt_no` continues from the running total across replay cycles. UNIQUE `(delivery_id, attempt_no)`.                                                                                                                                                            | `webhook_deliveries.id`                                                    |
 | `task_relations`              | **(ADR-083 — Implemented, migration `0043`)** Canonical one-direction typed task relations (`blocks\|depends_on\|parent_of`). UNIQUE `(from_task_id, kind, to_task_id)`; no self-relations; same-project enforced in the domain layer.                                                                                                  | `projects.id`, `tasks.id` (both ends)                                      |
 | `task_comments`               | **(ADR-083 — Implemented, migration `0043`)** Append-only markdown task comments; mentions stored expanded; polymorphic actor pair.                                                                                                                                                                                                     | `tasks.id`, `projects.id`                                                  |
-| `task_activity`               | **(ADR-083 — Implemented, migration `0043`)** Append-only domain-written task event log (`task_created\|comment_added\|task_mentioned\|relation_added\|relation_removed\|run_launched`) with jsonb payload.                                                                                                                              | `tasks.id`, `projects.id`                                                  |
+| `task_activity`               | **(ADR-083 — Implemented, migration `0043`; kind CHECK widened by `0050`/`0090`/`0105`/`0111`)** Append-only domain-written task event log (`task_created\|comment_added\|task_mentioned\|relation_added\|relation_removed\|run_launched\|triage_set\|triage_requeued\|agent_quarantined\|experiment_concluded\|run_pr_merged\|evaluation_decided`) with jsonb payload.                                                                                                                              | `tasks.id`, `projects.id`                                                  |
 | `task_subscribers`            | **(ADR-083 — Implemented, migration `0043`)** Per-task subscriber set (`user\|agent` pair + reason `creator\|commenter\|mentioned\|manual`). UNIQUE `(task_id, subscriber_type, subscriber_id)`.                                                                                                                                        | `tasks.id`                                                                 |
 | `inbox_items`                 | **(ADR-083 — Implemented, migration `0043`)** Per-recipient inbox fanned out from comment/mention events; `read_at` read marker; `source_ref` jsonb.                                                                                                                                                                                    | `projects.id`, `tasks.id`                                                  |
 ## `users`
@@ -1163,7 +1163,11 @@ Append-only in Stage 1 — no edit, delete, or threading. Indexed
   projectId,                      // FK -> projects.id (cascade)
   actorType, actorId?,            // polymorphic actor pair
   eventKind: 'task_created' | 'comment_added' | 'task_mentioned'
-           | 'relation_added' | 'relation_removed' | 'run_launched',
+           | 'relation_added' | 'relation_removed' | 'run_launched'
+           | 'triage_set' | 'triage_requeued' | 'agent_quarantined'   // 0050
+           | 'experiment_concluded'                                   // 0090
+           | 'run_pr_merged'                                          // 0105
+           | 'evaluation_decided',                                    // 0111
   payload,                        // jsonb NOT NULL DEFAULT '{}'
   createdAt
 }
@@ -1643,8 +1647,8 @@ this section names the invariants the columns encode. Eight migrations:
   `experiments`/`experiment_runs` tables remain the payload source of record
   and MUST NOT be dropped until those payloads are carried over or that
   carry-over is explicitly waived; the legacy-contract drop is a future
-  reserved migration (unnumbered) after the rollback window and operator
-  sign-off.
+  reserved migration (unnumbered, 0115+) after the rollback window and
+  operator sign-off.
 
 - **Verdict task-activity (`0111`).** Additive CHECK-widen only (no new
   table): drops and re-adds `task_activity_event_kind_check` so

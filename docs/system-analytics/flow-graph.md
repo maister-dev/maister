@@ -518,7 +518,7 @@ readiness interaction: [`readiness.md`](readiness.md).
 - A manifest declares a non-empty `nodes[]`; any `steps[]` key and any missing
   or empty `nodes[]` is refused with `MaisterError("CONFIG")`.
 - A graph flow's declared `compat` range MUST include the current host engine
-  `3.1.0`;
+  `3.2.0`;
   open-ended graph packages with an older `engine_min` remain compatible.
 - `node_attempts` is **append-only**: rework and retries never mutate a prior
   row; `attempt` auto-increments per `(run_id, node_id)` under

@@ -10,6 +10,29 @@ import { useTranslations } from "next-intl";
 import { readApiError } from "@/lib/api-error";
 import { TOKEN_SCOPE_VALUES, type TokenScope } from "@/types/token-scopes";
 
+// ADR-145 D10/D12: the four attempt-bound evaluator judge scopes are minted
+// ONLY on a judge attempt's ephemeral agent token (EVALUATION_JUDGE_TOKEN_SCOPES
+// in the server-only lib/agents/tokens.ts — mirrored here because that module
+// cannot be imported from a client component). They are machine-only and are
+// excluded from the user token picker, the same way AGENT_TOKEN_SCOPES is a
+// fixed machine set outside the picker vocabulary.
+const JUDGE_TOKEN_SCOPES = [
+  "evaluations:context:read",
+  "evaluations:evidence:read",
+  "evaluations:objective:read",
+  "evaluations:result:submit",
+] as const satisfies readonly TokenScope[];
+
+type JudgeTokenScope = (typeof JUDGE_TOKEN_SCOPES)[number];
+
+type UserTokenScope = Exclude<TokenScope, JudgeTokenScope>;
+
+export const USER_TOKEN_SCOPE_VALUES: readonly UserTokenScope[] =
+  TOKEN_SCOPE_VALUES.filter(
+    (scope): scope is UserTokenScope =>
+      !(JUDGE_TOKEN_SCOPES as readonly TokenScope[]).includes(scope),
+  );
+
 const BTN_NEUTRAL =
   "rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2 disabled:opacity-50";
 const BTN_PRIMARY =
@@ -244,7 +267,10 @@ function KindField({
   );
 }
 
-function scopeText(labels: TokenLabels, scope: TokenScope): string {
+// Exhaustive over the USER-facing scope vocabulary — no fallback, so adding a
+// user scope without a label is a compile-time error, and a machine-only scope
+// can never render as a raw id.
+function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
   switch (scope) {
     case "*":
       return labels.scopeAll;
@@ -308,11 +334,6 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeExperimentsRead;
     case "experiments:advise":
       return labels.scopeExperimentsAdvise;
-    // ADR-145: attempt-bound evaluator judge scopes are machine-minted for judge
-    // attempt tokens, not part of the labeled user-token vocabulary — render the
-    // raw id rather than carrying four unused i18n label keys.
-    default:
-      return scope;
   }
 }
 
@@ -342,7 +363,7 @@ function ScopeField({
         {labels.scopesLabel}
       </legend>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {TOKEN_SCOPE_VALUES.map((scope) => (
+        {USER_TOKEN_SCOPE_VALUES.map((scope) => (
           <label
             key={scope}
             className="flex min-h-9 items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[11px] text-ink-2"

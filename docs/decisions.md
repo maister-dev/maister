@@ -12542,9 +12542,12 @@ legacy migration ledger.
   offset/length), `evaluation_objective_results`, `evaluation_result_submit`.
   No tool accepts a project/worktree path, supervisor/session id, study/run/
   snapshot id when the token already binds it.
-- Migration ledger: `0104_evaluation_studies_expand`,
-  `0105_evaluation_platform_config`, `0106_evaluation_execution_evidence`, and
-  the deferred `0107_evaluation_legacy_contract`. Legacy Experiment rows/JSON
+- Migration ledger (renumbered onto main): `0107_wet_red_skull`
+  (Study/recipe/participant), `0108_dizzy_speed` (platform config),
+  `0109_clear_major_mapleleaf` (execution + evidence),
+  `0110_evaluation_legacy_backfill`, and a deferred, still-unnumbered
+  legacy-contract drop migration (0115+ — 0111–0114 were claimed by
+  verdict-activity and M47/M48). Legacy Experiment rows/JSON
   migrate losslessly with count/digest parity or the migration aborts.
 
 **Consequences:**

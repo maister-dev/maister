@@ -41,6 +41,10 @@ import {
   deriveExperimentMembershipFromSource,
   type InheritedExperimentMembership,
 } from "@/lib/experiments/membership";
+import {
+  deriveEvaluationParticipationFromSource,
+  type InheritedEvaluationParticipation,
+} from "@/lib/evaluations/membership";
 import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import {
   assertNodeLaunchable,
@@ -110,6 +114,7 @@ import {
 // types remain stable across the service and integration-test boundaries.
 const {
   capabilityRecords,
+  evaluationParticipants,
   experiments,
   experimentRuns,
   flowRevisions,
@@ -347,6 +352,14 @@ export type LaunchRunInput = {
   // ADR-126 T10: launch-time auto-promotion opt-out. `false` ⇒ a `launch`-sourced
   // promotion_hold is written at run INSERT; unset/true ⇒ no hold.
   autoPromote?: boolean;
+  // ADR-146 D15: server-internal marker for a controlled evaluation launch (the
+  // launch-batch seam adapter). When set, the run INSERT writes an
+  // `evaluation_study`-sourced promotion hold (forced — independent of
+  // `autoPromote`) so the participant can never auto-promote/auto-deliver and
+  // the DELETE hold route can refuse clearing it while the study is live. Never
+  // accepted from a route body; a launched-participant restart derives the same
+  // hold from its inherited participation instead.
+  evaluationStudyId?: string;
   // ADR-121 (INV-9): mark this run as auto-DRAINED — stamps runs.queue_admitted_at
   // at insert so it counts toward the per-project `maxInFlightAuto` share and is
   // distinguishable from manual/scratch/resume runs. Set ONLY by the unified
@@ -647,17 +660,42 @@ export async function* launchRunStaged(
   const effectiveExperimentMembership =
     input.experimentMembership ??
     toLaunchMembership(inheritedExperimentMembership);
+  // ADR-146 D15: the evaluation analogue of the experiment inheritance above. A
+  // relaunch/budget-restart of a LAUNCHED evaluation participant mints a
+  // SUCCESSOR participant row (same study/recipe lineage, new runId) in the
+  // run-insert tx below, so the replacement run stays launched-lineage-held —
+  // without it the restart would be the escape hatch out of the study's
+  // no-auto-promotion/no-auto-delivery guarantee.
+  const inheritedEvaluationParticipation: InheritedEvaluationParticipation | null =
+    inheritanceSource === null
+      ? null
+      : await deriveEvaluationParticipationFromSource(_db as never, {
+          sourceRunId: inheritanceSource.sourceRunId,
+          taskId: task.id,
+        });
   const forceByBudgetMembership =
     inheritedExperimentMembership?.launchReason === "budget_restart";
   const forceByDirectExperimentMembership =
     input.experimentMembership !== undefined;
+  // A budget-restarted launched participant relaunches INDEPENDENTLY of its
+  // still-active study siblings (the widened HITL preflight already classified
+  // it force-relaunchable — without this the widening was a no-op and the
+  // restart died `PRECONDITION busy`). Mirrors forceByBudgetMembership.
+  const forceByBudgetEvaluationParticipation =
+    inheritedEvaluationParticipation !== null &&
+    inheritanceSource?.launchReason === "budget_restart";
   const allowConcurrentForLaunch = input.scheduledReservation
     ? false
     : Boolean(
         input.allowConcurrent ||
           forceByBudgetMembership ||
-          forceByDirectExperimentMembership,
+          forceByDirectExperimentMembership ||
+          forceByBudgetEvaluationParticipation,
       );
+  // The study whose forced `evaluation_study` promotion hold this run carries:
+  // an explicit controlled launch (seam adapter) or inherited participation.
+  const evaluationHoldStudyId =
+    input.evaluationStudyId ?? inheritedEvaluationParticipation?.studyId ?? null;
 
   if (inheritedExperimentMembership) {
     log.info(
@@ -671,6 +709,20 @@ export async function* launchRunStaged(
         forceByDirectExperimentMembership,
       },
       "POST /api/runs inherited experiment membership",
+    );
+  }
+
+  if (inheritedEvaluationParticipation) {
+    log.info(
+      {
+        sourceRunId: inheritanceSource?.sourceRunId,
+        studyId: inheritedEvaluationParticipation.studyId,
+        recipeId: inheritedEvaluationParticipation.recipeId,
+        replicateOrdinal: inheritedEvaluationParticipation.replicateOrdinal,
+        launchReason: inheritanceSource?.launchReason,
+        forceByBudgetEvaluationParticipation,
+      },
+      "POST /api/runs inherited evaluation participation",
     );
   }
 
@@ -1598,8 +1650,17 @@ export async function* launchRunStaged(
             executionPolicy,
             // ADR-126 T10: launch opt-out persists as a `launch`-sourced hold so
             // the sweep never considers this run (survives rework like any hold).
-            promotionHold:
-              input.autoPromote === false
+            // ADR-146 D15: a launched evaluation participant (controlled launch
+            // via `evaluationStudyId`, or a restart inheriting participation)
+            // gets the FORCED `evaluation_study` hold instead — the DELETE hold
+            // route refuses to clear it while the owning study is live.
+            promotionHold: evaluationHoldStudyId
+              ? {
+                  source: "evaluation_study" as const,
+                  reason: `launched evaluation participant (study ${evaluationHoldStudyId})`,
+                  createdAt: new Date().toISOString(),
+                }
+              : input.autoPromote === false
                 ? {
                     source: "launch" as const,
                     createdAt: new Date().toISOString(),
@@ -1707,6 +1768,40 @@ export async function* launchRunStaged(
                 ),
               );
           }
+        }
+
+        // ADR-146 D15: the SUCCESSOR participant row for a restarted launched
+        // evaluation participant — same study/recipe lineage, the NEW runId, so
+        // `isLaunchedLineageRun(newRun)` holds the replacement. The fresh runId
+        // never collides with the live (study_id, run_id) partial unique (the
+        // dead run's row stays, immutably holding the dead run); `batch_item_id`
+        // stays null (the partial-unique adoption anchor binds the ORIGINAL
+        // batch launch to its first participant). A tombstoned source mirrors
+        // its removed state — the replacement is held without re-surfacing as a
+        // live study participant. `budget_restart` maps to `manual_relaunch`
+        // (the participant launch_reason enum; same mapping as backfill 0110).
+        if (inheritedEvaluationParticipation) {
+          await tx.insert(evaluationParticipants).values({
+            id: randomUUID(),
+            studyId: inheritedEvaluationParticipation.studyId,
+            runId,
+            sourceType: "launched",
+            recipeId: inheritedEvaluationParticipation.recipeId,
+            label: inheritedEvaluationParticipation.label,
+            replicateGroup: inheritedEvaluationParticipation.replicateGroup,
+            replicateOrdinal: inheritedEvaluationParticipation.replicateOrdinal,
+            launchReason: "manual_relaunch",
+            runIdentity: {
+              runId,
+              taskId: task.id,
+              flowRefId: flow.flowRefId,
+              flowRevisionId: revision.id,
+              capturedAt: new Date().toISOString(),
+            },
+            ...(inheritedEvaluationParticipation.sourceRemoved
+              ? { removedAt: new Date() }
+              : {}),
+          });
         }
 
         // M42 (ADR-114): one `run_sessions` row per resolved session — the SOLE

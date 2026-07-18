@@ -1,3 +1,9 @@
+import type {
+  JudgePanelRow,
+  MethodologyRow,
+  ProfileRow,
+} from "@/components/settings/evaluations/types";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -10,13 +16,8 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/settings/evaluations",
 }));
 
+import { FeedbackProvider } from "@/components/feedback/feedback-provider";
 import { EvaluationsSettings } from "@/components/settings/evaluations/evaluations-settings";
-
-import type {
-  JudgePanelRow,
-  MethodologyRow,
-  ProfileRow,
-} from "@/components/settings/evaluations/types";
 
 const methodology: MethodologyRow = {
   id: "m1",
@@ -70,11 +71,15 @@ const profile: ProfileRow = {
 describe("EvaluationsSettings", () => {
   it("renders three tabs with counts and the methodologies table by default", () => {
     const markup = renderToStaticMarkup(
-      createElement(EvaluationsSettings, {
-        methodologies: [methodology, degradedMethodology],
-        panels: [panel],
-        profiles: [profile],
-      }),
+      createElement(
+        FeedbackProvider,
+        null,
+        createElement(EvaluationsSettings, {
+          methodologies: [methodology, degradedMethodology],
+          panels: [panel],
+          profiles: [profile],
+        }),
+      ),
     );
 
     expect(markup).toContain("tabMethodologies");
@@ -90,11 +95,15 @@ describe("EvaluationsSettings", () => {
 
   it("gates the disable/enable action on health and surfaces validation reasons", () => {
     const markup = renderToStaticMarkup(
-      createElement(EvaluationsSettings, {
-        methodologies: [degradedMethodology],
-        panels: [],
-        profiles: [],
-      }),
+      createElement(
+        FeedbackProvider,
+        null,
+        createElement(EvaluationsSettings, {
+          methodologies: [degradedMethodology],
+          panels: [],
+          profiles: [],
+        }),
+      ),
     );
 
     // A degraded, disabled method cannot be enabled — the button is disabled and
@@ -106,11 +115,15 @@ describe("EvaluationsSettings", () => {
 
   it("renders an empty-state when there are no methodologies", () => {
     const markup = renderToStaticMarkup(
-      createElement(EvaluationsSettings, {
-        methodologies: [],
-        panels: [],
-        profiles: [],
-      }),
+      createElement(
+        FeedbackProvider,
+        null,
+        createElement(EvaluationsSettings, {
+          methodologies: [],
+          panels: [],
+          profiles: [],
+        }),
+      ),
     );
 
     expect(markup).toContain("noMethodologies");

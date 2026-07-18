@@ -12,6 +12,7 @@ import {
   retryFailedBatchItems,
   runControlledLaunchBatch,
 } from "@/lib/evaluations/launch-batch";
+import { MaisterError } from "@/lib/errors";
 import { createControlledRecipe } from "@/lib/evaluations/recipes";
 import { createStudy } from "@/lib/evaluations/studies";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
@@ -417,7 +418,9 @@ describe("runControlledLaunchBatch", () => {
 
     expect(failedItem[0].status).toBe("failed");
     expect(failedItem[0].attempt).toBe(1);
-    expect(failedItem[0].errorReason).toContain("simulated");
+    // The persisted reason is a typed marker, never the raw error message
+    // (which may embed host paths).
+    expect(failedItem[0].errorReason).toBe("CRASH");
   });
 
   it("does not re-launch already-launched items on a second drive (crash recovery)", async () => {
@@ -649,5 +652,221 @@ describe("runControlledLaunchBatch", () => {
       .where(eq(schema.evaluationParticipants.batchItemId, item.id));
 
     expect(participants).toHaveLength(1);
+  });
+});
+
+describe("launch-time governance gates (kill switch / study status / tombstone)", () => {
+  const KILL_SWITCH_ENV = "MAISTER_CONTROLLED_RECIPES_ENABLED";
+
+  function trackingSeam(calls: string[]): LaunchRunSeam {
+    return async ({ launchKey }) => {
+      calls.push(launchKey);
+
+      return { runId: await makeRun() };
+    };
+  }
+
+  async function withKillSwitchOff<T>(fn: () => Promise<T>): Promise<T> {
+    const prior = process.env[KILL_SWITCH_ENV];
+
+    process.env[KILL_SWITCH_ENV] = "false";
+    try {
+      return await fn();
+    } finally {
+      if (prior === undefined) delete process.env[KILL_SWITCH_ENV];
+      else process.env[KILL_SWITCH_ENV] = prior;
+    }
+  }
+
+  it("halts the drive under the kill switch, leaving items queued, then drains after re-enable", async () => {
+    const study = await createStudy({ projectId, taskId, title: "G1" }, db);
+    const recipeId = await newRecipe(study.id as string, "a", 2);
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+    const seamCalls: string[] = [];
+
+    const halted = await withKillSwitchOff(() =>
+      runControlledLaunchBatch(batchId, trackingSeam(seamCalls), db),
+    );
+
+    expect(halted).toEqual({ launched: 0, failed: 0, skipped: 0 });
+    expect(seamCalls).toEqual([]);
+
+    const items = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.batchId, batchId));
+
+    expect(
+      items.every((i: Record<string, unknown>) => i.status === "queued"),
+    ).toBe(true);
+
+    // Freeze lifted → the SAME durable batch drains normally.
+    const drained = await runControlledLaunchBatch(
+      batchId,
+      trackingSeam(seamCalls),
+      db,
+    );
+
+    expect(drained).toEqual({ launched: 2, failed: 0, skipped: 0 });
+  });
+
+  it("terminalizes queued items with a typed reason when the study is no longer launchable", async () => {
+    const study = await createStudy({ projectId, taskId, title: "G2" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+
+    await db
+      .update(schema.evaluationStudies)
+      .set({ status: "decided" })
+      .where(eq(schema.evaluationStudies.id, study.id as string));
+
+    const seamCalls: string[] = [];
+    const outcome = await runControlledLaunchBatch(
+      batchId,
+      trackingSeam(seamCalls),
+      db,
+    );
+
+    expect(outcome).toEqual({ launched: 0, failed: 1, skipped: 0 });
+    expect(seamCalls).toEqual([]);
+
+    const [item] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.batchId, batchId));
+
+    expect(item.status).toBe("failed");
+    expect(item.errorReason).toBe("STUDY_NOT_LAUNCHABLE");
+
+    const [batch] = await db
+      .select()
+      .from(schema.evaluationLaunchBatches)
+      .where(eq(schema.evaluationLaunchBatches.id, batchId));
+
+    expect(batch.status).toBe("failed");
+  });
+
+  it("terminalizes queued items whose recipe was tombstoned after batch create", async () => {
+    const study = await createStudy({ projectId, taskId, title: "G3" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+
+    await db
+      .update(schema.evaluationRecipes)
+      .set({ tombstonedAt: new Date() })
+      .where(eq(schema.evaluationRecipes.id, recipeId));
+
+    const seamCalls: string[] = [];
+    const outcome = await runControlledLaunchBatch(
+      batchId,
+      trackingSeam(seamCalls),
+      db,
+    );
+
+    expect(outcome).toEqual({ launched: 0, failed: 1, skipped: 0 });
+    expect(seamCalls).toEqual([]);
+
+    const [item] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.batchId, batchId));
+
+    expect(item.errorReason).toBe("RECIPE_TOMBSTONED");
+  });
+
+  it("retry refuses under the kill switch and skips tombstoned recipes", async () => {
+    const study = await createStudy({ projectId, taskId, title: "G4" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+
+    // Fail the item once via a failing seam.
+    await runControlledLaunchBatch(batchId, stubSeam(recipeId), db);
+
+    const frozen = await withKillSwitchOff(() =>
+      retryFailedBatchItems(batchId, 5, db),
+    );
+
+    expect(frozen).toEqual({ requeued: 0 });
+
+    await db
+      .update(schema.evaluationRecipes)
+      .set({ tombstonedAt: new Date() })
+      .where(eq(schema.evaluationRecipes.id, recipeId));
+
+    expect(await retryFailedBatchItems(batchId, 5, db)).toEqual({
+      requeued: 0,
+    });
+
+    await db
+      .update(schema.evaluationRecipes)
+      .set({ tombstonedAt: null })
+      .where(eq(schema.evaluationRecipes.id, recipeId));
+
+    expect(await retryFailedBatchItems(batchId, 5, db)).toEqual({
+      requeued: 1,
+    });
+  });
+
+  it("retry refuses when the study is no longer launchable", async () => {
+    const study = await createStudy({ projectId, taskId, title: "G5" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+
+    await runControlledLaunchBatch(batchId, stubSeam(recipeId), db);
+    await db
+      .update(schema.evaluationStudies)
+      .set({ status: "archived" })
+      .where(eq(schema.evaluationStudies.id, study.id as string));
+
+    expect(await retryFailedBatchItems(batchId, 5, db)).toEqual({
+      requeued: 0,
+    });
+  });
+
+  it("persists the MaisterError code as the item error reason (never raw text)", async () => {
+    const study = await createStudy({ projectId, taskId, title: "G6" }, db);
+    const recipeId = await newRecipe(study.id as string, "a");
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId: study.id as string, projectId, items: [{ recipeId }] },
+      db,
+    );
+
+    const typedFailingSeam: LaunchRunSeam = async () => {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "runner down at /Users/someone/private/repo",
+      );
+    };
+
+    const outcome = await runControlledLaunchBatch(
+      batchId,
+      typedFailingSeam,
+      db,
+    );
+
+    expect(outcome.failed).toBe(1);
+
+    const [item] = await db
+      .select()
+      .from(schema.evaluationLaunchBatchItems)
+      .where(eq(schema.evaluationLaunchBatchItems.batchId, batchId));
+
+    expect(item.errorReason).toBe("EXECUTOR_UNAVAILABLE");
+    expect(item.errorReason).not.toContain("/Users/");
   });
 });

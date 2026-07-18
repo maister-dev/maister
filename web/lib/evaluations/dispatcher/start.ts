@@ -1,6 +1,11 @@
 import "server-only";
 
 import type { Db } from "@/lib/evaluations/db";
+import type {
+  EvaluationCriterionSnapshotSpec,
+  EvaluationExecutionAggregationPolicySnapshot,
+  EvaluationExecutionJudgePolicySnapshot,
+} from "@/lib/evaluations/types";
 
 import { randomUUID } from "node:crypto";
 
@@ -25,16 +30,29 @@ const log = pino({
 });
 
 // The evidence-protocol digest keyed by the shared M46 capture protocol (diff +
-// ground-truth). A method may declare an `evidenceProtocol` override; all M46
-// methods share the default, so a sealed snapshot is reusable across compatible
-// methods over the same participant set (D5). NOT the method definition digest.
+// ground-truth). Derived from the method's `evidence` block (the real schema
+// key — captureBudgetBytes + requiredCoverage), deterministically: coverage is
+// order-insensitive and the cosmetic `description` is excluded, so a sealed
+// snapshot is reusable across compatible methods over the same participant set
+// (D5). NOT the method definition digest. A definition without an `evidence`
+// block falls back to the shared default protocol token.
 export function deriveEvidenceProtocolDigest(
   methodDef: Record<string, unknown>,
 ): string {
-  const protocol = (methodDef.evidenceProtocol ??
-    "diff+ground_truth@1") as unknown;
+  const evidence = methodDef.evidence as
+    | { captureBudgetBytes?: number; requiredCoverage?: string[] }
+    | undefined;
 
-  return contentDigest({ evidenceProtocol: protocol });
+  if (!evidence || typeof evidence !== "object") {
+    return contentDigest({ evidenceProtocol: "diff+ground_truth@1" });
+  }
+
+  return contentDigest({
+    evidenceProtocol: {
+      captureBudgetBytes: evidence.captureBudgetBytes ?? null,
+      requiredCoverage: [...(evidence.requiredCoverage ?? [])].sort(),
+    },
+  });
 }
 
 interface MethodDefinition {
@@ -46,12 +64,23 @@ interface MethodDefinition {
     hostCheckProfile?: string;
   }>;
   aggregation?: { algorithm: string };
+  criteria?: Array<{
+    id: string;
+    weight: number;
+    scale: { min: number; max: number };
+    optional?: boolean;
+    itemCap?: number;
+  }>;
+  caps?: { totalMax?: number };
 }
 
 async function loadMethodDefinition(
   methodRevisionId: string,
   d: Db,
-): Promise<MethodDefinition> {
+): Promise<{
+  definition: MethodDefinition;
+  normalizedCriteria: Array<{ id: string; normalizedWeight: number }>;
+}> {
   const [rev] = await d
     .select({
       normalizedDefinition: evaluationMethodRevisions.normalizedDefinition,
@@ -59,7 +88,38 @@ async function loadMethodDefinition(
     .from(evaluationMethodRevisions)
     .where(eq(evaluationMethodRevisions.id, methodRevisionId));
 
-  return (rev?.normalizedDefinition?.definition ?? {}) as MethodDefinition;
+  return {
+    definition: (rev?.normalizedDefinition?.definition ??
+      {}) as MethodDefinition,
+    normalizedCriteria: (rev?.normalizedDefinition?.criteria ?? []) as Array<{
+      id: string;
+      normalizedWeight: number;
+    }>,
+  };
+}
+
+// Freeze the definition slices the judge/aggregation pipeline consumes
+// mid-flight onto the execution snapshots. The methods-registry upsert mutates
+// `normalizedDefinition` in place, so anything read after start MUST come from
+// these snapshots, never a live revision re-read (bounded exception: the judge
+// context prompt/rubric, see judges/facade.ts).
+function buildCriterionSnapshot(loaded: {
+  definition: MethodDefinition;
+  normalizedCriteria: Array<{ id: string; normalizedWeight: number }>;
+}): EvaluationCriterionSnapshotSpec[] {
+  const normalizedById = new Map(
+    loaded.normalizedCriteria.map((c) => [c.id, c.normalizedWeight]),
+  );
+
+  return (loaded.definition.criteria ?? []).map((c) => ({
+    id: c.id,
+    weight: c.weight,
+    normalizedWeight: normalizedById.get(c.id) ?? c.weight,
+    scaleMin: c.scale.min,
+    scaleMax: c.scale.max,
+    optional: c.optional ?? false,
+    itemCap: c.itemCap ?? null,
+  }));
 }
 
 export interface StartExecutionArgs {
@@ -115,7 +175,8 @@ export async function startEvaluationExecution(
     },
     d,
   );
-  const methodDef = await loadMethodDefinition(profile.methodRevisionId, d);
+  const method = await loadMethodDefinition(profile.methodRevisionId, d);
+  const methodDef = method.definition;
 
   // Pairwise execution is owner-deferred with the pairwise UI: the judge
   // submission contract carries no A/B pick yet, so an execution would only
@@ -180,11 +241,24 @@ export async function startEvaluationExecution(
         judgePolicySnapshot: {
           roleBindings: profile.roleBindings,
           policy: profile.policy,
-        },
+          criteria: buildCriterionSnapshot(method),
+        } satisfies EvaluationExecutionJudgePolicySnapshot as Record<
+          string,
+          unknown
+        >,
         aggregationPolicySnapshot: {
           algorithm: methodDef.aggregation?.algorithm ?? null,
           quorum: profile.policy.quorum,
-        },
+          totalMax: methodDef.caps?.totalMax ?? null,
+          gateCheckIds: (methodDef.objectiveChecks ?? [])
+            .filter((c) => c.policy === "gate")
+            .map((c) => c.id),
+          definitionDigest: profile.methodDigests.definitionDigest,
+          schemaDigest: profile.methodDigests.schemaDigest,
+        } satisfies EvaluationExecutionAggregationPolicySnapshot as Record<
+          string,
+          unknown
+        >,
         randomizationSeed: randomUUID(),
         idempotencyKey: args.idempotencyKey ?? null,
         requestDigest,

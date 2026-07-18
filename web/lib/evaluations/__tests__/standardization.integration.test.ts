@@ -89,7 +89,7 @@ function loaders(
   };
 }
 
-function recipeDefinition(): Record<string, unknown> {
+function recipeDefinition(titleMarker = "x"): Record<string, unknown> {
   const flow = liveFlow();
 
   return {
@@ -100,16 +100,18 @@ function recipeDefinition(): Record<string, unknown> {
       inputContractDigest: computeInputContractDigest(flow),
       artifactContractDigest: computeArtifactContractDigest(flow),
     },
-    inputs: { taskSnapshotRef: "snap", formValues: { title: "x" } },
+    inputs: { taskSnapshotRef: "snap", formValues: { title: titleMarker } },
     executionPolicy: { preset: "supervised" },
     slotBindings: { "session:main": { mode: "runner", runnerId: "r1" } },
   };
 }
 
 // Seed a decided Study whose winner is a launched participant with a recipe.
-async function decidedStudyWithLaunchedWinner(): Promise<{
+// `titleMarker` varies the recipe CONTENT so revision digests can differ.
+async function decidedStudyWithLaunchedWinner(titleMarker = "x"): Promise<{
   studyId: string;
   recipeId: string;
+  participantId: string;
 }> {
   const study = await createStudy(
     { projectId, taskId, title: `S-${randomUUID().slice(0, 6)}` },
@@ -121,7 +123,7 @@ async function decidedStudyWithLaunchedWinner(): Promise<{
       projectId,
       key: "winner",
       label: "Winner",
-      definition: recipeDefinition(),
+      definition: recipeDefinition(titleMarker),
     },
     db,
   );
@@ -144,7 +146,11 @@ async function decidedStudyWithLaunchedWinner(): Promise<{
     noEvaluationEvidenceAck: true,
   });
 
-  return { studyId: study.id as string, recipeId: recipe.id as string };
+  return {
+    studyId: study.id as string,
+    recipeId: recipe.id as string,
+    participantId,
+  };
 }
 
 beforeAll(async () => {
@@ -261,6 +267,40 @@ describe("checkStandardizationEligible", () => {
     expect(result.eligible).toBe(false);
     expect(result.refusals.some((r) => r.startsWith("preflight:"))).toBe(true);
   });
+
+  it("throws typed CONFIG when the verdict cites a participant of ANOTHER study (no cross-study recipe pull)", async () => {
+    const donor = await decidedStudyWithLaunchedWinner();
+    const study = await createStudy({ projectId, taskId, title: "XS" }, db);
+
+    // Corrupt/legacy verdict citing the donor study's participant.
+    await db.insert(schema.evaluationHumanVerdicts).values({
+      studyId: study.id as string,
+      outcome: "winner",
+      participantIds: [donor.participantId],
+      executionIds: [],
+      noEvaluationEvidenceAck: true,
+    });
+
+    await expect(
+      checkStandardizationEligible(
+        { studyId: study.id as string, projectId },
+        loaders(),
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringMatching(/outside study/),
+    });
+
+    // The confirm/write path refuses identically — nothing standardized.
+    await expect(
+      standardizeRecipe(
+        { studyId: study.id as string, projectId, actorUserId: userId },
+        loaders(),
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+  });
 });
 
 describe("standardizeRecipe + rollback", () => {
@@ -301,21 +341,42 @@ describe("standardizeRecipe + rollback", () => {
     ).rejects.toThrow(/not eligible/);
   });
 
-  it("rolls back to the prior revision (audited, append-only)", async () => {
-    // Two standardizations already exist from the earlier test → rollback works.
+  it("rolls back to the prior revision (audited, append-only, content-verified)", async () => {
+    // Self-contained slot with two CONTENT-DIFFERING revisions — restoring
+    // revision 1 is then distinguishable from a no-op on revision 2.
+    const slot = "rollback-slot";
+    const a = await decidedStudyWithLaunchedWinner("rollback-rev-one");
+    const b = await decidedStudyWithLaunchedWinner("rollback-rev-two");
+
+    const first = await standardizeRecipe(
+      { studyId: a.studyId, projectId, slot, actorUserId: userId },
+      loaders(),
+      db,
+    );
+    const second = await standardizeRecipe(
+      { studyId: b.studyId, projectId, slot, actorUserId: userId },
+      loaders(),
+      db,
+    );
+
+    // Precondition for a meaningful assertion: the revisions really differ.
+    expect(second.definitionDigest).not.toBe(first.definitionDigest);
+
     const rolled = await rollbackStandardization(
-      { projectId, actorUserId: userId },
+      { projectId, slot, actorUserId: userId },
       db,
     );
 
     expect(rolled.action).toBe("rollback");
-    expect(rolled.rolledBackToRevision).toBeTruthy();
+    expect(rolled.rolledBackToRevision).toBe(1);
+    // Compared against revision 1's STORED digest — not against the record the
+    // rollback call just wrote.
+    expect(rolled.definitionDigest).toBe(first.definitionDigest);
 
-    const current = await getCurrentStandardizedRecipe({ projectId }, db);
+    const current = await getCurrentStandardizedRecipe({ projectId, slot }, db);
 
     expect(current?.action).toBe("rollback");
-    // The rollback restored a prior definition digest.
-    expect(current?.definitionDigest).toBe(rolled.definitionDigest);
+    expect(current?.definitionDigest).toBe(first.definitionDigest);
   });
 
   it("refuses rollback for a slot with a single revision", async () => {

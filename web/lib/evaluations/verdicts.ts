@@ -12,6 +12,7 @@ import { getDb } from "@/lib/db/client";
 import {
   evaluationExecutions,
   evaluationHumanVerdicts,
+  evaluationParticipants,
   evaluationStudies,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -74,6 +75,15 @@ export async function recordVerdict(
         `study ${args.studyId} is ${study.status}; a verdict requires an open (or already-decided) study`,
       );
     }
+    // A decided study already has a standing verdict; a new one may not win by
+    // mere recency — it must be an explicit correction (supersedesId, and the
+    // supersedes block below enforces the rationale).
+    if (study.status === "decided" && !args.supersedesId) {
+      throw new MaisterError(
+        "CONFIG",
+        `study ${args.studyId} is decided; a new verdict must supersede the standing verdict (supersedesId + rationale)`,
+      );
+    }
 
     if (args.executionIds.length === 0) {
       if (!args.noEvaluationEvidenceAck) {
@@ -124,6 +134,35 @@ export async function recordVerdict(
       }
     }
 
+    if (args.participantIds.length > 0) {
+      const citedParticipants = await tx
+        .select({ id: evaluationParticipants.id })
+        .from(evaluationParticipants)
+        .where(
+          and(
+            inArray(evaluationParticipants.id, args.participantIds),
+            eq(evaluationParticipants.studyId, args.studyId),
+          ),
+        );
+
+      if (citedParticipants.length !== new Set(args.participantIds).size) {
+        throw new MaisterError(
+          "CONFIG",
+          "one or more cited participants do not exist in this study",
+        );
+      }
+    }
+
+    // docs/db/evaluations-domain.md is silent on winner cardinality; enforced
+    // here: a `winner` verdict must name at least one validated participant
+    // (standardization reads participantIds[0] as THE winner).
+    if (args.outcome === "winner" && args.participantIds.length === 0) {
+      throw new MaisterError(
+        "CONFIG",
+        "a winner verdict requires at least one cited participant",
+      );
+    }
+
     if (args.supersedesId) {
       const [prior] = await tx
         .select({
@@ -137,6 +176,19 @@ export async function recordVerdict(
         throw new MaisterError(
           "PRECONDITION",
           `superseded verdict not found in study: ${args.supersedesId}`,
+        );
+      }
+      // No forks: a verdict may be superseded exactly once. Race-safe because
+      // the study row is locked FOR UPDATE above, serializing verdict writes.
+      const [alreadySuperseded] = await tx
+        .select({ id: evaluationHumanVerdicts.id })
+        .from(evaluationHumanVerdicts)
+        .where(eq(evaluationHumanVerdicts.supersedesId, args.supersedesId));
+
+      if (alreadySuperseded) {
+        throw new MaisterError(
+          "CONFLICT",
+          `verdict ${args.supersedesId} is already superseded by ${alreadySuperseded.id}`,
         );
       }
       if (!args.rationale || args.rationale.trim().length === 0) {

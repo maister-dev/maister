@@ -30,8 +30,15 @@ import { removeOwnedWorktree } from "@/lib/worktree";
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { experimentRuns, experiments, projects, runs, workspaces } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  evaluationParticipants,
+  evaluationStudies,
+  experimentRuns,
+  experiments,
+  projects,
+  runs,
+  workspaces,
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -180,6 +187,29 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
         ),
       ),
   );
+  // Evaluation-lab evidence hold (ADR-146 D15, mirroring the experiment join):
+  // a launched participant's worktree is study evidence — later executions
+  // (judge captures, verdicts) read it, so it must survive until the study
+  // reaches a terminal status. `draft`/`open` are the live set; only
+  // `decided`/`archived` release the hold (schema.ts evaluation_studies status
+  // check). Deliberately NOT filtered on removed_at: a tombstoned launched
+  // participant still holds its run (membership immutability).
+  const evaluationNotBlocked = notExists(
+    db
+      .select({ one: evaluationParticipants.id })
+      .from(evaluationParticipants)
+      .innerJoin(
+        evaluationStudies,
+        eq(evaluationStudies.id, evaluationParticipants.studyId),
+      )
+      .where(
+        and(
+          eq(evaluationParticipants.runId, runs.id),
+          eq(evaluationParticipants.sourceType, "launched"),
+          notInArray(evaluationStudies.status, ["decided", "archived"]),
+        ),
+      ),
+  );
 
   const rows = await db
     .select({
@@ -209,6 +239,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
         ),
         treeNotBlocked,
         experimentNotBlocked,
+        evaluationNotBlocked,
       ),
     )
     .limit(PER_TICK_LIMIT);

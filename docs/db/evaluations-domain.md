@@ -204,7 +204,7 @@ erDiagram
         text supersedes_id FK "self, nullable"
         text outcome "winner|tie|inconclusive"
         jsonb execution_ids
-        bool no_evaluation_evidence_ack "true iff zero-citation"
+        bool no_evaluation_evidence_ack "required when zero-citation"
     }
     evaluation_events {
         text id PK

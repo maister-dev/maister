@@ -18,12 +18,27 @@ import clsx from "clsx";
 import { JudgePanelModal } from "./judge-panel-modal";
 import { ProfileModal } from "./profile-modal";
 
+import {
+  EvalApiError,
+  evalErrorKey,
+  evalRequest,
+} from "@/components/evaluations/api-error";
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useFeedback } from "@/components/feedback/feedback-provider";
+
 type Tab = "methodologies" | "panels" | "profiles";
 
 type Props = {
   methodologies: MethodologyRow[];
   panels: JudgePanelRow[];
   profiles: ProfileRow[];
+};
+
+type PendingDelete = {
+  kind: "judge-panels" | "profiles";
+  id: string;
+  revision: number;
+  name: string;
 };
 
 function HealthDot({
@@ -63,6 +78,8 @@ export function EvaluationsSettings({
   profiles,
 }: Props): ReactElement {
   const t = useTranslations("settingsEvaluations");
+  const tErr = useTranslations("evaluationsErrors");
+  const feedback = useFeedback();
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [tab, setTab] = useState<Tab>("methodologies");
@@ -74,9 +91,18 @@ export function EvaluationsSettings({
   const [profileModal, setProfileModal] = useState<
     { mode: "create" } | { mode: "edit"; profile: ProfileRow } | null
   >(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
+    null,
+  );
 
   const refresh = (): void => startTransition(() => router.refresh());
+
+  function switchTab(next: Tab): void {
+    setTab(next);
+    setPendingDelete(null);
+    setError(null);
+  }
+
   const healthLabels: Record<MethodologyRow["health"], string> = {
     ready: t("healthReady"),
     degraded: t("healthDegraded"),
@@ -90,7 +116,7 @@ export function EvaluationsSettings({
     setPending(row.id);
     setError(null);
     try {
-      const res = await fetch(
+      await evalRequest(
         `/api/admin/evaluations/methodologies/${row.id}/activation`,
         {
           method: "PATCH",
@@ -98,57 +124,44 @@ export function EvaluationsSettings({
           body: JSON.stringify({ activation }),
         },
       );
-
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as {
-          message?: string;
-        } | null;
-
-        throw new Error(payload?.message ?? `request failed: ${res.status}`);
-      }
+      feedback.success({
+        mutationId: `eval-method-activation:${row.id}:${Date.now()}`,
+        message:
+          activation === "enabled" ? t("toastEnabled") : t("toastDisabled"),
+      });
       refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(tErr(evalErrorKey(err)));
     } finally {
       setPending(null);
     }
   }
 
-  async function remove(
-    kind: "judge-panels" | "profiles",
-    id: string,
-    revision: number,
-  ): Promise<void> {
-    setPending(id);
+  async function confirmRemove(target: PendingDelete): Promise<void> {
+    setPending(target.id);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/evaluations/${kind}/${id}`, {
+      await evalRequest(`/api/admin/evaluations/${target.kind}/${target.id}`, {
         method: "DELETE",
-        headers: { "if-match": String(revision) },
+        headers: { "if-match": String(target.revision) },
       });
-
-      if (res.status === 204 || res.ok) {
-        setConfirmDelete(null);
-        refresh();
-
-        return;
-      }
-      const payload = (await res.json().catch(() => null)) as {
-        code?: string;
-        message?: string;
-      } | null;
-
-      // 409 CONFLICT = usage-guarded (a profile still references this panel, or
-      // an override references this profile). Surface the reason.
-      setError(
-        payload?.code === "CONFLICT"
-          ? `${t("deleteBlocked")}: ${payload.message ?? ""}`
-          : (payload?.message ?? `request failed: ${res.status}`),
-      );
+      feedback.success({
+        mutationId: `eval-delete:${target.kind}:${target.id}:${Date.now()}`,
+        message: t("toastDeleted"),
+      });
+      refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // 409 CONFLICT on delete = usage-guarded (a profile still references
+      // this panel / an override references this profile) or a concurrent
+      // edit — either way the row must be re-checked, not force-deleted.
+      setError(
+        err instanceof EvalApiError && err.code === "CONFLICT"
+          ? t("deleteBlocked")
+          : tErr(evalErrorKey(err)),
+      );
     } finally {
       setPending(null);
+      setPendingDelete(null);
     }
   }
 
@@ -175,7 +188,7 @@ export function EvaluationsSettings({
                 : "border-transparent text-mute hover:text-ink-2",
             )}
             type="button"
-            onClick={() => setTab(entry.id)}
+            onClick={() => switchTab(entry.id)}
           >
             {entry.label}{" "}
             <span className="font-mono text-[11px] text-mute">
@@ -186,7 +199,7 @@ export function EvaluationsSettings({
       </div>
 
       {error ? (
-        <p className="mb-3 text-[12px] text-red-700" role="alert">
+        <p className="mb-3 text-[12px] text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -332,31 +345,23 @@ export function EvaluationsSettings({
                               className="h-4 w-4"
                             />
                           </button>
-                          {confirmDelete === p.id ? (
-                            <button
-                              className="h-8 rounded-[8px] border border-[#b5332b] bg-[#b5332b] px-2.5 text-[12px] font-semibold text-white disabled:opacity-50"
-                              disabled={pending !== null}
-                              type="button"
-                              onClick={() =>
-                                void remove("judge-panels", p.id, p.revision)
-                              }
-                            >
-                              {t("confirm")}
-                            </button>
-                          ) : (
-                            <button
-                              aria-label={t("delete")}
-                              className="grid h-8 w-8 place-items-center rounded-[8px] border border-[#b5332b]/40 text-[#b5332b] hover:bg-[#b5332b]/5"
-                              title={t("delete")}
-                              type="button"
-                              onClick={() => setConfirmDelete(p.id)}
-                            >
-                              <TrashIcon
-                                aria-hidden="true"
-                                className="h-4 w-4"
-                              />
-                            </button>
-                          )}
+                          <button
+                            aria-label={t("delete")}
+                            className="grid h-8 w-8 place-items-center rounded-[8px] border border-[#b5332b]/40 text-[#b5332b] hover:bg-[#b5332b]/5 disabled:opacity-50"
+                            disabled={pending !== null}
+                            title={t("delete")}
+                            type="button"
+                            onClick={() =>
+                              setPendingDelete({
+                                kind: "judge-panels",
+                                id: p.id,
+                                revision: p.revision,
+                                name: p.name,
+                              })
+                            }
+                          >
+                            <TrashIcon aria-hidden="true" className="h-4 w-4" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -436,31 +441,23 @@ export function EvaluationsSettings({
                               className="h-4 w-4"
                             />
                           </button>
-                          {confirmDelete === p.id ? (
-                            <button
-                              className="h-8 rounded-[8px] border border-[#b5332b] bg-[#b5332b] px-2.5 text-[12px] font-semibold text-white disabled:opacity-50"
-                              disabled={pending !== null}
-                              type="button"
-                              onClick={() =>
-                                void remove("profiles", p.id, p.revision)
-                              }
-                            >
-                              {t("confirm")}
-                            </button>
-                          ) : (
-                            <button
-                              aria-label={t("delete")}
-                              className="grid h-8 w-8 place-items-center rounded-[8px] border border-[#b5332b]/40 text-[#b5332b] hover:bg-[#b5332b]/5"
-                              title={t("delete")}
-                              type="button"
-                              onClick={() => setConfirmDelete(p.id)}
-                            >
-                              <TrashIcon
-                                aria-hidden="true"
-                                className="h-4 w-4"
-                              />
-                            </button>
-                          )}
+                          <button
+                            aria-label={t("delete")}
+                            className="grid h-8 w-8 place-items-center rounded-[8px] border border-[#b5332b]/40 text-[#b5332b] hover:bg-[#b5332b]/5 disabled:opacity-50"
+                            disabled={pending !== null}
+                            title={t("delete")}
+                            type="button"
+                            onClick={() =>
+                              setPendingDelete({
+                                kind: "profiles",
+                                id: p.id,
+                                revision: p.revision,
+                                name: p.name,
+                              })
+                            }
+                          >
+                            <TrashIcon aria-hidden="true" className="h-4 w-4" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -489,6 +486,37 @@ export function EvaluationsSettings({
           }
           onClose={() => setProfileModal(null)}
         />
+      ) : null}
+      {pendingDelete ? (
+        <ConfirmDialog
+          body={t("deleteConfirmBody", { name: pendingDelete.name })}
+          busy={pending === pendingDelete.id}
+          cancelLabel={t("cancel")}
+          testId="evaluations-delete-confirm"
+          title={t("deleteConfirmTitle")}
+          titleId="evaluations-delete-confirm-title"
+          onClose={() => setPendingDelete(null)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className="h-8 rounded-[8px] border border-line px-3 text-[12px] text-mute hover:bg-ivory disabled:opacity-50"
+              disabled={pending === pendingDelete.id}
+              type="button"
+              onClick={() => setPendingDelete(null)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className="h-8 rounded-[8px] border border-[#b5332b] bg-[#b5332b] px-3 text-[12px] font-semibold text-white disabled:opacity-50"
+              data-testid="evaluations-delete-confirm-submit"
+              disabled={pending === pendingDelete.id}
+              type="button"
+              onClick={() => void confirmRemove(pendingDelete)}
+            >
+              {t("confirm")}
+            </button>
+          </div>
+        </ConfirmDialog>
       ) : null}
     </div>
   );

@@ -34,11 +34,14 @@ inbox substrate. (Implemented)
 - **Activity event** — `task_activity` append-only row with
   `event_kind ∈ {task_created, comment_added, task_mentioned,
   relation_added, relation_removed, run_launched, triage_set,
-  triage_requeued, agent_quarantined, run_pr_merged}` and a jsonb `payload`
+  triage_requeued, agent_quarantined, experiment_concluded,
+  run_pr_merged, evaluation_decided}` and a jsonb `payload`
   (`triage_set`/`triage_requeued`/`agent_quarantined` added by M34 platform
-  agents; `run_pr_merged` added by ADR-140/141's `pr_state_scan` merged
-  edge). Written only by the domain layer (`web/lib/social/*` via
-  `recordTaskActivity` plus the named service write-sites).
+  agents; `experiment_concluded` by ADR-124; `run_pr_merged` added by
+  ADR-140/141's `pr_state_scan` merged edge; `evaluation_decided` by
+  ADR-142's human verdict mirror). Written only by the domain layer
+  (`web/lib/social/*` via `recordTaskActivity` plus the named service
+  write-sites).
 - **Subscriber** — `task_subscribers` row: `(task_id, subscriber_type,
   subscriber_id, reason)` with `reason ∈ {creator, commenter, mentioned,
   manual}` and `subscriber_type ∈ {user, agent}` (`system` never
@@ -167,7 +170,8 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   route handlers MUST NOT insert activity directly. (Implemented)
 - `task_activity.event_kind` MUST be one of `task_created | comment_added |
   task_mentioned | relation_added | relation_removed | run_launched |
-  triage_set | triage_requeued | agent_quarantined`;
+  triage_set | triage_requeued | agent_quarantined | experiment_concluded |
+  run_pr_merged | evaluation_decided`;
   `run_finished` joins only when a `setRunStatus` choke point exists
   (Phase 2). (Implemented)
 - Every social-table row MUST satisfy `actor_type ∈ {user, agent, system}`

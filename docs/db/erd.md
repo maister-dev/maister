@@ -720,7 +720,7 @@ erDiagram
         text project_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
-        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|experiment_concluded|run_pr_merged (ADR-140 0105)"
+        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|triage_set|triage_requeued|agent_quarantined|experiment_concluded|run_pr_merged|evaluation_decided (widened 0050/0090/0105/0111)"
         jsonb payload "DEFAULT {}"
         timestamp created_at
     }

@@ -8,6 +8,7 @@ import * as fullSchema from "@/lib/db/schema";
 import {
   advanceExecution,
   createRetryExecution,
+  failWedgedJudgingExecution,
 } from "@/lib/evaluations/dispatcher/advance";
 import {
   formatSseFrame,
@@ -263,5 +264,85 @@ describe("advanceExecution + replayable events", () => {
     await expect(
       createRetryExecution({ studyId, retryOf: running }, db),
     ).rejects.toThrow(/non-terminal/);
+  });
+});
+
+describe("failWedgedJudgingExecution (dispatcher liveness backstop)", () => {
+  it("CAS-terminalizes a judging execution to failed with the event in the same transaction", async () => {
+    const executionId = await newExecution("judging");
+
+    const res = await failWedgedJudgingExecution(
+      { studyId, executionId, expectedVersion: 1, reason: "CONFIG" },
+      db,
+    );
+
+    expect(res.version).toBe(2);
+
+    const [row] = await db
+      .select({
+        status: schema.evaluationExecutions.status,
+        terminalReason: schema.evaluationExecutions.terminalReason,
+        terminalAt: schema.evaluationExecutions.terminalAt,
+      })
+      .from(schema.evaluationExecutions)
+      .where(eq(schema.evaluationExecutions.id, executionId));
+
+    expect(row.status).toBe("failed");
+    expect(row.terminalReason).toBe("CONFIG");
+    expect(row.terminalAt).not.toBeNull();
+
+    const events = await readEvaluationEvents({ studyId }, db);
+    const failedEvents = events.filter(
+      (e) =>
+        e.executionId === executionId && e.eventType === "evaluation.failed",
+    );
+
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0].payload).toMatchObject({
+      reason: "CONFIG",
+      wedged: true,
+    });
+  });
+
+  it("loses to a non-judging status or stale version as CONFLICT — never terminalizes a moved row", async () => {
+    const executionId = await newExecution("aggregating");
+
+    await expect(
+      failWedgedJudgingExecution(
+        { studyId, executionId, expectedVersion: 1, reason: "CONFIG" },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(/is aggregating, not judging@v1/),
+    });
+
+    const judging = await newExecution("judging");
+
+    await expect(
+      failWedgedJudgingExecution(
+        { studyId, executionId: judging, expectedVersion: 7, reason: "SPAWN" },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const [row] = await db
+      .select({ status: schema.evaluationExecutions.status })
+      .from(schema.evaluationExecutions)
+      .where(eq(schema.evaluationExecutions.id, judging));
+
+    expect(row.status).toBe("judging");
+
+    await expect(
+      failWedgedJudgingExecution(
+        {
+          studyId,
+          executionId: randomUUID(),
+          expectedVersion: 1,
+          reason: "SPAWN",
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 });

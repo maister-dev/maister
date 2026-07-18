@@ -115,6 +115,85 @@ function isTerminal(status: EvaluationExecutionStatus): boolean {
   );
 }
 
+// Dispatcher liveness backstop: terminalize a WEDGED judging execution to
+// `failed`. The client-safe FSM allow-list (fsm.ts) intentionally has no
+// `judging -> failed` edge — a healthy panel fails out through allTerminal →
+// aggregating → partial — so this cannot go through advanceExecution's
+// assertTransition. It preserves the same invariants regardless: exact-value
+// CAS on (status='judging', version) and the durable `evaluation.failed` event
+// appended in the SAME transaction. Only the dispatch tick calls this, and only
+// for an execution whose panel drive keeps failing past the stale-age cutoff
+// (e.g. an unresolvable panel binding or a persistent spawn failure) — never on
+// a live, progressing panel.
+export async function failWedgedJudgingExecution(
+  args: {
+    studyId: string;
+    executionId: string;
+    expectedVersion: number;
+    reason: string;
+  },
+  db?: Db,
+): Promise<{ version: number; sequence: number }> {
+  const d = db ?? getDb();
+
+  return d.transaction(async (tx: Db) => {
+    const updated = await tx
+      .update(evaluationExecutions)
+      .set({
+        status: "failed",
+        version: args.expectedVersion + 1,
+        terminalReason: args.reason,
+        terminalAt: new Date(),
+      })
+      .where(
+        and(
+          eq(evaluationExecutions.id, args.executionId),
+          eq(evaluationExecutions.status, "judging"),
+          eq(evaluationExecutions.version, args.expectedVersion),
+        ),
+      )
+      .returning({ version: evaluationExecutions.version });
+
+    if (updated.length === 0) {
+      const [exists] = await tx
+        .select({ status: evaluationExecutions.status })
+        .from(evaluationExecutions)
+        .where(eq(evaluationExecutions.id, args.executionId));
+
+      if (!exists) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `evaluation execution not found: ${args.executionId}`,
+        );
+      }
+
+      throw new MaisterError(
+        "CONFLICT",
+        `evaluation execution ${args.executionId} is ${exists.status}, not judging@v${args.expectedVersion}`,
+      );
+    }
+
+    const { sequence } = await appendEvaluationEvent(tx, {
+      studyId: args.studyId,
+      executionId: args.executionId,
+      eventType: "evaluation.failed",
+      payload: { reason: args.reason, wedged: true },
+    });
+
+    log.warn(
+      {
+        executionId: args.executionId,
+        reason: args.reason,
+        version: updated[0].version,
+        sequence,
+      },
+      "wedged judging execution terminalized failed",
+    );
+
+    return { version: updated[0].version, sequence };
+  });
+}
+
 // A retry never re-enters a terminal row — it creates a NEW execution with
 // retry_of lineage starting at queued (D4). This inserts the successor and emits
 // the queued event; the caller re-resolves the effective profile for the new row.

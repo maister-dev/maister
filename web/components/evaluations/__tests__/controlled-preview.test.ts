@@ -27,7 +27,6 @@ function preview(
     ],
     overlay: { rulesAdded: 0, skillsAdded: 0, mcpsAdded: 0, subagentsAdded: 0 },
     policyPreset: "supervised",
-    promotionHeld: true,
     evidenceMethodQualifiedId: "core:sdd-quality",
     evidenceCoverage: ["diff"],
     estimatedJudgeAttempts: 3,

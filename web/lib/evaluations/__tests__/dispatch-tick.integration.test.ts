@@ -6,7 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { readEvaluationEvents } from "@/lib/evaluations/dispatcher/events";
-import { startEvaluationExecution } from "@/lib/evaluations/dispatcher/start";
+import {
+  deriveEvidenceProtocolDigest,
+  startEvaluationExecution,
+} from "@/lib/evaluations/dispatcher/start";
 import {
   runEvaluationDispatchTick,
   type EvaluationDispatchDeps,
@@ -25,10 +28,12 @@ let db: NodePgDatabase<typeof fullSchema>;
 let projectId: string;
 let studyId: string;
 let profileId: string;
+let methodRevisionId: string;
 
 const NORMALIZED_DEFINITION = {
   definition: {
     id: "sdd-quality",
+    evidence: { captureBudgetBytes: 65536, requiredCoverage: [] },
     criteria: [
       {
         id: "correctness",
@@ -229,7 +234,7 @@ beforeAll(async () => {
     packageStatus: "Installed",
     trustStatus: "trusted",
   });
-  const methodRevisionId = randomUUID();
+  methodRevisionId = randomUUID();
 
   await db.insert(schema.evaluationMethodRevisions).values({
     id: methodRevisionId,
@@ -580,5 +585,391 @@ describe("startEvaluationExecution idempotency + start gates", () => {
       );
 
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("dispatch liveness fixes", () => {
+  it("passes the snapshotted method definition to the evidence-protocol digest (not a constant)", async () => {
+    const { executionId } = await startEvaluationExecution(
+      { studyId, projectId, profileId },
+      db,
+    );
+
+    const seen: string[] = [];
+    const deps = stubDeps();
+    const recordingDeps: EvaluationDispatchDeps = {
+      ...deps,
+      captureEvidence: async (args) => {
+        if (args.executionId === executionId) {
+          seen.push(args.evidenceProtocolDigest);
+        }
+
+        return deps.captureEvidence(args);
+      },
+    };
+
+    await runEvaluationDispatchTick(recordingDeps, db);
+
+    expect(await statusOf(executionId)).toBe("judging");
+    expect(seen).toEqual([
+      deriveEvidenceProtocolDigest(NORMALIZED_DEFINITION.definition),
+    ]);
+  });
+
+  it("two-racer poison: a concurrent tick+kick never terminalizes the claim winner's live execution", async () => {
+    const executionIds: string[] = [];
+
+    for (let i = 0; i < 6; i++) {
+      const { executionId } = await startEvaluationExecution(
+        { studyId, projectId, profileId, idempotencyKey: randomUUID() },
+        db,
+      );
+
+      executionIds.push(executionId);
+    }
+
+    // Widen the claim race window: the capture step (which runs AFTER the
+    // queued→capturing claim) sleeps briefly so both racers overlap.
+    const slowDeps = (): EvaluationDispatchDeps => {
+      const deps = stubDeps();
+
+      return {
+        ...deps,
+        captureEvidence: async (args) => {
+          await new Promise((r) => setTimeout(r, 25));
+
+          return deps.captureEvidence(args);
+        },
+      };
+    };
+
+    const [a, b] = await Promise.all([
+      runEvaluationDispatchTick(slowDeps(), db),
+      runEvaluationDispatchTick(slowDeps(), db),
+    ]);
+
+    // The claim loser must skip, never poison the winner's live execution.
+    expect(a.poisoned + b.poisoned).toBe(0);
+    // Each execution driven at least once between the racers (stray queued
+    // rows from earlier tests may add to the count, never subtract).
+    expect(a.drivenToJudging + b.drivenToJudging).toBeGreaterThanOrEqual(
+      executionIds.length,
+    );
+
+    // The winner's executions stay LIVE — the loser terminalized nothing.
+    for (const id of executionIds) {
+      expect(await statusOf(id)).toBe("judging");
+    }
+  });
+
+  it("recovers stale capturing (poison → failed/CRASH) and stale aggregating (re-aggregate → completed)", async () => {
+    const staleCapturing = randomUUID();
+
+    await db.insert(schema.evaluationExecutions).values({
+      id: staleCapturing,
+      studyId,
+      status: "capturing",
+      version: 2,
+      startedAt: new Date(Date.now() - 15 * 60_000),
+      judgePolicySnapshot: { policy: { maxRetries: 0 } },
+    });
+
+    const staleAggregating = randomUUID();
+
+    await db.insert(schema.evaluationExecutions).values({
+      id: staleAggregating,
+      studyId,
+      status: "aggregating",
+      version: 4,
+      startedAt: new Date(Date.now() - 15 * 60_000),
+      methodRevisionId,
+    });
+
+    for (const ordinal of [1, 2]) {
+      const attemptId = randomUUID();
+
+      await db.insert(schema.evaluationJudgeAttempts).values({
+        id: attemptId,
+        executionId: staleAggregating,
+        role: "reviewer",
+        ordinal,
+        retryOrdinal: 0,
+        agentId: "core:sdd-judge",
+        status: "completed",
+        terminalAt: new Date(),
+      });
+      for (const [criterionId, score] of [
+        ["correctness", "4"],
+        ["maintainability", "3"],
+      ] as const) {
+        await db.insert(schema.evaluationCriterionResults).values({
+          attemptId,
+          criterionId,
+          state: "scored",
+          score,
+          confidence: "0.9",
+        });
+      }
+    }
+
+    const summary = await runEvaluationDispatchTick(stubDeps(), db);
+
+    expect(summary.recovered).toBeGreaterThanOrEqual(2);
+    expect(await statusOf(staleCapturing)).toBe("failed");
+
+    const [failedRow] = await db
+      .select({ terminalReason: schema.evaluationExecutions.terminalReason })
+      .from(schema.evaluationExecutions)
+      .where(eq(schema.evaluationExecutions.id, staleCapturing));
+
+    expect(failedRow.terminalReason).toBe("CRASH");
+
+    expect(await statusOf(staleAggregating)).toBe("completed");
+
+    const aggregates = await db
+      .select({ id: schema.evaluationAggregateResults.id })
+      .from(schema.evaluationAggregateResults)
+      .where(
+        eq(schema.evaluationAggregateResults.executionId, staleAggregating),
+      );
+
+    expect(aggregates.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("recreates the missing review row for a crash-window review_required execution, damped by a fresh entry event", async () => {
+    // Crash artifact: review_required with NO review.required event (recovers
+    // immediately — a real crash artifact's event would be past the cutoff).
+    const orphaned = randomUUID();
+
+    await db.insert(schema.evaluationExecutions).values({
+      id: orphaned,
+      studyId,
+      status: "review_required",
+      version: 5,
+    });
+
+    // Live-worker window: review_required whose entry event is FRESH — the
+    // recovery arm must NOT race the worker's own openReview.
+    const inFlight = randomUUID();
+
+    await db.insert(schema.evaluationExecutions).values({
+      id: inFlight,
+      studyId,
+      status: "review_required",
+      version: 5,
+    });
+    await db.insert(schema.evaluationEvents).values({
+      studyId,
+      executionId: inFlight,
+      sequence: 900_001,
+      eventType: "review.required",
+      payload: {},
+    });
+
+    await runEvaluationDispatchTick(stubDeps(), db);
+
+    const orphanReviews = await db
+      .select({
+        id: schema.evaluationReviews.id,
+        status: schema.evaluationReviews.status,
+        kind: schema.evaluationReviews.kind,
+      })
+      .from(schema.evaluationReviews)
+      .where(eq(schema.evaluationReviews.executionId, orphaned));
+
+    expect(orphanReviews).toHaveLength(1);
+    expect(orphanReviews[0].status).toBe("required");
+    expect(orphanReviews[0].kind).toBe("disagreement");
+
+    const inFlightReviews = await db
+      .select({ id: schema.evaluationReviews.id })
+      .from(schema.evaluationReviews)
+      .where(eq(schema.evaluationReviews.executionId, inFlight));
+
+    expect(inFlightReviews).toHaveLength(0);
+  });
+
+  it("reap guard: a Pending-run attempt is not reaped (clock re-anchored); a started attempt is reaped with token revoked and run stopped", async () => {
+    const { executionId } = await startEvaluationExecution(
+      { studyId, projectId, profileId },
+      db,
+    );
+
+    await runEvaluationDispatchTick(stubDeps(), db);
+    expect(await statusOf(executionId)).toBe("judging");
+
+    const attempts = await db
+      .select({
+        id: schema.evaluationJudgeAttempts.id,
+        ordinal: schema.evaluationJudgeAttempts.ordinal,
+      })
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.executionId, executionId))
+      .orderBy(schema.evaluationJudgeAttempts.ordinal);
+
+    expect(attempts).toHaveLength(2);
+
+    const pendingRunId = randomUUID();
+    const runningRunId = randomUUID();
+
+    await db.insert(schema.runs).values([
+      {
+        id: pendingRunId,
+        runKind: "agent",
+        agentId: "core:sdd-judge",
+        agentWorkspace: "none",
+        projectId,
+        status: "Pending",
+        flowVersion: "v0",
+      },
+      {
+        id: runningRunId,
+        runKind: "agent",
+        agentId: "core:sdd-judge",
+        agentWorkspace: "none",
+        projectId,
+        status: "Running",
+        flowVersion: "v0",
+      },
+    ]);
+
+    const tokenA = randomUUID();
+    const tokenB = randomUUID();
+
+    await db.insert(schema.projectTokens).values([
+      {
+        id: tokenA,
+        project_id: projectId,
+        name: `agent-run:${pendingRunId}`,
+        token_kind: "agent",
+        agent_id: "core:sdd-judge",
+        prefix: "tkA",
+        token_hash: "hashA",
+        scopes: ["evaluations:judge"],
+        expires_at: new Date(Date.now() + 3_600_000),
+      },
+      {
+        id: tokenB,
+        project_id: projectId,
+        name: `agent-run:${runningRunId}`,
+        token_kind: "agent",
+        agent_id: "core:sdd-judge",
+        prefix: "tkB",
+        token_hash: "hashB",
+        scopes: ["evaluations:judge"],
+        expires_at: new Date(Date.now() + 3_600_000),
+      },
+    ]);
+
+    const backdated = new Date(Date.now() - 120_000);
+
+    await db
+      .update(schema.evaluationJudgeAttempts)
+      .set({
+        agentRunId: pendingRunId,
+        tokenId: tokenA,
+        runningAt: backdated,
+      })
+      .where(eq(schema.evaluationJudgeAttempts.id, attempts[0].id));
+    await db
+      .update(schema.evaluationJudgeAttempts)
+      .set({
+        agentRunId: runningRunId,
+        tokenId: tokenB,
+        runningAt: backdated,
+      })
+      .where(eq(schema.evaluationJudgeAttempts.id, attempts[1].id));
+
+    const summary = await runEvaluationDispatchTick(stubDeps(), db);
+
+    // >= 1: attempts of long-lived judging executions from earlier tests may
+    // also cross their 60s timeout while this file runs.
+    expect(summary.timedOutAttempts).toBeGreaterThanOrEqual(1);
+
+    // The Pending-run attempt is NOT reaped; its timeout clock is re-anchored.
+    const [guarded] = await db
+      .select({
+        status: schema.evaluationJudgeAttempts.status,
+        runningAt: schema.evaluationJudgeAttempts.runningAt,
+      })
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.id, attempts[0].id));
+
+    expect(guarded.status).toBe("running");
+    expect(guarded.runningAt!.getTime()).toBeGreaterThan(backdated.getTime());
+
+    // The started attempt is reaped, its token revoked, its agent run stopped
+    // (terminal Abandoned → the agent slot is freed and run tokens revoked).
+    const [reaped] = await db
+      .select({ status: schema.evaluationJudgeAttempts.status })
+      .from(schema.evaluationJudgeAttempts)
+      .where(eq(schema.evaluationJudgeAttempts.id, attempts[1].id));
+
+    expect(reaped.status).toBe("timed_out");
+
+    const [revokedToken] = await db
+      .select({ revoked_at: schema.projectTokens.revoked_at })
+      .from(schema.projectTokens)
+      .where(eq(schema.projectTokens.id, tokenB));
+
+    expect(revokedToken.revoked_at).not.toBeNull();
+
+    const [guardedToken] = await db
+      .select({ revoked_at: schema.projectTokens.revoked_at })
+      .from(schema.projectTokens)
+      .where(eq(schema.projectTokens.id, tokenA));
+
+    expect(guardedToken.revoked_at).toBeNull();
+
+    const [stoppedRun] = await db
+      .select({ status: schema.runs.status })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runningRunId));
+
+    expect(stoppedRun.status).toBe("Abandoned");
+
+    // One attempt still running → the panel is NOT terminal.
+    expect(await statusOf(executionId)).toBe("judging");
+  });
+
+  it("terminalizes a wedged judging execution (persistent launch failure past the cutoff) as failed", async () => {
+    const wedged = randomUUID();
+
+    await db.insert(schema.evaluationExecutions).values({
+      id: wedged,
+      studyId,
+      status: "judging",
+      version: 4,
+      startedAt: new Date(Date.now() - 15 * 60_000),
+      // No judge attempts and a launch that always fails → the panel can never
+      // reach allTerminal; without the backstop this retries forever.
+    });
+
+    const failingLaunch = stubDeps({
+      launchPanel: async (executionId) => {
+        if (executionId === wedged) {
+          throw new Error("simulated persistent spawn failure");
+        }
+      },
+    });
+
+    const summary = await runEvaluationDispatchTick(failingLaunch, db);
+
+    expect(summary.wedgedFailed).toBe(1);
+    expect(await statusOf(wedged)).toBe("failed");
+
+    const [row] = await db
+      .select({ terminalReason: schema.evaluationExecutions.terminalReason })
+      .from(schema.evaluationExecutions)
+      .where(eq(schema.evaluationExecutions.id, wedged));
+
+    expect(row.terminalReason).toBe("DISPATCH_STEP");
+
+    const events = await readEvaluationEvents({ studyId }, db);
+    const wedgedEvents = events.filter(
+      (e) => e.executionId === wedged && e.eventType === "evaluation.failed",
+    );
+
+    expect(wedgedEvents).toHaveLength(1);
   });
 });

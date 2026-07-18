@@ -116,6 +116,8 @@ tags:
     description: Run launch, status, and event streaming.
   - name: experiments
     description: ADR-124 Experiment Comparison Studio — pinned-base variant runs, comparison DTOs, human verdicts, and advisory judge controls.
+  - name: evaluations
+    description: ADR-142..147 Evaluation Lab — Studies/participants/verdicts, execution start + SSE stream, review resolution, admin methodologies/panels/profiles, and project profile overrides (internal session surface).
   - name: scratch-runs
     description: Manual coding-agent dialog workspaces outside the task board.
   - name: hitl
@@ -3010,6 +3012,993 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/evaluations/judge-panels:
+    get:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) List Judge Panels
+      description: |
+        Global-admin only (`requireGlobalRole("admin")`). Returns every mutable
+        Judge Panel as an explicit DTO (role→package-agent bindings + policy +
+        optimistic `revision`). Bindings reference package-qualified agent ids
+        and runner intent only — never a secret.
+
+        All `/api/admin/evaluations/*` and `/api/projects/{slug}/evaluations/*`
+        routes share the Evaluation Lab error mapping
+        (`web/lib/evaluations/route-helpers.ts:evalStatusForCode`):
+        malformed/semantic config → `CONFIG` **422**, missing/cross-project →
+        `PRECONDITION` **404**, stale If-Match / idempotency-key reuse /
+        illegal state → `CONFLICT` **409**, dependency unavailable →
+        `EXECUTOR_UNAVAILABLE` **503** — deliberately distinct from the generic
+        project-route mapping (`CONFIG` → 400, `PRECONDITION` → 409).
+      operationId: listEvaluationJudgePanels
+      responses:
+        "200":
+          description: Panel list.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [panels]
+                properties:
+                  panels:
+                    type: array
+                    items: { $ref: "#/components/schemas/EvaluationJudgePanel" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Create a Judge Panel
+      description: |
+        Global-admin only. Strict body — `name` + non-empty `roleBindings`
+        (max 32) + full `policy`; `quorum > attempts` is refused at the config
+        boundary (`CONFIG` 422).
+      operationId: createEvaluationJudgePanel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, roleBindings, policy]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                roleBindings:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  items:
+                    {
+                      $ref: "#/components/schemas/EvaluationJudgePanelRoleBinding",
+                    }
+                policy:
+                  { $ref: "#/components/schemas/EvaluationJudgePanelPolicy" }
+      responses:
+        "201":
+          description: Panel created (revision 1).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [panel]
+                properties:
+                  panel: { $ref: "#/components/schemas/EvaluationJudgePanel" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/admin/evaluations/judge-panels/{panelId}:
+    parameters:
+      - name: panelId
+        in: path
+        required: true
+        schema: { type: string, minLength: 1 }
+    get:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Get a Judge Panel
+      description: Global-admin only. Missing id is `PRECONDITION` 404.
+      operationId: getEvaluationJudgePanel
+      responses:
+        "200":
+          description: Panel DTO.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [panel]
+                properties:
+                  panel: { $ref: "#/components/schemas/EvaluationJudgePanel" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+    patch:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Update a Judge Panel (If-Match CAS)
+      description: |
+        Global-admin only. Partial body (at least one of
+        `name`/`roleBindings`/`policy`/`enabled`); the mandatory `If-Match`
+        revision is CAS-enforced — a stale value is `CONFLICT` 409. Editing a
+        panel never mutates a historical execution (each execution snapshots
+        its panel at start).
+      operationId: patchEvaluationJudgePanel
+      parameters:
+        - { $ref: "#/components/parameters/EvaluationIfMatch" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                roleBindings:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  items:
+                    {
+                      $ref: "#/components/schemas/EvaluationJudgePanelRoleBinding",
+                    }
+                policy:
+                  { $ref: "#/components/schemas/EvaluationJudgePanelPolicy" }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated panel (revision bumped).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [panel]
+                properties:
+                  panel: { $ref: "#/components/schemas/EvaluationJudgePanel" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+    delete:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Delete a Judge Panel (If-Match CAS)
+      description: |
+        Global-admin only. The `If-Match` revision is enforced atomically
+        inside the delete's WHERE (stale → 409, missing row → 404 — no
+        read-then-delete race window); a panel referenced by a Profile is
+        refused (`CONFLICT` 409).
+      operationId: deleteEvaluationJudgePanel
+      parameters:
+        - { $ref: "#/components/parameters/EvaluationIfMatch" }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/admin/evaluations/methodologies:
+    get:
+      tags: [evaluations]
+      summary: (ADR-143, Implemented) List projected Evaluation Methodologies
+      description: |
+        Global-admin only. Every projected package method revision with derived
+        health, package trust, and validation errors
+        (`web/lib/evaluations/methods-registry.ts:listMethodologies`). Never
+        exposes `installed_path` or prompt/schema bodies.
+      operationId: listEvaluationMethodologies
+      responses:
+        "200":
+          description: Methodology catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [methodologies]
+                properties:
+                  methodologies:
+                    type: array
+                    items:
+                      { $ref: "#/components/schemas/EvaluationMethodology" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/admin/evaluations/methodologies/{methodRevisionId}/activation:
+    patch:
+      tags: [evaluations]
+      summary: (ADR-143, Implemented) Enable/disable a method revision
+      description: |
+        Global-admin only. Enabling is gated on ready health (trusted +
+        engine-compatible + error-free) — a degraded/incompatible method is
+        refused with an actionable reason (`CONFIG` 422) and can never drive
+        execution. Disabling is always allowed (ops kill switch; never deletes
+        history).
+      operationId: setEvaluationMethodActivation
+      parameters:
+        - name: methodRevisionId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [activation]
+              properties:
+                activation:
+                  type: string
+                  enum: [enabled, disabled]
+      responses:
+        "200":
+          description: Activation applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok, activation, health]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  activation:
+                    type: string
+                    enum: [enabled, disabled]
+                  health:
+                    type: object
+                    additionalProperties: true
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/admin/evaluations/profiles:
+    get:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) List Evaluation Profiles
+      description: Global-admin only. Explicit DTOs with optimistic `revision`.
+      operationId: listEvaluationProfiles
+      responses:
+        "200":
+          description: Profile list.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: array
+                    items: { $ref: "#/components/schemas/EvaluationProfile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Create an Evaluation Profile
+      description: |
+        Global-admin only. One method revision + one panel +
+        defaults/hard-limits/allowed-overrides. Referenced method/panel must
+        exist; both FKs are RESTRICT-guarded thereafter.
+      operationId: createEvaluationProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, methodRevisionId, panelId]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                methodRevisionId: { type: string, minLength: 1 }
+                panelId: { type: string, minLength: 1 }
+                defaults:
+                  type: object
+                  additionalProperties: true
+                  nullable: true
+                hardLimits:
+                  type: object
+                  additionalProperties: true
+                  nullable: true
+                allowedOverrides:
+                  type: object
+                  additionalProperties: true
+                  nullable: true
+      responses:
+        "201":
+          description: Profile created (revision 1).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [profile]
+                properties:
+                  profile: { $ref: "#/components/schemas/EvaluationProfile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/admin/evaluations/profiles/{profileId}:
+    parameters:
+      - name: profileId
+        in: path
+        required: true
+        schema: { type: string, minLength: 1 }
+    get:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Get an Evaluation Profile
+      description: Global-admin only. Missing id is `PRECONDITION` 404.
+      operationId: getEvaluationProfile
+      responses:
+        "200":
+          description: Profile DTO.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [profile]
+                properties:
+                  profile: { $ref: "#/components/schemas/EvaluationProfile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+    patch:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Update an Evaluation Profile (If-Match CAS)
+      description: |
+        Global-admin only. Partial body (at least one of
+        `name`/`defaults`/`hardLimits`/`allowedOverrides`/`enabled`); the
+        method/panel bindings are immutable after create. Mandatory `If-Match`;
+        stale → `CONFLICT` 409.
+      operationId: patchEvaluationProfile
+      parameters:
+        - { $ref: "#/components/parameters/EvaluationIfMatch" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                defaults:
+                  type: object
+                  additionalProperties: true
+                  nullable: true
+                hardLimits:
+                  type: object
+                  additionalProperties: true
+                  nullable: true
+                allowedOverrides:
+                  type: object
+                  additionalProperties: true
+                  nullable: true
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated profile (revision bumped).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [profile]
+                properties:
+                  profile: { $ref: "#/components/schemas/EvaluationProfile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+    delete:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Delete an Evaluation Profile (If-Match CAS)
+      description: |
+        Global-admin only. If-Match enforced atomically inside the delete's
+        WHERE; a profile referenced by project overrides or executions is
+        refused (`CONFLICT` 409).
+      operationId: deleteEvaluationProfile
+      parameters:
+        - { $ref: "#/components/parameters/EvaluationIfMatch" }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluation-profiles/{profileId}/override:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - name: profileId
+        in: path
+        required: true
+        schema: { type: string, minLength: 1 }
+    get:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Get the project's saved Profile override
+      description: |
+        Auth-first session, then
+        `requireProjectAction(projectId, "manageProjectEvaluationOverrides")`
+        (project `admin`). `null` means the project inherits the Profile
+        default.
+      operationId: getProjectEvaluationOverride
+      responses:
+        "200":
+          description: Saved override or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [override]
+                properties:
+                  override:
+                    nullable: true
+                    allOf:
+                      - {
+                          $ref: "#/components/schemas/EvaluationProjectOverride",
+                        }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+    put:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Upsert the project's Profile override
+      description: |
+        Project `admin` (`manageProjectEvaluationOverrides`). Every override
+        key must be in the Profile's allow-list and within its hard limits —
+        validated at write time (`assertOverridesAllowed`); a forbidden or
+        out-of-bound value is `CONFIG` 422. Values are numbers or booleans
+        only.
+      operationId: putProjectEvaluationOverride
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [overrides]
+              properties:
+                overrides:
+                  type: object
+                  additionalProperties:
+                    oneOf:
+                      - { type: number }
+                      - { type: boolean }
+      responses:
+        "200":
+          description: Upserted override (revision bumped on update).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [override]
+                properties:
+                  override:
+                    { $ref: "#/components/schemas/EvaluationProjectOverride" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+    delete:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Clear the project's Profile override
+      description: |
+        Project `admin`. Absent row means inherit — deleting is the honest
+        reset and is idempotent (`cleared: false` when nothing was saved).
+      operationId: clearProjectEvaluationOverride
+      responses:
+        "200":
+          description: Cleared (or already absent).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [cleared]
+                properties:
+                  cleared: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+  /api/projects/{slug}/evaluations/studies:
+    get:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) List the project's Evaluation Studies
+      description: |
+        Auth-first session, then
+        `requireProjectAction(projectId, "readEvaluationStudies")` (`viewer`).
+        The `projectId` is derived from the path slug.
+      operationId: listEvaluationStudies
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      responses:
+        "200":
+          description: Study list.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [studies]
+                properties:
+                  studies:
+                    type: array
+                    items: { $ref: "#/components/schemas/EvaluationStudy" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Create an Evaluation Study
+      description: |
+        `manageEvaluationStudies` (`member`). `taskId` is validated against the
+        slug-derived project inside `createStudy` — a cross-project task is
+        refused. The Study is created `draft` and bound to exactly one project
+        + one task.
+      operationId: createEvaluationStudy
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [taskId, title]
+              properties:
+                taskId: { type: string, minLength: 1 }
+                title: { type: string, minLength: 1, maxLength: 300 }
+                purpose: { type: string, maxLength: 4000, nullable: true }
+      responses:
+        "201":
+          description: Study created (`draft`).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [study]
+                properties:
+                  study: { $ref: "#/components/schemas/EvaluationStudy" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+    get:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Get one Evaluation Study
+      description: |
+        `readEvaluationStudies` (`viewer`). A cross-project `studyId` is hidden
+        as 404.
+      operationId: getEvaluationStudy
+      responses:
+        "200":
+          description: Study DTO.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [study]
+                properties:
+                  study: { $ref: "#/components/schemas/EvaluationStudy" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+    patch:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Update Study title/purpose (If-Match CAS)
+      description: |
+        `manageEvaluationStudies` (`member`). At least one of `title`/`purpose`
+        required; mandatory `If-Match` carries the expected Study `version`
+        (stale → `CONFLICT` 409). Ownership is guarded before any write.
+      operationId: patchEvaluationStudy
+      parameters:
+        - { $ref: "#/components/parameters/EvaluationIfMatch" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                title: { type: string, minLength: 1, maxLength: 300 }
+                purpose: { type: string, maxLength: 4000, nullable: true }
+      responses:
+        "200":
+          description: Updated Study (version bumped).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [study]
+                properties:
+                  study: { $ref: "#/components/schemas/EvaluationStudy" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/participants:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+    get:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) List Study participants
+      description: "`readEvaluationStudies` (`viewer`), Study-ownership guarded."
+      operationId: listEvaluationParticipants
+      responses:
+        "200":
+          description: Participants (tombstoned rows included, `removedAt` set).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [participants]
+                properties:
+                  participants:
+                    type: array
+                    items:
+                      { $ref: "#/components/schemas/EvaluationParticipant" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Add observed Run participants
+      description: |
+        `manageEvaluationStudies` (`member`). Each Run is validated to belong
+        to the Study's task + project and to be a flow run; an `observed`
+        participant NEVER gains launch semantics or promotion holds (D3).
+        Re-adding a Run whose participant was tombstoned is allowed (partial
+        UNIQUE on live rows).
+      operationId: addEvaluationParticipants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [runIds]
+              properties:
+                runIds:
+                  type: array
+                  minItems: 1
+                  items: { type: string, minLength: 1 }
+                labels:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Optional per-runId display label map.
+      responses:
+        "201":
+          description: Added participants.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [participants]
+                properties:
+                  participants:
+                    type: array
+                    items:
+                      { $ref: "#/components/schemas/EvaluationParticipant" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/participants/{participantId}:
+    delete:
+      tags: [evaluations]
+      summary: (ADR-142, Implemented) Remove a Study participant
+      description: |
+        `manageEvaluationStudies` (`member`). A participant cited by a sealed
+        evidence item is TOMBSTONED (`removedAt` set — history survives);
+        otherwise it is hard-deleted. A missing participant is 404.
+      operationId: removeEvaluationParticipant
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/StudyId" }
+        - name: participantId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [tombstoned]
+                properties:
+                  tombstoned:
+                    type: boolean
+                    description: true = tombstoned (evidence-cited); false = hard-deleted.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/verdicts:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+    get:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) List the Study's human verdict history
+      description: |
+        `readEvaluationStudies` (`viewer`). Append-only history, newest first;
+        a superseded verdict stays in the list (`supersedes` lineage).
+      operationId: listEvaluationVerdicts
+      responses:
+        "200":
+          description: Verdict rows (append-only).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [verdicts]
+                properties:
+                  verdicts:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      description: |
+                        `evaluation_human_verdicts` row — `id`, `outcome`
+                        (`winner|tie|inconclusive`), `participantIds`,
+                        `executionIds`, `noEvaluationEvidenceAck`,
+                        `rationale`, `supersedesId`, actor + timestamps.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Record a conclusive human verdict
+      description: |
+        `concludeEvaluationStudy` (`member`) on a SESSION route — the actor is
+        always human; a judge/agent ext token can never reach it. Cites
+        Completed or terminal Partial executions only; a zero-citation verdict
+        requires `noEvaluationEvidenceAck: true`; a Partial citation requires
+        non-empty `acknowledgedWarnings`; on an already-`decided` Study a new
+        verdict must supersede the standing one (`supersedesId` + rationale).
+        The verdict row + `verdict.recorded` event + Study `decided` flip (and
+        the `evaluation_decided` task activity) commit in ONE transaction; NO
+        Run status change, promotion, or abandon happens (D14).
+      operationId: recordEvaluationVerdict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome, participantIds, executionIds]
+              properties:
+                outcome:
+                  type: string
+                  enum: [winner, tie, inconclusive]
+                participantIds:
+                  type: array
+                  items: { type: string, minLength: 1 }
+                executionIds:
+                  type: array
+                  items: { type: string, minLength: 1 }
+                noEvaluationEvidenceAck: { type: boolean }
+                rationale: { type: string, maxLength: 8000, nullable: true }
+                acknowledgedWarnings:
+                  type: array
+                  items: { type: string }
+                supersedesId: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Verdict recorded; Study flips to `decided`.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, sequence]
+                properties:
+                  id: { type: string }
+                  sequence:
+                    type: integer
+                    description: The `verdict.recorded` event sequence in the Study stream.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/evaluations:
+    post:
+      tags: [evaluations]
+      summary: (ADR-144/145, Implemented) Start an Evaluation Execution
+      description: |
+        `launchEvaluationRuns` (`member`) on a SESSION route (human actor).
+        Resolves + snapshots the effective profile
+        (platform → project override → per-Study overrides, allow-list-scoped),
+        queues the execution, and fires an immediate in-process dispatch kick
+        so the FSM starts without waiting for the 60s `evaluation_dispatch`
+        cron; the dispatcher — not this route — captures evidence and launches
+        judges. Idempotency: the `Idempotency-Key` header is the canonical
+        carrier (body field is the fallback); the same key with the same
+        request digest replays the original execution (200, `deduped: true`);
+        the same key with a DIFFERENT request is `CONFLICT` 409. A
+        `pairwise_tournament@1` method is refused (`CONFIG` 422 — the pairwise
+        execution path is owner-deferred with the pairwise UI).
+      operationId: startEvaluationExecution
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/StudyId" }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [profileId]
+              properties:
+                profileId: { type: string, minLength: 1 }
+                studyOverrides:
+                  type: object
+                  additionalProperties: true
+                  description: Allow-list-scoped per-Study overrides (validated in `resolveEffectiveProfile`).
+                idempotencyKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Fallback for the `Idempotency-Key` header.
+      responses:
+        "201":
+          description: "Execution queued (`deduped: false`); dispatch kicked."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [executionId, deduped]
+                properties:
+                  executionId: { type: string }
+                  deduped: { type: boolean, enum: [false] }
+        "200":
+          description: Idempotent replay of the original execution.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [executionId, deduped]
+                properties:
+                  executionId: { type: string }
+                  deduped: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/stream:
+    get:
+      tags: [evaluations]
+      summary: (ADR-144, Implemented) SSE — stream the Study's evaluation events
+      description: |
+        `readEvaluationStudies` (`viewer`), Study-ownership guarded before
+        streaming. Server-side poll of the DURABLE `evaluation_events` log
+        (1s interval) — a read model, never a state-transition trigger (the
+        FSM is CAS-driven by the dispatcher). Each frame is
+        `id: <sequence>` + `event: <eventType>` +
+        `data: {executionId, sequence, payload}`; reconnect with the standard
+        `Last-Event-ID` header (or `?lastEventId=N`) replays the tail from the
+        DB — no in-memory replay state. A comment heartbeat every 15s keeps
+        the connection warm without advancing `Last-Event-ID`; after 5 minutes
+        the server emits `event: stream_timeout` and closes (the client
+        reconnects). Payloads are bounded ids/status/counts — never evidence
+        bodies.
+      operationId: streamEvaluationStudyEvents
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/StudyId" }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string }
+        - name: lastEventId
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: SSE stream (`text/event-stream`).
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                enum: [text/event-stream]
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+  /api/projects/{slug}/evaluations/reviews/{reviewId}:
+    patch:
+      tags: [evaluations]
+      summary: (ADR-145, Implemented) Resolve a disagreement/escalation review
+      description: |
+        `resolveEvaluationReview` (project `admin`). Ownership is guarded
+        through the review → execution → study → project chain; the mandatory
+        `If-Match` carries the expected review `version` and the resolve is a
+        single CAS UPDATE (`required` → `resolved`) — a stale revision or an
+        already-resolved review loses as `CONFLICT` 409. Records reviewer,
+        resolution, rationale, and an optional adjudicated result; emits
+        `review.resolved` on the Study stream.
+      operationId: resolveEvaluationReview
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - name: reviewId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - { $ref: "#/components/parameters/EvaluationIfMatch" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [resolution]
+              properties:
+                resolution: { type: string, minLength: 1, maxLength: 2000 }
+                rationale: { type: string, maxLength: 8000, nullable: true }
+                adjudicatedResult:
+                  type: object
+                  additionalProperties: true
+                  nullable: true
+      responses:
+        "200":
+          description: Review resolved.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [sequence]
+                properties:
+                  sequence:
+                    type: integer
+                    description: The `review.resolved` event sequence in the Study stream.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
   /api/inbox/{itemId}/read:
     patch:
       tags: [social-board]
@@ -12775,6 +13764,25 @@ components:
       required: true
       description: Experiment id (`experiments.id`) joined through the slug-derived project.
       schema: { type: string, minLength: 1 }
+    StudyId:
+      name: studyId
+      in: path
+      required: true
+      description: |
+        Evaluation Study id (`evaluation_studies.id`). Always ownership-guarded
+        through the slug-derived project — a cross-project id is hidden as 404.
+      schema: { type: string, minLength: 1 }
+    EvaluationIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: |
+        (Evaluation Lab, mandatory on mutating PATCH/DELETE.) The expected
+        optimistic revision as a positive integer (optionally quoted). Absent
+        or non-integer → `CONFIG` 422; a stale value loses the CAS as
+        `CONFLICT` 409 — a concurrent edit is never silently overwritten.
+        Enforced by `web/lib/evaluations/route-helpers.ts:requireIfMatchRevision`.
+      schema: { type: string }
   responses:
     Unauthenticated:
       description: No valid session (`UNAUTHENTICATED`).
@@ -12809,6 +13817,30 @@ components:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     Config:
       description: Invalid body or incompatible package (`CONFIG`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    EvaluationNotFound:
+      description: |
+        (Evaluation Lab error mapping — `web/lib/evaluations/route-helpers.ts`.)
+        Missing or cross-project resource: `PRECONDITION` maps to **404** on
+        these routes (NOT 409 as on the generic project routes).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    EvaluationConflict:
+      description: |
+        (Evaluation Lab.) `CONFLICT` 409 — stale If-Match revision, an
+        idempotency key reused with a DIFFERENT request digest, a
+        reference-guarded delete, or an illegal state transition.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    EvaluationInvalid:
+      description: |
+        (Evaluation Lab.) `CONFIG` 422 — malformed JSON, invalid body shape, a
+        missing/invalid If-Match header, or a semantic config refusal (the
+        evaluation mapping separates malformed 422 from missing 404).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -17295,6 +18327,274 @@ components:
         state:
           type: string
           enum: [idle, starting, ready, failed, stopping]
+    EvaluationJudgePanelRoleBinding:
+      type: object
+      additionalProperties: false
+      required: [role, agentId]
+      description: |
+        (ADR-145.) One logical judge role bound to a package-qualified platform
+        agent. Carries runner intent only — never a credential, path, or
+        session handle.
+      properties:
+        role: { type: string, minLength: 1, maxLength: 64 }
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Package-qualified platform agent id (`<flowRefId>:<stem>`).
+        runnerId: { type: string, nullable: true }
+        runnerIntent:
+          type: object
+          additionalProperties: true
+          nullable: true
+    EvaluationJudgePanelPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          attempts,
+          maxParallelAttempts,
+          quorum,
+          timeoutMs,
+          maxRetries,
+          blindLabels,
+          randomizeOrder,
+          allowedMcps,
+        ]
+      description: |
+        (ADR-145.) Panel execution policy. `quorum` MUST NOT exceed `attempts`
+        (validated at the config boundary, not only at resolution).
+      properties:
+        attempts: { type: integer, minimum: 1, maximum: 64 }
+        maxParallelAttempts: { type: integer, minimum: 1, maximum: 64 }
+        quorum: { type: integer, minimum: 1, maximum: 64 }
+        timeoutMs: { type: integer, minimum: 1, maximum: 3600000 }
+        maxRetries: { type: integer, minimum: 0, maximum: 16 }
+        budgets:
+          type: object
+          additionalProperties: false
+          nullable: true
+          properties:
+            tokens: { type: integer, nullable: true }
+            costUsd: { type: number, nullable: true }
+        blindLabels: { type: boolean }
+        randomizeOrder: { type: boolean }
+        allowedMcps:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1 }
+        poisonPolicy:
+          type: object
+          additionalProperties: true
+          nullable: true
+    EvaluationJudgePanel:
+      type: object
+      additionalProperties: false
+      required: [id, name, revision, roleBindings, policy, enabled, updatedAt]
+      description: |
+        (ADR-145.) Mutable admin Judge Panel DTO
+        (`web/lib/evaluations/config-schemas.ts:toJudgePanelDto`). Snapshotted
+        into each execution at start — editing it never mutates a historical
+        result.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        revision:
+          type: integer
+          description: Optimistic revision — echo back via `If-Match`.
+        roleBindings:
+          type: array
+          items: { $ref: "#/components/schemas/EvaluationJudgePanelRoleBinding" }
+        policy: { $ref: "#/components/schemas/EvaluationJudgePanelPolicy" }
+        enabled: { type: boolean }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    EvaluationProfile:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          name,
+          revision,
+          methodRevisionId,
+          panelId,
+          defaults,
+          hardLimits,
+          allowedOverrides,
+          enabled,
+          updatedAt,
+        ]
+      description: |
+        (ADR-145.) Admin Profile DTO — one method revision + one panel +
+        defaults/hard-limits/allowed-overrides. RESTRICT-guarded against
+        delete-while-referenced.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        revision: { type: integer }
+        methodRevisionId: { type: string }
+        panelId: { type: string }
+        defaults: { type: object, additionalProperties: true, nullable: true }
+        hardLimits:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            properties:
+              min: { type: number }
+              max: { type: number }
+        allowedOverrides:
+          type: object
+          nullable: true
+          description: |
+            Per-key override permission — `true` (any value) or an inclusive
+            numeric `{min, max}` bound.
+          additionalProperties: true
+        enabled: { type: boolean }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    EvaluationMethodology:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          qualifiedId,
+          methodId,
+          packageName,
+          versionLabel,
+          packageInstallId,
+          schemaVersion,
+          compat,
+          activation,
+          health,
+          validationErrors,
+          trustStatus,
+          updatedAt,
+        ]
+      description: |
+        (ADR-143.) One projected package-sourced Evaluation Method revision
+        (`web/lib/evaluations/methods-registry.ts:listMethodologies`) with
+        derived health + package trust. Never exposes `installed_path` or
+        prompt/schema bodies.
+      properties:
+        id: { type: string, description: "`evaluation_method_revisions.id`." }
+        qualifiedId:
+          type: string
+          description: "`packageName:methodId`."
+        methodId: { type: string }
+        packageName: { type: string }
+        versionLabel: { type: string }
+        packageInstallId: { type: string }
+        schemaVersion: { type: integer }
+        compat:
+          type: object
+          additionalProperties: true
+          description: Declared `engine_min`/`engine_max` range.
+        activation:
+          type: string
+          enum: [enabled, disabled]
+        health:
+          type: object
+          additionalProperties: true
+          description: Derived from trust + engine compatibility + validation errors.
+        validationErrors:
+          type: array
+          nullable: true
+          items: { type: string }
+        trustStatus: { type: string }
+        updatedAt: { type: string, format: date-time }
+    EvaluationStudy:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          projectId,
+          taskId,
+          title,
+          purpose,
+          status,
+          version,
+          legacyExperimentId,
+          createdAt,
+          updatedAt,
+          archivedAt,
+        ]
+      description: |
+        (ADR-142.) Evaluation Study DTO
+        (`web/lib/evaluations/study-dtos.ts:toStudyDto`). Persisted status is
+        only `draft|open|decided|archived` — readiness and active-evaluation
+        count are derived, never a Study-level flip.
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        taskId: { type: string }
+        title: { type: string }
+        purpose: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [draft, open, decided, archived]
+        version:
+          type: integer
+          description: Optimistic revision — echo back via `If-Match` on PATCH.
+        legacyExperimentId:
+          type: string
+          nullable: true
+          description: Set only on a Study migrated from a legacy Experiment (0110).
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        archivedAt: { type: string, format: date-time, nullable: true }
+    EvaluationParticipant:
+      type: object
+      additionalProperties: false
+      required: [id, sourceType, runId, label, displayOrder, joinedAt]
+      description: |
+        (ADR-142.) Study participant DTO
+        (`web/lib/evaluations/study-dtos.ts:toParticipantDto`). `runIdentity`
+        provenance is bounded/opaque by construction — never a path, session
+        id, adapter env, or credential.
+      properties:
+        id: { type: string }
+        sourceType:
+          type: string
+          enum: [observed, launched]
+          description: Immutable provenance — an observed Run never gains launch semantics.
+        runId:
+          type: string
+          nullable: true
+          description: SET NULL on Run deletion; `runIdentity` survives.
+        recipeId: { type: string, nullable: true }
+        label: { type: string }
+        displayOrder: { type: integer }
+        replicateGroup: { type: string, nullable: true }
+        replicateOrdinal: { type: integer, nullable: true }
+        launchReason: { type: string, nullable: true }
+        runIdentity:
+          type: object
+          additionalProperties: true
+          nullable: true
+        joinedAt: { type: string, format: date-time, nullable: true }
+        frozenAt: { type: string, format: date-time, nullable: true }
+        removedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Tombstone marker (participant cited by sealed evidence).
+    EvaluationProjectOverride:
+      type: object
+      additionalProperties: false
+      required: [profileId, revision, overrides, updatedAt]
+      description: |
+        (ADR-145.) Saved per-project Profile override values, constrained to
+        the Profile's allow-list and hard limits at write time.
+      properties:
+        profileId: { type: string }
+        revision: { type: integer }
+        overrides:
+          type: object
+          additionalProperties: true
+        updatedAt: { type: string, format: date-time, nullable: true }
     MaisterErrorBody:
       type: object
       required: [code, message]

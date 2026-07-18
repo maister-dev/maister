@@ -15,7 +15,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, type RunSyncPhase } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { isExperimentMemberRun } from "@/lib/experiments/membership";
+import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { isBranchPublished } from "@/lib/runs/branch-published";
 import { lifecycleClaimIsStale } from "@/lib/runs/lifecycle-claim";
@@ -159,8 +159,10 @@ function claimHeartbeatMs(): number {
 }
 
 // The shared readiness contract Task 9 needs from a run row + its workspace. A
-// sync targets exactly a top-level, non-shared, non-experiment Review flow/agent
-// run whose worktree is still present.
+// sync targets exactly a top-level, non-shared, non-launched-lineage Review
+// flow/agent run whose worktree is still present. (`isExperimentMember` carries
+// the unified launched-lineage predicate — experiment member OR launched
+// evaluation participant.)
 export function assertSyncEligible(
   run: SyncEligibilityRun,
   workspace: { removedAt: Date | null },
@@ -192,7 +194,7 @@ export function assertSyncEligible(
   if (run.isExperimentMember) {
     throw new MaisterError(
       "PRECONDITION",
-      "an experiment-member run cannot sync — conclude the experiment first",
+      "a launched experiment/evaluation participant cannot sync — conclude the experiment or decide the study first",
     );
   }
   if (workspace.removedAt !== null) {
@@ -675,7 +677,11 @@ export async function syncRunTarget(
   // 1. Load + eligibility + dirty-tree refusal (all BEFORE any claim).
   const run = await loadRun(db, runId);
   const workspace = await loadWorkspace(db, runId);
-  const isExperimentMember = await isExperimentMemberRun(db, runId);
+  // Launched-lineage predicate (legacy Experiment member OR launched Evaluation
+  // participant): a launched participant in Review must not rebase/force-push
+  // mid-study — it would rewrite the tip later evidence captures read. The field
+  // keeps its historical `isExperimentMember` name for contract stability.
+  const isExperimentMember = await isLaunchedLineageRun(db, runId);
 
   assertSyncEligible(
     {

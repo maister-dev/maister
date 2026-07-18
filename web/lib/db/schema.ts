@@ -2852,6 +2852,15 @@ export const evaluationCriterionResults = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    // One row per (attempt, criterion, participant). NULLS NOT DISTINCT so the
+    // holistic case (participant_id null) is also single-writer — a duplicate
+    // seal can never double-write a criterion cell (belt; the seal CAS is the
+    // suspenders).
+    uniqAttemptCriterionParticipant: unique(
+      "evaluation_criterion_results_attempt_criterion_uq",
+    )
+      .on(t.attemptId, t.criterionId, t.participantId)
+      .nullsNotDistinct(),
     idxAttempt: index("evaluation_criterion_results_attempt_idx").on(
       t.attemptId,
     ),
@@ -2899,6 +2908,11 @@ export const evaluationAggregateResults = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    // Append-only revisions are strictly sequential per execution; concurrent
+    // persists race on this unique and the loser re-reads + retries (persist.ts).
+    uniqExecutionRevision: unique(
+      "evaluation_aggregate_results_execution_revision_uq",
+    ).on(t.executionId, t.revision),
     idxExecution: index("evaluation_aggregate_results_execution_idx").on(
       t.executionId,
     ),

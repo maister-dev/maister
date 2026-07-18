@@ -107,6 +107,8 @@ export async function checkStandardizationEligible(
     return empty;
   }
 
+  // Scoped by the verdict's study — a verdict citing a participant of another
+  // study/project must never pull that recipe into THIS project's default.
   const [participant] = await d
     .select({
       id: evaluationParticipants.id,
@@ -114,13 +116,21 @@ export async function checkStandardizationEligible(
       recipeId: evaluationParticipants.recipeId,
     })
     .from(evaluationParticipants)
-    .where(eq(evaluationParticipants.id, winnerParticipantId));
+    .where(
+      and(
+        eq(evaluationParticipants.id, winnerParticipantId),
+        eq(evaluationParticipants.studyId, verdict.studyId),
+      ),
+    );
 
-  if (
-    !participant ||
-    participant.sourceType !== "launched" ||
-    !participant.recipeId
-  ) {
+  if (!participant) {
+    throw new MaisterError(
+      "CONFIG",
+      `verdict ${verdict.id} cites participant ${winnerParticipantId} outside study ${verdict.studyId}`,
+    );
+  }
+
+  if (participant.sourceType !== "launched" || !participant.recipeId) {
     // An observed winner has no reproducible recipe to standardize.
     refusals.push("winner_not_launched_recipe");
 
@@ -134,7 +144,12 @@ export async function checkStandardizationEligible(
       tombstonedAt: evaluationRecipes.tombstonedAt,
     })
     .from(evaluationRecipes)
-    .where(eq(evaluationRecipes.id, participant.recipeId));
+    .where(
+      and(
+        eq(evaluationRecipes.id, participant.recipeId),
+        eq(evaluationRecipes.studyId, verdict.studyId),
+      ),
+    );
 
   if (!recipe || recipe.tombstonedAt) {
     refusals.push("recipe_unavailable");
