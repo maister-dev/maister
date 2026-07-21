@@ -114,10 +114,12 @@ tags:
     description: Global admin account management.
   - name: runs
     description: Run launch, status, and event streaming.
+  # REMOVAL MARKER (ADR-149, Phase 4): this tag is deleted with the eight
+  # `/experiments*` paths it labels.
   - name: experiments
-    description: ADR-124 Experiment Comparison Studio — pinned-base variant runs, comparison DTOs, human verdicts, and advisory judge controls.
+    description: ADR-124 Experiment Comparison Studio (**retired by ADR-149**) — pinned-base variant runs, comparison DTOs, human verdicts, and advisory judge controls.
   - name: evaluations
-    description: ADR-142..147 Evaluation Lab — Studies/participants/verdicts, execution start + SSE stream, review resolution, admin methodologies/panels/profiles, and project profile overrides (internal session surface).
+    description: ADR-142..147 + ADR-149 Evaluation Lab — Studies/participants/verdicts, execution start + SSE stream, review resolution, controlled-launch preflight/batches, recipe standardization, admin methodologies/panels/profiles, and project profile overrides (internal session surface).
   - name: scratch-runs
     description: Manual coding-agent dialog workspaces outside the task board.
   - name: hitl
@@ -2693,10 +2695,20 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  # ============================================================================
+  # REMOVAL MARKER (ADR-149, Phase 4): the eight `/api/projects/{slug}/experiments*`
+  # paths below are deleted with the legacy UI, together with the `experiments`
+  # tag, the `readExperiments|manageExperiments|concludeExperiments` authz
+  # actions, and the `ExperimentDetail`/`ExperimentComparison` schemas — whose
+  # `nullable`-beside-`allOf` redocly errors (filed 2026-07-11) this deletion
+  # resolves. `pin-options` is NOT simply dropped: it is ported first to
+  # `/api/projects/{slug}/evaluations/pin-options` in Phase 1.
+  # Only permanent redirects survive under the `/experiments` path.
+  # ============================================================================
   /api/projects/{slug}/experiments:
     get:
       tags: [experiments]
-      summary: (ADR-124, Implemented) List project experiments
+      summary: (ADR-124, Implemented; **retired by ADR-149**) List project experiments
       description: |
         Requires `requireProjectAction(projectId, "readExperiments")`
         (`viewer`). The `projectId` is derived from the path slug. Phase 1 has
@@ -3888,9 +3900,19 @@ paths:
         judges. Idempotency: the `Idempotency-Key` header is the canonical
         carrier (body field is the fallback); the same key with the same
         request digest replays the original execution (200, `deduped: true`);
-        the same key with a DIFFERENT request is `CONFLICT` 409. A
-        `pairwise_tournament@1` method is refused (`CONFIG` 422 — the pairwise
-        execution path is owner-deferred with the pairwise UI).
+        the same key with a DIFFERENT request is `CONFLICT` 409.
+
+        Pairwise: a `pairwise_tournament@1` method is currently refused
+        (`CONFIG` 422) by a fail-closed gate, because the judge submission
+        contract carries no A/B pick and the execution would otherwise die at
+        aggregation. **(ADR-149, Designed — Phase 1.5)** that gate is removed
+        once the pairwise path works end to end: judge attempts are then
+        provisioned per unordered PAIR (`N·(N−1)/2` matches, a bye for an odd
+        count), each attempt carries its match identity, and aggregation
+        routes through `computeTournament`. Execution results — including the
+        tournament ranking and per-match outcomes — are read by the Study Lab
+        through server components, not through this route, so no response
+        shape here changes.
       operationId: startEvaluationExecution
       parameters:
         - { $ref: "#/components/parameters/ProjectSlug" }
@@ -4039,6 +4061,356 @@ paths:
         "404": { $ref: "#/components/responses/EvaluationNotFound" }
         "409": { $ref: "#/components/responses/EvaluationConflict" }
         "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/pin-options:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+    get:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Package-pin options for a recipe's packagePin slot
+      description: |
+        `launchEvaluationRuns` (`member`). Ported from the retiring
+        `/api/projects/{slug}/experiments/pin-options` (ADR-132); the shared
+        resolution stays in `web/lib/packages/pin.ts`. Options are filtered
+        SERVER-side by the task's project attachments — the caller never
+        supplies a candidate list.
+      operationId: listEvaluationPinOptions
+      parameters:
+        - name: taskId
+          in: query
+          required: true
+          description: Task whose project attachments scope the pin candidates.
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Pin options available to this task.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [options]
+                properties:
+                  options:
+                    type: array
+                    items: { $ref: "#/components/schemas/EvaluationPinOption" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/launch-preflight:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Preflight one or more controlled recipes
+      description: |
+        `launchEvaluationRuns` (`member`), Study-ownership guarded. PURE — no
+        side effect, nothing persisted. Returns every typed refusal and
+        warning from `preflightControlledRecipe` verbatim so the launch dialog
+        can show them before submit; the same core runs again at launch, so a
+        recipe that passes here can still be refused if live contracts drift.
+        A missing catalog surfaces as a refusal, never a fabricated pass.
+      operationId: preflightEvaluationRecipes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [recipes]
+              properties:
+                recipes:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  items:
+                    { $ref: "#/components/schemas/EvaluationRecipeDefinition" }
+      responses:
+        "200":
+          description: Per-recipe preflight verdicts, in request order.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      { $ref: "#/components/schemas/EvaluationPreflightResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/launch-batches:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Create a controlled-launch batch and drive it
+      description: |
+        `launchEvaluationRuns` (`member`), Study-ownership guarded.
+
+        Two-phase by contract: the durable batch intent commits BEFORE any
+        launch side effect, then the drive loop runs post-commit. The route
+        therefore returns `201` with the `batchId` even when the drive then
+        halts (kill switch) — those items stay `queued` and remain visible.
+
+        `items[].recipeId` is cross-resource and is validated server-side to
+        belong to THIS Study; a mismatch is `409`. When an item instead
+        carries a `definition`, the recipe is created inline in the Study
+        first.
+
+        Idempotency: the request digest covers ONLY the items array. The same
+        `idempotencyKey` with an identical digest returns the original batch
+        with `deduped: true`; the same key with any different digest —
+        including a REORDERING of `items` — is `409`. A replay into a Study
+        that has since become `decided`/`archived` is `409`, not a dedup.
+      operationId: createEvaluationLaunchBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [items]
+              properties:
+                idempotencyKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Scoped to this Study by a partial UNIQUE index.
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  items:
+                    type: object
+                    additionalProperties: false
+                    properties:
+                      recipeId:
+                        type: string
+                        minLength: 1
+                        description: An existing recipe in THIS Study. Mutually exclusive with `definition`.
+                      definition:
+                        allOf:
+                          - { $ref: "#/components/schemas/EvaluationRecipeDefinition" }
+                        description: Create the recipe inline, then launch it. Mutually exclusive with `recipeId`.
+                      replicateCount:
+                        type: integer
+                        minimum: 1
+                        maximum: 32
+                        description: |
+                          Defaults to the recipe's own `replicatePolicy.count`,
+                          then to 1.
+      responses:
+        "201":
+          description: |
+            Batch intent persisted. `deduped` is true when an existing batch
+            was replayed rather than created.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/EvaluationLaunchBatchCreated" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/launch-batches/{batchId}:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+      - { $ref: "#/components/parameters/LaunchBatchId" }
+    get:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Read a launch batch and its per-item state
+      description: |
+        `launchEvaluationRuns` (`member`), Study-ownership guarded. Batch
+        progress is POLLED here — it is deliberately not streamed on the Study
+        SSE channel.
+      operationId: getEvaluationLaunchBatch
+      responses:
+        "200":
+          description: Batch with per-item statuses.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationLaunchBatch" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/launch-batches/{batchId}/retry:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+      - { $ref: "#/components/parameters/LaunchBatchId" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Re-queue failed items in a launch batch
+      description: |
+        `launchEvaluationRuns` (`member`), Study-ownership guarded.
+
+        Re-queues only items that are `failed` AND below the attempt budget
+        AND whose recipe is not tombstoned. The budget bounds the `attempt`
+        column, which is incremented ONLY by a seam failure — items
+        terminalized by governance (study decided, recipe tombstoned) never
+        consume it. An item at the cap is silently left `failed`; `requeued`
+        reports how many actually moved.
+
+        Refuses softly rather than throwing when the kill switch is off or the
+        Study is no longer launchable: the response is `200` with
+        `requeued: 0`.
+      operationId: retryEvaluationLaunchBatch
+      responses:
+        "200":
+          description: Count of items moved back to `queued`.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [requeued]
+                properties:
+                  requeued: { type: integer, minimum: 0 }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+  /api/projects/{slug}/evaluations/standardization:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+    get:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Read the current standardized recipe for a slot
+      description: |
+        `manageProjectEvaluationOverrides` (`admin`). Returns the highest
+        revision for the `(project, slot)` pair, or `null` when the slot has
+        never been standardized.
+      operationId: getCurrentStandardizedRecipe
+      parameters:
+        - { $ref: "#/components/parameters/StandardizationSlot" }
+      responses:
+        "200":
+          description: The current standardized recipe, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [current]
+                properties:
+                  current:
+                    allOf:
+                      - { $ref: "#/components/schemas/EvaluationStandardizedRecipe" }
+                    nullable: true
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/standardization-eligibility:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+    get:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Preview whether a Study's winner can be standardized
+      description: |
+        `manageProjectEvaluationOverrides` (`admin`), Study-ownership guarded.
+        Phase 1 of the two-phase flow — NO side effect. Runs a FRESH
+        compatibility/trust preflight, so eligibility reflects live contracts
+        rather than the state at verdict time.
+      operationId: checkEvaluationStandardizationEligibility
+      responses:
+        "200":
+          description: Eligibility verdict with any refusal reasons.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/EvaluationStandardizationEligibility" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/studies/{studyId}/standardize:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+      - { $ref: "#/components/parameters/StudyId" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Standardize this Study's winning recipe
+      description: |
+        `manageProjectEvaluationOverrides` (`admin`), Study-ownership guarded.
+        Phase 2 — human-approved and non-automatic (ADR-147): no machine may
+        reach this route. Eligibility is RE-CHECKED inside the write
+        transaction, so drift between preview and confirm refuses with `409`.
+        Serialized per `(project, slot)` by an advisory transaction lock.
+        Appends one ledger row; changes NO Run status and promotes nothing.
+      operationId: standardizeEvaluationRecipe
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                slot:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  default: default
+      responses:
+        "201":
+          description: The appended ledger row.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/EvaluationStandardizedRecipe" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
+        "422": { $ref: "#/components/responses/EvaluationInvalid" }
+  /api/projects/{slug}/evaluations/standardization/rollback:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectSlug" }
+    post:
+      tags: [evaluations]
+      summary: (ADR-149, Designed) Roll a slot back to its previous standardized recipe
+      description: |
+        `manageProjectEvaluationOverrides` (`admin`). History is never
+        rewritten: this APPENDS a new ledger row at `max(revision) + 1` with
+        `action: "rollback"`, copying the prior revision's definition and
+        recording `rolledBackToRevision`. Requires at least two existing
+        revisions for the slot, else `409`.
+      operationId: rollbackEvaluationStandardization
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                slot:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  default: default
+      responses:
+        "201":
+          description: The appended rollback ledger row.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/EvaluationStandardizedRecipe" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/EvaluationNotFound" }
+        "409": { $ref: "#/components/responses/EvaluationConflict" }
   /api/inbox/{itemId}/read:
     patch:
       tags: [social-board]
@@ -13952,6 +14324,22 @@ components:
         Evaluation Study id (`evaluation_studies.id`). Always ownership-guarded
         through the slug-derived project — a cross-project id is hidden as 404.
       schema: { type: string, minLength: 1 }
+    LaunchBatchId:
+      name: batchId
+      in: path
+      required: true
+      description: |
+        Controlled-launch batch id (`evaluation_launch_batches.id`), validated
+        to belong to the path Study — a cross-Study id is hidden as 404.
+      schema: { type: string, minLength: 1 }
+    StandardizationSlot:
+      name: slot
+      in: query
+      required: false
+      description: |
+        Standardization slot within the project. Defaults to `default`; the
+        `(project, slot)` pair is the serialization and revision key.
+      schema: { type: string, minLength: 1, maxLength: 64, default: default }
     EvaluationIfMatch:
       name: If-Match
       in: header
@@ -18823,6 +19211,298 @@ components:
           format: date-time
           nullable: true
           description: Tombstone marker (participant cited by sealed evidence).
+    EvaluationPinOption:
+      type: object
+      additionalProperties: false
+      required: [packageInstallId, label]
+      description: |
+        (ADR-132/ADR-149.) One selectable package pin for a recipe. Candidates
+        are resolved server-side from the task's project attachments.
+      properties:
+        packageInstallId: { type: string }
+        label: { type: string }
+        versionLabel: { type: string, nullable: true }
+        isLocalCut:
+          type: boolean
+          description: True when this pin points at a local cut rather than an upstream tag.
+    EvaluationRecipeDefinition:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, flow, inputs, executionPolicy]
+      description: |
+        (ADR-146 D16.) The immutable "variant passport". Mirrors
+        `evaluationRecipeDefinitionSchema`, which is `.strict()` at EVERY
+        level — an unknown key (notably an arbitrary `transform`/`script`/
+        `mapping`) is a loud `CONFIG` failure, never a silent drop.
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        flow:
+          type: object
+          additionalProperties: false
+          required: [flowRefId, flowRevisionId, inputContractDigest, artifactContractDigest]
+          description: |
+            The pinned Flow/package revision plus the contract digests captured
+            at freeze time, so later drift never silently changes what a
+            launched participant ran.
+          properties:
+            flowRefId: { type: string, minLength: 1 }
+            flowRevisionId: { type: string, minLength: 1 }
+            packageInstallId: { type: string, minLength: 1 }
+            versionLabel: { type: string, minLength: 1 }
+            resolvedRevision: { type: string, minLength: 1 }
+            inputContractDigest: { type: string, minLength: 1 }
+            artifactContractDigest: { type: string, minLength: 1 }
+        inputs:
+          type: object
+          additionalProperties: false
+          required: [taskSnapshotRef]
+          properties:
+            taskSnapshotRef: { type: string, minLength: 1 }
+            formValues:
+              type: object
+              additionalProperties: true
+              default: {}
+        nodeAgentBindings:
+          type: array
+          default: []
+          description: nodeId to package-qualified agent id; an agent persona is NOT a runner.
+          items:
+            type: object
+            additionalProperties: false
+            required: [nodeId, agentId]
+            properties:
+              nodeId: { type: string, minLength: 1 }
+              agentId: { type: string, minLength: 1 }
+        slotBindings:
+          type: object
+          default: {}
+          description: |
+            Stable slot key to either a hard runner pin or a typed runner
+            intent. The `default` session may be omitted — it resolves through
+            the project/platform default chain.
+          additionalProperties:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required: [mode, runnerId]
+                properties:
+                  mode: { type: string, enum: [runner] }
+                  runnerId: { type: string, minLength: 1 }
+              - type: object
+                additionalProperties: false
+                required: [mode, config]
+                properties:
+                  mode: { type: string, enum: [intent] }
+                  config:
+                    type: object
+                    additionalProperties: true
+                    description: A `flowRunnerConfigSchema` intent (capability agent required).
+        executionPolicy: { $ref: "#/components/schemas/ExecutionPolicy" }
+        capabilityOverlay:
+          type: object
+          additionalProperties: true
+          description: Add/remove overlay across rules, skills, mcps, and subagents.
+        budgets:
+          type: object
+          additionalProperties: true
+          description: Budget axis (ADR-101).
+        materializationIntent:
+          type: object
+          additionalProperties: false
+          description: |
+            Declarative only — refs and labels. No path, credential,
+            environment value, or executable hook may appear here.
+          properties:
+            packagePins:
+              type: array
+              default: []
+              items:
+                type: object
+                additionalProperties: false
+                required: [packageInstallId]
+                properties:
+                  packageInstallId: { type: string, minLength: 1 }
+                  versionLabel: { type: string, minLength: 1 }
+            capabilityRequirements:
+              type: array
+              default: []
+              items: { type: string, minLength: 1 }
+            allowedProjectOverlays:
+              type: array
+              default: []
+              items: { type: string, minLength: 1 }
+        replicatePolicy:
+          type: object
+          additionalProperties: false
+          required: [groupKey, count]
+          properties:
+            groupKey: { type: string, minLength: 1 }
+            count: { type: integer, minimum: 1 }
+        promotionHold:
+          type: object
+          additionalProperties: false
+          required: [source]
+          description: |
+            Forced and unremovable. A recipe author cannot weaken the hold —
+            the literal rejects any other source, so even an
+            unattended-within-policy recipe can never auto-promote.
+          properties:
+            source: { type: string, enum: [evaluation_study] }
+    EvaluationPreflightResult:
+      type: object
+      additionalProperties: false
+      required: [ok, refusals, warnings]
+      description: |
+        (ADR-146 D16.) Verbatim output of the pure `preflightControlledRecipe`
+        core. `ok` is exactly `refusals.length === 0`; warnings never block.
+      properties:
+        ok: { type: boolean }
+        refusals:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, message]
+            properties:
+              code:
+                type: string
+                enum:
+                  - ownership_mismatch
+                  - flow_untrusted
+                  - flow_not_launchable
+                  - engine_incompatible
+                  - schema_version_unsupported
+                  - input_contract_drift
+                  - artifact_contract_drift
+                  - form_field_unknown
+                  - form_required_missing
+                  - artifact_requirement_uncovered
+                  - slot_unknown
+                  - slot_unbound
+                  - slot_runner_unavailable
+                  - slot_intent_unsatisfiable
+                  - overlay_ref_unknown
+              message: { type: string }
+        warnings:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, slotKey, message]
+            properties:
+              code: { type: string, enum: [slot_intent_soft_mismatch] }
+              slotKey: { type: string }
+              message: { type: string }
+    EvaluationLaunchBatchCreated:
+      type: object
+      additionalProperties: false
+      required: [batchId, deduped, itemCount]
+      description: |
+        (ADR-149.) The durable batch intent. Returned with `201` even when the
+        post-commit drive then halts — items stay `queued` and visible.
+      properties:
+        batchId: { type: string }
+        deduped:
+          type: boolean
+          description: True when an existing batch was replayed for the same idempotency key and digest.
+        itemCount:
+          type: integer
+          minimum: 1
+          description: Recounted from the DB on the dedup path, not echoed from the request.
+    EvaluationLaunchBatch:
+      type: object
+      additionalProperties: false
+      required: [id, studyId, status, items, createdAt]
+      description: (ADR-149.) A launch batch with its per-item state.
+      properties:
+        id: { type: string }
+        studyId: { type: string }
+        status:
+          type: string
+          enum: [queued, launching, completed, partial, failed]
+          description: |
+            Derived from item states after the initial insert. `queued` is only
+            ever the insert-time value and is never re-derived — a
+            fully-queued batch reads `launching`.
+        idempotencyKey: { type: string, nullable: true }
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Re-stamped on every non-pending finalize and never cleared, so a
+            retried batch may briefly carry a populated value beside a
+            non-terminal status.
+        createdAt: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, recipeId, replicateOrdinal, status, attempt]
+            properties:
+              id:
+                type: string
+                description: Also the `launchKey` handed to the run-launch seam; stable across retries.
+              recipeId: { type: string }
+              replicateOrdinal: { type: integer, minimum: 1 }
+              status:
+                type: string
+                enum: [queued, launching, launched, failed]
+              runId: { type: string, nullable: true }
+              participantId: { type: string, nullable: true }
+              attempt:
+                type: integer
+                minimum: 0
+                description: |
+                  Incremented ONLY by a seam failure. Items terminalized by
+                  governance never consume retry budget.
+              errorReason:
+                type: string
+                nullable: true
+                description: |
+                  A typed code (`MaisterError.code`, `STUDY_NOT_LAUNCHABLE`,
+                  `RECIPE_TOMBSTONED`) — never a raw error message, which can
+                  embed host paths and stays log-only.
+    EvaluationStandardizedRecipe:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, slot, revision, action, definition, createdAt]
+      description: |
+        (ADR-147/ADR-149.) One append-only ledger row. History is never
+        rewritten — a rollback appends a new row rather than deleting one.
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        slot: { type: string }
+        revision: { type: integer, minimum: 1 }
+        action: { type: string, enum: [standardize, rollback] }
+        sourceStudyId: { type: string, nullable: true }
+        sourceRecipeId: { type: string, nullable: true }
+        sourceVerdictId: { type: string, nullable: true }
+        definition: { $ref: "#/components/schemas/EvaluationRecipeDefinition" }
+        definitionDigest: { type: string }
+        rolledBackToRevision: { type: integer, nullable: true }
+        createdByUserId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    EvaluationStandardizationEligibility:
+      type: object
+      additionalProperties: false
+      required: [eligible, refusals]
+      description: |
+        (ADR-147/ADR-149.) Phase-1 preview. Refusals are plain codes;
+        preflight refusals appear prefixed as `preflight:<code>`.
+      properties:
+        eligible: { type: boolean }
+        refusals:
+          type: array
+          items: { type: string }
+          description: |
+            One of `no_conclusive_winner`, `winner_not_launched_recipe`,
+            `recipe_unavailable`, or `preflight:<PreflightRefusalCode>`.
+        winnerParticipantId: { type: string, nullable: true }
+        sourceRecipeId: { type: string, nullable: true }
+        sourceVerdictId: { type: string, nullable: true }
     EvaluationProjectOverride:
       type: object
       additionalProperties: false

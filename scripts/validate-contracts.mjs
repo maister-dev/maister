@@ -14,6 +14,7 @@ const OPENAPI_FILES = [
 const ASYNCAPI_FILES = [
   "docs/api/async/outbound-webhooks.asyncapi.yaml",
   "docs/api/async/supervisor-sse.asyncapi.yaml",
+  "docs/api/async/web-evaluations.asyncapi.yaml",
   "docs/api/async/web-runs.asyncapi.yaml",
 ];
 

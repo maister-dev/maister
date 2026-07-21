@@ -1658,11 +1658,14 @@ this section names the invariants the columns encode. Eight migrations:
   materialization PAYLOADS are summarized as flags/sizes only
   (`legacyDiffSnapshotBytes` / `legacyDiffSnapshotTruncated` /
   `legacyHasDiffFilesSummary` / `legacyHasMaterializationDelta`) — the legacy
-  `experiments`/`experiment_runs` tables remain the payload source of record
-  and MUST NOT be dropped until those payloads are carried over or that
-  carry-over is explicitly waived; the legacy-contract drop is a future
-  reserved migration (unnumbered, 0115+) after the rollback window and
-  operator sign-off.
+  `experiments`/`experiment_runs` tables remained the payload source of record
+  and could not be dropped until those payloads were carried over or that
+  carry-over was explicitly waived.
+  **[ADR-149](decisions.md#adr-149-experiments-cut-over-completion) is that
+  waiver (2026-07-21):** the payloads are NOT migrated — no installation holds
+  working experiments, and the retained flags plus `legacy_snapshot` are
+  accepted as sufficient historical provenance. The drop lands as migration
+  `0119` (see below), not as an unnumbered future migration.
 
 - **Verdict task-activity (`0111`).** Additive CHECK-widen only (no new
   table): drops and re-adds `task_activity_event_kind_check` so
@@ -1711,6 +1714,77 @@ this section names the invariants the columns encode. Eight migrations:
   provenance refs (`source_study_id` / `source_recipe_id` /
   `source_verdict_id` — history survives source deletion), and
   `rolled_back_to_revision` on rollback rows.
+
+- **Pairwise match identity + launch-key binding (`0118`, Designed —
+  ADR-149).** Additive DDL for two independent Phase-1/1.5 needs. First, a
+  judge attempt must be able to name the PAIR it judges; existing rows are all
+  non-pairwise and take `NULL`/`NULL`, so no backfill runs:
+
+  ```sql
+  ALTER TABLE "evaluation_judge_attempts" ADD COLUMN "match_a" text;
+  ALTER TABLE "evaluation_judge_attempts" ADD COLUMN "match_b" text;
+  ALTER TABLE "evaluation_judge_attempts"
+    DROP CONSTRAINT "evaluation_judge_attempts_unique";
+  ALTER TABLE "evaluation_judge_attempts"
+    ADD CONSTRAINT "evaluation_judge_attempts_unique"
+    UNIQUE NULLS NOT DISTINCT
+    ("execution_id", "role", "ordinal", "retry_ordinal", "match_a", "match_b");
+  ```
+
+  `NULLS NOT DISTINCT` is load-bearing, not stylistic: Postgres treats NULLs as
+  distinct in a UNIQUE by default, so a plainly-widened constraint would let two
+  non-pairwise attempts with identical `(execution, role, ordinal,
+  retry_ordinal)` coexist — silently destroying the dedup this constraint
+  exists to provide. Mirrors the `evaluation_criterion_results` precedent.
+
+  Second, the controlled-launch seam needs a durable idempotency handle written
+  in the SAME statement that creates a launched run, so a re-driven batch item
+  adopts its existing run instead of minting a second one (an adversarial pass
+  proved a post-hoc `batch_item_id → run_id` lookup double-launches across the
+  crash window and under two lease-free drives):
+
+  ```sql
+  ALTER TABLE "runs" ADD COLUMN "evaluation_batch_item_id" text;
+  CREATE UNIQUE INDEX "runs_evaluation_batch_item_uq"
+    ON "runs" ("evaluation_batch_item_id")
+    WHERE "evaluation_batch_item_id" IS NOT NULL;
+  ```
+
+  This mirrors the existing `runs.scheduled_launch_id` +
+  `runs_scheduled_launch_id_unique` claim shape: the seam passes the batch item
+  id into `launchRun`, the INSERT's `onConflictDoNothing` targets this index,
+  and a loser re-selects the winner's run. No FK — the column is a claim token,
+  not a relation, and the batch item may be GC'd independently.
+
+- **Legacy Experiment drop (`0119`, Designed — ADR-149).** The terminal step of
+  the Experiments cut-over. The safety backfill re-runs first; it is idempotent
+  and a no-op on empty tables, so it costs nothing while satisfying the
+  preserve-or-refuse-loudly rule. The 0110 payload carry-over is **explicitly
+  waived** by ADR-149 (see the `0110` note above):
+
+  ```sql
+  SELECT evaluation_backfill_from_experiments();
+  DROP TABLE "experiment_runs";
+  DROP TABLE "experiments";
+  DROP FUNCTION evaluation_backfill_from_experiments();
+  ```
+
+  `experiment_runs` drops before `experiments` because it holds the FK.
+  `evaluation_studies.legacy_experiment_id` and `legacy_snapshot` are retained
+  (historical provenance behind the `migratedBadge`), and the
+  `experiment_concluded` kind stays in the `task_activity` / `inbox_items`
+  CHECK constraints because historical rows reference it. No constraint on a
+  shared table is dropped-and-recreated here, so a later renumber cannot
+  reorder this against another migration touching the same CHECK.
+
+  Both migrations carry the full journal/snapshot triple — the `.sql` file, a
+  `meta/_journal.json` entry whose `when` is strictly greater than
+  `1784407016089` (`0117_new_maggott`) and monotonic between them, and a
+  generated `meta/*_snapshot.json` — verified by the journal-integrity and
+  drift suites. A fresh-container test proves `0000 → 0119` on an EMPTY
+  database and on one seeded with legacy Experiment rows, asserting that the
+  migrated Studies stay queryable after the drop and that `legacy_snapshot`
+  survives intact.
 
 ## Cost rollup tables (Designed — ADR-085, migration `0047`)
 

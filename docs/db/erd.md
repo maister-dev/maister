@@ -41,8 +41,9 @@ outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 **ADR-085 (Designed, migration `0047`)** delivery-policy and cost-rollup
 projection fields/tables (`PROJECTS.delivery_policy_default`,
 `RUNS.delivery_policy_snapshot`, `RUN_COST_ROLLUPS`,
-`NODE_ATTEMPT_COST_ROLLUPS`), and the **ADR-124 (Designed, migration `0090`)**
-Experiment Comparison Studio tables `EXPERIMENTS` and `EXPERIMENT_RUNS`. For
+`NODE_ATTEMPT_COST_ROLLUPS`), and the **ADR-124 (Implemented, migration `0090`;
+retired by ADR-149)** Experiment Comparison Studio tables `EXPERIMENTS` and
+`EXPERIMENT_RUNS`. For
 partial views by domain, see
 [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),

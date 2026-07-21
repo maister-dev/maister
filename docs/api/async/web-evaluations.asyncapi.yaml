@@ -1,0 +1,270 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster Web — per-Study evaluation SSE stream
+  version: "1.0.0"
+  description: |
+    Server-Sent Events delivered by the Next.js web tier's
+    `GET /api/projects/{slug}/evaluations/studies/{studyId}/stream`
+    endpoint (described in `../web.openapi.yaml`).
+
+    The stream is a server-side poll of the **durable** `evaluation_events`
+    table — it is a read model, never a state-transition trigger. The
+    Evaluation Execution FSM is CAS-driven by the dispatcher
+    (`web/lib/evaluations/dispatcher/fsm.ts`); every legal transition appends
+    one event row inside the same transaction as the state change, so a client
+    that replays this stream observes the complete lifecycle without polling
+    any other endpoint.
+
+    Ordering and replay:
+
+    - Each event carries a per-Study monotonic `sequence`, allocated under a
+      `SELECT … FOR UPDATE` on the parent Study row so two concurrent
+      executions in one Study can never collide on `UNIQUE(study_id, sequence)`.
+    - The SSE `id:` field IS that sequence. A browser reconnect sends
+      `Last-Event-ID`; a non-browser client may pass `?lastEventId=`. The
+      server replays the tail from Postgres — there is no in-memory replay
+      state and no per-connection buffer.
+    - A replay read returns at most `min(limit ?? 500, 1000)` rows per poll.
+
+    Timing (all server-side constants):
+
+    - Poll interval `1000 ms`.
+    - After `15 s` with no new events the server emits a bare SSE comment
+      frame `: heartbeat`. It deliberately carries no `id:`, so it never
+      advances `Last-Event-ID`.
+    - Once a connection has been open longer than `5 min` the server emits a
+      terminal `stream_timeout` event and closes; the client is expected to
+      reconnect with its last id. The constant bounding this is named
+      `MAX_QUIET_MS` but is compared against the connection start time, so it
+      caps **total stream duration**, not idle time.
+
+    Authorization: `readEvaluationStudies` (project `viewer`). The session is
+    established BEFORE the slug is resolved so an unauthenticated caller
+    cannot probe project existence, and a `studyId` belonging to another
+    project is hidden as `404`, never `403`.
+
+    Scope note: controlled-launch **batch** progress is NOT streamed on this
+    channel. A batch is polled through
+    `GET /api/projects/{slug}/evaluations/studies/{studyId}/launch-batches/{batchId}`,
+    which returns per-item state directly (ADR-149). No batch event types are
+    emitted here.
+  contact:
+    name: MAIster
+    url: https://github.com/maister
+  license:
+    name: MIT
+servers:
+  local:
+    url: http://localhost:3000
+    protocol: http
+    description: Local Next.js dev server.
+channels:
+  /api/projects/{slug}/evaluations/studies/{studyId}/stream:
+    parameters:
+      slug:
+        description: Project slug (kebab-case, derived from `project.name`).
+        schema:
+          type: string
+      studyId:
+        description: Evaluation Study id, re-scoped to the project server-side.
+        schema:
+          type: string
+    bindings:
+      http:
+        type: response
+        method: GET
+        headers:
+          Content-Type:
+            type: string
+            const: text/event-stream
+    subscribe:
+      operationId: subscribeEvaluationStudyEvents
+      summary: Replayable stream of Study-scoped evaluation events
+      description: |
+        Frames are emitted as
+        `id: <sequence>\nevent: <eventType>\ndata: <json>\n\n`, where the JSON
+        body is always `{ executionId, sequence, payload }`.
+
+        The one exception is `stream_timeout`, which is synthesized by the
+        route rather than read from the event log: it carries no `id:` and its
+        data body is `{"reason":"max-duration"}`.
+
+        Consumers MUST ignore unknown `event:` names — `eventType` is a text
+        column, and `evaluation.transition` is the deliberate catch-all for a
+        transition with no dedicated name.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/EvaluationQueued"
+          - $ref: "#/components/messages/EvidenceCaptureStarted"
+          - $ref: "#/components/messages/EvidenceSnapshotSealed"
+          - $ref: "#/components/messages/EvidenceCaptureFailed"
+          - $ref: "#/components/messages/ObjectiveCheckCompleted"
+          - $ref: "#/components/messages/PanelQuorumReached"
+          - $ref: "#/components/messages/EvaluationCompleted"
+          - $ref: "#/components/messages/PanelPartial"
+          - $ref: "#/components/messages/EvaluationPartial"
+          - $ref: "#/components/messages/EvaluationFailed"
+          - $ref: "#/components/messages/ReviewRequired"
+          - $ref: "#/components/messages/ReviewResolved"
+          - $ref: "#/components/messages/EvaluationCancelling"
+          - $ref: "#/components/messages/EvaluationCancelled"
+          - $ref: "#/components/messages/EvaluationTransition"
+          - $ref: "#/components/messages/VerdictRecorded"
+          - $ref: "#/components/messages/StreamTimeout"
+components:
+  messages:
+    EvaluationQueued:
+      name: evaluation.queued
+      title: Execution row inserted
+      summary: |
+        Emitted on execution insert and on retry-successor insert. Payload
+        carries `{ profileId }` for a fresh start, or `{ retryOf }` for a
+        retry successor.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvidenceCaptureStarted:
+      name: evidence.capture_started
+      title: queued -> capturing
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvidenceSnapshotSealed:
+      name: evidence.snapshot_sealed
+      title: capturing -> checking
+      summary: The immutable evidence snapshot is sealed and reusable.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvidenceCaptureFailed:
+      name: evidence.capture_failed
+      title: capturing -> failed
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    ObjectiveCheckCompleted:
+      name: objective_check.completed
+      title: checking -> judging
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    PanelQuorumReached:
+      name: panel.quorum_reached
+      title: judging -> aggregating
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvaluationCompleted:
+      name: evaluation.completed
+      title: aggregating -> completed
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    PanelPartial:
+      name: panel.partial
+      title: aggregating -> partial
+      summary: |
+        The aggregate could not reach quorum; the execution lands `partial`
+        with `terminal_reason: "quorum_not_met"`. This is a defined outcome,
+        not a failure.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvaluationPartial:
+      name: evaluation.partial
+      title: checking -> partial, or review_required -> partial
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvaluationFailed:
+      name: evaluation.failed
+      title: checking -> failed, or a wedged execution
+      summary: |
+        Also emitted by the recovery path for an execution wedged beyond
+        `STALE_RECOVERY_MS` (10 min), with payload `{ reason, wedged: true }`.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    ReviewRequired:
+      name: review.required
+      title: aggregating -> review_required
+      summary: |
+        A disagreement or escalation review was opened. Payload carries
+        `{ reviewId, kind }` where `kind` is `disagreement | escalation`.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    ReviewResolved:
+      name: review.resolved
+      title: review_required -> completed
+      summary: Payload carries `{ reviewId }`.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvaluationCancelling:
+      name: evaluation.cancelling
+      title: queued | capturing | checking | judging -> cancelling
+      summary: |
+        `aggregating` is deliberately NOT cancellable (ADR-145 D4) — it is a
+        short computational state with no outgoing cancel edge.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvaluationCancelled:
+      name: evaluation.cancelled
+      title: cancelling -> cancelled
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    EvaluationTransition:
+      name: evaluation.transition
+      title: Catch-all for an unmapped legal transition
+      summary: |
+        The default arm of `eventTypeForTransition`. Consumers MUST tolerate
+        it rather than treating an unnamed transition as an error.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    VerdictRecorded:
+      name: verdict.recorded
+      title: A human verdict concluded the Study
+      summary: |
+        Appended in the same transaction that flips the Study `open -> decided`.
+        Payload carries at least `{ verdictId }`. Verdicts are append-only; a
+        correction emits a further `verdict.recorded` for the superseding row.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StudyEventFrame" }
+    StreamTimeout:
+      name: stream_timeout
+      title: Server closed the stream after its max duration
+      summary: |
+        Synthesized by the route, NOT read from the durable log. Carries no
+        `id:` field and therefore never advances `Last-Event-ID`. The client
+        should reconnect with the last id it received.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/StreamTimeoutFrame" }
+  schemas:
+    StudyEventFrame:
+      type: object
+      description: |
+        The `data:` body of every durable frame. `payload` shape varies by
+        event type and is bounded to ids, statuses, and counts — it NEVER
+        carries evidence bodies, judge rationale, or any private source text
+        (ADR-144).
+      required:
+        - executionId
+        - sequence
+        - payload
+      properties:
+        executionId:
+          type: string
+          nullable: true
+          description: |
+            The Evaluation Execution this event belongs to, or `null` for
+            Study-scoped events such as `verdict.recorded`.
+        sequence:
+          type: integer
+          minimum: 1
+          description: |
+            Per-Study monotonic sequence. Mirrors the SSE `id:` field and is
+            what a client sends back as `Last-Event-ID`.
+        payload:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Bounded ids/statuses/counts only.
+    StreamTimeoutFrame:
+      type: object
+      description: The `data:` body of the synthesized `stream_timeout` event.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          enum:
+            - max-duration

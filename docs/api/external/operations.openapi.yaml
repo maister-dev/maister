@@ -96,9 +96,14 @@ tags:
       tokens and mirrored by the MCP facade. Recall returns the implemented
       owned/indexed union; clusters and proposals are implemented Sub-project C
       contracts.
+  # REMOVAL MARKER (ADR-149, Phase 2): this tag, both `/experiments*` paths
+  # below, and the `experiments:read` / `experiments:advise` scopes are deleted
+  # together with the ext routes. No 410 window and no 1:1 replacement — the
+  # judge path is already covered by the attempt-bound `evaluation_*` ops.
   - name: experiments
     description: |
-      (ADR-124, Implemented) Experiment Comparison Studio token surface. Agents may
+      (ADR-124, Implemented; **retired by ADR-149**) Experiment Comparison Studio
+      token surface. Agents may
       read experiment detail with `experiments:read` and append judge advisories
       with `experiments:advise`; agent tokens are limited to the experiment
       judge agent, and conclusions remain human/session-auth only.
@@ -2684,7 +2689,24 @@ components:
       description: |
         Strict per-criterion judge submission. Attribution is server-derived and
         MUST NOT appear in the body (ADR-142 D12).
+
+        **(ADR-149, Designed — Phase 1.5)** `winner` carries the head-to-head
+        pick for a pairwise attempt. Its presence is validated against the
+        BOUND attempt, fail-closed in both directions: supplying `winner` on a
+        non-pairwise attempt is `422`, and omitting it on a pairwise attempt is
+        also `422`. The pick names the attempt's own match sides — the body
+        never names participant ids, because the match identity is
+        server-derived from the attempt row exactly like every other
+        attribution field. `criteria` stays required for pairwise attempts: the
+        rubric is still scored, and the pick is the additional head-to-head
+        verdict the tournament aggregates.
       properties:
+        winner:
+          type: string
+          enum: [a, b, tie]
+          description: |
+            Pairwise pick, relative to the bound attempt's `match_a`/`match_b`.
+            Required for a pairwise attempt, rejected for any other.
         criteria:
           type: array
           minItems: 1

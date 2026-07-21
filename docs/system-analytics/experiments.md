@@ -1,5 +1,9 @@
 # Experiments domain
 
+> **Legacy — removal in progress ([ADR-149](../decisions.md#adr-149-experiments-cut-over-completion));
+> superseded by [`evaluations.md`](evaluations.md).** This file documents the
+> retiring Experiment surface and is deleted when the cut-over completes.
+
 ## Purpose
 
 This domain (**Implemented, Phase 1; ADR-124**) covers task-bound experiment
