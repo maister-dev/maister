@@ -124,8 +124,8 @@ Single-store, single-tx, no external side effects → two-phase-commit rule N/A.
 <!-- Commit checkpoint 1 -->
 
 ### Phase 1 — Schema + server helpers (exit: lock-scenario integration green; suite no new reds)
-- [ ] Task 3: migration `0118` — 3 nullable lock columns on `authored_capabilities` (FK users SET NULL); drizzle-kit generate (NOT --custom); journal `when` monotonic; journal-integrity test green. (depends on 1)
-- [ ] Task 4: `web/lib/catalog/authored-lock.ts` twin (read/acquire/refresh/release/assertHoldsLock/assertNoForeignLiveLock; tx-handle honoring; holderLabel join; shared TTL; pino debug/warn) + RED→GREEN→REFACTOR `authored-lock.integration.test.ts` (acquire/hold/same-user takeover/foreign read-only/lazy stale takeover/release + refusal matrix + tx-visibility case). ONLY end-to-end home of lock semantics (ACL-10). (depends on 3)
+- [x] Task 3: migration `0118` — 3 nullable lock columns on `authored_capabilities` (FK users SET NULL); drizzle-kit generate (NOT --custom); journal `when` monotonic; journal-integrity test green. (depends on 1)
+- [x] Task 4: `web/lib/catalog/authored-lock.ts` twin (read/acquire/refresh/release/assertHoldsLock/assertNoForeignLiveLock; tx-handle honoring; holderLabel join; shared TTL; pino debug/warn) + RED→GREEN→REFACTOR `authored-lock.integration.test.ts` (acquire/hold/same-user takeover/foreign read-only/lazy stale takeover/release + refusal matrix + tx-visibility case). ONLY end-to-end home of lock semantics (ACL-10). (depends on 3)
 <!-- Commit checkpoint 2 -->
 
 ### Phase 2 — Routes + service seam (exit: route tests + seam matrix green; `validate:contracts` green)

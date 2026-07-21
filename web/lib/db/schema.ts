@@ -1280,6 +1280,14 @@ export const authoredCapabilities = pgTable(
     currentDraftRevisionId: text("current_draft_revision_id"),
     currentPublishedRevisionId: text("current_published_revision_id"),
     sourceFlowRefId: text("source_flow_ref_id"),
+    lockedByUserId: text("locked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    lockedBySession: text("locked_by_session"),
+    lockExpiresAt: timestamp("lock_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
