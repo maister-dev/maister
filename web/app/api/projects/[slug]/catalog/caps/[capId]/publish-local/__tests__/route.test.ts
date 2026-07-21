@@ -25,6 +25,7 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/publish-local", () => {
     bridgePublishedAuthoredFlowMock.mockReset();
     authorizeCatalogRouteProjectMock.mockResolvedValue({
       projectId: "project-demo",
+      userId: "user-1",
     });
     bridgePublishedAuthoredFlowMock.mockResolvedValue({
       flowRowId: "flow-row-1",
@@ -54,6 +55,9 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/publish-local", () => {
       expect.objectContaining({
         projectSlug: "demo",
         capId: "cap-1",
+        // (ADR-149) the headless publish path must still carry the caller so the
+        // seam can refuse a foreign live edit-lock.
+        editor: { userId: "user-1" },
         validateDraftRevision: expect.any(Function),
       }),
     );

@@ -19,11 +19,15 @@ export async function POST(
   try {
     const { slug, capId } = await ctx.params;
 
-    await authorizeCatalogRouteProject(slug);
+    const { userId } = await authorizeCatalogRouteProject(slug);
+
     await assertEmptyBody(req);
     const result = await publishAuthoredCapabilityLocal({
       projectSlug: slug,
       capId,
+      // (ADR-149) Headless publish: no sessionId in the body, so the seam
+      // refuses only when ANOTHER user holds a live edit-lock.
+      editor: { userId },
       validateDraftRevision: (revision) => {
         assertPublishableAuthoredFlowRevision({
           revision,
