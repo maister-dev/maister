@@ -18,6 +18,7 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/archive", () => {
     authorizeCatalogRouteProjectMock.mockReset();
     authorizeCatalogRouteProjectMock.mockResolvedValue({
       projectId: "project-demo",
+      userId: "user-1",
     });
   });
 
@@ -44,6 +45,7 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/archive", () => {
     expect(archiveAuthoredCapabilityMock).toHaveBeenCalledWith({
       projectSlug: "demo",
       capId: "cap-1",
+      editor: { userId: "user-1" },
     });
   });
 

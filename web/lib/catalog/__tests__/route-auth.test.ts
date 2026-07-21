@@ -52,6 +52,7 @@ describe("authorizeCatalogRouteProject", () => {
 
     await expect(authorizeCatalogRouteProject("demo")).resolves.toEqual({
       projectId: "project-1",
+      userId: "user-1",
     });
 
     expect(requireProjectActionMock).toHaveBeenCalledWith(

@@ -48,6 +48,26 @@ function nextExpiry(): Date {
   return new Date(Date.now() + localPackageLockMinutes() * 60_000);
 }
 
+// Lock-route precondition. Missing, foreign-project, and ARCHIVED all read as
+// "not lockable" so the routes answer a uniform 404 without leaking whether a
+// capability exists in another project.
+export async function isLockableCapability(
+  projectId: string,
+  capId: string,
+  db?: AuthoredLockDb,
+): Promise<boolean> {
+  const result = await resolveDb(db).execute(sql`
+    SELECT id
+    FROM authored_capabilities
+    WHERE id = ${capId}
+      AND project_id = ${projectId}
+      AND lifecycle <> 'ARCHIVED'
+    LIMIT 1
+  `);
+
+  return rowsOf<{ id: string }>(result).length > 0;
+}
+
 export async function readLockState(
   capId: string,
   sessionId: string,

@@ -17,6 +17,10 @@ import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
+import {
+  assertHoldsLock,
+  assertNoForeignLiveLock,
+} from "@/lib/catalog/authored-lock";
 import { validateGraphManifest } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
@@ -49,6 +53,35 @@ type TransactionalCatalogDb = AuthoredCatalogDb & {
 type QueryResult = {
   rows?: unknown[];
 };
+
+// (ADR-149) Who is driving this write. `sessionId` comes from the editor's
+// hidden field and is optional at every parse boundary, so a no-JS submit or a
+// headless caller degrades to the user-scoped check instead of failing.
+export type EditorLockContext = {
+  sessionId?: string;
+  userId?: string;
+};
+
+// The edit-lock seam. It runs INSIDE the `draft_version` CAS transaction on the
+// tx handle, so the lock check and the CAS observe one snapshot (no TOCTOU).
+// A present sessionId must hold the live lock; an absent one is refused only
+// when ANOTHER user holds a live lock. With neither (CLI import, brain
+// auto-draft) nothing is asserted — those paths are lock-free by design.
+async function assertEditLock(
+  tx: CatalogDb,
+  capId: string,
+  editor?: EditorLockContext,
+): Promise<void> {
+  if (editor?.sessionId) {
+    await assertHoldsLock(capId, editor.sessionId, tx);
+
+    return;
+  }
+
+  if (editor?.userId) {
+    await assertNoForeignLiveLock(capId, editor.userId, tx);
+  }
+}
 
 type ProjectRow = { id: string };
 
@@ -408,6 +441,7 @@ export async function updateAuthoredDraft(args: {
   projectSlug: string;
   capId: string;
   input: UpdateAuthoredDraftInput;
+  editor?: EditorLockContext;
   db?: TransactionalCatalogDb;
 }): Promise<AuthoredCapabilityRevision> {
   const db = args.db ?? (getDb() as unknown as TransactionalCatalogDb);
@@ -415,6 +449,8 @@ export async function updateAuthoredDraft(args: {
   return db.transaction(async (tx) => {
     const projectId = await resolveProjectId(tx, args.projectSlug);
     const cap = await loadCapability(tx, projectId, args.capId);
+
+    await assertEditLock(tx, args.capId, args.editor);
 
     if (cap.lifecycle === "ARCHIVED") {
       throw new MaisterError(
@@ -562,6 +598,7 @@ export async function publishAuthoredCapabilityLocal(args: {
   capId: string;
   expectedDraftVersion?: number;
   validateDraftRevision?: (revision: AuthoredCapabilityRevision) => void;
+  editor?: EditorLockContext;
   db?: TransactionalCatalogDb;
 }): Promise<{
   revision: AuthoredCapabilityRevision;
@@ -572,6 +609,8 @@ export async function publishAuthoredCapabilityLocal(args: {
   return db.transaction(async (tx) => {
     const projectId = await resolveProjectId(tx, args.projectSlug);
     const cap = await loadCapability(tx, projectId, args.capId);
+
+    await assertEditLock(tx, args.capId, args.editor);
 
     if (cap.lifecycle === "ARCHIVED") {
       throw new MaisterError(
@@ -656,6 +695,7 @@ export async function publishAuthoredCapabilityLocal(args: {
 export async function archiveAuthoredCapability(args: {
   projectSlug: string;
   capId: string;
+  editor?: EditorLockContext;
   db?: TransactionalCatalogDb;
 }): Promise<AuthoredCapability> {
   const db = args.db ?? (getDb() as unknown as TransactionalCatalogDb);
@@ -667,6 +707,10 @@ export async function archiveAuthoredCapability(args: {
     if (cap.lifecycle === "ARCHIVED") {
       return toCapability(cap);
     }
+
+    // After the idempotent early return: re-archiving is a no-op that mutates
+    // nothing, so it must not start failing on someone else's edit-lock.
+    await assertEditLock(tx, args.capId, args.editor);
 
     const archivedAt = new Date();
 

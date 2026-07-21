@@ -129,8 +129,8 @@ Single-store, single-tx, no external side effects → two-phase-commit rule N/A.
 <!-- Commit checkpoint 2 -->
 
 ### Phase 2 — Routes + service seam (exit: route tests + seam matrix green; `validate:contracts` green)
-- [ ] Task 5: `lock-refresh`/`lock-release` routes under the caps family (manageCatalog gate; missing/foreign/ARCHIVED → 404; identifier trust table honored) + RED-first route unit tests with mocked helpers (acquire-default, refresh-heartbeat, 403, 404-ARCHIVED; release, 422, 403). (depends on 2, 4)
-- [ ] Task 6: service seam — optional `sessionId` through update/publish (asserts ON THE TX HANDLE inside the CAS transaction), archive foreign-live refusal; optional form field in both actions (progressive enhancement) + optional body field on PATCH draft; publish-local/archive keep empty bodies. RED matrix (a)-(f) incl. ACL-05 holder-with-stale-CAS case; backward-compat: absent sessionId + free lock = today. (depends on 2, 4)
+- [x] Task 5: `lock-refresh`/`lock-release` routes under the caps family (manageCatalog gate; missing/foreign/ARCHIVED → 404; identifier trust table honored) + RED-first route unit tests with mocked helpers (acquire-default, refresh-heartbeat, 403, 404-ARCHIVED; release, 422, 403). (depends on 2, 4)
+- [x] Task 6: service seam — optional `sessionId` through update/publish (asserts ON THE TX HANDLE inside the CAS transaction), archive foreign-live refusal; optional form field in both actions (progressive enhancement) + optional body field on PATCH draft; publish-local/archive keep empty bodies. RED matrix (a)-(f) incl. ACL-05 holder-with-stale-CAS case; backward-compat: absent sessionId + free lock = today. (depends on 2, 4)
 <!-- Commit checkpoint 3 -->
 
 ### Phase 3 — Client (exit: editor acquires/renews/releases; RU+EN banner; suite green)

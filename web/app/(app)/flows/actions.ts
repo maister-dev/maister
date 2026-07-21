@@ -68,8 +68,7 @@ export async function updateAuthoredFlowAction(
   formData: FormData,
 ): Promise<void> {
   const projectSlug = requireFormString(formData, "projectSlug");
-
-  await authorizeCatalogRouteProject(projectSlug);
+  const { userId } = await authorizeCatalogRouteProject(projectSlug);
 
   const capId = requireFormString(formData, "capId");
   const title = requireFormString(formData, "title");
@@ -115,6 +114,10 @@ export async function updateAuthoredFlowAction(
       schemaVersion: DEFAULT_FLOW_VERSION,
       expectedDraftVersion,
     },
+    editor: {
+      sessionId: optionalFormString(formData, "sessionId") ?? undefined,
+      userId,
+    },
   });
 
   revalidatePath("/flows");
@@ -125,8 +128,7 @@ export async function publishAuthoredFlowAction(
   formData: FormData,
 ): Promise<void> {
   const projectSlug = requireFormString(formData, "projectSlug");
-
-  await authorizeCatalogRouteProject(projectSlug);
+  const { userId } = await authorizeCatalogRouteProject(projectSlug);
 
   const capId = requireFormString(formData, "capId");
   const expectedDraftVersion = parseExpectedDraftVersion(
@@ -138,6 +140,10 @@ export async function publishAuthoredFlowAction(
     projectSlug,
     capId,
     expectedDraftVersion,
+    editor: {
+      sessionId: optionalFormString(formData, "sessionId") ?? undefined,
+      userId,
+    },
     validateDraftRevision: (revision) => {
       assertPublishableAuthoredFlowRevision({
         revision,

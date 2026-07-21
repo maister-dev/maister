@@ -18,6 +18,7 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/draft", () => {
     authorizeCatalogRouteProjectMock.mockReset();
     authorizeCatalogRouteProjectMock.mockResolvedValue({
       projectId: "project-demo",
+      userId: "user-1",
     });
   });
 
@@ -56,6 +57,39 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/draft", () => {
         body: { content: "New text" },
         expectedDraftVersion: 2,
       },
+      editor: { sessionId: undefined, userId: "user-1" },
+    });
+  });
+
+  it("forwards an optional editor sessionId without leaking it into the draft input", async () => {
+    updateAuthoredDraftMock.mockResolvedValue({
+      id: "rev-4",
+      lifecycle: "DRAFT",
+      draftVersion: 4,
+    });
+    const { PATCH } = await import("../route");
+
+    const response = await PATCH(
+      new NextRequest(
+        "http://localhost/api/projects/demo/catalog/caps/cap-1/draft",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            title: "Updated",
+            expectedDraftVersion: 3,
+            sessionId: "s1",
+          }),
+        },
+      ),
+      { params: Promise.resolve({ slug: "demo", capId: "cap-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(updateAuthoredDraftMock).toHaveBeenCalledWith({
+      projectSlug: "demo",
+      capId: "cap-1",
+      input: { title: "Updated", expectedDraftVersion: 3 },
+      editor: { sessionId: "s1", userId: "user-1" },
     });
   });
 

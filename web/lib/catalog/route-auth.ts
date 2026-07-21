@@ -17,8 +17,8 @@ type RouteAuthDb = {
 
 export async function authorizeCatalogRouteProject(
   slug: string,
-): Promise<{ projectId: string }> {
-  await requireActiveSession();
+): Promise<{ projectId: string; userId: string }> {
+  const user = await requireActiveSession();
 
   const db = getDb() as unknown as RouteAuthDb;
   const result = await db.execute(sql`
@@ -35,5 +35,5 @@ export async function authorizeCatalogRouteProject(
 
   await requireProjectAction(project.id, "manageCatalog");
 
-  return { projectId: project.id };
+  return { projectId: project.id, userId: user.id };
 }

@@ -10,6 +10,7 @@ import {
   acquireLock,
   assertHoldsLock,
   assertNoForeignLiveLock,
+  isLockableCapability,
   readLockState,
   refreshLock,
   releaseLock,
@@ -53,6 +54,13 @@ async function insertUser(name: string | null): Promise<string> {
 }
 
 async function insertCapability(): Promise<string> {
+  return (await insertCapabilityWithProject()).capId;
+}
+
+async function insertCapabilityWithProject(): Promise<{
+  capId: string;
+  projectId: string;
+}> {
   const projectId = randomUUID();
   const projectSlug = `authored-lock-${projectId}`;
 
@@ -75,7 +83,7 @@ async function insertCapability(): Promise<string> {
     title: "Lock fixture",
   });
 
-  return capId;
+  return { capId, projectId };
 }
 
 async function setLockExpiry(capId: string, expiresAt: Date): Promise<void> {
@@ -322,6 +330,23 @@ describe("authored capability edit-lock", () => {
     await expect(
       assertNoForeignLiveLock(capId, other, lockDb),
     ).resolves.toBeUndefined();
+  });
+
+  it("treats missing, foreign-project, and ARCHIVED capabilities as not lockable", async () => {
+    const { capId, projectId } = await insertCapabilityWithProject();
+
+    expect(await isLockableCapability(projectId, capId, lockDb)).toBe(true);
+    expect(await isLockableCapability(projectId, randomUUID(), lockDb)).toBe(
+      false,
+    );
+    expect(await isLockableCapability(randomUUID(), capId, lockDb)).toBe(false);
+
+    await db
+      .update(schema.authoredCapabilities)
+      .set({ lifecycle: "ARCHIVED" })
+      .where(eq(schema.authoredCapabilities.id, capId));
+
+    expect(await isLockableCapability(projectId, capId, lockDb)).toBe(false);
   });
 
   it("honors a transaction handle so the seam sees uncommitted lock state", async () => {

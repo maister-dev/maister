@@ -17,11 +17,13 @@ export async function POST(
   try {
     const { slug, capId } = await ctx.params;
 
-    await authorizeCatalogRouteProject(slug);
+    const { userId } = await authorizeCatalogRouteProject(slug);
+
     await assertEmptyBody(req);
     const result = await archiveAuthoredCapability({
       projectSlug: slug,
       capId,
+      editor: { userId },
     });
 
     return NextResponse.json(result, { status: 200 });

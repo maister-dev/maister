@@ -1,6 +1,7 @@
 import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 import { updateAuthoredDraft } from "@/lib/catalog/authored-service";
 import { updateAuthoredDraftSchema } from "@/lib/catalog/authored-schema";
@@ -11,6 +12,13 @@ type RouteContext = {
   params: Promise<{ slug: string; capId: string }>;
 };
 
+// (ADR-149) `sessionId` is optional so headless callers keep working; present,
+// it must hold the live edit-lock. It is editor context, not draft content, so
+// it is split off before the input reaches the service.
+const draftBodySchema = updateAuthoredDraftSchema.extend({
+  sessionId: z.string().min(1).max(200).optional(),
+});
+
 export async function PATCH(
   req: NextRequest,
   ctx: RouteContext,
@@ -18,12 +26,13 @@ export async function PATCH(
   try {
     const { slug, capId } = await ctx.params;
 
-    await authorizeCatalogRouteProject(slug);
-    const input = updateAuthoredDraftSchema.parse(await req.json());
+    const { userId } = await authorizeCatalogRouteProject(slug);
+    const { sessionId, ...input } = draftBodySchema.parse(await req.json());
     const result = await updateAuthoredDraft({
       projectSlug: slug,
       capId,
       input,
+      editor: { sessionId, userId },
     });
 
     return NextResponse.json(result, { status: 200 });
