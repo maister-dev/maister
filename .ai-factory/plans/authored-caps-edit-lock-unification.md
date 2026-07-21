@@ -134,8 +134,8 @@ Single-store, single-tx, no external side effects → two-phase-commit rule N/A.
 <!-- Commit checkpoint 3 -->
 
 ### Phase 3 — Client (exit: editor acquires/renews/releases; RU+EN banner; suite green)
-- [ ] Task 7: `web/components/flows/use-editor-lock.ts` — pure controller core (`createEditorLockController`) + thin hook; `createLockOpQueue` reused verbatim; RED-first controller unit test (issue-order under adversarial latencies, refresh-fail degrade, teardown release, rejection non-wedging). (depends on 1)
-- [ ] Task 8: flows page wiring — RSC optimistic initial snapshot, new `authored-cap-lock-shell.tsx` (banner + holder label + effective canManage), `FlowEditorTabs` optional `lockSessionId` hidden input, EN+RU i18n keys. (depends on 5, 6, 7)
+- [x] Task 7: `web/components/flows/use-editor-lock.ts` — pure controller core (`createEditorLockController`) + thin hook; `createLockOpQueue` reused verbatim; RED-first controller unit test (issue-order under adversarial latencies, refresh-fail degrade, teardown release, rejection non-wedging). (depends on 1)
+- [x] Task 8: flows page wiring — RSC optimistic initial snapshot, new `authored-cap-lock-shell.tsx` (banner + holder label + effective canManage), `FlowEditorTabs` optional `lockSessionId` hidden input, EN+RU i18n keys. (depends on 5, 6, 7)
 <!-- Commit checkpoint 4 -->
 
 ### Phase 4 — Unification closure (exit: full matrix green)

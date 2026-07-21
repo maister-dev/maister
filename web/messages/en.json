@@ -573,6 +573,10 @@
     "title": "Flows",
     "sub": "Create local Flow drafts, inspect installed executable packages, and keep package YAML visible before publication tooling lands.",
     "newFlow": "New Flow",
+    "editorLock": {
+      "readOnlyHeld": "Locked by $holder — read-only.",
+      "readOnlyUnknownHolder": "Locked by another session — read-only."
+    },
     "projects": "Projects",
     "authored": "Authored",
     "installed": "Installed",

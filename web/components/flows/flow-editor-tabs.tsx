@@ -90,6 +90,7 @@ export function FlowEditorTabs({
   mcpOptions,
   saveAction,
   publishAction,
+  lockSessionId,
   filesDrawer,
   diffDrawer,
   onWriteSchemaFile,
@@ -122,6 +123,10 @@ export function FlowEditorTabs({
   mcpOptions?: CapabilityOption[];
   saveAction: ServerFormAction;
   publishAction: ServerFormAction;
+  // (ADR-149) Editor edit-lock session id. Submitted with BOTH save and publish
+  // (publish is a formAction button inside this form). Optional: a no-JS submit
+  // omits it and degrades to the headless seam.
+  lockSessionId?: string;
   filesDrawer: ReactNode;
   // Phase C/M36: when provided, the [Diff] drawer renders this git-backed diff
   // (working-tree-vs-HEAD of a local package) instead of the draft-vs-published
@@ -301,6 +306,9 @@ export function FlowEditorTabs({
       <input name="capId" type="hidden" value={capId} />
       <input name="expectedDraftVersion" type="hidden" value={draftVersion} />
       <input name="flowYaml" type="hidden" value={yaml} />
+      {lockSessionId ? (
+        <input name="sessionId" type="hidden" value={lockSessionId} />
+      ) : null}
 
       <EditorTopBar
         canManage={canManage}

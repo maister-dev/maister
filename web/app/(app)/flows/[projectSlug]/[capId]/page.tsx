@@ -14,8 +14,9 @@ import {
   publishAuthoredFlowAction,
   updateAuthoredFlowAction,
 } from "@/app/(app)/flows/actions";
-import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
+import { AuthoredCapLockShell } from "@/components/flows/authored-cap-lock-shell";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import { readLockState } from "@/lib/catalog/authored-lock";
 import { getAuthoredCapability } from "@/lib/catalog/authored-service";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
@@ -105,9 +106,11 @@ export default async function FlowDetailPage({
     }
   }
 
+  const lock = await readLockState(capId, "");
+
   return (
     <div className="flex h-[calc(100vh-200px)] min-h-[560px] w-full flex-col">
-      <FlowEditorTabs
+      <AuthoredCapLockShell
         canManage={canManage}
         canvasAvailable={canvasAvailable}
         capId={capId}
@@ -128,12 +131,25 @@ export default async function FlowDetailPage({
           slug: detail.capability.slug,
           kind: "flow",
         }}
+        initialLock={{
+          held: lock.held,
+          // Optimistic: a free lock means this opener will acquire it on mount,
+          // so render editable and avoid a read-only flash. A lock held by
+          // someone else stays read-only until the client acquire round-trips
+          // (which takes over for the same user). ADR-105.
+          heldByMe: !lock.held,
+          holderLabel: lock.holderLabel,
+        }}
         initialManifest={canvasAvailable ? canvasManifest : null}
         initialTitle={detail.capability.title}
         initialYaml={flowYaml}
         labels={editorLabels}
         layout={layout}
         lifecycleLabel={t(`lifecycle.${detail.capability.lifecycle}`)}
+        lockLabels={{
+          readOnlyHeld: t("editorLock.readOnlyHeld"),
+          readOnlyUnknownHolder: t("editorLock.readOnlyUnknownHolder"),
+        }}
         projectSlug={projectSlug}
         publishAction={publishAuthoredFlowAction}
         readinessReady={isPackageValid}
