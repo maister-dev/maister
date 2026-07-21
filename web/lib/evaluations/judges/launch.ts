@@ -202,11 +202,16 @@ export async function provisionJudgeAttempts(
           status: "queued",
         })
         .onConflictDoNothing({
+          // ADR-149: the unique widened to include the pairwise match columns
+          // (NULLS NOT DISTINCT). The ON CONFLICT target MUST list all six or it
+          // matches no constraint; match_a/match_b are NULL for non-pairwise.
           target: [
             evaluationJudgeAttempts.executionId,
             evaluationJudgeAttempts.role,
             evaluationJudgeAttempts.ordinal,
             evaluationJudgeAttempts.retryOrdinal,
+            evaluationJudgeAttempts.matchA,
+            evaluationJudgeAttempts.matchB,
           ],
         });
     }

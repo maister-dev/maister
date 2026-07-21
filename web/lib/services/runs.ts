@@ -360,6 +360,12 @@ export type LaunchRunInput = {
   // accepted from a route body; a launched-participant restart derives the same
   // hold from its inherited participation instead.
   evaluationStudyId?: string;
+  // ADR-149: the controlled-launch batch item id (the seam's `launchKey`),
+  // persisted on runs.evaluation_batch_item_id INSIDE this run's INSERT. It is
+  // the idempotency handle — a re-driven batch item re-invokes the seam with the
+  // SAME id and ADOPTS the existing run (partial UNIQUE) rather than launching a
+  // second. Server-internal (seam adapter only); never a route body field.
+  evaluationBatchItemId?: string;
   // ADR-121 (INV-9): mark this run as auto-DRAINED — stamps runs.queue_admitted_at
   // at insert so it counts toward the per-project `maxInFlightAuto` share and is
   // distinguishable from manual/scratch/resume runs. Set ONLY by the unified
@@ -873,6 +879,14 @@ export async function* launchRunStaged(
   // block can still read it (the try opens right after the adopt).
   const scheduledReservation = input.scheduledReservation;
   const runId = scheduledReservation?.runId ?? randomUUID();
+  // ADR-149: set inside the run-insert tx when a controlled-launch re-drive
+  // adopts an already-launched batch item instead of inserting. Non-null after
+  // the tx means THIS attempt is a duplicate — its fresh worktree is an orphan
+  // to compensate, and the adopted (existing) run is returned as the result.
+  let adoptedRunId: string | null = null;
+  // The freshly-created worktree of THIS attempt, captured for the adopt-path
+  // compensation (its `const` twin is scoped inside the launch try).
+  let createdWorktreePath: string | null = null;
   let runnerResolutionWarnings: RunnerResolutionWarningRecord[] = [];
 
   // ADR-107: adopt advanced the SHARED project pin. Everything below, up to the
@@ -1563,6 +1577,7 @@ export async function* launchRunStaged(
       },
     });
     yield launchProgress("worktree_created");
+    createdWorktreePath = worktreePath;
 
     // The worktree now exists; this nested try compensates it (removeWorktree) on any
     // failure through the run-insert. The pin is compensated by the outer catch.
@@ -1689,6 +1704,11 @@ export async function* launchRunStaged(
             triggerPayload: input.triggerPayload ?? null,
             scheduledLaunchId: scheduledReservation?.scheduledLaunchId ?? null,
             agentScheduleId: input.agentScheduleId ?? null,
+            // ADR-149: the controlled-launch idempotency handle. The partial
+            // UNIQUE `runs_evaluation_batch_item_uq` makes a re-driven batch item
+            // hit onConflictDoNothing → the empty-insert branch below ADOPTS the
+            // existing run instead of minting a second.
+            evaluationBatchItemId: input.evaluationBatchItemId ?? null,
             createdByUserId: ctx.actorUserId,
             // ADR-121 (INV-9): auto-drain origin marker, set ONLY for runs minted
             // by the unified admission funnel.
@@ -1713,6 +1733,27 @@ export async function* launchRunStaged(
         // run already exists. Surface a typed CONFLICT (the catch compensates the
         // worktree); never a raw 23505 → 500. Board launches never reach here.
         if (insertedRun.length === 0) {
+          // ADR-149: a controlled-launch re-drive lost the
+          // `runs_evaluation_batch_item_uq` claim — the winner already launched
+          // this batch item. ADOPT it: return the existing run so the seam's
+          // launchKey is idempotent (never a second run), and signal the caller
+          // to compensate this attempt's orphan worktree. Checked BEFORE the
+          // trigger-event/scheduled throws so a batch launch never mis-reports.
+          if (input.evaluationBatchItemId) {
+            const [winner] = await tx
+              .select({ id: runs.id })
+              .from(runs)
+              .where(
+                eq(runs.evaluationBatchItemId, input.evaluationBatchItemId),
+              );
+
+            if (winner) {
+              adoptedRunId = winner.id;
+
+              return;
+            }
+          }
+
           if (scheduledReservation) {
             throw new MaisterError(
               "CONFLICT",
@@ -1909,6 +1950,27 @@ export async function* launchRunStaged(
       db: _db as never,
     });
     throw err;
+  }
+
+  // ADR-149: this attempt lost the batch-item claim and adopted the winner's
+  // run. Nothing was inserted for `runId`, but its fresh unique worktree is an
+  // orphan (safe to remove — the path is `<slug>/<runId>`, never the winner's).
+  // Skip start (the adopted run is already driving) and return it.
+  if (adoptedRunId) {
+    if (createdWorktreePath) {
+      await removeWorktree({
+        projectRepoPath: project.repoPath,
+        worktreePath: createdWorktreePath,
+        force: true,
+      }).catch((rmErr) =>
+        log.error(
+          { rmErr: (rmErr as Error).message, worktreePath: createdWorktreePath },
+          "adopt-path compensating removeWorktree failed (manual cleanup may be required)",
+        ),
+      );
+    }
+
+    return { runId: adoptedRunId, status: "Pending" };
   }
 
   await appendRunnerResolutionWarningEvents({

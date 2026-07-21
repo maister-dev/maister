@@ -633,3 +633,84 @@ describe("C-4 — worktree GC holds open-study evidence", () => {
     expect(heldAfter.removedAt).toBeInstanceOf(Date);
   });
 });
+
+describe("ADR-149 — controlled-launch seam idempotency (T1.2)", () => {
+  function controlledInput(taskId: string, studyId: string, batchItemId: string) {
+    return {
+      taskId,
+      triggerSource: "manual" as const,
+      allowConcurrent: true,
+      autoPromote: false,
+      evaluationStudyId: studyId,
+      evaluationBatchItemId: batchItemId,
+    };
+  }
+
+  it("launches with the forced evaluation_study hold and persists the batch-item binding", async () => {
+    const taskId = await seedTask();
+    const studyId = randomUUID();
+    const batchItemId = randomUUID();
+
+    const result = await launchRun(
+      controlledInput(taskId, studyId, batchItemId),
+      ctx,
+      db,
+    );
+
+    const [run] = await db
+      .select({
+        promotionHold: schema.runs.promotionHold,
+        evaluationBatchItemId: schema.runs.evaluationBatchItemId,
+      })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, result.runId));
+
+    expect(run.promotionHold).toMatchObject({ source: "evaluation_study" });
+    expect(String(run.promotionHold.reason)).toContain(studyId);
+    expect(run.evaluationBatchItemId).toBe(batchItemId);
+  });
+
+  it("adopts the existing run when the same launchKey is re-driven (never a second run)", async () => {
+    const taskId = await seedTask();
+    const studyId = randomUUID();
+    const batchItemId = randomUUID();
+
+    const first = await launchRun(
+      controlledInput(taskId, studyId, batchItemId),
+      ctx,
+      db,
+    );
+    const second = await launchRun(
+      controlledInput(taskId, studyId, batchItemId),
+      ctx,
+      db,
+    );
+
+    expect(second.runId).toBe(first.runId);
+
+    const runs = await db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.evaluationBatchItemId, batchItemId));
+
+    expect(runs).toHaveLength(1);
+  });
+
+  it("keeps distinct batch items as distinct runs (no false adoption)", async () => {
+    const taskId = await seedTask();
+    const studyId = randomUUID();
+
+    const a = await launchRun(
+      controlledInput(taskId, studyId, randomUUID()),
+      ctx,
+      db,
+    );
+    const b = await launchRun(
+      controlledInput(taskId, studyId, randomUUID()),
+      ctx,
+      db,
+    );
+
+    expect(b.runId).not.toBe(a.runId);
+  });
+});

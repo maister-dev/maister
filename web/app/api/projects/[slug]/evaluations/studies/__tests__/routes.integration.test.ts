@@ -42,6 +42,7 @@ let verdictsRoute: typeof import("../[studyId]/verdicts/route");
 let reviewRoute: typeof import("../../reviews/[reviewId]/route");
 let startRoute: typeof import("../[studyId]/evaluations/route");
 let streamRoute: typeof import("../[studyId]/stream/route");
+let preflightRoute: typeof import("../[studyId]/launch-preflight/route");
 let overrideRoute: typeof import("../../../evaluation-profiles/[profileId]/override/route");
 
 let projectId: string;
@@ -104,6 +105,7 @@ beforeAll(async () => {
   reviewRoute = await import("../../reviews/[reviewId]/route");
   startRoute = await import("../[studyId]/evaluations/route");
   streamRoute = await import("../[studyId]/stream/route");
+  preflightRoute = await import("../[studyId]/launch-preflight/route");
   overrideRoute = await import(
     "../../../evaluation-profiles/[profileId]/override/route"
   );
@@ -854,5 +856,70 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
         "UNAUTHENTICATED",
       );
     }
+  });
+});
+
+describe("launch-preflight route (ADR-149)", () => {
+  let preflightStudyId: string;
+
+  beforeAll(async () => {
+    asAdmin();
+    const created = await studiesRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies`, {
+        method: "POST",
+        body: { taskId, title: "Preflight Study" },
+      }),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    preflightStudyId = (await created.json()).study.id;
+  });
+
+  function call(
+    studyId: string,
+    body: unknown,
+  ): Promise<Response> {
+    return preflightRoute.POST(
+      req(
+        `/api/projects/${slug}/evaluations/studies/${studyId}/launch-preflight`,
+        { method: "POST", body },
+      ),
+      { params: Promise.resolve({ slug, studyId: studyId }) },
+    );
+  }
+
+  it("401 without a session", async () => {
+    sessionRef.value = null;
+    const res = await call(preflightStudyId, { recipes: [{}] });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("403 for a member below launchEvaluationRuns", async () => {
+    asViewer();
+    const res = await call(preflightStudyId, { recipes: [{}] });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("404 for a cross-project / unknown study", async () => {
+    asAdmin();
+    const res = await call(randomUUID(), { recipes: [{}] });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("422 for a malformed body (empty recipes)", async () => {
+    asAdmin();
+    const res = await call(preflightStudyId, { recipes: [] });
+
+    expect(res.status).toBe(422);
+  });
+
+  it("422 for an unknown top-level key", async () => {
+    asAdmin();
+    const res = await call(preflightStudyId, { recipes: [{}], extra: 1 });
+
+    expect(res.status).toBe(422);
   });
 });

@@ -1709,6 +1709,12 @@ export const runs = pgTable(
       () => agentSchedules.id,
       { onDelete: "set null" },
     ),
+    // ADR-149: controlled-launch idempotency handle. Written INSIDE the run
+    // INSERT so a re-driven batch item adopts its existing run (partial UNIQUE
+    // `runs_evaluation_batch_item_uq`) rather than minting a second — a post-hoc
+    // batch_item_id -> run_id lookup double-launches across the crash window.
+    // No FK: a claim token, not a relation (the batch item may be GC'd apart).
+    evaluationBatchItemId: text("evaluation_batch_item_id"),
     // M34 (ADR-090): the workspace axis the run ACTUALLY launched with,
     // snapshotted from the project's pinned (effective) definition at insert.
     // Terminal L3 enforcement reads this, NOT the agents catalog index (which
@@ -1923,6 +1929,12 @@ export const runs = pgTable(
     uniqScheduledLaunch: unique("runs_scheduled_launch_id_unique").on(
       t.scheduledLaunchId,
     ),
+    // ADR-149: the controlled-launch seam's idempotency backstop. The run
+    // INSERT's onConflictDoNothing targets this index, so a re-driven batch item
+    // adopts the winner instead of double-launching.
+    uniqEvaluationBatchItem: uniqueIndex("runs_evaluation_batch_item_uq")
+      .on(t.evaluationBatchItemId)
+      .where(sql`${t.evaluationBatchItemId} IS NOT NULL`),
     idxAgentSchedule: index("runs_agent_schedule_idx").on(t.agentScheduleId),
     // M37 Phase 8 (ADR-099): an addressable_key is unique within one
     // orchestrator tree among persistent children — the partial-index backstop
@@ -2761,6 +2773,11 @@ export const evaluationJudgeAttempts = pgTable(
     ordinal: integer("ordinal").notNull(),
     // 0 for a primary attempt; > 0 for a bounded repair child (retry_of set).
     retryOrdinal: integer("retry_ordinal").notNull().default(0),
+    // ADR-149 (pairwise): the unordered participant PAIR this attempt judges.
+    // NULL for every non-pairwise attempt. Part of the unique key with
+    // NULLS NOT DISTINCT so non-pairwise dedup survives the widening.
+    matchA: text("match_a"),
+    matchB: text("match_b"),
     retryOf: text("retry_of").references(
       (): AnyPgColumn => {
         return evaluationJudgeAttempts.id;
@@ -2815,12 +2832,12 @@ export const evaluationJudgeAttempts = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    uniqExecRoleOrdinal: unique("evaluation_judge_attempts_unique").on(
-      t.executionId,
-      t.role,
-      t.ordinal,
-      t.retryOrdinal,
-    ),
+    uniqExecRoleOrdinal: unique("evaluation_judge_attempts_unique")
+      .on(t.executionId, t.role, t.ordinal, t.retryOrdinal, t.matchA, t.matchB)
+      // NULLS NOT DISTINCT: non-pairwise attempts carry NULL match columns;
+      // without this Postgres treats each NULL pair as distinct and the widened
+      // key would stop deduping them (ADR-149).
+      .nullsNotDistinct(),
     idxExecution: index("evaluation_judge_attempts_execution_idx").on(
       t.executionId,
     ),
