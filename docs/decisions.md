@@ -173,6 +173,7 @@
 | [ADR-146](#adr-146-controlled-evaluation-recipes-and-slot-keyed-execution-profiles) | Controlled Evaluation recipes and slot-keyed execution profiles | Accepted | 2026-07-16 |
 | [ADR-147](#adr-147-advanced-evaluation-suites-calibration-and-recipe-standardization) | Advanced evaluation suites calibration and recipe standardization | Accepted | 2026-07-16 |
 | [ADR-148](#adr-148-run-workspace-lifecycle-cleanup-and-reconciliation) | Run workspace lifecycle cleanup and reconciliation | Implemented | 2026-07-16 |
+| [ADR-149](#adr-149-authored-capability-editor-session-edit-lock) | Authored-capability editor session edit-lock | Designed | 2026-07-21 |
 
 ---
 
@@ -12781,6 +12782,90 @@ compatibility route merely makes that job due and attempts its existing claim.
   foreign-path failures.
 - _Keep a standalone GC timer and direct GC route_: rejected because two
   owners make bounded retry and truthful operational summaries impossible.
+
+---
+
+### ADR-149: Authored-capability editor session edit-lock
+
+**Date:** 2026-07-21
+**Status:** Designed
+
+**Context:** Two editing-concurrency mechanisms diverged. The local-package
+editor (`/studio/edit/[id]`) holds a session edit-lock: acquire on open, a 60s
+keep-alive refresh, an ordered release through the client lock-op queue
+(`web/lib/local-packages/lock-op-queue.ts`), server helpers in
+`web/lib/local-packages/lock.ts` (lock columns on `local_packages`, lazy stale
+takeover, same-user takeover, holder label, per-write `assertHoldsLock`), and a
+read-only banner when the lock is not held. The authored-catalog capability
+editor (`/flows/[projectSlug]/[capId]`) has ONLY the optimistic
+`authored_capabilities.draft_version` CAS: a concurrent edit is discovered at
+save time as `CONFLICT "stale authored capability draft"`, which escapes
+uncaught to the root error boundary — no session lock, no keep-alive, no holder
+indication, no read-only mode.
+
+**Decision:**
+
+- Give the authored editor the SAME session edit-lock, keeping the
+  `draft_version` CAS as the write-time correctness backstop. The lock is
+  coordination/UX; the CAS is correctness. They layer; they do not substitute.
+- Add three nullable lock columns to `authored_capabilities`
+  (`locked_by_user_id` FK `users` `ON DELETE SET NULL`, `locked_by_session`,
+  `lock_expires_at`) in migration `0118` — a twin of the `local_packages` lock
+  columns; no new indexes.
+- Implement a TWIN lock module `web/lib/catalog/authored-lock.ts` rather than
+  generalizing `lock.ts` over tables: Drizzle strict-mode table-generic typing
+  is the known `FIXME(any)` pain, and two instances do not justify the
+  abstraction. The CLIENT side is fully shared instead — `createLockOpQueue` is
+  reused verbatim and ONE `useEditorLock` hook is consumed by both editors.
+- Gate the two new routes `POST .../caps/{capId}/lock-refresh` and
+  `.../lock-release` with project-scoped `manageCatalog` (via
+  `authorizeCatalogRouteProject`), not the global-role gate the local-packages
+  routes use — authored caps are project-scoped. A missing, foreign-project, or
+  `ARCHIVED` capability returns `404`.
+- Run the lock seam INSIDE the existing `draft_version` CAS transaction, on the
+  tx handle, immediately after `loadCapability`: a present `sessionId` →
+  `assertHoldsLock`; an absent `sessionId` → `assertNoForeignLiveLock(userId)`
+  (refuse only a LIVE lock held by another user); archive never carries a
+  `sessionId` and applies only the foreign-live refusal; all create paths
+  (brain auto-draft, seed-from-revision, CLI import) stay lock-free.
+- Make `sessionId` OPTIONAL at every parse boundary (a hidden form input;
+  progressive enhancement — a no-JS submit degrades to the headless seam).
+  Reuse the existing `CONFLICT` error with `details.reason = "edit_lock_not_held"`
+  — no new `MaisterError` code.
+- Reuse the shared editor-lock TTL knob `localPackageLockMinutes()`
+  (`MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`, default 30) — no new env var, no
+  deployment wiring.
+
+**Consequences:**
+
+- Migration `0118` adds three nullable columns; no backfill, no index; the
+  journal `when` stays strictly monotonic.
+- The stale-draft `CONFLICT` still escapes to the root error boundary for TRUE
+  races; the lock makes the concurrent-editor path unreachable in the UI
+  (buttons gate on `heldByMe`). Graceful stale-draft UX is a follow-up candidate.
+- `archiveAuthoredCapability` still has no CAS; the foreign-live-lock refusal
+  narrows but does not close the archive-vs-save race. Full CAS on archive is a
+  documented follow-up candidate.
+- OpenAPI gains the two new caps lock paths + an `AuthoredCapabilityLock` schema
+  + an optional `sessionId` on PATCH draft; while mirroring, two pre-existing
+  local-packages lock spec gaps are fixed (`lock-refresh` missing `requestBody`;
+  `lock-release` path missing entirely).
+
+**Alternatives Considered:**
+
+- _Generalize `lock.ts` over both tables_: rejected — Drizzle strict-mode
+  table-generic typing forces `FIXME(any)`; two instances do not pay for the
+  abstraction. The client side is shared instead.
+- _Global-role gate (as the local-packages routes use)_: rejected — authored
+  caps are project-scoped; `manageCatalog` is the existing gate for every caps
+  mutation.
+- _Require `sessionId` at the seam_: rejected — headless callers (the PATCH
+  route, publish-local/archive, CLI import, brain auto-draft) legitimately lack
+  it; making it optional (foreign-live refusal when absent) preserves today's
+  behavior and progressive enhancement.
+- _A new `MaisterError` code or a new env var_: rejected — reuse `CONFLICT` +
+  `edit_lock_not_held` and the existing lock-TTL knob; no taxonomy or deployment
+  change.
 
 ---
 

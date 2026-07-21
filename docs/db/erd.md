@@ -467,6 +467,9 @@ erDiagram
         text current_draft_revision_id
         text current_published_revision_id
         text source_flow_ref_id "M27 Designed: nullable; links edited installed flow to its flows.flow_ref_id"
+        text locked_by_user_id FK "ADR-149 Designed: nullable; SET NULL; editor lock holder"
+        text locked_by_session "ADR-149 Designed: nullable; opaque editor session id"
+        timestamp lock_expires_at "ADR-149 Designed: nullable; editor lock TTL"
         timestamp archived_at
         timestamp created_at
         timestamp updated_at

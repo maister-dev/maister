@@ -267,8 +267,58 @@ visible inventory but cannot mutate authored content.
 
 Server actions and HTTP routes resolve the project from server state before
 parsing user-supplied YAML or package file content. Body fields such as
-`projectSlug`, `capId`, and `expectedDraftVersion` are locators or concurrency
-guards only; they are never authority.
+`projectSlug`, `capId`, `expectedDraftVersion`, and `sessionId` are locators,
+concurrency guards, or opaque bearer tokens only; they are never authority.
+
+## Editor session edit-lock (Designed, [ADR-149](../decisions.md#adr-149))
+
+The authored-capability editor uses the SAME session edit-lock as the
+local-package editor ([local-packages.md](local-packages.md), `web/lib/
+local-packages/lock.ts`). The lock is **coordination/UX**; the `draft_version`
+CAS remains the write-time correctness backstop — the two layer, they do not
+substitute. Lock state lives in three nullable columns on
+`authored_capabilities` (`locked_by_user_id` FK `users` `ON DELETE SET NULL`,
+`locked_by_session`, `lock_expires_at`), a twin of the `local_packages` lock
+columns. TTL is the shared `localPackageLockMinutes()` knob
+(`MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`, default 30). The holder label is
+`users.name ?? users.email` — never the session id.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Free: no live lock
+    Free --> HeldByMe: acquire on open
+    HeldByMe --> HeldByMe: 60s keep-alive refresh
+    HeldByMe --> Free: release on close or pagehide
+    HeldByMe --> Free: TTL expiry
+    Free --> HeldByOther: another user acquires
+    HeldByOther --> HeldByMe: same-user or expired takeover
+    HeldByOther --> Free: holder releases or expires
+```
+
+Acquire is an allow-list: the row is taken iff free, held by THIS session, held
+by THIS user in any session, or expired (lazy stale takeover — no sweeper).
+`heldByMe=false` in an acquire response means another user holds a live lock and
+the editor renders read-only; there is no 409 — the state is the signal. A
+failed refresh IS a 409 (`CONFLICT`), because that session was expired or taken
+over.
+
+**Seam gating (allow-list, evaluated INSIDE the `draft_version` CAS transaction,
+on the tx handle, right after `loadCapability`):**
+
+| Action | `sessionId` | Lock state | Outcome |
+| --- | --- | --- | --- |
+| update draft / publish-local | present | this session holds live | proceed to CAS |
+| update draft / publish-local | present | not held by this session | `CONFLICT` `edit_lock_not_held` |
+| update draft / publish-local | absent (headless / no-JS) | free / expired / mine | proceed to CAS (today's behavior) |
+| update draft / publish-local | absent | LIVE lock of ANOTHER user | `CONFLICT` `edit_lock_not_held` |
+| archive | never sent | free / expired / mine | proceed |
+| archive | never sent | LIVE lock of ANOTHER user | `CONFLICT` `edit_lock_not_held` |
+| create (brain auto-draft / seed-from-revision / CLI import) | never sent | any | proceed — creates are lock-free |
+
+The `draft_version` CAS is unchanged: a lock HOLDER submitting a stale
+`expectedDraftVersion` still receives the stale-draft `CONFLICT`. A missing,
+foreign-project, or `ARCHIVED` capability on the `lock-refresh` / `lock-release`
+routes returns `404` (mirrors the local-packages `status !== "active"` rule).
 
 ## Package body contract
 
@@ -353,6 +403,13 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   publication is a later state/table.
 - Draft updates MUST require matching `draft_version` and fail stale writes with
   `CONFLICT`.
+- The authored editor lock MUST be coordination only; the `draft_version` CAS
+  MUST stay the correctness backstop, so a lock holder submitting a stale
+  `expectedDraftVersion` MUST still receive the stale-draft `CONFLICT`. (Designed, ADR-149)
+- A draft update / publish carrying a `sessionId` MUST hold a live lock for that
+  session or be refused `CONFLICT` `edit_lock_not_held`; an absent `sessionId`
+  MUST be refused only when ANOTHER user holds a live lock; every create path
+  MUST stay lock-free. (Designed, ADR-149)
 - Published revisions MUST be immutable.
 - Local publish of `rule` and `skill` MUST project authored-origin
   `capability_records` in the same transaction.
@@ -398,6 +455,9 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   config-owned rows, not authored-origin projections.
 - Archiving an authored cap disables only its authored-origin projection and
   preserves historic run snapshots.
+- The `lock-refresh` / `lock-release` routes on a missing, foreign-project, or
+  `ARCHIVED` capability return `404`; a failed refresh returns `409` `CONFLICT`
+  `edit_lock_not_held`.
 - Authored flow publish returns local catalog data only; attempts to execute it
   through Flow package enablement remain a later milestone.
 - Adding Gemini/OpenCode/MiMo to the agent union does not backfill old capability
@@ -416,6 +476,7 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   [`../db/erd.md`](../db/erd.md).
 - ADR: [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle),
   [ADR-066 authored editor](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Implemented),
-  [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) (Designed).
+  [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) (Designed),
+  [ADR-149](../decisions.md#adr-149) editor session edit-lock (Designed).
 - Source seams: `web/lib/capabilities/catalog.ts`,
   `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/cleanup.ts`.

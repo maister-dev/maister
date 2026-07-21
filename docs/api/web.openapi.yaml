@@ -8668,6 +8668,98 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/projects/{slug}/catalog/caps/{capId}/lock-refresh:
+    post:
+      tags: [catalog, flow-studio]
+      summary: (ADR-149) Acquire or refresh the authored-capability edit-lock
+      description: |
+        Designed, ADR-149. Editor keep-alive; mirrors the local-package
+        `lock-refresh`. `mode=acquire` (default) takes the lock iff free, this
+        session, this user, or expired; `heldByMe=false` in the response means
+        another user holds a live lock (no 409 — the state is the signal).
+        `mode=refresh` extends the TTL only for the caller's live lock, else
+        `409 CONFLICT`. Requires the `manageCatalog` project action. A missing,
+        foreign-project, or `ARCHIVED` capability returns `404`.
+      operationId: refreshAuthoredCapabilityLock
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sessionId]
+              properties:
+                sessionId: { type: string, minLength: 1, maxLength: 200 }
+                mode:
+                  type: string
+                  enum: [acquire, refresh]
+                  default: acquire
+      responses:
+        "200":
+          description: Lock acquired or refreshed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthoredCapabilityLock" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/catalog/caps/{capId}/lock-release:
+    post:
+      tags: [catalog, flow-studio]
+      summary: (ADR-149) Release the authored-capability edit-lock
+      description: |
+        Designed, ADR-149. Session-fenced release; clears the lock iff the
+        caller's session holds it (idempotent). Requires the `manageCatalog`
+        project action. A missing, foreign-project, or `ARCHIVED` capability
+        returns `404`.
+      operationId: releaseAuthoredCapabilityLock
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sessionId]
+              properties:
+                sessionId: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Lock released (idempotent).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [released]
+                properties:
+                  released: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
+
   /api/projects/{slug}/catalog/caps/{capId}/publish-local:
     post:
       tags: [catalog, flow-studio]
@@ -9720,14 +9812,69 @@ paths:
         `POST /api/runs/{runId}/activity`. Extends `lock_expires_at` for the
         caller's session iff it holds the live lock.
       operationId: refreshStudioLocalPackageLock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sessionId]
+              properties:
+                sessionId: { type: string, minLength: 1, maxLength: 200 }
+                mode:
+                  type: string
+                  enum: [acquire, refresh]
+                  default: acquire
       responses:
         "200":
-          description: Lock extended.
+          description: Lock acquired or extended.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LocalPackageLock" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/lock-release:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Release the session edit-lock
+      description: |
+        (ADR-096 — Designed.) Session-fenced release; clears the lock iff the
+        caller's session holds it (idempotent).
+      operationId: releaseStudioLocalPackageLock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sessionId]
+              properties:
+                sessionId: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Lock released (idempotent).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [released]
+                properties:
+                  released: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
 
   /api/studio/local-packages/{id}/files/{path}:
     parameters:
@@ -16382,6 +16529,15 @@ components:
         body: {}
         manifest: {}
         schemaVersion: { type: integer, minimum: 1 }
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            (ADR-149 — Designed) Optional editor session id (opaque bearer
+            token). When present, the save asserts this session holds the live
+            edit-lock (else `409 CONFLICT` `edit_lock_not_held`); when absent,
+            the save is refused only if another user holds a live lock.
     ScratchCapabilityOption:
       type: object
       required:
@@ -19558,6 +19714,28 @@ components:
     LocalPackageLock:
       type: object
       description: "(ADR-096 — Designed) Session edit-lock state for a local package."
+      required: [held, heldByMe]
+      properties:
+        held:
+          {
+            type: boolean,
+            description: "True if a live (non-expired) lock exists.",
+          }
+        heldByMe:
+          {
+            type: boolean,
+            description: "True if the caller's session holds it.",
+          }
+        holderLabel:
+          {
+            type: string,
+            nullable: true,
+            description: "Display name of the holder (never the session id).",
+          }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    AuthoredCapabilityLock:
+      type: object
+      description: "(ADR-149 — Designed) Session edit-lock state for an authored capability. Twin of LocalPackageLock."
       required: [held, heldByMe]
       properties:
         held:

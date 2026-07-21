@@ -141,16 +141,22 @@ sequenceDiagram
     participant FS as flows.ts bridge
 
     Op->>Ed: edit nodes / edges / settings
-    Ed->>W: PATCH /catalog/caps/{capId}/draft\n(manifest, expectedDraftVersion)
+    Ed->>W: PATCH /catalog/caps/{capId}/draft\n(manifest, expectedDraftVersion, optional sessionId)
     W->>W: validateGraphManifest + compileManifest
     alt invalid manifest
         W-->>Ed: 422 MaisterError CONFIG (NOT persisted)
     else valid
-        W->>DB: UPDATE authored draft CAS (draft_version)
-        alt stale CAS
-            W-->>Ed: 409 MaisterError CONFLICT
-        else ok
-            W-->>Ed: 200 saved draft
+        W->>DB: BEGIN tx + loadCapability
+        W->>W: assert edit-lock on tx handle (assertHoldsLock or assertNoForeignLiveLock)
+        alt foreign live lock / not held
+            W-->>Ed: 409 CONFLICT edit_lock_not_held
+        else lock ok
+            W->>DB: UPDATE authored draft CAS (draft_version)
+            alt stale CAS
+                W-->>Ed: 409 MaisterError CONFLICT
+            else ok
+                W-->>Ed: 200 saved draft
+            end
         end
     end
     Op->>W: POST publish-local
@@ -183,6 +189,7 @@ testable):
 8. Launch MUST snapshot the resolved set into `runs.resolved_capability_set`; the runner MUST read the snapshot, never the live catalog; an edit/publish during a run MUST NOT mutate that run.
 9. The editor MUST be read-write only for users with `manageCatalog`; the run-scoped view stays read-only (`readBoard`).
 10. No engine bump; no new `runs.status`; presentation stays additive/runner-ignored.
+11. The editor edit-lock assert MUST run on the tx handle immediately after `loadCapability` and BEFORE the `draft_version` CAS: a present `sessionId` MUST hold a live lock (else `CONFLICT` `edit_lock_not_held`), an absent `sessionId` MUST be refused only on a foreign live lock, archive MUST apply the foreign-live refusal only, and all create paths MUST stay lock-free. (Designed, ADR-149)
 
 ## Edge cases
 
@@ -192,6 +199,7 @@ These map to the authoring and bridge rows from SDD §8:
 |---|---|---|
 | Invalid manifest on draft save or publish (not persisted) | `CONFIG` | 422 |
 | Stale `expectedDraftVersion` on PATCH /draft | `CONFLICT` | 409 |
+| Foreign edit-lock on draft save / publish (`sessionId` not held, or foreign live lock when absent) | `CONFLICT` `edit_lock_not_held` | 409 |
 | Unknown MCP/skill ref in manifest at validation | `CONFIG` | 422 |
 | Required MCP unresolved at launch (`launchRun` insertion point #2) | `CONFIG` | 409 |
 | Required MCP agent-unsupported at launch | `EXECUTOR_UNAVAILABLE` | 503 |
