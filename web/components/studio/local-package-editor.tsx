@@ -65,6 +65,10 @@ import {
 import { readApiError } from "@/lib/api-error";
 import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
+import {
+  createLockOpQueue,
+  type LockOpQueue,
+} from "@/lib/local-packages/lock-op-queue";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
 import {
@@ -130,7 +134,29 @@ export type LocalPackageEditorLabels = {
 // a wide safety margin and is cheap (one row UPDATE).
 const LOCK_REFRESH_MS = 60_000;
 
-function releaseEditorLock(packageId: string, sessionId: string): void {
+// Ordered release for unmount / end-edit: runs through the lock-op queue, so a
+// release can never be applied by the server after a later same-session acquire
+// (that reorder silently cleared the fresh lock while the editor still showed
+// itself as the holder). `keepalive` lets the request finish across SPA
+// navigation.
+function releaseEditorLockFetch(
+  packageId: string,
+  sessionId: string,
+): Promise<void> {
+  return fetch(`/api/studio/local-packages/${packageId}/lock-release`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId }),
+    keepalive: true,
+  }).then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+// Last-resort release on document teardown (pagehide): sendBeacon survives the
+// document, and no same-session op can follow it, so queue ordering is moot.
+function releaseEditorLockBeacon(packageId: string, sessionId: string): void {
   const url = `/api/studio/local-packages/${packageId}/lock-release`;
   const body = JSON.stringify({ sessionId });
 
@@ -143,12 +169,7 @@ function releaseEditorLock(packageId: string, sessionId: string): void {
     if (queued) return;
   }
 
-  void fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-    keepalive: true,
-  }).catch(() => undefined);
+  void releaseEditorLockFetch(packageId, sessionId);
 }
 
 function formatUsageCount(locale: string, value: number): string {
@@ -175,7 +196,9 @@ type SaveStatus =
  *    + the editor renders with `canManage=false`.
  *  - every write goes through PUT/DELETE /files, which asserts the lock; a
  *    CONFLICT (expired / taken over) surfaces a "reload" banner.
- *  - unmount/pagehide releases the lock; same-user reopen can also take over a
+ *  - unmount releases the lock through the same lock-op queue as acquire/refresh
+ *    (issue order = server order, so a release never clobbers a newer acquire);
+ *    pagehide fires a last-resort beacon; same-user reopen can also take over a
  *    stale tab session.
  *
  * `working_dir` never reaches this client — only the file list/content DTOs do.
@@ -263,6 +286,16 @@ export function LocalPackageEditor({
         : `lp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
+  // Serializes this session's lock ops (acquire / refresh / release) so they
+  // reach the server in issue order — see createLockOpQueue for the race this
+  // closes.
+  const lockOpsRef = useRef<LockOpQueue | null>(null);
+
+  if (lockOpsRef.current === null) {
+    lockOpsRef.current = createLockOpQueue();
+  }
+  const lockOps = lockOpsRef.current;
+
   const [lockHeldByMe, setLockHeldByMe] = useState(initialLock.heldByMe);
   const [lockConfirmedByMe, setLockConfirmedByMe] = useState(false);
   const [holderLabel, setHolderLabel] = useState(initialLock.holderLabel);
@@ -329,13 +362,18 @@ export function LocalPackageEditor({
   // M39: explicit "Done / End edit" — release the lock now (the unmount cleanup
   // also releases, idempotently) and return to the local-package list.
   const endEdit = useCallback((): void => {
-    releaseEditorLock(packageId, sessionIdRef.current);
+    void lockOps.run(() =>
+      releaseEditorLockFetch(packageId, sessionIdRef.current),
+    );
     router.push("/studio/local");
-  }, [packageId, router]);
+  }, [lockOps, packageId, router]);
 
   // Acquire on open + keep-alive heartbeat. A failed refresh degrades to
   // read-only rather than throwing — the next write's lock assertion is the
-  // hard gate.
+  // hard gate. Every op goes through `lockOps`, so the cleanup release of one
+  // effect cycle can never overtake the next cycle's acquire (StrictMode
+  // double-invokes this effect, and unordered that release cleared the fresh
+  // lock server-side while the UI stayed editable).
   useEffect(() => {
     let cancelled = false;
     const sessionId = sessionIdRef.current;
@@ -371,22 +409,24 @@ export function LocalPackageEditor({
         }
       }
     };
-    const release = (): void => releaseEditorLock(packageId, sessionId);
     const releaseOnPageHide = (event: PageTransitionEvent): void => {
-      if (!event.persisted) release();
+      if (!event.persisted) releaseEditorLockBeacon(packageId, sessionId);
     };
 
     window.addEventListener("pagehide", releaseOnPageHide);
-    void syncLock("acquire");
-    const handle = setInterval(() => void syncLock("refresh"), LOCK_REFRESH_MS);
+    void lockOps.run(() => syncLock("acquire"));
+    const handle = setInterval(
+      () => void lockOps.run(() => syncLock("refresh")),
+      LOCK_REFRESH_MS,
+    );
 
     return () => {
       cancelled = true;
       clearInterval(handle);
       window.removeEventListener("pagehide", releaseOnPageHide);
-      release();
+      void lockOps.run(() => releaseEditorLockFetch(packageId, sessionId));
     };
-  }, [packageId, applyLock]);
+  }, [lockOps, packageId, applyLock]);
 
   // Track the working-tree changed-count for the Commit-state badge. Re-runs on
   // diffRefresh (after any save / import / commit). A failed fetch leaves the
