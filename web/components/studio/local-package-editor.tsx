@@ -17,7 +17,6 @@ import type {
 } from "@/lib/flows/editor/reference-sources";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
-import type { LockState } from "@/lib/local-packages/lock";
 import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { ReactElement, ReactNode } from "react";
 import type { PackageBom } from "@/lib/queries/package-bom";
@@ -65,10 +64,7 @@ import {
 import { readApiError } from "@/lib/api-error";
 import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
-import {
-  createLockOpQueue,
-  type LockOpQueue,
-} from "@/lib/local-packages/lock-op-queue";
+import { useEditorLock } from "@/components/flows/use-editor-lock";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
 import {
@@ -128,49 +124,6 @@ export type LocalPackageEditorLabels = {
   commitState: string;
   changeReview: ChangeReviewDialogLabels;
 };
-
-// Keep-alive cadence. The server lock TTL defaults to 30 min
-// (MAISTER_LOCAL_PACKAGE_LOCK_MINUTES); refreshing every 60s keeps it live with
-// a wide safety margin and is cheap (one row UPDATE).
-const LOCK_REFRESH_MS = 60_000;
-
-// Ordered release for unmount / end-edit: runs through the lock-op queue, so a
-// release can never be applied by the server after a later same-session acquire
-// (that reorder silently cleared the fresh lock while the editor still showed
-// itself as the holder). `keepalive` lets the request finish across SPA
-// navigation.
-function releaseEditorLockFetch(
-  packageId: string,
-  sessionId: string,
-): Promise<void> {
-  return fetch(`/api/studio/local-packages/${packageId}/lock-release`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId }),
-    keepalive: true,
-  }).then(
-    () => undefined,
-    () => undefined,
-  );
-}
-
-// Last-resort release on document teardown (pagehide): sendBeacon survives the
-// document, and no same-session op can follow it, so queue ordering is moot.
-function releaseEditorLockBeacon(packageId: string, sessionId: string): void {
-  const url = `/api/studio/local-packages/${packageId}/lock-release`;
-  const body = JSON.stringify({ sessionId });
-
-  if (typeof navigator.sendBeacon === "function") {
-    const queued = navigator.sendBeacon(
-      url,
-      new Blob([body], { type: "application/json" }),
-    );
-
-    if (queued) return;
-  }
-
-  void releaseEditorLockFetch(packageId, sessionId);
-}
 
 function formatUsageCount(locale: string, value: number): string {
   return new Intl.NumberFormat(locale).format(value);
@@ -274,31 +227,20 @@ export function LocalPackageEditor({
   const tPublish = useTranslations("publishDialog");
   const [importing, setImporting] = useState(false);
 
-  // Stable per-mount session id (survives re-renders; never the lock-holder
-  // label). Generated lazily so SSR and the first client render agree (the ref
-  // is only read in effects / event handlers, after hydration).
-  const sessionIdRef = useRef<string>("");
-
-  if (sessionIdRef.current === "") {
-    sessionIdRef.current =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `lp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  }
-
-  // Serializes this session's lock ops (acquire / refresh / release) so they
-  // reach the server in issue order — see createLockOpQueue for the race this
-  // closes.
-  const lockOpsRef = useRef<LockOpQueue | null>(null);
-
-  if (lockOpsRef.current === null) {
-    lockOpsRef.current = createLockOpQueue();
-  }
-  const lockOps = lockOpsRef.current;
-
-  const [lockHeldByMe, setLockHeldByMe] = useState(initialLock.heldByMe);
-  const [lockConfirmedByMe, setLockConfirmedByMe] = useState(false);
-  const [holderLabel, setHolderLabel] = useState(initialLock.holderLabel);
+  // (ADR-149) Shared editor edit-lock: acquire on open, 60s keep-alive, ordered
+  // release through one per-mount queue. `sessionId` is also the stable
+  // per-mount identity every other editor call carries (assistant, file writes).
+  const {
+    sessionId,
+    heldByMe: lockHeldByMe,
+    holderLabel,
+    confirmed: lockConfirmedByMe,
+    release: releaseEditorLock,
+    markLost: markLockLost,
+  } = useEditorLock({
+    basePath: `/api/studio/local-packages/${packageId}`,
+    initialLock,
+  });
   const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
   // Bumped after a successful save or import so the git-diff drawer re-fetches
   // the working-tree diff + its changed-count.
@@ -354,79 +296,12 @@ export function LocalPackageEditor({
     if (nodeId !== null) setAiOpen(false);
   }, []);
 
-  const applyLock = useCallback((lock: LockState | LockSnapshot): void => {
-    setLockHeldByMe(lock.heldByMe);
-    setHolderLabel(lock.holderLabel ?? null);
-  }, []);
-
   // M39: explicit "Done / End edit" — release the lock now (the unmount cleanup
   // also releases, idempotently) and return to the local-package list.
   const endEdit = useCallback((): void => {
-    void lockOps.run(() =>
-      releaseEditorLockFetch(packageId, sessionIdRef.current),
-    );
+    releaseEditorLock();
     router.push("/studio/local");
-  }, [lockOps, packageId, router]);
-
-  // Acquire on open + keep-alive heartbeat. A failed refresh degrades to
-  // read-only rather than throwing — the next write's lock assertion is the
-  // hard gate. Every op goes through `lockOps`, so the cleanup release of one
-  // effect cycle can never overtake the next cycle's acquire (StrictMode
-  // double-invokes this effect, and unordered that release cleared the fresh
-  // lock server-side while the UI stayed editable).
-  useEffect(() => {
-    let cancelled = false;
-    const sessionId = sessionIdRef.current;
-
-    setLockConfirmedByMe(false);
-
-    const syncLock = async (mode: "acquire" | "refresh"): Promise<void> => {
-      try {
-        const res = await fetch(
-          `/api/studio/local-packages/${packageId}/lock-refresh`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ sessionId, mode }),
-          },
-        );
-
-        if (cancelled) return;
-        if (!res.ok) {
-          setLockHeldByMe(false);
-          setLockConfirmedByMe(false);
-
-          return;
-        }
-        const lock = (await res.json()) as LockState;
-
-        applyLock(lock);
-        setLockConfirmedByMe(lock.heldByMe);
-      } catch {
-        if (!cancelled) {
-          setLockHeldByMe(false);
-          setLockConfirmedByMe(false);
-        }
-      }
-    };
-    const releaseOnPageHide = (event: PageTransitionEvent): void => {
-      if (!event.persisted) releaseEditorLockBeacon(packageId, sessionId);
-    };
-
-    window.addEventListener("pagehide", releaseOnPageHide);
-    void lockOps.run(() => syncLock("acquire"));
-    const handle = setInterval(
-      () => void lockOps.run(() => syncLock("refresh")),
-      LOCK_REFRESH_MS,
-    );
-
-    return () => {
-      cancelled = true;
-      clearInterval(handle);
-      window.removeEventListener("pagehide", releaseOnPageHide);
-      void lockOps.run(() => releaseEditorLockFetch(packageId, sessionId));
-    };
-  }, [lockOps, packageId, applyLock]);
+  }, [releaseEditorLock, router]);
 
   // Track the working-tree changed-count for the Commit-state badge. Re-runs on
   // diffRefresh (after any save / import / commit). A failed fetch leaves the
@@ -574,7 +449,7 @@ export function LocalPackageEditor({
                     method: "PUT",
                     headers: { "content-type": "application/json" },
                     body: JSON.stringify({
-                      sessionId: sessionIdRef.current,
+                      sessionId: sessionId,
                       content: write.content,
                     }),
                   },
@@ -586,7 +461,7 @@ export function LocalPackageEditor({
                   {
                     method: "DELETE",
                     headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ sessionId: sessionIdRef.current }),
+                    body: JSON.stringify({ sessionId: sessionId }),
                   },
                 );
 
@@ -594,7 +469,7 @@ export function LocalPackageEditor({
             const code = await peekErrorCode(res);
 
             if (code === "CONFLICT") {
-              setLockHeldByMe(false);
+              markLockLost();
               setStatus({ kind: "conflict" });
 
               return false;
@@ -713,7 +588,7 @@ export function LocalPackageEditor({
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ sessionId: sessionIdRef.current, flow }),
+            body: JSON.stringify({ sessionId: sessionId, flow }),
           },
         );
 
@@ -964,7 +839,7 @@ export function LocalPackageEditor({
               disabled={readOnly}
               options={sync.options}
               packageId={packageId}
-              sessionId={sessionIdRef.current}
+              sessionId={sessionId}
             />
           ) : null}
           {flowPath !== null ? (
@@ -1015,7 +890,7 @@ export function LocalPackageEditor({
           disabled={readOnly || !canManage}
           packageId={packageId}
           pending={sync.pending}
-          sessionId={sessionIdRef.current}
+          sessionId={sessionId}
         />
       ) : null}
       {recoveryStatus !== "ready" ? (
@@ -1074,7 +949,7 @@ export function LocalPackageEditor({
         <ImportDialog
           labels={buildImportDialogLabels(tStudio)}
           packageId={packageId}
-          sessionId={sessionIdRef.current}
+          sessionId={sessionId}
           onClose={() => setImporting(false)}
           onImported={() => {
             setDiffRefresh((n) => n + 1);
@@ -1088,7 +963,7 @@ export function LocalPackageEditor({
           diffViewLabels={labels.diffView}
           labels={labels.changeReview}
           packageId={packageId}
-          sessionId={sessionIdRef.current}
+          sessionId={sessionId}
           onClose={() => setReviewOpen(false)}
           onCommitted={() => {
             setDiffRefresh((n) => n + 1);
@@ -1151,7 +1026,7 @@ export function LocalPackageEditor({
                 navigatorLabels={navigatorLabels}
                 packageId={packageId}
                 readOnly={readOnly}
-                sessionId={sessionIdRef.current}
+                sessionId={sessionId}
                 skillId={skillId}
                 onDraftFilesChange={handleDraftFilesChange}
                 onRename={(newName) =>
@@ -1186,7 +1061,7 @@ export function LocalPackageEditor({
                     mcpCatalog={mcpCatalog}
                     packageId={packageId}
                     readOnly={readOnly}
-                    sessionId={sessionIdRef.current}
+                    sessionId={sessionId}
                     onDraftFilesChange={handleDraftFilesChange}
                     onSaveDraft={saveDraft}
                   />
@@ -1227,7 +1102,7 @@ export function LocalPackageEditor({
                   labels={labels.diff}
                   packageId={packageId}
                   refreshSignal={diffRefresh}
-                  sessionId={sessionIdRef.current}
+                  sessionId={sessionId}
                   onChanged={setChangedCount}
                 />
               }
@@ -1362,7 +1237,7 @@ export function LocalPackageEditor({
                   focusPath={flowPath}
                   labels={labels.ai}
                   packageId={packageId}
-                  sessionId={sessionIdRef.current}
+                  sessionId={sessionId}
                   onActivity={onAssistantActivity}
                   onBeforeSend={flushBeforeAssistant}
                   onBusyChange={setAssistantBusy}

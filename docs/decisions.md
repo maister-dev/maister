@@ -173,7 +173,7 @@
 | [ADR-146](#adr-146-controlled-evaluation-recipes-and-slot-keyed-execution-profiles) | Controlled Evaluation recipes and slot-keyed execution profiles | Accepted | 2026-07-16 |
 | [ADR-147](#adr-147-advanced-evaluation-suites-calibration-and-recipe-standardization) | Advanced evaluation suites calibration and recipe standardization | Accepted | 2026-07-16 |
 | [ADR-148](#adr-148-run-workspace-lifecycle-cleanup-and-reconciliation) | Run workspace lifecycle cleanup and reconciliation | Implemented | 2026-07-16 |
-| [ADR-149](#adr-149-authored-capability-editor-session-edit-lock) | Authored-capability editor session edit-lock | Designed | 2026-07-21 |
+| [ADR-149](#adr-149-authored-capability-editor-session-edit-lock) | Authored-capability editor session edit-lock | Implemented | 2026-07-21 |
 
 ---
 
@@ -12788,7 +12788,7 @@ compatibility route merely makes that job due and attempts its existing claim.
 ### ADR-149: Authored-capability editor session edit-lock
 
 **Date:** 2026-07-21
-**Status:** Designed
+**Status:** Implemented
 
 **Context:** Two editing-concurrency mechanisms diverged. The local-package
 editor (`/studio/edit/[id]`) holds a session edit-lock: acquire on open, a 60s

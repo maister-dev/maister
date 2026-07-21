@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createLockOpQueue,
@@ -143,6 +143,15 @@ export function useEditorLock(opts: {
   sessionId: string;
   heldByMe: boolean;
   holderLabel: string | null;
+  // True only once a server round-trip confirmed this session holds the lock —
+  // distinct from `heldByMe`, which starts from the page's optimistic snapshot.
+  // Gate anything that must not run on an unconfirmed lock on this.
+  confirmed: boolean;
+  // Explicit "done editing" release through the same queue as acquire/refresh.
+  release: () => void;
+  // A write that came back CONFLICT proves the lock is gone: flip to read-only
+  // now instead of waiting for the next heartbeat to notice.
+  markLost: () => void;
 } {
   const enabled = opts.enabled ?? true;
   const sessionIdRef = useRef<string | null>(null);
@@ -155,21 +164,38 @@ export function useEditorLock(opts: {
   const [snapshot, setSnapshot] = useState<EditorLockSnapshot>(
     opts.initialLock,
   );
-  const controllerRef = useRef<EditorLockController | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const controllerRef = useRef<{
+    basePath: string;
+    controller: EditorLockController;
+  } | null>(null);
 
   // One controller — and therefore ONE queue — per mount. Creating it inside the
   // effect would give StrictMode's second cycle its own queue, so that cycle's
-  // acquire could race the first cycle's cleanup release again.
-  if (controllerRef.current === null) {
-    controllerRef.current = createEditorLockController({
-      transport: createHttpEditorLockTransport(opts.basePath, sessionId),
-      onState: setSnapshot,
-    });
+  // acquire could race the first cycle's cleanup release again. A changed
+  // basePath targets a different row, so re-keying the queue there is safe.
+  if (
+    controllerRef.current === null ||
+    controllerRef.current.basePath !== opts.basePath
+  ) {
+    controllerRef.current = {
+      basePath: opts.basePath,
+      controller: createEditorLockController({
+        transport: createHttpEditorLockTransport(opts.basePath, sessionId),
+        onState: (next) => {
+          setSnapshot(next);
+          // A failed sync reports NOT_HELD, so this also clears confirmation.
+          setConfirmed(next.heldByMe);
+        },
+      }),
+    };
   }
-  const controller = controllerRef.current;
+  const controller = controllerRef.current.controller;
 
   useEffect(() => {
     if (!enabled) return;
+
+    setConfirmed(false);
 
     const releaseOnPageHide = (event: PageTransitionEvent): void => {
       if (!event.persisted) controller.releaseBeacon();
@@ -190,9 +216,20 @@ export function useEditorLock(opts: {
     };
   }, [controller, enabled]);
 
+  const release = useCallback((): void => {
+    void controller.release();
+  }, [controller]);
+
+  const markLost = useCallback((): void => {
+    setSnapshot((prev) => ({ ...prev, heldByMe: false }));
+  }, []);
+
   return {
     sessionId,
     heldByMe: snapshot.heldByMe,
     holderLabel: snapshot.holderLabel,
+    confirmed,
+    release,
+    markLost,
   };
 }

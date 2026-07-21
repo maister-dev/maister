@@ -270,7 +270,7 @@ parsing user-supplied YAML or package file content. Body fields such as
 `projectSlug`, `capId`, `expectedDraftVersion`, and `sessionId` are locators,
 concurrency guards, or opaque bearer tokens only; they are never authority.
 
-## Editor session edit-lock (Designed, [ADR-149](../decisions.md#adr-149))
+## Editor session edit-lock (Implemented, [ADR-149](../decisions.md#adr-149))
 
 The authored-capability editor uses the SAME session edit-lock as the
 local-package editor ([local-packages.md](local-packages.md), `web/lib/
@@ -405,11 +405,11 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   `CONFLICT`.
 - The authored editor lock MUST be coordination only; the `draft_version` CAS
   MUST stay the correctness backstop, so a lock holder submitting a stale
-  `expectedDraftVersion` MUST still receive the stale-draft `CONFLICT`. (Designed, ADR-149)
+  `expectedDraftVersion` MUST still receive the stale-draft `CONFLICT`. (Implemented, ADR-149)
 - A draft update / publish carrying a `sessionId` MUST hold a live lock for that
   session or be refused `CONFLICT` `edit_lock_not_held`; an absent `sessionId`
   MUST be refused only when ANOTHER user holds a live lock; every create path
-  MUST stay lock-free. (Designed, ADR-149)
+  MUST stay lock-free. (Implemented, ADR-149)
 - Published revisions MUST be immutable.
 - Local publish of `rule` and `skill` MUST project authored-origin
   `capability_records` in the same transaction.
@@ -477,6 +477,6 @@ state renders through message keys. Raw enum strings are not user-facing copy.
 - ADR: [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle),
   [ADR-066 authored editor](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Implemented),
   [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) (Designed),
-  [ADR-149](../decisions.md#adr-149) editor session edit-lock (Designed).
+  [ADR-149](../decisions.md#adr-149) editor session edit-lock (Implemented).
 - Source seams: `web/lib/capabilities/catalog.ts`,
   `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/cleanup.ts`.

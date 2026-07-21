@@ -1,6 +1,6 @@
 # Authored-capability editor session edit-lock
 
-**Status:** Designed
+**Status:** Implemented
 
 ## Problem
 

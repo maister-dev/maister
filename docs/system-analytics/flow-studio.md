@@ -189,7 +189,7 @@ testable):
 8. Launch MUST snapshot the resolved set into `runs.resolved_capability_set`; the runner MUST read the snapshot, never the live catalog; an edit/publish during a run MUST NOT mutate that run.
 9. The editor MUST be read-write only for users with `manageCatalog`; the run-scoped view stays read-only (`readBoard`).
 10. No engine bump; no new `runs.status`; presentation stays additive/runner-ignored.
-11. The editor edit-lock assert MUST run on the tx handle immediately after `loadCapability` and BEFORE the `draft_version` CAS: a present `sessionId` MUST hold a live lock (else `CONFLICT` `edit_lock_not_held`), an absent `sessionId` MUST be refused only on a foreign live lock, archive MUST apply the foreign-live refusal only, and all create paths MUST stay lock-free. (Designed, ADR-149)
+11. The editor edit-lock assert MUST run on the tx handle immediately after `loadCapability` and BEFORE the `draft_version` CAS: a present `sessionId` MUST hold a live lock (else `CONFLICT` `edit_lock_not_held`), an absent `sessionId` MUST be refused only on a foreign live lock, archive MUST apply the foreign-live refusal only, and all create paths MUST stay lock-free. (Implemented, ADR-149)
 
 ## Edge cases
 

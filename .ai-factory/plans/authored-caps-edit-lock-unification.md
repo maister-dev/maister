@@ -3,7 +3,7 @@
 Branch: claude/session-5e8256 (existing session branch — no new branch; prerequisite commit `13d9d1674` "fix(studio): serialize editor lock ops to stop release/acquire race" is already on it)
 Created: 2026-07-21 · Refined: 2026-07-21 (/aif-improve — SDD/TDD pass)
 
-**Status:** Planned
+**Status:** Implemented
 
 ## Settings
 - Testing: yes
@@ -139,8 +139,8 @@ Single-store, single-tx, no external side effects → two-phase-commit rule N/A.
 <!-- Commit checkpoint 4 -->
 
 ### Phase 4 — Unification closure (exit: full matrix green)
-- [ ] Task 9: REFACTOR leg — migrate `local-package-editor.tsx` to `useEditorLock`; STRICT no-behavior-change; existing tests green UNCHANGED; lock-region diff net-negative/equal LOC; abort on any doubt. (depends on 8)
-- [ ] Task 10: docs + spec as-built flip (Designed → Implemented), `configuration.md` shared-TTL note, ACL traceability closed, final verification matrix. (depends on 8, 9)
+- [x] Task 9: REFACTOR leg — migrate `local-package-editor.tsx` to `useEditorLock`; STRICT no-behavior-change; existing tests green UNCHANGED; lock-region diff net-negative/equal LOC; abort on any doubt. (depends on 8)
+- [x] Task 10: docs + spec as-built flip (Designed → Implemented), `configuration.md` shared-TTL note, ACL traceability closed, final verification matrix. (depends on 8, 9)
 <!-- Commit checkpoint 5 -->
 
 ## Final verification matrix

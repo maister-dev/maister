@@ -8673,7 +8673,7 @@ paths:
       tags: [catalog, flow-studio]
       summary: (ADR-149) Acquire or refresh the authored-capability edit-lock
       description: |
-        Designed, ADR-149. Editor keep-alive; mirrors the local-package
+        Implemented, ADR-149. Editor keep-alive; mirrors the local-package
         `lock-refresh`. `mode=acquire` (default) takes the lock iff free, this
         session, this user, or expired; `heldByMe=false` in the response means
         another user holds a live lock (no 409 — the state is the signal).
@@ -8721,7 +8721,7 @@ paths:
       tags: [catalog, flow-studio]
       summary: (ADR-149) Release the authored-capability edit-lock
       description: |
-        Designed, ADR-149. Session-fenced release; clears the lock iff the
+        Implemented, ADR-149. Session-fenced release; clears the lock iff the
         caller's session holds it (idempotent). Requires the `manageCatalog`
         project action. A missing, foreign-project, or `ARCHIVED` capability
         returns `404`.
@@ -16534,7 +16534,7 @@ components:
           minLength: 1
           maxLength: 200
           description: |
-            (ADR-149 — Designed) Optional editor session id (opaque bearer
+            (ADR-149 — Implemented) Optional editor session id (opaque bearer
             token). When present, the save asserts this session holds the live
             edit-lock (else `409 CONFLICT` `edit_lock_not_held`); when absent,
             the save is refused only if another user holds a live lock.
@@ -19735,7 +19735,7 @@ components:
         expiresAt: { type: string, format: date-time, nullable: true }
     AuthoredCapabilityLock:
       type: object
-      description: "(ADR-149 — Designed) Session edit-lock state for an authored capability. Twin of LocalPackageLock."
+      description: "(ADR-149 — Implemented) Session edit-lock state for an authored capability. Twin of LocalPackageLock."
       required: [held, heldByMe]
       properties:
         held:
