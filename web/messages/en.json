@@ -4624,7 +4624,38 @@
     "partialAck": "I acknowledge the comparability warnings of the cited partial evaluations.",
     "zeroCitationAck": "I acknowledge this verdict cites no evaluation evidence.",
     "rationale": "Rationale (optional)",
-    "recordVerdict": "Record verdict"
+    "recordVerdict": "Record verdict",
+    "standardization": {
+      "section": "Standardization",
+      "none": "Not standardized",
+      "loading": "Checking eligibility…",
+      "standardizedAt": "Standardized · rev {revision}",
+      "rolledBack": "Rolled back · rev {revision} → {to}",
+      "eligible": "This study's winning recipe can be set as the project default.",
+      "ineligible": "Cannot standardize this study's winner:",
+      "standardize": "Standardize winner",
+      "rollback": "Roll back",
+      "confirm": "Confirm",
+      "confirmStandardizeTitle": "Standardize winning recipe?",
+      "confirmStandardizeBody": "Sets this study's winning recipe as the project default. No runs change and nothing is promoted.",
+      "confirmRollbackTitle": "Roll back the standardized recipe?",
+      "confirmRollbackBody": "Appends a rollback entry restoring the previous revision. History is preserved.",
+      "refusal": {
+        "no_conclusive_winner": "No conclusive winner verdict.",
+        "winner_not_launched_recipe": "The winner is an observed run with no reproducible recipe.",
+        "recipe_unavailable": "The winning recipe is no longer available."
+      }
+    },
+    "pairwise": {
+      "ranking": "Ranking",
+      "matches": "Matches",
+      "points": "pts",
+      "byes": "byes",
+      "vs": "vs",
+      "tie": "Tie",
+      "unresolved": "Unresolved",
+      "unresolvedBadge": "{count} unresolved match(es)"
+    }
   },
   "evaluationsErrors": {
     "CONFIG": "Invalid input — check the submitted values.",

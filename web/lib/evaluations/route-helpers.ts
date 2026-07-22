@@ -64,6 +64,26 @@ export async function parseEvalJson(req: NextRequest): Promise<unknown> {
   }
 }
 
+// Like `parseEvalJson` but for routes whose body is OPTIONAL: an absent/empty
+// body resolves to `{}` (so a zod schema of all-optional fields validates),
+// while a present-but-malformed body is still a typed CONFIG (422), never a 500.
+export async function parseOptionalEvalJson(
+  req: NextRequest,
+): Promise<unknown> {
+  const text = await req.text();
+
+  if (!text.trim()) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `invalid JSON body: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 // Read + validate the mandatory If-Match optimistic-revision header for
 // PATCH/DELETE (plan §API). Absent/non-integer → CONFIG (422) with a stable
 // message so the client never silently overwrites a concurrent edit.

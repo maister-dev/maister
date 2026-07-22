@@ -37,6 +37,12 @@ function canManage(role: string): boolean {
   return role === "owner" || role === "admin" || role === "member";
 }
 
+// Standardization is `manageProjectEvaluationOverrides` (admin). Global admins
+// map to "owner" on this page; project admins are "admin".
+function canStandardize(role: string): boolean {
+  return role === "owner" || role === "admin";
+}
+
 export default async function StudyDetailPage({
   params,
 }: PageProps): Promise<ReactElement> {
@@ -124,6 +130,7 @@ export default async function StudyDetailPage({
           warnings: row.aggregate.warnings,
         }
       : null,
+    tournament: row.tournament,
   }));
 
   return (
@@ -147,6 +154,7 @@ export default async function StudyDetailPage({
       <StudyLab
         canConclude={canManage(role)}
         canManage={canManage(role)}
+        canStandardize={canStandardize(role)}
         comparableRuns={comparableRuns}
         controlledLaunch={controlledLaunch}
         executions={executions}

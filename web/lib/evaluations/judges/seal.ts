@@ -34,8 +34,15 @@ export interface SubmittedCriterionCell extends SubmittedCriterion {
   criterionId: string;
 }
 
+export type PairwisePickValue = "a" | "b" | "tie";
+
+// A judge submission always scores the rubric (`criteria`); a pairwise attempt
+// ADDITIONALLY carries `winner` — the head-to-head pick the tournament aggregates
+// (ADR-147). `winner` is required for a pairwise attempt and rejected for any
+// other, both enforced fail-closed against the bound attempt's match identity.
 export interface JudgeSubmission {
   criteria: SubmittedCriterionCell[];
+  winner?: PairwisePickValue;
 }
 
 export type SealOutcome =
@@ -114,6 +121,25 @@ export async function submitBoundJudgeResult(
 ): Promise<SealOutcome> {
   const d = db ?? getDb();
   const bound = await resolveBoundAttempt(actor, d);
+
+  // ADR-147: `winner` is bound to the attempt's match identity, fail-closed both
+  // directions (a 422 that preserves the attempt, never a silent seal). The
+  // rubric (`criteria`) is scored either way; only the extra head-to-head pick is
+  // gated here. The tournament aggregation reads `winner` from the sealed result.
+  const isPairwise = bound.matchA !== null && bound.matchB !== null;
+
+  if (isPairwise && !submission.winner) {
+    throw new MaisterError(
+      "CONFIG",
+      "this is a pairwise attempt — a `winner` pick of a, b, or tie is required",
+    );
+  }
+  if (!isPairwise && submission.winner) {
+    throw new MaisterError(
+      "CONFIG",
+      "`winner` is only valid for a pairwise attempt",
+    );
+  }
 
   let specs = specsFromSnapshot(bound);
 

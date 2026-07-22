@@ -12,6 +12,11 @@ import {
   ControlledLaunch,
   type ControlledLaunchContext,
 } from "@/components/evaluations/controlled-launch";
+import {
+  PairwiseScoreboard,
+  type PairwiseTournamentView,
+} from "@/components/evaluations/pairwise-scoreboard";
+import { StandardizationPanel } from "@/components/evaluations/standardization-panel";
 import { useStudyStream } from "@/components/evaluations/use-study-stream";
 import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import { RUN_STATUS_KEYS } from "@/lib/runs/run-status-tone";
@@ -34,6 +39,8 @@ export interface ExecutionView {
     perCriterion: Array<{ criterionId: string; displayValue: number | null }>;
     warnings: string[] | null;
   } | null;
+  // Pairwise tournament result (ADR-147), null for scalar methods.
+  tournament: PairwiseTournamentView | null;
 }
 
 export interface VerdictView {
@@ -53,6 +60,7 @@ type Props = {
   controlledLaunch: ControlledLaunchContext;
   canManage: boolean;
   canConclude: boolean;
+  canStandardize: boolean;
 };
 
 const TERMINAL = new Set(["completed", "partial", "failed", "cancelled"]);
@@ -145,6 +153,7 @@ export function StudyLab({
   controlledLaunch,
   canManage,
   canConclude,
+  canStandardize,
 }: Props): ReactElement {
   const t = useTranslations("evaluationsLab");
   const tErr = useTranslations("evaluationsErrors");
@@ -233,6 +242,8 @@ export function StudyLab({
     (r) => !alreadyParticipant.has(r.id),
   );
   const readyToLaunch = participants.length >= 2 && profiles.length > 0;
+  const labelFor = (id: string): string =>
+    participants.find((p) => p.id === id)?.label ?? id.slice(0, 8);
 
   return (
     <div className="w-full">
@@ -432,7 +443,12 @@ export function StudyLab({
                     <span className="font-mono">{exec.terminalReason}</span>
                   </p>
                 ) : null}
-                {exec.aggregate ? (
+                {exec.tournament ? (
+                  <PairwiseScoreboard
+                    labelFor={labelFor}
+                    tournament={exec.tournament}
+                  />
+                ) : exec.aggregate ? (
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px]">
                     <span className="font-semibold text-ink">
                       {t("total")}:{" "}
@@ -466,6 +482,10 @@ export function StudyLab({
         studyStatus={study.status}
         verdicts={verdicts}
       />
+
+      {canStandardize ? (
+        <StandardizationPanel slug={slug} studyId={study.id} />
+      ) : null}
     </div>
   );
 }

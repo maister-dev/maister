@@ -16,7 +16,12 @@ import {
   type AttemptResult,
 } from "./algorithms";
 import { classifyDisagreement } from "./disagreement";
+import {
+  computeTournamentForExecution,
+  persistTournamentAggregate,
+} from "./pairwise-aggregate";
 import { persistAggregate } from "./persist";
+import { PAIRWISE_TOURNAMENT_ALGORITHM } from "./tournament";
 
 import { advanceExecution } from "@/lib/evaluations/dispatcher/advance";
 import { openReview } from "@/lib/evaluations/reviews";
@@ -329,7 +334,12 @@ export async function evaluateAndAdvancePanel(
 
   const loaded = await loadAttemptResults(executionId, d);
 
-  const quorumMet = loaded.validCount >= method.quorum;
+  // Pairwise: `method.quorum` is the PER-MATCH quorum, decided at aggregation —
+  // the scalar total-quorum short-circuit would advance before every match has
+  // its picks. Wait for all attempts terminal; the tournament then resolves each
+  // match (unmet-quorum matches stay unresolved → partial).
+  const isPairwise = method.algorithm === PAIRWISE_TOURNAMENT_ALGORITHM;
+  const quorumMet = !isPairwise && loaded.validCount >= method.quorum;
   const allTerminal =
     loaded.totalCount > 0 && loaded.terminalCount === loaded.totalCount;
 
@@ -378,6 +388,61 @@ export async function runAggregationForExecution(
       "PRECONDITION",
       `execution ${executionId} has no aggregation config (no policy snapshot and no method revision)`,
     );
+  }
+
+  // Pairwise executions aggregate through the tournament, never the scalar
+  // combine (ADR-147). Resolve each match under the per-match quorum, persist the
+  // ranking, and take the terminal edge — completed when every match resolved,
+  // else partial (quorum shortfall). No disagreement/review lane in v1.
+  if (method.algorithm === PAIRWISE_TOURNAMENT_ALGORITHM) {
+    const tournament = await computeTournamentForExecution(
+      { executionId, studyId: exec.studyId, quorum: method.quorum },
+      d,
+    );
+
+    await persistTournamentAggregate(
+      {
+        executionId,
+        result: tournament,
+        methodDigests: {
+          definitionDigest: method.definitionDigest,
+          schemaDigest: method.schemaDigest,
+        },
+      },
+      d,
+    );
+
+    const to = tournament.unresolvedMatchCount > 0 ? "partial" : "completed";
+    const fresh = await loadExecution(executionId, d);
+
+    await advanceExecution(
+      {
+        studyId: exec.studyId,
+        executionId,
+        from: "aggregating",
+        to,
+        expectedVersion: fresh.version,
+        patch:
+          to === "partial" ? { terminalReason: "quorum_not_met" } : undefined,
+        payload: {
+          unresolvedMatchCount: tournament.unresolvedMatchCount,
+          rankingTop: tournament.standings[0]?.participantId ?? null,
+        },
+      },
+      d,
+    );
+
+    log.info(
+      {
+        executionId,
+        to,
+        unresolvedMatchCount: tournament.unresolvedMatchCount,
+        matches: tournament.matches.length,
+      },
+      "pairwise tournament aggregation completed",
+    );
+
+    return;
   }
 
   const loaded = await loadAttemptResults(executionId, d);

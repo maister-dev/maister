@@ -50,6 +50,10 @@ export interface BoundAttempt {
   evidenceSnapshotId: string | null;
   randomizationSeed: string | null;
   judgePolicySnapshot: EvaluationExecutionJudgePolicySnapshot | null;
+  // Pairwise match identity (ADR-147). Non-null ⇒ this attempt judges a single
+  // participant PAIR and submits a pick (a|b|tie); NULL ⇒ a scalar attempt.
+  matchA: string | null;
+  matchB: string | null;
 }
 
 // Resolve the token-bound judge attempt WITHOUT trusting any client id (D10). The
@@ -69,6 +73,8 @@ export async function resolveBoundAttempt(
       role: evaluationJudgeAttempts.role,
       ordinal: evaluationJudgeAttempts.ordinal,
       status: evaluationJudgeAttempts.status,
+      matchA: evaluationJudgeAttempts.matchA,
+      matchB: evaluationJudgeAttempts.matchB,
       studyId: evaluationExecutions.studyId,
       methodRevisionId: evaluationExecutions.methodRevisionId,
       evidenceSnapshotId: evaluationExecutions.evidenceSnapshotId,
@@ -128,6 +134,8 @@ export async function resolveBoundAttempt(
     // is the only writer and it stores exactly this typed shape.
     judgePolicySnapshot:
       row.judgePolicySnapshot as EvaluationExecutionJudgePolicySnapshot | null,
+    matchA: row.matchA,
+    matchB: row.matchB,
   };
 }
 

@@ -295,7 +295,11 @@ describe("checkStandardizationEligible", () => {
     // The confirm/write path refuses identically — nothing standardized.
     await expect(
       standardizeRecipe(
-        { studyId: study.id as string, projectId, actorUserId: userId },
+        {
+          studyId: study.id as string,
+          projectId,
+          actor: { type: "user", id: userId },
+        },
         loaders(),
         db,
       ),
@@ -308,7 +312,7 @@ describe("standardizeRecipe + rollback", () => {
     const { studyId } = await decidedStudyWithLaunchedWinner();
 
     const first = await standardizeRecipe(
-      { studyId, projectId, actorUserId: userId },
+      { studyId, projectId, actor: { type: "user", id: userId } },
       loaders(),
       db,
     );
@@ -319,7 +323,11 @@ describe("standardizeRecipe + rollback", () => {
     const second = await decidedStudyWithLaunchedWinner();
 
     await standardizeRecipe(
-      { studyId: second.studyId, projectId, actorUserId: userId },
+      {
+        studyId: second.studyId,
+        projectId,
+        actor: { type: "user", id: userId },
+      },
       loaders(),
       db,
     );
@@ -329,12 +337,37 @@ describe("standardizeRecipe + rollback", () => {
     expect(current?.revision).toBe(2);
   });
 
+  it("refuses a non-human actor at the service level (B4 defense in depth)", async () => {
+    const { studyId } = await decidedStudyWithLaunchedWinner();
+
+    // The route gates on admin, but the service independently refuses a machine
+    // actor so a non-route importer can never silently standardize.
+    await expect(
+      standardizeRecipe(
+        { studyId, projectId, actor: { type: "agent", id: "agent-1" } },
+        loaders(),
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+    await expect(
+      rollbackStandardization(
+        { projectId, actor: { type: "agent", id: "agent-1" } },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
   it("refuses to standardize an ineligible study (CONFLICT, no config write)", async () => {
     const study = await createStudy({ projectId, taskId, title: "Bad" }, db);
 
     await expect(
       standardizeRecipe(
-        { studyId: study.id as string, projectId, actorUserId: userId },
+        {
+          studyId: study.id as string,
+          projectId,
+          actor: { type: "user", id: userId },
+        },
         loaders(),
         db,
       ),
@@ -349,12 +382,22 @@ describe("standardizeRecipe + rollback", () => {
     const b = await decidedStudyWithLaunchedWinner("rollback-rev-two");
 
     const first = await standardizeRecipe(
-      { studyId: a.studyId, projectId, slot, actorUserId: userId },
+      {
+        studyId: a.studyId,
+        projectId,
+        slot,
+        actor: { type: "user", id: userId },
+      },
       loaders(),
       db,
     );
     const second = await standardizeRecipe(
-      { studyId: b.studyId, projectId, slot, actorUserId: userId },
+      {
+        studyId: b.studyId,
+        projectId,
+        slot,
+        actor: { type: "user", id: userId },
+      },
       loaders(),
       db,
     );
@@ -363,7 +406,7 @@ describe("standardizeRecipe + rollback", () => {
     expect(second.definitionDigest).not.toBe(first.definitionDigest);
 
     const rolled = await rollbackStandardization(
-      { projectId, slot, actorUserId: userId },
+      { projectId, slot, actor: { type: "user", id: userId } },
       db,
     );
 
@@ -382,7 +425,7 @@ describe("standardizeRecipe + rollback", () => {
   it("refuses rollback for a slot with a single revision", async () => {
     await expect(
       rollbackStandardization(
-        { projectId, slot: "fresh-slot", actorUserId: userId },
+        { projectId, slot: "fresh-slot", actor: { type: "user", id: userId } },
         db,
       ),
     ).rejects.toThrow(/no prior standardized revision/);
@@ -402,12 +445,22 @@ describe("revision allocation race (per-(project, slot) serialization)", () => {
     // the advisory lock they collide on UNIQUE(project, slot, revision).
     const [first, second] = await Promise.all([
       standardizeRecipe(
-        { studyId: a.studyId, projectId, slot, actorUserId: userId },
+        {
+          studyId: a.studyId,
+          projectId,
+          slot,
+          actor: { type: "user", id: userId },
+        },
         loaders(),
         db,
       ),
       standardizeRecipe(
-        { studyId: b.studyId, projectId, slot, actorUserId: userId },
+        {
+          studyId: b.studyId,
+          projectId,
+          slot,
+          actor: { type: "user", id: userId },
+        },
         loaders(),
         db,
       ),
@@ -425,11 +478,14 @@ describe("revision allocation race (per-(project, slot) serialization)", () => {
     // interleaving. Both must succeed with distinct sequential revisions.
     const [standardized, rolled] = await Promise.all([
       standardizeRecipe(
-        { studyId, projectId, slot, actorUserId: userId },
+        { studyId, projectId, slot, actor: { type: "user", id: userId } },
         loaders(),
         db,
       ),
-      rollbackStandardization({ projectId, slot, actorUserId: userId }, db),
+      rollbackStandardization(
+        { projectId, slot, actor: { type: "user", id: userId } },
+        db,
+      ),
     ]);
 
     expect(

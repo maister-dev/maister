@@ -133,10 +133,11 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_result_submit: {
     description:
-      "Submit a strict per-criterion judge result for the token-bound attempt (ADR-145). Requires evaluations:result:submit. Attribution is server-derived; the body carries only per-criterion scores and rejects extra keys. An invalid result seals a terminal-invalid attempt (valid:false, HTTP 200).",
+      "Submit a strict per-criterion judge result for the token-bound attempt (ADR-145/ADR-147). Requires evaluations:result:submit. Always score `criteria`; a pairwise attempt ALSO sends `winner` (a|b|tie) — required for a pairwise attempt, rejected otherwise (422 either way). Attribution is server-derived; extra keys are rejected. An invalid criteria result seals a terminal-invalid attempt (valid:false, HTTP 200).",
     inputSchema: {
       type: "object",
       properties: {
+        winner: { type: "string", enum: ["a", "b", "tie"] },
         criteria: { type: "array" },
       },
       required: ["criteria"],
@@ -770,14 +771,13 @@ function resolveRouting(
       };
     }
     case "experiment_advise": {
-      const { slug, experimentId, scores, summary, confidence } =
-        args as {
-          slug: string;
-          experimentId: string;
-          scores: Record<string, Record<string, number>>;
-          summary: string;
-          confidence?: number;
-        };
+      const { slug, experimentId, scores, summary, confidence } = args as {
+        slug: string;
+        experimentId: string;
+        scores: Record<string, Record<string, number>>;
+        summary: string;
+        confidence?: number;
+      };
       const body: Record<string, unknown> = { scores, summary };
 
       if (confidence !== undefined) body.confidence = confidence;
@@ -828,12 +828,15 @@ function resolveRouting(
         path: `/api/v1/ext/evaluations/objective-results`,
       };
     case "evaluation_result_submit": {
-      const { criteria } = args as { criteria: unknown };
+      const { criteria, winner } = args as {
+        criteria: unknown;
+        winner?: unknown;
+      };
 
       return {
         method: "POST",
         path: `/api/v1/ext/evaluations/result`,
-        body: { criteria },
+        body: winner === undefined ? { criteria } : { criteria, winner },
       };
     }
     case "memory_recall": {

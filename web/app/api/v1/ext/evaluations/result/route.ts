@@ -10,12 +10,16 @@ import { handleExt } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "POST /api/v1/ext/evaluations/result";
 
-// The strict submission envelope. Per-criterion strictness (unknown/out-of-range/
-// missing-required) is enforced by validateJudgeResult against the method — this
-// schema only guards the wire shape. `.strict()` rejects extra keys so a client
-// can never smuggle server-derived attribution (attemptId/agentRunId/etc.).
+// The strict submission envelope (ExtEvaluationResultBody). `criteria` is always
+// required — the rubric is scored for scalar AND pairwise attempts. `winner` is
+// the ADDITIONAL head-to-head pick for a pairwise attempt (ADR-147): required for
+// a pairwise attempt, rejected for any other — both enforced fail-closed (422)
+// by the seal against the bound attempt's match identity. Per-criterion
+// strictness is enforced by validateJudgeResult. `.strict()` rejects extra keys
+// so a client can never smuggle server-derived attribution.
 const submissionSchema = z
   .object({
+    winner: z.enum(["a", "b", "tie"]).optional(),
     criteria: z
       .array(
         z
@@ -72,22 +76,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         return bodyError(`invalid body: ${parsed.error.message}`);
       }
 
+      const submission = {
+        winner: parsed.data.winner,
+        criteria: parsed.data.criteria.map((c) => ({
+          criterionId: c.criterionId,
+          state: c.state,
+          score: c.score,
+          rationale: c.rationale,
+          confidence: c.confidence,
+          evidenceRefs: c.evidenceRefs,
+          objectiveRefs: c.objectiveRefs,
+        })),
+      };
+
       try {
-        const outcome = await submitBoundJudgeResult(
-          ctx.actor,
-          {
-            criteria: parsed.data.criteria.map((c) => ({
-              criterionId: c.criterionId,
-              state: c.state,
-              score: c.score,
-              rationale: c.rationale,
-              confidence: c.confidence,
-              evidenceRefs: c.evidenceRefs,
-              objectiveRefs: c.objectiveRefs,
-            })),
-          },
-          db,
-        );
+        const outcome = await submitBoundJudgeResult(ctx.actor, submission, db);
 
         return NextResponse.json(outcome);
       } catch (err) {

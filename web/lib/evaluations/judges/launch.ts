@@ -9,6 +9,11 @@ import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { issueJudgeAttemptToken } from "@/lib/agents/tokens";
+import { orderedStudyParticipantIds } from "@/lib/evaluations/aggregation/pairwise-aggregate";
+import {
+  generateRoundRobinPairs,
+  PAIRWISE_TOURNAMENT_ALGORITHM,
+} from "@/lib/evaluations/aggregation/tournament";
 import { getDb } from "@/lib/db/client";
 import {
   evaluationExecutions,
@@ -120,10 +125,11 @@ async function loadExecutionForLaunch(
 // Resolve the (role × ordinal) attempt matrix: each method judge role's declared
 // count crossed with its panel-bound agent. A role with no panel binding is a
 // CONFIG refusal (the panel is incomplete) — never a silently dropped role.
+// `isPairwise` (ADR-147) drives the per-participant-pair fan-out at provisioning.
 async function resolvePanel(
   exec: ExecutionForLaunch,
   d: Db,
-): Promise<ResolvedRole[]> {
+): Promise<{ roles: ResolvedRole[]; isPairwise: boolean }> {
   if (!exec.methodRevisionId) {
     throw new MaisterError(
       "PRECONDITION",
@@ -140,13 +146,14 @@ async function resolvePanel(
 
   const definition = (rev?.normalizedDefinition?.definition ?? {}) as {
     judges?: { roles?: Array<{ id: string; count: number }> };
+    aggregation?: { algorithm?: string };
   };
   const roles = definition.judges?.roles ?? [];
   const bindings = new Map(
     (exec.judgePolicySnapshot?.roleBindings ?? []).map((b) => [b.role, b]),
   );
 
-  return roles.map((r) => {
+  const resolved = roles.map((r) => {
     const binding = bindings.get(r.id);
 
     if (!binding) {
@@ -163,6 +170,12 @@ async function resolvePanel(
       count: r.count,
     };
   });
+
+  return {
+    roles: resolved,
+    isPairwise:
+      definition.aggregation?.algorithm === PAIRWISE_TOURNAMENT_ALGORITHM,
+  };
 }
 
 // Provision the attempt matrix for an execution's panel (D12). Idempotent —
@@ -183,37 +196,66 @@ export async function provisionJudgeAttempts(
     agentRunId: string | null;
     intendedRunId: string | null;
     status: string;
+    matchA: string | null;
+    matchB: string | null;
   }>
 > {
   const d = db ?? getDb();
   const exec = await loadExecutionForLaunch(executionId, d);
-  const panel = await resolvePanel(exec, d);
+  const { roles, isPairwise } = await resolvePanel(exec, d);
 
-  for (const r of panel) {
-    for (let ordinal = 1; ordinal <= r.count; ordinal++) {
-      await d
-        .insert(evaluationJudgeAttempts)
-        .values({
-          executionId,
-          role: r.role,
-          ordinal,
-          retryOrdinal: 0,
-          agentId: r.agentId,
-          status: "queued",
-        })
-        .onConflictDoNothing({
-          // ADR-149: the unique widened to include the pairwise match columns
-          // (NULLS NOT DISTINCT). The ON CONFLICT target MUST list all six or it
-          // matches no constraint; match_a/match_b are NULL for non-pairwise.
-          target: [
-            evaluationJudgeAttempts.executionId,
-            evaluationJudgeAttempts.role,
-            evaluationJudgeAttempts.ordinal,
-            evaluationJudgeAttempts.retryOrdinal,
-            evaluationJudgeAttempts.matchA,
-            evaluationJudgeAttempts.matchB,
-          ],
-        });
+  // Insert one primary attempt for a (role, ordinal, match) cell. Idempotent via
+  // the six-column NULLS-NOT-DISTINCT unique — the ON CONFLICT target MUST list
+  // all six (match_a/match_b are NULL for non-pairwise), or it matches no
+  // constraint and double-provisions on a re-drive.
+  const insertAttempt = async (
+    r: ResolvedRole,
+    ordinal: number,
+    matchA: string | null,
+    matchB: string | null,
+  ): Promise<void> => {
+    await d
+      .insert(evaluationJudgeAttempts)
+      .values({
+        executionId,
+        role: r.role,
+        ordinal,
+        retryOrdinal: 0,
+        agentId: r.agentId,
+        status: "queued",
+        matchA,
+        matchB,
+      })
+      .onConflictDoNothing({
+        target: [
+          evaluationJudgeAttempts.executionId,
+          evaluationJudgeAttempts.role,
+          evaluationJudgeAttempts.ordinal,
+          evaluationJudgeAttempts.retryOrdinal,
+          evaluationJudgeAttempts.matchA,
+          evaluationJudgeAttempts.matchB,
+        ],
+      });
+  };
+
+  if (isPairwise) {
+    // ADR-147 D13: one attempt matrix PER unordered participant pair (round
+    // robin). A judge attempt compares exactly two participants and submits a
+    // pick; the tournament aggregation tallies the resolved matches.
+    const participantIds = await orderedStudyParticipantIds(exec.studyId, d);
+
+    for (const [a, b] of generateRoundRobinPairs(participantIds)) {
+      for (const r of roles) {
+        for (let ordinal = 1; ordinal <= r.count; ordinal++) {
+          await insertAttempt(r, ordinal, a, b);
+        }
+      }
+    }
+  } else {
+    for (const r of roles) {
+      for (let ordinal = 1; ordinal <= r.count; ordinal++) {
+        await insertAttempt(r, ordinal, null, null);
+      }
     }
   }
 
@@ -226,6 +268,8 @@ export async function provisionJudgeAttempts(
       agentRunId: evaluationJudgeAttempts.agentRunId,
       intendedRunId: evaluationJudgeAttempts.intendedRunId,
       status: evaluationJudgeAttempts.status,
+      matchA: evaluationJudgeAttempts.matchA,
+      matchB: evaluationJudgeAttempts.matchB,
     })
     .from(evaluationJudgeAttempts)
     .where(
@@ -235,7 +279,7 @@ export async function provisionJudgeAttempts(
       ),
     );
 
-  const byRole = new Map(panel.map((p) => [p.role, p]));
+  const byRole = new Map(roles.map((p) => [p.role, p]));
 
   return rows.map((r) => ({
     ...r,

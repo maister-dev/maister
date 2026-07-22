@@ -51,6 +51,7 @@ const executions: ExecutionView[] = [
       perCriterion: [{ criterionId: "correctness", displayValue: 4.5 }],
       warnings: [],
     },
+    tournament: null,
   },
 ];
 
@@ -64,6 +65,7 @@ const partialExecution: ExecutionView = {
     perCriterion: [],
     warnings: ["incomplete_coverage"],
   },
+  tournament: null,
 };
 
 const controlledLaunch = {
@@ -88,6 +90,7 @@ describe("StudyLab", () => {
         comparableRuns: [{ id: "r3", status: "Done" }],
         verdicts: [],
         controlledLaunch,
+        canStandardize: false,
         canManage: true,
         canConclude: true,
       }),
@@ -117,6 +120,7 @@ describe("StudyLab", () => {
         comparableRuns: [],
         verdicts: [],
         controlledLaunch,
+        canStandardize: false,
         canManage: true,
         canConclude: true,
       }),
@@ -141,12 +145,14 @@ describe("StudyLab", () => {
             terminalReason: "capture_failed",
             methodQualifiedId: "core:sdd-quality",
             aggregate: null,
+            tournament: null,
           },
         ],
         profiles: [],
         comparableRuns: [],
         verdicts: [],
         controlledLaunch,
+        canStandardize: false,
         canManage: false,
         canConclude: false,
       }),
@@ -168,6 +174,7 @@ describe("StudyLab", () => {
         comparableRuns: [],
         verdicts: [{ id: "v1", outcome: "winner", createdAt: null }],
         controlledLaunch,
+        canStandardize: false,
         canManage: false,
         canConclude: false,
       }),

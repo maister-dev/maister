@@ -178,15 +178,9 @@ export async function startEvaluationExecution(
   const method = await loadMethodDefinition(profile.methodRevisionId, d);
   const methodDef = method.definition;
 
-  // Pairwise execution is owner-deferred with the pairwise UI: the judge
-  // submission contract carries no A/B pick yet, so an execution would only
-  // die later at aggregation. Fail closed here with a typed refusal.
-  if (methodDef.aggregation?.algorithm === "pairwise_tournament@1") {
-    throw new MaisterError(
-      "CONFIG",
-      "pairwise_tournament methods are not executable yet — the pairwise execution path lands with the pairwise UI",
-    );
-  }
+  // ADR-147: pairwise_tournament execution is now wired end-to-end (per-pair
+  // provisioning → pick submission → tournament aggregation), so the historical
+  // fail-closed gate that lived here is removed; `methodDef` feeds the snapshots.
 
   const requestDigest = contentDigest({
     profileId: args.profileId,

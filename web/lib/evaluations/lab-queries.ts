@@ -30,6 +30,23 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+export interface TournamentStandingView {
+  participantId: string;
+  rank: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  byes: number;
+  points: number;
+}
+
+export interface TournamentMatchView {
+  a: string;
+  b: string;
+  outcome: "a" | "b" | "tie" | "unresolved";
+  tally: { a: number; b: number; tie: number };
+}
+
 export interface StudyExecutionView {
   id: string;
   status: string;
@@ -42,6 +59,13 @@ export interface StudyExecutionView {
     perCriterion: Array<{ criterionId: string; displayValue: number | null }>;
     dispersion: Record<string, unknown> | null;
     warnings: string[] | null;
+  } | null;
+  // Pairwise tournament ranking + per-match outcomes (ADR-147), null for scalar
+  // methods. Drives the scoreboard's pairwise branch.
+  tournament: {
+    standings: TournamentStandingView[];
+    matches: TournamentMatchView[];
+    unresolvedMatchCount: number;
   } | null;
 }
 
@@ -74,7 +98,9 @@ export async function listStudyExecutions(
   for (const row of rows) {
     const [agg] = await d
       .select({
+        algorithmId: evaluationAggregateResults.algorithmId,
         displayValues: evaluationAggregateResults.displayValues,
+        calculations: evaluationAggregateResults.calculations,
         dispersion: evaluationAggregateResults.dispersion,
         warnings: evaluationAggregateResults.warnings,
       })
@@ -82,6 +108,9 @@ export async function listStudyExecutions(
       .where(eq(evaluationAggregateResults.executionId, row.id))
       .orderBy(desc(evaluationAggregateResults.revision))
       .limit(1);
+
+    const isTournament = agg?.algorithmId === "pairwise_tournament";
+    const dv = agg?.displayValues as Record<string, unknown> | undefined;
 
     result.push({
       id: row.id,
@@ -102,6 +131,16 @@ export async function listStudyExecutions(
             warnings: agg.warnings ?? null,
           }
         : null,
+      tournament:
+        agg && isTournament
+          ? {
+              standings: (dv?.standings ?? []) as TournamentStandingView[],
+              matches: ((agg.calculations as { matches?: unknown })?.matches ??
+                []) as TournamentMatchView[],
+              unresolvedMatchCount:
+                (dv?.unresolvedMatchCount as number | undefined) ?? 0,
+            }
+          : null,
     });
   }
 

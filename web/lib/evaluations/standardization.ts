@@ -24,6 +24,24 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// The actor a standardize/rollback write is attributed to. Standardization is a
+// human-approved, non-automatic act (ADR-147): the service refuses any non-human
+// actor independently of the route gate, so a future non-route importer (an
+// agent/MCP path) cannot silently standardize. Mirrors `concludeExperiment`.
+export type StandardizationActor = {
+  type: "user" | "agent" | "system";
+  id: string;
+};
+
+function assertHumanActor(actor: StandardizationActor): void {
+  if (actor.type !== "user") {
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "only a human session can standardize or roll back a recipe",
+    );
+  }
+}
+
 export interface StandardizationEligibility {
   eligible: boolean;
   refusals: string[];
@@ -56,7 +74,9 @@ async function latestConclusiveVerdict(
 // effects. Requires a conclusive `winner` verdict citing a LAUNCHED participant
 // with a typed controlled recipe, and a FRESH compatibility/trust preflight that
 // passes. Every failure is a stable refusal code (localized at the UI). This is a
-// read + pure-check path — a judge token never reaches it (route enforces admin).
+// read + pure-check path. The route gates it on `manageProjectEvaluationOverrides`
+// (admin); the write paths (`standardizeRecipe`/`rollbackStandardization`) also
+// enforce a human actor at the service level (`assertHumanActor`).
 export async function checkStandardizationEligible(
   args: { studyId: string; projectId: string },
   loaders: PreflightContractLoaders,
@@ -241,11 +261,13 @@ export async function standardizeRecipe(
     studyId: string;
     projectId: string;
     slot?: string;
-    actorUserId: string;
+    actor: StandardizationActor;
   },
   loaders: PreflightContractLoaders,
   db?: Db,
 ): Promise<Record<string, unknown>> {
+  assertHumanActor(args.actor);
+
   const d = db ?? getDb();
   const slot = args.slot ?? "default";
 
@@ -278,7 +300,7 @@ export async function standardizeRecipe(
         sourceVerdictId: eligibility.sourceVerdictId,
         definition: eligibility.recipeDefinition,
         definitionDigest: contentDigest(eligibility.recipeDefinition),
-        createdByUserId: args.actorUserId,
+        createdByUserId: args.actor.id,
       })
       .returning();
 
@@ -318,9 +340,11 @@ export async function getCurrentStandardizedRecipe(
 // Appends a new `rollback` revision — history is never rewritten. Refuses when
 // there is no prior revision to restore.
 export async function rollbackStandardization(
-  args: { projectId: string; slot?: string; actorUserId: string },
+  args: { projectId: string; slot?: string; actor: StandardizationActor },
   db?: Db,
 ): Promise<Record<string, unknown>> {
+  assertHumanActor(args.actor);
+
   const d = db ?? getDb();
   const slot = args.slot ?? "default";
 
@@ -360,7 +384,7 @@ export async function rollbackStandardization(
         definition: prior.definition,
         definitionDigest: prior.definitionDigest,
         rolledBackToRevision: prior.revision,
-        createdByUserId: args.actorUserId,
+        createdByUserId: args.actor.id,
       })
       .returning();
 
@@ -376,4 +400,47 @@ export async function rollbackStandardization(
 
     return row;
   });
+}
+
+// Public DTO projection of a standardized-recipe ledger row (never a raw DB row).
+// The `definition` is a controlled recipe (bounded/opaque by construction — no
+// path, session id, or credential), safe to surface.
+export function toStandardizedRecipeDto(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    slot: row.slot,
+    revision: Number(row.revision),
+    action: row.action,
+    sourceStudyId: row.sourceStudyId ?? null,
+    sourceRecipeId: row.sourceRecipeId ?? null,
+    sourceVerdictId: row.sourceVerdictId ?? null,
+    definition: row.definition,
+    definitionDigest: row.definitionDigest,
+    rolledBackToRevision:
+      row.rolledBackToRevision != null
+        ? Number(row.rolledBackToRevision)
+        : null,
+    createdByUserId: row.createdByUserId ?? null,
+    createdAt:
+      row.createdAt instanceof Date
+        ? row.createdAt.toISOString()
+        : (row.createdAt ?? null),
+  };
+}
+
+// Public DTO for a Phase-1 eligibility preview. Drops `recipeDefinition` — a
+// preview never ships the winning recipe body across the boundary.
+export function toStandardizationEligibilityDto(
+  e: StandardizationEligibility,
+): Record<string, unknown> {
+  return {
+    eligible: e.eligible,
+    refusals: e.refusals,
+    winnerParticipantId: e.winnerParticipantId,
+    sourceRecipeId: e.sourceRecipeId,
+    sourceVerdictId: e.sourceVerdictId,
+  };
 }

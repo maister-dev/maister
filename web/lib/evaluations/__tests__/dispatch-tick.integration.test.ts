@@ -514,7 +514,7 @@ describe("startEvaluationExecution idempotency + start gates", () => {
     expect(rows).toHaveLength(1);
   });
 
-  it("refuses to start a pairwise_tournament method (fail-closed CONFIG gate)", async () => {
+  it("starts a pairwise_tournament method (ADR-147 — the start gate is removed)", async () => {
     const [profileRow] = await db
       .select()
       .from(schema.evaluationProfiles)
@@ -561,21 +561,19 @@ describe("startEvaluationExecution idempotency + start gates", () => {
       enabled: true,
     });
 
-    await expect(
-      startEvaluationExecution(
-        { studyId, projectId, profileId: pairwiseProfileId },
-        db,
-      ),
-    ).rejects.toMatchObject({
-      code: "CONFIG",
-      message: expect.stringMatching(
-        /pairwise_tournament methods are not executable yet/,
-      ),
-    });
+    // ADR-147: pairwise execution is wired end-to-end (per-pair provisioning →
+    // winner pick → tournament aggregation), so start no longer refuses — it
+    // queues an execution like any other method.
+    const { executionId, deduped } = await startEvaluationExecution(
+      { studyId, projectId, profileId: pairwiseProfileId },
+      db,
+    );
 
-    // Fail-closed at start: no execution row was created for the method.
+    expect(executionId).toBeTruthy();
+    expect(deduped).toBe(false);
+
     const rows = await db
-      .select({ id: schema.evaluationExecutions.id })
+      .select({ status: schema.evaluationExecutions.status })
       .from(schema.evaluationExecutions)
       .where(
         eq(
@@ -584,7 +582,8 @@ describe("startEvaluationExecution idempotency + start gates", () => {
         ),
       );
 
-    expect(rows).toHaveLength(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("queued");
   });
 });
 
