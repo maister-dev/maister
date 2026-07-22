@@ -7,10 +7,11 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { evalErrorKey, evalRequest } from "@/components/evaluations/api-error";
 import {
-  evalErrorKey,
-  evalRequest,
-} from "@/components/evaluations/api-error";
+  ControlledLaunch,
+  type ControlledLaunchContext,
+} from "@/components/evaluations/controlled-launch";
 import { useStudyStream } from "@/components/evaluations/use-study-stream";
 import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import { RUN_STATUS_KEYS } from "@/lib/runs/run-status-tone";
@@ -49,6 +50,7 @@ type Props = {
   profiles: { id: string; name: string }[];
   comparableRuns: { id: string; status: string }[];
   verdicts: VerdictView[];
+  controlledLaunch: ControlledLaunchContext;
   canManage: boolean;
   canConclude: boolean;
 };
@@ -140,6 +142,7 @@ export function StudyLab({
   profiles,
   comparableRuns,
   verdicts,
+  controlledLaunch,
   canManage,
   canConclude,
 }: Props): ReactElement {
@@ -349,6 +352,14 @@ export function StudyLab({
           </details>
         ) : null}
       </section>
+
+      {canManage ? (
+        <ControlledLaunch
+          context={controlledLaunch}
+          slug={slug}
+          studyId={study.id}
+        />
+      ) : null}
 
       {canManage ? (
         <section className="mb-6 flex flex-wrap items-end gap-3 rounded-[10px] border border-line bg-paper p-4">

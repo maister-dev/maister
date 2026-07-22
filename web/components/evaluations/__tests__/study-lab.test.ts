@@ -66,6 +66,16 @@ const partialExecution: ExecutionView = {
   },
 };
 
+const controlledLaunch = {
+  enabled: true,
+  launchable: true,
+  taskId: "t1",
+  scaffold: null,
+  runnerOptions: [],
+  overlayCatalog: { rules: [], skills: [], mcps: [], subagents: [] },
+  existingRecipes: [],
+};
+
 describe("StudyLab", () => {
   it("renders participants, the scoreboard, and manage actions for a member", () => {
     const markup = renderToStaticMarkup(
@@ -77,6 +87,7 @@ describe("StudyLab", () => {
         profiles: [{ id: "pr1", name: "SDD Profile" }],
         comparableRuns: [{ id: "r3", status: "Done" }],
         verdicts: [],
+        controlledLaunch,
         canManage: true,
         canConclude: true,
       }),
@@ -105,6 +116,7 @@ describe("StudyLab", () => {
         profiles: [{ id: "pr1", name: "SDD Profile" }],
         comparableRuns: [],
         verdicts: [],
+        controlledLaunch,
         canManage: true,
         canConclude: true,
       }),
@@ -134,6 +146,7 @@ describe("StudyLab", () => {
         profiles: [],
         comparableRuns: [],
         verdicts: [],
+        controlledLaunch,
         canManage: false,
         canConclude: false,
       }),
@@ -154,6 +167,7 @@ describe("StudyLab", () => {
         profiles: [{ id: "pr1", name: "SDD Profile" }],
         comparableRuns: [],
         verdicts: [{ id: "v1", outcome: "winner", createdAt: null }],
+        controlledLaunch,
         canManage: false,
         canConclude: false,
       }),

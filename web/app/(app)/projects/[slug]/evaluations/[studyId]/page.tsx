@@ -19,6 +19,7 @@ import {
   listComparableTaskRuns,
   listEnabledProfiles,
   listStudyExecutions,
+  loadControlledLaunchContext,
 } from "@/lib/evaluations/lab-queries";
 import {
   getStudyForProject,
@@ -70,6 +71,7 @@ export default async function StudyDetailPage({
     profiles,
     comparableRuns,
     verdictRows,
+    controlledLaunch,
     board,
     showBrain,
   ] = await Promise.all([
@@ -78,6 +80,12 @@ export default async function StudyDetailPage({
     listEnabledProfiles(),
     listComparableTaskRuns(study.taskId as string),
     listVerdicts(studyId),
+    loadControlledLaunchContext({
+      studyId,
+      projectId: project.id,
+      taskId: (study.taskId as string | null) ?? null,
+      status: study.status as string,
+    }),
     getBoardData(project.id),
     isProjectBrainIndexingAvailable(project),
   ]);
@@ -140,6 +148,7 @@ export default async function StudyDetailPage({
         canConclude={canManage(role)}
         canManage={canManage(role)}
         comparableRuns={comparableRuns}
+        controlledLaunch={controlledLaunch}
         executions={executions}
         participants={participants}
         profiles={profiles}

@@ -2,16 +2,33 @@ import "server-only";
 
 import type { Db } from "@/lib/evaluations/db";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import pino from "pino";
 
+import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { getDb } from "@/lib/db/client";
 import {
+  capabilityRecords,
   evaluationAggregateResults,
   evaluationExecutions,
   evaluationMethodRevisions,
   evaluationProfiles,
+  evaluationRecipes,
+  flows,
   runs,
+  tasks,
 } from "@/lib/db/schema";
+import { buildFlowContractProjection } from "@/lib/evaluations/preflight-loaders";
+import {
+  computeArtifactContractDigest,
+  computeInputContractDigest,
+} from "@/lib/evaluations/recipe";
+import { controlledRecipesEnabled } from "@/lib/evaluations/launch-batch";
+
+const log = pino({
+  name: "evaluations-lab-queries",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export interface StudyExecutionView {
   id: string;
@@ -140,4 +157,212 @@ export async function listComparableTaskRuns(
     status: r.status,
     startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : null,
   }));
+}
+
+// ── Controlled-launch context (ADR-149 T1.4) ─────────────────────────────────
+// The Study Lab launch dialog builds inline controlled recipes client-side, but
+// the load-bearing parts of a recipe — the pinned Flow revision and its
+// input/artifact contract digests — MUST be server-derived: the freeze-time and
+// preflight-time digests are only byte-identical when both come from the ONE
+// assembler (`buildFlowContractProjection`). So the server resolves the recipe
+// scaffold here and the client only fills the parity axes (runner, pin, policy,
+// overlay). The client can never fabricate a digest that would pass preflight.
+
+// The stable slot/consensus keys + pinned revision the client stamps onto every
+// inline recipe. `null` ⇒ the study's task has no launchable Flow (launch off).
+export interface ControlledFlowScaffold {
+  flowRefId: string;
+  flowRevisionId: string;
+  inputContractDigest: string;
+  artifactContractDigest: string;
+  // A stable, opaque ref to the task snapshot (the taskId — schema requires a
+  // non-empty string; nothing dereferences it in M47's first scope).
+  taskSnapshotRef: string;
+  slotKeys: string[];
+  requiredSlotKeys: string[];
+}
+
+// A launchable host runner for the per-slot hard-pin picker. NO env/provider —
+// those carry credentials and never cross the RSC boundary.
+export interface ControlledRunnerOption {
+  id: string;
+  capabilityAgent: string;
+  model: string;
+  ready: boolean;
+}
+
+// A previously-created recipe the operator may re-launch in a new batch (D3).
+export interface ControlledRecipeOption {
+  id: string;
+  key: string;
+  label: string;
+}
+
+export interface ControlledOverlayCatalog {
+  rules: string[];
+  skills: string[];
+  mcps: string[];
+  subagents: string[];
+}
+
+export interface ControlledLaunchContext {
+  // Kill switch (`MAISTER_CONTROLLED_RECIPES_ENABLED`). Off ⇒ the create refuses
+  // CONFIG server-side, so the dialog disables launch with a reason.
+  enabled: boolean;
+  // Study status admits a launch (draft|open). decided|archived ⇒ launch hidden.
+  launchable: boolean;
+  taskId: string | null;
+  scaffold: ControlledFlowScaffold | null;
+  runnerOptions: ControlledRunnerOption[];
+  overlayCatalog: ControlledOverlayCatalog;
+  existingRecipes: ControlledRecipeOption[];
+}
+
+const LAUNCHABLE_STUDY_STATUSES = new Set(["draft", "open"]);
+
+// Resolve the study task's enabled Flow revision into the recipe scaffold. Honest
+// absence: a task with no flow, a flow with no enabled revision, or an
+// unresolvable projection (missing revision / unparseable manifest) degrades to
+// `null` + a WARN — never a fabricated scaffold that would fail preflight loudly.
+async function resolveFlowScaffold(
+  projectId: string,
+  taskId: string | null,
+  d: Db,
+): Promise<ControlledFlowScaffold | null> {
+  if (!taskId) return null;
+
+  const [task] = await d
+    .select({ flowId: tasks.flowId })
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+
+  if (!task?.flowId) return null;
+
+  const [flow] = await d
+    .select({
+      flowRefId: flows.flowRefId,
+      enabledRevisionId: flows.enabledRevisionId,
+    })
+    .from(flows)
+    .where(eq(flows.id, task.flowId));
+
+  if (!flow?.enabledRevisionId) return null;
+
+  try {
+    const projection = await buildFlowContractProjection(
+      {
+        projectId,
+        flowRefId: flow.flowRefId,
+        flowRevisionId: flow.enabledRevisionId,
+      },
+      d,
+    );
+
+    return {
+      flowRefId: projection.flowRefId,
+      flowRevisionId: projection.flowRevisionId,
+      inputContractDigest: computeInputContractDigest(projection),
+      artifactContractDigest: computeArtifactContractDigest(projection),
+      taskSnapshotRef: taskId,
+      slotKeys: projection.slotKeys,
+      requiredSlotKeys: projection.requiredSlotKeys,
+    };
+  } catch (err) {
+    log.warn(
+      { projectId, taskId, err: (err as Error).message },
+      "controlled-launch flow scaffold unavailable",
+    );
+
+    return null;
+  }
+}
+
+async function loadOverlayCatalog(
+  projectId: string,
+  d: Db,
+): Promise<ControlledOverlayCatalog> {
+  const rows = await d
+    .select({
+      capabilityRefId: capabilityRecords.capabilityRefId,
+      kind: capabilityRecords.kind,
+    })
+    .from(capabilityRecords)
+    .where(
+      and(
+        eq(capabilityRecords.projectId, projectId),
+        isNull(capabilityRecords.disabledAt),
+      ),
+    );
+
+  const catalog: ControlledOverlayCatalog = {
+    rules: [],
+    skills: [],
+    mcps: [],
+    subagents: [],
+  };
+
+  for (const row of rows) {
+    if (row.kind === "rule") catalog.rules.push(row.capabilityRefId);
+    else if (row.kind === "skill") catalog.skills.push(row.capabilityRefId);
+    else if (row.kind === "mcp") catalog.mcps.push(row.capabilityRefId);
+    else if (row.kind === "agent_definition")
+      catalog.subagents.push(row.capabilityRefId);
+  }
+
+  return catalog;
+}
+
+// Everything the Study Lab launch dialog needs to compose + preflight inline
+// controlled recipes for a study, resolved server-side (D3, ADR-149 T1.4).
+export async function loadControlledLaunchContext(
+  args: {
+    studyId: string;
+    projectId: string;
+    taskId: string | null;
+    status: string;
+  },
+  db?: Db,
+): Promise<ControlledLaunchContext> {
+  const d = db ?? getDb();
+
+  const [scaffold, runners, overlayCatalog, recipeRows] = await Promise.all([
+    resolveFlowScaffold(args.projectId, args.taskId, d),
+    loadRunnerCatalog(d),
+    loadOverlayCatalog(args.projectId, d),
+    d
+      .select({
+        id: evaluationRecipes.id,
+        key: evaluationRecipes.key,
+        label: evaluationRecipes.label,
+      })
+      .from(evaluationRecipes)
+      .where(
+        and(
+          eq(evaluationRecipes.studyId, args.studyId),
+          isNull(evaluationRecipes.tombstonedAt),
+        ),
+      )
+      .orderBy(desc(evaluationRecipes.createdAt)),
+  ]);
+
+  return {
+    enabled: controlledRecipesEnabled(),
+    launchable: LAUNCHABLE_STUDY_STATUSES.has(args.status),
+    taskId: args.taskId,
+    scaffold,
+    runnerOptions: runners
+      .filter((r) => r.enabled)
+      .map((r) => ({
+        id: r.id,
+        capabilityAgent: r.capabilityAgent,
+        model: r.model,
+        ready: r.enabled && r.ready,
+      })),
+    overlayCatalog,
+    existingRecipes: recipeRows.map((r) => ({
+      id: r.id,
+      key: r.key,
+      label: r.label,
+    })),
+  };
 }

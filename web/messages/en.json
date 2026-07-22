@@ -4507,6 +4507,60 @@
       "supervised": "Supervised",
       "assisted": "Assisted",
       "unattended": "Unattended within policy"
+    },
+    "launch": {
+      "section": "Controlled launches",
+      "trigger": "Launch variants",
+      "title": "Launch controlled variants",
+      "close": "Close",
+      "cancel": "Cancel",
+      "disabledKillSwitch": "Controlled launches are disabled by the operator.",
+      "disabledStatus": "Variants can only be launched while the study is a draft or open.",
+      "disabledNoFlow": "This study's task has no launchable Flow — configure a Flow to launch variants.",
+      "variants": "Variants",
+      "addVariant": "Add variant",
+      "removeVariant": "Remove variant",
+      "variantLabel": "Variant label",
+      "noSlots": "This Flow declares no pinnable runner slots; variants use the default runner chain.",
+      "runnerFor": "Runner · {slot}",
+      "runnerDefault": "Project default",
+      "runnerNotReady": "not ready",
+      "packagePin": "Package pin",
+      "packagePinNone": "Default (no pin)",
+      "pinLocalCut": "local cut",
+      "pinUpstream": "upstream",
+      "policy": "Execution policy",
+      "replicates": "Replicates",
+      "overlay": {
+        "rules": { "add": "Rules add", "remove": "Rules remove" },
+        "skills": { "add": "Skills add", "remove": "Skills remove" },
+        "mcps": { "add": "MCPs add", "remove": "MCPs remove" },
+        "subagents": { "add": "Subagents add", "remove": "Subagents remove" }
+      },
+      "reuse": "Reuse existing recipes",
+      "preview": "Preview",
+      "previewing": "Checking…",
+      "previewHeading": "Preflight preview",
+      "confirm": "Launch",
+      "launching": "Launching…",
+      "emptyRefusal": "Add at least one variant or select a recipe to launch.",
+      "batchHeading": "Launch batch",
+      "retry": "Retry failed",
+      "retrying": "Retrying…",
+      "batch": {
+        "queued": "Queued",
+        "launching": "Launching",
+        "completed": "Completed",
+        "partial": "Partial",
+        "failed": "Failed"
+      },
+      "item": {
+        "queued": "queued",
+        "launching": "launching",
+        "launched": "launched",
+        "failed": "failed",
+        "skipped": "skipped"
+      }
     }
   },
   "evaluationsLab": {
