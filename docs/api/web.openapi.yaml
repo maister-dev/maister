@@ -4161,9 +4161,10 @@ paths:
         halts (kill switch) — those items stay `queued` and remain visible.
 
         `items[].recipeId` is cross-resource and is validated server-side to
-        belong to THIS Study; a mismatch is `409`. When an item instead
-        carries a `definition`, the recipe is created inline in the Study
-        first.
+        belong to THIS Study; a recipe absent from the Study is `404`
+        (not-found, `PRECONDITION`), and a tombstoned recipe is `409`. When an
+        item instead carries a `definition`, the recipe is created inline in the
+        Study first.
 
         Idempotency: the request digest covers ONLY the items array. The same
         `idempotencyKey` with an identical digest returns the original batch

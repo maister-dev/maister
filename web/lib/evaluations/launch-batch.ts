@@ -337,6 +337,20 @@ export async function runControlledLaunchBatch(
 ): Promise<{ launched: number; failed: number; skipped: number }> {
   const d = db ?? getDb();
 
+  // ADR-149 (adversarial fix B5): the kill switch is consulted at the TOP of the
+  // drive, before stuck-recovery and the queued loop. Read only inside per-item
+  // admission (below), a frozen platform still mutated item rows and could move
+  // one to `launched`. Halting here keeps the documented contract: items stay
+  // queued, nothing is mutated. No run ever escaped the freeze regardless.
+  if (!controlledRecipesEnabled()) {
+    log.warn(
+      { batchId },
+      "controlled recipes kill switch is off; batch drive refused at entry",
+    );
+
+    return { launched: 0, failed: 0, skipped: 0 };
+  }
+
   const [batch] = await d
     .select({
       id: evaluationLaunchBatches.id,
@@ -547,6 +561,30 @@ export async function runControlledLaunchBatch(
       // launched item record (or vice versa). The batch_item_id conflict path
       // adopts a participant a crashed prior drive already created.
       await d.transaction(async (tx: Db) => {
+        // ADR-149 (adversarial fix B2): admission is checked before the CAS
+        // claim, but the seam call can run for minutes. Re-read the study status
+        // UNDER this tx before writing the participant — otherwise a study that
+        // became `decided`/`archived` during the launch still acquires a
+        // launched participant. FOR UPDATE serializes against a concurrent
+        // verdict flip on the same study row.
+        const [liveStudy] = await tx
+          .select({ status: evaluationStudies.status })
+          .from(evaluationStudies)
+          .where(eq(evaluationStudies.id, batch.studyId))
+          .for("update");
+
+        if (
+          !liveStudy ||
+          !(LAUNCHABLE_STUDY_STATUSES as readonly string[]).includes(
+            liveStudy.status,
+          )
+        ) {
+          throw new MaisterError(
+            "CONFLICT",
+            `study ${batch.studyId} became non-launchable during the launch`,
+          );
+        }
+
         const insertedParticipant = await tx
           .insert(evaluationParticipants)
           .values({
@@ -607,7 +645,12 @@ export async function runControlledLaunchBatch(
             ),
           );
 
-        await tx
+        // ADR-149 (adversarial fix B2): status-guarded like the failure path.
+        // The seam call can run for minutes; a concurrent stuck-recovery drive
+        // could terminalize this item (study decided → `failed`) in that window.
+        // Without the `status='launching'` guard this write resurrects it
+        // `failed → launched` and lets a decided study acquire a participant.
+        const finalized = await tx
           .update(evaluationLaunchBatchItems)
           .set({
             status: "launched",
@@ -619,7 +662,23 @@ export async function runControlledLaunchBatch(
             updatedAt: new Date(),
             version: sql`${evaluationLaunchBatchItems.version} + 1`,
           })
-          .where(eq(evaluationLaunchBatchItems.id, item.id));
+          .where(
+            and(
+              eq(evaluationLaunchBatchItems.id, item.id),
+              eq(evaluationLaunchBatchItems.status, "launching"),
+            ),
+          )
+          .returning({ id: evaluationLaunchBatchItems.id });
+
+        // Lost the guard: another drive already terminalized this item. The run
+        // we just launched is adopted by that item's own record via the
+        // launchKey binding — do NOT double-count it as launched here.
+        if (finalized.length === 0) {
+          throw new MaisterError(
+            "CONFLICT",
+            `launch batch item ${item.id} was terminalized concurrently`,
+          );
+        }
       });
       launched += 1;
     } catch (err) {
@@ -778,4 +837,84 @@ export async function retryFailedBatchItems(
     .returning({ id: evaluationLaunchBatchItems.id });
 
   return { requeued: requeued.length };
+}
+
+export interface LaunchBatchItemDto {
+  id: string;
+  recipeId: string;
+  replicateOrdinal: number;
+  status: string;
+  runId: string | null;
+  participantId: string | null;
+  attempt: number;
+  errorReason: string | null;
+}
+
+export interface LaunchBatchDto {
+  id: string;
+  studyId: string;
+  status: string;
+  idempotencyKey: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  items: LaunchBatchItemDto[];
+}
+
+// Read a batch + its per-item state, ownership-scoped to the study. A batchId
+// belonging to another study is hidden as PRECONDITION (route → 404), matching
+// the study-ownership guard on every other evaluation route.
+export async function getLaunchBatchForStudy(
+  args: { studyId: string; batchId: string },
+  db?: Db,
+): Promise<LaunchBatchDto> {
+  const d = db ?? getDb();
+
+  const [batch] = await d
+    .select({
+      id: evaluationLaunchBatches.id,
+      studyId: evaluationLaunchBatches.studyId,
+      status: evaluationLaunchBatches.status,
+      idempotencyKey: evaluationLaunchBatches.idempotencyKey,
+      completedAt: evaluationLaunchBatches.completedAt,
+      createdAt: evaluationLaunchBatches.createdAt,
+    })
+    .from(evaluationLaunchBatches)
+    .where(
+      and(
+        eq(evaluationLaunchBatches.id, args.batchId),
+        eq(evaluationLaunchBatches.studyId, args.studyId),
+      ),
+    );
+
+  if (!batch) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `launch batch not found: ${args.batchId}`,
+    );
+  }
+
+  const items = await d
+    .select({
+      id: evaluationLaunchBatchItems.id,
+      recipeId: evaluationLaunchBatchItems.recipeId,
+      replicateOrdinal: evaluationLaunchBatchItems.replicateOrdinal,
+      status: evaluationLaunchBatchItems.status,
+      runId: evaluationLaunchBatchItems.runId,
+      participantId: evaluationLaunchBatchItems.participantId,
+      attempt: evaluationLaunchBatchItems.attempt,
+      errorReason: evaluationLaunchBatchItems.errorReason,
+    })
+    .from(evaluationLaunchBatchItems)
+    .where(eq(evaluationLaunchBatchItems.batchId, args.batchId))
+    .orderBy(evaluationLaunchBatchItems.replicateOrdinal);
+
+  return {
+    id: batch.id,
+    studyId: batch.studyId,
+    status: batch.status,
+    idempotencyKey: batch.idempotencyKey,
+    completedAt: batch.completedAt ? batch.completedAt.toISOString() : null,
+    createdAt: batch.createdAt.toISOString(),
+    items,
+  };
 }

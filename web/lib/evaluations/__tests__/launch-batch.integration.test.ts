@@ -869,4 +869,43 @@ describe("launch-time governance gates (kill switch / study status / tombstone)"
     expect(item.errorReason).toBe("EXECUTOR_UNAVAILABLE");
     expect(item.errorReason).not.toContain("/Users/");
   });
+
+  // ADR-149 (adversarial fix B2): a study that becomes `decided` DURING the seam
+  // call must not acquire a launched participant. The seam here flips the study
+  // mid-launch; the in-tx re-check refuses, so no participant is written and the
+  // item lands `failed` rather than resurrecting into a decided study.
+  it("refuses to write a participant when the study is decided during the seam call", async () => {
+    const study = await createStudy(
+      { projectId, taskId, title: "SeamWindow" },
+      db,
+    );
+    const studyId = study.id as string;
+    const recipeId = await newRecipe(studyId, "sw", 1);
+    const { batchId } = await createControlledLaunchBatch(
+      { studyId, projectId, items: [{ recipeId }] },
+      db,
+    );
+
+    const decidingSeam: LaunchRunSeam = async () => {
+      // Simulate the study concluding while this launch is in flight.
+      await db
+        .update(schema.evaluationStudies)
+        .set({ status: "decided" })
+        .where(eq(schema.evaluationStudies.id, studyId));
+
+      return { runId: await makeRun() };
+    };
+
+    const outcome = await runControlledLaunchBatch(batchId, decidingSeam, db);
+
+    expect(outcome.launched).toBe(0);
+    expect(outcome.failed).toBe(1);
+
+    const participants = await db
+      .select()
+      .from(schema.evaluationParticipants)
+      .where(eq(schema.evaluationParticipants.studyId, studyId));
+
+    expect(participants).toHaveLength(0);
+  });
 });

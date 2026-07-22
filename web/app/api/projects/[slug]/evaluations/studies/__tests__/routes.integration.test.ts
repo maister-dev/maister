@@ -34,6 +34,19 @@ vi.mock("@/auth", () => ({
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
+// The controlled-launch batch routes kick the drive async; stub it to a no-op so
+// the route contract (create/read/retry) is tested without the launch stack. The
+// lib's own drive is covered by launch-batch.integration.test.ts.
+vi.mock("@/lib/evaluations/launch-seam", () => ({
+  defaultLaunchRunSeam: () => async () => ({ runId: "stub-run" }),
+}));
+vi.mock("@/lib/evaluations/launch-batch", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/evaluations/launch-batch")>();
+
+  return { ...actual, runControlledLaunchBatch: async () => ({}) };
+});
+
 let studiesRoute: typeof import("../route");
 let studyRoute: typeof import("../[studyId]/route");
 let participantsRoute: typeof import("../[studyId]/participants/route");
@@ -43,6 +56,9 @@ let reviewRoute: typeof import("../../reviews/[reviewId]/route");
 let startRoute: typeof import("../[studyId]/evaluations/route");
 let streamRoute: typeof import("../[studyId]/stream/route");
 let preflightRoute: typeof import("../[studyId]/launch-preflight/route");
+let batchesRoute: typeof import("../[studyId]/launch-batches/route");
+let batchRoute: typeof import("../[studyId]/launch-batches/[batchId]/route");
+let batchRetryRoute: typeof import("../[studyId]/launch-batches/[batchId]/retry/route");
 let overrideRoute: typeof import("../../../evaluation-profiles/[profileId]/override/route");
 
 let projectId: string;
@@ -106,6 +122,9 @@ beforeAll(async () => {
   startRoute = await import("../[studyId]/evaluations/route");
   streamRoute = await import("../[studyId]/stream/route");
   preflightRoute = await import("../[studyId]/launch-preflight/route");
+  batchesRoute = await import("../[studyId]/launch-batches/route");
+  batchRoute = await import("../[studyId]/launch-batches/[batchId]/route");
+  batchRetryRoute = await import("../[studyId]/launch-batches/[batchId]/retry/route");
   overrideRoute = await import(
     "../../../evaluation-profiles/[profileId]/override/route"
   );
@@ -921,5 +940,159 @@ describe("launch-preflight route (ADR-149)", () => {
     const res = await call(preflightStudyId, { recipes: [{}], extra: 1 });
 
     expect(res.status).toBe(422);
+  });
+});
+
+describe("launch-batches routes (ADR-149)", () => {
+  let batchStudyId: string;
+  let recipeId: string;
+  let otherStudyId: string;
+  let otherRecipeId: string;
+
+  const validRecipe = {
+    schemaVersion: 1,
+    flow: {
+      flowRefId: "bugfix",
+      flowRevisionId: "rev-1",
+      inputContractDigest: "d-in",
+      artifactContractDigest: "d-art",
+    },
+    inputs: { taskSnapshotRef: "snap", formValues: {} },
+    executionPolicy: { preset: "supervised" },
+  };
+
+  async function seedStudy(): Promise<string> {
+    asAdmin();
+    const created = await studiesRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies`, {
+        method: "POST",
+        body: { taskId, title: "Batch Study" },
+      }),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    return (await created.json()).study.id;
+  }
+
+  async function seedRecipe(studyId: string, key: string): Promise<string> {
+    const [row] = await db
+      .insert(schema.evaluationRecipes)
+      .values({
+        studyId,
+        key,
+        label: key,
+        definition: validRecipe,
+        definitionDigest: `digest-${key}`,
+      })
+      .returning({ id: schema.evaluationRecipes.id });
+
+    return row.id as string;
+  }
+
+  beforeAll(async () => {
+    batchStudyId = await seedStudy();
+    recipeId = await seedRecipe(batchStudyId, "variant-a");
+    otherStudyId = await seedStudy();
+    otherRecipeId = await seedRecipe(otherStudyId, "variant-x");
+  });
+
+  function createCall(studyId: string, body: unknown): Promise<Response> {
+    return batchesRoute.POST(
+      req(`/api/projects/${slug}/evaluations/studies/${studyId}/launch-batches`, {
+        method: "POST",
+        body,
+      }),
+      { params: Promise.resolve({ slug, studyId }) },
+    );
+  }
+
+  it("creates a batch (201) and reads it back with one queued item", async () => {
+    asAdmin();
+    const res = await createCall(batchStudyId, { items: [{ recipeId }] });
+
+    expect(res.status).toBe(201);
+    const { batchId, deduped, itemCount } = await res.json();
+
+    expect(deduped).toBe(false);
+    expect(itemCount).toBe(1);
+
+    asAdmin();
+    const read = await batchRoute.GET(
+      req(
+        `/api/projects/${slug}/evaluations/studies/${batchStudyId}/launch-batches/${batchId}`,
+      ),
+      { params: Promise.resolve({ slug, studyId: batchStudyId, batchId }) },
+    );
+
+    expect(read.status).toBe(200);
+    const batch = await read.json();
+
+    expect(batch.items).toHaveLength(1);
+    expect(batch.items[0].recipeId).toBe(recipeId);
+  });
+
+  it("dedups an identical idempotency key (deduped: true)", async () => {
+    asAdmin();
+    const body = { idempotencyKey: "k-1", items: [{ recipeId }] };
+    const first = await createCall(batchStudyId, body);
+    const second = await createCall(batchStudyId, body);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect((await second.json()).deduped).toBe(true);
+  });
+
+  it("409s a recipe from another study (cross-resource guard)", async () => {
+    asAdmin();
+    const res = await createCall(batchStudyId, { items: [{ recipeId: otherRecipeId }] });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("403s a viewer (below launchEvaluationRuns)", async () => {
+    asViewer();
+    const res = await createCall(batchStudyId, { items: [{ recipeId }] });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("422s an empty items list", async () => {
+    asAdmin();
+    const res = await createCall(batchStudyId, { items: [] });
+
+    expect(res.status).toBe(422);
+  });
+
+  it("422s when the kill switch is off", async () => {
+    asAdmin();
+    process.env.MAISTER_CONTROLLED_RECIPES_ENABLED = "false";
+    try {
+      const res = await createCall(batchStudyId, { items: [{ recipeId }] });
+
+      expect(res.status).toBe(422);
+    } finally {
+      delete process.env.MAISTER_CONTROLLED_RECIPES_ENABLED;
+    }
+  });
+
+  it("retry returns 200 requeued:0 when nothing failed", async () => {
+    asAdmin();
+    const created = await createCall(batchStudyId, {
+      idempotencyKey: "k-retry",
+      items: [{ recipeId }],
+    });
+    const { batchId } = await created.json();
+
+    asAdmin();
+    const res = await batchRetryRoute.POST(
+      req(
+        `/api/projects/${slug}/evaluations/studies/${batchStudyId}/launch-batches/${batchId}/retry`,
+        { method: "POST" },
+      ),
+      { params: Promise.resolve({ slug, studyId: batchStudyId, batchId }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).requeued).toBe(0);
   });
 });
