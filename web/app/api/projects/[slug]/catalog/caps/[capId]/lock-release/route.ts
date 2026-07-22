@@ -22,14 +22,14 @@ export async function POST(
 ): Promise<NextResponse> {
   try {
     const { slug, capId } = await ctx.params;
-    const { projectId } = await authorizeCatalogRouteProject(slug);
+    const { projectId, userId } = await authorizeCatalogRouteProject(slug);
     const parsed = bodySchema.parse(await req.json());
 
     if (!(await isLockableCapability(projectId, capId))) {
       return notFoundResponse("authored capability not found");
     }
 
-    await releaseLock(capId, parsed.sessionId);
+    await releaseLock(capId, parsed.sessionId, userId);
 
     return NextResponse.json({ released: true }, { status: 200 });
   } catch (err) {

@@ -63,7 +63,13 @@ export type EditorLockContext = {
 };
 
 // The edit-lock seam. It runs INSIDE the `draft_version` CAS transaction on the
-// tx handle, so the lock check and the CAS observe one snapshot (no TOCTOU).
+// tx handle, which NARROWS the window between check and write — it does not
+// close it: the connection runs at READ COMMITTED, so each statement takes a
+// fresh snapshot, and this assert takes no row lock (no `FOR UPDATE`). A
+// concurrent `acquireLock` can therefore still commit between this check and
+// the CAS. That is acceptable by design: the lock is coordination/UX and the
+// `draft_version` CAS is the correctness backstop. Do not restate this as
+// "no TOCTOU" — it would need `FOR UPDATE` here, or REPEATABLE READ, to be true.
 // A present sessionId must hold the live lock; an absent one is refused only
 // when ANOTHER user holds a live lock. With neither (CLI import, brain
 // auto-draft) nothing is asserted — those paths are lock-free by design.
@@ -73,7 +79,9 @@ async function assertEditLock(
   editor?: EditorLockContext,
 ): Promise<void> {
   if (editor?.sessionId) {
-    await assertHoldsLock(capId, editor.sessionId, tx);
+    // Every caller that supplies a sessionId also supplies the authenticated
+    // userId; `?? ""` fails closed (matches no real user) if that ever breaks.
+    await assertHoldsLock(capId, editor.sessionId, editor.userId ?? "", tx);
 
     return;
   }
@@ -450,14 +458,18 @@ export async function updateAuthoredDraft(args: {
     const projectId = await resolveProjectId(tx, args.projectSlug);
     const cap = await loadCapability(tx, projectId, args.capId);
 
-    await assertEditLock(tx, args.capId, args.editor);
-
+    // Immutability dominates the lock: an ARCHIVED row clears its lock columns
+    // on archive, so checking the lock first would refuse a concurrent-archive
+    // race with `edit_lock_not_held` instead of the true "immutable" reason.
     if (cap.lifecycle === "ARCHIVED") {
       throw new MaisterError(
         "CONFLICT",
         "archived authored capability is immutable",
       );
     }
+
+    await assertEditLock(tx, args.capId, args.editor);
+
     assertDraftVersion({
       expectedDraftVersion: args.input.expectedDraftVersion,
       actualDraftVersion: cap.draft_version,
@@ -610,14 +622,17 @@ export async function publishAuthoredCapabilityLocal(args: {
     const projectId = await resolveProjectId(tx, args.projectSlug);
     const cap = await loadCapability(tx, projectId, args.capId);
 
-    await assertEditLock(tx, args.capId, args.editor);
-
+    // Immutability dominates the lock (see updateAuthoredDraft): check ARCHIVED
+    // before the edit-lock so a concurrent-archive race yields "cannot publish",
+    // not a misleading `edit_lock_not_held`.
     if (cap.lifecycle === "ARCHIVED") {
       throw new MaisterError(
         "CONFLICT",
         "archived authored capability cannot publish",
       );
     }
+
+    await assertEditLock(tx, args.capId, args.editor);
 
     const revision = await loadDraftRevision(tx, args.capId);
     const expectedDraftVersion = args.expectedDraftVersion ?? cap.draft_version;
@@ -714,9 +729,18 @@ export async function archiveAuthoredCapability(args: {
 
     const archivedAt = new Date();
 
+    // (ADR-149) Clear the edit-lock as part of archiving. An ARCHIVED row is
+    // not lockable, so `lock-refresh` / `lock-release` answer 404 from here on
+    // — a surviving lock could never be refreshed or released and would sit on
+    // the row forever, still reading as "held" to `readLockState`.
     await tx.execute(sql`
       UPDATE authored_capabilities
-      SET lifecycle = 'ARCHIVED', archived_at = now(), updated_at = now()
+      SET lifecycle = 'ARCHIVED',
+          archived_at = now(),
+          updated_at = now(),
+          locked_by_user_id = NULL,
+          locked_by_session = NULL,
+          lock_expires_at = NULL
       WHERE id = ${args.capId}
         AND project_id = ${projectId}
     `);
@@ -838,6 +862,31 @@ async function assertNoNonAuthoredProjectCollision(
       `authored capability ${kind}/${slug} collides with a non-authored project capability`,
     );
   }
+}
+
+// (ADR-149) Route-boundary existence probe. `loadCapability` refuses a missing
+// row with `CONFIG` (422) because it is a service-layer guard with no HTTP
+// vocabulary; the caps routes call this first so a missing or foreign-project
+// capability answers 404 like every other resource in the API. Deliberately NO
+// lifecycle filter — an ARCHIVED capability EXISTS and must still reach its
+// `CONFLICT` "immutable" refusal rather than reading as absent. Contrast
+// `isLockableCapability`, which DOES exclude ARCHIVED because taking an edit
+// lock on an immutable row is meaningless.
+export async function capabilityExistsInProject(
+  projectId: string,
+  capId: string,
+  db?: CatalogDb,
+): Promise<boolean> {
+  const handle = db ?? (getDb() as unknown as CatalogDb);
+  const result = await handle.execute(sql`
+    SELECT id
+    FROM authored_capabilities
+    WHERE id = ${capId}
+      AND project_id = ${projectId}
+    LIMIT 1
+  `);
+
+  return rowsOf<{ id: string }>(result).length > 0;
 }
 
 async function loadCapability(

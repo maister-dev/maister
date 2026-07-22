@@ -2,7 +2,11 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getAuthoredCapability } from "@/lib/catalog/authored-service";
+import { notFoundResponse } from "@/lib/api/project-route-helpers";
+import {
+  capabilityExistsInProject,
+  getAuthoredCapability,
+} from "@/lib/catalog/authored-service";
 import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
 import { catalogErrorResponse } from "@/lib/catalog/route-errors";
 
@@ -17,7 +21,12 @@ export async function GET(
   try {
     const { slug, capId } = await ctx.params;
 
-    await authorizeCatalogRouteProject(slug);
+    const { projectId } = await authorizeCatalogRouteProject(slug);
+
+    if (!(await capabilityExistsInProject(projectId, capId))) {
+      return notFoundResponse("authored capability not found");
+    }
+
     const detail = await getAuthoredCapability({ projectSlug: slug, capId });
 
     return NextResponse.json(detail, { status: 200 });

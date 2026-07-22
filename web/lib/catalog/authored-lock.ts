@@ -17,6 +17,12 @@ const log = pino({
 // takes the catalog module's structural db handle (not a NodePgDatabase) so
 // every assert can run ON the `draft_version` CAS transaction handle. The lock
 // is coordination/UX; the CAS stays the correctness backstop.
+// Project scoping is the CALLER's precondition, not a predicate here: routes
+// resolve the project from the URL and gate on `isLockableCapability(projectId,
+// capId)` before touching any lock. Re-asserting `project_id` in every
+// statement below would only guard against a capability changing projects
+// mid-request — and `authored_capabilities.project_id` is never updated
+// anywhere in the codebase. Keep that true, or these helpers need the scope.
 export type AuthoredLockDb = {
   execute(query: SQL): Promise<{ rows?: unknown[] }>;
 };
@@ -30,6 +36,7 @@ export type LockState = {
 };
 
 type LockRow = {
+  locked_by_user_id: string | null;
   locked_by_session: string | null;
   lock_expires_at: Date | string | null;
   holder_name: string | null;
@@ -74,7 +81,8 @@ export async function readLockState(
   db?: AuthoredLockDb,
 ): Promise<LockState> {
   const result = await resolveDb(db).execute(sql`
-    SELECT c.locked_by_session,
+    SELECT c.locked_by_user_id,
+           c.locked_by_session,
            c.lock_expires_at,
            u.name  AS holder_name,
            u.email AS holder_email
@@ -90,7 +98,14 @@ export async function readLockState(
   }
 
   const expiresAt = row.lock_expires_at ? new Date(row.lock_expires_at) : null;
+  // `locked_by_user_id` is part of liveness, not just display: the FK is
+  // ON DELETE SET NULL, so deleting the holder orphans a row that still has a
+  // session id and an unexpired TTL. Without this arm the row reads "held" here
+  // (and is un-acquirable, since no acquire disjunct matches an orphan) while
+  // `assertNoForeignLiveLock` reads it as free — the two disagree for a full
+  // TTL. Orphaned lock == free lock, uniformly.
   const live =
+    row.locked_by_user_id != null &&
     row.locked_by_session != null &&
     expiresAt != null &&
     expiresAt.getTime() > Date.now();
@@ -103,9 +118,12 @@ export async function readLockState(
   };
 }
 
-// Acquire iff free, this session, this user, or expired (lazy stale takeover).
-// heldByMe=false means another user holds a live lock — the editor renders
-// read-only. That is a state, not an error, so this never throws.
+// Acquire iff free, this session, this user, or expired (lazy stale takeover) —
+// but never on an ARCHIVED row: archiving clears the lock columns and an
+// immutable row is not editable, so an acquire racing an archive must not
+// re-stamp a lock that `lock-refresh`/`lock-release` (both 404 once ARCHIVED)
+// could never clear. heldByMe=false means another user holds a live lock — the
+// editor renders read-only. That is a state, not an error, so this never throws.
 export async function acquireLock(
   capId: string,
   userId: string,
@@ -120,10 +138,12 @@ export async function acquireLock(
         locked_by_session = ${sessionId},
         lock_expires_at = ${expiresAt}
     WHERE id = ${capId}
+      AND lifecycle <> 'ARCHIVED'
       AND (
         locked_by_session IS NULL
         OR locked_by_session = ${sessionId}
         OR locked_by_user_id = ${userId}
+        OR locked_by_user_id IS NULL
         OR lock_expires_at IS NULL
         OR lock_expires_at < now()
       )
@@ -143,9 +163,13 @@ export async function acquireLock(
 }
 
 // Keep-alive: extend the TTL only if this session still holds a live lock.
+// `userId` is matched too, not just the session: the session id is a client-
+// minted bearer token, so binding it to the authenticated user stops a leaked
+// session string from being replayed by a different user to keep a lock alive.
 export async function refreshLock(
   capId: string,
   sessionId: string,
+  userId: string,
   db?: AuthoredLockDb,
 ): Promise<LockState> {
   const expiresAt = nextExpiry();
@@ -154,6 +178,7 @@ export async function refreshLock(
     SET lock_expires_at = ${expiresAt}
     WHERE id = ${capId}
       AND locked_by_session = ${sessionId}
+      AND locked_by_user_id = ${userId}
       AND lock_expires_at > now()
     RETURNING id
   `);
@@ -171,10 +196,14 @@ export async function refreshLock(
   return { held: true, heldByMe: true, holderLabel: null, expiresAt };
 }
 
-// Guard an interactive write: the caller's session must hold a live lock.
+// Guard an interactive write: the caller's session must hold a live lock, and
+// that lock must belong to the caller's own user (the session id alone is a
+// client-minted bearer token — pairing it with `userId` blocks a leaked session
+// from writing through another user's lock).
 export async function assertHoldsLock(
   capId: string,
   sessionId: string,
+  userId: string,
   db?: AuthoredLockDb,
 ): Promise<void> {
   const result = await resolveDb(db).execute(sql`
@@ -182,6 +211,7 @@ export async function assertHoldsLock(
     FROM authored_capabilities
     WHERE id = ${capId}
       AND locked_by_session = ${sessionId}
+      AND locked_by_user_id = ${userId}
       AND lock_expires_at > now()
     LIMIT 1
   `);
@@ -228,6 +258,7 @@ export async function assertNoForeignLiveLock(
 export async function releaseLock(
   capId: string,
   sessionId: string,
+  userId: string,
   db?: AuthoredLockDb,
 ): Promise<void> {
   await resolveDb(db).execute(sql`
@@ -237,5 +268,6 @@ export async function releaseLock(
         lock_expires_at = NULL
     WHERE id = ${capId}
       AND locked_by_session = ${sessionId}
+      AND locked_by_user_id = ${userId}
   `);
 }

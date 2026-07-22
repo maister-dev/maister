@@ -211,10 +211,23 @@ describe("authored edit-lock seam inside the draft_version CAS", () => {
 
     await acquireLock(capId, userId, "s1", db);
 
-    const actual = await draftVersionOf(capId);
+    // The REAL stale case: this session read version V, a save moved the row to
+    // V+1, and the editor still submits V. A version from the future
+    // (`actual + N`) also throws, but on a value that never existed — it would
+    // not catch an implementation that rejected only FORWARD mismatches.
+    const stale = await draftVersionOf(capId);
+
+    await updateAuthoredDraft(
+      saveArgs(projectSlug, capId, stale, { sessionId: "s1", userId }),
+    );
+
+    const current = await draftVersionOf(capId);
+
+    expect(current).toBe(stale + 1);
+
     const err = await captureError(() =>
       updateAuthoredDraft(
-        saveArgs(projectSlug, capId, actual + 41, {
+        saveArgs(projectSlug, capId, stale, {
           sessionId: "s1",
           userId,
         }),
@@ -223,8 +236,10 @@ describe("authored edit-lock seam inside the draft_version CAS", () => {
 
     expect(err.code).toBe("CONFLICT");
     expect(err.message).toContain("stale authored capability draft");
+    // The lock holder's refusal is the CAS one, never `edit_lock_not_held` —
+    // that is what "the CAS is preserved under the lock" means.
     expect(err.details?.reason).toBeUndefined();
-    expect(await draftVersionOf(capId)).toBe(actual);
+    expect(await draftVersionOf(capId)).toBe(current);
   });
 
   it("(f) gates publish on the same seam", async () => {
@@ -255,7 +270,7 @@ describe("authored edit-lock seam inside the draft_version CAS", () => {
     expect(published.revision.lifecycle).toBe("PUBLISHED");
   });
 
-  it("(f) refuses archive while another user holds a live lock", async () => {
+  it("(f2) refuses archive while another user holds a live lock", async () => {
     const { projectSlug, capId } = await seedCapability();
     const holder = await insertUser();
     const other = await insertUser();
@@ -281,5 +296,92 @@ describe("authored edit-lock seam inside the draft_version CAS", () => {
     });
 
     expect(archived.lifecycle).toBe("ARCHIVED");
+  });
+
+  it("(g) re-archiving is an idempotent no-op even under a foreign live lock", async () => {
+    const { projectSlug, capId } = await seedCapability();
+    const holder = await insertUser();
+    const other = await insertUser();
+
+    await archiveAuthoredCapability({
+      projectSlug,
+      capId,
+      editor: { userId: other },
+      db,
+    });
+
+    // The already-ARCHIVED early return runs BEFORE the lock assert, so a
+    // second archive cannot be refused — it mutates nothing. Documented as its
+    // own row in the capability-catalog gating table.
+    await acquireLock(capId, holder, "s1", db);
+
+    const again = await archiveAuthoredCapability({
+      projectSlug,
+      capId,
+      editor: { userId: other },
+      db,
+    });
+
+    expect(again.lifecycle).toBe("ARCHIVED");
+  });
+
+  it("(h) archiving clears the edit-lock columns", async () => {
+    const { projectSlug, capId } = await seedCapability();
+    const holder = await insertUser();
+
+    await acquireLock(capId, holder, "s1", db);
+    await archiveAuthoredCapability({
+      projectSlug,
+      capId,
+      editor: { userId: holder },
+      db,
+    });
+
+    // An ARCHIVED row is not lockable, so a surviving lock could never be
+    // refreshed or released — it would read as "held" forever.
+    const rows = await db
+      .select({
+        lockedByUserId: schema.authoredCapabilities.lockedByUserId,
+        lockedBySession: schema.authoredCapabilities.lockedBySession,
+        lockExpiresAt: schema.authoredCapabilities.lockExpiresAt,
+      })
+      .from(schema.authoredCapabilities)
+      .where(eq(schema.authoredCapabilities.id, capId));
+
+    expect(rows[0]).toEqual({
+      lockedByUserId: null,
+      lockedBySession: null,
+      lockExpiresAt: null,
+    });
+  });
+
+  it("(i) refuses an ARCHIVED-cap save with 'immutable', not edit_lock_not_held", async () => {
+    const { projectSlug, capId } = await seedCapability();
+    const holder = await insertUser();
+
+    await acquireLock(capId, holder, "s1", db);
+    await archiveAuthoredCapability({
+      projectSlug,
+      capId,
+      editor: { userId: holder },
+      db,
+    });
+
+    // Immutability is checked BEFORE the lock assert, so a would-be holder
+    // submitting `sessionId` on a concurrently-archived cap gets the "immutable"
+    // reason — NOT a misleading `edit_lock_not_held` (archive cleared the lock).
+    const before = await draftVersionOf(capId);
+    const err = await captureError(() =>
+      updateAuthoredDraft(
+        saveArgs(projectSlug, capId, before, {
+          sessionId: "s1",
+          userId: holder,
+        }),
+      ),
+    );
+
+    expect(err.code).toBe("CONFLICT");
+    expect(err.message).toContain("immutable");
+    expect(err.details?.reason).toBeUndefined();
   });
 });

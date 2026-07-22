@@ -20,8 +20,15 @@ export function catalogErrorResponse(err: unknown): NextResponse {
   }
 
   if (isMaisterError(err)) {
+    // (ADR-093, additive) `details` is forwarded only when the thrower set it —
+    // e.g. the edit-lock's `{ reason: "edit_lock_not_held" }`, which is what
+    // lets a client tell a lock refusal apart from a stale-CAS refusal (both
+    // are 409). Mirrors `errorResponse` in `lib/api/project-route-helpers.ts`;
+    // throwers redact, so this is never a server-only handle.
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      err.details
+        ? { code: err.code, message: err.message, details: err.details }
+        : { code: err.code, message: err.message },
       { status: httpStatusForCatalogError(err.code) },
     );
   }

@@ -2,10 +2,12 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const archiveAuthoredCapabilityMock = vi.hoisted(() => vi.fn());
+const capabilityExistsInProjectMock = vi.hoisted(() => vi.fn());
 const authorizeCatalogRouteProjectMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/catalog/authored-service", () => ({
   archiveAuthoredCapability: archiveAuthoredCapabilityMock,
+  capabilityExistsInProject: capabilityExistsInProjectMock,
 }));
 vi.mock("@/lib/catalog/route-auth", () => ({
   authorizeCatalogRouteProject: authorizeCatalogRouteProjectMock,
@@ -16,6 +18,8 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/archive", () => {
     vi.resetModules();
     archiveAuthoredCapabilityMock.mockReset();
     authorizeCatalogRouteProjectMock.mockReset();
+    capabilityExistsInProjectMock.mockReset();
+    capabilityExistsInProjectMock.mockResolvedValue(true);
     authorizeCatalogRouteProjectMock.mockResolvedValue({
       projectId: "project-demo",
       userId: "user-1",
@@ -90,6 +94,27 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/archive", () => {
 
     expect(response.status).toBe(422);
     expect(body.code).toBe("CONFIG");
+    expect(archiveAuthoredCapabilityMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the capability is missing or belongs to another project", async () => {
+    capabilityExistsInProjectMock.mockResolvedValue(false);
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      new NextRequest(
+        "http://localhost/api/projects/demo/catalog/caps/cap-x/archive",
+        { method: "POST" },
+      ),
+      { params: Promise.resolve({ slug: "demo", capId: "cap-x" }) },
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ code: "NOT_FOUND" });
+    expect(capabilityExistsInProjectMock).toHaveBeenCalledWith(
+      "project-demo",
+      "cap-x",
+    );
     expect(archiveAuthoredCapabilityMock).not.toHaveBeenCalled();
   });
 });

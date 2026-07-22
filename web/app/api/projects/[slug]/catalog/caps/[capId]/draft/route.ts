@@ -3,7 +3,11 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { updateAuthoredDraft } from "@/lib/catalog/authored-service";
+import { notFoundResponse } from "@/lib/api/project-route-helpers";
+import {
+  capabilityExistsInProject,
+  updateAuthoredDraft,
+} from "@/lib/catalog/authored-service";
 import { updateAuthoredDraftSchema } from "@/lib/catalog/authored-schema";
 import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
 import { catalogErrorResponse } from "@/lib/catalog/route-errors";
@@ -26,8 +30,13 @@ export async function PATCH(
   try {
     const { slug, capId } = await ctx.params;
 
-    const { userId } = await authorizeCatalogRouteProject(slug);
+    const { projectId, userId } = await authorizeCatalogRouteProject(slug);
     const { sessionId, ...input } = draftBodySchema.parse(await req.json());
+
+    if (!(await capabilityExistsInProject(projectId, capId))) {
+      return notFoundResponse("authored capability not found");
+    }
+
     const result = await updateAuthoredDraft({
       projectSlug: slug,
       capId,

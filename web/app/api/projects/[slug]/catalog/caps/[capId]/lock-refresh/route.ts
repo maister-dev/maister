@@ -45,7 +45,7 @@ export async function POST(
 
     const lock =
       parsed.mode === "refresh"
-        ? await refreshLock(capId, parsed.sessionId)
+        ? await refreshLock(capId, parsed.sessionId, userId)
         : await acquireLock(capId, userId, parsed.sessionId);
 
     return NextResponse.json(lock, { status: 200 });

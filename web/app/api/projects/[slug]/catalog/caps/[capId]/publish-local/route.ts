@@ -2,7 +2,11 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { publishAuthoredCapabilityLocal } from "@/lib/catalog/authored-service";
+import { notFoundResponse } from "@/lib/api/project-route-helpers";
+import {
+  capabilityExistsInProject,
+  publishAuthoredCapabilityLocal,
+} from "@/lib/catalog/authored-service";
 import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
 import { catalogErrorResponse } from "@/lib/catalog/route-errors";
 import { bridgePublishedAuthoredFlow } from "@/lib/flows/authored-bridge";
@@ -19,9 +23,14 @@ export async function POST(
   try {
     const { slug, capId } = await ctx.params;
 
-    const { userId } = await authorizeCatalogRouteProject(slug);
+    const { projectId, userId } = await authorizeCatalogRouteProject(slug);
 
     await assertEmptyBody(req);
+
+    if (!(await capabilityExistsInProject(projectId, capId))) {
+      return notFoundResponse("authored capability not found");
+    }
+
     const result = await publishAuthoredCapabilityLocal({
       projectSlug: slug,
       capId,

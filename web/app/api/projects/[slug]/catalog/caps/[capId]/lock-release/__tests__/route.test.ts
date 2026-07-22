@@ -49,7 +49,7 @@ describe("POST /api/projects/[slug]/catalog/caps/[capId]/lock-release", () => {
 
     expect(res.status).toBe(200);
     expect(mocks.authorizeCatalogRouteProject).toHaveBeenCalledWith("demo");
-    expect(mocks.releaseLock).toHaveBeenCalledWith("cap-1", "s1");
+    expect(mocks.releaseLock).toHaveBeenCalledWith("cap-1", "s1", "u1");
     expect(await res.json()).toEqual({ released: true });
   });
 
@@ -78,6 +78,55 @@ describe("POST /api/projects/[slug]/catalog/caps/[capId]/lock-release", () => {
     const res = await POST(req({ sessionId: "s1" }), ctx());
 
     expect(res.status).toBe(404);
+    expect(mocks.releaseLock).not.toHaveBeenCalled();
+  });
+
+  it("scopes the lookup to the SERVER-resolved projectId, not the url slug", async () => {
+    await POST(req({ sessionId: "s1" }), ctx());
+
+    expect(mocks.isLockableCapability).toHaveBeenCalledWith(
+      "project-demo",
+      "cap-1",
+    );
+  });
+
+  it("returns 401 for an unauthenticated caller", async () => {
+    mocks.authorizeCatalogRouteProject.mockRejectedValue(
+      new MaisterError("UNAUTHENTICATED", "sign in"),
+    );
+
+    const res = await POST(req({ sessionId: "s1" }), ctx());
+
+    expect(res.status).toBe(401);
+    expect(mocks.releaseLock).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the project is unknown or archived", async () => {
+    mocks.authorizeCatalogRouteProject.mockRejectedValue(
+      new MaisterError("PRECONDITION", "project not found: demo"),
+    );
+
+    const res = await POST(req({ sessionId: "s1" }), ctx());
+
+    // PRECONDITION maps to 409 in the catalog error mapping — documented on
+    // this path only after review found the twin documented it and this one
+    // did not.
+    expect(res.status).toBe(409);
+    expect(mocks.releaseLock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown body keys (schema is strict)", async () => {
+    const res = await POST(req({ sessionId: "s1", capId: "cap-evil" }), ctx());
+
+    expect(res.status).toBe(422);
+    expect(mocks.releaseLock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed JSON body as 422, not 500", async () => {
+    const res = await POST(req("{not json"), ctx());
+
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("CONFIG");
     expect(mocks.releaseLock).not.toHaveBeenCalled();
   });
 });

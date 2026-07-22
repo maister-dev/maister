@@ -4,11 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const publishAuthoredCapabilityLocalMock = vi.hoisted(() => vi.fn());
+const capabilityExistsInProjectMock = vi.hoisted(() => vi.fn());
 const authorizeCatalogRouteProjectMock = vi.hoisted(() => vi.fn());
 const bridgePublishedAuthoredFlowMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/catalog/authored-service", () => ({
   publishAuthoredCapabilityLocal: publishAuthoredCapabilityLocalMock,
+  capabilityExistsInProject: capabilityExistsInProjectMock,
 }));
 vi.mock("@/lib/catalog/route-auth", () => ({
   authorizeCatalogRouteProject: authorizeCatalogRouteProjectMock,
@@ -22,6 +24,8 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/publish-local", () => {
     vi.resetModules();
     publishAuthoredCapabilityLocalMock.mockReset();
     authorizeCatalogRouteProjectMock.mockReset();
+    capabilityExistsInProjectMock.mockReset();
+    capabilityExistsInProjectMock.mockResolvedValue(true);
     bridgePublishedAuthoredFlowMock.mockReset();
     authorizeCatalogRouteProjectMock.mockResolvedValue({
       projectId: "project-demo",
@@ -189,5 +193,23 @@ describe("/api/projects/[slug]/catalog/caps/[capId]/publish-local", () => {
     expect(response.status).toBe(422);
     expect(body.code).toBe("CONFIG");
     expect(publishAuthoredCapabilityLocalMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the capability is missing or belongs to another project", async () => {
+    capabilityExistsInProjectMock.mockResolvedValue(false);
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      new NextRequest(
+        "http://localhost/api/projects/demo/catalog/caps/cap-x/publish-local",
+        { method: "POST" },
+      ),
+      { params: Promise.resolve({ slug: "demo", capId: "cap-x" }) },
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ code: "NOT_FOUND" });
+    expect(publishAuthoredCapabilityLocalMock).not.toHaveBeenCalled();
+    expect(bridgePublishedAuthoredFlowMock).not.toHaveBeenCalled();
   });
 });
