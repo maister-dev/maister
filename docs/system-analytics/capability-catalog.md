@@ -142,7 +142,11 @@ stateDiagram-v2
 ```mermaid
 flowchart TD
     Start([POST publish-local]) --> Load[load cap + active draft by project]
-    Load --> Stale{draft_version matches?}
+    Load --> Archived{lifecycle == ARCHIVED?}
+    Archived -- yes --> C409a[409 CONFLICT<br/>cannot publish]
+    Archived -- no --> Lock{edit-lock held?<br/>sessionId to assertHoldsLock,<br/>headless to no foreign live lock}
+    Lock -- no --> C409lock[409 CONFLICT<br/>edit_lock_not_held]
+    Lock -- yes --> Stale{draft_version matches?}
     Stale -- no --> C409[409 CONFLICT]
     Stale -- yes --> Collision{non-authored project row<br/>same kind+slug?}
     Collision -- yes --> C409b[409 CONFLICT]
@@ -291,34 +295,70 @@ stateDiagram-v2
     HeldByMe --> Free: release on close or pagehide
     HeldByMe --> Free: TTL expiry
     Free --> HeldByOther: another user acquires
-    HeldByOther --> HeldByMe: same-user or expired takeover
-    HeldByOther --> Free: holder releases or expires
+    HeldByOther --> Free: holder releases, expires, or is deleted
+    Free --> HeldByMe: lazy takeover of an expired or orphaned lock
 ```
 
+An orphaned lock (holder row deleted — the FK is `ON DELETE SET NULL`, so
+`locked_by_user_id` goes NULL while the session id and TTL survive) counts as
+**Free** everywhere: `readLockState` requires a non-null `locked_by_user_id` for
+liveness, `acquireLock` takes such a row, and `assertHoldsLock` /
+`assertNoForeignLiveLock` both treat it as unheld. Without that arm the row
+would read "held" and be un-acquirable for a full TTL while headless writes
+sailed past the foreign-lock refusal.
+
 Acquire is an allow-list: the row is taken iff free, held by THIS session, held
-by THIS user in any session, or expired (lazy stale takeover — no sweeper).
-`heldByMe=false` in an acquire response means another user holds a live lock and
-the editor renders read-only; there is no 409 — the state is the signal. A
-failed refresh IS a 409 (`CONFLICT`), because that session was expired or taken
-over.
+by THIS user in any session, or expired (lazy stale takeover — no sweeper) — but
+NEVER on an `ARCHIVED` row (archiving clears the lock columns, so an acquire
+racing an archive must not re-stamp a lock that `lock-refresh` / `lock-release`
+could never clear). `heldByMe=false` in an acquire response means another user
+holds a live lock and the editor renders read-only; there is no 409 — the state
+is the signal. A failed refresh IS a 409 (`CONFLICT`), because that session was
+expired or taken over. `refreshLock`, `releaseLock`, and `assertHoldsLock` match
+BOTH `locked_by_session` and `locked_by_user_id`: the session id is a client-
+minted bearer token, so pairing it with the authenticated user stops a leaked
+session from being replayed by a different user.
 
 **Seam gating (allow-list, evaluated INSIDE the `draft_version` CAS transaction,
-on the tx handle, right after `loadCapability`):**
+on the tx handle, after `loadCapability` AND the `ARCHIVED` immutability check,
+before the `draft_version` CAS — except on archive, where it runs after the
+already-`ARCHIVED` idempotent early return). Immutability dominates the lock: an
+`ARCHIVED` row is refused with its "immutable"/"cannot publish" reason BEFORE the
+lock is consulted, so a concurrent-archive race never surfaces a misleading
+`edit_lock_not_held`.**
 
 | Action | `sessionId` | Lock state | Outcome |
 | --- | --- | --- | --- |
-| update draft / publish-local | present | this session holds live | proceed to CAS |
-| update draft / publish-local | present | not held by this session | `CONFLICT` `edit_lock_not_held` |
+| update draft / publish-local | any | capability is `ARCHIVED` | `CONFLICT` immutable / cannot publish (checked BEFORE the lock) |
+| update draft / publish-local | present | this session + user hold live | proceed to CAS |
+| update draft / publish-local | present | not held by this session, or session belongs to another user | `CONFLICT` `edit_lock_not_held` |
 | update draft / publish-local | absent (headless / no-JS) | free / expired / mine | proceed to CAS (today's behavior) |
 | update draft / publish-local | absent | LIVE lock of ANOTHER user | `CONFLICT` `edit_lock_not_held` |
-| archive | never sent | free / expired / mine | proceed |
-| archive | never sent | LIVE lock of ANOTHER user | `CONFLICT` `edit_lock_not_held` |
+| archive (not yet archived) | never sent | free / expired / mine | proceed — and the archive write CLEARS the lock columns |
+| archive (not yet archived) | never sent | LIVE lock of ANOTHER user | `CONFLICT` `edit_lock_not_held` |
+| archive (already `ARCHIVED`) | never sent | any, incl. foreign live lock | `200` idempotent no-op — the early return precedes the lock assert, so no refusal is possible |
 | create (brain auto-draft / seed-from-revision / CLI import) | never sent | any | proceed — creates are lock-free |
 
+Being inside the transaction NARROWS the check→write window; it does not close
+it. The connection runs at READ COMMITTED and the assert takes no `FOR UPDATE`,
+so a concurrent `acquireLock` can still commit between the assert and the CAS.
+The `draft_version` CAS — not the lock — is what makes the write correct.
+
 The `draft_version` CAS is unchanged: a lock HOLDER submitting a stale
-`expectedDraftVersion` still receives the stale-draft `CONFLICT`. A missing,
-foreign-project, or `ARCHIVED` capability on the `lock-refresh` / `lock-release`
-routes returns `404` (mirrors the local-packages `status !== "active"` rule).
+`expectedDraftVersion` still receives the stale-draft `CONFLICT`.
+
+**Missing capability is `404` across the whole caps family.** `lock-refresh` /
+`lock-release` refuse a missing, foreign-project, or `ARCHIVED` capability with
+`404` (mirrors the local-packages `status !== "active"` rule). `GET /caps/
+{capId}`, `PATCH /draft`, `publish-local`, and `archive` probe
+`capabilityExistsInProject` before entering the service and answer `404`
+likewise — that probe deliberately applies NO lifecycle filter, so an `ARCHIVED`
+capability still reaches its `CONFLICT` "immutable" refusal instead of reading as
+absent. Because the immutability check now precedes the lock assert, that
+refusal is reached on BOTH the interactive (`sessionId`) and headless paths — a
+save racing a concurrent archive gets "immutable", not `edit_lock_not_held`. `graph` and `diff` already answered `404` by mapping the service's
+not-found `CONFIG`. The service-layer `loadCapability` still throws `CONFIG`
+because it has no HTTP vocabulary; translating it is the route's job.
 
 ## Package body contract
 

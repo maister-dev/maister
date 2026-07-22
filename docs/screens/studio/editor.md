@@ -364,6 +364,13 @@ The local editor works against the local-package working-dir seam:
   enforcement.
 - Lock refresh/release routes keep a single editing session writable; a second
   session is read-only until it acquires the lock.
+- The authored-capability editor at `/flows/{projectSlug}/{capId}` carries the
+  SAME session edit-lock (ADR-149) over `authored_capabilities` lock columns:
+  acquire on open, 60s keep-alive, ordered release, a read-only banner naming
+  the holder, and a hidden `sessionId` on the save/publish forms. Save/publish
+  stay disabled until a server round-trip CONFIRMS the lock, so an optimistic
+  first render cannot submit a write the seam will refuse. Behavior contract:
+  [capability-catalog.md](../../system-analytics/capability-catalog.md).
 - The local-workspace and Studio-overview **Cut version** controls use
   `POST /api/studio/local-packages/{id}/cut-version` to install the working dir
   as a `local-<digest>` `package_installs` revision a member can then attach;

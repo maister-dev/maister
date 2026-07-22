@@ -52,7 +52,7 @@ Where each capability lives **today** (all Implemented):
 | Attach / detach / upgrade / trust → project | board `?tab=packages` | `components/board/panels/project-packages-section.tsx`, `project-package-contents.tsx`, `project-local-packages.tsx`, `package-actions.tsx` |
 | Package bill-of-materials | `/projects/{slug}/package-installs/{attachmentId}` | that page |
 | Browse package (graph + yaml + files) + Fork | `/projects/{slug}/packages/{flowRefId}` | `package-viewer.tsx`, `flow-graph-view-section.tsx`, `code-editor.tsx`, `package-fork-button.tsx` |
-| Author/edit a Flow (Graph · YAML · Diff + file editors) | `/flows/{projectSlug}/{capId}` | `flow-editor-tabs.tsx`, `flow-graph-editor.tsx`, `package-files-editor.tsx`, `artifact-editors/*` |
+| Author/edit a Flow (Graph · YAML · Diff + file editors) | `/flows/{projectSlug}/{capId}` | `authored-cap-lock-shell.tsx` (session edit-lock, ADR-149), `flow-editor-tabs.tsx`, `flow-graph-editor.tsx`, `package-files-editor.tsx`, `artifact-editors/*` |
 | Attach agents + triggers | board `?tab=agents` | `components/board/panels/agents-attach-panel.tsx` |
 | MCP catalogs | `/mcps` (platform) · `?tab=mcps` (project) | `mcp-servers-panel.tsx`, `mcp-server-modal.tsx` |
 

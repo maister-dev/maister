@@ -8630,6 +8630,7 @@ paths:
               schema: { $ref: "#/components/schemas/AuthoredCapabilityDetail" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
@@ -8665,6 +8666,7 @@ paths:
                 { $ref: "#/components/schemas/AuthoredCapabilityRevision" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
@@ -8679,7 +8681,9 @@ paths:
         another user holds a live lock (no 409 — the state is the signal).
         `mode=refresh` extends the TTL only for the caller's live lock, else
         `409 CONFLICT`. Requires the `manageCatalog` project action. A missing,
-        foreign-project, or `ARCHIVED` capability returns `404`.
+        foreign-project, or `ARCHIVED` capability returns `404`; an unknown or
+        archived project slug returns `409` (project precondition, resolved
+        before the capability is looked up).
       operationId: refreshAuthoredCapabilityLock
       parameters:
         - name: slug
@@ -8722,9 +8726,11 @@ paths:
       summary: (ADR-149) Release the authored-capability edit-lock
       description: |
         Implemented, ADR-149. Session-fenced release; clears the lock iff the
-        caller's session holds it (idempotent). Requires the `manageCatalog`
-        project action. A missing, foreign-project, or `ARCHIVED` capability
-        returns `404`.
+        caller's session AND user hold it (idempotent — release itself never
+        `409`s). Requires the `manageCatalog` project action. A missing,
+        foreign-project, or `ARCHIVED` capability returns `404`; an unknown or
+        archived project slug returns `409` (project precondition, the only
+        `409` this route can emit).
       operationId: releaseAuthoredCapabilityLock
       parameters:
         - name: slug
@@ -8758,6 +8764,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
   /api/projects/{slug}/catalog/caps/{capId}/publish-local:
@@ -8801,81 +8808,53 @@ paths:
       responses:
         "200":
           description: |
-            Published local revision. For `kind=flow` (M27), additionally
-            includes the bridged `flows` and `flow_revisions` row ids.
+            Published local revision. The revision's fields are returned FLAT —
+            the handler spreads `result.revision` into the response body; there
+            is NO `revision` envelope. For `kind=flow` (M27) the bridged
+            `flows` / `flow_revisions` row ids are added alongside them.
           content:
             application/json:
               schema:
-                type: object
-                required: [revision]
-                properties:
-                  revision:
-                    $ref: "#/components/schemas/AuthoredCapabilityRevision"
-                  flowRowId:
-                    type: string
-                    format: uuid
-                    description: |
-                      (M27) Present only for `kind=flow`. The `flows.id` of
-                      the bridged executable flow row.
-                  revisionId:
-                    type: string
-                    format: uuid
-                    description: |
-                      (M27) Present only for `kind=flow`. The
-                      `flow_revisions.id` produced by the bridge.
+                allOf:
+                  - $ref: "#/components/schemas/AuthoredCapabilityRevision"
+                  - type: object
+                    properties:
+                      flowRowId:
+                        type: string
+                        format: uuid
+                        description: |
+                          (M27) Present only for `kind=flow`. The `flows.id` of
+                          the bridged executable flow row.
+                      revisionId:
+                        type: string
+                        format: uuid
+                        description: |
+                          (M27) Present only for `kind=flow`. The
+                          `flow_revisions.id` produced by the bridge.
               examples:
                 rule-skill-publish:
-                  summary: Non-flow publish (M25)
+                  summary: Non-flow publish (M25) — revision fields at top level
                   value:
-                    revision:
-                      id: rev-abc123
-                      capabilityId: cap-xyz
-                      projectId: proj-000
-                      kind: rule
-                      revisionNumber: 1
-                      draftVersion: 2
-                      lifecycle: PUBLISHED
-                      title: My rule
-                      body: "Always respond in English."
-                      manifest: null
-                      schemaVersion: 1
-                      contentHash: sha256:def
-                      publishedAt: "2026-06-08T12:00:00Z"
-                      archivedAt: null
-                      createdAt: "2026-06-08T12:00:00Z"
+                    id: rev-abc123
+                    capabilityId: cap-xyz
+                    projectId: proj-000
+                    kind: rule
+                    revisionNumber: 1
+                    lifecycle: PUBLISHED
                 flow-publish-with-bridge:
-                  summary: Flow publish with executable bridge (M27)
+                  summary: Flow publish (M27) — revision fields plus bridge ids
                   value:
-                    revision:
-                      id: rev-def456
-                      capabilityId: cap-flow-001
-                      projectId: proj-000
-                      kind: flow
-                      revisionNumber: 2
-                      draftVersion: 4
-                      lifecycle: PUBLISHED
-                      title: Bugfix v2
-                      body: null
-                      manifest:
-                        schemaVersion: 1
-                        name: Bugfix
-                        compat: { engine_min: 3.0.0 }
-                        nodes:
-                          - id: implement
-                            type: ai_coding
-                            action:
-                              prompt: "Implement {{ task.prompt }}"
-                            transitions:
-                              success: done
-                      schemaVersion: 1
-                      contentHash: sha256:abc
-                      publishedAt: "2026-06-08T12:00:00Z"
-                      archivedAt: null
-                      createdAt: "2026-06-08T12:00:00Z"
-                    flowRowId: f1b2c3d4-0000-0000-0000-000000000001
-                    revisionId: a1b2c3d4-0000-0000-0000-000000000002
+                    id: rev-def456
+                    capabilityId: cap-flow
+                    projectId: proj-000
+                    kind: flow
+                    revisionNumber: 3
+                    lifecycle: PUBLISHED
+                    flowRowId: 6f1c9a2e-0d4b-4a77-9d51-8c2f1e5b7a03
+                    revisionId: 2b8e7d10-5c3a-4f62-b1d9-7e0a4c6f9d85
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
@@ -8904,6 +8883,7 @@ paths:
               schema: { $ref: "#/components/schemas/AuthoredCapability" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
@@ -9806,9 +9786,9 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-096 — Designed) Refresh the session edit-lock
+      summary: (ADR-096 — Implemented) Refresh the session edit-lock
       description: |
-        (ADR-096 — Designed.) Editor keep-alive; mirrors
+        (ADR-096 — Implemented.) Editor keep-alive; mirrors
         `POST /api/runs/{runId}/activity`. Extends `lock_expires_at` for the
         caller's session iff it holds the live lock.
       operationId: refreshStudioLocalPackageLock
@@ -9846,9 +9826,9 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-096 — Designed) Release the session edit-lock
+      summary: (ADR-096 — Implemented) Release the session edit-lock
       description: |
-        (ADR-096 — Designed.) Session-fenced release; clears the lock iff the
+        (ADR-096 — Implemented.) Session-fenced release; clears the lock iff the
         caller's session holds it (idempotent).
       operationId: releaseStudioLocalPackageLock
       requestBody:
@@ -18892,7 +18872,10 @@ components:
           description: |
             (ADR-093, additive) Thrower-set client-facing context — e.g. the
             publish `{reason: "upstream_moved", canSync, localPackageId}`
-            (ADR-132) or the commit gate's `{invalidArtifacts: [...]}`.
+            (ADR-132), the commit gate's `{invalidArtifacts: [...]}`, or the
+            editor edit-lock's `{reason: "edit_lock_not_held"}` (ADR-149) —
+            the discriminator that separates a lock refusal from a stale-CAS
+            refusal, since both surface as 409 `CONFLICT`.
             Never a server-only handle.
 
     CloneFailureReason:

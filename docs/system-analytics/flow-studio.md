@@ -142,20 +142,30 @@ sequenceDiagram
 
     Op->>Ed: edit nodes / edges / settings
     Ed->>W: PATCH /catalog/caps/{capId}/draft\n(manifest, expectedDraftVersion, optional sessionId)
-    W->>W: validateGraphManifest + compileManifest
-    alt invalid manifest
-        W-->>Ed: 422 MaisterError CONFIG (NOT persisted)
-    else valid
+    W->>DB: capabilityExistsInProject
+    alt missing / cross-project
+        W-->>Ed: 404 NOT_FOUND
+    else present
         W->>DB: BEGIN tx + loadCapability
-        W->>W: assert edit-lock on tx handle (assertHoldsLock or assertNoForeignLiveLock)
-        alt foreign live lock / not held
-            W-->>Ed: 409 CONFLICT edit_lock_not_held
-        else lock ok
-            W->>DB: UPDATE authored draft CAS (draft_version)
-            alt stale CAS
-                W-->>Ed: 409 MaisterError CONFLICT
-            else ok
-                W-->>Ed: 200 saved draft
+        alt capability ARCHIVED
+            W-->>Ed: 409 CONFLICT immutable (checked before the lock)
+        else editable
+            W->>W: assert edit-lock on tx handle (assertHoldsLock or assertNoForeignLiveLock)
+            alt foreign live lock / not held / session user mismatch
+                W-->>Ed: 409 CONFLICT edit_lock_not_held
+            else lock ok
+                W->>W: assertDraftVersion (expected vs loaded row)
+                alt stale draft version
+                    W-->>Ed: 409 CONFLICT stale authored capability draft
+                else current
+                    W->>W: validateGraphManifest + compileManifest
+                    alt invalid manifest
+                        W-->>Ed: 422 MaisterError CONFIG (NOT persisted)
+                    else valid
+                        W->>DB: UPDATE ... WHERE draft_version = expected (SQL CAS backstop)
+                        W-->>Ed: 200 saved draft
+                    end
+                end
             end
         end
     end
@@ -164,7 +174,7 @@ sequenceDiagram
     W->>FS: installAuthoredFlowPackageBridge(trusted_by_policy)
     FS->>DB: intent row Installing (two-phase)
     FS->>DB: finalize Installed\ntrustStatus=trusted_by_policy\nexec_trust=untrusted
-    W-->>Op: 200 {revision, flowRowId, revisionId}
+    W-->>Op: 200 revision fields (flat) + flowRowId/revisionId for kind=flow
     Op->>W: POST /flows/{flowId}/trust-executable
     W->>DB: exec_trust=trusted
     W->>FS: runRevisionSetup (gated on exec_trust, sentinel once)
@@ -189,7 +199,7 @@ testable):
 8. Launch MUST snapshot the resolved set into `runs.resolved_capability_set`; the runner MUST read the snapshot, never the live catalog; an edit/publish during a run MUST NOT mutate that run.
 9. The editor MUST be read-write only for users with `manageCatalog`; the run-scoped view stays read-only (`readBoard`).
 10. No engine bump; no new `runs.status`; presentation stays additive/runner-ignored.
-11. The editor edit-lock assert MUST run on the tx handle immediately after `loadCapability` and BEFORE the `draft_version` CAS: a present `sessionId` MUST hold a live lock (else `CONFLICT` `edit_lock_not_held`), an absent `sessionId` MUST be refused only on a foreign live lock, archive MUST apply the foreign-live refusal only, and all create paths MUST stay lock-free. (Implemented, ADR-149)
+11. The editor edit-lock assert MUST run on the tx handle after `loadCapability` and the `ARCHIVED` immutability check (immutability dominates the lock) and BEFORE the `draft_version` CAS: a present `sessionId` MUST hold a live lock owned by the same user (else `CONFLICT` `edit_lock_not_held`), an absent `sessionId` MUST be refused only on a foreign live lock, archive MUST apply the foreign-live refusal only AFTER its already-`ARCHIVED` idempotent early return, and all create paths MUST stay lock-free. (Implemented, ADR-149)
 
 ## Edge cases
 

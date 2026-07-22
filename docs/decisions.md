@@ -12823,11 +12823,22 @@ indication, no read-only mode.
   routes use — authored caps are project-scoped. A missing, foreign-project, or
   `ARCHIVED` capability returns `404`.
 - Run the lock seam INSIDE the existing `draft_version` CAS transaction, on the
-  tx handle, immediately after `loadCapability`: a present `sessionId` →
-  `assertHoldsLock`; an absent `sessionId` → `assertNoForeignLiveLock(userId)`
-  (refuse only a LIVE lock held by another user); archive never carries a
-  `sessionId` and applies only the foreign-live refusal; all create paths
-  (brain auto-draft, seed-from-revision, CLI import) stay lock-free.
+  tx handle, after `loadCapability` and the `ARCHIVED` immutability check
+  (immutability dominates the lock, so a save/publish racing a concurrent
+  archive returns "immutable"/"cannot publish", not `edit_lock_not_held`): a
+  present `sessionId` → `assertHoldsLock`; an absent `sessionId` →
+  `assertNoForeignLiveLock(userId)` (refuse only a LIVE lock held by another
+  user); archive never carries a `sessionId` and applies only the foreign-live
+  refusal, AFTER its already-`ARCHIVED` idempotent early return; all create
+  paths (brain auto-draft, seed-from-revision, CLI import) stay lock-free.
+- Bind every lock write to BOTH `locked_by_session` AND `locked_by_user_id`
+  (`assertHoldsLock` / `refreshLock` / `releaseLock`), and refuse `acquireLock`
+  on an `ARCHIVED` row: the session id is a client-minted bearer token, so
+  pairing it with the authenticated user stops a leaked session from being
+  replayed by a different user, and the archived-acquire guard stops a lock
+  being stamped on an un-clearable immutable row. The client session id uses
+  `crypto.getRandomValues` when `crypto.randomUUID` is unavailable (a
+  non-secure-context self-host would otherwise get a predictable id).
 - Make `sessionId` OPTIONAL at every parse boundary (a hidden form input;
   progressive enhancement — a no-JS submit degrades to the headless seam).
   Reuse the existing `CONFLICT` error with `details.reason = "edit_lock_not_held"`
@@ -12840,9 +12851,13 @@ indication, no read-only mode.
 
 - Migration `0118` adds three nullable columns; no backfill, no index; the
   journal `when` stays strictly monotonic.
-- The stale-draft `CONFLICT` still escapes to the root error boundary for TRUE
-  races; the lock makes the concurrent-editor path unreachable in the UI
-  (buttons gate on `heldByMe`). Graceful stale-draft UX is a follow-up candidate.
+- Save/publish buttons gate on `heldByMe && confirmed` — the confirmed server
+  round-trip, not just the optimistic RSC snapshot. A lost-lock `CONFLICT` from a
+  server action is caught by a segment-level
+  `app/(app)/flows/[projectSlug]/[capId]/error.tsx` (NOT the root boundary), and
+  the read-only banner carries a `retry` affordance that re-acquires in place
+  once the lock frees. The residual buffer-loss on that specific crash, and
+  graceful stale-draft UX, remain follow-up candidates.
 - `archiveAuthoredCapability` still has no CAS; the foreign-live-lock refusal
   narrows but does not close the archive-vs-save race. Full CAS on archive is a
   documented follow-up candidate.

@@ -35,21 +35,26 @@ layered, not substituted.
 | **ACL-04** | The lock seam runs INSIDE the existing `draft_version` CAS transaction, immediately after `loadCapability(...)`, asserting on the transaction handle: a present `sessionId` → `assertHoldsLock`; an absent `sessionId` → `assertNoForeignLiveLock(userId)` (refuse only a LIVE lock held by ANOTHER user); archive takes no `sessionId` and applies only the foreign-live refusal. All create paths (brain auto-draft, seed-from-revision, CLI import) stay lock-free. |
 | **ACL-05** | The `draft_version` CAS is preserved unchanged: a lock HOLDER submitting a stale `expectedDraftVersion` still receives the stale-draft `CONFLICT`; an absent `sessionId` with a free or expired lock behaves EXACTLY as it does today (no regression for headless / no-JS callers). |
 | **ACL-06** | The client acquires the lock on editor open, refreshes on a 60s keep-alive, releases through `createLockOpQueue` (reused verbatim so a release can never overtake a newer same-session acquire — the `13d9d1674` race), sends a `pagehide` beacon, renders from an optimistic RSC lock snapshot (no read-only flash), and shows a read-only banner with the holder label when the lock is not held. All copy is EN + RU. |
-| **ACL-07** | The save and publish forms carry the `sessionId` as a hidden input, optional at parse (progressive enhancement — a no-JS submit degrades to the headless seam). A foreign write is refused with `CONFLICT` `details.reason = "edit_lock_not_held"`. |
+| **ACL-07** | The save and publish forms carry the `sessionId` as a hidden input, optional at parse (progressive enhancement — a no-JS submit degrades to the headless seam). A foreign write is refused with `CONFLICT` `details.reason = "edit_lock_not_held"`, and that `details` payload MUST survive HTTP serialization (`catalogErrorResponse` forwards `MaisterError.details`) — it is the only thing distinguishing a lock refusal from a stale-CAS refusal, since both are 409. |
 | **ACL-08** | Both editors consume ONE shared `useEditorLock` hook. The studio editor's observable behavior is unchanged after the migration. |
 | **ACL-09** | Every contract surface is closed: ADR-149; `capability-catalog.md` lock state machine; `flow-studio.md` save/publish sequence; `database-schema.md`; `docs/db/erd.md`; OpenAPI (the two new paths, the `sessionId` on PATCH draft, and the two pre-existing local-packages lock spec gaps); the `docs/configuration.md` shared-TTL note. |
 | **ACL-10** | Test discipline: RED → GREEN (→ REFACTOR) per implementation phase; coverage boundaries with zero overlap (see below); no trivial tests; the suite is green (or explicitly quarantined) at each phase checkpoint. |
 
 ### Coverage boundaries (ACL-10)
 
-- Lock SEMANTICS end-to-end live ONLY in `authored-lock.integration.test.ts`.
-- Route handler tests mock the lock helpers (assert wiring / status codes, not
-  semantics).
-- Seam-matrix tests assert ONLY gating (present/absent `sessionId` × free /
-  mine / foreign-live / stale-CAS) — no takeover/expiry re-runs.
-- Queue reorder semantics stay ONLY in the existing `lock-op-queue.test.ts`.
-- The hook controller test asserts wiring/state (issue order, refresh-fail
-  degrade, teardown release, rejection non-wedging) — not queue internals.
+- Lock SEMANTICS end-to-end live ONLY in `authored-lock.integration.test.ts` —
+  including takeover/expiry/orphan MECHANICS and the concurrent-acquire race.
+- Route handler tests mock the lock helpers (assert wiring / status codes /
+  call arguments, not semantics).
+- Seam-matrix tests assert ONLY gating: `sessionId` present or absent × the
+  lock state the seam branches on (free / expired / mine / foreign-live) ×
+  stale-CAS. A cell may USE an expired lock to reach its branch — what it must
+  not do is re-verify HOW expiry or takeover works; that belongs above.
+- Queue reorder semantics stay ONLY in `lock-op-queue.test.ts`. The hook
+  controller test asserts controller wiring/state (issue order through the
+  queue, refresh-fail degrade, rejection non-wedging, beacon bypasses the
+  queue); `createHttpEditorLockTransport` is covered separately against a
+  stubbed `fetch` (URLs, `!ok` throw, keepalive, beacon fallback).
 
 ## Acceptance criteria
 
@@ -78,11 +83,19 @@ layered, not substituted.
   no CAS today — an archive racing a draft-save silently wins. The foreign-live
   refusal added here narrows the race; full CAS on archive is a documented
   follow-up candidate.
-- **Known gap (pre-existing, narrowed not redesigned):** the stale-draft
-  `CONFLICT` from save/publish still escapes uncaught to the root error
-  boundary. The lock makes the concurrent-editor path unreachable in the UI
-  (buttons gate on `heldByMe`), so the crash path remains only for true races;
-  graceful stale-draft UX is a follow-up candidate.
+- **Post-review hardening (2026-07-22):** a lost-lock/stale-draft `CONFLICT` from
+  save/publish is now caught by a segment-level
+  `app/(app)/flows/[projectSlug]/[capId]/error.tsx` instead of unwinding to the
+  ROOT boundary, and the read-only banner carries a `retry` affordance that
+  re-acquires in place once the lock frees. The buttons still gate on
+  `canManage && heldByMe && confirmed` (the `confirmed` arm keeps save/publish
+  inert during the acquire round-trip). Residual buffer-loss on the specific
+  crash, and graceful stale-draft UX, remain follow-up candidates. Lock writes
+  now also bind `locked_by_user_id` (a leaked session cannot be replayed by
+  another user — STRICTER than the `lock.ts` twin, which fences on session
+  only), `acquireLock` refuses an `ARCHIVED` row, and the immutability check
+  precedes the lock so an archived-cap write returns "immutable", not
+  `edit_lock_not_held`.
 
 ## Traceability
 

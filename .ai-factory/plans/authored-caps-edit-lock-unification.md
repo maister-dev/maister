@@ -51,7 +51,7 @@ keeping `draft_version` CAS as the write-time correctness backstop
 
 Coverage boundaries (ACL-10): lock SEMANTICS end-to-end ONLY in
 `authored-lock.integration.test.ts` (T4); route handlers mock lock helpers
-(T5); seam matrix tests ONLY gating, никаких takeover/expiry re-runs (T6);
+(T5); seam matrix tests ONLY gating, no takeover/expiry re-runs (T6);
 queue reorder semantics ONLY in `lock-op-queue.test.ts` (existing); hook
 controller test asserts wiring/state, not queue internals (T7).
 
@@ -64,7 +64,7 @@ controller test asserts wiring/state, not queue internals (T7).
 | ARCHIVED / missing / foreign-project capability on lock routes | **404** `notFoundResponse` — mirrors local-packages `status !== "active"`; recorded in ADR-149. | `lock-refresh/route.ts:52-54` precedent |
 | AI-assistant path needing the lock? | **None exists.** `StudioAiTab` + `/assistant` routes are local-packages-only; `FlowEditorTabs` mounts on the flows page without any AI props. Brain proposals mint NEW draft rows — creates are lock-free by design. | Explore report §3; `flow-editor-tabs.tsx:117-140` props unused on flows page |
 | RSC initial lock snapshot? | Yes — flows `page.tsx` is RSC; mirror the studio page: authored `readLockState(capId, "")` + optimistic `heldByMe: !held` (ADR-105 pattern, no read-only flash). | `app/(app)/studio/edit/[id]/[[...path]]/page.tsx:152-246` |
-| Lock seam location | **Service layer, inside the same transaction as the `draft_version` CAS** — immediately after `loadCapability(...)` in `updateAuthoredDraft` / `publishAuthoredCapabilityLocal` / `archiveAuthoredCapability`; asserts run ON THE TX HANDLE (no TOCTOU, unlike the route-layer precedent in local-packages `commit/route.ts:63`). | `authored-service.ts:417,574,665 → loadCapability :799-818` |
+| Lock seam location | **Service layer, inside the same transaction as the `draft_version` CAS** — immediately after `loadCapability(...)` in `updateAuthoredDraft` / `publishAuthoredCapabilityLocal` / `archiveAuthoredCapability`; asserts run ON THE TX HANDLE, which NARROWS the check→write window versus the route-layer precedent in local-packages `commit/route.ts:63` but does not eliminate it (READ COMMITTED + no `FOR UPDATE`; the `draft_version` CAS remains the correctness backstop). | `authored-service.ts` seam calls → `loadCapability` |
 | Headless callers (PATCH route, publish-local/archive with `assertEmptyBody`, CLI import, brain auto-draft) | `sessionId` **optional** at the seam: present → `assertHoldsLock`; absent → `assertNoForeignLiveLock` (refuse only a LIVE lock of ANOTHER user). Archive never takes `sessionId`. Creates lock-free. Progressive enhancement: a no-JS form submit lacks `sessionId` → headless semantics, graceful. | `service.integration.test.ts:629` precedent |
 | Client hook location | `web/components/flows/use-editor-lock.ts` — hooks live beside components (`use-new-local-package.ts` precedent), pure testable controller core + thin React binding. | `components/studio/use-new-local-package.ts` |
 | TTL knob | Reuse `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES` via `localPackageLockMinutes()` — one "editor lock TTL" concept, **no new env var → no deployment wiring** (documented in `docs/configuration.md`). | skill-context deployment-touchpoints rule |
