@@ -21,6 +21,7 @@ import {
   scratchRuns as scratchRunsTable,
   tasks as tasksTable,
   domainEvents as domainEventsTable,
+  evaluationParticipants as evaluationParticipantsTable,
   webhookEvents as webhookEventsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
@@ -66,6 +67,7 @@ type Tables = {
   run_sessions: Row[];
   run_sync_attempts: Row[];
   tasks: Row[];
+  evaluation_participants: Row[];
 };
 
 const dbState: {
@@ -90,6 +92,10 @@ const dbState: {
     // resolver attempt. Empty here → the guard no-ops for every non-resolver run.
     run_sync_attempts: [],
     tasks: [],
+    // ADR-146 D15: the budget_breach restart checks launched-evaluation lineage
+    // (isLaunchedEvaluationRun). Empty here → not a launched participant, so the
+    // restart takes the plain force-relaunch path like a non-member.
+    evaluation_participants: [],
   },
   updates: [],
 };
@@ -110,6 +116,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === runSessionsTable) return "run_sessions";
   if (t === runSyncAttemptsTable) return "run_sync_attempts";
   if (t === tasksTable) return "tasks";
+  if (t === evaluationParticipantsTable) return "evaluation_participants";
   throw new Error("unknown table");
 }
 
@@ -349,6 +356,7 @@ beforeEach(async () => {
     run_sessions: [],
     run_sync_attempts: [],
     tasks: [],
+    evaluation_participants: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();

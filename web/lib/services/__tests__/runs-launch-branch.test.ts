@@ -243,6 +243,15 @@ vi.mock("@/lib/experiments/membership", () => ({
     mocks.deriveExperimentMembershipFromSource,
 }));
 
+// ADR-146 D15: launchRun also derives evaluation-participation inheritance from
+// the source run. These tests exercise EXPERIMENT membership only, so keep the
+// evaluation analogue neutral (no inheritance) and off the DB — the real query
+// innerJoins evaluation_participants/studies, which the fake db does not model.
+vi.mock("@/lib/evaluations/membership", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/evaluations/membership")>()),
+  deriveEvaluationParticipationFromSource: vi.fn().mockResolvedValue(null),
+}));
+
 // Mock only the two version-adopt entry points runs.ts calls; the rest of the
 // module stays real (no unexpected-undefined for other importers).
 const versionsMock = vi.hoisted(() => ({
