@@ -713,4 +713,52 @@ describe("ADR-149 — controlled-launch seam idempotency (T1.2)", () => {
 
     expect(b.runId).not.toBe(a.runId);
   });
+
+  it("threads a recipe hard-pin slot binding onto the run's session runner", async () => {
+    const { defaultLaunchRunSeam } = await import(
+      "@/lib/evaluations/launch-seam"
+    );
+    const taskId = await seedTask();
+    const studyId = randomUUID();
+    const batchItemId = randomUUID();
+
+    const seam = defaultLaunchRunSeam(ctx);
+    const { runId } = await seam({
+      studyId,
+      projectId,
+      taskId,
+      recipeId: randomUUID(),
+      recipeDefinition: {
+        schemaVersion: 1,
+        flow: {
+          flowRefId: "bugfix",
+          flowRevisionId: "rev",
+          inputContractDigest: "d",
+          artifactContractDigest: "d",
+        },
+        inputs: { taskSnapshotRef: "s", formValues: {} },
+        executionPolicy: { preset: "supervised" },
+        slotBindings: {
+          "session:default": { mode: "runner", runnerId: "claude-default" },
+        },
+        nodeAgentBindings: [],
+        materializationIntent: {
+          packagePins: [],
+          capabilityRequirements: [],
+          allowedProjectOverlays: [],
+        },
+        promotionHold: { source: "evaluation_study" },
+      } as never,
+      replicateOrdinal: 1,
+      launchKey: batchItemId,
+      requestedByUserId: null,
+    });
+
+    const [session] = await db
+      .select({ runnerId: schema.runSessions.runnerId })
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runId));
+
+    expect(session.runnerId).toBe("claude-default");
+  });
 });

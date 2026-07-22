@@ -366,6 +366,12 @@ export type LaunchRunInput = {
   // SAME id and ADOPTS the existing run (partial UNIQUE) rather than launching a
   // second. Server-internal (seam adapter only); never a route body field.
   evaluationBatchItemId?: string;
+  // ADR-149: per-session runner overrides `{ sessionName: runnerId }` from a
+  // controlled recipe's resolved slot bindings, so a launched variant runs on
+  // ITS recipe's chosen runners (not the task default). Threaded into the same
+  // `ephemeralOverrides` the single launch-dialog `runnerId` uses; a concrete
+  // override always wins over the default chain. Seam adapter only.
+  sessionRunnerOverrides?: Record<string, string>;
   // ADR-121 (INV-9): mark this run as auto-DRAINED — stamps runs.queue_admitted_at
   // at insert so it counts toward the per-project `maxInFlightAuto` share and is
   // distinguishable from manual/scratch/resume runs. Set ONLY by the unified
@@ -1108,10 +1114,18 @@ export async function* launchRunStaged(
       sessions: sessionSlots,
       runnerProfiles: manifest.runner_profiles,
       bindings,
-      // The single launch-dialog override applies to the run's primary session.
-      ephemeralOverrides: input.runnerId
-        ? { [primarySessionName]: input.runnerId }
-        : undefined,
+      // The single launch-dialog override applies to the run's primary session;
+      // ADR-149 controlled-recipe per-session overrides apply to their named
+      // sessions. The primary-session override wins on a key collision.
+      ephemeralOverrides:
+        input.runnerId || input.sessionRunnerOverrides
+          ? {
+              ...(input.sessionRunnerOverrides ?? {}),
+              ...(input.runnerId
+                ? { [primarySessionName]: input.runnerId }
+                : {}),
+            }
+          : undefined,
       projectFlow: { defaultRunnerId: projectFlowDefaultRunnerId },
       platformFlow: { defaultRunnerId: revision.defaultRunnerId },
       project: { defaultRunnerId: project.defaultRunnerId },

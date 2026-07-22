@@ -22,14 +22,37 @@ import { launchRun } from "@/lib/services/runs";
 // `autoPromote: false` records the launch opt-out; `allowConcurrent: true`
 // lets N variants × replicates run off one task past the single-active gate.
 //
-// CO-EVOLVE (T6.2 materialization threading): per-recipe slot-runner overrides,
-// the capability overlay, and the pinned flow-revision are NOT yet threaded —
-// `launchRun` does not accept the per-session runner map a recipe carries. Until
-// that lands, a launched variant runs on the task's default flow/runner; the
-// recipe's executionPolicy IS applied. Preflight already refuses an incompatible
-// recipe, so this is a fidelity gap, not a safety one.
+// Materialization: the recipe's HARD-PIN slot bindings (`mode: "runner"`) are
+// threaded as per-session runner overrides, so a launched variant runs on its
+// recipe's chosen runners. Slot keys are `session:<name>` / `consensus:...`;
+// only `session:` slots map to a run session override. INTENT-mode bindings
+// (`mode: "intent"`) still resolve via launchRun's default chain — resolving a
+// typed intent to a concrete runner needs the live catalog and is the remaining
+// co-evolve; the capabilityOverlay and pinned flow-revision are likewise not yet
+// threaded. Preflight already refuses an incompatible recipe, so these are
+// fidelity gaps, not safety ones.
+function sessionRunnerOverridesFromRecipe(
+  recipe: LaunchRunSeamArgs["recipeDefinition"],
+): Record<string, string> {
+  const overrides: Record<string, string> = {};
+
+  for (const [slotKey, target] of Object.entries(recipe.slotBindings)) {
+    if (target.mode === "runner" && slotKey.startsWith("session:")) {
+      overrides[slotKey.slice("session:".length)] = target.runnerId;
+    }
+  }
+
+  return overrides;
+}
+
+type LaunchRunSeamArgs = Parameters<LaunchRunSeam>[0];
+
 export function defaultLaunchRunSeam(ctx: LaunchRunContext): LaunchRunSeam {
   return async (args) => {
+    const sessionRunnerOverrides = sessionRunnerOverridesFromRecipe(
+      args.recipeDefinition,
+    );
+
     const { runId } = await launchRun(
       {
         taskId: args.taskId,
@@ -38,6 +61,9 @@ export function defaultLaunchRunSeam(ctx: LaunchRunContext): LaunchRunSeam {
         evaluationStudyId: args.studyId,
         evaluationBatchItemId: args.launchKey,
         executionPolicy: args.recipeDefinition.executionPolicy,
+        ...(Object.keys(sessionRunnerOverrides).length
+          ? { sessionRunnerOverrides }
+          : {}),
       },
       ctx,
     );
