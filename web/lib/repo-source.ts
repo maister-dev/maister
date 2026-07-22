@@ -498,7 +498,7 @@ export async function resolveProjectSource(body: {
         if ((err as NodeJS.ErrnoException).code === "EEXIST") {
           log.warn(
             { dir },
-            "[FIX] new-empty target appeared concurrently — refusing",
+            "new-empty target appeared concurrently — refusing",
           );
           throw new MaisterError(
             "PRECONDITION",
@@ -507,7 +507,7 @@ export async function resolveProjectSource(body: {
         }
         throw err;
       }
-      log.info({ dir }, "[FIX] new-empty project dir created exclusively");
+      log.info({ dir }, "new-empty project dir created exclusively");
 
       return {
         dir,

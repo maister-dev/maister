@@ -1309,7 +1309,7 @@ export async function runReconcileSweep(
           skipped += 1;
           log.warn(
             { runId: cand.runId, runKind: cand.runKind, reason },
-            "[FIX] reconcile: refusing reattach for non-flow run — skipping",
+            "reconcile: refusing reattach for non-flow run — skipping",
           );
 
           return;

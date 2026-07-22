@@ -477,7 +477,7 @@ export async function runControlledLaunchBatch(
     if (admission.verdict === "halt_kill_switch") {
       log.warn(
         { batchId },
-        "[FIX] controlled recipes kill switch is off; batch drive halted, remaining items left queued",
+        "controlled recipes kill switch is off; batch drive halted, remaining items left queued",
       );
       break;
     }
@@ -503,7 +503,7 @@ export async function runControlledLaunchBatch(
         failed += 1;
         log.warn(
           { batchId, itemId: item.id, reason: admission.reason },
-          "[FIX] launch batch item terminalized before launch",
+          "launch batch item terminalized before launch",
         );
       } else {
         skipped += 1;
@@ -764,7 +764,7 @@ export async function retryFailedBatchItems(
   if (!controlledRecipesEnabled()) {
     log.warn(
       { batchId },
-      "[FIX] controlled recipes kill switch is off; retry refused, items left failed",
+      "controlled recipes kill switch is off; retry refused, items left failed",
     );
 
     return { requeued: 0 };
@@ -793,7 +793,7 @@ export async function retryFailedBatchItems(
   ) {
     log.warn(
       { batchId, studyStatus: study?.status ?? "missing" },
-      "[FIX] study is not launchable; retry refused",
+      "study is not launchable; retry refused",
     );
 
     return { requeued: 0 };
