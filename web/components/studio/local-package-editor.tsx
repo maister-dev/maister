@@ -64,7 +64,11 @@ import {
 import { readApiError } from "@/lib/api-error";
 import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
-import { useEditorLock } from "@/components/flows/use-editor-lock";
+import {
+  formatHolderLabel,
+  useEditorLock,
+  type EditorLockSnapshot,
+} from "@/components/flows/use-editor-lock";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { validatePackageArtifactContent } from "@/lib/flows/artifact-validate";
 import {
@@ -84,11 +88,8 @@ import {
 } from "@/lib/local-packages/working-dir-save";
 
 // Client-projected lock state (Date → ISO string for the RSC boundary).
-export type LockSnapshot = {
-  held: boolean;
-  heldByMe: boolean;
-  holderLabel: string | null;
-};
+// One shape shared with the authored editor via the common hook.
+export type LockSnapshot = EditorLockSnapshot;
 
 type AssistantRunnersResponse = {
   runners: AssistantRunnerSource[];
@@ -1290,7 +1291,7 @@ function LockBanner({
     return (
       <Banner testid="local-editor-readonly" tone="amber">
         {holderLabel
-          ? labels.readOnlyHeld.replace("$holder", holderLabel)
+          ? formatHolderLabel(labels.readOnlyHeld, holderLabel)
           : labels.readOnlyUnknownHolder}
       </Banner>
     );

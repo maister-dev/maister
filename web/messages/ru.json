@@ -575,7 +575,8 @@
     "newFlow": "Новый Flow",
     "editorLock": {
       "readOnlyHeld": "Редактирует $holder — только чтение.",
-      "readOnlyUnknownHolder": "Редактируется в другой сессии — только чтение."
+      "readOnlyUnknownHolder": "Редактируется в другой сессии — только чтение.",
+      "retry": "Повторить"
     },
     "projects": "Проекты",
     "authored": "Авторские",

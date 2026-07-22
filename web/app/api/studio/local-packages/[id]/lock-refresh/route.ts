@@ -38,7 +38,11 @@ export async function POST(
   try {
     const user = await requireGlobalRole("member");
     const { id } = await params;
-    const parsed = bodySchema.safeParse(await req.json());
+    // An absent or malformed body must reach the documented 422, not a 500:
+    // `req.json()` throws SyntaxError on an empty body and `errorResponse`
+    // has no SyntaxError branch, so it would surface as CRASH.
+    const raw = await req.json().catch(() => null);
+    const parsed = bodySchema.safeParse(raw);
 
     if (!parsed.success) {
       return NextResponse.json(

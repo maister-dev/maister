@@ -106,7 +106,13 @@ export default async function FlowDetailPage({
     }
   }
 
-  const lock = await readLockState(capId, "");
+  // (ADR-149) Only managers can hold or contend for the lock, and the read-only
+  // banner is manager-only — so a non-manager must never receive the holder's
+  // name/email in the RSC payload. Skip the read entirely for them (also avoids
+  // a dead query) and hand the shell a free-lock snapshot.
+  const lock = canManage
+    ? await readLockState(capId, "")
+    : { held: false, heldByMe: false, holderLabel: null, expiresAt: null };
 
   return (
     <div className="flex h-[calc(100vh-200px)] min-h-[560px] w-full flex-col">
@@ -149,6 +155,7 @@ export default async function FlowDetailPage({
         lockLabels={{
           readOnlyHeld: t("editorLock.readOnlyHeld"),
           readOnlyUnknownHolder: t("editorLock.readOnlyUnknownHolder"),
+          retry: t("editorLock.retry"),
         }}
         projectSlug={projectSlug}
         publishAction={publishAuthoredFlowAction}

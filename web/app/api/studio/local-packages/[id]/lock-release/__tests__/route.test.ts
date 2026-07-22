@@ -29,6 +29,19 @@ function req(body: unknown): NextRequest {
   );
 }
 
+// A raw (non-JSON) body: `req.json()` throws, exercising the `.catch(() => null)`
+// hardening. A valid `{}` already takes the safeParse-fail path, so only this
+// shape regresses if the catch is removed.
+function rawReq(rawBody: string): NextRequest {
+  return new NextRequest(
+    new Request("http://x/api/studio/local-packages/lp1/lock-release", {
+      method: "POST",
+      body: rawBody,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+}
+
 function ctx() {
   return { params: Promise.resolve({ id: "lp1" }) };
 }
@@ -51,6 +64,13 @@ describe("POST .../lock-release", () => {
 
   it("rejects a missing session id before release", async () => {
     const res = await POST(req({}), ctx());
+
+    expect(res.status).toBe(422);
+    expect(mocks.releaseLock).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 (not a 500 crash) for a malformed JSON body", async () => {
+    const res = await POST(rawReq("{not json"), ctx());
 
     expect(res.status).toBe(422);
     expect(mocks.releaseLock).not.toHaveBeenCalled();

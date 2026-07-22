@@ -308,7 +308,7 @@ export function LocalPackagesList({
                   role="alertdialog"
                 >
                   <span className="text-[13px] text-ink">
-                    {t("local.deleteConfirm").replace("$name", pkg.name)}
+                    {t("local.deleteConfirm").replace("$name", () => pkg.name)}
                   </span>
                   <span className="ml-auto flex gap-2">
                     <button
@@ -513,7 +513,7 @@ export function LocalPackagesList({
             router.refresh();
           }}
           onCut={(label) =>
-            setNotice(t("local.cutVersionDone").replace("$label", label))
+            setNotice(t("local.cutVersionDone").replace("$label", () => label))
           }
         />
       ) : null}

@@ -38,12 +38,32 @@ const NOT_HELD: EditorLockSnapshot = {
   holderLabel: null,
 };
 
+// Non-ICU `$holder` interpolation, shared by both editors' read-only banners.
+// The function-form replacement inserts the raw value literally — a plain string
+// `.replace` would interpret `$&`, `` $` ``, `$'`, and `$1` in a user-controlled
+// holder label (e.g. a user literally named "$&").
+export function formatHolderLabel(
+  template: string,
+  holderLabel: string,
+): string {
+  return template.replace("$holder", () => holderLabel);
+}
+
 export function createEditorSessionId(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
+  if (typeof crypto !== "undefined") {
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+
+    // `randomUUID` is secure-context-only; `getRandomValues` is NOT. A self-host
+    // served over plain HTTP on a LAN address would otherwise fall through to the
+    // predictable `Date.now()`/`Math.random()` id, which a same-project peer can
+    // reconstruct to steal the (server-user-bound) session. Prefer real entropy.
+    if (typeof crypto.getRandomValues === "function") {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+
+      return `el-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+    }
   }
 
   return `el-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -152,6 +172,10 @@ export function useEditorLock(opts: {
   // A write that came back CONFLICT proves the lock is gone: flip to read-only
   // now instead of waiting for the next heartbeat to notice.
   markLost: () => void;
+  // User-initiated recovery after a takeover. Re-attempts acquire once (through
+  // the queue): succeeds if the lock has since freed, stays read-only otherwise.
+  // In-place, so unsaved edits survive — unlike a full reload.
+  retry: () => void;
 } {
   const enabled = opts.enabled ?? true;
   const sessionIdRef = useRef<string | null>(null);
@@ -169,6 +193,11 @@ export function useEditorLock(opts: {
     basePath: string;
     controller: EditorLockController;
   } | null>(null);
+  // Monotonic controller id. A superseded controller (basePath re-key, or a
+  // StrictMode acquire that settles after its cleanup) still holds the closed-
+  // over `generation`; if it no longer matches the live ref, its late `onState`
+  // is dropped instead of clobbering the current controller's state.
+  const generationRef = useRef(0);
 
   // One controller — and therefore ONE queue — per mount. Creating it inside the
   // effect would give StrictMode's second cycle its own queue, so that cycle's
@@ -178,11 +207,16 @@ export function useEditorLock(opts: {
     controllerRef.current === null ||
     controllerRef.current.basePath !== opts.basePath
   ) {
+    generationRef.current += 1;
+    const generation = generationRef.current;
+
     controllerRef.current = {
       basePath: opts.basePath,
       controller: createEditorLockController({
         transport: createHttpEditorLockTransport(opts.basePath, sessionId),
         onState: (next) => {
+          if (generationRef.current !== generation) return;
+
           setSnapshot(next);
           // A failed sync reports NOT_HELD, so this also clears confirmation.
           setConfirmed(next.heldByMe);
@@ -224,6 +258,10 @@ export function useEditorLock(opts: {
     setSnapshot((prev) => ({ ...prev, heldByMe: false }));
   }, []);
 
+  const retry = useCallback((): void => {
+    void controller.acquire();
+  }, [controller]);
+
   return {
     sessionId,
     heldByMe: snapshot.heldByMe,
@@ -231,5 +269,6 @@ export function useEditorLock(opts: {
     confirmed,
     release,
     markLost,
+    retry,
   };
 }
