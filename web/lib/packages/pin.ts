@@ -1,15 +1,77 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see catalog.ts).
-const { packageInstalls, flowRevisions } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { packageInstalls, flowRevisions, tasks, flows } =
+  schemaModule as unknown as Record<string, any>;
+
+// The variant/recipe package-pin picker feed — the valid install set for a
+// task's flow: Installed + trusted (allow-list) installs shipping a member
+// revision with the flow's ref id. Never free-text; the client only ever picks
+// from this server-filtered set. Lives here (not lib/experiments) so the
+// evaluations pin-options route survives the ADR-149 experiment removal.
+export type PinInstallOption = {
+  packageInstallId: string;
+  packageName: string;
+  versionLabel: string;
+  kind: "local_cut" | "upstream";
+};
+
+export async function listEligiblePinInstalls(args: {
+  db: any;
+  taskId: string;
+}): Promise<PinInstallOption[]> {
+  const taskRows = await args.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, args.taskId));
+  const task = taskRows[0];
+
+  if (!task?.flowId) return [];
+
+  const flowRows = await args.db
+    .select()
+    .from(flows)
+    .where(eq(flows.id, task.flowId));
+  const flowRow = flowRows[0];
+
+  if (!flowRow) return [];
+
+  const rows = await args.db
+    .select({
+      packageInstallId: packageInstalls.id,
+      packageName: packageInstalls.name,
+      versionLabel: packageInstalls.versionLabel,
+      sourceLocalPackageId: packageInstalls.sourceLocalPackageId,
+    })
+    .from(packageInstalls)
+    .innerJoin(
+      flowRevisions,
+      and(
+        eq(flowRevisions.resolvedRevision, packageInstalls.resolvedRevision),
+        eq(flowRevisions.flowRefId, flowRow.flowRefId),
+      ),
+    )
+    .where(
+      and(
+        eq(packageInstalls.packageStatus, "Installed"),
+        inArray(packageInstalls.trustStatus, ["trusted", "trusted_by_policy"]),
+      ),
+    );
+
+  return rows.map((row: Record<string, any>) => ({
+    packageInstallId: row.packageInstallId,
+    packageName: row.packageName,
+    versionLabel: row.versionLabel,
+    kind: row.sourceLocalPackageId
+      ? ("local_cut" as const)
+      : ("upstream" as const),
+  }));
+}
 
 // ADR-132 §a: the ephemeral-pin allow-list matrix — resolve the flow revision
 // an explicitly named `package_installs` row ships for a flow ref id.

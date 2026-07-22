@@ -59,6 +59,7 @@ let preflightRoute: typeof import("../[studyId]/launch-preflight/route");
 let batchesRoute: typeof import("../[studyId]/launch-batches/route");
 let batchRoute: typeof import("../[studyId]/launch-batches/[batchId]/route");
 let batchRetryRoute: typeof import("../[studyId]/launch-batches/[batchId]/retry/route");
+let pinOptionsRoute: typeof import("../../pin-options/route");
 let overrideRoute: typeof import("../../../evaluation-profiles/[profileId]/override/route");
 
 let projectId: string;
@@ -125,6 +126,7 @@ beforeAll(async () => {
   batchesRoute = await import("../[studyId]/launch-batches/route");
   batchRoute = await import("../[studyId]/launch-batches/[batchId]/route");
   batchRetryRoute = await import("../[studyId]/launch-batches/[batchId]/retry/route");
+  pinOptionsRoute = await import("../../pin-options/route");
   overrideRoute = await import(
     "../../../evaluation-profiles/[profileId]/override/route"
   );
@@ -1094,5 +1096,42 @@ describe("launch-batches routes (ADR-149)", () => {
 
     expect(res.status).toBe(200);
     expect((await res.json()).requeued).toBe(0);
+  });
+});
+
+describe("pin-options route (ADR-149)", () => {
+  function call(query: string): Promise<Response> {
+    return pinOptionsRoute.GET(
+      req(`/api/projects/${slug}/evaluations/pin-options${query}`),
+      { params: Promise.resolve({ slug }) },
+    );
+  }
+
+  it("401 without a session", async () => {
+    sessionRef.value = null;
+    expect((await call(`?taskId=${taskId}`)).status).toBe(401);
+  });
+
+  it("403 for a viewer", async () => {
+    asViewer();
+    expect((await call(`?taskId=${taskId}`)).status).toBe(403);
+  });
+
+  it("422 when taskId is missing", async () => {
+    asAdmin();
+    expect((await call("")).status).toBe(422);
+  });
+
+  it("422 for a task outside the project", async () => {
+    asAdmin();
+    expect((await call(`?taskId=${randomUUID()}`)).status).toBe(422);
+  });
+
+  it("200 with server-filtered options for a project task", async () => {
+    asAdmin();
+    const res = await call(`?taskId=${taskId}`);
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray((await res.json()).options)).toBe(true);
   });
 });

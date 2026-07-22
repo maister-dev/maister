@@ -2,15 +2,14 @@ import "server-only";
 
 import type { ExperimentVariant } from "@/lib/experiments/types";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { tasks, flows, packageInstalls, flowRevisions } =
-  schemaModule as unknown as Record<string, any>;
+const { tasks, flows } = schemaModule as unknown as Record<string, any>;
 
 // ADR-132 §b: batch-validate every variant `packagePin` against the pin
 // matrix for the experiment task's flow. Runs at CREATE time (an experiment
@@ -60,63 +59,10 @@ export async function assertVariantPackagePinsLaunchable(args: {
   }
 }
 
-// ADR-132 §b: the variant-editor picker feed — the T4-valid install set for
-// the task's flow: Installed + trusted (allow-list) installs shipping a
-// member revision with the flow's ref id. Never free-text; the client only
-// ever picks from this server-filtered set.
-export type ExperimentPinOption = {
-  packageInstallId: string;
-  packageName: string;
-  versionLabel: string;
-  kind: "local_cut" | "upstream";
-};
-
-export async function listEligiblePinInstalls(args: {
-  db: any;
-  taskId: string;
-}): Promise<ExperimentPinOption[]> {
-  const taskRows = await args.db
-    .select()
-    .from(tasks)
-    .where(eq(tasks.id, args.taskId));
-  const task = taskRows[0];
-
-  if (!task?.flowId) return [];
-
-  const flowRows = await args.db
-    .select()
-    .from(flows)
-    .where(eq(flows.id, task.flowId));
-  const flowRow = flowRows[0];
-
-  if (!flowRow) return [];
-
-  const rows = await args.db
-    .select({
-      packageInstallId: packageInstalls.id,
-      packageName: packageInstalls.name,
-      versionLabel: packageInstalls.versionLabel,
-      sourceLocalPackageId: packageInstalls.sourceLocalPackageId,
-    })
-    .from(packageInstalls)
-    .innerJoin(
-      flowRevisions,
-      and(
-        eq(flowRevisions.resolvedRevision, packageInstalls.resolvedRevision),
-        eq(flowRevisions.flowRefId, flowRow.flowRefId),
-      ),
-    )
-    .where(
-      and(
-        eq(packageInstalls.packageStatus, "Installed"),
-        inArray(packageInstalls.trustStatus, ["trusted", "trusted_by_policy"]),
-      ),
-    );
-
-  return rows.map((row: Record<string, any>) => ({
-    packageInstallId: row.packageInstallId,
-    packageName: row.packageName,
-    versionLabel: row.versionLabel,
-    kind: row.sourceLocalPackageId ? ("local_cut" as const) : ("upstream" as const),
-  }));
-}
+// ADR-149: the picker feed moved to `lib/packages/pin.ts` (survives the
+// experiment removal). Re-exported here for the legacy route until Phase 4/5
+// deletes it — one implementation, no drift.
+export {
+  listEligiblePinInstalls,
+  type PinInstallOption as ExperimentPinOption,
+} from "@/lib/packages/pin";
