@@ -106,8 +106,6 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "hitl:respond:human": "answerHitl",
   "memory:read": "readBrain",
   "memory:write": "writeBrain",
-  "experiments:read": "readExperiments",
-  "experiments:advise": "manageExperiments",
 };
 
 function projectActionForScope(scope: string): ProjectAction {

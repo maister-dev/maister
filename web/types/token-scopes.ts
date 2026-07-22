@@ -37,10 +37,6 @@ export const TOKEN_SCOPES = [
   // tokens, the can_read_brain / can_write_brain link axes.
   "memory:read",
   "memory:write",
-  // ADR-124: Experiment Comparison Studio. Read is detail/comparison access;
-  // advise appends judge advisories only, never a human conclusion.
-  "experiments:read",
-  "experiments:advise",
   // ADR-145 (Evaluation Lab) D10/D12: attempt-bound evaluator judge scopes. These
   // are minted ONLY on a judge attempt's ephemeral agent token
   // (EVALUATION_JUDGE_TOKEN_SCOPES in lib/agents/tokens.ts) — deliberately NOT in
@@ -76,10 +72,6 @@ export const AGENT_TOKEN_SCOPES = [
   // still gated by can_read_brain / can_write_brain on the agent-project link.
   "memory:read",
   "memory:write",
-  // ADR-124: experiment-judge agent reads the comparison DTO and appends an
-  // advisory result. Human verdicts remain session-auth only.
-  "experiments:read",
-  "experiments:advise",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

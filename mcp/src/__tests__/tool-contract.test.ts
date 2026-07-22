@@ -96,14 +96,6 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   },
   flow_list: { method: "get", path: "/api/v1/ext/projects/{slug}/flows" },
   runner_list: { method: "get", path: "/api/v1/ext/projects/{slug}/runners" },
-  experiment_get: {
-    method: "get",
-    path: "/api/v1/ext/projects/{slug}/experiments/{experimentId}",
-  },
-  experiment_advise: {
-    method: "post",
-    path: "/api/v1/ext/projects/{slug}/experiments/{experimentId}/advisory",
-  },
   evaluation_context_get: {
     method: "get",
     path: "/api/v1/ext/evaluations/context",

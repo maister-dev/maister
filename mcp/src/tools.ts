@@ -64,33 +64,6 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug"],
     },
   },
-  experiment_get: {
-    description:
-      "Get an Experiment Comparison Studio detail DTO for judge advisory work. Requires experiments:read; agent tokens must be the package-sourced experiment judge; returns pinned-base variants, rubric, member-run snapshots, and existing advisory history.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        slug: { type: "string" },
-        experimentId: { type: "string" },
-      },
-      required: ["slug", "experimentId"],
-    },
-  },
-  experiment_advise: {
-    description:
-      "Append an advisory-only judge result to an experiment. Requires experiments:advise; agent tokens must be the package-sourced experiment judge and attribution is server-derived; cannot conclude, abandon, pick a winner, launch runs, or mutate human verdict fields.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        slug: { type: "string" },
-        experimentId: { type: "string" },
-        scores: { type: "object" },
-        summary: { type: "string", minLength: 1, maxLength: 8000 },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
-      },
-      required: ["slug", "experimentId", "scores", "summary"],
-    },
-  },
   evaluation_context_get: {
     description:
       "Get the token-bound judge attempt context (ADR-145): attempt identity, method rubric, blind candidate order, and evidence/digest summary. Requires evaluations:context:read. The attempt is bound by the token — takes no ids and returns no real participant id, peer result, path, or session handle.",
@@ -758,35 +731,6 @@ function resolveRouting(
       const { slug } = args as { slug: string };
 
       return { method: "GET", path: `/api/v1/ext/projects/${slug}/runners` };
-    }
-    case "experiment_get": {
-      const { slug, experimentId } = args as {
-        slug: string;
-        experimentId: string;
-      };
-
-      return {
-        method: "GET",
-        path: `/api/v1/ext/projects/${slug}/experiments/${experimentId}`,
-      };
-    }
-    case "experiment_advise": {
-      const { slug, experimentId, scores, summary, confidence } = args as {
-        slug: string;
-        experimentId: string;
-        scores: Record<string, Record<string, number>>;
-        summary: string;
-        confidence?: number;
-      };
-      const body: Record<string, unknown> = { scores, summary };
-
-      if (confidence !== undefined) body.confidence = confidence;
-
-      return {
-        method: "POST",
-        path: `/api/v1/ext/projects/${slug}/experiments/${experimentId}/advisory`,
-        body,
-      };
     }
     case "evaluation_context_get":
       return { method: "GET", path: `/api/v1/ext/evaluations/context` };

@@ -53,8 +53,6 @@ const SCOPE_OPTIONS: ScopeOption[] = [
   { value: "runs:cancel", labelKey: "scopeLabels.runsCancel" },
   { value: "runs:promote", labelKey: "scopeLabels.runsPromote" },
   { value: "runs:sync", labelKey: "scopeLabels.runsSync" },
-  { value: "experiments:read", labelKey: "scopeLabels.experimentsRead" },
-  { value: "experiments:advise", labelKey: "scopeLabels.experimentsAdvise" },
 ];
 
 function formatDate(value: string | null, emptyLabel: string): string {
@@ -147,10 +145,6 @@ function scopeLabel(
       return t("scopeLabels.runsPromote");
     case "runs:sync":
       return t("scopeLabels.runsSync");
-    case "experiments:read":
-      return t("scopeLabels.experimentsRead");
-    case "experiments:advise":
-      return t("scopeLabels.experimentsAdvise");
     default:
       return scope;
   }

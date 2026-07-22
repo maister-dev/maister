@@ -15,18 +15,16 @@ describe("external token scope contract", () => {
     expect(PROJECT_ACTION_MIN.concludeExperiments).toBe("member");
   });
 
-  it("registers external experiment scopes and fixed agent-token access", () => {
-    expect(TOKEN_SCOPES).toContain("experiments:read");
-    expect(TOKEN_SCOPES).toContain("experiments:advise");
-    expect(AGENT_TOKEN_SCOPES).toContain("experiments:read");
-    expect(AGENT_TOKEN_SCOPES).toContain("experiments:advise");
+  it("no longer registers the retired experiment scopes (ADR-149)", () => {
+    expect(TOKEN_SCOPES).not.toContain("experiments:read");
+    expect(TOKEN_SCOPES).not.toContain("experiments:advise");
+    expect(AGENT_TOKEN_SCOPES).not.toContain("experiments:read");
+    expect(AGENT_TOKEN_SCOPES).not.toContain("experiments:advise");
   });
 
-  it("maps experiment scopes to the matching project actions", () => {
-    expect(PROJECT_ACTION_BY_SCOPE["experiments:read"]).toBe("readExperiments");
-    expect(PROJECT_ACTION_BY_SCOPE["experiments:advise"]).toBe(
-      "manageExperiments",
-    );
+  it("no longer maps the retired experiment scopes to a project action", () => {
+    expect(PROJECT_ACTION_BY_SCOPE["experiments:read"]).toBeUndefined();
+    expect(PROJECT_ACTION_BY_SCOPE["experiments:advise"]).toBeUndefined();
   });
 
   it("grants only attached agent tokens the task-bound human-ask capability", () => {

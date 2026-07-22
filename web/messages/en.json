@@ -2836,9 +2836,7 @@
         "runsCollect": "Collect child runs",
         "runsCancel": "Cancel child runs",
         "runsPromote": "Promote child runs",
-        "runsSync": "Sync & reopen runs",
-        "experimentsRead": "Read experiments",
-        "experimentsAdvise": "Advise experiments"
+        "runsSync": "Sync & reopen runs"
       }
     },
     "role": {
@@ -3357,8 +3355,6 @@
     "scopeRunsSync": "Sync & reopen runs",
     "scopeMemoryRead": "Read project memory",
     "scopeMemoryWrite": "Write project memory",
-    "scopeExperimentsRead": "Read experiments",
-    "scopeExperimentsAdvise": "Advise experiments",
     "audit": {
       "title": "Token activity",
       "description": "Actions performed through API tokens — calls to the external API, not from the web UI.",

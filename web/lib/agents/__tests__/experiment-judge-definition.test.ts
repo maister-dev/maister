@@ -32,15 +32,18 @@ describe("core:experiment-judge definition", () => {
     expect(parsed.recommended?.runner).toBe("claude");
   });
 
-  it("prompt is advisory-only and uses the experiment MCP facade", () => {
+  it("prompt is advisory-only and uses the evaluation MCP facade (refit, ADR-149)", () => {
     const parsed = parseAgentDefinition("core:experiment-judge", JUDGE_MD);
 
     expect(parsed.prompt).toContain("advisory only");
     expect(parsed.prompt).toContain("You never conclude an experiment");
-    expect(parsed.prompt).toContain("experiment_get");
-    expect(parsed.prompt).toContain("experiment_advise");
-    expect(parsed.prompt).toContain(
-      "criterion-id -> variant-key -> numeric score",
-    );
+    // Refit onto the attempt-bound evaluation_* tool family (D1a).
+    expect(parsed.prompt).toContain("evaluation_context_get");
+    expect(parsed.prompt).toContain("evaluation_result_submit");
+    // Pairwise attempts submit an additional winner pick (ADR-147).
+    expect(parsed.prompt).toContain("winner");
+    // The removed experiment ext tools are gone.
+    expect(parsed.prompt).not.toContain("experiment_get");
+    expect(parsed.prompt).not.toContain("experiment_advise");
   });
 });

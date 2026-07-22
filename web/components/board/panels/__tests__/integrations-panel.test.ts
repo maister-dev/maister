@@ -108,8 +108,6 @@ const labels: TokenLabels = {
   scopeRunsSync: "Sync & reopen runs",
   scopeMemoryRead: "Read project memory",
   scopeMemoryWrite: "Write project memory",
-  scopeExperimentsRead: "Read experiments",
-  scopeExperimentsAdvise: "Advise experiments",
   errorGeneric: "Something went wrong",
 };
 
@@ -240,8 +238,6 @@ describe("TokensTable — renders data for an admin (M16)", () => {
     expect(html).toContain(labels.scopeTasksCreate);
     expect(html).toContain(labels.scopeRunsLaunch);
     expect(html).toContain(labels.scopeGatesReport);
-    expect(html).toContain(labels.scopeExperimentsRead);
-    expect(html).toContain(labels.scopeExperimentsAdvise);
   });
 
   it("renders the create affordance label and a revoke affordance for an admin", () => {
