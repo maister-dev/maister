@@ -27,7 +27,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -36,7 +35,6 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
-import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import { runFlow } from "@/lib/flows/runner";
 import {
   startMainPostgresTestDb,
@@ -174,112 +172,7 @@ async function seedCapabilityRecords(projectId: string): Promise<void> {
       selectedByDefault: false,
       material: {},
     },
-    {
-      id: randomUUID(),
-      projectId,
-      capabilityRefId: "overlay-skill",
-      kind: "skill",
-      label: "Overlay Skill",
-      source: "project",
-      agents: ["claude", "codex"],
-      enforceability: "instructed",
-      selectable: true,
-      selectedByDefault: false,
-      material: {},
-    },
-    {
-      id: randomUUID(),
-      projectId,
-      capabilityRefId: "overlay-rule",
-      kind: "rule",
-      label: "Overlay Rule",
-      source: "project",
-      agents: ["claude", "codex"],
-      enforceability: "instructed",
-      selectable: true,
-      selectedByDefault: false,
-      material: {},
-    },
-    {
-      id: randomUUID(),
-      projectId,
-      capabilityRefId: "overlay-mcp",
-      kind: "mcp",
-      label: "Overlay MCP",
-      source: "project",
-      agents: ["claude", "codex"],
-      enforceability: "enforced",
-      selectable: true,
-      selectedByDefault: false,
-      material: {
-        command: "overlay-mcp",
-        args: [],
-        envKeys: [],
-        config: {},
-      },
-    },
-    {
-      id: randomUUID(),
-      projectId,
-      capabilityRefId: "reviewer",
-      kind: "agent_definition",
-      label: "Reviewer",
-      source: "project",
-      agents: ["claude"],
-      enforceability: "instructed",
-      selectable: true,
-      selectedByDefault: false,
-      material: {},
-    },
   ]);
-}
-
-async function seedExperimentMembership(seeded: Seeded): Promise<void> {
-  const experimentId = randomUUID();
-
-  await db.insert(schema.experiments).values({
-    id: experimentId,
-    projectId: seeded.projectId,
-    taskId: seeded.taskId,
-    title: "Overlay test",
-    baseBranch: "main",
-    baseCommit: "a".repeat(40),
-    variants: [
-      {
-        key: "overlay",
-        label: "Overlay",
-        config: {
-          capabilityOverlay: {
-            rules: { add: ["overlay-rule"] },
-            skills: { remove: ["my-skill"], add: ["overlay-skill"] },
-            mcps: { add: ["overlay-mcp"] },
-            subagents: { add: ["reviewer"] },
-          },
-        },
-      },
-    ],
-    rubric: { criteria: [] },
-  });
-  await db.insert(schema.experimentRuns).values({
-    id: randomUUID(),
-    experimentId,
-    runId: seeded.runId,
-    variantKey: "overlay",
-    replicateOrdinal: 1,
-    launchReason: "initial",
-    baseCommit: "a".repeat(40),
-  });
-}
-
-async function getNodeAttempt(runId: string) {
-  const attempts = await db
-    .select()
-    .from(schema.nodeAttempts)
-    .where(eq(schema.nodeAttempts.runId, runId));
-
-  return attempts.find(
-    (attempt: { nodeId?: string }) => attempt.nodeId === "implement",
-  );
 }
 
 // A SupervisorApi spy. createSession returns a canned session and streamSession
@@ -479,75 +372,6 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
 
     await expect(stat(settingsLocalPath)).rejects.toMatchObject({
       code: "ENOENT",
-    });
-  }, 60_000);
-
-  it("merges experiment overlays before profile materialization and persists the applied delta", async () => {
-    const seeded = await seedGraphRun(capabilityDeclaringFlow);
-
-    await seedCapabilityRecords(seeded.projectId);
-    await seedExperimentMembership(seeded);
-
-    const api = makeSupervisorSpy();
-
-    await runFlow(seeded.runId, {
-      db,
-      runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
-    });
-
-    const attempt = await getNodeAttempt(seeded.runId);
-
-    expect(attempt).toBeDefined();
-
-    const profileJson = JSON.parse(
-      await readFile(
-        join(
-          capabilityMaterializationRootPath(
-            seeded.worktreePath,
-            seeded.runId,
-            attempt!.id,
-          ),
-          "profile.json",
-        ),
-        "utf8",
-      ),
-    );
-
-    expect(profileJson.selectedSkillIds).toEqual(["overlay-skill"]);
-    expect(profileJson.selectedRuleIds).toEqual(["overlay-rule"]);
-    expect(profileJson.selectedMcpIds).toEqual(["github", "overlay-mcp"]);
-    expect(profileJson.selectedAgentDefinitionIds).toEqual(["reviewer"]);
-
-    const arg = api.createSpy.mock.calls[0][0] as {
-      mcpServers?: AgentMcpServer[];
-    };
-
-    expect((arg.mcpServers ?? []).map((server) => server.name)).toEqual(
-      expect.arrayContaining(["github", "overlay-mcp"]),
-    );
-
-    const rows = await db
-      .select()
-      .from(schema.experimentRuns)
-      .where(eq(schema.experimentRuns.runId, seeded.runId));
-    const member = rows[0];
-
-    expect(member.materializationDelta).toEqual({
-      experimentId: member.experimentId,
-      variantKey: "overlay",
-      added: {
-        rules: ["overlay-rule"],
-        skills: ["overlay-skill"],
-        mcps: ["overlay-mcp"],
-        subagents: ["reviewer"],
-      },
-      removed: {
-        rules: [],
-        skills: ["my-skill"],
-        mcps: [],
-        subagents: [],
-      },
     });
   }, 60_000);
 });

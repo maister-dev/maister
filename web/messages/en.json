@@ -4365,7 +4365,7 @@
       "no_task": "Run has no task",
       "orchestrator_child": "Child runs promote via their orchestrator",
       "shared_workspace": "Shared-workspace runs are excluded",
-      "experiment_member": "Experiment member runs never auto-promote",
+      "launched_lineage": "Launched evaluation runs never auto-promote",
       "auto_on_ready": "Run already auto-delivers"
     },
     "panel": {

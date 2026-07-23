@@ -129,7 +129,7 @@ export type SyncEligibilityRun = {
   runKind: string;
   parentRunId: string | null;
   workspaceMode: string | null;
-  isExperimentMember: boolean;
+  isLaunchedLineage: boolean;
 };
 
 type Claim = {
@@ -160,9 +160,8 @@ function claimHeartbeatMs(): number {
 
 // The shared readiness contract Task 9 needs from a run row + its workspace. A
 // sync targets exactly a top-level, non-shared, non-launched-lineage Review
-// flow/agent run whose worktree is still present. (`isExperimentMember` carries
-// the unified launched-lineage predicate — experiment member OR launched
-// evaluation participant.)
+// flow/agent run whose worktree is still present. (`isLaunchedLineage` carries
+// the launched-lineage predicate — a launched evaluation participant.)
 export function assertSyncEligible(
   run: SyncEligibilityRun,
   workspace: { removedAt: Date | null },
@@ -191,10 +190,10 @@ export function assertSyncEligible(
       "a shared-tree run cannot sync — the tree is one branch",
     );
   }
-  if (run.isExperimentMember) {
+  if (run.isLaunchedLineage) {
     throw new MaisterError(
       "PRECONDITION",
-      "a launched experiment/evaluation participant cannot sync — conclude the experiment or decide the study first",
+      "a launched evaluation participant cannot sync — decide the study first",
     );
   }
   if (workspace.removedAt !== null) {
@@ -684,11 +683,10 @@ export async function syncRunTarget(
   // 1. Load + eligibility + dirty-tree refusal (all BEFORE any claim).
   const run = await loadRun(db, runId);
   const workspace = await loadWorkspace(db, runId);
-  // Launched-lineage predicate (legacy Experiment member OR launched Evaluation
-  // participant): a launched participant in Review must not rebase/force-push
-  // mid-study — it would rewrite the tip later evidence captures read. The field
-  // keeps its historical `isExperimentMember` name for contract stability.
-  const isExperimentMember = await isLaunchedLineageRun(db, runId);
+  // Launched-lineage predicate: a launched evaluation participant in Review must
+  // not rebase/force-push mid-study — it would rewrite the tip later evidence
+  // captures read.
+  const isLaunchedLineage = await isLaunchedLineageRun(db, runId);
 
   assertSyncEligible(
     {
@@ -696,7 +694,7 @@ export async function syncRunTarget(
       runKind: run.runKind,
       parentRunId: run.parentRunId ?? null,
       workspaceMode: run.workspaceMode ?? null,
-      isExperimentMember,
+      isLaunchedLineage,
     },
     workspace,
   );
@@ -766,7 +764,7 @@ export async function syncRunTarget(
         runKind: lockedRun.runKind,
         parentRunId: lockedRun.parentRunId ?? null,
         workspaceMode: lockedRun.workspaceMode ?? null,
-        isExperimentMember,
+        isLaunchedLineage,
       },
       ws,
     );

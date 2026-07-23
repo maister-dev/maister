@@ -29,7 +29,6 @@ import {
 } from "@/lib/local-packages/versions";
 import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 import { getDb } from "@/lib/db/client";
-import { selectForUpdate } from "@/lib/db/select-for-update";
 import * as schemaModule from "@/lib/db/schema";
 import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -38,14 +37,9 @@ import {
   resolveFlowRef,
 } from "@/lib/flows/resolve-flow-ref";
 import {
-  deriveExperimentMembershipFromSource,
-  type InheritedExperimentMembership,
-} from "@/lib/experiments/membership";
-import {
   deriveEvaluationParticipationFromSource,
   type InheritedEvaluationParticipation,
 } from "@/lib/evaluations/membership";
-import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import {
   assertNodeLaunchable,
   capabilityBearingSettings,
@@ -115,8 +109,6 @@ import {
 const {
   capabilityRecords,
   evaluationParticipants,
-  experiments,
-  experimentRuns,
   flowRevisions,
   flows,
   platformAcpRunners,
@@ -131,12 +123,6 @@ const {
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
-
-const EXPERIMENT_MEMBER_LAUNCHABLE_STATUSES = new Set([
-  "draft",
-  "running",
-  "comparable",
-]);
 
 type RunnerResolutionWarningRecord = {
   readonly sessionName: string;
@@ -176,37 +162,6 @@ async function appendRunnerResolutionWarningEvents(args: {
         "failed to append runner resolution warning event",
       );
     }
-  }
-}
-
-async function assertExperimentMembershipLaunchable(args: {
-  tx: any;
-  membership: NonNullable<LaunchRunInput["experimentMembership"]>;
-}): Promise<void> {
-  const rows = await selectForUpdate(
-    args.tx
-      .select()
-      .from(experiments)
-      .where(eq(experiments.id, args.membership.experimentId)),
-  );
-  const experiment = rows.find(
-    (row: Record<string, unknown>) => row.id === args.membership.experimentId,
-  );
-
-  if (!experiment) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `experiment not found for member launch: ${args.membership.experimentId}`,
-    );
-  }
-
-  const status = String(experiment.status);
-
-  if (!EXPERIMENT_MEMBER_LAUNCHABLE_STATUSES.has(status)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `experiment ${args.membership.experimentId} is not launchable from ${status}`,
-    );
   }
 }
 
@@ -254,27 +209,6 @@ const log = pino({
   name: "service-runs",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-function postgresErrorRecord(err: unknown): {
-  code?: unknown;
-  constraint?: unknown;
-  cause?: unknown;
-} {
-  return err && typeof err === "object" ? err : {};
-}
-
-function isExperimentMembershipUniqueViolation(err: unknown): boolean {
-  const current = postgresErrorRecord(err);
-  const cause = postgresErrorRecord(current.cause);
-  const code = current.code ?? cause.code;
-  const constraint = current.constraint ?? cause.constraint;
-
-  return (
-    code === "23505" &&
-    (constraint === "experiment_runs_run_uq" ||
-      constraint === "experiment_runs_variant_replicate_uq")
-  );
-}
 
 // Explicit allow-list of project flow enablement states that may launch a run
 // (M10, ADR-021). `Installed`/`Disabled`/`Failed`/`Deprecated` are NOT
@@ -384,19 +318,7 @@ export type LaunchRunInput = {
   // boolean — no recall/embedding call, no snapshot insert happens here
   // (snapshots are consumption-time: T4.3 ambient / T4.2 explicit).
   brainContext?: boolean | null;
-  experimentMembership?: {
-    experimentId: string;
-    variantKey: string;
-    replicateOrdinal: number;
-    launchReason: "initial" | "manual_relaunch" | "budget_restart";
-    baseCommit: string;
-    markExperimentRunning?: boolean;
-  };
 };
-
-type LaunchRunExperimentMembership = NonNullable<
-  LaunchRunInput["experimentMembership"]
->;
 
 function budgetRestartSourceRunId(
   triggerPayload: Record<string, unknown> | null | undefined,
@@ -422,7 +344,6 @@ function membershipSourceForLaunch(input: LaunchRunInput): {
   sourceRunId: string;
   launchReason: "manual_relaunch" | "budget_restart";
 } | null {
-  if (input.experimentMembership) return null;
   if (input.relaunchOfRunId) {
     return {
       sourceRunId: input.relaunchOfRunId,
@@ -438,14 +359,6 @@ function membershipSourceForLaunch(input: LaunchRunInput): {
     sourceRunId: budgetSourceRunId,
     launchReason: "budget_restart",
   };
-}
-
-function toLaunchMembership(
-  inherited: InheritedExperimentMembership | null,
-): LaunchRunExperimentMembership | undefined {
-  if (inherited === null) return undefined;
-
-  return inherited;
 }
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -660,20 +573,8 @@ export async function* launchRunStaged(
   }
 
   const inheritanceSource = membershipSourceForLaunch(input);
-  const inheritedExperimentMembership =
-    inheritanceSource === null
-      ? null
-      : await deriveExperimentMembershipFromSource({
-          db: _db,
-          taskId: task.id,
-          sourceRunId: inheritanceSource.sourceRunId,
-          launchReason: inheritanceSource.launchReason,
-        });
-  const effectiveExperimentMembership =
-    input.experimentMembership ??
-    toLaunchMembership(inheritedExperimentMembership);
-  // ADR-146 D15: the evaluation analogue of the experiment inheritance above. A
-  // relaunch/budget-restart of a LAUNCHED evaluation participant mints a
+  // ADR-146 D15: a relaunch/budget-restart of a LAUNCHED evaluation participant
+  // mints a
   // SUCCESSOR participant row (same study/recipe lineage, new runId) in the
   // run-insert tx below, so the replacement run stays launched-lineage-held —
   // without it the restart would be the escape hatch out of the study's
@@ -685,44 +586,20 @@ export async function* launchRunStaged(
           sourceRunId: inheritanceSource.sourceRunId,
           taskId: task.id,
         });
-  const forceByBudgetMembership =
-    inheritedExperimentMembership?.launchReason === "budget_restart";
-  const forceByDirectExperimentMembership =
-    input.experimentMembership !== undefined;
   // A budget-restarted launched participant relaunches INDEPENDENTLY of its
   // still-active study siblings (the widened HITL preflight already classified
   // it force-relaunchable — without this the widening was a no-op and the
-  // restart died `PRECONDITION busy`). Mirrors forceByBudgetMembership.
+  // restart died `PRECONDITION busy`).
   const forceByBudgetEvaluationParticipation =
     inheritedEvaluationParticipation !== null &&
     inheritanceSource?.launchReason === "budget_restart";
   const allowConcurrentForLaunch = input.scheduledReservation
     ? false
-    : Boolean(
-        input.allowConcurrent ||
-          forceByBudgetMembership ||
-          forceByDirectExperimentMembership ||
-          forceByBudgetEvaluationParticipation,
-      );
+    : Boolean(input.allowConcurrent || forceByBudgetEvaluationParticipation);
   // The study whose forced `evaluation_study` promotion hold this run carries:
   // an explicit controlled launch (seam adapter) or inherited participation.
   const evaluationHoldStudyId =
     input.evaluationStudyId ?? inheritedEvaluationParticipation?.studyId ?? null;
-
-  if (inheritedExperimentMembership) {
-    log.info(
-      {
-        sourceRunId: inheritanceSource?.sourceRunId,
-        experimentId: inheritedExperimentMembership.experimentId,
-        variantKey: inheritedExperimentMembership.variantKey,
-        replicateOrdinal: inheritedExperimentMembership.replicateOrdinal,
-        launchReason: inheritedExperimentMembership.launchReason,
-        forceByBudgetMembership,
-        forceByDirectExperimentMembership,
-      },
-      "POST /api/runs inherited experiment membership",
-    );
-  }
 
   if (inheritedEvaluationParticipation) {
     log.info(
@@ -736,13 +613,6 @@ export async function* launchRunStaged(
       },
       "POST /api/runs inherited evaluation participation",
     );
-  }
-
-  if (effectiveExperimentMembership) {
-    await assertExperimentMembershipLaunchable({
-      tx: _db,
-      membership: effectiveExperimentMembership,
-    });
   }
 
   // tasks.status is a one-way latch (nothing writes Backlog back after
@@ -766,7 +636,7 @@ export async function* launchRunStaged(
       taskId: input.taskId,
       mode: allowConcurrentForLaunch ? "force" : "manual",
       allowConcurrent: allowConcurrentForLaunch,
-      forceByBudgetMembership,
+      forceByBudgetEvaluationParticipation,
       verdict: launchability,
     },
     "[launchability.force] launch gate classifier selected",
@@ -1471,8 +1341,7 @@ export async function* launchRunStaged(
       );
     }
 
-    const membershipBaseCommit = effectiveExperimentMembership?.baseCommit;
-    const requestedBaseCommit = input.baseCommit ?? membershipBaseCommit;
+    const requestedBaseCommit = input.baseCommit;
     const baseCommit =
       requestedBaseCommit === undefined
         ? await resolveBaseCommit({
@@ -1779,56 +1648,6 @@ export async function* launchRunStaged(
             "CONFLICT",
             `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
           );
-        }
-
-        if (effectiveExperimentMembership) {
-          await assertExperimentMembershipLaunchable({
-            tx,
-            membership: effectiveExperimentMembership,
-          });
-          try {
-            await tx.insert(experimentRuns).values({
-              id: randomUUID(),
-              experimentId: effectiveExperimentMembership.experimentId,
-              runId,
-              variantKey: effectiveExperimentMembership.variantKey,
-              replicateOrdinal: effectiveExperimentMembership.replicateOrdinal,
-              launchReason: effectiveExperimentMembership.launchReason,
-              baseCommit: effectiveExperimentMembership.baseCommit,
-            });
-          } catch (err) {
-            if (isExperimentMembershipUniqueViolation(err)) {
-              throw new MaisterError(
-                "CONFLICT",
-                `experiment member replicate already exists: ${effectiveExperimentMembership.experimentId}/${effectiveExperimentMembership.variantKey}/${effectiveExperimentMembership.replicateOrdinal}`,
-                { cause: err instanceof Error ? err : undefined },
-              );
-            }
-
-            throw err;
-          }
-          await syncExperimentStatusForRun({ db: tx, runId });
-
-          if (effectiveExperimentMembership.markExperimentRunning) {
-            const now = new Date();
-
-            await tx
-              .update(experiments)
-              .set({
-                status: "running",
-                launchedAt: now,
-                updatedAt: now,
-              })
-              .where(
-                and(
-                  eq(
-                    experiments.id,
-                    effectiveExperimentMembership.experimentId,
-                  ),
-                  eq(experiments.status, "draft"),
-                ),
-              );
-          }
         }
 
         // ADR-146 D15: the SUCCESSOR participant row for a restarted launched

@@ -17,7 +17,7 @@ import {
   budgetAxisSchema,
   executionPolicySchema,
 } from "@/lib/runs/execution-policy";
-import { experimentCapabilityOverlaySchema } from "@/lib/experiments/variant-config";
+import { evaluationCapabilityOverlaySchema } from "@/lib/evaluations/capability-overlay";
 import { flowRunnerConfigSchema } from "@/lib/config.schema";
 
 // The forced promotion hold source. A launched Evaluation participant ALWAYS
@@ -140,7 +140,7 @@ export const evaluationRecipeDefinitionSchema = z
       .record(z.string().min(1), recipeSlotTargetSchema)
       .default({}),
     executionPolicy: executionPolicySchema,
-    capabilityOverlay: experimentCapabilityOverlaySchema.optional(),
+    capabilityOverlay: evaluationCapabilityOverlaySchema.optional(),
     budgets: budgetAxisSchema.optional(),
     materializationIntent: recipeMaterializationIntentSchema.default({
       packagePins: [],

@@ -44,16 +44,6 @@ vi.mock("@/lib/runs/state-transitions", () => ({
     stateTransitionSpies.failResumedRunSpy(...(args as unknown[])),
 }));
 
-vi.mock("@/lib/experiments/diff-snapshot", () => ({
-  captureExperimentDiffSnapshotForRun: vi.fn(async () => ({
-    status: "not-member",
-  })),
-}));
-
-vi.mock("@/lib/experiments/status-sync", () => ({
-  syncExperimentStatusForRun: vi.fn(async () => null),
-}));
-
 const { rollbackResumedRunSpy, crashResumedRunSpy, failResumedRunSpy } =
   stateTransitionSpies;
 

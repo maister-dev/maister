@@ -27,16 +27,6 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-vi.mock("@/lib/experiments/diff-snapshot", () => ({
-  captureExperimentDiffSnapshotForRun: vi.fn(async () => ({
-    status: "not-member",
-  })),
-}));
-
-vi.mock("@/lib/experiments/status-sync", () => ({
-  syncExperimentStatusForRun: vi.fn(async () => null),
-}));
-
 vi.mock("@/lib/review-comments/feedback-packet", () => ({
   assertReviewFeedbackPresent: vi.fn(),
   buildReviewFeedbackPreview: vi.fn(async () => ({
@@ -1665,48 +1655,11 @@ describe("HITL respond route — kind=budget_breach", () => {
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
   });
 
-  it("terminalizes and relaunches a flow restart with recovered launch options", async () => {
-    const { runId, hitlRequestId } = seedBudgetBreachRow();
-
-    const res = await invokePost(runId, hitlRequestId, {
-      optionId: "restart",
-    });
-    const payload = await res.json();
-
-    expect(res.status).toBe(202);
-    expect(payload).toMatchObject({
-      ok: true,
-      runStatus: "Failed",
-      newRunId: "run-budget-restart",
-      newRunStatus: "Pending",
-      queuePosition: 1,
-    });
-    expect(dbState.tables.runs[0].status).toBe("Failed");
-    expect(dbState.tables.hitl_requests[0].response).toMatchObject({
-      optionId: "restart",
-      stage: "terminalized",
-      ref: "run-budget-restart",
-    });
-    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
-    expect(launchRunSpy).toHaveBeenCalledTimes(1);
-    expect(launchRunSpy.mock.calls[0]?.[0]).toEqual({
-      taskId: "task-1",
-      flowId: "flow-1",
-      runnerId: "runner-1",
-      baseBranch: "main",
-      targetBranch: "maister/budget",
-      triggerSource: "manual",
-      triggerPayload: {
-        kind: "budget_restart",
-        oldRunId: runId,
-        hitlRequestId,
-        idempotencyKey: `budget_restart:${runId}:${hitlRequestId}`,
-      },
-      allowConcurrent: false,
-    });
-    expect(addTaskCommentSpy).toHaveBeenCalledTimes(1);
-  });
-
+  // NOTE (ADR-149 T3.3): the "restart terminalizes + relaunches with recovered
+  // launch options" case moved to `hitl-budget-breach.integration.test.ts` — the
+  // restart path now consults `isLaunchedLineageRun`, which reads
+  // `evaluation_participants` (a real-DB-only table this mock cannot model). The
+  // integration suite is the single home for that behavior.
   it("rejects a delivered budget response when the retry payload differs", async () => {
     const { runId, hitlRequestId } = seedBudgetBreachRow({
       response: {

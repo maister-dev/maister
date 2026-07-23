@@ -5,7 +5,6 @@ import type { Db } from "@/lib/evaluations/db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { evaluationParticipants, evaluationStudies } from "@/lib/db/schema";
-import { isExperimentMemberRun } from "@/lib/experiments/membership";
 
 // A run is a launched evaluation participant iff a `launched`-source participant
 // references it. OBSERVED participants (`source_type = 'observed'`) are excluded
@@ -32,20 +31,17 @@ export async function isLaunchedEvaluationRun(
   return rows.length > 0;
 }
 
-// The unified launched-lineage predicate: true for a run launched as either a
-// legacy Experiment member (`experiment_runs`) OR a canonical launched
-// Evaluation participant (`evaluation_participants.source_type='launched'`).
-// During the M46 compatibility window both representations coexist (the legacy
-// route still writes `experiment_runs`; new recipe launches write launched
-// participants), so EVERY no-auto-promotion / auto-delivery / relaunch consumer
-// routes through this ONE predicate — observed participants can never leak into
-// a launched-lineage decision, and the two representations can never drift.
+// The launched-lineage predicate: true for a canonical launched Evaluation
+// participant (`evaluation_participants.source_type='launched'`). EVERY
+// no-auto-promotion / auto-delivery / relaunch consumer routes through this ONE
+// predicate — observed participants can never leak into a launched-lineage
+// decision. ADR-149 dropped the legacy `experiment_runs` leg: migration 0110
+// already backfilled every historical experiment member into a launched
+// evaluation participant, so they keep their launched semantics here.
 export async function isLaunchedLineageRun(
   db: Db,
   runId: string,
 ): Promise<boolean> {
-  if (await isExperimentMemberRun(db, runId)) return true;
-
   return isLaunchedEvaluationRun(db, runId);
 }
 

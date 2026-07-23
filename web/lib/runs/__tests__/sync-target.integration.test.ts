@@ -351,7 +351,7 @@ describe("assertSyncEligible", () => {
     runKind: "flow",
     parentRunId: null,
     workspaceMode: null,
-    isExperimentMember: false,
+    isLaunchedLineage: false,
   };
 
   it("passes an eligible top-level Review flow run", () => {
@@ -361,13 +361,13 @@ describe("assertSyncEligible", () => {
     ).not.toThrow();
   });
 
-  it("refuses non-Review, scratch, orchestrator-child, shared, and experiment members", () => {
+  it("refuses non-Review, scratch, orchestrator-child, shared, and launched-lineage runs", () => {
     for (const bad of [
       { ...base, status: "Running" },
       { ...base, runKind: "scratch" },
       { ...base, parentRunId: "parent-1" },
       { ...base, workspaceMode: "shared" },
-      { ...base, isExperimentMember: true },
+      { ...base, isLaunchedLineage: true },
     ]) {
       expect(() => assertSyncEligible(bad, ws)).toThrow(MaisterError);
       try {

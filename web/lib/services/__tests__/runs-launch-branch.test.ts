@@ -27,7 +27,6 @@ const mocks = vi.hoisted(() => ({
   runFlow: vi.fn(),
   worktreesRoot: vi.fn(),
   compileManifest: vi.fn(),
-  deriveExperimentMembershipFromSource: vi.fn(),
 }));
 
 // `from()` is both awaitable (for selects with no `.where()`, e.g.
@@ -87,14 +86,12 @@ const state: {
   selectResults: Record<string, unknown>[][];
   selectCalls: number;
   inserts: InsertCall[];
-  experiments: Record<string, unknown>[];
   latestFlowRun: Record<string, unknown> | null;
   insertFailures: Record<string, unknown>;
 } = {
   selectResults: [],
   selectCalls: 0,
   inserts: [],
-  experiments: [],
   latestFlowRun: null,
   insertFailures: {},
 };
@@ -124,19 +121,6 @@ const fakeDb: FakeDb = {
                 state.latestFlowRun === null ? [] : [state.latestFlowRun],
             }),
           }),
-        };
-      }
-      if (getTableName(table as never) === "experiments") {
-        const lockedResult: LockedResult = {
-          for: async () => state.experiments,
-          then: (onFulfilled, onRejected) =>
-            Promise.resolve(state.experiments).then(onFulfilled, onRejected),
-        };
-
-        return {
-          then: (onFulfilled, onRejected) =>
-            Promise.resolve(state.experiments).then(onFulfilled, onRejected),
-          where: () => lockedResult,
         };
       }
       if (getTableName(table as never) === "task_relations") {
@@ -237,10 +221,6 @@ vi.mock("@/lib/instance-config", () => ({
 }));
 vi.mock("@/lib/flows/graph/compile", () => ({
   compileManifest: mocks.compileManifest,
-}));
-vi.mock("@/lib/experiments/membership", () => ({
-  deriveExperimentMembershipFromSource:
-    mocks.deriveExperimentMembershipFromSource,
 }));
 
 // ADR-146 D15: launchRun also derives evaluation-participation inheritance from
@@ -375,7 +355,6 @@ beforeEach(async () => {
   state.selectResults = [];
   state.selectCalls = 0;
   state.inserts = [];
-  state.experiments = [{ id: "exp-1", status: "running" }];
   state.latestFlowRun = null;
   state.insertFailures = {};
 
@@ -401,7 +380,6 @@ beforeEach(async () => {
   });
   mocks.tryStartRun.mockResolvedValue({ started: false, queuePosition: 1 });
   mocks.runFlow.mockResolvedValue(undefined);
-  mocks.deriveExperimentMembershipFromSource.mockResolvedValue(null);
   // A trivial compiled graph with no capability-bearing nodes — sidesteps the
   // M11c/M13/M14 enforcement gates so the test isolates branch resolution.
   mocks.compileManifest.mockReturnValue({
@@ -442,12 +420,6 @@ function runInsert(): Record<string, unknown> | undefined {
   // The runs insert is the one carrying the execution-policy snapshot.
   return state.inserts.find(
     (call) => call.values && "executionPolicy" in call.values,
-  )?.values;
-}
-
-function experimentRunInsert(): Record<string, unknown> | undefined {
-  return state.inserts.find(
-    (call) => getTableName(call.table as never) === "experiment_runs",
   )?.values;
 }
 
@@ -706,254 +678,6 @@ describe("launchRun — branch allow-list validation precedes the worktree side-
     });
     expect(mocks.addWorktree).not.toHaveBeenCalled();
     expect(workspaceInsert()).toBeUndefined();
-  });
-});
-
-describe("launchRun — experiment membership transaction (ADR-124)", () => {
-  it("inserts experiment_runs membership in the same launch transaction", async () => {
-    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
-
-    await launchRun(
-      {
-        taskId: TASK_ID,
-        baseCommit: pinnedCommit,
-        experimentMembership: {
-          experimentId: "exp-1",
-          variantKey: "claude",
-          replicateOrdinal: 1,
-          launchReason: "initial",
-          baseCommit: pinnedCommit,
-        },
-      } as Parameters<typeof launchRun>[0],
-      ctx(),
-      fakeDb,
-    );
-
-    expect(experimentRunInsert()).toMatchObject({
-      experimentId: "exp-1",
-      variantKey: "claude",
-      replicateOrdinal: 1,
-      launchReason: "initial",
-      baseCommit: pinnedCommit,
-    });
-    expect(experimentRunInsert()?.runId).toBe(runInsert()?.id);
-  });
-
-  it("refuses membership when a concurrent conclusion made the experiment terminal", async () => {
-    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
-
-    state.experiments = [{ id: "exp-1", status: "concluded" }];
-
-    await expect(
-      launchRun(
-        {
-          taskId: TASK_ID,
-          baseCommit: pinnedCommit,
-          experimentMembership: {
-            experimentId: "exp-1",
-            variantKey: "claude",
-            replicateOrdinal: 1,
-            launchReason: "initial",
-            baseCommit: pinnedCommit,
-          },
-        } as Parameters<typeof launchRun>[0],
-        ctx(),
-        fakeDb,
-      ),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
-
-    expect(mocks.addWorktree).not.toHaveBeenCalled();
-    expect(experimentRunInsert()).toBeUndefined();
-  });
-
-  it("uses the force launchability gate for direct experiment member fan-out", async () => {
-    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
-
-    state.latestFlowRun = { id: "busy-run", status: "Running" };
-
-    await launchRun(
-      {
-        taskId: TASK_ID,
-        baseCommit: pinnedCommit,
-        allowConcurrent: false,
-        experimentMembership: {
-          experimentId: "exp-1",
-          variantKey: "codex",
-          replicateOrdinal: 2,
-          launchReason: "initial",
-          baseCommit: pinnedCommit,
-        },
-      } as Parameters<typeof launchRun>[0],
-      ctx(),
-      fakeDb,
-    );
-
-    expect(experimentRunInsert()).toMatchObject({
-      experimentId: "exp-1",
-      variantKey: "codex",
-      replicateOrdinal: 2,
-      launchReason: "initial",
-    });
-  });
-
-  it("maps duplicate experiment membership inserts to CONFLICT", async () => {
-    const pinnedCommit = "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e";
-
-    state.insertFailures.experiment_runs = Object.assign(
-      new Error("duplicate key value violates unique constraint"),
-      { code: "23505", constraint: "experiment_runs_variant_replicate_uq" },
-    );
-
-    await expect(
-      launchRun(
-        {
-          taskId: TASK_ID,
-          baseCommit: pinnedCommit,
-          experimentMembership: {
-            experimentId: "exp-1",
-            variantKey: "codex",
-            replicateOrdinal: 1,
-            launchReason: "initial",
-            baseCommit: pinnedCommit,
-          },
-        } as Parameters<typeof launchRun>[0],
-        ctx(),
-        fakeDb,
-      ),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
-  });
-
-  it("inherits experiment membership for manual relaunchOfRunId sources", async () => {
-    const inherited = {
-      experimentId: "exp-1",
-      variantKey: "codex",
-      replicateOrdinal: 3,
-      launchReason: "manual_relaunch" as const,
-      baseCommit: "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e",
-    };
-
-    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(inherited);
-
-    await launchRun(
-      {
-        taskId: TASK_ID,
-        relaunchOfRunId: "source-run-1",
-      } as Parameters<typeof launchRun>[0],
-      ctx(),
-      fakeDb,
-    );
-
-    expect(mocks.deriveExperimentMembershipFromSource).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceRunId: "source-run-1",
-        taskId: TASK_ID,
-        launchReason: "manual_relaunch",
-      }),
-    );
-    expect(experimentRunInsert()).toMatchObject(inherited);
-    expect(experimentRunInsert()?.runId).toBe(runInsert()?.id);
-  });
-
-  it("keeps a relaunch plain when the source run is not an experiment member", async () => {
-    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(null);
-
-    await launchRun(
-      {
-        taskId: TASK_ID,
-        relaunchOfRunId: "source-run-1",
-      } as Parameters<typeof launchRun>[0],
-      ctx(),
-      fakeDb,
-    );
-
-    expect(mocks.deriveExperimentMembershipFromSource).toHaveBeenCalled();
-    expect(experimentRunInsert()).toBeUndefined();
-  });
-
-  it("rejects cross-task relaunchOfRunId sources before worktree creation", async () => {
-    mocks.deriveExperimentMembershipFromSource.mockRejectedValueOnce(
-      new MaisterError("CONFLICT", "source run belongs to another task"),
-    );
-
-    await expect(
-      launchRun(
-        {
-          taskId: TASK_ID,
-          relaunchOfRunId: "other-task-run",
-        } as Parameters<typeof launchRun>[0],
-        ctx(),
-        fakeDb,
-      ),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
-
-    expect(mocks.addWorktree).not.toHaveBeenCalled();
-    expect(runInsert()).toBeUndefined();
-  });
-
-  it("uses the force launchability gate for budget restarts of active experiment members", async () => {
-    state.latestFlowRun = { id: "busy-run", status: "Running" };
-    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce({
-      experimentId: "exp-1",
-      variantKey: "claude",
-      replicateOrdinal: 2,
-      launchReason: "budget_restart",
-      baseCommit: "9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e",
-    });
-
-    await launchRun(
-      {
-        taskId: TASK_ID,
-        triggerSource: "manual",
-        triggerPayload: {
-          kind: "budget_restart",
-          oldRunId: "source-run-1",
-          hitlRequestId: "hitl-1",
-          idempotencyKey: "budget_restart:source-run-1:hitl-1",
-        },
-        allowConcurrent: false,
-      } as Parameters<typeof launchRun>[0],
-      ctx(),
-      fakeDb,
-    );
-
-    expect(mocks.deriveExperimentMembershipFromSource).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceRunId: "source-run-1",
-        launchReason: "budget_restart",
-      }),
-    );
-    expect(experimentRunInsert()).toMatchObject({
-      experimentId: "exp-1",
-      variantKey: "claude",
-      replicateOrdinal: 2,
-      launchReason: "budget_restart",
-    });
-  });
-
-  it("does not force a busy non-member budget restart", async () => {
-    state.latestFlowRun = { id: "busy-run", status: "Running" };
-    mocks.deriveExperimentMembershipFromSource.mockResolvedValueOnce(null);
-
-    await expect(
-      launchRun(
-        {
-          taskId: TASK_ID,
-          triggerSource: "manual",
-          triggerPayload: {
-            kind: "budget_restart",
-            oldRunId: "source-run-1",
-            hitlRequestId: "hitl-1",
-            idempotencyKey: "budget_restart:source-run-1:hitl-1",
-          },
-          allowConcurrent: false,
-        } as Parameters<typeof launchRun>[0],
-        ctx(),
-        fakeDb,
-      ),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
-
-    expect(mocks.addWorktree).not.toHaveBeenCalled();
-    expect(experimentRunInsert()).toBeUndefined();
   });
 });
 

@@ -44,9 +44,7 @@ import {
 } from "@/lib/flows/hitl-validate";
 import { isPlanReviewDecisionRequestSchema } from "@/lib/flows/graph/plan-review-decisions";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
-import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
-import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import { runFlow } from "@/lib/flows/runner";
 import {
   assertReviewFeedbackPresent,
@@ -1267,10 +1265,6 @@ async function handlePermissionResponse(
           .set({ respondedAt: new Date() })
           .where(eq(hitlRequests.id, hitlRequestId));
 
-        if (terminalRows.length > 0) {
-          await syncExperimentStatusForRun({ db: tx, runId });
-        }
-
         // ADR-097: project-less assistant run ⇒ no project to attribute the
         // terminal outbox events to (both emits require a non-null projectId).
         if (terminalRows.length > 0 && terminalRows[0].projectId) {
@@ -1355,7 +1349,6 @@ async function handlePermissionResponse(
         runId,
         reason: "permission deferred expired before response was delivered",
       });
-      await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
 
       log.warn(
         {
@@ -3056,8 +3049,6 @@ async function handleInfraRecoveryResponse(args: {
           (hitlRow.schema as { code?: string } | null)?.code ??
           "EXECUTOR_UNAVAILABLE";
 
-        await syncExperimentStatusForRun({ db: tx, runId });
-
         await emitWebhookEvent({
           db: tx,
           type: "run.failed",
@@ -3126,7 +3117,6 @@ async function handleInfraRecoveryResponse(args: {
   }
 
   if (outcome.transition === "abandoned") {
-    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     log.info(
       { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
       "infra_recovery abandoned — run Failed",
@@ -3268,10 +3258,6 @@ async function terminalizeBudgetRun(args: {
     });
   const row = terminal[0] ?? null;
 
-  if (row) {
-    await syncExperimentStatusForRun({ db: args.tx, runId: args.runId });
-  }
-
   if (row?.projectId) {
     await emitWebhookEvent({
       db: args.tx,
@@ -3313,8 +3299,6 @@ async function markBudgetParkedRun(args: {
   runId: string;
   ref: string | null;
 }): Promise<"Abandoned"> {
-  let changed = false;
-
   await args.db.transaction(async (tx: any) => {
     const endedAt = new Date();
     const updated = await tx
@@ -3353,9 +3337,6 @@ async function markBudgetParkedRun(args: {
       );
     }
 
-    changed = true;
-    await syncExperimentStatusForRun({ db: tx, runId: args.runId });
-
     if (row.projectId) {
       await emitWebhookEvent({
         db: tx,
@@ -3393,14 +3374,6 @@ async function markBudgetParkedRun(args: {
       reason: "budget breach parked",
     });
   });
-
-  if (changed) {
-    await captureExperimentDiffSnapshotForRun({
-      db: args.db,
-      runId: args.runId,
-      force: true,
-    });
-  }
 
   return "Abandoned";
 }
@@ -4224,7 +4197,6 @@ async function handleBudgetBreachResponse(args: {
           return row;
         });
         oldRunTerminalized = true;
-        await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
       }
 
       const launched = await launchBudgetRestart({
@@ -4434,8 +4406,6 @@ async function handleBudgetBreachResponse(args: {
   }
 
   if (outcome.transition === "abandoned") {
-    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
-
     if (
       decision.optionId === "abandon" &&
       decision.dropWorkspace &&
@@ -4588,10 +4558,6 @@ async function handleHookTripResponse(args: {
           parentRunId: runs.parentRunId,
         });
 
-      if (terminal.length > 0) {
-        await syncExperimentStatusForRun({ db: tx, runId });
-      }
-
       if (terminal.length > 0 && terminal[0].projectId) {
         await emitWebhookEvent({
           db: tx,
@@ -4669,7 +4635,6 @@ async function handleHookTripResponse(args: {
   }
 
   if (outcome.transition === "aborted") {
-    await captureExperimentDiffSnapshotForRun({ db, runId, force: true });
     log.info(
       { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
       "hook_trip aborted — run Failed",

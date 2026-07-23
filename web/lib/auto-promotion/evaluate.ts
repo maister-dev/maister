@@ -50,9 +50,10 @@ export const NOT_APPLICABLE_REASONS = [
   "no_task",
   "orchestrator_child",
   "shared_workspace",
-  // ADR-132 (enforcing ADR-124): experiment member runs never auto-promote —
-  // winner promotion stays the explicit human path.
-  "experiment_member",
+  // ADR-149 (enforcing ADR-142 D3): a launched-lineage run (evaluation
+  // participant) never auto-promotes — winner promotion stays the explicit
+  // human path.
+  "launched_lineage",
   "auto_on_ready",
 ] as const;
 
@@ -106,10 +107,11 @@ export interface AutoPromotionReaders {
   readinessGreen(): Promise<boolean>;
   externalCheck(gateId: string): Promise<ExternalCheckState>;
   readDepsFiles(files: DiffChangeStatEntry[]): Promise<DepsFile[]>;
-  // ADR-132: experiment membership is structural non-candidacy — the guard at
-  // the irreversible apply site, since promoteRun evaluation can be reached
-  // outside the sweep (the SQL prefilter alone is not enough).
-  isExperimentMember(): Promise<boolean>;
+  // ADR-149 (enforcing ADR-142 D3): launched-lineage membership is structural
+  // non-candidacy — the guard at the irreversible apply site, since promoteRun
+  // evaluation can be reached outside the sweep (the SQL prefilter alone is not
+  // enough).
+  isLaunchedLineage(): Promise<boolean>;
 }
 
 export interface EvaluateAutoPromotionInput {
@@ -168,10 +170,11 @@ export async function evaluateAutoPromotion(
   if (run.workspaceMode === "shared") {
     return { verdict: "not_applicable", reason: "shared_workspace" };
   }
-  // ADR-132 (enforcing the ADR-124 invariant): an experiment member run is
-  // structurally non-promotable — winner promotion is the explicit human path.
-  if (await readers.isExperimentMember()) {
-    return { verdict: "not_applicable", reason: "experiment_member" };
+  // ADR-149 (enforcing ADR-142 D3): a launched-lineage run (evaluation
+  // participant) is structurally non-promotable — winner promotion is the
+  // explicit human path.
+  if (await readers.isLaunchedLineage()) {
+    return { verdict: "not_applicable", reason: "launched_lineage" };
   }
 
   // Term 8: already auto-delivering (either OR-combined knob) — the existing

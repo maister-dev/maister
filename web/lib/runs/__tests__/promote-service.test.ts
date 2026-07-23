@@ -150,13 +150,6 @@ vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
   assertEvidenceReady: vi.fn(async () => ({ ready: true, reasons: [] })),
 }));
 
-vi.mock("@/lib/experiments/status-sync", () => ({
-  syncExperimentStatusForRun: vi.fn(async () => ({
-    changed: false,
-    experimentId: null,
-  })),
-}));
-
 vi.mock("@/lib/assignments/service", () => ({
   createAssignment: vi.fn(async () => ({ id: "assignment-1" })),
   ensureUserActor: vi.fn(async () => ({ id: "actor-1" })),

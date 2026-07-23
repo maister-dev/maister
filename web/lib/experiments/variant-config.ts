@@ -7,6 +7,10 @@ import {
   OVERLAY_CLASS_SUPPORT_BY_AGENT,
   type OverlayCapabilityClass,
 } from "@/lib/flows/enforcement";
+import {
+  evaluationCapabilityOverlaySchema,
+  evaluationOverlayDeltaSchema,
+} from "@/lib/evaluations/capability-overlay";
 import { MaisterError } from "@/lib/errors-core";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
 
@@ -30,63 +34,13 @@ export const OVERLAY_SELECTION_KEY_BY_CLASS = {
   subagents: "selectedAgentDefinitionIds",
 } as const satisfies Record<OverlayClass, keyof CapabilitySelection>;
 
-function firstDuplicate(values: readonly string[] | undefined): string | null {
-  if (!values) return null;
-
-  const seen = new Set<string>();
-
-  for (const value of values) {
-    if (seen.has(value)) return value;
-    seen.add(value);
-  }
-
-  return null;
-}
-
-export const experimentOverlayDeltaSchema = z
-  .object({
-    add: z.array(z.string().min(1)).optional(),
-    remove: z.array(z.string().min(1)).optional(),
-  })
-  .strict()
-  .superRefine((delta, ctx) => {
-    const duplicateAdd = firstDuplicate(delta.add);
-    const duplicateRemove = firstDuplicate(delta.remove);
-
-    if (duplicateAdd) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["add"],
-        message: `duplicate add ref "${duplicateAdd}"`,
-      });
-    }
-    if (duplicateRemove) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["remove"],
-        message: `duplicate remove ref "${duplicateRemove}"`,
-      });
-    }
-
-    const remove = new Set(delta.remove ?? []);
-    const duplicateAcross = (delta.add ?? []).find((ref) => remove.has(ref));
-
-    if (duplicateAcross) {
-      ctx.addIssue({
-        code: "custom",
-        message: `overlay ref "${duplicateAcross}" cannot be both added and removed`,
-      });
-    }
-  });
-
-export const experimentCapabilityOverlaySchema = z
-  .object({
-    rules: experimentOverlayDeltaSchema.optional(),
-    skills: experimentOverlayDeltaSchema.optional(),
-    mcps: experimentOverlayDeltaSchema.optional(),
-    subagents: experimentOverlayDeltaSchema.optional(),
-  })
-  .strict();
+// ADR-149 T3.5: the overlay schema moved to the evaluations module (its
+// canonical home, which outlives this file's Phase-5 deletion). Re-exported here
+// under the historical `experiment*` names so http-schemas.ts and the variant
+// config below keep resolving until the legacy module is removed.
+export const experimentOverlayDeltaSchema = evaluationOverlayDeltaSchema;
+export const experimentCapabilityOverlaySchema =
+  evaluationCapabilityOverlaySchema;
 
 export const experimentVariantConfigSchema = z
   .object({

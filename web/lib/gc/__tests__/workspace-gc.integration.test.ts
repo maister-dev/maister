@@ -45,8 +45,9 @@ import {
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
-  experimentRuns,
-  experiments,
+  evaluationParticipants,
+  evaluationRecipes,
+  evaluationStudies,
   flowRevisions,
   flows,
   projects,
@@ -143,6 +144,11 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.delete(workspaces);
+  // evaluation_studies.task_id is ON DELETE RESTRICT — clear studies (cascading
+  // to participants/recipes) before the tasks delete below.
+  await db.delete(evaluationParticipants);
+  await db.delete(evaluationRecipes);
+  await db.delete(evaluationStudies);
   await db.delete(runs);
   await db.delete(tasks);
 });
@@ -210,35 +216,43 @@ async function seed(opts: SeedOpts = {}): Promise<{
   return { runId, taskId, workspaceId, worktreePath };
 }
 
-async function seedExperimentMembership(args: {
+async function seedLaunchedParticipant(args: {
   runId: string;
   taskId: string;
-  status: "running" | "comparable" | "concluded" | "abandoned";
+  status: "draft" | "open" | "decided" | "archived";
 }): Promise<string> {
-  const experimentId = randomUUID();
+  const studyId = randomUUID();
 
-  await db.insert(experiments).values({
-    id: experimentId,
+  await db.insert(evaluationStudies).values({
+    id: studyId,
     projectId,
     taskId: args.taskId,
     title: "GC hold",
-    baseBranch: "main",
-    baseCommit: "a".repeat(40),
     status: args.status,
-    variants: [{ key: "a", label: "A", config: {} }],
-    rubric: { criteria: [] },
-  });
-  await db.insert(experimentRuns).values({
-    id: randomUUID(),
-    experimentId,
-    runId: args.runId,
-    variantKey: "a",
-    replicateOrdinal: 1,
-    launchReason: "initial",
-    baseCommit: "a".repeat(40),
   });
 
-  return experimentId;
+  const recipeId = randomUUID();
+
+  await db.insert(evaluationRecipes).values({
+    id: recipeId,
+    studyId,
+    key: "a",
+    label: "A",
+    definition: {},
+    definitionDigest: "d",
+  });
+  await db.insert(evaluationParticipants).values({
+    id: randomUUID(),
+    studyId,
+    runId: args.runId,
+    sourceType: "launched",
+    recipeId,
+    label: "launched",
+    launchReason: "initial",
+    replicateOrdinal: 1,
+  });
+
+  return studyId;
 }
 
 async function readWorkspace(workspaceId: string): Promise<any> {
@@ -512,14 +526,14 @@ describe("runWorkspaceGcSweep (integration)", () => {
     }, 60_000);
   }
 
-  it("holds experiment-member workspaces while the experiment is non-terminal and releases them after conclusion", async () => {
+  it("holds launched-participant workspaces while the study is non-terminal and releases them after it is decided", async () => {
     const { runId, taskId, workspaceId } = await seed({
       scheduledRemovalAt: new Date(Date.now() - 86_400_000),
     });
-    const experimentId = await seedExperimentMembership({
+    const studyId = await seedLaunchedParticipant({
       runId,
       taskId,
-      status: "running",
+      status: "open",
     });
 
     const first = makeOpts();
@@ -530,9 +544,9 @@ describe("runWorkspaceGcSweep (integration)", () => {
     expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
 
     await db
-      .update(experiments)
-      .set({ status: "concluded" })
-      .where(eq(experiments.id, experimentId));
+      .update(evaluationStudies)
+      .set({ status: "decided" })
+      .where(eq(evaluationStudies.id, studyId));
 
     const second = makeOpts();
     const secondSummary = await runWorkspaceGcSweep(second.opts);

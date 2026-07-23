@@ -21,16 +21,6 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { respondToHitl, HitlActor } from "@/lib/services/hitl";
 
-vi.mock("@/lib/experiments/diff-snapshot", () => ({
-  captureExperimentDiffSnapshotForRun: vi.fn(async () => ({
-    status: "not-member",
-  })),
-}));
-
-vi.mock("@/lib/experiments/status-sync", () => ({
-  syncExperimentStatusForRun: vi.fn(async () => null),
-}));
-
 type Row = Record<string, unknown>;
 type Tables = {
   runs: Row[];

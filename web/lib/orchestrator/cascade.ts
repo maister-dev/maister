@@ -7,8 +7,6 @@ import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
-import { captureExperimentDiffSnapshotForRun } from "@/lib/experiments/diff-snapshot";
-import { syncExperimentStatusForRun } from "@/lib/experiments/status-sync";
 import {
   CASCADE_NON_TERMINAL_RUN_STATUSES,
   getRunSubtreeIds,
@@ -155,7 +153,6 @@ export async function cascadeAbandonRunTree(
           );
 
         for (const row of runRows) {
-          await syncExperimentStatusForRun({ db: tx, runId: row.id });
           await emitDomainEvent({
             db: tx,
             kind: "run.abandoned",
@@ -181,16 +178,6 @@ export async function cascadeAbandonRunTree(
 
   // Reclaim freed slots per pool the cascade actually emptied (a sub-tree mixes
   // flow + agent run_kinds, each on its own budget).
-  await Promise.all(
-    cascaded.map((row) =>
-      captureExperimentDiffSnapshotForRun({
-        db: database,
-        runId: row.id,
-        force: true,
-      }),
-    ),
-  );
-
   const pools = new Set(cascaded.map((row) => poolForRunKind(row.runKind)));
 
   for (const pool of pools) {

@@ -30,16 +30,6 @@ vi.mock("drizzle-orm", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/experiments/diff-snapshot", () => ({
-  captureExperimentDiffSnapshotForRun: vi.fn(async () => ({
-    status: "not-member",
-  })),
-}));
-
-vi.mock("@/lib/experiments/status-sync", () => ({
-  syncExperimentStatusForRun: vi.fn(async () => null),
-}));
-
 type Captured = {
   setArg: Record<string, unknown> | null;
   whereArg: unknown;

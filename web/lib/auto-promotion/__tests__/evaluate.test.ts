@@ -35,7 +35,7 @@ function okReaders(): AutoPromotionReaders {
     readinessGreen: async () => true,
     externalCheck: async () => "passed",
     readDepsFiles: async () => [],
-    isExperimentMember: async () => false,
+    isLaunchedLineage: async () => false,
   };
 }
 
@@ -386,21 +386,21 @@ describe("verdict reason-code i18n closure (EN+RU)", () => {
   });
 });
 
-describe("evaluateAutoPromotion — ADR-132 experiment-member exclusion", () => {
-  it("returns not_applicable experiment_member for a member run (enforces the ADR-124 invariant at the apply site)", async () => {
+describe("evaluateAutoPromotion — ADR-149 launched-lineage exclusion", () => {
+  it("returns not_applicable launched_lineage for a launched-lineage run (enforces the ADR-142 D3 invariant at the apply site)", async () => {
     const evaluation = await evaluateAutoPromotion(
-      baseInput({ readers: { isExperimentMember: async () => true } }),
+      baseInput({ readers: { isLaunchedLineage: async () => true } }),
     );
 
     expect(evaluation).toEqual({
       verdict: "not_applicable",
-      reason: "experiment_member",
+      reason: "launched_lineage",
     });
   });
 
   it("a non-member run is unaffected (regression arm)", async () => {
     const evaluation = await evaluateAutoPromotion(
-      baseInput({ readers: { isExperimentMember: async () => false } }),
+      baseInput({ readers: { isLaunchedLineage: async () => false } }),
     );
 
     expect(evaluation).toMatchObject({ verdict: "eligible", lane: "docs" });

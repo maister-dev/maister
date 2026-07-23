@@ -169,16 +169,26 @@ describe("launched-lineage membership predicate", () => {
       baseCommit: "abc",
     });
 
-    // isLaunchedEvaluationRun: only the launched participant.
+    // isLaunchedEvaluationRun: only the launched participant. A raw legacy
+    // experiment member (pre-backfill) has no launched participant yet.
     expect(await isLaunchedEvaluationRun(db, launchedRun)).toBe(true);
     expect(await isLaunchedEvaluationRun(db, observedRun)).toBe(false);
     expect(await isLaunchedEvaluationRun(db, experimentRun)).toBe(false);
 
-    // isLaunchedLineageRun: launched-eval OR legacy-experiment, never observed.
+    // ADR-149: isLaunchedLineageRun no longer reads experiment_runs directly —
+    // a raw legacy member (not yet backfilled) is NOT launched-lineage.
     expect(await isLaunchedLineageRun(db, launchedRun)).toBe(true);
-    expect(await isLaunchedLineageRun(db, experimentRun)).toBe(true);
+    expect(await isLaunchedLineageRun(db, experimentRun)).toBe(false);
     expect(await isLaunchedLineageRun(db, observedRun)).toBe(false);
     expect(await isLaunchedLineageRun(db, plainRun)).toBe(false);
+
+    // The 0110 backfill converts the legacy member into a launched evaluation
+    // participant, restoring its launched-lineage semantics through the ONE
+    // predicate — so a historical experiment run stays excluded from
+    // auto-promotion after the experiment_runs leg is dropped.
+    await db.execute(sql`SELECT evaluation_backfill_from_experiments()`);
+    expect(await isLaunchedEvaluationRun(db, experimentRun)).toBe(true);
+    expect(await isLaunchedLineageRun(db, experimentRun)).toBe(true);
 
     // A tombstoned launched participant still holds its run (immutable hold).
     await db.execute(

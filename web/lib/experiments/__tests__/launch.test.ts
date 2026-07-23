@@ -230,7 +230,6 @@ describe("launchExperimentVariants — packagePin axis (ADR-132)", () => {
       runnerId: "runner-codex",
       executionPolicy: { preset: "assisted" },
       packagePin: { packageInstallId: PIN_ID },
-      experimentMembership: { variantKey: "fork" },
     });
   });
 
@@ -301,26 +300,18 @@ describe("launchExperimentVariants", () => {
     expect(state.transactionCount).toBe(1);
     expect(state.lockedTables).toEqual(["experiments", "experiment_runs"]);
     expect(mocks.launchRun).toHaveBeenCalledTimes(4);
+    // ADR-149 T3.3: the legacy launch no longer threads experimentMembership
+    // (launched-participant lineage is exclusively the controlled recipe seam);
+    // the fan-out itself — runner/policy/base per variant — is unchanged.
     expect(mocks.launchRun.mock.calls[0][0]).toMatchObject({
       taskId: "task-1",
       runnerId: "runner-claude",
       baseBranch: "main",
       baseCommit: "a".repeat(40),
-      experimentMembership: {
-        experimentId: "exp-1",
-        variantKey: "claude",
-        replicateOrdinal: 1,
-        launchReason: "initial",
-        baseCommit: "a".repeat(40),
-      },
     });
     expect(mocks.launchRun.mock.calls[2][0]).toMatchObject({
       runnerId: "runner-codex",
       executionPolicy: { preset: "assisted" },
-      experimentMembership: {
-        variantKey: "codex",
-        replicateOrdinal: 1,
-      },
     });
     expect(result).toMatchObject({
       experimentId: "exp-1",

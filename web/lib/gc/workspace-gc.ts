@@ -42,8 +42,6 @@ import {
 const {
   evaluationParticipants,
   evaluationStudies,
-  experimentRuns,
-  experiments,
   projects,
   runs,
   workspaces,
@@ -223,22 +221,13 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
         ),
     ),
   );
-  const experimentNotBlocked = notExists(
-    db
-      .select({ one: experimentRuns.id })
-      .from(experimentRuns)
-      .innerJoin(experiments, eq(experiments.id, experimentRuns.experimentId))
-      .where(
-        and(
-          eq(experimentRuns.runId, runs.id),
-          notInArray(experiments.status, ["concluded", "abandoned"]),
-        ),
-      ),
-  );
-  // Evaluation-lab evidence hold (ADR-146 D15, mirroring the experiment join):
-  // a launched participant's worktree is study evidence — later executions
-  // (judge captures, verdicts) read it, so it must survive until the study
-  // reaches a terminal status. `draft`/`open` are the live set; only
+  // Evaluation-lab evidence hold (ADR-146 D15): a launched participant's
+  // worktree is study evidence — later executions (judge captures, verdicts)
+  // read it, so it must survive until the study reaches a terminal status. This
+  // is the SOLE hold after ADR-149 — the ADR-149 `0110`/`0119` backfill converts
+  // every legacy `experiment_runs` member into a launched participant, so the
+  // retired experiment join is subsumed here. `draft`/`open` are the live set;
+  // only
   // `decided`/`archived` release the hold (schema.ts evaluation_studies status
   // check). Deliberately NOT filtered on removed_at: a tombstoned launched
   // participant still holds its run (membership immutability).
@@ -292,7 +281,6 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
           ),
         ),
         treeNotBlocked,
-        experimentNotBlocked,
         evaluationNotBlocked,
       ),
     )

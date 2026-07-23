@@ -439,14 +439,9 @@ export async function launchExperimentVariants(
         packagePin: item.variant.config.packagePin,
         baseBranch: experiment.baseBranch,
         baseCommit: experiment.baseCommit,
-        experimentMembership: {
-          experimentId: args.experimentId,
-          variantKey: item.variant.key,
-          replicateOrdinal: item.replicateOrdinal,
-          launchReason: "initial",
-          baseCommit: experiment.baseCommit,
-          markExperimentRunning: outcomes.length === 0 && status === "draft",
-        },
+        // ADR-149: the legacy experiment launch no longer creates experiment_runs
+        // membership — launched-participant lineage is exclusively the controlled
+        // recipe seam now. This legacy path is retired with the experiments UI.
       },
       {
         actorUserId: args.actorUserId,

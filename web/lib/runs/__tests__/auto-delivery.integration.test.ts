@@ -186,12 +186,14 @@ describe("deliverRunIfAutoReady — C1 OR-combine with execution policy", () => 
   });
 });
 
-// ADR-132 (enforcing ADR-124): an experiment-member run NEVER auto-promotes —
-// winner promotion is the explicit human path. The two implemented ADR arms (the
-// ADR-126 sweep SQL prefilter + the evaluate `not_applicable` term) do NOT cover
-// the auto_on_ready autopilot that reaches promotion through deliverRunIfAutoReady
-// → promoteRun. These regressions pin the choke-point guard + the ordering
-// short-circuit that close that hole.
+// ADR-149 (enforcing ADR-142 D3): a launched-lineage run (a launched evaluation
+// participant) NEVER auto-promotes — winner promotion is the explicit human
+// path. The two implemented arms (the ADR-126 sweep SQL prefilter + the evaluate
+// `not_applicable` term) do NOT cover the auto_on_ready autopilot that reaches
+// promotion through deliverRunIfAutoReady → promoteRun. These regressions pin the
+// choke-point guard + the ordering short-circuit that close that hole. The
+// exclusion is now via `evaluation_participants.source_type='launched'` — the
+// retired `experiment_runs` leg of isLaunchedLineageRun was dropped in ADR-149.
 async function seedExperimentMembership(runId: string): Promise<void> {
   const taskId = randomUUID();
 
@@ -203,28 +205,36 @@ async function seedExperimentMembership(runId: string): Promise<void> {
     prompt: "compare",
   });
 
-  const experimentId = randomUUID();
+  const studyId = randomUUID();
 
-  await db.insert(schema.experiments).values({
-    id: experimentId,
+  await db.insert(schema.evaluationStudies).values({
+    id: studyId,
     projectId,
     taskId,
     title: "fork vs upstream",
-    baseBranch: "main",
-    baseCommit: "abc1230000000000000000000000000000000000",
-    status: "running",
-    variants: [],
-    rubric: {},
+    status: "open",
   });
 
-  await db.insert(schema.experimentRuns).values({
+  const recipeId = randomUUID();
+
+  await db.insert(schema.evaluationRecipes).values({
+    id: recipeId,
+    studyId,
+    key: "a",
+    label: "A",
+    definition: {},
+    definitionDigest: "d",
+  });
+
+  await db.insert(schema.evaluationParticipants).values({
     id: randomUUID(),
-    experimentId,
+    studyId,
     runId,
-    variantKey: "a",
-    replicateOrdinal: 1,
+    sourceType: "launched",
+    recipeId,
+    label: "launched",
     launchReason: "initial",
-    baseCommit: "abc1230000000000000000000000000000000000",
+    replicateOrdinal: 1,
   });
 }
 

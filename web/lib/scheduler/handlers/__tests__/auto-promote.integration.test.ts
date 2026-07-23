@@ -98,6 +98,11 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "workspaces"`);
   await pool.query(`DELETE FROM "experiment_runs"`);
   await pool.query(`DELETE FROM "experiments"`);
+  // evaluation_studies.task_id is ON DELETE RESTRICT, so studies (and their
+  // cascading participants/recipes) must be cleared before the tasks delete.
+  await pool.query(`DELETE FROM "evaluation_participants"`);
+  await pool.query(`DELETE FROM "evaluation_recipes"`);
+  await pool.query(`DELETE FROM "evaluation_studies"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "tasks"`);
   await pool.query(`DELETE FROM "flows"`);
@@ -344,36 +349,47 @@ describe("runSchedulerTick × auto_promote — through-dispatch (codex F2)", () 
   });
 });
 
-describe("runAutoPromoteJob — ADR-132: experiment members are never candidates", () => {
+// ADR-149 (enforcing ADR-142 D3): a launched evaluation participant is
+// structurally non-promotable. The SQL prefilter now excludes on
+// `evaluation_participants.source_type = 'launched'` (NOT the retired
+// `experiment_runs`, which `0119` drops) — this block is the cross-check that
+// the replaced predicate still keeps a launched participant out of the sweep.
+describe("runAutoPromoteJob — ADR-149: launched participants are never candidates", () => {
   async function makeMember(runId: string, taskId: string): Promise<void> {
-    const experimentId = randomUUID();
+    const studyId = randomUUID();
 
-    await db.insert(schema.experiments).values({
-      id: experimentId,
+    await db.insert(schema.evaluationStudies).values({
+      id: studyId,
       projectId,
       taskId,
       title: "fork vs upstream",
-      baseBranch: "main",
-      baseCommit: "abc123",
-      status: "running",
-      variants: [
-        { key: "a", label: "A", config: {} },
-        { key: "b", label: "B", config: {} },
-      ],
-      rubric: { criteria: [] },
+      status: "open",
     });
-    await db.insert(schema.experimentRuns).values({
+
+    const recipeId = randomUUID();
+
+    await db.insert(schema.evaluationRecipes).values({
+      id: recipeId,
+      studyId,
+      key: "a",
+      label: "A",
+      definition: {},
+      definitionDigest: "d",
+    });
+
+    await db.insert(schema.evaluationParticipants).values({
       id: randomUUID(),
-      experimentId,
+      studyId,
       runId,
-      variantKey: "a",
-      replicateOrdinal: 1,
+      sourceType: "launched",
+      recipeId,
+      label: "launched",
       launchReason: "initial",
-      baseCommit: "abc123",
+      replicateOrdinal: 1,
     });
   }
 
-  it("the candidate query excludes the member; the sibling non-member still promotes (regression arm)", async () => {
+  it("the candidate query excludes the launched participant; the sibling non-participant still promotes (regression arm)", async () => {
     const member = (await seedReviewRun()) as unknown as {
       runId: string;
       taskId: string;
@@ -400,7 +416,7 @@ describe("runAutoPromoteJob — ADR-132: experiment members are never candidates
     );
   });
 
-  it("the runSchedulerTick through-dispatch path never promotes a member end-to-end (wiring seam)", async () => {
+  it("the runSchedulerTick through-dispatch path never promotes a launched participant end-to-end (wiring seam)", async () => {
     const member = (await seedReviewRun()) as unknown as {
       runId: string;
       taskId: string;
