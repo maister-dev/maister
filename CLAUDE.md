@@ -477,7 +477,7 @@ Current Scope, these are **Implemented** today:
 Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.
 Current sequencing lives in `.ai-factory/ROADMAP.md`; M45 qualifies
 core-package processes on private projects. Many original backlog foundations
-(Observatory, Project Brain, experiments, agents-as-actors) are implemented.
+(Observatory, Project Brain, the Evaluation Lab, agents-as-actors) are implemented.
 
 ## Phase 2 Candidates
 

@@ -17,8 +17,8 @@ aggregation (scalar and pairwise), and human-approved recipe standardization.
 It **excludes**: automatic promotion of a winner (no machine standardizes or
 promotes — ADR-147), a second scheduler clock (suites reuse the M24 tick), new
 execution runtimes, and the retired Experiment surface (ADR-149; the legacy
-`experiments` tables and `/experiments` routes are removed, and
-[`experiments.md`](experiments.md) is deleted with them).
+`experiments` tables and `/experiments` routes are removed, and the former
+`experiments.md` doc is deleted with them).
 
 Implementation status is per-section. Unless a heading says otherwise,
 everything below is **Implemented**.

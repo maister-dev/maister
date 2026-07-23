@@ -651,7 +651,7 @@
   is additive to M28 recurrence and M34 agent triggers, not a new qualification
   metric or an Observatory write path. Plan:
   `.ai-factory/plans/feature-project-automations-scheduled-launches.md`.
-- [ ] **M46. Evaluation Foundation** — evolve the task-bound Experiment
+- [x] **M46. Evaluation Foundation** — evolve the task-bound Experiment
   Comparison Studio (ADR-124) into a project-level Evaluation Lab: a neutral
   Evaluation Study over 2..N observed (existing) or legacy-launched Runs for one
   task, lossless legacy Experiment migration, package-sourced versioned
@@ -663,7 +663,7 @@
   no fabricated cost, no private bodies in telemetry.
   (see `.ai-factory/plans/feature-evaluation-lab.md`)
 
-- [~] **M47. Controlled Evaluation Expansion** — reproducible controlled variant
+- [x] **M47. Controlled Evaluation Expansion** — reproducible controlled variant
   launches: immutable Evaluation Recipes over alternative compatible Flows /
   package revisions, slot-keyed agent/runner/model bindings resolved to exact
   `run_sessions` snapshots, capability/MCP/materialization + input/artifact
@@ -671,18 +671,17 @@
   recipes, durable batch launch intents with first-class partial batches, and
   hybrid observed + launched Studies. Forced `promotionHold` on every launched
   participant; ADR-146. No weakening of promotion/trust rules.
-  Status: core + tests landed; the controlled-launch seam production adapter
-  and the creation-UI E2E remain owner-gated with the UI batch.
+  Status: the controlled-launch seam production adapter, the Study Lab
+  creation UI, and the E2E all landed with the ADR-149 experiments cut-over.
 
 - [~] **M48. Advanced Evaluation** — pairwise and tournament methods
   (`pairwise_tournament@1`), scheduled evaluation suites and package-upgrade
   regression Studies over the M24 clock, calibration/longitudinal read models,
   and optional human-approved standardization of a winning execution recipe.
   ADR-147. No automatic winner promotion is introduced.
-  Status: core + tests landed and the suite scheduler seam is now wired
-  (remediation pass); the pairwise EXECUTION path (match-verdict persistence +
-  routing) and the standardization routes/UI remain owner-deferred with the
-  UI batch.
+  Status: the pairwise EXECUTION path (match-verdict persistence + routing) and
+  the standardization routes/UI landed with the ADR-149 cut-over; calibration/
+  longitudinal read models and package-upgrade regression suites remain.
 
 ## Completed
 
