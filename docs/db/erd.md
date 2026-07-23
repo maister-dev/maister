@@ -41,9 +41,7 @@ outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 **ADR-085 (Designed, migration `0047`)** delivery-policy and cost-rollup
 projection fields/tables (`PROJECTS.delivery_policy_default`,
 `RUNS.delivery_policy_snapshot`, `RUN_COST_ROLLUPS`,
-`NODE_ATTEMPT_COST_ROLLUPS`), and the **ADR-124 (Implemented, migration `0090`;
-retired by ADR-149)** Experiment Comparison Studio tables `EXPERIMENTS` and
-`EXPERIMENT_RUNS`. For
+`NODE_ATTEMPT_COST_ROLLUPS`). For
 partial views by domain, see
 [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
@@ -93,11 +91,6 @@ erDiagram
     PROJECTS ||--o{ WORKSPACES : has
 
     TASKS ||--o{ RUNS : "attempt N+1"
-    TASKS ||--o{ EXPERIMENTS : "comparison containers (ADR-124)"
-    PROJECTS ||--o{ EXPERIMENTS : "owns experiments (ADR-124)"
-    EXPERIMENTS ||--o{ EXPERIMENT_RUNS : "variant member runs (ADR-124)"
-    RUNS ||--o| EXPERIMENT_RUNS : "optional experiment membership"
-    USERS ||--o{ EXPERIMENTS : "created/concluded by (SET NULL)"
     FLOWS ||--o{ RUNS : "selected at launch"
     FLOWS ||--o{ TASKS : "selected at create or triage (M34: flow_id nullable)"
     PLATFORM_ACP_RUNNERS ||--o{ TASKS : "triage runner verdict (M34, SET NULL)"
@@ -753,46 +746,6 @@ erDiagram
         jsonb source_ref "kind, taskId, commentId, activityId"
         timestamp read_at "NULL = unread"
         timestamp created_at
-    }
-
-    EXPERIMENTS {
-        text id PK
-        text project_id FK
-        text task_id FK
-        text title
-        text description
-        text base_branch
-        text base_commit "pinned immutable SHA"
-        text status "draft|running|comparable|concluded|abandoned"
-        jsonb variants "immutable [{key,label,config}]"
-        jsonb rubric "immutable criteria snapshot"
-        jsonb verdict "human/advisory envelope"
-        text created_by_user_id FK "users(id) SET NULL"
-        text concluded_by_user_id FK "users(id) SET NULL"
-        timestamp created_at
-        timestamp updated_at
-        timestamp launched_at
-        timestamp comparable_at
-        timestamp concluded_at
-        timestamp abandoned_at
-    }
-
-    EXPERIMENT_RUNS {
-        text id PK
-        text experiment_id FK
-        text run_id FK "UNIQUE"
-        text variant_key
-        integer replicate_ordinal
-        text launch_reason "initial|manual_relaunch|budget_restart"
-        text base_commit "pinned member run base"
-        text diff_snapshot "capped text"
-        boolean diff_snapshot_truncated
-        integer diff_snapshot_bytes
-        timestamp diff_snapshot_captured_at
-        jsonb diff_files_summary "full-diff file summary"
-        jsonb materialization_delta "actual applied overlay delta"
-        timestamp created_at
-        timestamp updated_at
     }
 
     RUNS {

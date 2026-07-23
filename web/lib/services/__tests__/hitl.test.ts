@@ -8,7 +8,6 @@ import {
   actorIdentities as actorIdentitiesTable,
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
-  experimentRuns as experimentRunsTable,
   gateChatTurns as gateChatTurnsTable,
   hitlRequests as hitlRequestsTable,
   domainEvents as domainEventsTable,
@@ -33,7 +32,6 @@ type Tables = {
   assignment_events: Row[];
   webhook_events: Row[];
   domain_events: Row[];
-  experiment_runs: Row[];
   gate_chat_turns: Row[];
 };
 
@@ -52,7 +50,6 @@ const dbState: {
     assignment_events: [],
     webhook_events: [],
     domain_events: [],
-    experiment_runs: [],
     gate_chat_turns: [],
   },
   updates: [],
@@ -69,7 +66,6 @@ function tableOf(t: unknown): keyof Tables {
   if (t === assignmentEventsTable) return "assignment_events";
   if (t === webhookEventsTable) return "webhook_events";
   if (t === domainEventsTable) return "domain_events";
-  if (t === experimentRunsTable) return "experiment_runs";
   if (t === gateChatTurnsTable) return "gate_chat_turns";
   throw new Error("unknown table");
 }
@@ -246,7 +242,6 @@ beforeEach(async () => {
     assignment_events: [],
     webhook_events: [],
     domain_events: [],
-    experiment_runs: [],
     gate_chat_turns: [],
   };
   dbState.updates = [];

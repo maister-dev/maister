@@ -78,7 +78,7 @@ export async function listEligiblePinInstalls(args: {
 // Refusals: unknown install → CONFIG; not Installed / untrusted →
 // PRECONDITION; no member revision with the flow's ref id → CONFIG naming
 // both ids. Shared by the launch pin (`launchRunStaged`), the try_once
-// translation, and the experiments create/fan-out batch validation — one
+// translation, and the evaluation controlled-launch batch validation — one
 // matrix, every entry point.
 export async function resolvePinnedFlowRevisionForRefId(
   db: any,

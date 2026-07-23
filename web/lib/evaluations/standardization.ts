@@ -27,7 +27,7 @@ const log = pino({
 // The actor a standardize/rollback write is attributed to. Standardization is a
 // human-approved, non-automatic act (ADR-147): the service refuses any non-human
 // actor independently of the route gate, so a future non-route importer (an
-// agent/MCP path) cannot silently standardize. Mirrors `concludeExperiment`.
+// agent/MCP path) cannot silently standardize.
 export type StandardizationActor = {
   type: "user" | "agent" | "system";
   id: string;

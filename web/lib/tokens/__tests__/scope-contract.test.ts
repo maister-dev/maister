@@ -3,18 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 
 import { EVALUATION_JUDGE_TOKEN_SCOPES } from "@/lib/agents/tokens";
-import { PROJECT_ACTION_MIN } from "@/lib/authz";
 import { PROJECT_ACTION_BY_SCOPE } from "@/lib/tokens/ext-handler";
 import { ORCHESTRATOR_TOKEN_SCOPES } from "@/lib/agents/tokens";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 
 describe("external token scope contract", () => {
-  it("registers session actions with the intended project-role minimums", () => {
-    expect(PROJECT_ACTION_MIN.readExperiments).toBe("viewer");
-    expect(PROJECT_ACTION_MIN.manageExperiments).toBe("member");
-    expect(PROJECT_ACTION_MIN.concludeExperiments).toBe("member");
-  });
-
   it("no longer registers the retired experiment scopes (ADR-149)", () => {
     expect(TOKEN_SCOPES).not.toContain("experiments:read");
     expect(TOKEN_SCOPES).not.toContain("experiments:advise");

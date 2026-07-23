@@ -88,7 +88,6 @@ describe("normalizeScheduledLaunchRequest", () => {
     { agentId: "agent-1" },
     { triggerSource: "cron" },
     { queueAdmitted: true },
-    { experimentId: "experiment-1" },
   ])("rejects an internal or force-launch field: %o", (forbiddenField) => {
     expect(() =>
       normalizeScheduledLaunchRequest({

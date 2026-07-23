@@ -20,7 +20,7 @@ supported.
 ## Tables
 
 The implemented schema contains auth, platform runner, project, capability, run, workspace,
-graph-runner, scratch-run, experiment-comparison, HITL, and outbound-webhook tables. Scratch-run persistence landed as
+graph-runner, scratch-run, evaluation-lab, HITL, and outbound-webhook tables. Scratch-run persistence landed as
 additive migrations: `runs.run_kind`, nullable scratch launch FKs,
 `scratch_runs`, `run_messages` (generalized from `scratch_messages`,
 migration `0083`), `scratch_attachments`, and
@@ -53,8 +53,6 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
 | `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. **(ADR-134 — Implemented, migration `0098`)** adds final promoted-delivery evidence. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
-| `experiments`                 | **(ADR-124 — Implemented, migration `0090`)** Task-bound Experiment Comparison Studio container: pinned `base_commit`, immutable variants/rubric snapshots, five-state FSM, and optional human/advisory verdict envelope.                                                                                                    | `projects.id`, `tasks.id`, optional `users.id`                             |
-| `experiment_runs`             | **(ADR-124 — Implemented, migration `0090`)** Membership rows linking ordinary runs to an experiment variant/replicate, with launch lineage, pinned `base_commit`, capped diff snapshot, structured truncation fields, full-file summary, and materialization delta.                                                            | `experiments.id`, `runs.id`                                                |
 | `evaluation_studies`          | **(ADR-142 — Implemented, migrations `0107`/`0110`)** Neutral Evaluation Study container (one project + one task). Status `draft\|open\|decided\|archived`; readiness/active-eval count are derived. `legacy_experiment_id` UNIQUE + `legacy_snapshot` preserve a migrated Experiment.                                          | `projects.id`, `tasks.id` (RESTRICT), optional `users.id`                  |
 | `evaluation_recipes`          | **(ADR-142 — Implemented, migration `0107`)** Immutable Study recipe definition (M46 = legacy variant config; M47 = typed controlled recipe). `definition_digest`; tombstone-after-launch. UNIQUE `(study_id, key)`.                                                                                                            | `evaluation_studies.id`                                                    |
 | `evaluation_participants`     | **(ADR-142 — Implemented, migration `0107`)** Study participant with immutable `source_type` (`observed`/`launched`) provenance; copied `run_identity` survives Run deletion (`run_id` SET NULL). Partial UNIQUE `(study_id, run_id)` on live rows; tombstone via `removed_at`. **(ADR-146 — `0112`)** adds `batch_item_id` (SET NULL, partial UNIQUE) — the controlled-launch adoption anchor.                                                  | `evaluation_studies.id`, optional `runs.id`, `evaluation_recipes.id`, `evaluation_launch_batch_items.id`      |
@@ -1520,71 +1518,6 @@ mappable to `slot_key`), so operators export/record and clear the table
 **before** running migrations, then re-map per slot via the project Flow runner
 UI **after** the upgrade succeeds.
 
-## Experiment comparison tables (Implemented — ADR-124, migration `0090`)
-
-Experiment comparison stores only the comparison envelope and membership
-evidence. Runs remain ordinary rows in `runs`; the feature adds no columns to
-`runs` and no variant table.
-
-```ts
-experiments {
-  id,
-  projectId,                      // FK -> projects.id CASCADE
-  taskId,                         // FK -> tasks.id CASCADE
-  title,
-  description?,
-  baseBranch,
-  baseCommit,                     // NOT NULL from create; pinned immutable SHA
-  status: 'draft' | 'running' | 'comparable' | 'concluded' | 'abandoned',
-  variants,                       // jsonb immutable [{key,label,config}]
-  rubric,                         // jsonb immutable rubric criteria snapshot
-  verdict?,                       // jsonb {human?, judgeAdvisories?}
-  createdByUserId?,               // FK -> users.id SET NULL
-  concludedByUserId?,             // FK -> users.id SET NULL
-  createdAt,
-  updatedAt,
-  launchedAt?,
-  comparableAt?,
-  concludedAt?,
-  abandonedAt?
-}
-
-experiment_runs {
-  id,
-  experimentId,                   // FK -> experiments.id CASCADE
-  runId,                          // FK -> runs.id CASCADE, UNIQUE
-  variantKey,
-  replicateOrdinal,               // UNIQUE with (experimentId, variantKey)
-  launchReason: 'initial' | 'manual_relaunch' | 'budget_restart',
-  baseCommit,                     // pinned commit used for this member run
-  diffSnapshot?,                  // capped at 512 KB by service
-  diffSnapshotTruncated,          // structured flag, never in-band marker
-  diffSnapshotBytes?,
-  diffSnapshotCapturedAt?,
-  diffFilesSummary?,              // jsonb [{path,status,additions,deletions,patchHash}]
-  materializationDelta?,          // jsonb actual applied overlay delta
-  createdAt,
-  updatedAt
-}
-```
-
-`experiments.status` is derived from member-run statuses. `comparable` means
-every member run is `Review` or terminal and at least two distinct variants
-have at least one member run. `concluded` and `abandoned` are terminal and are
-never overwritten by status recompute. Variants, rubric, and `baseCommit` are
-write-once at creation; post-create edits are service-level
-`PRECONDITION` failures.
-
-`experiment_runs.runId` is unique so a run belongs to at most one experiment.
-`UNIQUE (experimentId, variantKey, replicateOrdinal)` is the duplicate-click /
-racing-replicate backstop. `launchReason` explains lineage: initial fan-out,
-manual `relaunchOfRunId`, or ADR-125 budget restart. `diffFilesSummary` is
-captured from the full diff before the text cap, so the Files tab works even
-when `diffSnapshot` is truncated or the worktree is later removed.
-
-Indexes: `experiments(projectId, status)`, `experiments(taskId)`,
-`experiment_runs(experimentId)`, and `experiment_runs(runId)`.
-
 ## Evaluation Lab tables (Implemented — ADR-142..147, migrations `0107`–`0114`)
 
 The Evaluation Lab (M46–M48) evolves the task-bound Experiment Studio into a
@@ -1756,16 +1689,16 @@ this section names the invariants the columns encode. Eight migrations:
   and a loser re-selects the winner's run. No FK — the column is a claim token,
   not a relation, and the batch item may be GC'd independently.
 
-- **Legacy Experiment drop (`0119`, Designed — ADR-149).** The terminal step of
-  the Experiments cut-over. The safety backfill re-runs first; it is idempotent
-  and a no-op on empty tables, so it costs nothing while satisfying the
-  preserve-or-refuse-loudly rule. The 0110 payload carry-over is **explicitly
+- **Legacy Experiment drop (`0119`, Implemented — ADR-149).** The terminal step
+  of the Experiments cut-over. The safety backfill re-runs first; it is
+  idempotent and a no-op on empty tables, so it costs nothing while satisfying
+  the preserve-or-refuse-loudly rule. The 0110 payload carry-over is **explicitly
   waived** by ADR-149 (see the `0110` note above):
 
   ```sql
   SELECT evaluation_backfill_from_experiments();
-  DROP TABLE "experiment_runs";
-  DROP TABLE "experiments";
+  DROP TABLE "experiment_runs" CASCADE;
+  DROP TABLE "experiments" CASCADE;
   DROP FUNCTION evaluation_backfill_from_experiments();
   ```
 

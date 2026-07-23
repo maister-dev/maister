@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
-  startMainPostgresTestDb,
+  startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
@@ -24,9 +24,14 @@ let flowId: string;
 let taskId: string;
 
 beforeAll(async () => {
-  testDatabase = await startMainPostgresTestDb({
-    databaseName: "maister_eval_backfill_test",
-  });
+  // 0118 is the last revision where the legacy `experiments` /
+  // `experiment_runs` tables and `evaluation_backfill_from_experiments()` still
+  // exist; 0119 drops them. This suite seeds legacy rows and invokes the
+  // function directly, so it stops at 0118.
+  testDatabase = await startMainPostgresTestDbUpTo(
+    { databaseName: "maister_eval_backfill_test" },
+    "0118_tough_morlun",
+  );
   db = testDatabase.db;
 
   projectId = randomUUID();
@@ -114,22 +119,35 @@ async function makeRun(): Promise<string> {
   return runId;
 }
 
-async function insertExperiment(
-  overrides: Record<string, unknown>,
-): Promise<string> {
+// Raw SQL rather than `db.insert(schema.experiments)`: ADR-149 removed the
+// `experiments` drizzle table object from the schema barrel, so `schema.
+// experiments` is undefined at runtime. The table itself still exists at 0118.
+async function insertExperiment(overrides: {
+  status?: string;
+  description?: string;
+  verdict?: unknown;
+  concludedAt?: Date;
+  abandonedAt?: Date;
+}): Promise<string> {
   const id = randomUUID();
 
-  await db.insert(schema.experiments).values({
-    id,
-    projectId,
-    taskId,
-    title: "Exp",
-    baseBranch: "main",
-    baseCommit: "abc123",
-    variants: VARIANTS_AB,
-    rubric: RUBRIC,
-    ...overrides,
-  });
+  await db.execute(sql`
+    INSERT INTO experiments (
+      id, project_id, task_id, title, base_branch, base_commit,
+      variants, rubric, status, description, verdict,
+      concluded_at, abandoned_at
+    ) VALUES (
+      ${id}, ${projectId}, ${taskId}, 'Exp', 'main', 'abc123',
+      ${JSON.stringify(VARIANTS_AB)}::jsonb, ${JSON.stringify(RUBRIC)}::jsonb,
+      ${overrides.status ?? "draft"}, ${overrides.description ?? null},
+      ${
+        overrides.verdict === undefined
+          ? null
+          : JSON.stringify(overrides.verdict)
+      }::jsonb,
+      ${overrides.concludedAt ?? null}, ${overrides.abandonedAt ?? null}
+    )
+  `);
 
   return id;
 }
@@ -143,18 +161,17 @@ async function insertExperimentRun(
 ): Promise<string> {
   const runId = await makeRun();
 
-  await db.insert(schema.experimentRuns).values({
-    id: randomUUID(),
-    experimentId,
-    runId,
-    variantKey,
-    replicateOrdinal,
-    launchReason,
-    baseCommit: "abc123",
-    diffSnapshotBytes: 1024,
-    diffSnapshotTruncated: false,
-    diffSnapshotCapturedAt,
-  });
+  await db.execute(sql`
+    INSERT INTO experiment_runs (
+      id, experiment_id, run_id, variant_key, replicate_ordinal,
+      launch_reason, base_commit, diff_snapshot_bytes,
+      diff_snapshot_truncated, diff_snapshot_captured_at
+    ) VALUES (
+      ${randomUUID()}, ${experimentId}, ${runId}, ${variantKey},
+      ${replicateOrdinal}, ${launchReason}, 'abc123', 1024, false,
+      ${diffSnapshotCapturedAt ?? null}
+    )
+  `);
 
   return runId;
 }
@@ -444,15 +461,14 @@ describe("evaluation legacy backfill", () => {
     // A member run whose variant key is not present in variants[].
     const runId = await makeRun();
 
-    await db.insert(schema.experimentRuns).values({
-      id: randomUUID(),
-      experimentId: badId,
-      runId,
-      variantKey: "GHOST",
-      replicateOrdinal: 1,
-      launchReason: "initial",
-      baseCommit: "abc123",
-    });
+    await db.execute(sql`
+      INSERT INTO experiment_runs (
+        id, experiment_id, run_id, variant_key, replicate_ordinal,
+        launch_reason, base_commit
+      ) VALUES (
+        ${randomUUID()}, ${badId}, ${runId}, 'GHOST', 1, 'initial', 'abc123'
+      )
+    `);
 
     await expect(backfill()).rejects.toThrow();
 

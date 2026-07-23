@@ -1,7 +1,11 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pino from "pino";
@@ -9,6 +13,14 @@ import { Pool } from "pg";
 import { getContainerRuntimeClient } from "testcontainers";
 
 import * as mainSchema from "@/lib/db/schema";
+
+const MAIN_MIGRATIONS_FOLDER = "./lib/db/migrations";
+// Drizzle delimits statements within a migration file with this exact marker
+// (it appears both inline after a `;` and on its own line); splitting on it
+// mirrors drizzle's own `readMigrationFiles`.
+const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
+
+type MigrationJournalEntry = { idx: number; tag: string };
 
 export const PGVECTOR_IMAGE = "pgvector/pgvector:pg16";
 export const TEST_DATABASE_DOCKER_MESSAGE =
@@ -294,6 +306,100 @@ export async function startMainPostgresTestDb(
         endpoint: maskedEndpoint(database.databaseUrl),
       },
       "applied main test database migrations",
+    );
+
+    return database;
+  } catch (error) {
+    return throwAfterCleanup(options.lane ?? "integration", error, database);
+  }
+}
+
+async function readMainMigrationStatements(tag: string): Promise<string[]> {
+  const contents = await readFile(
+    join(MAIN_MIGRATIONS_FOLDER, `${tag}.sql`),
+    "utf8",
+  );
+
+  return contents
+    .split(STATEMENT_BREAKPOINT)
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+}
+
+// Apply a single main-lineage migration by tag, one statement at a time. Suits
+// migrations whose statements are self-contained (no cross-statement temp-table
+// or session state) — used to advance a partially-migrated test database across
+// one specific migration, e.g. the 0119 experiment drop.
+export async function applyMainMigration(
+  db: NodePgDatabase,
+  tag: string,
+): Promise<void> {
+  for (const statement of await readMainMigrationStatements(tag)) {
+    await db.execute(sql.raw(statement));
+  }
+}
+
+// Like `startMainPostgresTestDb`, but stops after `targetTag` instead of running
+// the whole lineage. Migrations are read from the journal and applied in order
+// up to and including the target — letting a test exercise schema objects that a
+// later migration drops (e.g. the legacy `experiments` tables removed at 0119).
+export async function startMainPostgresTestDbUpTo(
+  options: TestDatabaseOptions,
+  targetTag: string,
+): Promise<StartedPostgresTestDb> {
+  const database = await startBarePostgresTestDb(options);
+
+  try {
+    const journal = JSON.parse(
+      await readFile(
+        join(MAIN_MIGRATIONS_FOLDER, "meta", "_journal.json"),
+        "utf8",
+      ),
+    ) as { entries: MigrationJournalEntry[] };
+    const targetIndex = journal.entries.findIndex(
+      (entry) => entry.tag === targetTag,
+    );
+
+    if (targetIndex === -1) {
+      throw new Error(
+        `startMainPostgresTestDbUpTo: unknown target migration tag "${targetTag}"`,
+      );
+    }
+
+    const tags = journal.entries
+      .slice(0, targetIndex + 1)
+      .map((entry) => entry.tag);
+    // Apply the whole selected lineage on ONE connection inside ONE
+    // transaction, exactly as drizzle's migrator does. Some migrations create
+    // `ON COMMIT DROP` temp tables referenced across statement breakpoints
+    // (e.g. 0094), which a per-statement pool round-robin would not preserve.
+    const client = await database.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      for (const tag of tags) {
+        for (const statement of await readMainMigrationStatements(tag)) {
+          await client.query(statement);
+        }
+      }
+      await client.query("COMMIT");
+    } catch (migrationError) {
+      await client.query("ROLLBACK");
+      throw migrationError;
+    } finally {
+      client.release();
+    }
+
+    logger.info(
+      {
+        lane: options.lane ?? "integration",
+        lineage: "main-partial",
+        phase: "migrate",
+        targetTag,
+        applied: targetIndex + 1,
+        endpoint: maskedEndpoint(database.databaseUrl),
+      },
+      "applied partial main test database migrations",
     );
 
     return database;

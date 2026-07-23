@@ -10,13 +10,6 @@ import type {
 } from "@/lib/auto-promotion/config";
 import type { PromotionHold } from "@/lib/auto-promotion/types";
 import type { RunnerResolutionWarning } from "@/lib/acp-runners/resolve";
-import type {
-  ExperimentDiffFileSummary,
-  ExperimentMaterializationDelta,
-  ExperimentRubric,
-  ExperimentVariant,
-  ExperimentVerdictEnvelope,
-} from "@/lib/experiments/types";
 import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
 import type {
   EvaluationMethodCompat,
@@ -1958,124 +1951,6 @@ export const runs = pgTable(
   }),
 );
 
-export const experiments = pgTable(
-  "experiments",
-  {
-    id: text("id").primaryKey(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    taskId: text("task_id")
-      .notNull()
-      .references(() => tasks.id, { onDelete: "cascade" }),
-    title: text("title").notNull(),
-    description: text("description"),
-    baseBranch: text("base_branch").notNull(),
-    baseCommit: text("base_commit").notNull(),
-    status: text("status", {
-      enum: ["draft", "running", "comparable", "concluded", "abandoned"],
-    })
-      .notNull()
-      .default("draft"),
-    variants: jsonb("variants").$type<ExperimentVariant[]>().notNull(),
-    rubric: jsonb("rubric").$type<ExperimentRubric>().notNull(),
-    verdict: jsonb("verdict").$type<ExperimentVerdictEnvelope | null>(),
-    createdByUserId: text("created_by_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    concludedByUserId: text("concluded_by_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-    launchedAt: timestamp("launched_at", { withTimezone: true, mode: "date" }),
-    comparableAt: timestamp("comparable_at", {
-      withTimezone: true,
-      mode: "date",
-    }),
-    concludedAt: timestamp("concluded_at", {
-      withTimezone: true,
-      mode: "date",
-    }),
-    abandonedAt: timestamp("abandoned_at", {
-      withTimezone: true,
-      mode: "date",
-    }),
-  },
-  (t) => ({
-    idxProjectStatus: index("experiments_project_status_idx").on(
-      t.projectId,
-      t.status,
-    ),
-    idxTask: index("experiments_task_idx").on(t.taskId),
-    statusCheck: check(
-      "experiments_status_check",
-      sql`${t.status} in ('draft', 'running', 'comparable', 'concluded', 'abandoned')`,
-    ),
-  }),
-);
-
-export const experimentRuns = pgTable(
-  "experiment_runs",
-  {
-    id: text("id").primaryKey(),
-    experimentId: text("experiment_id")
-      .notNull()
-      .references(() => experiments.id, { onDelete: "cascade" }),
-    runId: text("run_id")
-      .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
-    variantKey: text("variant_key").notNull(),
-    replicateOrdinal: integer("replicate_ordinal").notNull(),
-    launchReason: text("launch_reason", {
-      enum: ["initial", "manual_relaunch", "budget_restart"],
-    }).notNull(),
-    baseCommit: text("base_commit").notNull(),
-    diffSnapshot: text("diff_snapshot"),
-    diffSnapshotTruncated: boolean("diff_snapshot_truncated")
-      .notNull()
-      .default(false),
-    diffSnapshotBytes: integer("diff_snapshot_bytes"),
-    diffSnapshotCapturedAt: timestamp("diff_snapshot_captured_at", {
-      withTimezone: true,
-      mode: "date",
-    }),
-    diffFilesSummary: jsonb("diff_files_summary").$type<
-      ExperimentDiffFileSummary[] | null
-    >(),
-    materializationDelta: jsonb(
-      "materialization_delta",
-    ).$type<ExperimentMaterializationDelta | null>(),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => ({
-    uniqRun: unique("experiment_runs_run_uq").on(t.runId),
-    uniqVariantReplicate: unique("experiment_runs_variant_replicate_uq").on(
-      t.experimentId,
-      t.variantKey,
-      t.replicateOrdinal,
-    ),
-    idxExperiment: index("experiment_runs_experiment_idx").on(t.experimentId),
-    launchReasonCheck: check(
-      "experiment_runs_launch_reason_check",
-      sql`${t.launchReason} in ('initial', 'manual_relaunch', 'budget_restart')`,
-    ),
-    replicatePositiveCheck: check(
-      "experiment_runs_replicate_positive_check",
-      sql`${t.replicateOrdinal} >= 1`,
-    ),
-  }),
-);
-
 // --- Evaluation Lab (M46, ADR-142..145) ------------------------------------
 // The neutral Study/participant/recipe model that supersedes the task-bound
 // Experiment coupling (ADR-124). Foundational tables only — the platform-config
@@ -2116,9 +1991,8 @@ export const evaluationStudies = pgTable(
     legacyExperimentId: text("legacy_experiment_id"),
     archivedReason: text("archived_reason"),
     // The original Experiment row preserved verbatim at backfill time so the
-    // Study stays self-contained once the deferred legacy-contract migration
-    // (0108) drops the experiments table (plan §Legacy backfill step 4). Null
-    // for natively-created Studies.
+    // Study stays self-contained now that migration 0119 (ADR-149) has dropped
+    // the experiments table. Null for natively-created Studies.
     legacySnapshot: jsonb("legacy_snapshot").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()

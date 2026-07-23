@@ -561,10 +561,10 @@ async function promoteWorkspaceRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
-  // ADR-132/142 (enforcing ADR-124): launched-lineage runs never auto-promote —
-  // winner promotion is the explicit human path (a legacy Experiment member OR a
-  // launched Evaluation participant; observed participants are excluded by
-  // construction). The guard lives HERE, at the flow/task promotion apply site,
+  // ADR-149 (enforcing ADR-142 D3): launched-lineage runs never auto-promote —
+  // winner promotion is the explicit human path (a launched Evaluation
+  // participant; observed participants are excluded by construction). The guard
+  // lives HERE, at the flow/task promotion apply site,
   // because auto delivery (deliverRunIfAutoReady) and the token/orchestrator
   // auto-promoter (which set autoOnReady) reach promotion OUTSIDE the ADR-126
   // sweep, whose SQL prefilter alone cannot cover them. Only HUMAN promotes set
@@ -577,8 +577,8 @@ async function promoteWorkspaceRun(
   ) {
     throw new MaisterError(
       "PRECONDITION",
-      "launched-lineage run cannot auto-promote — conclude the experiment/study and promote the winner explicitly",
-      { details: { experimentMember: true } },
+      "launched-lineage run cannot auto-promote — decide the study and promote the winner explicitly",
+      { details: { launchedLineage: true } },
     );
   }
 

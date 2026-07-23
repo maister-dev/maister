@@ -5,7 +5,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  startMainPostgresTestDb,
+  startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
@@ -23,9 +23,13 @@ let testDatabase: StartedPostgresTestDb;
 let db: Db;
 
 beforeAll(async () => {
-  testDatabase = await startMainPostgresTestDb({
-    databaseName: "maister_migration_0090_test",
-  });
+  // Stop at 0090: the experiment tables this suite asserts on are created here
+  // and dropped by 0119 in the full chain. No migration between 0091 and 0118
+  // alters them, so the 0090 point is the faithful "as created" state.
+  testDatabase = await startMainPostgresTestDbUpTo(
+    { databaseName: "maister_migration_0090_test" },
+    "0090_experiments",
+  );
 
   db = testDatabase.db;
 }, 180_000);

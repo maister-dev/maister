@@ -96,8 +96,6 @@ afterEach(() => {
 beforeEach(async () => {
   await pool.query(`DELETE FROM "task_comments"`);
   await pool.query(`DELETE FROM "workspaces"`);
-  await pool.query(`DELETE FROM "experiment_runs"`);
-  await pool.query(`DELETE FROM "experiments"`);
   // evaluation_studies.task_id is ON DELETE RESTRICT, so studies (and their
   // cascading participants/recipes) must be cleared before the tasks delete.
   await pool.query(`DELETE FROM "evaluation_participants"`);

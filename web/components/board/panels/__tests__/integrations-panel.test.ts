@@ -157,13 +157,13 @@ const expiredToken: TokenListItem = {
   revokedAt: null,
 };
 
-const experimentToken: TokenListItem = {
-  id: "tok-experiment",
-  name: "experiment-judge",
+const multiScopeToken: TokenListItem = {
+  id: "tok-multi",
+  name: "ci-bot",
   kind: "project",
   ownerUserId: null,
   ownerLabel: null,
-  scopes: ["experiments:read", "experiments:advise"],
+  scopes: ["board:read", "hitl:respond"],
   prefix: "mai_DDDD",
   createdAt: new Date(NOW - 2 * DAY),
   lastUsedAt: null,
@@ -175,7 +175,7 @@ const fixtures: TokenListItem[] = [
   activeToken,
   revokedToken,
   expiredToken,
-  experimentToken,
+  multiScopeToken,
 ];
 
 function renderTable(tokens: TokenListItem[], isAdmin: boolean): string {

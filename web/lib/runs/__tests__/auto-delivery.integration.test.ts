@@ -194,7 +194,7 @@ describe("deliverRunIfAutoReady — C1 OR-combine with execution policy", () => 
 // choke-point guard + the ordering short-circuit that close that hole. The
 // exclusion is now via `evaluation_participants.source_type='launched'` — the
 // retired `experiment_runs` leg of isLaunchedLineageRun was dropped in ADR-149.
-async function seedExperimentMembership(runId: string): Promise<void> {
+async function seedLaunchedParticipant(runId: string): Promise<void> {
   const taskId = randomUUID();
 
   await db.insert(schema.tasks).values({
@@ -238,14 +238,14 @@ async function seedExperimentMembership(runId: string): Promise<void> {
   });
 }
 
-describe("ADR-132 experiment-member auto-promotion exclusion", () => {
-  it("short-circuits an experiment-member run WITHOUT degrading its delivery policy", async () => {
+describe("ADR-149 launched-lineage auto-promotion exclusion", () => {
+  it("short-circuits a launched-lineage run WITHOUT degrading its delivery policy", async () => {
     const runId = await seedReviewRun({
       executionPolicy: { preset: "unattended" },
       deliveryPolicySnapshot: autoDelivery,
     });
 
-    await seedExperimentMembership(runId);
+    await seedLaunchedParticipant(runId);
     const promote = mockPromote();
 
     await deliverRunIfAutoReady(runId, db, promote);
@@ -253,7 +253,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
     expect(promote).not.toHaveBeenCalled();
 
     // The member must NOT be degraded to manual — it simply stays in Review
-    // for the human experiment-conclusion path.
+    // for the human study-decision path.
     const [row] = (await db
       .select({ deliveryPolicySnapshot: schema.runs.deliveryPolicySnapshot })
       .from(schema.runs)
@@ -270,7 +270,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
       deliveryPolicySnapshot: autoDelivery,
     });
 
-    await seedExperimentMembership(runId);
+    await seedLaunchedParticipant(runId);
 
     await expect(
       promoteRun(
@@ -281,7 +281,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
       ),
     ).rejects.toMatchObject({
       code: "PRECONDITION",
-      details: { experimentMember: true },
+      details: { launchedLineage: true },
     });
   });
 
@@ -291,7 +291,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
       deliveryPolicySnapshot: manualDelivery,
     });
 
-    await seedExperimentMembership(runId);
+    await seedLaunchedParticipant(runId);
 
     let caught: any;
 
@@ -307,7 +307,7 @@ describe("ADR-132 experiment-member auto-promotion exclusion", () => {
     }
 
     // A human promote passes the guard and fails later (no workspace), never
-    // with the experiment-member refusal.
-    expect(caught?.details?.experimentMember).toBeUndefined();
+    // with the launched-lineage refusal.
+    expect(caught?.details?.launchedLineage).toBeUndefined();
   });
 });

@@ -271,7 +271,7 @@ export type LaunchRunInput = {
   // resolves from THIS `package_installs` row (join on the flow's flowRefId +
   // the install's resolvedRevision) instead of the attachment's enabled
   // pointer; `project_package_attachments` is never mutated. Internal callers
-  // only (experiment variant fan-out; the try_once launch choice translates
+  // only (the evaluation controlled-launch seam; the try_once launch choice translates
   // into it) — not exposed on the public POST /api/runs body. A caller never
   // combines it with a non-keep `packageVersions` choice for the same package
   // (try_once translation REMOVES the choice it converts).
@@ -484,7 +484,7 @@ export type LaunchRunContext = {
 // the terminal `{runId, status, queuePosition?}`. `opts.signal` aborts at the
 // materialize boundary → the existing worktree compensation (pre-commit GC).
 // ADR-132 §a: the ephemeral-pin matrix lives in the neutral
-// `@/lib/packages/pin` module (shared with the experiments create/fan-out
+// `@/lib/packages/pin` module (shared with the evaluation controlled-launch
 // batch validation). This wrapper adapts it to the launch path's flow row.
 async function resolvePinnedFlowRevision(
   _db: any,
