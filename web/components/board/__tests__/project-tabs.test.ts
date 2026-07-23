@@ -22,20 +22,34 @@ describe("ProjectTabs", () => {
     expect(html).toContain("/projects/demo?tab=brain");
   });
 
-  it("renders a nested experiments tab with active state", async () => {
+  it("does not render the retired experiments tab (ADR-149)", async () => {
     const html = renderToStaticMarkup(
       await ProjectTabs({
         slug: "proj",
-        active: "experiments",
+        active: "board",
         boardCount: 7,
         showBrain: true,
       }),
     );
 
-    expect(html).toContain("nav.experiments");
-    expect(html).toContain("/projects/proj/experiments");
+    expect(html).not.toContain("nav.experiments");
+    expect(html).not.toContain("/projects/proj/experiments");
+  });
+
+  it("renders a nested evaluations tab with active state", async () => {
+    const html = renderToStaticMarkup(
+      await ProjectTabs({
+        slug: "proj",
+        active: "evaluations",
+        boardCount: 7,
+        showBrain: true,
+      }),
+    );
+
+    expect(html).toContain("nav.evaluations");
+    expect(html).toContain("/projects/proj/evaluations");
     expect(html).toContain('aria-selected="true"');
-    expect(html).not.toContain("?tab=experiments");
+    expect(html).not.toContain("?tab=evaluations");
   });
 
   it("does not render the retired pull-request tab", async () => {

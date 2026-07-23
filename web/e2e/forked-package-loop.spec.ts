@@ -8,13 +8,14 @@ import { test, expect, type Page } from "@playwright/test";
 import { loadFixtures } from "./_seed/fixtures";
 import { withE2EDb } from "./_seed/db";
 
-// ADR-132 — the forked-package loop through the UI. The heavy git/DB
+// ADR-132 / ADR-149 — the forked-package loop through the UI. The heavy git/DB
 // semantics are integration-proven (runs-launch-pin / package-pin /
 // fork-cut / sync / publish integration suites); this spec walks the UI
 // journey those tests cannot: source → install → fork → edit → commit →
-// cut (dialog) → attach-beside-upstream rename explainer → experiment lab
-// provenance → upstream re-tag → install & sync with conflicts → resolve →
-// publish with a configured base → "upstream moved — sync first" refusal.
+// cut (dialog) → attach-beside-upstream rename explainer → evaluation batch
+// fork-vs-upstream provenance → upstream re-tag → install & sync with conflicts
+// → resolve → publish with a configured base → "upstream moved — sync first"
+// refusal.
 //
 // Infra (shared-infra trap): ports 3100/7788 + the maister_e2e DB are shared
 // across ALL worktrees — kill stale listeners before a run and
@@ -222,7 +223,7 @@ async function cutViaDialog(
 
 test.describe.configure({ mode: "serial" });
 
-test("install → fork → edit → cut → experiment lab shows fork-vs-upstream provenance", async ({
+test("install → fork → edit → cut → evaluation batch shows fork-vs-upstream provenance", async ({
   page,
 }) => {
   test.setTimeout(300_000);
@@ -305,7 +306,9 @@ test("install → fork → edit → cut → experiment lab shows fork-vs-upstrea
     )
   ).id;
 
-  // Task bound to the package's flow → experiment A=upstream / B=fork cut.
+  // Task bound to the package's flow → controlled evaluation A=upstream /
+  // B=fork cut (ADR-149: the experiment lab this used to open is retired; the
+  // provenance now lives on the Evaluation Study surface).
   // createTask validates the flows ROW id (not the ref id) — resolve it.
   let flowRowId = "";
 
@@ -334,90 +337,117 @@ test("install → fork → edit → cut → experiment lab shows fork-vs-upstrea
 
   expect(task.status()).toBe(201);
   const { taskId } = (await task.json()) as { taskId: string };
-  const created = await page.request.post(
-    `/api/projects/${fx.projectSlug}/experiments`,
+
+  // Trust the fork cut so it is an eligible package pin BESIDE its upstream (the
+  // upstream install was attached + trusted above). The cut ships the SAME flow
+  // ref, so once trusted it joins the pin feed the Study surface reads.
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      `UPDATE package_installs SET trust_status = 'trusted' WHERE id = $1`,
+      [cut1InstallId],
+    );
+  });
+
+  // A Study on the package-flow task (replaces the experiment).
+  const studyRes = await page.request.post(
+    `/api/projects/${fx.projectSlug}/evaluations/studies`,
+    { data: { taskId, title: `Fork vs upstream ${RUN_TAG}` } },
+  );
+
+  expect(studyRes.status()).toBe(201);
+  const { study } = (await studyRes.json()) as { study: { id: string } };
+
+  // Fork-vs-upstream provenance on the Study surface: the pin picker feed (the
+  // data the launch dialog's package-pin dropdown renders) offers the fork cut
+  // as `local_cut` right beside its `upstream` — the same markers the retired
+  // experiment lab drew as chips.
+  const pinRes = await page.request.get(
+    `/api/projects/${fx.projectSlug}/evaluations/pin-options?taskId=${taskId}`,
+  );
+
+  expect(pinRes.ok()).toBeTruthy();
+  const pins = (
+    (await pinRes.json()) as {
+      options: { packageInstallId: string; kind: string }[];
+    }
+  ).options;
+
+  expect(
+    pins.find((o) => o.packageInstallId === upstreamInstallId)?.kind,
+  ).toBe("upstream");
+  expect(pins.find((o) => o.packageInstallId === cut1InstallId)?.kind).toBe(
+    "local_cut",
+  );
+
+  // A controlled batch pins upstream (variant A) vs the fork cut (variant B):
+  // 2 variants × 1 replicate. Each recipe carries the concrete package pin so a
+  // launched participant's provenance is unambiguous.
+  const recipe = (packageInstallId: string): Record<string, unknown> => ({
+    schemaVersion: 1,
+    flow: {
+      flowRefId: FLOW_ID,
+      flowRevisionId: `${RUN_TAG}-rev`,
+      inputContractDigest: "d-in",
+      artifactContractDigest: "d-art",
+    },
+    inputs: { taskSnapshotRef: taskId, formValues: {} },
+    executionPolicy: { preset: "supervised" },
+    materializationIntent: {
+      packagePins: [{ packageInstallId }],
+      capabilityRequirements: [],
+      allowedProjectOverlays: [],
+    },
+  });
+
+  const batchRes = await page.request.post(
+    `/api/projects/${fx.projectSlug}/evaluations/studies/${study.id}/launch-batches`,
     {
       data: {
-        taskId,
-        title: `Fork vs upstream ${RUN_TAG}`,
-        description: "ADR-132 packagePin axis.",
-        baseBranch: "main",
-        variants: [
-          { key: "control", label: "Upstream", config: {} },
-          {
-            key: "candidate",
-            label: "Fork cut",
-            config: { packagePin: { packageInstallId: cut1InstallId } },
-          },
+        idempotencyKey: `${RUN_TAG}-fork-batch`,
+        items: [
+          { definition: recipe(upstreamInstallId), replicateCount: 1 },
+          { definition: recipe(cut1InstallId), replicateCount: 1 },
         ],
-        rubric: {
-          criteria: [
-            {
-              id: "correctness",
-              label: "Correctness",
-              guidance: "Works as requested",
-              scale: { min: 1, max: 5 },
-              weight: 1,
-            },
-          ],
-        },
       },
     },
   );
 
-  expect(created.status()).toBe(201);
-  const { id: experimentId } = (await created.json()) as { id: string };
-  const launch = await page.request.post(
-    `/api/projects/${fx.projectSlug}/experiments/${experimentId}/launch`,
-    { data: { variants: "all", replicates: 1 } },
+  expect(batchRes.status()).toBe(201);
+  const batchCreated = (await batchRes.json()) as {
+    batchId: string;
+    itemCount: number;
+  };
+
+  expect(batchCreated.itemCount).toBe(2);
+
+  // Per-item batch status is visible (the strip's data source): 2 items.
+  const batchView = await page.request.get(
+    `/api/projects/${fx.projectSlug}/evaluations/studies/${study.id}/launch-batches/${batchCreated.batchId}`,
   );
 
-  expect(launch.status()).toBe(200);
-  const launched = (await launch.json()) as {
-    outcomes: { runId: string }[];
-  };
-  const runIds = launched.outcomes.map((o) => o.runId);
+  expect(batchView.ok()).toBeTruthy();
+  const batchItems = (
+    (await batchView.json()) as { items: { status: string }[] }
+  ).items;
 
-  expect(runIds).toHaveLength(2);
+  expect(batchItems).toHaveLength(2);
 
-  // Force both members comparable (the runs' execution is not this spec's
-  // subject) and open the lab.
-  await withE2EDb(async (pool) => {
-    await pool.query(
-      `UPDATE runs
-       SET status = 'Review',
-           started_at = coalesce(started_at, now() - interval '1 minute'),
-           ended_at = now()
-       WHERE id = ANY($1::text[])`,
-      [runIds],
-    );
-  });
-
-  await page.goto(`/projects/${fx.projectSlug}/experiments/${experimentId}`);
+  // The Study surface renders the provenance picker: open the controlled-launch
+  // dialog and assert the package-pin options offer the fork ("local cut")
+  // beside its "upstream" (native <option>s → assert attached, not visible).
+  await page.goto(`/projects/${fx.projectSlug}/evaluations/${study.id}`);
   await expect(
     page.getByRole("heading", { name: `Fork vs upstream ${RUN_TAG}` }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Launch variants" }).click();
+  const dialog = page.getByRole("dialog");
 
-  // ADR-132 provenance: per-variant chips + the cross-variant delta marker.
-  await expect(page.getByText("package versions differ")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(page.getByText("local cut", { exact: true })).toBeVisible();
-  await expect(page.getByText("upstream", { exact: true })).toBeVisible();
-
-  // The six comparison tabs render.
-  for (const tab of [
-    "Diff",
-    "Diff of diffs",
-    "Files",
-    "Gates",
-    "Cost",
-    "Verdict",
-  ]) {
-    await expect(
-      page.getByRole("tab", { name: tab, exact: true }).first(),
-    ).toBeVisible();
-  }
+  await expect(
+    dialog.locator("option", { hasText: "local cut" }).first(),
+  ).toBeAttached();
+  await expect(
+    dialog.locator("option", { hasText: "upstream" }).first(),
+  ).toBeAttached();
 });
 
 test("attach the fork beside its upstream: rename explainer → rename + re-cut → attached", async ({
