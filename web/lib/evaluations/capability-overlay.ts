@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// The controlled-launch capability overlay (ADR-146 D16 / ADR-149). This is the
+// The controlled-launch capability overlay (ADR-146 D16 / ADR-150). This is the
 // canonical home for the overlay schema — byte-identical to the legacy
 // experiment overlay it supersedes. `lib/experiments/variant-config.ts`
 // re-exports these under their historical `experiment*` names until that module

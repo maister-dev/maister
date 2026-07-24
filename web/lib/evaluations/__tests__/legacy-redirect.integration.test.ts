@@ -74,7 +74,7 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("resolveLegacyExperimentStudyId — deep-link contract (ADR-149 T4.1)", () => {
+describe("resolveLegacyExperimentStudyId — deep-link contract (ADR-150 T4.1)", () => {
   it("resolves a known legacy experiment id to its backfilled study", async () => {
     expect(
       await resolveLegacyExperimentStudyId(projectId, LEGACY_ID, db as never),

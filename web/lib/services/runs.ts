@@ -294,13 +294,13 @@ export type LaunchRunInput = {
   // accepted from a route body; a launched-participant restart derives the same
   // hold from its inherited participation instead.
   evaluationStudyId?: string;
-  // ADR-149: the controlled-launch batch item id (the seam's `launchKey`),
+  // ADR-150: the controlled-launch batch item id (the seam's `launchKey`),
   // persisted on runs.evaluation_batch_item_id INSIDE this run's INSERT. It is
   // the idempotency handle — a re-driven batch item re-invokes the seam with the
   // SAME id and ADOPTS the existing run (partial UNIQUE) rather than launching a
   // second. Server-internal (seam adapter only); never a route body field.
   evaluationBatchItemId?: string;
-  // ADR-149: per-session runner overrides `{ sessionName: runnerId }` from a
+  // ADR-150: per-session runner overrides `{ sessionName: runnerId }` from a
   // controlled recipe's resolved slot bindings, so a launched variant runs on
   // ITS recipe's chosen runners (not the task default). Threaded into the same
   // `ephemeralOverrides` the single launch-dialog `runnerId` uses; a concrete
@@ -755,7 +755,7 @@ export async function* launchRunStaged(
   // block can still read it (the try opens right after the adopt).
   const scheduledReservation = input.scheduledReservation;
   const runId = scheduledReservation?.runId ?? randomUUID();
-  // ADR-149: set inside the run-insert tx when a controlled-launch re-drive
+  // ADR-150: set inside the run-insert tx when a controlled-launch re-drive
   // adopts an already-launched batch item instead of inserting. Non-null after
   // the tx means THIS attempt is a duplicate — its fresh worktree is an orphan
   // to compensate, and the adopted (existing) run is returned as the result.
@@ -985,7 +985,7 @@ export async function* launchRunStaged(
       runnerProfiles: manifest.runner_profiles,
       bindings,
       // The single launch-dialog override applies to the run's primary session;
-      // ADR-149 controlled-recipe per-session overrides apply to their named
+      // ADR-150 controlled-recipe per-session overrides apply to their named
       // sessions. The primary-session override wins on a key collision.
       ephemeralOverrides:
         input.runnerId || input.sessionRunnerOverrides
@@ -1587,7 +1587,7 @@ export async function* launchRunStaged(
             triggerPayload: input.triggerPayload ?? null,
             scheduledLaunchId: scheduledReservation?.scheduledLaunchId ?? null,
             agentScheduleId: input.agentScheduleId ?? null,
-            // ADR-149: the controlled-launch idempotency handle. The partial
+            // ADR-150: the controlled-launch idempotency handle. The partial
             // UNIQUE `runs_evaluation_batch_item_uq` makes a re-driven batch item
             // hit onConflictDoNothing → the empty-insert branch below ADOPTS the
             // existing run instead of minting a second.
@@ -1616,7 +1616,7 @@ export async function* launchRunStaged(
         // run already exists. Surface a typed CONFLICT (the catch compensates the
         // worktree); never a raw 23505 → 500. Board launches never reach here.
         if (insertedRun.length === 0) {
-          // ADR-149: a controlled-launch re-drive lost the
+          // ADR-150: a controlled-launch re-drive lost the
           // `runs_evaluation_batch_item_uq` claim — the winner already launched
           // this batch item. ADOPT it: return the existing run so the seam's
           // launchKey is idempotent (never a second run), and signal the caller
@@ -1785,7 +1785,7 @@ export async function* launchRunStaged(
     throw err;
   }
 
-  // ADR-149: this attempt lost the batch-item claim and adopted the winner's
+  // ADR-150: this attempt lost the batch-item claim and adopted the winner's
   // run. Nothing was inserted for `runId`, but its fresh unique worktree is an
   // orphan (safe to remove — the path is `<slug>/<runId>`, never the winner's).
   // Skip start (the adopted run is already driving) and return it.

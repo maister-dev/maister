@@ -30,7 +30,7 @@ beforeAll(async () => {
   // function directly, so it stops at 0118.
   testDatabase = await startMainPostgresTestDbUpTo(
     { databaseName: "maister_eval_backfill_test" },
-    "0118_tough_morlun",
+    "0119_tough_morlun",
   );
   db = testDatabase.db;
 
@@ -119,7 +119,7 @@ async function makeRun(): Promise<string> {
   return runId;
 }
 
-// Raw SQL rather than `db.insert(schema.experiments)`: ADR-149 removed the
+// Raw SQL rather than `db.insert(schema.experiments)`: ADR-150 removed the
 // `experiments` drizzle table object from the schema barrel, so `schema.
 // experiments` is undefined at runtime. The table itself still exists at 0118.
 async function insertExperiment(overrides: {

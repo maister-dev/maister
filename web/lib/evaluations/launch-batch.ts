@@ -337,7 +337,7 @@ export async function runControlledLaunchBatch(
 ): Promise<{ launched: number; failed: number; skipped: number }> {
   const d = db ?? getDb();
 
-  // ADR-149 (adversarial fix B5): the kill switch is consulted at the TOP of the
+  // ADR-150 (adversarial fix B5): the kill switch is consulted at the TOP of the
   // drive, before stuck-recovery and the queued loop. Read only inside per-item
   // admission (below), a frozen platform still mutated item rows and could move
   // one to `launched`. Halting here keeps the documented contract: items stay
@@ -561,7 +561,7 @@ export async function runControlledLaunchBatch(
       // launched item record (or vice versa). The batch_item_id conflict path
       // adopts a participant a crashed prior drive already created.
       await d.transaction(async (tx: Db) => {
-        // ADR-149 (adversarial fix B2): admission is checked before the CAS
+        // ADR-150 (adversarial fix B2): admission is checked before the CAS
         // claim, but the seam call can run for minutes. Re-read the study status
         // UNDER this tx before writing the participant — otherwise a study that
         // became `decided`/`archived` during the launch still acquires a
@@ -645,7 +645,7 @@ export async function runControlledLaunchBatch(
             ),
           );
 
-        // ADR-149 (adversarial fix B2): status-guarded like the failure path.
+        // ADR-150 (adversarial fix B2): status-guarded like the failure path.
         // The seam call can run for minutes; a concurrent stuck-recovery drive
         // could terminalize this item (study decided → `failed`) in that window.
         // Without the `status='launching'` guard this write resurrects it

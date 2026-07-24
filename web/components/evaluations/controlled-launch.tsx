@@ -18,7 +18,7 @@ import { EVALUATION_RECIPE_HOLD_SOURCE } from "@/lib/evaluations/recipe-schema";
 // ── Client-facing props (server maps `loadControlledLaunchContext` → these) ────
 // Types are re-declared here rather than imported from the server-only
 // `lab-queries` module so this client bundle never reaches a `server-only`
-// import; the shapes are structurally identical (D3, ADR-149 T1.4).
+// import; the shapes are structurally identical (D3, ADR-150 T1.4).
 
 export interface ControlledFlowScaffold {
   flowRefId: string;

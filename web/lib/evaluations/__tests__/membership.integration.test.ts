@@ -145,7 +145,7 @@ describe("launched-lineage membership predicate", () => {
       replicateOrdinal: 1,
     });
 
-    // Both predicates key on a `launched`-source participant. ADR-149 dropped
+    // Both predicates key on a `launched`-source participant. ADR-150 dropped
     // the legacy `experiment_runs` leg entirely: migration 0110 already
     // backfilled every historical experiment member into a launched
     // participant, so the two predicates now collapse to this one check. The

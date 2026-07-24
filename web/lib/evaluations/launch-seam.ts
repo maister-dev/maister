@@ -5,7 +5,7 @@ import type { LaunchRunContext } from "@/lib/services/runs";
 
 import { launchRun } from "@/lib/services/runs";
 
-// The default LaunchRunSeam adapter (ADR-149 T1.2). Turns one controlled-launch
+// The default LaunchRunSeam adapter (ADR-150 T1.2). Turns one controlled-launch
 // batch item into a real flow run through the shared `launchRun` path, carrying
 // the two properties the batch FSM's correctness depends on:
 //

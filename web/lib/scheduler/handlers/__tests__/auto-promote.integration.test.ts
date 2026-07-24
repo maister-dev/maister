@@ -347,12 +347,12 @@ describe("runSchedulerTick × auto_promote — through-dispatch (codex F2)", () 
   });
 });
 
-// ADR-149 (enforcing ADR-142 D3): a launched evaluation participant is
+// ADR-150 (enforcing ADR-142 D3): a launched evaluation participant is
 // structurally non-promotable. The SQL prefilter now excludes on
 // `evaluation_participants.source_type = 'launched'` (NOT the retired
 // `experiment_runs`, which `0119` drops) — this block is the cross-check that
 // the replaced predicate still keeps a launched participant out of the sweep.
-describe("runAutoPromoteJob — ADR-149: launched participants are never candidates", () => {
+describe("runAutoPromoteJob — ADR-150: launched participants are never candidates", () => {
   async function makeMember(runId: string, taskId: string): Promise<void> {
     const studyId = randomUUID();
 

@@ -31,7 +31,7 @@ type RouteParams = { params: Promise<{ slug: string; studyId: string }> };
 // POST — preflight one or more controlled recipes against live contracts
 // (launchEvaluationRuns). PURE: no side effect, nothing persisted. Returns every
 // typed refusal/warning verbatim so the launch dialog can render them; the same
-// core runs again at launch (ADR-149, ADR-146 D16).
+// core runs again at launch (ADR-150, ADR-146 D16).
 export async function POST(
   req: NextRequest,
   { params }: RouteParams,

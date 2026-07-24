@@ -198,7 +198,7 @@ export async function listComparableTaskRuns(
   }));
 }
 
-// ── Controlled-launch context (ADR-149 T1.4) ─────────────────────────────────
+// ── Controlled-launch context (ADR-150 T1.4) ─────────────────────────────────
 // The Study Lab launch dialog builds inline controlled recipes client-side, but
 // the load-bearing parts of a recipe — the pinned Flow revision and its
 // input/artifact contract digests — MUST be server-derived: the freeze-time and
@@ -352,7 +352,7 @@ async function loadOverlayCatalog(
 }
 
 // Everything the Study Lab launch dialog needs to compose + preflight inline
-// controlled recipes for a study, resolved server-side (D3, ADR-149 T1.4).
+// controlled recipes for a study, resolved server-side (D3, ADR-150 T1.4).
 export async function loadControlledLaunchContext(
   args: {
     studyId: string;

@@ -634,7 +634,7 @@ describe("C-4 — worktree GC holds open-study evidence", () => {
   });
 });
 
-describe("ADR-149 — controlled-launch seam idempotency (T1.2)", () => {
+describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
   function controlledInput(taskId: string, studyId: string, batchItemId: string) {
     return {
       taskId,

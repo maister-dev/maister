@@ -35,7 +35,7 @@ export async function isLaunchedEvaluationRun(
 // participant (`evaluation_participants.source_type='launched'`). EVERY
 // no-auto-promotion / auto-delivery / relaunch consumer routes through this ONE
 // predicate — observed participants can never leak into a launched-lineage
-// decision. ADR-149 dropped the legacy `experiment_runs` leg: migration 0110
+// decision. ADR-150 dropped the legacy `experiment_runs` leg: migration 0110
 // already backfilled every historical experiment member into a launched
 // evaluation participant, so they keep their launched semantics here.
 export async function isLaunchedLineageRun(

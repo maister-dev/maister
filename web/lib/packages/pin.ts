@@ -13,7 +13,7 @@ const { packageInstalls, flowRevisions, tasks, flows } =
 // task's flow: Installed + trusted (allow-list) installs shipping a member
 // revision with the flow's ref id. Never free-text; the client only ever picks
 // from this server-filtered set. Lives here (not lib/experiments) so the
-// evaluations pin-options route survives the ADR-149 experiment removal.
+// evaluations pin-options route survives the ADR-150 experiment removal.
 export type PinInstallOption = {
   packageInstallId: string;
   packageName: string;

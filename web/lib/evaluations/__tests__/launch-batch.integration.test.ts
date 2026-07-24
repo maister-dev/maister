@@ -870,7 +870,7 @@ describe("launch-time governance gates (kill switch / study status / tombstone)"
     expect(item.errorReason).not.toContain("/Users/");
   });
 
-  // ADR-149 (adversarial fix B2): a study that becomes `decided` DURING the seam
+  // ADR-150 (adversarial fix B2): a study that becomes `decided` DURING the seam
   // call must not acquire a launched participant. The seam here flips the study
   // mid-launch; the in-tx re-check refuses, so no participant is written and the
   // item lands `failed` rather than resurrecting into a decided study.

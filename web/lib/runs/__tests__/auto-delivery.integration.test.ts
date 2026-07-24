@@ -186,14 +186,14 @@ describe("deliverRunIfAutoReady — C1 OR-combine with execution policy", () => 
   });
 });
 
-// ADR-149 (enforcing ADR-142 D3): a launched-lineage run (a launched evaluation
+// ADR-150 (enforcing ADR-142 D3): a launched-lineage run (a launched evaluation
 // participant) NEVER auto-promotes — winner promotion is the explicit human
 // path. The two implemented arms (the ADR-126 sweep SQL prefilter + the evaluate
 // `not_applicable` term) do NOT cover the auto_on_ready autopilot that reaches
 // promotion through deliverRunIfAutoReady → promoteRun. These regressions pin the
 // choke-point guard + the ordering short-circuit that close that hole. The
 // exclusion is now via `evaluation_participants.source_type='launched'` — the
-// retired `experiment_runs` leg of isLaunchedLineageRun was dropped in ADR-149.
+// retired `experiment_runs` leg of isLaunchedLineageRun was dropped in ADR-150.
 async function seedLaunchedParticipant(runId: string): Promise<void> {
   const taskId = randomUUID();
 
@@ -238,7 +238,7 @@ async function seedLaunchedParticipant(runId: string): Promise<void> {
   });
 }
 
-describe("ADR-149 launched-lineage auto-promotion exclusion", () => {
+describe("ADR-150 launched-lineage auto-promotion exclusion", () => {
   it("short-circuits a launched-lineage run WITHOUT degrading its delivery policy", async () => {
     const runId = await seedReviewRun({
       executionPolicy: { preset: "unattended" },

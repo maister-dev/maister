@@ -22,7 +22,7 @@ describe("ProjectTabs", () => {
     expect(html).toContain("/projects/demo?tab=brain");
   });
 
-  it("does not render the retired experiments tab (ADR-149)", async () => {
+  it("does not render the retired experiments tab (ADR-150)", async () => {
     const html = renderToStaticMarkup(
       await ProjectTabs({
         slug: "proj",

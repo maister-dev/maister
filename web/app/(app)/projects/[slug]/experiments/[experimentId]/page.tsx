@@ -7,7 +7,7 @@ interface PageProps {
   params: Promise<{ slug: string; experimentId: string }>;
 }
 
-// ADR-149: a legacy experiment deep-link resolves to its backfilled Study; an
+// ADR-150: a legacy experiment deep-link resolves to its backfilled Study; an
 // unknown id (or unknown project) falls back to the evaluations list. The
 // experiment detail UI is gone.
 export default async function LegacyExperimentDetailPage({

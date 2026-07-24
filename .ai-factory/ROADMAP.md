@@ -672,7 +672,7 @@
   hybrid observed + launched Studies. Forced `promotionHold` on every launched
   participant; ADR-146. No weakening of promotion/trust rules.
   Status: the controlled-launch seam production adapter, the Study Lab
-  creation UI, and the E2E all landed with the ADR-149 experiments cut-over.
+  creation UI, and the E2E all landed with the ADR-150 experiments cut-over.
 
 - [~] **M48. Advanced Evaluation** — pairwise and tournament methods
   (`pairwise_tournament@1`), scheduled evaluation suites and package-upgrade
@@ -680,7 +680,7 @@
   and optional human-approved standardization of a winning execution recipe.
   ADR-147. No automatic winner promotion is introduced.
   Status: the pairwise EXECUTION path (match-verdict persistence + routing) and
-  the standardization routes/UI landed with the ADR-149 cut-over; calibration/
+  the standardization routes/UI landed with the ADR-150 cut-over; calibration/
   longitudinal read models and package-upgrade regression suites remain.
 
 ## Completed

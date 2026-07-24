@@ -1650,7 +1650,7 @@ describe("HITL respond route — kind=budget_breach", () => {
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
   });
 
-  // NOTE (ADR-149 T3.3): the "restart terminalizes + relaunches with recovered
+  // NOTE (ADR-150 T3.3): the "restart terminalizes + relaunches with recovered
   // launch options" case moved to `hitl-budget-breach.integration.test.ts` — the
   // restart path now consults `isLaunchedLineageRun`, which reads
   // `evaluation_participants` (a real-DB-only table this mock cannot model). The

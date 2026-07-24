@@ -3,7 +3,7 @@
 - **Routes:** `/projects/{slug}/evaluations`,
   `/projects/{slug}/evaluations/{studyId}`
 - **Status:** Implemented (M46–M48, ADR-142..147); controlled-launch UI and
-  legacy-experiment cut-over (ADR-149). Supersedes the retired Experiment
+  legacy-experiment cut-over (ADR-150). Supersedes the retired Experiment
   Comparison Studio — legacy `/experiments` deep-links permanently redirect here.
 - **Source:** `web/app/(app)/projects/[slug]/evaluations/page.tsx`,
   `web/app/(app)/projects/[slug]/evaluations/[studyId]/page.tsx`,
@@ -129,7 +129,7 @@ Uses `evaluationsLab`, `evaluationsControlled`, `nav`, `run`, `readiness`,
 - ADR: [#adr-142](../../decisions.md#adr-142-evaluation-study-domain-and-legacy-experiment-compatibility),
   [#adr-146](../../decisions.md#adr-146-controlled-evaluation-recipes-and-slot-keyed-execution-profiles),
   [#adr-147](../../decisions.md#adr-147-advanced-evaluation-suites-calibration-and-recipe-standardization),
-  [#adr-149](../../decisions.md#adr-149-experiments-cut-over-completion).
+  [#adr-149](../../decisions.md#adr-150-experiments-cut-over-completion).
 - API contracts: [`../../api/web.openapi.yaml`](../../api/web.openapi.yaml),
   [`../../api/async/web-evaluations.asyncapi.yaml`](../../api/async/web-evaluations.asyncapi.yaml).
 - DB docs: [`../../database-schema.md`](../../database-schema.md),

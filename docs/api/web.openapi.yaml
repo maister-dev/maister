@@ -115,7 +115,7 @@ tags:
   - name: runs
     description: Run launch, status, and event streaming.
   - name: evaluations
-    description: ADR-142..147 + ADR-149 Evaluation Lab — Studies/participants/verdicts, execution start + SSE stream, review resolution, controlled-launch preflight/batches, recipe standardization, admin methodologies/panels/profiles, and project profile overrides (internal session surface).
+    description: ADR-142..147 + ADR-150 Evaluation Lab — Studies/participants/verdicts, execution start + SSE stream, review resolution, controlled-launch preflight/batches, recipe standardization, admin methodologies/panels/profiles, and project profile overrides (internal session surface).
   - name: scratch-runs
     description: Manual coding-agent dialog workspaces outside the task board.
   - name: hitl
@@ -3532,7 +3532,7 @@ paths:
         Pairwise: a `pairwise_tournament@1` method is currently refused
         (`CONFIG` 422) by a fail-closed gate, because the judge submission
         contract carries no A/B pick and the execution would otherwise die at
-        aggregation. **(ADR-149, Designed — Phase 1.5)** that gate is removed
+        aggregation. **(ADR-150, Designed — Phase 1.5)** that gate is removed
         once the pairwise path works end to end: judge attempts are then
         provisioned per unordered PAIR (`N·(N−1)/2` matches, a bye for an odd
         count), each attempt carries its match identity, and aggregation
@@ -3693,7 +3693,7 @@ paths:
       - { $ref: "#/components/parameters/ProjectSlug" }
     get:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Package-pin options for a recipe's packagePin slot
+      summary: (ADR-150, Designed) Package-pin options for a recipe's packagePin slot
       description: |
         `launchEvaluationRuns` (`member`). Ported from the retiring
         `/api/projects/{slug}/experiments/pin-options` (ADR-132); the shared
@@ -3730,7 +3730,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     post:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Preflight one or more controlled recipes
+      summary: (ADR-150, Designed) Preflight one or more controlled recipes
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded. PURE — no
         side effect, nothing persisted. Returns every typed refusal and
@@ -3778,7 +3778,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     post:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Create a controlled-launch batch and drive it
+      summary: (ADR-150, Designed) Create a controlled-launch batch and drive it
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded.
 
@@ -3857,7 +3857,7 @@ paths:
       - { $ref: "#/components/parameters/LaunchBatchId" }
     get:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Read a launch batch and its per-item state
+      summary: (ADR-150, Designed) Read a launch batch and its per-item state
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded. Batch
         progress is POLLED here — it is deliberately not streamed on the Study
@@ -3879,7 +3879,7 @@ paths:
       - { $ref: "#/components/parameters/LaunchBatchId" }
     post:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Re-queue failed items in a launch batch
+      summary: (ADR-150, Designed) Re-queue failed items in a launch batch
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded.
 
@@ -3913,7 +3913,7 @@ paths:
       - { $ref: "#/components/parameters/ProjectSlug" }
     get:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Read the current standardized recipe for a slot
+      summary: (ADR-150, Designed) Read the current standardized recipe for a slot
       description: |
         `manageProjectEvaluationOverrides` (`admin`). Returns the highest
         revision for the `(project, slot)` pair, or `null` when the slot has
@@ -3944,7 +3944,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     get:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Preview whether a Study's winner can be standardized
+      summary: (ADR-150, Designed) Preview whether a Study's winner can be standardized
       description: |
         `manageProjectEvaluationOverrides` (`admin`), Study-ownership guarded.
         Phase 1 of the two-phase flow — NO side effect. Runs a FRESH
@@ -3968,7 +3968,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     post:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Standardize this Study's winning recipe
+      summary: (ADR-150, Designed) Standardize this Study's winning recipe
       description: |
         `manageProjectEvaluationOverrides` (`admin`), Study-ownership guarded.
         Phase 2 — human-approved and non-automatic (ADR-147): no machine may
@@ -4007,7 +4007,7 @@ paths:
       - { $ref: "#/components/parameters/ProjectSlug" }
     post:
       tags: [evaluations]
-      summary: (ADR-149, Designed) Roll a slot back to its previous standardized recipe
+      summary: (ADR-150, Designed) Roll a slot back to its previous standardized recipe
       description: |
         `manageProjectEvaluationOverrides` (`admin`). History is never
         rewritten: this APPENDS a new ledger row at `max(revision) + 1` with
@@ -15186,7 +15186,7 @@ components:
           type: string
           minLength: 1
           description: |
-            (ADR-124, Implemented; membership inheritance retired by ADR-149)
+            (ADR-124, Implemented; membership inheritance retired by ADR-150)
             Optional source run for a relaunch. It must reference a run of the
             same task or the route returns `CONFLICT` (409). It always produces
             a plain run — the legacy server-derived experiment-membership
@@ -18354,7 +18354,7 @@ components:
       additionalProperties: false
       required: [packageInstallId, label]
       description: |
-        (ADR-132/ADR-149.) One selectable package pin for a recipe. Candidates
+        (ADR-132/ADR-150.) One selectable package pin for a recipe. Candidates
         are resolved server-side from the task's project attachments.
       properties:
         packageInstallId: { type: string }
@@ -18536,7 +18536,7 @@ components:
       additionalProperties: false
       required: [batchId, deduped, itemCount]
       description: |
-        (ADR-149.) The durable batch intent. Returned with `201` even when the
+        (ADR-150.) The durable batch intent. Returned with `201` even when the
         post-commit drive then halts — items stay `queued` and visible.
       properties:
         batchId: { type: string }
@@ -18551,7 +18551,7 @@ components:
       type: object
       additionalProperties: false
       required: [id, studyId, status, items, createdAt]
-      description: (ADR-149.) A launch batch with its per-item state.
+      description: (ADR-150.) A launch batch with its per-item state.
       properties:
         id: { type: string }
         studyId: { type: string }
@@ -18607,7 +18607,7 @@ components:
       additionalProperties: false
       required: [id, projectId, slot, revision, action, definition, createdAt]
       description: |
-        (ADR-147/ADR-149.) One append-only ledger row. History is never
+        (ADR-147/ADR-150.) One append-only ledger row. History is never
         rewritten — a rollback appends a new row rather than deleting one.
       properties:
         id: { type: string }
@@ -18628,7 +18628,7 @@ components:
       additionalProperties: false
       required: [eligible, refusals]
       description: |
-        (ADR-147/ADR-149.) Phase-1 preview. Refusals are plain codes;
+        (ADR-147/ADR-150.) Phase-1 preview. Refusals are plain codes;
         preflight refusals appear prefixed as `preflight:<code>`.
       properties:
         eligible: { type: boolean }

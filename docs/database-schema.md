@@ -1594,7 +1594,7 @@ this section names the invariants the columns encode. Eight migrations:
   `experiments`/`experiment_runs` tables remained the payload source of record
   and could not be dropped until those payloads were carried over or that
   carry-over was explicitly waived.
-  **[ADR-149](decisions.md#adr-149-experiments-cut-over-completion) is that
+  **[ADR-150](decisions.md#adr-150-experiments-cut-over-completion) is that
   waiver (2026-07-21):** the payloads are NOT migrated — no installation holds
   working experiments, and the retained flags plus `legacy_snapshot` are
   accepted as sufficient historical provenance. The drop lands as migration
@@ -1648,8 +1648,8 @@ this section names the invariants the columns encode. Eight migrations:
   `source_verdict_id` — history survives source deletion), and
   `rolled_back_to_revision` on rollback rows.
 
-- **Pairwise match identity + launch-key binding (`0118`, Designed —
-  ADR-149).** Additive DDL for two independent Phase-1/1.5 needs. First, a
+- **Pairwise match identity + launch-key binding (`0119`, Implemented —
+  ADR-150).** Additive DDL for two independent Phase-1/1.5 needs. First, a
   judge attempt must be able to name the PAIR it judges; existing rows are all
   non-pairwise and take `NULL`/`NULL`, so no backfill runs:
 
@@ -1689,11 +1689,11 @@ this section names the invariants the columns encode. Eight migrations:
   and a loser re-selects the winner's run. No FK — the column is a claim token,
   not a relation, and the batch item may be GC'd independently.
 
-- **Legacy Experiment drop (`0119`, Implemented — ADR-149).** The terminal step
+- **Legacy Experiment drop (`0120`, Implemented — ADR-150).** The terminal step
   of the Experiments cut-over. The safety backfill re-runs first; it is
   idempotent and a no-op on empty tables, so it costs nothing while satisfying
   the preserve-or-refuse-loudly rule. The 0110 payload carry-over is **explicitly
-  waived** by ADR-149 (see the `0110` note above):
+  waived** by ADR-150 (see the `0110` note above):
 
   ```sql
   SELECT evaluation_backfill_from_experiments();

@@ -112,7 +112,7 @@ export function buildAutoPromotionReaders(args: {
 
       return rows.length > 0;
     },
-    // ADR-149 (enforcing ADR-142 D3): launched-lineage membership (a launched
+    // ADR-150 (enforcing ADR-142 D3): launched-lineage membership (a launched
     // Evaluation participant) excludes the run from the ADR-126 auto-promotion
     // sweep. The authoritative apply-site guard lives in promoteWorkspaceRun;
     // this shares the one canonical predicate so the two can never drift.

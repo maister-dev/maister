@@ -1,4 +1,4 @@
--- ADR-149 (Phase 5, T5.1): drop the legacy Experiment tables. The idempotent
+-- ADR-150 (Phase 5, T5.1): drop the legacy Experiment tables. The idempotent
 -- backfill re-runs first as a zero-cost safety valve — a no-op on empty tables,
 -- but it converts any surviving legacy Experiment into an evaluation Study
 -- (preserving `legacy_snapshot`) before the tables and the function are dropped,

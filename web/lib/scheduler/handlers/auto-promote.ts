@@ -133,7 +133,7 @@ export async function runAutoPromoteJob(
         sql`${projects.autoPromotion} @> '{"enabled": true}'::jsonb`,
         // A shared-tree run has workspace_mode='shared'; exclude fail-closed.
         sql`${runs.workspaceMode} IS DISTINCT FROM 'shared'`,
-        // ADR-149 (enforcing ADR-142 D3): a launched-lineage run (a launched
+        // ADR-150 (enforcing ADR-142 D3): a launched-lineage run (a launched
         // evaluation participant) never occupies a candidate slot — winner
         // promotion is the explicit human path. evaluateAutoPromotion re-checks
         // membership at the apply site. `source_type = 'launched'` is REQUIRED

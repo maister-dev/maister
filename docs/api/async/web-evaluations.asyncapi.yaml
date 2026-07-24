@@ -46,7 +46,7 @@ info:
     Scope note: controlled-launch **batch** progress is NOT streamed on this
     channel. A batch is polled through
     `GET /api/projects/{slug}/evaluations/studies/{studyId}/launch-batches/{batchId}`,
-    which returns per-item state directly (ADR-149). No batch event types are
+    which returns per-item state directly (ADR-150). No batch event types are
     emitted here.
   contact:
     name: MAIster

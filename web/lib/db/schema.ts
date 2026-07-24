@@ -1702,7 +1702,7 @@ export const runs = pgTable(
       () => agentSchedules.id,
       { onDelete: "set null" },
     ),
-    // ADR-149: controlled-launch idempotency handle. Written INSIDE the run
+    // ADR-150: controlled-launch idempotency handle. Written INSIDE the run
     // INSERT so a re-driven batch item adopts its existing run (partial UNIQUE
     // `runs_evaluation_batch_item_uq`) rather than minting a second — a post-hoc
     // batch_item_id -> run_id lookup double-launches across the crash window.
@@ -1922,7 +1922,7 @@ export const runs = pgTable(
     uniqScheduledLaunch: unique("runs_scheduled_launch_id_unique").on(
       t.scheduledLaunchId,
     ),
-    // ADR-149: the controlled-launch seam's idempotency backstop. The run
+    // ADR-150: the controlled-launch seam's idempotency backstop. The run
     // INSERT's onConflictDoNothing targets this index, so a re-driven batch item
     // adopts the winner instead of double-launching.
     uniqEvaluationBatchItem: uniqueIndex("runs_evaluation_batch_item_uq")
@@ -1991,7 +1991,7 @@ export const evaluationStudies = pgTable(
     legacyExperimentId: text("legacy_experiment_id"),
     archivedReason: text("archived_reason"),
     // The original Experiment row preserved verbatim at backfill time so the
-    // Study stays self-contained now that migration 0119 (ADR-149) has dropped
+    // Study stays self-contained now that migration 0120 (ADR-150) has dropped
     // the experiments table. Null for natively-created Studies.
     legacySnapshot: jsonb("legacy_snapshot").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -2647,7 +2647,7 @@ export const evaluationJudgeAttempts = pgTable(
     ordinal: integer("ordinal").notNull(),
     // 0 for a primary attempt; > 0 for a bounded repair child (retry_of set).
     retryOrdinal: integer("retry_ordinal").notNull().default(0),
-    // ADR-149 (pairwise): the unordered participant PAIR this attempt judges.
+    // ADR-150 (pairwise): the unordered participant PAIR this attempt judges.
     // NULL for every non-pairwise attempt. Part of the unique key with
     // NULLS NOT DISTINCT so non-pairwise dedup survives the widening.
     matchA: text("match_a"),
@@ -2710,7 +2710,7 @@ export const evaluationJudgeAttempts = pgTable(
       .on(t.executionId, t.role, t.ordinal, t.retryOrdinal, t.matchA, t.matchB)
       // NULLS NOT DISTINCT: non-pairwise attempts carry NULL match columns;
       // without this Postgres treats each NULL pair as distinct and the widened
-      // key would stop deduping them (ADR-149).
+      // key would stop deduping them (ADR-150).
       .nullsNotDistinct(),
     idxExecution: index("evaluation_judge_attempts_execution_idx").on(
       t.executionId,

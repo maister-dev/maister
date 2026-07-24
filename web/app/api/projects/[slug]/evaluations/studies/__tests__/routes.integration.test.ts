@@ -880,7 +880,7 @@ describe("evaluation study/participant/verdict/review routes (T5)", () => {
   });
 });
 
-describe("launch-preflight route (ADR-149)", () => {
+describe("launch-preflight route (ADR-150)", () => {
   let preflightStudyId: string;
 
   beforeAll(async () => {
@@ -945,7 +945,7 @@ describe("launch-preflight route (ADR-149)", () => {
   });
 });
 
-describe("launch-batches routes (ADR-149)", () => {
+describe("launch-batches routes (ADR-150)", () => {
   let batchStudyId: string;
   let recipeId: string;
   let otherStudyId: string;
@@ -1099,7 +1099,7 @@ describe("launch-batches routes (ADR-149)", () => {
   });
 });
 
-describe("pin-options route (ADR-149)", () => {
+describe("pin-options route (ADR-150)", () => {
   function call(query: string): Promise<Response> {
     return pinOptionsRoute.GET(
       req(`/api/projects/${slug}/evaluations/pin-options${query}`),

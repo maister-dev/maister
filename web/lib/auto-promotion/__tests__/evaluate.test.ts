@@ -386,7 +386,7 @@ describe("verdict reason-code i18n closure (EN+RU)", () => {
   });
 });
 
-describe("evaluateAutoPromotion — ADR-149 launched-lineage exclusion", () => {
+describe("evaluateAutoPromotion — ADR-150 launched-lineage exclusion", () => {
   it("returns not_applicable launched_lineage for a launched-lineage run (enforces the ADR-142 D3 invariant at the apply site)", async () => {
     const evaluation = await evaluateAutoPromotion(
       baseInput({ readers: { isLaunchedLineage: async () => true } }),

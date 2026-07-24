@@ -228,7 +228,7 @@ async function loadMethodRequirements(
 }
 
 // The set of known capability refs per class for a project's overlay validation.
-// Inlined (not imported from lib/experiments, which is removed in the ADR-149
+// Inlined (not imported from lib/experiments, which is removed in the ADR-150
 // cut-over) — the predicate is `capability_records WHERE project + not disabled`,
 // bucketed by kind; `agent_definition` records back the `subagents` class.
 async function loadOverlayCatalog(

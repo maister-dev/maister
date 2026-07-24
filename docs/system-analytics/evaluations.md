@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This domain (**ADR-142..ADR-147 + [ADR-149](../decisions.md#adr-149-experiments-cut-over-completion)**)
+This domain (**ADR-142..ADR-147 + [ADR-150](../decisions.md#adr-150-experiments-cut-over-completion)**)
 covers the Evaluation Lab: the one surface that compares Runs for a task and
 records a conclusive human verdict. A **Study** is scoped to exactly one
 project and one task. Its **participants** are either *observed* (an existing
@@ -16,7 +16,7 @@ aggregation (scalar and pairwise), and human-approved recipe standardization.
 
 It **excludes**: automatic promotion of a winner (no machine standardizes or
 promotes — ADR-147), a second scheduler clock (suites reuse the M24 tick), new
-execution runtimes, and the retired Experiment surface (ADR-149; the legacy
+execution runtimes, and the retired Experiment surface (ADR-150; the legacy
 `experiments` tables and `/experiments` routes are removed, and the former
 `experiments.md` doc is deleted with them).
 
@@ -31,7 +31,7 @@ Persisted in Postgres; ERD in [`../db/evaluations-domain.md`](../db/evaluations-
 **Study core**
 
 - **`evaluation_studies`** — the Study root (one project + one task).
-  Carries `status`, optimistic `version`, and the ADR-149 provenance columns
+  Carries `status`, optimistic `version`, and the ADR-150 provenance columns
   `legacy_experiment_id` (UNIQUE) + `legacy_snapshot` that survive the legacy
   table drop and back the `migratedBadge`.
 - **`evaluation_participants`** — one compared Run. `source_type` decides
@@ -261,7 +261,7 @@ aggregate's outcome is not a status but the terminal it drives —
 
 ### Controlled launch (recipes → preflight → batch → runs)
 
-Lib **Implemented**; routes and Study Lab UI **Designed (ADR-149, Phase 1)**.
+Lib **Implemented**; routes and Study Lab UI **Designed (ADR-150, Phase 1)**.
 
 The batch FSM does **not** enforce the launch chain. `launch-batch.ts` imports
 neither `preflight.ts` nor `materialization.ts` — its only recipe validation is
@@ -385,9 +385,9 @@ two lease-free drives inside the seam for the same item — and both would mint
 a second run. The binding is therefore persisted **inside the run INSERT** as
 `runs.evaluation_batch_item_id` under a partial UNIQUE (the same shape as
 `runs.scheduled_launch_id`), so the conflict resolves in the statement that
-creates the run and a loser re-selects the winner (ADR-149, migration `0118`).
+creates the run and a loser re-selects the winner (ADR-150, migration `0118`).
 
-### Pairwise execution (Designed, ADR-149 — Phase 1.5)
+### Pairwise execution (Designed, ADR-150 — Phase 1.5)
 
 For a method whose aggregation is `pairwise_tournament@1`, judge attempts are
 provisioned per unordered **pair** of participants rather than per participant:
@@ -406,7 +406,7 @@ match is `unresolved`, which changes no standing but increments
 
 ### Recipe standardization
 
-Lib **Implemented**; routes and UI **Designed (ADR-149, Phase 1.5)**.
+Lib **Implemented**; routes and UI **Designed (ADR-150, Phase 1.5)**.
 Human-approved and non-automatic, per ADR-147. Two phases over
 `standardization.ts`, both scoped to a `(project, slot)` pair that defaults to
 `"default"`:
@@ -464,17 +464,17 @@ is `viewer(0) < member(1) < admin(2) < owner(3)`.
 | ------ | -------- | ------ |
 | `readEvaluationStudies` | `viewer` | study list/detail, participants list, verdict history, SSE stream |
 | `manageEvaluationStudies` | `member` | create/patch study, add/remove participants |
-| `launchEvaluationRuns` | `member` | start an execution; **and** (ADR-149) launch-preflight, launch-batches create/read/retry, pin-options |
+| `launchEvaluationRuns` | `member` | start an execution; **and** (ADR-150) launch-preflight, launch-batches create/read/retry, pin-options |
 | `concludeEvaluationStudy` | `member` | record a human verdict |
 | `resolveEvaluationReview` | `admin` | resolve a disagreement/escalation review |
-| `manageProjectEvaluationOverrides` | `admin` | project profile overrides; **and** (ADR-149) standardization eligibility/standardize/rollback/current |
+| `manageProjectEvaluationOverrides` | `admin` | project profile overrides; **and** (ADR-150) standardization eligibility/standardize/rollback/current |
 | `readEvaluationEvidence` | `member` | declared, unused — evidence reads run on the ext token scope `evaluations:evidence:read` instead |
 | `runEvaluations` | `member` | declared, unused — reserved |
 
 Two naming caveats worth stating rather than silently reproducing:
 
-- `launchEvaluationRuns` reads as "launch runs" but its pre-ADR-149 consumer
-  guards *starting an execution*. ADR-149 adds the controlled-launch routes
+- `launchEvaluationRuns` reads as "launch runs" but its pre-ADR-150 consumer
+  guards *starting an execution*. ADR-150 adds the controlled-launch routes
   under the same action — the name finally matches one of its two uses, and
   both are `member`, so no privilege boundary moves.
 - `manageEvaluationConfig` is **not** a declared action. It appears only in
@@ -596,12 +596,12 @@ project-admin action rather than introducing a new one: a standardized recipe
 - **The evaluation GC hold only covers backfilled legacy rows.** It matches
   `evaluation_participants`, so an `experiment_runs` row created *after*
   migration `0110` had no participant until the backfill re-ran. This is why
-  ADR-149 removes the legacy write path before deleting the legacy GC
+  ADR-150 removes the legacy write path before deleting the legacy GC
   predicate, and re-runs `evaluation_backfill_from_experiments()` inside the
   drop migration — which executes before the app accepts traffic, closing the
   window.
 
-## Known lineage gaps (pre-existing; not introduced or worsened by ADR-149)
+## Known lineage gaps (pre-existing; not introduced or worsened by ADR-150)
 
 An adversarial pass over the launched-lineage invariants found four gaps that
 predate this cut-over. They are recorded here because this document is where a
@@ -642,7 +642,7 @@ guarantee that holds.
   (evidence), [ADR-145](../decisions.md#adr-145-multi-judge-execution-aggregation-disagreement-and-human-verdict)
   (aggregation/verdict), [ADR-146](../decisions.md#adr-146-controlled-evaluation-recipes-and-slot-keyed-execution-profiles)
   (recipes), [ADR-147](../decisions.md#adr-147-advanced-evaluation-suites-calibration-and-recipe-standardization)
-  (suites/standardization), [ADR-149](../decisions.md#adr-149-experiments-cut-over-completion)
+  (suites/standardization), [ADR-150](../decisions.md#adr-150-experiments-cut-over-completion)
   (cut-over completion).
 - **API** — [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (studies,
   participants, verdicts, executions, launch batches, standardization),
@@ -660,7 +660,7 @@ guarantee that holds.
 
 ## Known documentation debt
 
-Not introduced by ADR-149 and deliberately out of its scope:
+Not introduced by ADR-150 and deliberately out of its scope:
 
 - [`../db/erd.md`](../db/erd.md) does not carry entity blocks for the 18
   evaluation tables added after it was written; only the domain ERD does.

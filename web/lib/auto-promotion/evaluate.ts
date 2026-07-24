@@ -50,7 +50,7 @@ export const NOT_APPLICABLE_REASONS = [
   "no_task",
   "orchestrator_child",
   "shared_workspace",
-  // ADR-149 (enforcing ADR-142 D3): a launched-lineage run (evaluation
+  // ADR-150 (enforcing ADR-142 D3): a launched-lineage run (evaluation
   // participant) never auto-promotes — winner promotion stays the explicit
   // human path.
   "launched_lineage",
@@ -107,7 +107,7 @@ export interface AutoPromotionReaders {
   readinessGreen(): Promise<boolean>;
   externalCheck(gateId: string): Promise<ExternalCheckState>;
   readDepsFiles(files: DiffChangeStatEntry[]): Promise<DepsFile[]>;
-  // ADR-149 (enforcing ADR-142 D3): launched-lineage membership is structural
+  // ADR-150 (enforcing ADR-142 D3): launched-lineage membership is structural
   // non-candidacy — the guard at the irreversible apply site, since promoteRun
   // evaluation can be reached outside the sweep (the SQL prefilter alone is not
   // enough).
@@ -170,7 +170,7 @@ export async function evaluateAutoPromotion(
   if (run.workspaceMode === "shared") {
     return { verdict: "not_applicable", reason: "shared_workspace" };
   }
-  // ADR-149 (enforcing ADR-142 D3): a launched-lineage run (evaluation
+  // ADR-150 (enforcing ADR-142 D3): a launched-lineage run (evaluation
   // participant) is structurally non-promotable — winner promotion is the
   // explicit human path.
   if (await readers.isLaunchedLineage()) {

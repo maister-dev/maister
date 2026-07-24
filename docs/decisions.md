@@ -10487,7 +10487,7 @@ worktree paths.
   rejected. Manual workbench actions are explicit operator sovereignty; stored
   snapshots are the degradation boundary.
 
-**Partially superseded by [ADR-149](#adr-149-experiments-cut-over-completion)
+**Partially superseded by [ADR-150](#adr-150-experiments-cut-over-completion)
 (2026-07-21).** The Experiment entity, its comparison studio UI, its web/ext
 API, its MCP tools, and the `experiments`/`experiment_runs` tables are retired;
 the Evaluation Lab (ADR-142..ADR-147) owns comparison. The job-to-be-done and
@@ -11614,7 +11614,7 @@ re-check (D7) · clone-with-history forks (D5, rejected below).
   already a cut of this local package; switching an upstream consumer to a
   fork stays an explicit per-project action.
 
-**Partially superseded by [ADR-149](#adr-149-experiments-cut-over-completion)
+**Partially superseded by [ADR-150](#adr-150-experiments-cut-over-completion)
 (2026-07-21).** The package-experiment axis described here no longer runs
 through the Experiment entity: the server-filtered package-pin option feed
 moves to `GET /api/projects/{slug}/evaluations/pin-options`, and pins are
@@ -13099,10 +13099,11 @@ the evaluations namespace; the packagePin concept itself lives on in recipes).
 - The two pre-existing `nullable-type-sibling` redocly errors on
   `ExperimentDetail`/`ExperimentComparison` (filed 2026-07-11) are resolved by
   deleting those schemas.
-- ADR-149 and migration `0118` are contested with the unmerged
-  `authored-caps-edit-lock-unification` work. Whichever merges second
-  renumbers by provenance — and must renumber `0119` with it, keeping the
-  journal `when` values strictly monotonic.
+- This ADR and its migrations collided with the
+  `authored-caps-edit-lock-unification` work, which merged first as ADR-149 +
+  migration `0118`. On rebase this cut-over was renumbered by provenance to
+  ADR-150, with its additive migration `0119` and drop migration `0120`, journal
+  `when` values kept strictly monotonic.
 
 **Alternatives Considered:**
 

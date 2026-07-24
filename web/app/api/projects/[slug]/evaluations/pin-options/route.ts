@@ -22,7 +22,7 @@ const log = pino({
 
 type RouteParams = { params: Promise<{ slug: string }> };
 
-// GET — the recipe packagePin picker feed (ADR-149; ported from the retiring
+// GET — the recipe packagePin picker feed (ADR-150; ported from the retiring
 // experiments pin-options). `launchEvaluationRuns`-gated. `taskId` is a query
 // param validated against the slug-derived project (a task outside the project
 // is a CONFIG refusal — the picker never leaks another project's installs).

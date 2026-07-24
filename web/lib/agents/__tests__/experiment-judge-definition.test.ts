@@ -32,7 +32,7 @@ describe("core:experiment-judge definition", () => {
     expect(parsed.recommended?.runner).toBe("claude");
   });
 
-  it("prompt is advisory-only and uses the evaluation MCP facade (refit, ADR-149)", () => {
+  it("prompt is advisory-only and uses the evaluation MCP facade (refit, ADR-150)", () => {
     const parsed = parseAgentDefinition("core:experiment-judge", JUDGE_MD);
 
     expect(parsed.prompt).toContain("advisory only");

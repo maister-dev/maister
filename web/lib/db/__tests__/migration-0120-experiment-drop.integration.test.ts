@@ -33,12 +33,12 @@ const RUBRIC = {
   ],
 };
 
-// T5.1 — the destructive leg of ADR-149. 0119 first re-runs the idempotent
+// T5.1 — the destructive leg of ADR-150. 0120 first re-runs the idempotent
 // backfill (a safety valve that converts any surviving legacy Experiment into a
 // Study), then drops the `experiments` / `experiment_runs` tables and the
-// function. This suite seeds a legacy Experiment at 0118, applies 0119, and
+// function. This suite seeds a legacy Experiment at 0119, applies 0120, and
 // proves the seeded row was preserved as a Study before the tables vanished.
-describe("migration 0119 — seeded legacy experiments backfill then drop", () => {
+describe("migration 0120 — seeded legacy experiments backfill then drop", () => {
   let testDatabase: StartedPostgresTestDb;
   let db: NodePgDatabase;
   let experimentId: string;
@@ -46,7 +46,7 @@ describe("migration 0119 — seeded legacy experiments backfill then drop", () =
   beforeAll(async () => {
     testDatabase = await startMainPostgresTestDbUpTo(
       { databaseName: "maister_migration_0119_seeded" },
-      "0118_tough_morlun",
+      "0119_tough_morlun",
     );
     db = testDatabase.db;
 
@@ -107,7 +107,7 @@ describe("migration 0119 — seeded legacy experiments backfill then drop", () =
     });
 
     // Raw SQL: the `experiments` drizzle table object was removed from the
-    // schema barrel by ADR-149, but the table still exists at 0118.
+    // schema barrel by ADR-150, but the table still exists at 0118.
     experimentId = randomUUID();
     await db.execute(sql`
       INSERT INTO experiments (
@@ -128,7 +128,7 @@ describe("migration 0119 — seeded legacy experiments backfill then drop", () =
       )
     `);
 
-    await applyMainMigration(db, "0119_living_captain_marvel");
+    await applyMainMigration(db, "0120_living_captain_marvel");
   }, 180_000);
 
   afterAll(async () => {
@@ -184,10 +184,10 @@ describe("migration 0119 — seeded legacy experiments backfill then drop", () =
   });
 });
 
-// The empty-DB arm: the full 0000→0119 chain must apply cleanly on a fresh
+// The empty-DB arm: the full 0000→0120 chain must apply cleanly on a fresh
 // container (startMainPostgresTestDb runs the whole lineage — a throw would fail
-// beforeAll), with the 0119 safety-valve backfill a no-op over zero legacy rows.
-describe("migration 0119 — full chain is clean on an empty database", () => {
+// beforeAll), with the 0120 safety-valve backfill a no-op over zero legacy rows.
+describe("migration 0120 — full chain is clean on an empty database", () => {
   let testDatabase: StartedPostgresTestDb;
 
   beforeAll(async () => {

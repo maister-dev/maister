@@ -8,7 +8,7 @@ import { ORCHESTRATOR_TOKEN_SCOPES } from "@/lib/agents/tokens";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 
 describe("external token scope contract", () => {
-  it("no longer registers the retired experiment scopes (ADR-149)", () => {
+  it("no longer registers the retired experiment scopes (ADR-150)", () => {
     expect(TOKEN_SCOPES).not.toContain("experiments:read");
     expect(TOKEN_SCOPES).not.toContain("experiments:advise");
     expect(AGENT_TOKEN_SCOPES).not.toContain("experiments:read");
