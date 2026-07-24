@@ -174,7 +174,7 @@
 | [ADR-147](#adr-147-advanced-evaluation-suites-calibration-and-recipe-standardization) | Advanced evaluation suites calibration and recipe standardization | Accepted | 2026-07-16 |
 | [ADR-148](#adr-148-run-workspace-lifecycle-cleanup-and-reconciliation) | Run workspace lifecycle cleanup and reconciliation | Implemented | 2026-07-16 |
 | [ADR-149](#adr-149-authored-capability-editor-session-edit-lock) | Authored-capability editor session edit-lock | Implemented | 2026-07-21 |
-| [ADR-150](#adr-150-experiments-cut-over-completion) | Experiments cut-over completion | Accepted | 2026-07-21 |
+| [ADR-150](#adr-150-experiments-cut-over-completion) | Experiments cut-over completion | Implemented | 2026-07-21 |
 
 ---
 
@@ -12901,7 +12901,7 @@ indication, no read-only mode.
 ### ADR-150: Experiments cut-over completion
 
 **Date:** 2026-07-21
-**Status:** Accepted
+**Status:** Implemented
 
 **Context:** ADR-124 introduced Experiments as a task-bound A/B comparison
 surface; ADR-142..ADR-147 then rebuilt the same job on the Evaluation Lab
@@ -12962,7 +12962,7 @@ installation, so the cut-over can complete rather than dual-run.
   installation holds working experiments and the retained flags plus
   `legacy_snapshot` are sufficient historical provenance. Recording the waiver
   here rather than silently dropping is the point — the precondition was real.
-- **Legacy tables are dropped plainly** (D2). Migration `0119` re-runs the
+- **Legacy tables are dropped plainly** (D2). Migration `0120` re-runs the
   idempotent `evaluation_backfill_from_experiments()` immediately before the
   drops as a zero-cost safety valve (a no-op on empty tables, satisfying the
   preserve-or-refuse-loudly migration rule), then drops `experiment_runs`,
@@ -12975,13 +12975,13 @@ installation, so the cut-over can complete rather than dual-run.
   has no match-identity columns and its `UNIQUE(execution_id, role, ordinal,
   retry_ordinal)` has no dimension in which two rows could differ by which
   pair they judge, so pairwise cannot persist a match without DDL — and
-  pairwise ships before the drops. Migration `0118` therefore adds nullable
+  pairwise ships before the drops. Migration `0119` therefore adds nullable
   `match_a`/`match_b` and widens that unique to include them **with
   `nullsNotDistinct`**: Postgres treats NULLs as distinct by default, so a
   plain widened unique would silently destroy the existing non-pairwise dedup.
-  Migration `0119` performs the backfill-then-drop above. Ordering also
+  Migration `0120` performs the backfill-then-drop above. Ordering also
   matters for GC: the legacy `experiment_runs` write path is removed before
-  the legacy GC predicate, and `0119`'s backfill runs before the app accepts
+  the legacy GC predicate, and `0120`'s backfill runs before the app accepts
   traffic, so no launched workspace loses its retention hold in between.
 - **Controlled launches are wired through the existing lib, not reimplemented.**
   The frozen surface is: `POST .../studies/{studyId}/launch-preflight`,
@@ -13016,7 +13016,7 @@ installation, so the cut-over can complete rather than dual-run.
   existing `runs.scheduled_launch_id` and `(agent_id, trigger_event_id)`
   claims: the conflict resolves in the same statement that creates the run,
   and a loser re-selects the winner's run instead of launching a second one.
-  Migration `0118` adds the column and index.
+  Migration `0119` adds the column and index.
 - **The batch drive re-checks admission inside the participant transaction, and
   its success write is CAS-guarded.** Admission is evaluated before the CAS
   claim while the seam call — a worktree fork plus runner resolution — can run
@@ -13083,10 +13083,10 @@ the evaluations namespace; the packagePin concept itself lives on in recipes).
 
 **Consequences:**
 
-- Migration `0119` drops two tables and one function. It is destructive by
+- Migration `0120` drops two tables and one function. It is destructive by
   design and gated on the documented precondition that no installation holds
   working experiments; the safety backfill runs first so any row that *did*
-  exist is preserved as an evaluation study before the drop. Migration `0118`
+  exist is preserved as an evaluation study before the drop. Migration `0119`
   is additive and needs no backfill — every existing judge attempt is
   non-pairwise and takes `NULL`/`NULL`.
 - A deliberate mid-branch degradation is accepted: between the ext/MCP removal

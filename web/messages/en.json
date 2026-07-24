@@ -4298,7 +4298,7 @@
         "overlay_ref_unknown": "A capability overlay reference is not in the project catalog."
       },
       "warning": {
-        "slot_intent_soft_mismatch": "A slot's requested model is unavailable; a same-capability runner will be used."
+        "slot_intent_soft_mismatch": "A slot requests a runner by intent, which the launch does not honor yet — the run uses the default runner, not the requested one."
       }
     },
     "preview": {

@@ -2568,7 +2568,7 @@ components:
         Strict per-criterion judge submission. Attribution is server-derived and
         MUST NOT appear in the body (ADR-142 D12).
 
-        **(ADR-150, Designed — Phase 1.5)** `winner` carries the head-to-head
+        **(ADR-150, Implemented — Phase 1.5)** `winner` carries the head-to-head
         pick for a pairwise attempt. Its presence is validated against the
         BOUND attempt, fail-closed in both directions: supplying `winner` on a
         non-pairwise attempt is `422`, and omitting it on a pairwise attempt is

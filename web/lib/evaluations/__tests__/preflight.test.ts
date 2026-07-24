@@ -251,6 +251,29 @@ describe("preflightControlledRecipe", () => {
     );
   });
 
+  it("warns (never silently passes) on an exact-intent slot the seam cannot thread", () => {
+    const flow = flowRevision();
+    const recipe = recipeFor(flow, {
+      slotBindings: {
+        "session:main": {
+          mode: "intent",
+          config: { capability_agent: "claude", model: "claude-sonnet-4-6" },
+        },
+      },
+    });
+    // An EXACT host runner exists, but the launch seam threads only mode:"runner"
+    // hard-pins — an intent slot falls back to launchRun's default chain, so
+    // preflight must WARN rather than pass silently (ADR-150 F2 / hard-warn).
+    const result = preflightControlledRecipe(
+      input({ flow, recipe, runners: [runner()] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings.map((w) => w.code)).toContain(
+      "slot_intent_soft_mismatch",
+    );
+  });
+
   it("refuses an intent with no same-capability host runner", () => {
     const flow = flowRevision();
     const recipe = recipeFor(flow, {

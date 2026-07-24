@@ -107,7 +107,7 @@ describe("migration 0120 — seeded legacy experiments backfill then drop", () =
     });
 
     // Raw SQL: the `experiments` drizzle table object was removed from the
-    // schema barrel by ADR-150, but the table still exists at 0118.
+    // schema barrel by ADR-150, but the table still exists at 0119.
     experimentId = randomUUID();
     await db.execute(sql`
       INSERT INTO experiments (
@@ -192,7 +192,7 @@ describe("migration 0120 — full chain is clean on an empty database", () => {
 
   beforeAll(async () => {
     testDatabase = await startMainPostgresTestDb({
-      databaseName: "maister_migration_0119_empty",
+      databaseName: "maister_migration_0120_empty",
     });
   }, 180_000);
 

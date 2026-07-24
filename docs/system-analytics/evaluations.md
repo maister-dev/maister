@@ -261,7 +261,7 @@ aggregate's outcome is not a status but the terminal it drives —
 
 ### Controlled launch (recipes → preflight → batch → runs)
 
-Lib **Implemented**; routes and Study Lab UI **Designed (ADR-150, Phase 1)**.
+Lib **Implemented**; routes and Study Lab UI **Implemented (ADR-150, Phase 1)**.
 
 The batch FSM does **not** enforce the launch chain. `launch-batch.ts` imports
 neither `preflight.ts` nor `materialization.ts` — its only recipe validation is
@@ -355,8 +355,10 @@ only — every check is exact-or-superset, never a lossy coercion.
 | `overlay_ref_unknown` | a capability overlay names an unknown rule/skill/mcp/subagent |
 
 There is exactly one warning code, `slot_intent_soft_mismatch`
-(`preflight.ts:88-92`) — an intent resolved to a candidate that is not its
-first preference. Warnings never block.
+(`preflight.ts:88-92`) — fired on every satisfiable intent-mode slot, because
+the launch seam threads only `mode: "runner"` hard-pins, so an intent variant
+falls back to the default runner chain rather than its declared intent. Warnings
+never block.
 
 A missing catalog MUST surface as a refusal, never a fabricated pass: absence
 of evidence is not evidence of compatibility.
@@ -385,9 +387,9 @@ two lease-free drives inside the seam for the same item — and both would mint
 a second run. The binding is therefore persisted **inside the run INSERT** as
 `runs.evaluation_batch_item_id` under a partial UNIQUE (the same shape as
 `runs.scheduled_launch_id`), so the conflict resolves in the statement that
-creates the run and a loser re-selects the winner (ADR-150, migration `0118`).
+creates the run and a loser re-selects the winner (ADR-150, migration `0119`).
 
-### Pairwise execution (Designed, ADR-150 — Phase 1.5)
+### Pairwise execution (Implemented, ADR-150 — Phase 1.5)
 
 For a method whose aggregation is `pairwise_tournament@1`, judge attempts are
 provisioned per unordered **pair** of participants rather than per participant:
@@ -406,7 +408,7 @@ match is `unresolved`, which changes no standing but increments
 
 ### Recipe standardization
 
-Lib **Implemented**; routes and UI **Designed (ADR-150, Phase 1.5)**.
+Lib **Implemented**; routes and UI **Implemented (ADR-150, Phase 1.5)**.
 Human-approved and non-automatic, per ADR-147. Two phases over
 `standardization.ts`, both scoped to a `(project, slot)` pair that defaults to
 `"default"`:

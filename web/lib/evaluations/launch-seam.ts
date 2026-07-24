@@ -26,11 +26,13 @@ import { launchRun } from "@/lib/services/runs";
 // threaded as per-session runner overrides, so a launched variant runs on its
 // recipe's chosen runners. Slot keys are `session:<name>` / `consensus:...`;
 // only `session:` slots map to a run session override. INTENT-mode bindings
-// (`mode: "intent"`) still resolve via launchRun's default chain — resolving a
-// typed intent to a concrete runner needs the live catalog and is the remaining
-// co-evolve; the capabilityOverlay and pinned flow-revision are likewise not yet
-// threaded. Preflight already refuses an incompatible recipe, so these are
-// fidelity gaps, not safety ones.
+// (`mode: "intent"`) are NOT threaded here — they fall back to launchRun's
+// default runner chain (resolving a typed intent to a concrete runner needs the
+// live catalog and is the remaining co-evolve); the capabilityOverlay and
+// pinned flow-revision are likewise not yet threaded. Preflight WARNS on every
+// intent-mode slot (never a silent pass), so the author sees the variant runs
+// on the default runner, not its declared intent — the misroute is surfaced,
+// not hidden.
 function sessionRunnerOverridesFromRecipe(
   recipe: LaunchRunSeamArgs["recipeDefinition"],
 ): Record<string, string> {

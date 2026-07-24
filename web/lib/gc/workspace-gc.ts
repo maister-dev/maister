@@ -224,7 +224,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
   // Evaluation-lab evidence hold (ADR-146 D15): a launched participant's
   // worktree is study evidence — later executions (judge captures, verdicts)
   // read it, so it must survive until the study reaches a terminal status. This
-  // is the SOLE hold after ADR-150 — the ADR-150 `0110`/`0119` backfill converts
+  // is the SOLE hold after ADR-150 — the ADR-150 `0110`/`0120` backfill converts
   // every legacy `experiment_runs` member into a launched participant, so the
   // retired experiment join is subsumed here. `draft`/`open` are the live set;
   // only

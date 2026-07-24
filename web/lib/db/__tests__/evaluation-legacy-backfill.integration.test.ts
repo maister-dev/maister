@@ -24,10 +24,10 @@ let flowId: string;
 let taskId: string;
 
 beforeAll(async () => {
-  // 0118 is the last revision where the legacy `experiments` /
+  // 0119 is the last revision where the legacy `experiments` /
   // `experiment_runs` tables and `evaluation_backfill_from_experiments()` still
-  // exist; 0119 drops them. This suite seeds legacy rows and invokes the
-  // function directly, so it stops at 0118.
+  // exist; 0120 drops them. This suite seeds legacy rows and invokes the
+  // function directly, so it stops at 0119.
   testDatabase = await startMainPostgresTestDbUpTo(
     { databaseName: "maister_eval_backfill_test" },
     "0119_tough_morlun",
@@ -121,7 +121,7 @@ async function makeRun(): Promise<string> {
 
 // Raw SQL rather than `db.insert(schema.experiments)`: ADR-150 removed the
 // `experiments` drizzle table object from the schema barrel, so `schema.
-// experiments` is undefined at runtime. The table itself still exists at 0118.
+// experiments` is undefined at runtime. The table itself still exists at 0119.
 async function insertExperiment(overrides: {
   status?: string;
   description?: string;

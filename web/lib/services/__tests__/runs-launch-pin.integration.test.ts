@@ -72,6 +72,10 @@ import {
 import { acquireLock, releaseLock } from "@/lib/local-packages/lock";
 import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
 import { attachPackage, installPackageRevision } from "@/lib/packages/attach";
+import {
+  listEligiblePinInstalls,
+  resolvePinnedFlowRevisionForRefId,
+} from "@/lib/packages/pin";
 import { launchRun } from "@/lib/services/runs";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
@@ -428,6 +432,87 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
       .select()
       .from(schema.runs)
       .where(eq(schema.runs.taskId, "task-refuse-1"));
+    const workspaceRows = await db.select().from(schema.workspaces);
+
+    expect(runRows).toHaveLength(0);
+    expect(
+      workspaceRows.filter((w: any) => w.projectId === project.id),
+    ).toHaveLength(0);
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+    expect(await attachmentRow(fx.attachmentId)).toEqual(before);
+  });
+
+  // Test-Matrix Row 5 (feature-experiments-cutover): a pin that is ELIGIBLE
+  // when the recipe is created but becomes INELIGIBLE by launch time must be
+  // refused at launch — never silently launched on a stale/invalid pin. The
+  // create-side eligibility feed (`listEligiblePinInstalls`) and the launch-side
+  // re-validation (`resolvePinnedFlowRevisionForRefId`, the exact matrix
+  // `launchRun` re-runs) share ONE predicate set in `lib/packages/pin.ts`, so
+  // both sides must AGREE across the eligible→ineligible transition (parity).
+  it("a pin eligible in the create-feed is refused at launch once the install is removed (create ↔ launch re-validate parity)", async () => {
+    const project = await createProject();
+    const fx = await forkAttachWithNewerCut(
+      project,
+      "paritypkg",
+      "flow-parity",
+    );
+
+    await seedTask("task-parity-1", project.id, fx.flowRowId);
+    const before = await attachmentRow(fx.attachmentId);
+
+    // Eligible now: the create-side picker feed offers the newer cut, and the
+    // launch-side matrix resolves it — both sides admit the pin.
+    const eligibleBefore = await listEligiblePinInstalls({
+      db,
+      taskId: "task-parity-1",
+    });
+
+    expect(eligibleBefore.map((o) => o.packageInstallId)).toContain(
+      fx.cut2InstallId,
+    );
+    await expect(
+      resolvePinnedFlowRevisionForRefId(db, {
+        flowRefId: "flow-parity",
+        packageInstallId: fx.cut2InstallId,
+      }),
+    ).resolves.toBeDefined();
+
+    // The pinned install is removed AFTER the recipe was creatable — the shared
+    // `package_status = 'Installed'` predicate now fails for it.
+    await db
+      .update(schema.packageInstalls)
+      .set({ packageStatus: "Removed" })
+      .where(eq(schema.packageInstalls.id, fx.cut2InstallId));
+
+    // Create-side: the feed no longer offers it (a recipe could not be built on
+    // it now), while a still-eligible sibling cut stays offered — surgical flip.
+    const eligibleAfter = await listEligiblePinInstalls({
+      db,
+      taskId: "task-parity-1",
+    });
+    const idsAfter = eligibleAfter.map((o) => o.packageInstallId);
+
+    expect(idsAfter).not.toContain(fx.cut2InstallId);
+    expect(idsAfter).toContain(fx.pinInstallId);
+
+    // Launch-side: the authoritative launch re-validates through the SAME matrix
+    // and refuses (PRECONDITION) BEFORE any worktree — no run, no workspace, the
+    // attachment byte-identical. Parity holds: create-side and launch-side agree.
+    await expect(
+      launchRun(
+        {
+          taskId: "task-parity-1",
+          packagePin: { packageInstallId: fx.cut2InstallId },
+        },
+        ctx(),
+        db as never,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const runRows = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-parity-1"));
     const workspaceRows = await db.select().from(schema.workspaces);
 
     expect(runRows).toHaveLength(0);

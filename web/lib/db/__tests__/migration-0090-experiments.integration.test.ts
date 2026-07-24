@@ -24,7 +24,7 @@ let db: Db;
 
 beforeAll(async () => {
   // Stop at 0090: the experiment tables this suite asserts on are created here
-  // and dropped by 0119 in the full chain. No migration between 0091 and 0118
+  // and dropped by 0120 in the full chain. No migration between 0091 and 0119
   // alters them, so the 0090 point is the faithful "as created" state.
   testDatabase = await startMainPostgresTestDbUpTo(
     { databaseName: "maister_migration_0090_test" },

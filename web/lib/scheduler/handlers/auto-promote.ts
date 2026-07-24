@@ -139,7 +139,7 @@ export async function runAutoPromoteJob(
         // membership at the apply site. `source_type = 'launched'` is REQUIRED
         // (an observed participant must NOT be excluded); `removed_at` is
         // deliberately NOT filtered (a tombstoned launched participant keeps its
-        // hold). REPLACE, never delete: `0119` drops `experiment_runs`, so the
+        // hold). REPLACE, never delete: `0120` drops `experiment_runs`, so the
         // legacy predicate would crash every tick.
         sql`NOT EXISTS (SELECT 1 FROM evaluation_participants ep WHERE ep.run_id = ${runs.id} AND ep.source_type = 'launched')`,
         // Keyset resume: rows strictly after the previous tick's last key, in the

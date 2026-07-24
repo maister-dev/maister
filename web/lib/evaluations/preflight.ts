@@ -136,24 +136,27 @@ function checkSlotTarget(
     return {};
   }
 
-  // Typed intent: at least one enabled+ready same-capability candidate must
-  // exist. An EXACT candidate (model+provider match) is a hard pass; only a
-  // same-capability-but-not-exact resolution is a soft mismatch WARNING.
+  // Typed intent: the launch seam threads only mode==="runner" hard-pins into
+  // run_sessions (launch-seam.ts sessionRunnerOverridesFromRecipe), so a
+  // satisfiable intent is NOT resolved to its host — the run falls back to the
+  // platform default runner chain. Surface that as a WARNING on EVERY
+  // satisfiable intent (exact OR same-capability), never a silent pass, so a
+  // model-comparison author sees the variant will run on the default runner and
+  // not its declared intent. A total absence of any enabled+ready host
+  // candidate is still a hard refusal.
   const candidates = runnerIntentCandidates(
     target.config,
     runners as RunnerCatalogEntry[],
   );
 
-  if (candidates.exact.length > 0) return {};
-
-  if (candidates.sameCapability.length > 0) {
+  if (candidates.exact.length > 0 || candidates.sameCapability.length > 0) {
     return {
       warning: {
         code: "slot_intent_soft_mismatch",
         slotKey,
         message: `slot "${slotKey}" intent (capability ${target.config.capability_agent}${
           target.config.model ? `, model ${target.config.model}` : ""
-        }) has no exact host runner; a same-capability runner will be used`,
+        }) is not threaded by the launch seam yet; the run uses the default runner chain, not this slot's intent`,
       },
     };
   }

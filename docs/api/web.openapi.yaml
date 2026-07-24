@@ -3532,7 +3532,7 @@ paths:
         Pairwise: a `pairwise_tournament@1` method is currently refused
         (`CONFIG` 422) by a fail-closed gate, because the judge submission
         contract carries no A/B pick and the execution would otherwise die at
-        aggregation. **(ADR-150, Designed — Phase 1.5)** that gate is removed
+        aggregation. **(ADR-150, Implemented — Phase 1.5)** that gate is removed
         once the pairwise path works end to end: judge attempts are then
         provisioned per unordered PAIR (`N·(N−1)/2` matches, a bye for an odd
         count), each attempt carries its match identity, and aggregation
@@ -3693,7 +3693,7 @@ paths:
       - { $ref: "#/components/parameters/ProjectSlug" }
     get:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Package-pin options for a recipe's packagePin slot
+      summary: (ADR-150, Implemented) Package-pin options for a recipe's packagePin slot
       description: |
         `launchEvaluationRuns` (`member`). Ported from the retiring
         `/api/projects/{slug}/experiments/pin-options` (ADR-132); the shared
@@ -3730,7 +3730,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     post:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Preflight one or more controlled recipes
+      summary: (ADR-150, Implemented) Preflight one or more controlled recipes
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded. PURE — no
         side effect, nothing persisted. Returns every typed refusal and
@@ -3778,7 +3778,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     post:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Create a controlled-launch batch and drive it
+      summary: (ADR-150, Implemented) Create a controlled-launch batch and drive it
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded.
 
@@ -3857,7 +3857,7 @@ paths:
       - { $ref: "#/components/parameters/LaunchBatchId" }
     get:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Read a launch batch and its per-item state
+      summary: (ADR-150, Implemented) Read a launch batch and its per-item state
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded. Batch
         progress is POLLED here — it is deliberately not streamed on the Study
@@ -3879,7 +3879,7 @@ paths:
       - { $ref: "#/components/parameters/LaunchBatchId" }
     post:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Re-queue failed items in a launch batch
+      summary: (ADR-150, Implemented) Re-queue failed items in a launch batch
       description: |
         `launchEvaluationRuns` (`member`), Study-ownership guarded.
 
@@ -3913,7 +3913,7 @@ paths:
       - { $ref: "#/components/parameters/ProjectSlug" }
     get:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Read the current standardized recipe for a slot
+      summary: (ADR-150, Implemented) Read the current standardized recipe for a slot
       description: |
         `manageProjectEvaluationOverrides` (`admin`). Returns the highest
         revision for the `(project, slot)` pair, or `null` when the slot has
@@ -3944,7 +3944,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     get:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Preview whether a Study's winner can be standardized
+      summary: (ADR-150, Implemented) Preview whether a Study's winner can be standardized
       description: |
         `manageProjectEvaluationOverrides` (`admin`), Study-ownership guarded.
         Phase 1 of the two-phase flow — NO side effect. Runs a FRESH
@@ -3968,7 +3968,7 @@ paths:
       - { $ref: "#/components/parameters/StudyId" }
     post:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Standardize this Study's winning recipe
+      summary: (ADR-150, Implemented) Standardize this Study's winning recipe
       description: |
         `manageProjectEvaluationOverrides` (`admin`), Study-ownership guarded.
         Phase 2 — human-approved and non-automatic (ADR-147): no machine may
@@ -4007,7 +4007,7 @@ paths:
       - { $ref: "#/components/parameters/ProjectSlug" }
     post:
       tags: [evaluations]
-      summary: (ADR-150, Designed) Roll a slot back to its previous standardized recipe
+      summary: (ADR-150, Implemented) Roll a slot back to its previous standardized recipe
       description: |
         `manageProjectEvaluationOverrides` (`admin`). History is never
         rewritten: this APPENDS a new ledger row at `max(revision) + 1` with

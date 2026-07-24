@@ -178,7 +178,7 @@ flowchart TD
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/project-automations.md`](projects/project-automations.md) | Project Automations (one-time task launches, recurring schedules, agent binding links) | `/projects/{slug}?tab=automations` | Implemented (ADR-139) |
 | [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (M27 list + ADR-129 hub) |
-| [`projects/project-evaluations.md`](projects/project-evaluations.md) | Evaluation Lab (Studies list, Study Lab, controlled-launch dialog, verdict) | `/projects/{slug}/evaluations` and `/projects/{slug}/evaluations/{studyId}` | Implemented (M46–M48, ADR-142..147/149) |
+| [`projects/project-evaluations.md`](projects/project-evaluations.md) | Evaluation Lab (Studies list, Study Lab, controlled-launch dialog, verdict) | `/projects/{slug}/evaluations` and `/projects/{slug}/evaluations/{studyId}` | Implemented (M46–M48, ADR-142..147/150) |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (modes, prefill, bootstrap, classified clone errors) | `/projects/new` | Implemented |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
 | [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Implemented (M39, ADR-106) |
