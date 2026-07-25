@@ -354,11 +354,14 @@ only — every check is exact-or-superset, never a lossy coercion.
 | `slot_intent_unsatisfiable` | a runner *intent* matches no catalog candidate |
 | `overlay_ref_unknown` | a capability overlay names an unknown rule/skill/mcp/subagent |
 
-There is exactly one warning code, `slot_intent_soft_mismatch`
-(`preflight.ts:88-92`) — fired on every satisfiable intent-mode slot, because
-the launch seam threads only `mode: "runner"` hard-pins, so an intent variant
-falls back to the default runner chain rather than its declared intent. Warnings
-never block.
+There are two warning codes. `slot_intent_soft_mismatch` (`preflight.ts`) fires
+on every satisfiable intent-mode slot, because the launch seam threads only
+`mode: "runner"` hard-pins, so an intent variant falls back to the default
+runner chain rather than its declared intent. `slot_runner_pin_not_threaded`
+fires on a `mode: "runner"` hard-pin bound to a non-`session:` slot (e.g. a
+`consensus:` participant): the seam threads only `session:` slots
+(`isSeamThreadableSlot`), so such a pin is not honored and the run uses the
+default runner chain. Warnings never block.
 
 A missing catalog MUST surface as a refusal, never a fabricated pass: absence
 of evidence is not evidence of compatibility.

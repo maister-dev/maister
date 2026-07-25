@@ -223,6 +223,27 @@ describe("createControlledRecipe", () => {
       /already exists/i,
     );
   });
+
+  it("returns the existing recipe (not CONFLICT) under returnExistingOnKeyConflict (M2 idempotency)", async () => {
+    // The launch route re-derives a DETERMINISTIC inline key per
+    // (idempotencyKey, index); an idempotent batch retry must resolve that key
+    // to the SAME recipeId so the batch request digest matches (deduped) instead
+    // of leaking a duplicate recipe + a 409 on digest mismatch.
+    const study = await createStudy({ projectId, taskId, title: "S5" }, db);
+    const args = {
+      studyId: study.id as string,
+      projectId,
+      key: "idem-a",
+      label: "Idem A",
+      definition: recipeDefinition(liveFlow()),
+      returnExistingOnKeyConflict: true,
+    };
+
+    const first = await createControlledRecipe(args, db);
+    const second = await createControlledRecipe(args, db);
+
+    expect(second.id).toBe(first.id);
+  });
 });
 
 describe("preflightStudyRecipe", () => {

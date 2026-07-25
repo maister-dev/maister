@@ -19,6 +19,7 @@ import {
   computeArtifactContractDigest,
   computeInputContractDigest,
 } from "@/lib/evaluations/recipe";
+import { isSeamThreadableSlot } from "@/lib/evaluations/slot-threading";
 
 // The Flow revision resolved live at preflight time, with the launchability and
 // trust facets M47 gates on. The projection reuses the FlowContractProjection
@@ -86,7 +87,7 @@ export interface PreflightRefusal {
 }
 
 export interface PreflightWarning {
-  code: "slot_intent_soft_mismatch";
+  code: "slot_intent_soft_mismatch" | "slot_runner_pin_not_threaded";
   slotKey: string;
   message: string;
 }
@@ -129,6 +130,21 @@ function checkSlotTarget(
         refusal: {
           code: "slot_runner_unavailable",
           message: `slot "${slotKey}" pins runner "${target.runnerId}" which is missing, disabled, or not ready`,
+        },
+      };
+    }
+
+    // The launch seam threads a runner hard-pin ONLY for `session:` slots
+    // (isSeamThreadableSlot). A pin on any other slot family — `consensus:`
+    // participants above all — is silently dropped and the run falls back to the
+    // default runner chain. WARN (never a silent pass, mirroring the intent-slot
+    // warning) so a model-comparison author sees the pin will not be honored yet.
+    if (!isSeamThreadableSlot(slotKey)) {
+      return {
+        warning: {
+          code: "slot_runner_pin_not_threaded",
+          slotKey,
+          message: `slot "${slotKey}" pins runner "${target.runnerId}" but the launch seam threads only session-slot pins yet; this pin is not honored and the run uses the default runner chain`,
         },
       };
     }

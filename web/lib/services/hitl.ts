@@ -3573,9 +3573,9 @@ async function preflightBudgetRestartLaunchability(args: {
   }
 
   await requireProjectAction(task.projectId, "launchRun");
-  // ADR-132/142: a launched-lineage run (legacy Experiment member OR launched
-  // Evaluation participant) relaunches INDEPENDENTLY of its siblings — the
-  // study/experiment legitimately keeps other active member runs — so it skips
+  // ADR-132/142/150: a launched-lineage run (a launched Evaluation participant;
+  // ADR-150 dropped the legacy Experiment leg) relaunches INDEPENDENTLY of its
+  // siblings — the study legitimately keeps other active participant runs — so it skips
   // the single-active-run precondition and uses force-relaunch classification.
   const launchedLineageRestart = await isLaunchedLineageRun(
     args.db,

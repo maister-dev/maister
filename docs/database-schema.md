@@ -1714,7 +1714,7 @@ this section names the invariants the columns encode. Eight migrations:
   `meta/_journal.json` entry whose `when` is strictly greater than
   `1784407016089` (`0117_new_maggott`) and monotonic between them, and a
   generated `meta/*_snapshot.json` — verified by the journal-integrity and
-  drift suites. A fresh-container test proves `0000 → 0119` on an EMPTY
+  drift suites. A fresh-container test proves `0000 → 0120` on an EMPTY
   database and on one seeded with legacy Experiment rows, asserting that the
   migrated Studies stay queryable after the drop and that `legacy_snapshot`
   survives intact.
@@ -3457,12 +3457,10 @@ projects
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
   │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083
   │     ├── task_activity    (FK taskId,   cascade)                ← ADR-083
-  │     ├── experiments      (FK taskId,   cascade)                ← ADR-124
   │     ├── task_subscribers (FK taskId,   cascade)                ← ADR-083
   │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-083
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
-  │           ├── experiment_runs (FK runId,        cascade)       ← ADR-124
   │           ├── run_sessions    (FK runId,        cascade)       ← M42 ADR-114
   │           ├── run_cost_rollups (FK runId,       cascade)       ← ADR-085
   │           ├── node_attempts   (FK runId,        cascade)   ← M11a
@@ -3490,8 +3488,6 @@ projects
   ├── project_tokens     (nullable FK projectId, cascade; NULL personal tokens)  ← M16, 0063 Implemented
   │     └── token_audit_log  (FK tokenId, cascade)
   ├── token_audit_log    (nullable FK projectId, SET NULL)  ← M16, 0063 Implemented (also direct)
-  ├── experiments        (FK projectId, cascade)  ← also direct, ADR-124
-  │     └── experiment_runs (FK experimentId, cascade)
   ├── runs               (FK projectId, cascade)  ← also direct
   ├── run_cost_rollups   (FK projectId, cascade)  ← also direct, ADR-085
   ├── node_attempt_cost_rollups (FK projectId, cascade)  ← also direct, ADR-085
@@ -3536,11 +3532,6 @@ Created via Drizzle:
 | `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(M37, Implemented, migration 0060)** one persistent child per `addressableKey` within a run-tree (star-routing). |
 | `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(M37, Implemented, migration 0060, ADR-100)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
 | `runs`                | `runs_ended_at_idx`                     | `(endedAt)` PARTIAL WHERE `ended_at IS NOT NULL` | **(ADR-117, Implemented, migration 0083)** bounded `order by ended_at limit n` scan for the `system_sweep` cost-rollup backstop reconcile. |
-| `experiments`         | `experiments_project_status_idx`        | `(projectId, status)`              | **(ADR-124, Implemented)** Project experiment list + active retention holds |
-| `experiments`         | `experiments_task_idx`                  | `(taskId)`                         | **(ADR-124, Implemented)** Task-bound lab/detail lookup |
-| `experiment_runs`     | `experiment_runs_run_uq`                | `(runId)` UNIQUE                   | **(ADR-124, Implemented)** A run belongs to at most one experiment |
-| `experiment_runs`     | `experiment_runs_variant_replicate_uq`  | `(experimentId, variantKey, replicateOrdinal)` UNIQUE | **(ADR-124, Implemented)** Duplicate-click/racing replicate backstop |
-| `experiment_runs`     | `experiment_runs_experiment_idx`        | `(experimentId)`                   | **(ADR-124, Implemented)** Comparison member-run listing |
 | `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
 | `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
 | `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |

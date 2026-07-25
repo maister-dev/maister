@@ -125,7 +125,9 @@ beforeAll(async () => {
   preflightRoute = await import("../[studyId]/launch-preflight/route");
   batchesRoute = await import("../[studyId]/launch-batches/route");
   batchRoute = await import("../[studyId]/launch-batches/[batchId]/route");
-  batchRetryRoute = await import("../[studyId]/launch-batches/[batchId]/retry/route");
+  batchRetryRoute = await import(
+    "../[studyId]/launch-batches/[batchId]/retry/route"
+  );
   pinOptionsRoute = await import("../../pin-options/route");
   overrideRoute = await import(
     "../../../evaluation-profiles/[profileId]/override/route"
@@ -896,10 +898,7 @@ describe("launch-preflight route (ADR-150)", () => {
     preflightStudyId = (await created.json()).study.id;
   });
 
-  function call(
-    studyId: string,
-    body: unknown,
-  ): Promise<Response> {
+  function call(studyId: string, body: unknown): Promise<Response> {
     return preflightRoute.POST(
       req(
         `/api/projects/${slug}/evaluations/studies/${studyId}/launch-preflight`,
@@ -1000,10 +999,13 @@ describe("launch-batches routes (ADR-150)", () => {
 
   function createCall(studyId: string, body: unknown): Promise<Response> {
     return batchesRoute.POST(
-      req(`/api/projects/${slug}/evaluations/studies/${studyId}/launch-batches`, {
-        method: "POST",
-        body,
-      }),
+      req(
+        `/api/projects/${slug}/evaluations/studies/${studyId}/launch-batches`,
+        {
+          method: "POST",
+          body,
+        },
+      ),
       { params: Promise.resolve({ slug, studyId }) },
     );
   }
@@ -1046,7 +1048,9 @@ describe("launch-batches routes (ADR-150)", () => {
 
   it("409s a recipe from another study (cross-resource guard)", async () => {
     asAdmin();
-    const res = await createCall(batchStudyId, { items: [{ recipeId: otherRecipeId }] });
+    const res = await createCall(batchStudyId, {
+      items: [{ recipeId: otherRecipeId }],
+    });
 
     expect(res.status).toBe(404);
   });
@@ -1056,6 +1060,21 @@ describe("launch-batches routes (ADR-150)", () => {
     const res = await createCall(batchStudyId, { items: [{ recipeId }] });
 
     expect(res.status).toBe(403);
+  });
+
+  it("blocks an inline recipe that fails preflight before any write (M1 enforcement)", async () => {
+    asAdmin();
+    // `validRecipe` pins flow revision "rev-1", which has no flow_revisions row,
+    // so the live preflight loader refuses it. The launch route now runs preflight
+    // on every inline recipe and blocks BEFORE any recipe/batch write — a caller
+    // that skipped the advisory preview cannot launch an un-vetted variant.
+    const res = await createCall(batchStudyId, {
+      items: [{ definition: validRecipe }],
+    });
+
+    expect(res.status).not.toBe(201);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
   });
 
   it("422s an empty items list", async () => {

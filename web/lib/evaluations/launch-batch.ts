@@ -13,6 +13,7 @@ import {
   evaluationParticipants,
   evaluationRecipes,
   evaluationStudies,
+  runs,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -585,6 +586,20 @@ export async function runControlledLaunchBatch(
           );
         }
 
+        // ADR-150 provenance: the seam does not thread the recipe's pinned flow
+        // revision yet (co-evolve), so the run resolved its flow from the task's
+        // LIVE enabled revision. Record the ACTUAL revision the run launched with
+        // — never the recipe's declared pin — so evidence never attributes a
+        // result to a revision that did not produce it. `flowRefId` is stable
+        // (only the revision drifts on a package upgrade), so it stays from the
+        // recipe.
+        const [launchedRun] = await tx
+          .select({ flowRevisionId: runs.flowRevisionId })
+          .from(runs)
+          .where(eq(runs.id, runId));
+        const actualFlowRevisionId =
+          launchedRun?.flowRevisionId ?? definition.flow.flowRevisionId;
+
         const insertedParticipant = await tx
           .insert(evaluationParticipants)
           .values({
@@ -601,7 +616,7 @@ export async function runControlledLaunchBatch(
               runId,
               taskId: study.taskId,
               flowRefId: definition.flow.flowRefId,
-              flowRevisionId: definition.flow.flowRevisionId,
+              flowRevisionId: actualFlowRevisionId,
               capturedAt: new Date().toISOString(),
             },
           })
@@ -721,32 +736,47 @@ export async function runControlledLaunchBatch(
 // completed = all launched; failed = all failed; partial = a mix; still
 // launching = any queued/launching remain.
 async function finalizeBatchStatus(batchId: string, d: Db): Promise<void> {
-  const items = await d
-    .select({ status: evaluationLaunchBatchItems.status })
-    .from(evaluationLaunchBatchItems)
-    .where(eq(evaluationLaunchBatchItems.batchId, batchId));
-  const statuses = items.map((i) => i.status);
-  const pending = statuses.some((s) => s === "queued" || s === "launching");
-  const anyLaunched = statuses.some((s) => s === "launched");
-  const anyFailed = statuses.some((s) => s === "failed");
+  // ADR-150 hardening: a create-drive and a retry-drive can run fire-and-forget
+  // on the SAME batch concurrently, and each ends by recomputing + overwriting
+  // the batch status. Lock the batch row FOR UPDATE and recompute from the
+  // items' COMMITTED states UNDER the lock, so the two finalizes serialize and
+  // the last one writes the correct status — a stale non-terminal read can never
+  // clobber a terminal `completed`/`partial`/`failed` into a permanent
+  // `launching`.
+  await d.transaction(async (tx: Db) => {
+    await tx
+      .select({ id: evaluationLaunchBatches.id })
+      .from(evaluationLaunchBatches)
+      .where(eq(evaluationLaunchBatches.id, batchId))
+      .for("update");
 
-  const status = pending
-    ? "launching"
-    : anyLaunched && anyFailed
-      ? "partial"
-      : anyLaunched
-        ? "completed"
-        : "failed";
+    const items = await tx
+      .select({ status: evaluationLaunchBatchItems.status })
+      .from(evaluationLaunchBatchItems)
+      .where(eq(evaluationLaunchBatchItems.batchId, batchId));
+    const statuses = items.map((i) => i.status);
+    const pending = statuses.some((s) => s === "queued" || s === "launching");
+    const anyLaunched = statuses.some((s) => s === "launched");
+    const anyFailed = statuses.some((s) => s === "failed");
 
-  await d
-    .update(evaluationLaunchBatches)
-    .set({
-      status,
-      updatedAt: new Date(),
-      ...(pending ? {} : { completedAt: new Date() }),
-      version: sql`${evaluationLaunchBatches.version} + 1`,
-    })
-    .where(eq(evaluationLaunchBatches.id, batchId));
+    const status = pending
+      ? "launching"
+      : anyLaunched && anyFailed
+        ? "partial"
+        : anyLaunched
+          ? "completed"
+          : "failed";
+
+    await tx
+      .update(evaluationLaunchBatches)
+      .set({
+        status,
+        updatedAt: new Date(),
+        ...(pending ? {} : { completedAt: new Date() }),
+        version: sql`${evaluationLaunchBatches.version} + 1`,
+      })
+      .where(eq(evaluationLaunchBatches.id, batchId));
+  });
 }
 
 // Re-queue a batch's failed items for another drive pass, bounded by

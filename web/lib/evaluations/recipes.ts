@@ -37,6 +37,11 @@ export async function createControlledRecipe(
     key: string;
     label: string;
     definition: unknown;
+    // Idempotency (ADR-150 M2): when true, a key that already exists in the
+    // study returns the EXISTING recipe instead of throwing CONFLICT — so an
+    // idempotent batch retry that re-derives the same inline key resolves to the
+    // same recipeId (stable request digest), never a leaked duplicate + a 409.
+    returnExistingOnKeyConflict?: boolean;
   },
   db?: Db,
 ): Promise<Record<string, unknown>> {
@@ -74,6 +79,20 @@ export async function createControlledRecipe(
       .returning();
 
     if (!inserted.length) {
+      if (args.returnExistingOnKeyConflict) {
+        const [existing] = await tx
+          .select()
+          .from(evaluationRecipes)
+          .where(
+            and(
+              eq(evaluationRecipes.studyId, args.studyId),
+              eq(evaluationRecipes.key, args.key),
+            ),
+          );
+
+        if (existing) return existing;
+      }
+
       throw new MaisterError(
         "CONFLICT",
         `recipe key already exists in study: ${args.key}`,

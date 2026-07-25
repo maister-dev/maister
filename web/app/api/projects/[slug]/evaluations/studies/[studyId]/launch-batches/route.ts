@@ -11,8 +11,12 @@ import {
   createControlledLaunchBatch,
   runControlledLaunchBatch,
 } from "@/lib/evaluations/launch-batch";
-import { createControlledRecipe } from "@/lib/evaluations/recipes";
 import { defaultLaunchRunSeam } from "@/lib/evaluations/launch-seam";
+import { livePreflightLoaders } from "@/lib/evaluations/preflight-loaders";
+import {
+  createControlledRecipe,
+  preflightStudyRecipe,
+} from "@/lib/evaluations/recipes";
 import { MaisterError } from "@/lib/errors";
 import {
   evalErrorResponse,
@@ -70,16 +74,49 @@ export async function POST(
       );
     }
 
+    // M1 (ADR-150): the launch path ENFORCES preflight. Every inline recipe is
+    // preflit against the live contracts; any hard refusal (untrusted /
+    // unlaunchable flow, unavailable runner, uncovered artifact, contract drift,
+    // unknown overlay) blocks the launch BEFORE any recipe/batch write, so a
+    // caller that skipped the advisory preview cannot launch an un-vetted
+    // variant. Warnings never block. recipeId items reference recipes already
+    // vetted at their own inline creation.
+    const loaders = livePreflightLoaders();
+
+    for (const [index, item] of parsed.data.items.entries()) {
+      if (item.definition === undefined) continue;
+
+      const verdict = await preflightStudyRecipe(
+        { studyId, projectId: project.id, definition: item.definition },
+        loaders,
+      );
+
+      if (!verdict.ok) {
+        throw new MaisterError(
+          "CONFIG",
+          `inline recipe #${index + 1} failed preflight: ${verdict.refusals
+            .map((r) => r.code)
+            .join(", ")}`,
+        );
+      }
+    }
+
     // D3: an item may carry a recipe definition to create inline in the study
-    // first. Each inline recipe gets a unique key; a bad definition refuses the
-    // whole request (CONFIG) before any batch write.
+    // first. M2 (ADR-150): the inline key is DETERMINISTIC per
+    // (idempotencyKey, index) — an idempotent retry re-derives the same key and
+    // `returnExistingOnKeyConflict` resolves it to the same recipeId, so the
+    // batch's request digest matches (`deduped: true`) instead of leaking a
+    // duplicate recipe + a 409 on digest mismatch. Absent an idempotency key
+    // there is no retry contract, so a unique key is minted.
     const items: Array<{ recipeId: string; replicateCount?: number }> = [];
 
     for (const [index, item] of parsed.data.items.entries()) {
       if (item.recipeId) {
         items.push({
           recipeId: item.recipeId,
-          ...(item.replicateCount ? { replicateCount: item.replicateCount } : {}),
+          ...(item.replicateCount
+            ? { replicateCount: item.replicateCount }
+            : {}),
         });
 
         continue;
@@ -88,9 +125,12 @@ export async function POST(
       const created = await createControlledRecipe({
         studyId,
         projectId: project.id,
-        key: `inline-${Date.now()}-${index}`,
+        key: parsed.data.idempotencyKey
+          ? `inline-${parsed.data.idempotencyKey}-${index}`
+          : `inline-${Date.now()}-${index}`,
         label: `Variant ${index + 1}`,
         definition: item.definition,
+        returnExistingOnKeyConflict: true,
       });
 
       items.push({
@@ -112,7 +152,10 @@ export async function POST(
     if (!result.deduped) {
       void runControlledLaunchBatch(
         result.batchId,
-        defaultLaunchRunSeam({ actorUserId: session.id, authorize: async () => {} }),
+        defaultLaunchRunSeam({
+          actorUserId: session.id,
+          authorize: async () => {},
+        }),
       ).catch((err: unknown) =>
         log.error(
           { batchId: result.batchId, err: (err as Error).message },

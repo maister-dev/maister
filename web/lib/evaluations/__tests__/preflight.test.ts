@@ -230,6 +230,32 @@ describe("preflightControlledRecipe", () => {
     );
   });
 
+  it("warns (never silently drops) on a runner pin for a non-session slot the seam cannot thread", () => {
+    // A `consensus:` participant slot pinned to an available runner: the launch
+    // seam threads only `session:` pins (isSeamThreadableSlot), so this hard-pin
+    // is silently dropped and the run uses the default chain. Preflight must WARN
+    // rather than pass clean (ADR-150 H1 / hard-warn), exactly like an intent slot.
+    const flow = flowRevision({
+      slotKeys: ["session:main", "consensus:vote:a"],
+    });
+    const recipe = recipeFor(flow, {
+      slotBindings: {
+        "session:main": { mode: "runner", runnerId: "runner-1" },
+        "consensus:vote:a": { mode: "runner", runnerId: "runner-1" },
+      },
+    });
+    const result = preflightControlledRecipe(
+      input({ flow, recipe, runners: [runner()] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings.map((w) => w.code)).toContain(
+      "slot_runner_pin_not_threaded",
+    );
+    // The threadable `session:` runner pin is honored → no warning for it.
+    expect(result.warnings.map((w) => w.slotKey)).not.toContain("session:main");
+  });
+
   it("warns (not refuses) on a same-capability-only intent soft mismatch", () => {
     const flow = flowRevision();
     const recipe = recipeFor(flow, {

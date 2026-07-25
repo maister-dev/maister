@@ -4298,7 +4298,8 @@
         "overlay_ref_unknown": "A capability overlay reference is not in the project catalog."
       },
       "warning": {
-        "slot_intent_soft_mismatch": "A slot requests a runner by intent, which the launch does not honor yet — the run uses the default runner, not the requested one."
+        "slot_intent_soft_mismatch": "A slot requests a runner by intent, which the launch does not honor yet — the run uses the default runner, not the requested one.",
+        "slot_runner_pin_not_threaded": "A non-session slot pins a runner the launch does not thread yet — the run uses the default runner, not the pinned one."
       }
     },
     "preview": {

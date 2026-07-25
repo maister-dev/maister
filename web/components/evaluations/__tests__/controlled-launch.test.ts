@@ -10,6 +10,7 @@ vi.mock("next-intl", () => ({
 import {
   BatchStatusStrip,
   buildRecipeDefinition,
+  ControlledLaunch,
   csvRefs,
   LaunchDisabledReason,
   makeVariant,
@@ -18,6 +19,7 @@ import {
   toVerdictView,
   VariantEditorFields,
   type ControlledFlowScaffold,
+  type ControlledLaunchContext,
   type ControlledRunnerOption,
   type VariantDraft,
 } from "@/components/evaluations/controlled-launch";
@@ -305,5 +307,54 @@ describe("LaunchDisabledReason render contract", () => {
     );
 
     expect(markup).toContain("launch.disabledKillSwitch");
+  });
+});
+
+describe("ControlledLaunch launch-precondition gating (M5)", () => {
+  const baseContext: ControlledLaunchContext = {
+    enabled: true,
+    launchable: true,
+    taskId: "task-1",
+    scaffold,
+    runnerOptions,
+    overlayCatalog: { rules: [], skills: [], mcps: [], subagents: [] },
+    existingRecipes: [],
+  };
+
+  function renderLaunch(ctx: Partial<ControlledLaunchContext>): string {
+    return renderToStaticMarkup(
+      createElement(ControlledLaunch, {
+        slug: "proj",
+        studyId: "study-1",
+        context: { ...baseContext, ...ctx },
+      }),
+    );
+  }
+
+  it("disables the trigger with the kill-switch reason when controlled recipes are off", () => {
+    const markup = renderLaunch({ enabled: false });
+
+    expect(markup).toContain("launch.disabledKillSwitch");
+  });
+
+  it("disables the trigger with the status reason on a decided/archived study", () => {
+    const markup = renderLaunch({ launchable: false });
+
+    expect(markup).toContain("launch.disabledStatus");
+    expect(markup).not.toContain("launch.disabledKillSwitch");
+  });
+
+  it("disables the trigger with the no-flow reason when the study has no launchable scaffold", () => {
+    const markup = renderLaunch({ scaffold: null });
+
+    expect(markup).toContain("launch.disabledNoFlow");
+  });
+
+  it("shows no disabled reason when every launch precondition holds", () => {
+    const markup = renderLaunch({});
+
+    expect(markup).not.toContain("launch.disabledKillSwitch");
+    expect(markup).not.toContain("launch.disabledStatus");
+    expect(markup).not.toContain("launch.disabledNoFlow");
   });
 });

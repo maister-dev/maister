@@ -757,6 +757,7 @@ erDiagram
         jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
         text scheduled_launch_id FK "ADR-139: scheduled_task_launches(id) SET NULL, UNIQUE when set"
         text agent_schedule_id FK "ADR-139: agent_schedules(id) SET NULL"
+        text evaluation_batch_item_id "ADR-150: controlled-launch idempotency handle, partial UNIQUE when set, no FK"
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"

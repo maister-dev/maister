@@ -18352,17 +18352,18 @@ components:
     EvaluationPinOption:
       type: object
       additionalProperties: false
-      required: [packageInstallId, label]
+      required: [packageInstallId, packageName, versionLabel, kind]
       description: |
         (ADR-132/ADR-150.) One selectable package pin for a recipe. Candidates
         are resolved server-side from the task's project attachments.
       properties:
         packageInstallId: { type: string }
-        label: { type: string }
+        packageName: { type: string }
         versionLabel: { type: string, nullable: true }
-        isLocalCut:
-          type: boolean
-          description: True when this pin points at a local cut rather than an upstream tag.
+        kind:
+          type: string
+          enum: [local_cut, upstream]
+          description: local_cut when this pin points at a local cut rather than an upstream tag.
     EvaluationRecipeDefinition:
       type: object
       additionalProperties: false

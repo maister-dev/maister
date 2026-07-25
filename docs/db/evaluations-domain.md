@@ -169,8 +169,10 @@ erDiagram
         text id PK
         text execution_id FK
         text role
-        int ordinal "UNIQUE tuple"
+        int ordinal "UNIQUE tuple (+match_a,match_b NULLS NOT DISTINCT, ADR-150)"
         int retry_ordinal
+        text match_a "ADR-150: pairwise pair id, NULL for non-pairwise"
+        text match_b "ADR-150: pairwise pair id, NULL for non-pairwise"
         text agent_run_id FK
         text intended_run_id "pre-spawn intent, no FK"
         text status "queued…error"
