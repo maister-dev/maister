@@ -24,7 +24,7 @@ const log = pino({
 
 const BASE_URL = process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000";
 
-// --- build McpServer and register all 8 tools ---
+// --- build McpServer and register every external facade tool ---
 
 function buildServer(transportType: "stdio" | "http"): McpServer {
   const server = new McpServer({ name: "maister-mcp", version: "0.0.1" });

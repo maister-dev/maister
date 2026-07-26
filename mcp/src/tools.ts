@@ -259,6 +259,37 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId"],
     },
   },
+  activity_pulse: {
+    description:
+      "Get the assistant pulse for the token-bound project: persisted happened facts, the current active-run snapshot, and pending needs-you items. Requires a project-bound token with runs:read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: { type: "string" },
+        salience: {
+          type: "string",
+          enum: ["high", "normal", "low"],
+        },
+      },
+    },
+  },
+  run_activity: {
+    description:
+      "Get semantic assistant activity for one run, with mutation-horizon replay via sinceId. Requires a project-bound token with runs:read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+        sinceId: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+        salience: {
+          type: "string",
+          enum: ["high", "normal", "low"],
+        },
+      },
+      required: ["runId"],
+    },
+  },
   run_delegate: {
     description:
       "Delegate work to a governed child run spawned from a catalog agent (target.agentId, package-qualified <flowRefId>:<stem>). mode:'task' also creates a child board task linked parent_of under the orchestrator's task; mode:'run' spawns a board-less child. The parent orchestrator run is derived from the calling token — it is never accepted in the body. Delegating to an untrusted/disabled agent is refused (no child run is created).",
@@ -916,6 +947,40 @@ function resolveRouting(
       const { runId } = args as { runId: string };
 
       return { method: "GET", path: `/api/v1/ext/runs/${runId}` };
+    }
+    case "activity_pulse": {
+      const { since, salience } = args as {
+        since?: string;
+        salience?: string;
+      };
+      const sp = new URLSearchParams();
+
+      if (since !== undefined) sp.set("since", since);
+      if (salience !== undefined) sp.set("salience", salience);
+
+      const suffix = sp.size > 0 ? `?${sp.toString()}` : "";
+
+      return { method: "GET", path: `/api/v1/ext/activity${suffix}` };
+    }
+    case "run_activity": {
+      const { runId, sinceId, limit, salience } = args as {
+        runId: string;
+        sinceId?: string;
+        limit?: number;
+        salience?: string;
+      };
+      const sp = new URLSearchParams();
+
+      if (sinceId !== undefined) sp.set("sinceId", sinceId);
+      if (limit !== undefined) sp.set("limit", String(limit));
+      if (salience !== undefined) sp.set("salience", salience);
+
+      const suffix = sp.size > 0 ? `?${sp.toString()}` : "";
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/runs/${runId}/activity${suffix}`,
+      };
     }
     case "run_delegate": {
       const {

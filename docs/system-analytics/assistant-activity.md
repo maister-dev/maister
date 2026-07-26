@@ -40,8 +40,8 @@ token model.
 - **Salience** — deterministic item importance class:
   `high | normal | low | suppressed`. `suppressed` is internal-only and never
   crosses the external contract.
-- **Liveness state** — synthesized active-run status:
-  `working | silent | waiting_on_tool | waiting_on_human | stalled`.
+- **Liveness state** — synthesized snapshot status:
+  `working | silent | waiting_on_tool | waiting_on_human | stalled | inactive`.
 - **Needs-you item** — a project-scoped pending human-attention projection over
   active HITL / clarification rows. It is NOT the same contract as the global
   personal-token inbox route `GET /api/v1/ext/hitl`.
@@ -53,7 +53,9 @@ token model.
 ## State machine
 
 The run row remains the source of truth for lifecycle state; assistant
-liveness is a synthesized read-model overlay on active runs only.
+liveness is a synthesized read-model overlay. The project pulse reports only
+active runs, while the per-run route may return a non-active current status
+with `liveness.state = inactive` and a status-specific summary.
 
 ```mermaid
 stateDiagram-v2
@@ -66,6 +68,7 @@ stateDiagram-v2
     waiting_on_human --> working: HITL or clarification is answered or superseded
     silent --> working: later meaningful action arrives
     stalled --> working: later meaningful action arrives
+    [*] --> inactive: run is Pending, WaitingOnChildren, Done, Failed, Crashed, or Abandoned
 ```
 
 Precedence is deterministic:
@@ -155,8 +158,9 @@ Replay rules:
   return 403.
 - `GET /api/v1/ext/runs/{runId}/activity` MUST derive `projectId` from the run
   row, require the token's bound `projectId` to match it, existence-hide
-  cross-project access with 404, and honor the same `runs:read` scope as
-  `GET /api/v1/ext/runs/{runId}`.
+  cross-project access with 404, honor the same `runs:read` scope as
+  `GET /api/v1/ext/runs/{runId}`, and return the run's current status even
+  when it is no longer active.
 - Pulse `since` cursors are client-held only. The route MUST NOT create or
   advance a `domain_event_consumers` row.
 - Pulse `happened` ordering MUST be `domain_events.id ASC`, filtered strictly
@@ -195,8 +199,8 @@ Replay rules:
 
 - **Invalid pulse cursor** — malformed or unsupported `since` returns 422
   `CONFIG`; the route does not silently reset to the current tail.
-- **Invalid per-run mutation horizon** — malformed `sinceId`, non-positive
-  numeric values, or a `limit` outside the declared bounds return 422
+- **Invalid per-run mutation horizon** — malformed or negative `sinceId`
+  values, or a `limit` outside the declared bounds return 422
   `CONFIG`.
 - **Projectless token on the pulse** — a global personal token calling
   `GET /api/v1/ext/activity` returns 403 because there is no server-derived

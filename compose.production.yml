@@ -13,6 +13,9 @@ x-security: &default-security
 # Production hardening overlay for the only containerized service, Postgres.
 # `web` and `supervisor` run on the host (see ADR-023); the base file's
 # 127.0.0.1:5432 publish lets them reach Postgres over loopback.
+# Assistant-activity thresholds stay in the host env / systemd unit alongside
+# the web tier; they are intentionally not duplicated into this Postgres-only
+# overlay.
 services:
   postgres:
     # ADR-122 (Project Brain): pgvector-enabled PG16, data-compatible with

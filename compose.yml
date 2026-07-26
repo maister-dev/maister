@@ -3,6 +3,9 @@ name: ${COMPOSE_PROJECT_NAME:-maister}
 # Only Postgres is containerized. `web` and `supervisor` run on the host via
 # pnpm (they spawn agent CLIs, need host agent auth, and operate on host git
 # repos / worktrees) — see ADR-023 and `CLAUDE.md` "How to run".
+# Assistant-activity liveness thresholds remain host env only
+# (`MAISTER_ASSISTANT_ACTIVITY_*`) for the same reason — there is no web
+# container env block to mirror here.
 services:
   postgres:
     # ADR-122 (Project Brain): pgvector-enabled PG16 — the brain lineage does

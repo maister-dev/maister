@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { MaisterError } from "@/lib/errors";
 import {
   filterBySalience,
   meetsSalience,
+  parseActivitySalience,
   salienceRank,
 } from "@/lib/ext-activity/salience";
 
@@ -36,5 +38,14 @@ describe("ext activity salience helpers", () => {
       "c",
       "d",
     ]);
+  });
+
+  it("defaults missing query input to low salience", () => {
+    expect(parseActivitySalience(null)).toBe("low");
+    expect(parseActivitySalience(undefined)).toBe("low");
+  });
+
+  it("rejects unknown salience query values", () => {
+    expect(() => parseActivitySalience("urgent")).toThrow(MaisterError);
   });
 });

@@ -30,6 +30,7 @@ type JsonSchema = {
   properties?: Record<string, JsonSchema>;
   required?: string[];
   items?: JsonSchema;
+  allOf?: JsonSchema[];
   $ref?: string;
   minimum?: number;
   maximum?: number;
@@ -77,6 +78,15 @@ function deref<T extends { $ref?: string }>(node: T): T {
     return deref(cur as T);
   }
 
+  if (
+    node &&
+    typeof node === "object" &&
+    Array.isArray((node as JsonSchema).allOf) &&
+    (node as JsonSchema).allOf?.length === 1
+  ) {
+    return deref((node as JsonSchema).allOf?.[0] as T);
+  }
+
   return node;
 }
 
@@ -118,6 +128,11 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   },
   run_launch: { method: "post", path: "/api/v1/ext/runs" },
   run_get: { method: "get", path: "/api/v1/ext/runs/{runId}" },
+  activity_pulse: { method: "get", path: "/api/v1/ext/activity" },
+  run_activity: {
+    method: "get",
+    path: "/api/v1/ext/runs/{runId}/activity",
+  },
   run_delegate: { method: "post", path: "/api/v1/ext/runs/delegate" },
   run_plan: { method: "post", path: "/api/v1/ext/runs/plan" },
   run_collect: { method: "post", path: "/api/v1/ext/runs/collect" },

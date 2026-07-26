@@ -505,7 +505,7 @@ The feature is not done until all of these hold:
 
 ### Phase 4 - TDD Slice D: Ext Routes, Auth, and Deployment Wiring
 
-- [ ] Task 9 (RED): Add failing integration tests for route auth, project
+- [x] Task 9 (RED): Add failing integration tests for route auth, project
   isolation, actual response JSON shape, salience filtering, cursor replay,
   empty states, scratch/agent/flow coverage, and invalid query handling.
   Files:
@@ -515,7 +515,7 @@ The feature is not done until all of these hold:
   the failing assertions are against actual `Response` JSON and HTTP status,
   not helper internals.
 
-- [ ] Task 10 (GREEN -> REFACTOR): Implement the ext routes and any final env
+- [x] Task 10 (GREEN -> REFACTOR): Implement the ext routes and any final env
   wiring needed for liveness thresholds, then refactor for clarity while
   preserving the tested wire contract.
   Files:
@@ -535,7 +535,7 @@ The feature is not done until all of these hold:
 
 ### Phase 5 - TDD Slice E: MCP Facade, As-Built Sync, and Final Verification
 
-- [ ] Task 11 (RED): Add failing MCP tests for tool schema parity, request
+- [x] Task 11 (RED): Add failing MCP tests for tool schema parity, request
   mapping, numeric coercion boundaries, and error forwarding only where the
   facade transforms behavior.
   Files:
@@ -544,7 +544,7 @@ The feature is not done until all of these hold:
   Acceptance:
   failures prove contract drift against the frozen OpenAPI schema.
 
-- [ ] Task 12 (GREEN -> REFACTOR): Implement the MCP tools, finish as-built doc
+- [x] Task 12 (GREEN -> REFACTOR): Implement the MCP tools, finish as-built doc
   sync, and run the focused verification lane across docs, web, DB artifacts if
   touched, and MCP. If the fallback migration path was activated, include its
   schema/doc/integrity updates here as part of done.

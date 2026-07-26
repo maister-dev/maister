@@ -2052,8 +2052,8 @@ paths:
       summary: Get semantic assistant activity for one run
       description: |
         Scope `runs:read`. Returns a semantic activity feed for the run
-        identified by `runId`, plus the same synthesized `now` snapshot used by
-        the project pulse.
+        identified by `runId`, plus the current run snapshot using the same
+        semantic fields as the project pulse.
 
         The run's `projectId` is derived server-side from the run row and MUST
         match the token's bound project. Cross-project or inaccessible runs
@@ -3516,13 +3516,13 @@ components:
 
     ExtActivityLiveness:
       type: object
-      description: Synthesized active-run liveness state.
+      description: Synthesized run-snapshot liveness state.
       required: [state, summary, since]
       additionalProperties: false
       properties:
         state:
           type: string
-          enum: [working, silent, waiting_on_tool, waiting_on_human, stalled]
+          enum: [working, silent, waiting_on_tool, waiting_on_human, stalled, inactive]
         summary:
           type: string
         since:
@@ -3535,7 +3535,7 @@ components:
 
     ExtActivityRunSnapshot:
       type: object
-      description: One active-run snapshot used by the pulse and per-run activity response.
+      description: One run snapshot used by the pulse and per-run activity response. The project pulse reports only active runs; the per-run route may return non-active statuses with `liveness.state = inactive`.
       required: [runId, runKind, status, liveness]
       additionalProperties: false
       properties:
@@ -3557,7 +3557,7 @@ components:
           enum: [flow, scratch, agent]
         status:
           type: string
-          enum: [Running, NeedsInput, NeedsInputIdle, HumanWorking]
+          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Crashed, Done, Abandoned, Failed]
         currentStepId:
           type: string
           nullable: true

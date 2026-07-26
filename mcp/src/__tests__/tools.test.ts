@@ -51,9 +51,10 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 38 external tools (incl. task-bound human ask + personal HITL inbox + discovery + memory + evaluations + branch sync/reopen)", () => {
+  it("registers all 40 external tools (incl. assistant activity pulse + run activity)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
+        "activity_pulse",
         "ask_human",
         "comment_create",
         "comment_list",
@@ -75,6 +76,7 @@ describe("TOOL_SPECS registry", () => {
         "relation_add",
         "relation_list",
         "relation_remove",
+        "run_activity",
         "run_cancel",
         "run_collect",
         "run_delegate",
@@ -524,6 +526,49 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
 
     expect(init.method).toBe("GET");
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/run-1`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("activity_pulse → GET /api/v1/ext/activity with query args only", async () => {
+    mockOnce({ happened: { items: [] }, now: { runs: [] }, needsYou: { items: [] } }, 200);
+
+    await dispatchTool({
+      name: "activity_pulse",
+      args: { since: "12", salience: "normal" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/activity?since=12&salience=normal`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("run_activity → GET /api/v1/ext/runs/{runId}/activity with cursor, limit, and salience", async () => {
+    mockOnce({ items: [], nextSinceId: "0", hasMore: false, now: null }, 200);
+
+    await dispatchTool({
+      name: "run_activity",
+      args: {
+        runId: "run-1",
+        sinceId: "4",
+        limit: 25,
+        salience: "high",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/runs/run-1/activity?sinceId=4&limit=25&salience=high`,
+    );
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toBeUndefined();
   });
