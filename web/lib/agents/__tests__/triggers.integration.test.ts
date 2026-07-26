@@ -253,6 +253,36 @@ describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
     expect(c.claimed).toBe(0);
     expect(launches).toHaveLength(1);
   });
+
+  // ADR-151 D8: the tick filters trigger_type='cron' explicitly, so a mention
+  // row (all-null cron columns) is invisible to it. Asserted, not assumed —
+  // a mention row picked up here would crash on its null cron_expr.
+  it("never claims a mention binding", async () => {
+    const mentionAgent = await seedAgent({
+      id: "mention-cron-agent",
+      triggers: ["domain_event"],
+    });
+
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type")
+       VALUES ($1, $2, $3, 'mention')`,
+      [randomUUID(), mentionAgent, projectId],
+    );
+
+    const launches: string[] = [];
+    const summary = await triggers.dispatchDueAgentSchedules({
+      db,
+      launch: async (input) => {
+        launches.push(input.agentId);
+
+        return { runId: randomUUID(), status: "Running" as const };
+      },
+    });
+
+    expect(summary.due).toBe(0);
+    expect(summary.claimed).toBe(0);
+    expect(launches).toEqual([]);
+  });
 });
 
 describe("agent_triggers outbox consumer (ADR-086/087)", () => {
@@ -282,6 +312,46 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
 
     expect(runs.rows).toHaveLength(1);
     expect(Number(runs.rows[0].trigger_event_id)).toBe(777);
+  });
+
+  // ADR-151 D8: the generic matcher filters trigger_type='event' explicitly,
+  // so a mention binding never joins the eventMatch.kinds fan-out (its
+  // event_match is null and would match nothing anyway — the point is that the
+  // filter, not the null payload, is what excludes it).
+  it("the generic event matcher never selects a mention binding", async () => {
+    const mentionAgent = await seedAgent({
+      id: "mention-generic-agent",
+      triggers: ["domain_event"],
+    });
+
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type")
+       VALUES ($1, $2, $3, 'mention')`,
+      [randomUUID(), mentionAgent, projectId],
+    );
+
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+
+    await consumer.handle([
+      fakeEvent({
+        id: 811 as unknown as DomainEventRow["id"],
+        kind: "task.created",
+      }),
+    ]);
+
+    const runs = await pool.query(`SELECT "id" FROM "runs" WHERE "agent_id" = $1`, [
+      mentionAgent,
+    ]);
+    const outcome = await pool.query(
+      `SELECT "last_outcome", "last_attempt_at" FROM "agent_schedules" WHERE "agent_id" = $1`,
+      [mentionAgent],
+    );
+
+    expect(runs.rows).toHaveLength(0);
+    expect(outcome.rows[0]).toEqual({
+      last_outcome: null,
+      last_attempt_at: null,
+    });
   });
 
   it("routes a clarification answer only to its requesting attached agent without a schedule", async () => {

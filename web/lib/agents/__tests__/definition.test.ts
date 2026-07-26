@@ -270,6 +270,51 @@ describe("parseAgentDefinition", () => {
     );
   });
 
+  // ADR-151: `recommended.mention` prefills a trigger_type='mention' binding
+  // row in the attach modal — a recommendation, never an implicit grant.
+  it("parses recommended.mention and keeps the block strict", () => {
+    const withMention = VALID.replace(
+      "risk_tier: read_only",
+      ["risk_tier: read_only", "recommended:", "  mention: true"].join("\n"),
+    );
+
+    expect(parseAgentDefinition("aif:triager", withMention).recommended).toEqual(
+      { mention: true },
+    );
+
+    const withFalse = VALID.replace(
+      "risk_tier: read_only",
+      ["risk_tier: read_only", "recommended:", "  mention: false"].join("\n"),
+    );
+
+    expect(parseAgentDefinition("aif:triager", withFalse).recommended).toEqual({
+      mention: false,
+    });
+
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "risk_tier: read_only",
+            "risk_tier: read_only\nrecommended:\n  mention: yes-please",
+          ),
+        ),
+      /mention/i,
+    );
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "risk_tier: read_only",
+            "risk_tier: read_only\nrecommended:\n  mentions: true",
+          ),
+        ),
+      /recommended/i,
+    );
+  });
+
   it("refuses an unsafe flow value (bad chars / dot-dot)", () => {
     expectConfig(
       () =>

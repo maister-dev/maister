@@ -39,6 +39,7 @@ const labels: FrontmatterArtifactEditorLabels = {
   agentRecommendedCronExpr: "Cron",
   agentRecommendedCronTz: "Timezone",
   agentRecommendedEvents: "Events",
+  agentRecommendedMention: "Recommended mention trigger",
   agentCapabilityProfile: "Capability profile",
   agentCapabilityProfileInvalid: "Invalid capability profile",
   allowedPaths: "Allowed paths",
@@ -148,5 +149,102 @@ describe("FrontmatterArtifactEditor capability profile", () => {
         ],
       }).filter((issue) => issue.severity === "block"),
     ).toEqual([]);
+  });
+});
+
+// ADR-151 D13 regression. `editRecommended` REBUILDS the whole `recommended`
+// object from its known sub-fields and writes it back, so a sub-field the
+// function does not know about is silently stripped by ANY Studio edit — a
+// silent data loss with no error and no failing test anywhere else.
+describe("FrontmatterArtifactEditor recommended.mention round-trip", () => {
+  function mountAgentEditor(initial: string): {
+    node: HTMLDivElement;
+    read: () => string;
+  } {
+    let latest = initial;
+    const node = document.createElement("div");
+    const root = createRoot(node);
+
+    roots.push(root);
+    document.body.append(node);
+
+    function Host() {
+      const [value, setValue] = useState(initial);
+
+      return createElement(FrontmatterArtifactEditor, {
+        content: value,
+        kind: "agent_definition",
+        labels,
+        onChange: (next: string) => {
+          latest = next;
+          setValue(next);
+        },
+      });
+    }
+
+    act(() => root.render(createElement(Host)));
+
+    return { node, read: () => latest };
+  }
+
+  function mentionCheckbox(node: HTMLElement): HTMLInputElement {
+    const box = node.querySelector<HTMLInputElement>(
+      '[data-testid="agent-recommended-mention"]',
+    );
+
+    if (!box) throw new Error("recommended.mention checkbox missing");
+
+    return box;
+  }
+
+  it("SET → CLEAR → re-SET keeps the key exactly where the author put it", () => {
+    const { node, read } = mountAgentEditor(content);
+
+    act(() => {
+      mentionCheckbox(node).click();
+    });
+    expect(read()).toContain("mention: true");
+
+    act(() => {
+      mentionCheckbox(node).click();
+    });
+    expect(read()).not.toContain("mention:");
+
+    act(() => {
+      mentionCheckbox(node).click();
+    });
+    expect(read()).toContain("mention: true");
+  });
+
+  it("survives an unrelated recommended edit (the silent-strip defect)", () => {
+    const withMention = content.replace(
+      "capability_profile:",
+      "recommended:\n  mention: true\ncapability_profile:",
+    );
+    const { node, read } = mountAgentEditor(withMention);
+    const runnerField = [
+      ...node.querySelectorAll<HTMLInputElement>("input[type=text]"),
+    ].find(
+      (input) =>
+        input.closest("label")?.textContent?.includes("Recommended runner") ??
+        false,
+    );
+
+    if (!runnerField) throw new Error("recommended runner field missing");
+
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+
+    if (!setter) throw new Error("input value setter missing");
+
+    act(() => {
+      setter.call(runnerField, "claude-default");
+      runnerField.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(read()).toContain("runner: claude-default");
+    expect(read()).toContain("mention: true");
   });
 });

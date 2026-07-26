@@ -184,6 +184,12 @@ const recommendedSchema = z
         "recommended events must not repeat",
       )
       .optional(),
+    // ADR-151: prefills a `trigger_type='mention'` binding row in the attach
+    // modal. Adding any sub-field here also obliges `editRecommended` in
+    // components/flows/artifact-editors/frontmatter-artifact-editor.tsx — it
+    // rebuilds this whole object from the sub-fields it knows, so an unknown
+    // key is silently stripped on the next Studio edit.
+    mention: z.boolean().optional(),
     executionPolicy: recommendedExecutionPolicySchema.optional(),
   })
   .strict();

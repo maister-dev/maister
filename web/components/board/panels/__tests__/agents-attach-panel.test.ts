@@ -168,6 +168,22 @@ describe("AgentsAttachPanel (M34 D11)", () => {
     expect(viewer).not.toContain("agentsAttach.detach");
   });
 
+  // ADR-151: a mention grant appears in the trigger summary so an operator can
+  // see, from the table alone, which agents are summonable by @id.
+  it("summarizes a mention binding in the trigger column", () => {
+    const html = render({
+      attached: [
+        {
+          ...ATTACHED,
+          schedules: [{ triggerType: "mention", enabled: true }],
+        },
+      ],
+    });
+
+    expect(html).toContain("mention");
+    expect(html).not.toContain("event undefined");
+  });
+
   it("renders the empty state without attachments", () => {
     const html = render({ attached: [] });
 
@@ -206,5 +222,30 @@ describe("AttachEditModal (M39 instance policy controls)", () => {
     expect(html).toContain("agentsAttach.budgetEscalate");
     expect(html).toContain("agentsAttach.budgetTerminate");
     expect(html).toContain("agentsAttach.budgetTerminateRestorable");
+  });
+
+  // ADR-151: the mention row takes no cron and no event input — it is a bare
+  // grant. It must not be blocked by the cron/event validity rule.
+  it("offers an add-mention control and renders a mention row with no inputs", () => {
+    expect(renderModal()).toContain("agentsAttach.addMention");
+
+    const html = renderToStaticMarkup(
+      createElement(AttachEditModal, {
+        slug: "demo",
+        row: {
+          ...ATTACHED,
+          schedules: [{ triggerType: "mention", enabled: true }],
+        },
+        runners: [{ id: "runner-2", label: "runner-2" }],
+        eventKinds: ["task.created"],
+        onClose: vi.fn(),
+        onSaved: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("agentsAttach.mentionRow");
+    expect(html).toContain("agentsAttach.mentionHint");
+    expect(html).not.toContain("agentsAttach.cronExpr");
+    expect(html).not.toContain("agentsAttach.eventKinds");
   });
 });

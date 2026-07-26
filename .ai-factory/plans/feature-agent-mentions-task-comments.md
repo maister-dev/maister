@@ -282,17 +282,17 @@ Phase 0  spec ──► Phase 1  binding foundation ──► Phase 2  resolutio
 
 ### Phase 1 — Binding foundation
 
-- [ ] **T3. Migration 0121 + `task_activity` kind union**
+- [x] **T3. Migration 0121 + `task_activity` kind union**
   RED: an integration assertion that an `agent_summon_suppressed` activity row inserts once and that a duplicate `(task_id, payload agentId, payload triggerEventId)` insert is a silent no-op under `onConflictDoNothing`. Run integration (testcontainers apply migrations on boot).
   GREEN: `migrations/0121_agent_mention_summons.sql` — (a) drop/re-add `task_activity_event_kind_check` with `agent_summon_suppressed` (pattern: 0111); (b) partial unique `task_activity_agent_summon_uq` on `(task_id, (payload->>'agentId'), (payload->>'triggerEventId')) WHERE event_kind='agent_summon_suppressed'`. Additive only — no data-bearing DROP, no backfill (stated in the migration header, together with the evidence that `agent_schedules` needs no migration). TRIPLE: SQL + `_journal.json` entry (verify `when` monotonic) + `meta/0121_snapshot.json`. schema.ts: `TASK_ACTIVITY_EVENT_KINDS` + the index declaration. `inbox_items_event_kind_check` deliberately untouched.
   REFACTOR: confirm the newest journal entry has a matching snapshot; no other CHECK is touched.
 
-- [ ] **T4. `'mention'` triggerType server-side + `recommended.mention` fan-out**
+- [x] **T4. `'mention'` triggerType server-side + `recommended.mention` fan-out**
   RED: unit — `normalizeSchedule` mention arm (accepts a minimal row; `CONFIG` on stray cron/event fields); `scheduleSchema` accept/reject matrix; at-most-one-enabled-mention rule; `recommendedSchema` accepts `mention` and still rejects unknown keys (`.strict()`); **Studio frontmatter round-trip: SET → CLEAR → re-SET** (the data-loss regression). Integration — `updateAgentLink` mention-binding round-trip. Run unit + integration.
   GREEN: schema.ts triggerType union; `normalizeSchedule` arm; `updateAgentLink` rule; `scheduleToView`; route `scheduleSchema`; `recommendedSchema.mention`; **`frontmatter-artifact-editor.tsx:547-569` `editRecommended` learns `mention`** (else Studio strips it); `studio/agent-view.tsx` read-only mirror.
   REFACTOR + fan-out acceptance: complete every D8 row; grep `triggerType`/`trigger_type` and `TASK_ACTIVITY_EVENT_KINDS` consumers repo-wide; add the two guard tests proving the cron tick and the generic matcher ignore `'mention'`.
 
-- [ ] **T5. Attach/edit UI + prefill**
+- [x] **T5. Attach/edit UI + prefill**
   RED: unit — `rowFromAvailable` maps `recommended.mention` to one mention row; modal validity accepts a mention row with no cron/event input. GREEN: minimal "Add mention trigger" row in `agents-attach-edit-modal.tsx` + prefill in `agents-attach-panel.tsx`; EN/RU strings. REFACTOR: the row reuses the existing binding-row layout rather than a parallel component (DRY). Binding edits stay `editSettings`-gated (admin) — do not loosen.
 
 ### Phase 2 — Mention resolution + write path

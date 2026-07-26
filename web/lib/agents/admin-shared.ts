@@ -61,6 +61,7 @@ function projectRecommended(rec: unknown): Record<string, unknown> | null {
     branch_base?: string;
     cron?: { expr: string; timezone: string };
     events?: string[];
+    mention?: boolean;
     executionPolicy?: { autoApply?: string; onBudgetBreach?: string };
   };
 
@@ -69,6 +70,7 @@ function projectRecommended(rec: unknown): Record<string, unknown> | null {
     ...(r.branch_base !== undefined ? { branchBase: r.branch_base } : {}),
     ...(r.cron !== undefined ? { cron: r.cron } : {}),
     ...(r.events !== undefined ? { events: r.events } : {}),
+    ...(r.mention !== undefined ? { mention: r.mention } : {}),
     ...(r.executionPolicy !== undefined
       ? { executionPolicy: r.executionPolicy }
       : {}),

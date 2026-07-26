@@ -36,7 +36,7 @@ const log = pino({
 
 export type AgentScheduleInput = {
   id?: string;
-  triggerType: "cron" | "event";
+  triggerType: "cron" | "event" | "mention";
   cronExpr?: string;
   timezone?: string;
   eventKinds?: string[];
@@ -63,7 +63,7 @@ export type AttachedAgentView = {
   schedulesRevision: number;
   schedules: Array<{
     id: string;
-    triggerType: "cron" | "event";
+    triggerType: "cron" | "event" | "mention";
     cronExpr?: string;
     timezone?: string;
     eventKinds?: string[];
@@ -99,6 +99,27 @@ function normalizeSchedule(
   input: AgentScheduleInput,
   now: Date,
 ): Record<string, unknown> {
+  // ADR-151: a mention binding is a bare grant — it carries no cron and no
+  // event columns. Stray fields are refused rather than dropped so an author
+  // never believes a schedule or kind filter is in effect.
+  if (input.triggerType === "mention") {
+    if (input.cronExpr || input.timezone || input.eventKinds) {
+      throw new MaisterError(
+        "CONFIG",
+        "mention schedules take no cronExpr, timezone, or eventKinds",
+      );
+    }
+
+    return {
+      triggerType: "mention",
+      cronExpr: null,
+      timezone: null,
+      nextFireAt: null,
+      eventMatch: null,
+      enabled: input.enabled ?? true,
+    };
+  }
+
   if (input.triggerType === "cron") {
     if (!input.cronExpr || !input.timezone) {
       throw new MaisterError(
@@ -145,12 +166,20 @@ function normalizeSchedule(
 
 function scheduleToView(row: Record<string, any>): {
   id: string;
-  triggerType: "cron" | "event";
+  triggerType: "cron" | "event" | "mention";
   cronExpr?: string;
   timezone?: string;
   eventKinds?: string[];
   enabled: boolean;
 } {
+  if (row.triggerType === "mention") {
+    return {
+      id: row.id as string,
+      triggerType: "mention",
+      enabled: row.enabled as boolean,
+    };
+  }
+
   if (row.triggerType === "cron") {
     return {
       id: row.id as string,
@@ -466,6 +495,7 @@ export async function updateAgentLink(
       );
       const receivedIds = new Set<string>();
       const enabledEventKinds = new Set<string>();
+      let enabledMentions = 0;
 
       for (const schedule of normalizedSchedules) {
         if (schedule.id && !existingIds.has(schedule.id)) {
@@ -478,6 +508,21 @@ export async function updateAgentLink(
           throw new MaisterError("CONFIG", "agent schedule id is duplicated");
         }
         if (schedule.id) receivedIds.add(schedule.id);
+
+        // ADR-151: the summonability query joins ONE enabled mention binding;
+        // a second would make which row records the outcome arbitrary.
+        if (
+          schedule.values.triggerType === "mention" &&
+          schedule.values.enabled
+        ) {
+          enabledMentions += 1;
+          if (enabledMentions > 1) {
+            throw new MaisterError(
+              "CONFIG",
+              "only one enabled mention binding is allowed per agent",
+            );
+          }
+        }
 
         if (schedule.values.triggerType === "event" && schedule.values.enabled) {
           const kinds = (schedule.values.eventMatch as { kinds: string[] }).kinds;

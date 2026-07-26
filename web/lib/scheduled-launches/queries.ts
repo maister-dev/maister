@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
@@ -474,6 +474,12 @@ async function listProjectAutomationRows(input: {
     .where(
       and(
         eq(agentSchedules.projectId, input.projectId),
+        // ADR-151: a `mention` binding has no cadence, no trigger expression,
+        // and no next action — it is a summon GRANT, not an automation. The
+        // `agent_cron`/`agent_event` projection below would label it
+        // `agent_event` with an empty trigger and a detail href that resolves
+        // to nothing. Its home is Project Settings → Agents.
+        ne(agentSchedules.triggerType, "mention"),
         automationRowsAfterCursor({ cursor, sort: agentSort }),
       ),
     )

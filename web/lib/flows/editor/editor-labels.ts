@@ -122,6 +122,7 @@ export function frontmatterArtifactEditorLabels(
     agentRecommendedCronExpr: te("artifacts.agentRecommendedCronExpr"),
     agentRecommendedCronTz: te("artifacts.agentRecommendedCronTz"),
     agentRecommendedEvents: te("artifacts.agentRecommendedEvents"),
+    agentRecommendedMention: te("artifacts.agentRecommendedMention"),
     agentCapabilityProfile: te("artifacts.agentCapabilityProfile"),
     agentCapabilityProfileInvalid: te(
       "artifacts.agentCapabilityProfileInvalid",

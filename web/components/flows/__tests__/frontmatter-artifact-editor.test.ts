@@ -25,6 +25,7 @@ const labels: FrontmatterArtifactEditorLabels = {
   agentRecommendedCronExpr: "Recommended cron expression",
   agentRecommendedCronTz: "Recommended cron timezone",
   agentRecommendedEvents: "Recommended event kinds",
+  agentRecommendedMention: "Recommended mention trigger",
   agentCapabilityProfile: "Capability profile (JSON object)",
   agentCapabilityProfileInvalid: "Invalid JSON object",
   allowedPaths: "Allowed paths",

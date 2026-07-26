@@ -284,6 +284,107 @@ describe("project agent links (attach panel service)", () => {
     ).rejects.toMatchObject({ code: "CONFIG" });
   });
 
+  // ADR-151: the mention binding is a bare grant. It round-trips with all-null
+  // cron/event columns (no agent_schedules migration was needed), refuses
+  // stray schedule fields, and allows at most one ENABLED row per agent.
+  // ADR-151: the mention binding is a bare grant. It round-trips with all-null
+  // cron/event columns (no agent_schedules migration was needed), refuses
+  // stray schedule fields, and allows at most one ENABLED row per agent.
+  it("PATCH round-trips a mention binding and enforces at-most-one-enabled", async () => {
+    const revision = async (): Promise<number> =>
+      (await getProjectAgentsView(fx.projectId, db)).attached[0]
+        .schedulesRevision;
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: await revision(),
+          schedules: [{ triggerType: "mention" }],
+        },
+      },
+      db,
+    );
+
+    const view = await getProjectAgentsView(fx.projectId, db);
+
+    expect(view.attached[0].schedules).toEqual([
+      {
+        id: expect.any(String),
+        triggerType: "mention",
+        enabled: true,
+      },
+    ]);
+
+    const rows = await pool.query(
+      `select trigger_type, cron_expr, timezone, next_fire_at, event_match
+       from agent_schedules where project_id = $1 and agent_id = $2`,
+      [fx.projectId, fx.agentId],
+    );
+
+    expect(rows.rows[0]).toEqual({
+      trigger_type: "mention",
+      cron_expr: null,
+      timezone: null,
+      next_fire_at: null,
+      event_match: null,
+    });
+
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: {
+            schedulesRevision: await revision(),
+            schedules: [
+              { triggerType: "mention", eventKinds: ["task.comment_added"] },
+            ],
+          },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: {
+            schedulesRevision: await revision(),
+            schedules: [
+              { triggerType: "mention" },
+              { triggerType: "mention" },
+            ],
+          },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    // A disabled second row is fine — only ENABLED rows contend.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: await revision(),
+          schedules: [
+            { triggerType: "mention" },
+            { triggerType: "mention", enabled: false },
+          ],
+        },
+      },
+      db,
+    );
+
+    const after = await getProjectAgentsView(fx.projectId, db);
+
+    expect(after.attached[0].schedules).toHaveLength(2);
+  });
+
   it("detach removes link + bindings and revokes every live (agent, project) token", async () => {
     await issueAgentRunToken({
       agentId: fx.agentId,

@@ -102,6 +102,7 @@ export default async function StudioAgentDetailPage({
       capabilityProfile: def.capabilityProfile,
       recommendedCron: cron ? `${cron.expr} (${cron.timezone})` : null,
       recommendedEvents: def.recommended?.events ?? null,
+      recommendedMention: def.recommended?.mention === true,
       prompt: def.prompt,
     };
   } catch {
@@ -164,6 +165,7 @@ export default async function StudioAgentDetailPage({
     capabilityProfile: tViewer("agentCapabilityProfile"),
     recommendedCron: tViewer("agentRecommendedCron"),
     recommendedEvents: tViewer("agentRecommendedEvents"),
+    recommendedMention: tViewer("agentRecommendedMention"),
     none: tViewer("agentNone"),
   };
 

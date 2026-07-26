@@ -14,7 +14,7 @@ import {
 
 export type AttachScheduleView = {
   id?: string;
-  triggerType: "cron" | "event";
+  triggerType: "cron" | "event" | "mention";
   cronExpr?: string;
   timezone?: string;
   eventKinds?: string[];
@@ -42,6 +42,8 @@ export type AgentRecommendedView = {
   branchBase?: string;
   cron?: { expr: string; timezone: string };
   events?: string[];
+  // (ADR-151) Prefills a mention binding row; the operator still has to save.
+  mention?: boolean;
   executionPolicy?: ExecutionPolicyOverrideView;
 };
 
@@ -107,11 +109,13 @@ function scheduleSummary(schedules: AttachScheduleView[]): string {
   if (schedules.length === 0) return "—";
 
   return schedules
-    .map((s) =>
-      s.triggerType === "cron"
+    .map((s) => {
+      if (s.triggerType === "mention") return "mention";
+
+      return s.triggerType === "cron"
         ? `cron ${s.cronExpr ?? "?"}`
-        : `event ${(s.eventKinds ?? []).join("|")}`,
-    )
+        : `event ${(s.eventKinds ?? []).join("|")}`;
+    })
     .join(" · ");
 }
 
@@ -420,6 +424,9 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
               enabled: true,
             },
           ]
+        : []),
+      ...(rec?.mention
+        ? [{ triggerType: "mention" as const, enabled: true }]
         : []),
     ],
     agent: {

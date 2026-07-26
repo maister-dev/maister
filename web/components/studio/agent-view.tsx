@@ -16,6 +16,7 @@ export interface AgentViewLabels {
   capabilityProfile: string;
   recommendedCron: string;
   recommendedEvents: string;
+  recommendedMention: string;
   none: string;
 }
 
@@ -31,6 +32,7 @@ export interface AgentViewModel {
   capabilityProfile: Record<string, unknown> | null;
   recommendedCron: string | null;
   recommendedEvents: string[] | null;
+  recommendedMention: boolean;
   prompt: string;
 }
 
@@ -108,6 +110,9 @@ export function AgentView({
           ) : (
             labels.none
           )}
+        </MetaRow>
+        <MetaRow label={labels.recommendedMention}>
+          {agent.recommendedMention ? "✓" : labels.none}
         </MetaRow>
         <MetaRow label={labels.capabilityProfile}>
           {agent.capabilityProfile ? (

@@ -18,7 +18,7 @@ const { projects } = schemaModule as unknown as Record<string, any>;
 const scheduleSchema = z
   .object({
     id: z.string().uuid().optional(),
-    triggerType: z.enum(["cron", "event"]),
+    triggerType: z.enum(["cron", "event", "mention"]),
     cronExpr: z.string().min(1).max(255).optional(),
     timezone: z.string().min(1).max(64).optional(),
     eventKinds: z.array(z.string().min(1)).max(16).optional(),

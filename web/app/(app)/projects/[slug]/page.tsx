@@ -826,6 +826,7 @@ function toRecommendedView(rec: unknown): AgentRecommendedView | null {
     branch_base?: string;
     cron?: { expr: string; timezone: string };
     events?: string[];
+    mention?: boolean;
     executionPolicy?: {
       autoApply?: "off" | "permissions" | "full";
       onBudgetBreach?: "escalate" | "terminate" | "terminate_restorable";
@@ -837,6 +838,7 @@ function toRecommendedView(rec: unknown): AgentRecommendedView | null {
     ...(r.branch_base !== undefined ? { branchBase: r.branch_base } : {}),
     ...(r.cron !== undefined ? { cron: r.cron } : {}),
     ...(r.events !== undefined ? { events: r.events } : {}),
+    ...(r.mention !== undefined ? { mention: r.mention } : {}),
     ...(r.executionPolicy !== undefined
       ? { executionPolicy: r.executionPolicy }
       : {}),

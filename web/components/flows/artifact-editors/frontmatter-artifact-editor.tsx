@@ -48,6 +48,7 @@ export interface FrontmatterArtifactEditorLabels {
   agentRecommendedCronExpr: string;
   agentRecommendedCronTz: string;
   agentRecommendedEvents: string;
+  agentRecommendedMention: string;
   agentCapabilityProfile: string;
   agentCapabilityProfileInvalid: string;
   allowedPaths: string;
@@ -543,6 +544,7 @@ function SkillAgentFields({
     runner?: string;
     cron?: { expr?: string; timezone?: string };
     events?: string[];
+    mention?: boolean;
   };
   const editRecommended = (
     patch: Partial<{
@@ -550,12 +552,14 @@ function SkillAgentFields({
       cronExpr: string;
       cronTz: string;
       events: string[];
+      mention: boolean;
     }>,
   ): void => {
     const runner = patch.runner ?? recommended.runner ?? "";
     const cronExpr = patch.cronExpr ?? recommended.cron?.expr ?? "";
     const cronTz = patch.cronTz ?? recommended.cron?.timezone ?? "";
     const events = patch.events ?? recommended.events ?? [];
+    const mention = patch.mention ?? recommended.mention ?? false;
 
     const next: Record<string, unknown> = {
       ...(runner.trim() !== "" ? { runner: runner.trim() } : {}),
@@ -563,6 +567,7 @@ function SkillAgentFields({
         ? { cron: { expr: cronExpr.trim(), timezone: cronTz.trim() } }
         : {}),
       ...(events.length > 0 ? { events } : {}),
+      ...(mention ? { mention: true } : {}),
     };
 
     editField("recommended", Object.keys(next).length === 0 ? undefined : next);
@@ -657,6 +662,18 @@ function SkillAgentFields({
             values={asList(recommended.events)}
             onValues={(next) => editRecommended({ events: next })}
           />
+          <label className="flex items-center gap-1.5 font-mono text-[12px] text-ink">
+            <input
+              checked={recommended.mention === true}
+              data-testid="agent-recommended-mention"
+              disabled={readOnly}
+              type="checkbox"
+              onChange={(event) =>
+                editRecommended({ mention: event.target.checked })
+              }
+            />
+            {labels.agentRecommendedMention}
+          </label>
           <CapabilityProfileField
             invalidLabel={labels.agentCapabilityProfileInvalid}
             label={labels.agentCapabilityProfile}

@@ -57,7 +57,7 @@ export async function sendJson(
 
 type EditableSchedule = {
   id?: string;
-  triggerType: "cron" | "event";
+  triggerType: "cron" | "event" | "mention";
   cronExpr: string;
   timezone: string;
   eventKinds: string[];
@@ -209,11 +209,15 @@ export function AttachEditModal({
     );
   }
 
-  const valid = schedules.every((s) =>
-    s.triggerType === "cron"
+  // (ADR-151) A mention row is a bare grant — it has nothing to fill in, so it
+  // is always valid; only cron and event rows carry required input.
+  const valid = schedules.every((s) => {
+    if (s.triggerType === "mention") return true;
+
+    return s.triggerType === "cron"
       ? s.cronExpr.trim() !== "" && s.timezone.trim() !== ""
-      : s.eventKinds.length > 0,
-  );
+      : s.eventKinds.length > 0;
+  });
 
   async function save(): Promise<void> {
     setBusy(true);
@@ -247,8 +251,16 @@ export function AttachEditModal({
         // PATCH; omit the field entirely when nothing is declared.
         ...(configSchema.length > 0 ? { configValues } : {}),
         schedulesRevision: row.schedulesRevision,
-        schedules: schedules.map((s) =>
-          s.triggerType === "cron"
+        schedules: schedules.map((s) => {
+          if (s.triggerType === "mention") {
+            return {
+              ...(s.id ? { id: s.id } : {}),
+              triggerType: "mention",
+              enabled: s.enabled,
+            };
+          }
+
+          return s.triggerType === "cron"
             ? {
                 ...(s.id ? { id: s.id } : {}),
                 triggerType: "cron",
@@ -261,8 +273,8 @@ export function AttachEditModal({
                 triggerType: "event",
                 eventKinds: s.eventKinds,
                 enabled: s.enabled,
-              },
-        ),
+              };
+        }),
       });
       onSaved();
       onClose();
@@ -465,6 +477,24 @@ export function AttachEditModal({
               >
                 {t("addEvent")}
               </button>
+              <button
+                className="h-8 rounded-[8px] border border-line px-2.5 text-[11.5px] font-semibold text-ink"
+                type="button"
+                onClick={() =>
+                  setSchedules((current) => [
+                    ...current,
+                    {
+                      triggerType: "mention",
+                      cronExpr: "",
+                      timezone: "UTC",
+                      eventKinds: [],
+                      enabled: true,
+                    },
+                  ])
+                }
+              >
+                {t("addMention")}
+              </button>
             </div>
           </div>
 
@@ -478,9 +508,11 @@ export function AttachEditModal({
             >
               <div className="mb-2 flex items-center justify-between">
                 <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-2">
-                  {schedule.triggerType === "cron"
-                    ? t("cronRow")
-                    : t("eventRow")}
+                  {schedule.triggerType === "mention"
+                    ? t("mentionRow")
+                    : schedule.triggerType === "cron"
+                      ? t("cronRow")
+                      : t("eventRow")}
                 </span>
                 <div className="flex items-center gap-2">
                   <label className="inline-flex items-center gap-1.5 font-mono text-[11px] text-ink">
@@ -507,7 +539,11 @@ export function AttachEditModal({
                   </button>
                 </div>
               </div>
-              {schedule.triggerType === "cron" ? (
+              {schedule.triggerType === "mention" ? (
+                <p className="m-0 text-[12px] leading-[1.45] text-mute">
+                  {t("mentionHint")}
+                </p>
+              ) : schedule.triggerType === "cron" ? (
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <label className="flex flex-col gap-1">
                     <span className={fieldLabel}>{t("cronExpr")}</span>

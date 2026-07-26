@@ -851,6 +851,10 @@ export type AgentRecommended = {
   branch_base?: string;
   cron?: { expr: string; timezone: string };
   events?: string[];
+  // ADR-151: prefills a trigger_type='mention' binding row in the attach
+  // modal. A recommendation, never an implicit grant — only a project admin
+  // saving that row actually makes the agent summonable.
+  mention?: boolean;
   executionPolicy?: AgentExecutionPolicyRecommendation;
 };
 
@@ -985,8 +989,11 @@ export const agentSchedules = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    // ADR-151: `mention` rows carry no cron and no event_match — both shape
+    // CHECKs are `<>`-guarded, and the column itself has no value CHECK, so
+    // the third value needed no migration.
     triggerType: text("trigger_type", {
-      enum: ["cron", "event"],
+      enum: ["cron", "event", "mention"],
     }).notNull(),
     cronExpr: text("cron_expr"),
     timezone: text("timezone"),
@@ -5872,6 +5879,10 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "run_pr_merged",
   // M46 (ADR-142): a conclusive human Evaluation Study verdict was recorded.
   "evaluation_decided",
+  // ADR-151: a mentioned agent already held an active run on the task, so the
+  // summon was skipped. Written by the agent_triggers consumer (system actor),
+  // idempotent by construction — see task_activity_agent_summon_uq.
+  "agent_summon_suppressed",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -5914,8 +5925,18 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed')`,
     ),
+    // ADR-151: the structural backstop for at-least-once event redelivery —
+    // the consumer inserts with onConflictDoNothing instead of reading first,
+    // so there is no TOCTOU window between "already noted?" and the insert.
+    uniqAgentSummon: uniqueIndex("task_activity_agent_summon_uq")
+      .on(
+        t.taskId,
+        sql`(${t.payload}->>'agentId')`,
+        sql`(${t.payload}->>'triggerEventId')`,
+      )
+      .where(sql`${t.eventKind} = 'agent_summon_suppressed'`),
     actorTypeCheck: check(
       "task_activity_actor_type_check",
       sql`${t.actorType} in ('user', 'agent', 'system')`,
