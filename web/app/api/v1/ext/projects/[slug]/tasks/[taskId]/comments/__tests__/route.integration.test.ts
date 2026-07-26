@@ -286,6 +286,57 @@ describe("ext comment routes (ADR-078 D12)", () => {
     });
   });
 
+  // ADR-151 — the assistant-over-MCP posts summoning comments through this
+  // route, so the response must report what resolved without a second call.
+  it("reports resolved agent mentions with their write-time summonability", async () => {
+    await pool.query(
+      `insert into agents
+         (id, package_name, version_label, origin, name, description, workspace,
+          mode, triggers, risk_tier, source_path)
+       values ('core:triager', 'core', 'v1.0.0', 'git', 'triager', 'd', 'none',
+               'session', '["domain_event"]'::jsonb, 'read_only', '/tmp/a.md')
+       on conflict (id) do nothing`,
+    );
+    await pool.query(
+      `insert into agent_project_links (id, agent_id, project_id) values ($1, 'core:triager', $2)`,
+      [randomUUID(), fx.projectId],
+    );
+    await pool.query(
+      `insert into agent_schedules (id, agent_id, project_id, trigger_type)
+       values ($1, 'core:triager', $2, 'mention')`,
+      [randomUUID(), fx.projectId],
+    );
+
+    const res = await POST(
+      request("POST", fx.userToken, { body: "@triager please dedupe" }),
+      routeParams(SLUG, fx.taskId),
+    );
+
+    expect(res.status).toBe(201);
+
+    const payload = (await res.json()) as {
+      comment: { body: string };
+      mentionedAgents?: Array<{ id: string; summonable: boolean }>;
+    };
+
+    expect(payload.comment.body).toBe(
+      "[@core:triager](/agents/core:triager) please dedupe",
+    );
+    expect(payload.mentionedAgents).toEqual([
+      { id: "core:triager", name: "triager", summonable: true },
+    ]);
+  });
+
+  it("omits mentionedAgents when the body resolved none", async () => {
+    const res = await POST(
+      request("POST", fx.userToken, { body: "no handles here" }),
+      routeParams(SLUG, fx.taskId),
+    );
+    const payload = (await res.json()) as Record<string, unknown>;
+
+    expect("mentionedAgents" in payload).toBe(false);
+  });
+
   it("refuses comments:create without the scope (403, scopes not revealed)", async () => {
     const res = await POST(
       request("POST", fx.readOnlyToken, { body: "nope" }),

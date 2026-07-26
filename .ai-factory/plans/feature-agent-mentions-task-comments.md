@@ -297,17 +297,17 @@ Phase 0  spec ──► Phase 1  binding foundation ──► Phase 2  resolutio
 
 ### Phase 2 — Mention resolution + write path
 
-- [ ] **T6. Agent-handle scanning + expansion (`web/lib/social/mentions.ts`)**
+- [x] **T6. Agent-handle scanning + expansion (`web/lib/social/mentions.ts`)**
   RED: extend `web/lib/social/__tests__/mentions.test.ts` — canonical `@pkg:stem`; bare unique stem; ambiguous bare → literal; unknown → literal; fenced block inert; inline-code inert; inside existing link inert; `user@example.com` non-match; trailing punctuation boundary; duplicate handle → single id, both occurrences expanded; mixed KEY-N + @agent in one body; **href starts with `/`** (scheme-parse guard). Run `pnpm --filter maister-web test:unit`; expect module-not-found for the new exports, then assertion failures.
   GREEN: `collectAgentMentionCandidates(segments)` + pure `resolveAgentMentions(candidates, agents)` + expansion inside the existing rewrite pass; extend `expandMentions` to return agent mentions alongside task mentions (single caller — comments.ts — updated in T8). DEBUG log of candidate/resolved counts on the existing logger.
   REFACTOR: one token regex, one boundary rule, shared segment walk with KEY-N (DRY); why-comment on the leading-slash invariant (non-obvious constraint — the only comment this task adds).
 
-- [ ] **T7. Summonability helper (`web/lib/agents/summonability.ts`, new)**
+- [x] **T7. Summonability helper (`web/lib/agents/summonability.ts`, new)**
   RED: new `web/lib/agents/__tests__/summonability.integration.test.ts` covering the 8-row matrix — no link · link disabled · agent disabled · quarantined · no mention binding · binding disabled · definition lacks `domain_event` · fully summonable; plus project scoping (an agent attached to another project is absent). Run `pnpm --filter maister-web test:integration`.
   GREEN: `listMentionCandidateAgents(dbOrTx, projectId) → {id, stem, name, summonable}[]` (eligibility mirroring triggers.ts:341-361 + LEFT JOIN enabled mention binding + `triggers ∋ 'domain_event'`), accepting an injected `tx`. Export `MENTION_SUPPRESSION_STATUSES` with a why-comment naming its concern and why `Review`/`Crashed` are excluded.
   REFACTOR: this module is the single source for both the write path and the consumer's eligibility check (DRY); assert by grep that no second eligibility query exists.
 
-- [ ] **T8. Write path + POST response contract**
+- [x] **T8. Write path + POST response contract**
   RED: extend `social-domain.integration.test.ts` (expanded body stored; activity payload `mentionedAgents`; **zero** `inbox_items`/`task_subscribers` rows for agent mentions; poisoned-step rollback leaves no partial writes) · `emit-sites.integration.test.ts` (payload carries deduped `mentionedAgentIds`; mention-free comment omits the key) · both comment-route integration suites (POST response `mentionedAgents`; ext agent-token author expands identically; self-mention still expands). Run integration.
   GREEN: wire T6+T7 into `addTaskComment` inside the existing transaction; add the response field in both routes. Extend the existing INFO "comment added" line with the agent-mention count.
   REFACTOR: no new transaction boundaries; response projection is an explicit DTO mapping at the boundary (project convention: rows never serialize verbatim).

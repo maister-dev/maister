@@ -222,6 +222,56 @@ describe("comments routes", () => {
     });
   });
 
+  // ADR-151 — the session route reports the same mention contract as the ext
+  // route, so a UI or script learns whether its summon was accepted.
+  it("reports resolved agent mentions and omits the field when none resolved", async () => {
+    actAs(fx.memberId);
+
+    await pool.query(
+      `insert into agents
+         (id, package_name, version_label, origin, name, description, workspace,
+          mode, triggers, risk_tier, source_path)
+       values ('core:triager', 'core', 'v1.0.0', 'git', 'triager', 'd', 'none',
+               'session', '["domain_event"]'::jsonb, 'read_only', '/tmp/a.md')
+       on conflict (id) do nothing`,
+    );
+    await pool.query(
+      `insert into agent_project_links (id, agent_id, project_id) values ($1, 'core:triager', $2)`,
+      [randomUUID(), fx.projectId],
+    );
+    await pool.query(
+      `insert into agent_schedules (id, agent_id, project_id, trigger_type)
+       values ($1, 'core:triager', $2, 'mention')`,
+      [randomUUID(), fx.projectId],
+    );
+
+    const res = await commentsPOST(
+      jsonRequest("POST", { body: "@core:triager please dedupe" }),
+      routeParams(SLUG, fx.taskNumber),
+    );
+
+    expect(res.status).toBe(201);
+
+    const payload = (await res.json()) as {
+      comment: { body: string };
+      mentionedAgents?: Array<{ id: string; summonable: boolean }>;
+    };
+
+    expect(payload.comment.body).toBe(
+      "[@core:triager](/agents/core:triager) please dedupe",
+    );
+    expect(payload.mentionedAgents).toEqual([
+      { id: "core:triager", name: "triager", summonable: true },
+    ]);
+
+    const plain = await commentsPOST(
+      jsonRequest("POST", { body: "no handles" }),
+      routeParams(SLUG, fx.taskNumber),
+    );
+
+    expect("mentionedAgents" in ((await plain.json()) as object)).toBe(false);
+  });
+
   it("viewer can GET but cannot POST (403 UNAUTHORIZED)", async () => {
     actAs(fx.viewerId);
 

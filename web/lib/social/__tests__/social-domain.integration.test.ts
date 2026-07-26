@@ -93,6 +93,40 @@ async function seedProject(taskKey: string): Promise<{
   return { projectId, flowId, slug };
 }
 
+// ADR-151: attach an agent to the project, optionally with the enabled mention
+// binding that makes it summonable.
+async function seedSummonableAgent(
+  projectId: string,
+  packageName: string,
+  stem: string,
+  opts: { mentionBinding?: boolean } = {},
+): Promise<string> {
+  const id = `${packageName}:${stem}`;
+
+  await pool.query(
+    `insert into agents
+       (id, package_name, version_label, origin, name, description, workspace,
+        mode, triggers, risk_tier, source_path)
+     values ($1, $2, 'v1.0.0', 'git', $3, 'd', 'none', 'session',
+             '["domain_event"]'::jsonb, 'read_only', '/tmp/a.md')
+     on conflict (id) do nothing`,
+    [id, packageName, stem],
+  );
+  await pool.query(
+    `insert into agent_project_links (id, agent_id, project_id) values ($1, $2, $3)`,
+    [newId(), id, projectId],
+  );
+  if (opts.mentionBinding !== false) {
+    await pool.query(
+      `insert into agent_schedules (id, agent_id, project_id, trigger_type)
+       values ($1, $2, $3, 'mention')`,
+      [newId(), id, projectId],
+    );
+  }
+
+  return id;
+}
+
 async function rowsOf(table: string, where: string): Promise<any[]> {
   const result = await pool.query(`select * from ${table} where ${where}`);
 
@@ -618,7 +652,7 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
       db,
     );
 
-    const comment = await addTaskComment(
+    const { comment } = await addTaskComment(
       {
         taskId: a.taskId,
         body: `depends on EXP-${b.number} and GHOST-99 but not \`EXP-${b.number}\``,
@@ -646,7 +680,7 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
       db,
     );
 
-    const comment = await addTaskComment(
+    const { comment } = await addTaskComment(
       {
         taskId: a.taskId,
         body: `see EVT-${b.number}`,
@@ -752,7 +786,7 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
       });
     }
 
-    const comment = await addTaskComment(
+    const { comment } = await addTaskComment(
       {
         taskId: a.taskId,
         body: "ping",
@@ -829,7 +863,7 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
       db,
     );
 
-    const comment = await addTaskComment(
+    const { comment } = await addTaskComment(
       {
         taskId: a.taskId,
         body: "automated note",
@@ -875,7 +909,7 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
       db,
     );
 
-    const comment = await addTaskComment(
+    const { comment } = await addTaskComment(
       {
         taskId: a.taskId,
         body: `this is SLF-${a.number}`,
@@ -892,6 +926,154 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
     );
 
     expect(mentioned).toHaveLength(0);
+  });
+
+  // ADR-151 — agent mentions ride the same transaction and MUST NOT touch the
+  // human notification substrate.
+  it("expands an agent mention, records it on the activity + event, and creates NO inbox or subscriber row", async () => {
+    const { projectId, flowId } = await seedProject("AGM");
+    const creator = await seedUser();
+    const a = await createTask(
+      { title: "A", prompt: "p", flowId },
+      { projectId, actorUserId: creator },
+      db,
+    );
+
+    await seedSummonableAgent(projectId, "core", "triager");
+
+    const inboxBefore = (await rowsOf("inbox_items", `task_id = '${a.taskId}'`))
+      .length;
+    const { comment, mentionedAgents } = await addTaskComment(
+      {
+        taskId: a.taskId,
+        body: "@core:triager and @ghost please look",
+        actor: { type: "user", id: creator },
+      },
+      db,
+    );
+
+    expect(comment.body).toBe(
+      "[@core:triager](/agents/core:triager) and @ghost please look",
+    );
+    expect(mentionedAgents).toEqual([
+      { id: "core:triager", name: "triager", summonable: true },
+    ]);
+
+    const activity = await rowsOf(
+      "task_activity",
+      `task_id = '${a.taskId}' and event_kind = 'comment_added'`,
+    );
+
+    expect(activity[0].payload).toMatchObject({
+      commentId: comment.id,
+      mentionedAgents: [
+        { id: "core:triager", name: "triager", summonable: true },
+      ],
+    });
+
+    const events = await rowsOf(
+      "domain_events",
+      `task_id = '${a.taskId}' and kind = 'task.comment_added'`,
+    );
+
+    expect(events[0].payload.mentionedAgentIds).toEqual(["core:triager"]);
+
+    // The agent is never a notification recipient (Expectation 8).
+    const inboxAfter = await rowsOf("inbox_items", `task_id = '${a.taskId}'`);
+    const subscribers = await rowsOf(
+      "task_subscribers",
+      `task_id = '${a.taskId}'`,
+    );
+
+    expect(inboxAfter).toHaveLength(inboxBefore);
+    expect(
+      subscribers.every((row: any) => row.subscriber_type === "user"),
+    ).toBe(true);
+  });
+
+  it("omits mentionedAgents / mentionedAgentIds entirely when nothing resolved", async () => {
+    const { projectId, flowId } = await seedProject("NOM");
+    const creator = await seedUser();
+    const a = await createTask(
+      { title: "A", prompt: "p", flowId },
+      { projectId, actorUserId: creator },
+      db,
+    );
+
+    const { comment, mentionedAgents } = await addTaskComment(
+      { taskId: a.taskId, body: "plain text", actor: { type: "user", id: creator } },
+      db,
+    );
+
+    expect(mentionedAgents).toEqual([]);
+
+    const activity = await rowsOf(
+      "task_activity",
+      `task_id = '${a.taskId}' and event_kind = 'comment_added'`,
+    );
+    const events = await rowsOf(
+      "domain_events",
+      `task_id = '${a.taskId}' and kind = 'task.comment_added'`,
+    );
+
+    expect(activity[0].payload).toEqual({ commentId: comment.id });
+    expect("mentionedAgentIds" in events[0].payload).toBe(false);
+  });
+
+  it("dedupes a doubly-mentioned agent to one id while expanding both occurrences", async () => {
+    const { projectId, flowId } = await seedProject("DPA");
+    const creator = await seedUser();
+    const a = await createTask(
+      { title: "A", prompt: "p", flowId },
+      { projectId, actorUserId: creator },
+      db,
+    );
+
+    await seedSummonableAgent(projectId, "core", "triager");
+
+    const { comment, mentionedAgents } = await addTaskComment(
+      {
+        taskId: a.taskId,
+        // The canonical id and the bare stem name the SAME agent.
+        body: "@core:triager then @triager",
+        actor: { type: "user", id: creator },
+      },
+      db,
+    );
+
+    expect(comment.body).toBe(
+      "[@core:triager](/agents/core:triager) then [@core:triager](/agents/core:triager)",
+    );
+    expect(mentionedAgents.map((m) => m.id)).toEqual(["core:triager"]);
+  });
+
+  it("reports summonable:false for an attached agent with no mention binding", async () => {
+    const { projectId, flowId } = await seedProject("NSU");
+    const creator = await seedUser();
+    const a = await createTask(
+      { title: "A", prompt: "p", flowId },
+      { projectId, actorUserId: creator },
+      db,
+    );
+
+    await seedSummonableAgent(projectId, "core", "reviewer", {
+      mentionBinding: false,
+    });
+
+    const { comment, mentionedAgents } = await addTaskComment(
+      {
+        taskId: a.taskId,
+        body: "@core:reviewer fyi",
+        actor: { type: "user", id: creator },
+      },
+      db,
+    );
+
+    // The chip still renders — the footnote is what explains the difference.
+    expect(comment.body).toBe("[@core:reviewer](/agents/core:reviewer) fyi");
+    expect(mentionedAgents).toEqual([
+      { id: "core:reviewer", name: "reviewer", summonable: false },
+    ]);
   });
 
   it("rejects a comment on a missing task with PRECONDITION", async () => {

@@ -22,8 +22,28 @@ export type MarkdownSegment = {
   value: string;
 };
 
-const MENTION_TOKEN = /\b([A-Z][A-Z0-9]{1,9})-(\d+)\b/g;
 const PG_INT4_MAX = 2_147_483_647;
+
+// ADR-151. ONE alternation over both token families so a text segment is
+// consumed left to right exactly once: a stem may itself look like `KEY-N`
+// (`@core:MAI-1`), and two independent passes would rewrite it twice.
+// The agent branch opens only at a word boundary — start of segment,
+// whitespace, or `(` — which is what keeps `user@example.com` inert.
+const AGENT_HANDLE = "[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?";
+const MENTION_TOKENS = new RegExp(
+  `(^|[\\s(])@(${AGENT_HANDLE})|\\b([A-Z][A-Z0-9]{1,9})-(\\d+)\\b`,
+  "g",
+);
+
+// The handle ends on its last alphanumeric, so trailing sentence punctuation
+// (`@triager.`) stays outside the link.
+function trimAgentHandle(raw: string): string {
+  let end = raw.length;
+
+  while (end > 0 && !/[A-Za-z0-9]/.test(raw[end - 1])) end -= 1;
+
+  return raw.slice(0, end);
+}
 
 function segmentInline(chunk: string, out: MarkdownSegment[]): void {
   let text = "";
@@ -163,9 +183,13 @@ export function collectMentionCandidates(
 
   for (const segment of segments) {
     if (segment.kind !== "text") continue;
-    for (const match of segment.value.matchAll(MENTION_TOKEN)) {
-      const key = match[1];
-      const number = Number.parseInt(match[2], 10);
+    for (const match of segment.value.matchAll(MENTION_TOKENS)) {
+      // An agent handle consumed this position; a `KEY-N`-shaped stem inside
+      // it is part of the handle, not a task reference.
+      if (match[2] !== undefined) continue;
+
+      const key = match[3];
+      const number = Number.parseInt(match[4], 10);
 
       if (number < 1 || number > PG_INT4_MAX) continue;
 
@@ -180,6 +204,77 @@ export function collectMentionCandidates(
   return candidates;
 }
 
+export function collectAgentMentionCandidates(
+  segments: MarkdownSegment[],
+): string[] {
+  const seen = new Set<string>();
+  const handles: string[] = [];
+
+  for (const segment of segments) {
+    if (segment.kind !== "text") continue;
+    for (const match of segment.value.matchAll(MENTION_TOKENS)) {
+      if (match[2] === undefined) continue;
+
+      const handle = trimAgentHandle(match[2]);
+
+      if (handle.length === 0 || seen.has(handle)) continue;
+      seen.add(handle);
+      handles.push(handle);
+    }
+  }
+
+  return handles;
+}
+
+/** One project-attached agent a handle may resolve to. */
+export type MentionableAgent = {
+  id: string;
+  stem: string;
+  name: string;
+  summonable: boolean;
+};
+
+export type ResolvedAgentMention = {
+  id: string;
+  name: string;
+  summonable: boolean;
+};
+
+// Pure: the candidate set is injected, so resolution has no DB dependency.
+// Bare-stem uniqueness is computed over EVERY attached agent, not only the
+// summonable ones — otherwise enabling a binding would silently change which
+// agent an existing `@stem` refers to.
+export function resolveAgentMentions(
+  handles: string[],
+  agents: MentionableAgent[],
+): Map<string, ResolvedAgentMention> {
+  const byId = new Map(agents.map((a) => [a.id, a]));
+  const byStem = new Map<string, MentionableAgent[]>();
+
+  for (const agent of agents) {
+    byStem.set(agent.stem, [...(byStem.get(agent.stem) ?? []), agent]);
+  }
+
+  const resolved = new Map<string, ResolvedAgentMention>();
+
+  for (const handle of handles) {
+    const hit = handle.includes(":")
+      ? byId.get(handle)
+      : (byStem.get(handle) ?? []).length === 1
+        ? byStem.get(handle)![0]
+        : undefined;
+
+    if (!hit) continue;
+    resolved.set(handle, {
+      id: hit.id,
+      name: hit.name,
+      summonable: hit.summonable,
+    });
+  }
+
+  return resolved;
+}
+
 export type ResolvedMention = {
   slug: string;
   key: string;
@@ -189,15 +284,35 @@ export type ResolvedMention = {
 export function expandResolvedMentions(
   segments: MarkdownSegment[],
   resolved: Map<string, ResolvedMention>,
+  agents: Map<string, ResolvedAgentMention> = new Map(),
 ): string {
   return segments
     .map((segment) => {
       if (segment.kind !== "text") return segment.value;
 
       return segment.value.replace(
-        MENTION_TOKEN,
-        (token, key: string, num: string) => {
-          const hit = resolved.get(`${key}-${Number.parseInt(num, 10)}`);
+        MENTION_TOKENS,
+        (
+          token,
+          boundary: string | undefined,
+          handle: string | undefined,
+          key: string | undefined,
+          num: string | undefined,
+        ) => {
+          if (handle !== undefined) {
+            const trimmed = trimAgentHandle(handle);
+            const agent = agents.get(trimmed);
+
+            if (!agent) return token;
+
+            // The leading `/` is load-bearing: without it react-markdown's
+            // urlTransform reads `core:` as a URL scheme and drops the link.
+            return `${boundary ?? ""}[@${agent.id}](/agents/${agent.id})${handle.slice(
+              trimmed.length,
+            )}`;
+          }
+
+          const hit = resolved.get(`${key}-${Number.parseInt(num ?? "", 10)}`);
 
           if (!hit) return token;
 
@@ -216,18 +331,36 @@ export type ExpandedMentions = {
     key: string;
     number: number;
   }>;
+  mentionedAgents: Array<{ id: string; name: string; summonable: boolean }>;
 };
 
 export async function expandMentions(
   body: string,
   db?: Db,
+  agentCandidates: MentionableAgent[] = [],
 ): Promise<ExpandedMentions> {
   const _db = (db ?? getDb()) as unknown as { select: any };
   const segments = segmentMarkdown(body);
   const candidates = collectMentionCandidates(segments);
+  const agents = resolveAgentMentions(
+    collectAgentMentionCandidates(segments),
+    agentCandidates,
+  );
+  // Deduped by construction: one entry per resolved AGENT, however many
+  // handles (canonical + bare) pointed at it.
+  const mentionedAgents = [
+    ...new Map([...agents.values()].map((a) => [a.id, a])).values(),
+  ];
 
   if (candidates.length === 0) {
-    return { expanded: body, mentioned: [] };
+    return {
+      expanded:
+        agents.size > 0
+          ? expandResolvedMentions(segments, new Map(), agents)
+          : body,
+      mentioned: [],
+      mentionedAgents,
+    };
   }
 
   const rows = (await _db
@@ -262,17 +395,23 @@ export async function expandMentions(
   );
 
   log.debug(
-    { candidates: candidates.length, resolved: rows.length },
+    {
+      candidates: candidates.length,
+      resolved: rows.length,
+      agentCandidates: agentCandidates.length,
+      agentsResolved: mentionedAgents.length,
+    },
     "mentions expanded",
   );
 
   return {
-    expanded: expandResolvedMentions(segments, resolved),
+    expanded: expandResolvedMentions(segments, resolved, agents),
     mentioned: rows.map((r) => ({
       taskId: r.taskId,
       projectId: r.projectId,
       key: r.key,
       number: r.number,
     })),
+    mentionedAgents,
   };
 }

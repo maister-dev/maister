@@ -150,7 +150,7 @@ export async function POST(
 
     await requireProjectAction(resolved.project.id, "commentTask");
 
-    const record = await addTaskComment({
+    const { comment: record, mentionedAgents } = await addTaskComment({
       taskId: resolved.task.id,
       body: body.body,
       actor: { type: "user", id: user.id },
@@ -162,7 +162,15 @@ export async function POST(
       "task comment posted",
     );
 
-    return NextResponse.json({ comment }, { status: 201 });
+    // (ADR-151) Report resolved agent mentions so a caller learns whether its
+    // summon was accepted without polling; omitted when nothing resolved.
+    return NextResponse.json(
+      {
+        comment,
+        ...(mentionedAgents.length > 0 ? { mentionedAgents } : {}),
+      },
+      { status: 201 },
+    );
   } catch (err) {
     return errorResponse(err, slug);
   }

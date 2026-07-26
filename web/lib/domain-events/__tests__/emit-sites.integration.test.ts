@@ -193,7 +193,7 @@ describe("addTaskComment → task.comment_added (T-E4)", () => {
 
     await db.delete(schema.domainEvents);
 
-    const comment = await addTaskComment(
+    const { comment } = await addTaskComment(
       {
         taskId: target.taskId,
         body: `see ${taskKey}-${mentioned.number}`,
@@ -230,7 +230,7 @@ describe("addTaskComment → task.comment_added (T-E4)", () => {
 
     await db.delete(schema.domainEvents);
 
-    const comment = await addTaskComment(
+    const { comment } = await addTaskComment(
       {
         taskId: target.taskId,
         body: "plain note",

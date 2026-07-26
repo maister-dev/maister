@@ -15,6 +15,7 @@ import {
   resolveActorLabels,
   type ActorDTO,
 } from "@/lib/social/actors";
+import { listMentionCandidateAgents } from "@/lib/agents/summonability";
 import { fanoutToSubscribers } from "@/lib/social/inbox";
 import { expandMentions } from "@/lib/social/mentions";
 import { subscribe } from "@/lib/social/subscriptions";
@@ -42,6 +43,18 @@ export type TaskCommentRecord = {
   createdAt: Date;
 };
 
+/** (ADR-151) One agent handle that RESOLVED, with its write-time summonability. */
+export type MentionedAgentDTO = {
+  id: string;
+  name: string;
+  summonable: boolean;
+};
+
+export type AddTaskCommentResult = {
+  comment: TaskCommentRecord;
+  mentionedAgents: MentionedAgentDTO[];
+};
+
 // ADR-078 D7: the full comment pipeline runs in ONE db.transaction — mention
 // expansion, comment insert, comment_added + task_mentioned activity,
 // subscription upserts (first reason wins), and inbox fanout excluding the
@@ -54,7 +67,7 @@ export async function addTaskComment(
     activityPayloadExtra?: Record<string, unknown>;
   },
   db?: Db,
-): Promise<TaskCommentRecord> {
+): Promise<AddTaskCommentResult> {
   const _db = (db ?? getDb()) as unknown as { transaction: any };
 
   const result = await _db.transaction(async (tx: any) => {
@@ -79,7 +92,17 @@ export async function addTaskComment(
       throw new MaisterError("PRECONDITION", `task not found: ${input.taskId}`);
     }
 
-    const { expanded, mentioned } = await expandMentions(input.body, tx);
+    // (ADR-151) Agent candidates come from the ONE summonability query, inside
+    // this transaction, so the write-time flag and the stored body agree.
+    const agentCandidates = await listMentionCandidateAgents(
+      tx,
+      task.projectId,
+    );
+    const { expanded, mentioned, mentionedAgents } = await expandMentions(
+      input.body,
+      tx,
+      agentCandidates,
+    );
     // A task mentioning itself stays an expanded link but produces no extra
     // activity/subscription/fanout — the comment itself already notifies.
     const mentionedOthers = mentioned.filter((m) => m.taskId !== task.id);
@@ -102,7 +125,14 @@ export async function addTaskComment(
       projectId: task.projectId,
       actor: input.actor,
       eventKind: "comment_added",
-      payload: { commentId, ...input.activityPayloadExtra },
+      payload: {
+        commentId,
+        // (ADR-151) Write-time truth for the UI: the timeline reads this to
+        // footnote mentions that resolved but cannot summon. The chip in the
+        // body is never the authoritative signal.
+        ...(mentionedAgents.length > 0 ? { mentionedAgents } : {}),
+        ...input.activityPayloadExtra,
+      },
     });
 
     await emitDomainEvent({
@@ -116,6 +146,11 @@ export async function addTaskComment(
         commentId,
         ...(mentionedOthers.length > 0
           ? { mentionedTaskIds: mentionedOthers.map((m) => m.taskId) }
+          : {}),
+        // (ADR-151) ALL resolved ids, including currently non-summonable ones:
+        // the consumer is authoritative at consume time.
+        ...(mentionedAgents.length > 0
+          ? { mentionedAgentIds: mentionedAgents.map((a) => a.id) }
           : {}),
       },
     });
@@ -200,7 +235,12 @@ export async function addTaskComment(
       excludeActor: input.actor,
     });
 
-    return { comment: inserted[0], mentions: mentionedOthers.length, fanout };
+    return {
+      comment: inserted[0],
+      mentions: mentionedOthers.length,
+      mentionedAgents,
+      fanout,
+    };
   });
 
   log.info(
@@ -208,12 +248,13 @@ export async function addTaskComment(
       taskId: input.taskId,
       commentId: result.comment.id,
       mentions: result.mentions,
+      agentMentions: result.mentionedAgents.length,
       fanout: result.fanout,
     },
     "comment added",
   );
 
-  return result.comment;
+  return { comment: result.comment, mentionedAgents: result.mentionedAgents };
 }
 
 export async function listTaskComments(

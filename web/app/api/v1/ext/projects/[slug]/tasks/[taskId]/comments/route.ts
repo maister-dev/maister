@@ -147,8 +147,8 @@ export async function POST(
       const actor = socialActorForToken(ctx.actor);
 
       try {
-        const record = await (db as TransactionalDb).transaction(async (tx) => {
-          const comment = await addTaskComment(
+        const added = await (db as TransactionalDb).transaction(async (tx) => {
+          const result = await addTaskComment(
             {
               taskId,
               body: body.body,
@@ -179,11 +179,21 @@ export async function POST(
             tx,
           );
 
-          return comment;
+          return result;
         });
-        const [comment] = await toCommentDTOs([record], db);
+        const [comment] = await toCommentDTOs([added.comment], db);
 
-        return NextResponse.json({ comment }, { status: 201 });
+        // (ADR-151) Same response contract as the session route — the
+        // assistant-over-MCP is a first-class author of summoning comments.
+        return NextResponse.json(
+          {
+            comment,
+            ...(added.mentionedAgents.length > 0
+              ? { mentionedAgents: added.mentionedAgents }
+              : {}),
+          },
+          { status: 201 },
+        );
       } catch (err) {
         if (isMaisterError(err)) {
           return NextResponse.json(
