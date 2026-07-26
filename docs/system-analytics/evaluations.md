@@ -401,6 +401,21 @@ match identity in `match_a` / `match_b`; a judge submits a `winner` pick of
 `a | b | tie` validated against that identity. Aggregation routes through
 `computeTournament`, never the scalar registry.
 
+Both the pair fan-out and the tournament MUST read the execution's **frozen**
+participant set — the keys of its sealed evidence snapshot's
+`participant_watermarks` (`frozen-participants.ts`) — never live Study
+membership: a participant added mid-flight enters no pair, and a tombstoned
+one keeps its matches and its standing. Aggregation compares recorded verdicts
+against the frozen expected matrix, so a pair with no recorded attempts stays
+explicitly `unresolved` and the execution lands `partial`, never a false
+`completed`. Provisioning a pairwise panel on an execution with no sealed
+snapshot fails closed (`MaisterError("PRECONDITION")`). The judge's evaluator
+context carries a blinded `match: {a, b}` mapping (which candidate label is
+which match side — the `winner` pick refers to these sides) and is scoped —
+candidates, evidence, objective facts — to the pair under comparison plus
+shared (participant-less) items; a match side with no captured evidence
+refuses the attempt (`PRECONDITION`) rather than serving it half-blind.
+
 Scoring is exactly `points = wins × 1 + ties × 0.5`
 (`aggregation/tournament.ts:230`); byes contribute **zero** points. A match
 resolves only on a strict plurality for `a` or `b` — an equal tally, or `tie`

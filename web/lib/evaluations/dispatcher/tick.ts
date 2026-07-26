@@ -17,7 +17,6 @@ import {
   evaluationExecutions,
   evaluationJudgeAttempts,
   evaluationMethodRevisions,
-  evaluationParticipants,
   evaluationReviews,
   runs,
 } from "@/lib/db/schema";
@@ -27,6 +26,7 @@ import {
   runAggregationForExecution,
 } from "@/lib/evaluations/aggregation/worker";
 import { captureEvidenceForExecution } from "@/lib/evaluations/evidence/capture";
+import { frozenExecutionParticipants } from "@/lib/evaluations/frozen-participants";
 import {
   defaultJudgeSpawn,
   launchJudgePanel,
@@ -95,8 +95,9 @@ export function defaultDispatchDeps(db?: Db): EvaluationDispatchDeps {
   };
 }
 
-// Run every declared objective check over every live participant using the LIVE
-// fact source (T3.2). No package command runs; missing facts stay honest absence.
+// Run every declared objective check over the execution's frozen snapshot
+// participant set using the LIVE fact source (T3.2). No package command runs;
+// missing facts stay honest absence.
 export async function runChecksForExecution(
   executionId: string,
   db?: Db,
@@ -105,7 +106,6 @@ export async function runChecksForExecution(
 
   const [exec] = await d
     .select({
-      studyId: evaluationExecutions.studyId,
       objectivePolicySnapshot: evaluationExecutions.objectivePolicySnapshot,
     })
     .from(evaluationExecutions)
@@ -133,18 +133,10 @@ export async function runChecksForExecution(
 
   const registeredHostProfiles = new Set(snapshot.registeredHostProfiles ?? []);
 
-  const participants: Array<{ id: string; runId: string | null }> = await d
-    .select({
-      id: evaluationParticipants.id,
-      runId: evaluationParticipants.runId,
-    })
-    .from(evaluationParticipants)
-    .where(
-      and(
-        eq(evaluationParticipants.studyId, exec.studyId),
-        isNull(evaluationParticipants.removedAt),
-      ),
-    );
+  // Checks run over the execution's FROZEN snapshot participant set (Codex-4)
+  // — the run ids come from the capture-time watermarks, so a Study membership
+  // change between capture and checking is inert.
+  const participants = await frozenExecutionParticipants(executionId, d);
 
   const facts: ParticipantFacts[] = [];
 
@@ -800,9 +792,10 @@ export async function runEvaluationDispatchTick(
     try {
       if (await dep.advancePanel(j.id)) summary.panelsAdvanced += 1;
     } catch (err) {
-      const level = isMaisterError(err) && err.code === "CONFLICT"
-        ? ("debug" as const)
-        : ("warn" as const);
+      const level =
+        isMaisterError(err) && err.code === "CONFLICT"
+          ? ("debug" as const)
+          : ("warn" as const);
 
       log[level](
         { executionId: j.id, err: messageOf(err) },

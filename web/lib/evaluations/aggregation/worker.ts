@@ -396,7 +396,7 @@ export async function runAggregationForExecution(
   // else partial (quorum shortfall). No disagreement/review lane in v1.
   if (method.algorithm === PAIRWISE_TOURNAMENT_ALGORITHM) {
     const tournament = await computeTournamentForExecution(
-      { executionId, studyId: exec.studyId, quorum: method.quorum },
+      { executionId, quorum: method.quorum },
       d,
     );
 

@@ -3529,17 +3529,18 @@ paths:
         request digest replays the original execution (200, `deduped: true`);
         the same key with a DIFFERENT request is `CONFLICT` 409.
 
-        Pairwise: a `pairwise_tournament@1` method is currently refused
-        (`CONFIG` 422) by a fail-closed gate, because the judge submission
-        contract carries no A/B pick and the execution would otherwise die at
-        aggregation. **(ADR-150, Implemented — Phase 1.5)** that gate is removed
-        once the pairwise path works end to end: judge attempts are then
+        Pairwise **(ADR-150, Implemented — Phase 1.5)**: a
+        `pairwise_tournament@1` method executes end to end. Judge attempts are
         provisioned per unordered PAIR (`N·(N−1)/2` matches, a bye for an odd
-        count), each attempt carries its match identity, and aggregation
-        routes through `computeTournament`. Execution results — including the
-        tournament ranking and per-match outcomes — are read by the Study Lab
-        through server components, not through this route, so no response
-        shape here changes.
+        count) over the execution's FROZEN evidence-snapshot participant set —
+        never live Study membership, so a mid-flight add/remove is inert —
+        each attempt carries its match identity, and aggregation routes
+        through `computeTournament` against the same frozen expected matrix
+        (a pair with no recorded attempts stays unresolved and the execution
+        lands `partial`, never a false `completed`). Execution results —
+        including the tournament ranking and per-match outcomes — are read by
+        the Study Lab through server components, not through this route, so no
+        response shape here changes.
       operationId: startEvaluationExecution
       parameters:
         - { $ref: "#/components/parameters/ProjectSlug" }

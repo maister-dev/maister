@@ -3,10 +3,11 @@ import "server-only";
 import type { Db } from "@/lib/evaluations/db";
 import type { MatchVerdicts, TournamentResult } from "./tournament";
 
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import {
   computeTournament,
+  generateRoundRobinPairs,
   PAIRWISE_TOURNAMENT_ALGORITHM,
   scheduleRoundRobin,
 } from "./tournament";
@@ -15,44 +16,10 @@ import { getDb } from "@/lib/db/client";
 import {
   evaluationAggregateResults,
   evaluationJudgeAttempts,
-  evaluationParticipants,
 } from "@/lib/db/schema";
 import { sha256, stableStringify } from "@/lib/evaluations/digest";
+import { frozenExecutionParticipants } from "@/lib/evaluations/frozen-participants";
 import { MaisterError } from "@/lib/errors";
-
-// The participant set a pairwise execution pairs off, ordered deterministically
-// (displayOrder, then id). SINGLE source of truth for BOTH the provisioning
-// round-robin (judges/launch.ts) and the aggregation round-robin here — the pair
-// list + bye schedule must be derived identically or the tournament references a
-// pair that was never provisioned. Non-removed participants only.
-export async function orderedStudyParticipantIds(
-  studyId: string,
-  d: Db,
-): Promise<string[]> {
-  const rows = await d
-    .select({
-      id: evaluationParticipants.id,
-      displayOrder: evaluationParticipants.displayOrder,
-    })
-    .from(evaluationParticipants)
-    .where(
-      and(
-        eq(evaluationParticipants.studyId, studyId),
-        isNull(evaluationParticipants.removedAt),
-      ),
-    );
-
-  return rows
-    .sort((x, y) => {
-      const ax = x.displayOrder ?? 0;
-      const ay = y.displayOrder ?? 0;
-
-      if (ax !== ay) return ax - ay;
-
-      return x.id < y.id ? -1 : 1;
-    })
-    .map((r) => r.id);
-}
 
 // Group the execution's sealed pairwise attempts into per-match verdicts. Only a
 // COMPLETED attempt contributes a pick (read from `sealedResult.winner`); a
@@ -103,15 +70,36 @@ export async function buildMatchVerdicts(
   return [...byPair.values()];
 }
 
-// Aggregate a pairwise execution into a tournament ranking. Loads participants +
-// per-match verdicts, folds in the deterministic bye schedule, and resolves each
-// match under the per-match quorum via the pure `computeTournament`.
+// Aggregate a pairwise execution into a tournament ranking over the FROZEN
+// snapshot participant set (Codex-4) — never live Study membership, so a
+// mid-flight add/remove is inert. The expected match matrix is re-derived from
+// the frozen set: a recorded verdict group is matched orientation-agnostically
+// (a provisioned row keeps its own a/b sides — its picks bind to them); an
+// expected pair with NO recorded attempts is synthesized empty so it stays
+// explicitly unresolved and the execution can never complete with a missing
+// match. Out-of-universe rows (pre-freeze provisioning against mutated
+// membership) are dropped by the expected-matrix walk.
 export async function computeTournamentForExecution(
-  args: { executionId: string; studyId: string; quorum: number },
+  args: { executionId: string; quorum: number },
   d: Db,
 ): Promise<TournamentResult> {
-  const participants = await orderedStudyParticipantIds(args.studyId, d);
-  const matches = await buildMatchVerdicts(args.executionId, d);
+  const frozen = await frozenExecutionParticipants(args.executionId, d);
+  const participants = frozen.map((p) => p.id);
+  const recorded = await buildMatchVerdicts(args.executionId, d);
+
+  const pairKey = (a: string, b: string): string =>
+    a < b ? `${a}::${b}` : `${b}::${a}`;
+  const recordedByPair = new Map<string, MatchVerdicts>();
+
+  for (const match of recorded) {
+    const key = pairKey(match.a, match.b);
+
+    if (!recordedByPair.has(key)) recordedByPair.set(key, match);
+  }
+
+  const matches = generateRoundRobinPairs(participants).map(
+    ([a, b]) => recordedByPair.get(pairKey(a, b)) ?? { a, b, picks: [] },
+  );
   const { byes } = scheduleRoundRobin(participants);
 
   return computeTournament({

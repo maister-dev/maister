@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -36,6 +36,8 @@ let provisionJudgeAttempts: typeof import("@/lib/evaluations/judges/launch").pro
 let evaluateAndAdvancePanel: typeof import("@/lib/evaluations/aggregation/worker").evaluateAndAdvancePanel;
 let submitBoundJudgeResult: typeof import("@/lib/evaluations/judges/seal").submitBoundJudgeResult;
 let issueJudgeAttemptToken: typeof import("@/lib/agents/tokens").issueJudgeAttemptToken;
+let sealEvidenceSnapshot: typeof import("@/lib/evaluations/evidence/snapshots").sealEvidenceSnapshot;
+let frozenExecutionParticipants: typeof import("@/lib/evaluations/frozen-participants").frozenExecutionParticipants;
 
 const AGENT_ID = "core:pairwise-judge";
 
@@ -107,7 +109,10 @@ function judgeSnapshot(): Record<string, unknown> {
   };
 }
 
-async function seedExecution(studyId: string): Promise<string> {
+async function seedExecution(
+  studyId: string,
+  opts: { snapshotId?: string } = {},
+): Promise<string> {
   const id = randomUUID();
 
   await db.insert(schema.evaluationExecutions).values({
@@ -115,12 +120,34 @@ async function seedExecution(studyId: string): Promise<string> {
     studyId,
     status: "judging",
     methodRevisionId,
+    evidenceSnapshotId: opts.snapshotId ?? null,
     randomizationSeed: `seed-${id.slice(0, 8)}`,
     judgePolicySnapshot: judgeSnapshot(),
     aggregationPolicySnapshot: aggregationSnapshot(),
   });
 
   return id;
+}
+
+// Seal a minimal snapshot whose participantWatermarks keys ARE the frozen
+// participant set (Codex-4). No items — the frozen derivation reads keys only.
+async function sealSnapshotFor(
+  studyId: string,
+  participantIds: string[],
+): Promise<string> {
+  const sealed = await sealEvidenceSnapshot(
+    {
+      studyId,
+      participantWatermarks: Object.fromEntries(
+        participantIds.map((id) => [id, { runId: null }]),
+      ),
+      evidenceProtocolDigest: `epd-${randomUUID()}`,
+      items: [],
+    },
+    db,
+  );
+
+  return sealed.snapshotId;
 }
 
 async function seedParticipants(
@@ -222,6 +249,12 @@ Pick the better of the two candidates.
   ));
   ({ submitBoundJudgeResult } = await import("@/lib/evaluations/judges/seal"));
   ({ issueJudgeAttemptToken } = await import("@/lib/agents/tokens"));
+  ({ sealEvidenceSnapshot } = await import(
+    "@/lib/evaluations/evidence/snapshots"
+  ));
+  ({ frozenExecutionParticipants } = await import(
+    "@/lib/evaluations/frozen-participants"
+  ));
 
   projectId = randomUUID();
   await db.insert(schema.projects).values({
@@ -334,9 +367,9 @@ afterAll(async () => {
 describe("pairwise provisioning", () => {
   it("provisions one attempt matrix per unordered participant pair", async () => {
     const studyId = await freshStudy();
-    const executionId = await seedExecution(studyId);
-
-    await seedParticipants(studyId, ["A", "B", "C"]);
+    const participantIds = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, participantIds);
+    const executionId = await seedExecution(studyId, { snapshotId });
 
     const attempts = await provisionJudgeAttempts(executionId, db);
 
@@ -361,8 +394,9 @@ describe("pairwise provisioning", () => {
 describe("pairwise aggregation", () => {
   it("aggregates resolved matches into a tournament ranking → completed", async () => {
     const studyId = await freshStudy();
-    const executionId = await seedExecution(studyId);
     const [p1, p2, p3] = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, [p1, p2, p3]);
+    const executionId = await seedExecution(studyId, { snapshotId });
     const attempts = await provisionJudgeAttempts(executionId, db);
     const forPair = (a: string, b: string) =>
       attempts.filter((x) => x.matchA === a && x.matchB === b);
@@ -394,8 +428,9 @@ describe("pairwise aggregation", () => {
 
   it("marks the execution partial when a match falls below its quorum", async () => {
     const studyId = await freshStudy();
-    const executionId = await seedExecution(studyId);
     const [p1, p2, p3] = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, [p1, p2, p3]);
+    const executionId = await seedExecution(studyId, { snapshotId });
     const attempts = await provisionJudgeAttempts(executionId, db);
     const forPair = (a: string, b: string) =>
       attempts.filter((x) => x.matchA === a && x.matchB === b);
@@ -411,6 +446,138 @@ describe("pairwise aggregation", () => {
     const advanced = await evaluateAndAdvancePanel(executionId, db);
 
     expect(advanced).toBe(true);
+    expect(await executionStatus(executionId)).toBe("partial");
+
+    const agg = await latestAggregate(executionId);
+
+    expect((agg?.displayValues as any).unresolvedMatchCount).toBe(1);
+    expect(agg?.warnings).toContain("quorum_not_met");
+  });
+});
+
+describe("frozen participant set (Codex-4)", () => {
+  it("refuses to provision a pairwise panel without a sealed evidence snapshot", async () => {
+    const studyId = await freshStudy();
+    const executionId = await seedExecution(studyId);
+
+    await seedParticipants(studyId, ["A", "B"]);
+
+    await expect(provisionJudgeAttempts(executionId, db)).rejects.toMatchObject(
+      { code: "PRECONDITION" },
+    );
+  });
+
+  it("derives the frozen set from watermark keys — ordered, tombstone-inclusive", async () => {
+    const studyId = await freshStudy();
+    const [p1, p2, p3] = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, [p1, p2, p3]);
+    const executionId = await seedExecution(studyId, { snapshotId });
+
+    // A mid-flight tombstone must NOT shrink the frozen set.
+    await db
+      .update(schema.evaluationParticipants)
+      .set({ removedAt: new Date() })
+      .where(eq(schema.evaluationParticipants.id, p2));
+
+    const frozen = await frozenExecutionParticipants(executionId, db);
+
+    expect(frozen.map((p) => p.id)).toEqual([p1, p2, p3]);
+  });
+
+  it("ignores a participant added mid-judging: no new pairs, no phantom standing", async () => {
+    const studyId = await freshStudy();
+    const [p1, p2, p3] = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, [p1, p2, p3]);
+    const executionId = await seedExecution(studyId, { snapshotId });
+    const attempts = await provisionJudgeAttempts(executionId, db);
+
+    expect(attempts).toHaveLength(6);
+
+    // Membership add DURING judging — inert to the sealed execution.
+    const [p4] = await seedParticipants(studyId, ["D"]);
+    const reprovisioned = await provisionJudgeAttempts(executionId, db);
+
+    expect(reprovisioned).toHaveLength(6);
+
+    for (const at of attempts) await sealPick(at.id, "a");
+    const advanced = await evaluateAndAdvancePanel(executionId, db);
+
+    expect(advanced).toBe(true);
+    expect(await executionStatus(executionId)).toBe("completed");
+
+    const agg = await latestAggregate(executionId);
+    const standings = (agg?.displayValues as any).standings as Array<{
+      participantId: string;
+    }>;
+
+    expect(standings).toHaveLength(3);
+    expect(standings.map((s) => s.participantId)).not.toContain(p4);
+  });
+
+  it("keeps a tombstoned participant's matches and standing (no vanish)", async () => {
+    const studyId = await freshStudy();
+    const [p1, p2, p3] = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, [p1, p2, p3]);
+    const executionId = await seedExecution(studyId, { snapshotId });
+    const attempts = await provisionJudgeAttempts(executionId, db);
+
+    // Every match resolves a-side: p1 2-0, p2 1-1, p3 0-2.
+    for (const at of attempts) await sealPick(at.id, "a");
+
+    // Tombstone p3 AFTER its matches completed, BEFORE aggregation.
+    await db
+      .update(schema.evaluationParticipants)
+      .set({ removedAt: new Date() })
+      .where(eq(schema.evaluationParticipants.id, p3));
+
+    const advanced = await evaluateAndAdvancePanel(executionId, db);
+
+    expect(advanced).toBe(true);
+    expect(await executionStatus(executionId)).toBe("completed");
+
+    const agg = await latestAggregate(executionId);
+    const standings = (agg?.displayValues as any).standings as Array<{
+      participantId: string;
+      wins: number;
+      losses: number;
+    }>;
+
+    expect(standings).toHaveLength(3);
+    const p3Row = standings.find((s) => s.participantId === p3);
+
+    expect(p3Row?.losses).toBe(2);
+    const p1Row = standings.find((s) => s.participantId === p1);
+
+    expect(p1Row?.wins).toBe(2);
+  });
+
+  it("stays partial when an expected frozen match has no recorded attempts", async () => {
+    const studyId = await freshStudy();
+    const [p1, p2, p3] = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, [p1, p2, p3]);
+    const executionId = await seedExecution(studyId, { snapshotId });
+    const attempts = await provisionJudgeAttempts(executionId, db);
+
+    // Simulate a lost pair (crash mid-provision): the p2/p3 attempts vanish.
+    const lostPair = attempts.filter((x) => x.matchA === p2 && x.matchB === p3);
+
+    expect(lostPair).toHaveLength(2);
+    await db.delete(schema.evaluationJudgeAttempts).where(
+      inArray(
+        schema.evaluationJudgeAttempts.id,
+        lostPair.map((a) => a.id),
+      ),
+    );
+
+    for (const at of attempts.filter((a) => !lostPair.includes(a))) {
+      await sealPick(at.id, "a");
+    }
+
+    const advanced = await evaluateAndAdvancePanel(executionId, db);
+
+    expect(advanced).toBe(true);
+    // The frozen expected matrix (3 pairs) keeps the lost match unresolved —
+    // the execution must NOT complete with a missing match.
     expect(await executionStatus(executionId)).toBe("partial");
 
     const agg = await latestAggregate(executionId);
@@ -448,9 +615,9 @@ describe("pairwise pick submission (seal branch)", () => {
 
   it("seals a pairwise attempt (criteria + winner) as completed", async () => {
     const studyId = await freshStudy();
-    const executionId = await seedExecution(studyId);
-
-    await seedParticipants(studyId, ["A", "B", "C"]);
+    const participantIds = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, participantIds);
+    const executionId = await seedExecution(studyId, { snapshotId });
     const attempts = await provisionJudgeAttempts(executionId, db);
     const actor = await boundActorFor(attempts[0].id);
 
@@ -479,9 +646,9 @@ describe("pairwise pick submission (seal branch)", () => {
 
   it("rejects a pairwise submission with no winner (422 CONFIG), attempt preserved", async () => {
     const studyId = await freshStudy();
-    const executionId = await seedExecution(studyId);
-
-    await seedParticipants(studyId, ["A", "B", "C"]);
+    const participantIds = await seedParticipants(studyId, ["A", "B", "C"]);
+    const snapshotId = await sealSnapshotFor(studyId, participantIds);
+    const executionId = await seedExecution(studyId, { snapshotId });
     const attempts = await provisionJudgeAttempts(executionId, db);
     const actor = await boundActorFor(attempts[0].id);
 

@@ -9,11 +9,11 @@ import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { issueJudgeAttemptToken } from "@/lib/agents/tokens";
-import { orderedStudyParticipantIds } from "@/lib/evaluations/aggregation/pairwise-aggregate";
 import {
   generateRoundRobinPairs,
   PAIRWISE_TOURNAMENT_ALGORITHM,
 } from "@/lib/evaluations/aggregation/tournament";
+import { frozenExecutionParticipants } from "@/lib/evaluations/frozen-participants";
 import { getDb } from "@/lib/db/client";
 import {
   evaluationExecutions,
@@ -240,9 +240,12 @@ export async function provisionJudgeAttempts(
 
   if (isPairwise) {
     // ADR-147 D13: one attempt matrix PER unordered participant pair (round
-    // robin). A judge attempt compares exactly two participants and submits a
-    // pick; the tournament aggregation tallies the resolved matches.
-    const participantIds = await orderedStudyParticipantIds(exec.studyId, d);
+    // robin) over the execution's FROZEN snapshot participant set (Codex-4) —
+    // a Study membership change mid-flight never adds or removes pairs. A judge
+    // attempt compares exactly two participants and submits a pick; the
+    // tournament aggregation tallies the resolved matches over the SAME set.
+    const frozen = await frozenExecutionParticipants(executionId, d);
+    const participantIds = frozen.map((p) => p.id);
 
     for (const [a, b] of generateRoundRobinPairs(participantIds)) {
       for (const r of roles) {
