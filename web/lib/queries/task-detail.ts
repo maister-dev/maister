@@ -37,6 +37,13 @@ const {
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
 
+/** (ADR-151) One agent handle that resolved when the comment was written. */
+export type TimelineMentionedAgent = {
+  id: string;
+  name: string;
+  summonable: boolean;
+};
+
 export type TimelineItem =
   | {
       kind: "comment";
@@ -44,6 +51,7 @@ export type TimelineItem =
       body: string;
       actor: ActorDTO;
       createdAt: Date;
+      mentionedAgents?: TimelineMentionedAgent[];
     }
   | {
       kind: "activity";
@@ -54,9 +62,34 @@ export type TimelineItem =
       createdAt: Date;
     };
 
+function mentionedAgentsOf(
+  payload: Record<string, unknown>,
+): TimelineMentionedAgent[] | undefined {
+  const raw = payload.mentionedAgents;
+
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+
+    return typeof row.id === "string"
+      ? [
+          {
+            id: row.id,
+            name: typeof row.name === "string" ? row.name : row.id,
+            summonable: row.summonable === true,
+          },
+        ]
+      : [];
+  });
+}
+
 // Merge comments and activity ascending by (createdAt, id). `comment_added`
 // activity rows are SKIPPED — the comment itself renders in their place; the
 // duplicate row exists for the Log page and analytics, not the timeline.
+// (ADR-151) Their payload still carries the write-time agent-mention truth, so
+// it is lifted onto the comment before the row is dropped.
 export function interleaveTimeline(
   comments: Array<{
     id: string;
@@ -72,8 +105,29 @@ export function interleaveTimeline(
     createdAt: Date;
   }>,
 ): TimelineItem[] {
+  const mentionsByComment = new Map<string, TimelineMentionedAgent[]>();
+
+  for (const row of activity) {
+    if (row.eventKind !== "comment_added") continue;
+
+    const commentId = row.payload.commentId;
+    const mentioned = mentionedAgentsOf(row.payload);
+
+    if (typeof commentId === "string" && mentioned) {
+      mentionsByComment.set(commentId, mentioned);
+    }
+  }
+
   const items: TimelineItem[] = [
-    ...comments.map((c) => ({ kind: "comment" as const, ...c })),
+    ...comments.map((c) => {
+      const mentioned = mentionsByComment.get(c.id);
+
+      return {
+        kind: "comment" as const,
+        ...c,
+        ...(mentioned ? { mentionedAgents: mentioned } : {}),
+      };
+    }),
     ...activity
       .filter((a) => a.eventKind !== "comment_added")
       .map((a) => ({ kind: "activity" as const, ...a })),

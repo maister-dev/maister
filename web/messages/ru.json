@@ -3965,18 +3965,22 @@
     "timelineEmpty": "Комментариев и событий пока нет.",
     "formerUser": "бывший пользователь",
     "systemActor": "система",
+    "mentionNotSummonable": "%agents% не будет вызван — нет триггера упоминания. Включить его может админ проекта в настройках.",
     "event": {
       "taskCreated": "создал(а) задачу",
       "taskMentioned": "упомянул(а) задачу в комментарии к %ref%",
       "relationAdded": "добавил(а) связь с %ref%",
       "relationRemoved": "удалил(а) связь с %ref%",
       "runLaunched": "запустил(а) попытку %attempt%",
-      "experimentConcluded": "завершил(а) эксперимент"
+      "experimentConcluded": "завершил(а) эксперимент",
+      "agentSummonSuppressed": "не стал(а) вызывать %agent% — он уже работает над этой задачей"
     },
-    "composerPlaceholder": "Напишите комментарий… ссылки KEY-N станут кликабельными.",
+    "composerPlaceholder": "Напишите комментарий… KEY-N станет ссылкой, @agent вызовет агента.",
     "composerSubmit": "Комментировать",
     "composerSubmitting": "Отправка…",
-    "composerHint": "Поддерживается Markdown. Упоминайте задачи как KEY-N.",
+    "composerHint": "Поддерживается Markdown. Задачи — KEY-N, агенты — @id.",
+    "composerMentionListLabel": "Агенты, которых можно вызвать",
+    "composerMentionMatchCount": "Подходящих агентов: $count",
     "composerErrorConfig": "Комментарий должен быть от 1 до 10000 символов.",
     "errorForbidden": "Нужны права участника проекта.",
     "errorGeneric": "Не получилось. Попробуйте ещё раз.",
@@ -4072,7 +4076,8 @@
       "relationAdded": "связь добавлена",
       "relationRemoved": "связь удалена",
       "runLaunched": "запуск",
-      "experimentConcluded": "эксперимент завершён"
+      "experimentConcluded": "эксперимент завершён",
+      "agentSummonSuppressed": "вызов пропущен"
     }
   },
   "agents": {

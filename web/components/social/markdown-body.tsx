@@ -57,15 +57,53 @@ function CodeBlockPreview({
   );
 }
 
+const AGENT_MENTION_HREF = /^\/agents\/(.+)$/;
+
+/**
+ * (ADR-151) The write-time agent-mention shape, detected STRUCTURALLY —
+ * `[@<id>](/agents/<id>)` where the label is the id prefixed by `@`. The
+ * renderer never re-resolves against the live catalog: only a mention that
+ * resolved at write time may look like one.
+ */
+function agentMentionId(
+  href: string | undefined,
+  label: unknown,
+): string | null {
+  const match = href ? AGENT_MENTION_HREF.exec(href) : null;
+
+  if (!match) return null;
+
+  const text = typeof label === "string" ? label : null;
+
+  return text === `@${match[1]}` ? match[1] : null;
+}
+
 const components: Components = {
-  a: ({ href, children }) => (
-    <a
-      className="text-amber underline decoration-amber/40 underline-offset-2 hover:decoration-amber"
-      href={href}
-    >
-      {children}
-    </a>
-  ),
+  a: ({ href, children }) => {
+    // A chip, not a link: there is no /agents/<id> route and /agents is
+    // admin-only, so navigating would 404 or 403 for an ordinary member.
+    const agentId = agentMentionId(href, children);
+
+    if (agentId) {
+      return (
+        <span
+          className="rounded-full border border-line bg-ivory px-1.5 py-px font-mono text-[11.5px] text-ink-2"
+          title={agentId}
+        >
+          @{agentId}
+        </span>
+      );
+    }
+
+    return (
+      <a
+        className="text-amber underline decoration-amber/40 underline-offset-2 hover:decoration-amber"
+        href={href}
+      >
+        {children}
+      </a>
+    );
+  },
   code: ({ className, children }) => {
     const isBlock = Boolean(className);
 

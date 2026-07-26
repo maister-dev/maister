@@ -321,12 +321,12 @@ Phase 0  spec ──► Phase 1  binding foundation ──► Phase 2  resolutio
 
 ### Phase 4 — Surfaces
 
-- [ ] **T10. Composer autocomplete (UX contract D9)**
+- [x] **T10. Composer autocomplete (UX contract D9)**
   RED: unit tests for the pure helpers — `detectMentionQuery(text, caret)` (word-boundary trigger, closes on whitespace, no trigger mid-email), `filterMentionCandidates(candidates, query)` (prefix-before-substring, id and name, 8-row cap), `applyMentionSelection(text, caret, id)` (replaces the partial token, adds one trailing space, returns the new caret). Run unit.
   GREEN: page-side candidate derivation (summonable only, from data already loaded); popover in `comment-composer.tsx` implementing the full D9 contract (keyboard incl. wrap, `isComposing` guard, ARIA set, live-region count, pointer-safe selection, scroll-into-view, zero-candidate = never open); EN/RU strings incl. aria labels; updated placeholder/hint.
   REFACTOR: helpers stay pure and colocated; the component holds interaction only (SOLID); no duplicate filtering in the popover.
 
-- [ ] **T11. Chips, footnotes, timeline**
+- [x] **T11. Chips, footnotes, timeline**
   RED: unit — `MarkdownBody` via `renderToStaticMarkup`: an `/agents/…` link with an `@` label renders the non-navigating chip; a normal link and a KEY-N task link are untouched; a code-fenced mention stays plain text. `task-detail` mapping: `comment_added` payload → per-comment `mentionedAgents` attached before the existing `comment_added` filter; `agent_summon_suppressed` interleaves into the timeline. Run unit.
   GREEN: `markdown-body.tsx` `a` override case; `task-detail.ts` mapping; `task-timeline.tsx` footnote + suppressed-event row; label maps on both pages; EN/RU strings.
   REFACTOR: one chip-detection predicate shared by any future caller (DRY); no styling duplication with task links.

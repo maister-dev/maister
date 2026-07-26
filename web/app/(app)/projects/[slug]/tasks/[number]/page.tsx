@@ -37,6 +37,7 @@ import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
+import { listMentionCandidateAgents } from "@/lib/agents/summonability";
 import { getTaskDetail } from "@/lib/queries/task-detail";
 import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
 import {
@@ -220,6 +221,15 @@ export default async function TaskDetailPage({
               .join(", ")}`
           : t(`launchReason.${forceLaunchability}`);
 
+  // (ADR-151) Composer mention candidates — SUMMONABLE agents only, through the
+  // one eligibility helper the write path and the consumer also read. No
+  // autocomplete endpoint: this is an RSC page prop (D10).
+  const mentionCandidates = canAct
+    ? (await listMentionCandidateAgents(undefined, detail.project.id))
+        .filter((agent) => agent.summonable)
+        .map((agent) => ({ id: agent.id, name: agent.name }))
+    : [];
+
   // M34: attached agents with the `manual` trigger — "Run agent" candidates.
   const manualAgents = canAct
     ? (await getProjectAgentsView(detail.project.id)).attached
@@ -331,6 +341,7 @@ export default async function TaskDetailPage({
     empty: t("timelineEmpty"),
     formerUser: t("formerUser"),
     system: t("systemActor"),
+    mentionNotSummonable: t("mentionNotSummonable"),
     event: {
       task_created: t("event.taskCreated"),
       task_mentioned: t("event.taskMentioned"),
@@ -338,6 +349,7 @@ export default async function TaskDetailPage({
       relation_removed: t("event.relationRemoved"),
       run_launched: t("event.runLaunched"),
       experiment_concluded: t("event.experimentConcluded"),
+      agent_summon_suppressed: t("event.agentSummonSuppressed"),
     },
   };
   const editableTask: TaskEditableTarget = {
@@ -764,7 +776,10 @@ export default async function TaskDetailPage({
               errorConfig: t("composerErrorConfig"),
               errorForbidden: t("errorForbidden"),
               errorGeneric: t("errorGeneric"),
+              mentionListLabel: t("composerMentionListLabel"),
+              mentionMatchCount: t("composerMentionMatchCount"),
             }}
+            mentionCandidates={mentionCandidates}
             slug={slug}
             taskNumber={detail.task.number}
           />

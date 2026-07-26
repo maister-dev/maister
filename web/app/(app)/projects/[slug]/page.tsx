@@ -528,6 +528,7 @@ export default async function ProjectBoardPage({
                   relation_removed: tLog("kind.relationRemoved"),
                   run_launched: tLog("kind.runLaunched"),
                   experiment_concluded: tLog("kind.experimentConcluded"),
+                  agent_summon_suppressed: tLog("kind.agentSummonSuppressed"),
                 },
               }}
               page={activityLog.page}

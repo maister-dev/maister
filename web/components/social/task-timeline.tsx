@@ -7,6 +7,9 @@ export interface TaskTimelineLabels {
   empty: string;
   formerUser: string;
   system: string;
+  // (ADR-151) `%agents%` is the comma-joined list of resolved-but-unsummonable
+  // agent ids.
+  mentionNotSummonable: string;
   event: Record<string, string>;
 }
 
@@ -36,8 +39,13 @@ function activityText(
     typeof payload.attemptNumber === "number"
       ? String(payload.attemptNumber)
       : "";
+  // (ADR-151) agent_summon_suppressed names the agent it skipped.
+  const agent = typeof payload.agentId === "string" ? payload.agentId : "";
 
-  return template.replace("%ref%", ref).replace("%attempt%", attempt);
+  return template
+    .replace("%ref%", ref)
+    .replace("%attempt%", attempt)
+    .replace("%agent%", agent);
 }
 
 function timestamp(at: Date): ReactElement {
@@ -79,6 +87,19 @@ export function TaskTimeline({
               {timestamp(item.createdAt)}
             </div>
             <MarkdownBody text={item.body} />
+            {/* (ADR-151) Only the mentions that will NOT run are explained —
+                a successful summon has its run as the evidence. */}
+            {(item.mentionedAgents ?? []).some((a) => !a.summonable) ? (
+              <p className="mt-1.5 text-[11px] leading-[1.45] text-mute">
+                {labels.mentionNotSummonable.replace(
+                  "%agents%",
+                  (item.mentionedAgents ?? [])
+                    .filter((a) => !a.summonable)
+                    .map((a) => a.id)
+                    .join(", "),
+                )}
+              </p>
+            ) : null}
           </li>
         ) : (
           <li

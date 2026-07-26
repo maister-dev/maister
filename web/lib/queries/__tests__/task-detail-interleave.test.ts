@@ -53,3 +53,64 @@ describe("interleaveTimeline (ADR-078 task timeline)", () => {
     expect(items.map((i) => i.id)).toEqual(["a", "b", "c"]);
   });
 });
+
+// ADR-151 — the `comment_added` activity row is still skipped, but its payload
+// carries the write-time mention truth. It is attached to the comment it
+// describes so the timeline can footnote mentions that cannot summon; the
+// chip in the body is never the authoritative signal.
+describe("interleaveTimeline agent mentions (ADR-151)", () => {
+  it("attaches mentionedAgents from the skipped comment_added row", () => {
+    const items = interleaveTimeline(
+      [comment("c1", "2026-06-01T00:00:00Z")],
+      [
+        {
+          id: "a-dup",
+          eventKind: "comment_added",
+          payload: {
+            commentId: "c1",
+            mentionedAgents: [
+              { id: "core:triager", name: "Triager", summonable: true },
+              { id: "core:reviewer", name: "Reviewer", summonable: false },
+            ],
+          },
+          actor: user,
+          createdAt: new Date("2026-06-01T00:00:00Z"),
+        },
+      ],
+    );
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      kind: "comment",
+      id: "c1",
+      mentionedAgents: [
+        { id: "core:triager", name: "Triager", summonable: true },
+        { id: "core:reviewer", name: "Reviewer", summonable: false },
+      ],
+    });
+  });
+
+  it("leaves a comment without mentions untouched", () => {
+    const items = interleaveTimeline(
+      [comment("c1", "2026-06-01T00:00:00Z")],
+      [activity("a-dup", "comment_added", "2026-06-01T00:00:00Z")],
+    );
+
+    expect(items[0]).not.toHaveProperty("mentionedAgents");
+  });
+
+  it("keeps agent_summon_suppressed as its own timeline row", () => {
+    const items = interleaveTimeline(
+      [comment("c1", "2026-06-01T00:00:00Z")],
+      [
+        activity(
+          "a-sup",
+          "agent_summon_suppressed",
+          "2026-06-02T00:00:00Z",
+        ),
+      ],
+    );
+
+    expect(items.map((i) => i.id)).toEqual(["c1", "a-sup"]);
+  });
+});

@@ -3965,18 +3965,22 @@
     "timelineEmpty": "No comments or activity yet.",
     "formerUser": "former user",
     "systemActor": "system",
+    "mentionNotSummonable": "%agents% will not run — no mention trigger. A project admin can enable one in project settings.",
     "event": {
       "taskCreated": "created this task",
       "taskMentioned": "mentioned this task in a comment on %ref%",
       "relationAdded": "added a relation to %ref%",
       "relationRemoved": "removed a relation to %ref%",
       "runLaunched": "launched run attempt %attempt%",
-      "experimentConcluded": "concluded an experiment"
+      "experimentConcluded": "concluded an experiment",
+      "agentSummonSuppressed": "skipped summoning %agent% — it is already working on this task"
     },
-    "composerPlaceholder": "Write a comment… KEY-N references become links.",
+    "composerPlaceholder": "Write a comment… KEY-N references become links, @agent summons an agent.",
     "composerSubmit": "Comment",
     "composerSubmitting": "Posting…",
-    "composerHint": "Markdown supported. Mention tasks as KEY-N.",
+    "composerHint": "Markdown supported. Mention tasks as KEY-N, agents as @id.",
+    "composerMentionListLabel": "Agents you can summon",
+    "composerMentionMatchCount": "$count agents match",
     "composerErrorConfig": "Comment must be 1–10000 characters.",
     "errorForbidden": "You need member access for that.",
     "errorGeneric": "Action failed. Try again.",
@@ -4072,7 +4076,8 @@
       "relationAdded": "relation added",
       "relationRemoved": "relation removed",
       "runLaunched": "run launched",
-      "experimentConcluded": "experiment concluded"
+      "experimentConcluded": "experiment concluded",
+      "agentSummonSuppressed": "summon suppressed"
     }
   },
   "agents": {
