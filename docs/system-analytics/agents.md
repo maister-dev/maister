@@ -65,7 +65,10 @@ not contain the package-root `maister-agents/`).
   description, runner_id?, workspace (none|repo_read|worktree), workspace_ref?,
   mode (session|subagent), triggers jsonb, capability_profile jsonb?, risk_tier
   (read_only|standard|destructive), recommended jsonb? (extended with
-  executionPolicy), flow_ref? (NEW — same-package flow id), branch_base? (NEW),
+  executionPolicy; **ADR-151 — Designed** adds `mention?: boolean`, which
+  prefills a `trigger_type='mention'` binding row in the attach/edit modal —
+  a recommendation only, never an implicit grant),
+  flow_ref? (NEW — same-package flow id), branch_base? (NEW),
   source_path (server-only), enabled, quarantined_at?, quarantine_reason? }`.
   Admin DTOs expose only logical `definitionPath = maister-agents/<stem>.md`;
   invalid-resync DTOs expose `artifactPath`, never an absolute host path. Index
@@ -96,6 +99,14 @@ not contain the package-root `maister-agents/`).
   `schedules` patch (delete-all-then-reinsert), seeded in the UI from
   `recommended`. (Implemented — ADR-106) An agent disable cascades `enabled=false`
   onto these rows.
+  **(ADR-151 — Designed)** a third value `trigger_type='mention'` carries NO
+  cron and NO `event_match` columns and grants an agent summonability by
+  `@<agentId>` in a task comment — at most ONE enabled mention row per
+  `(agent, project)`. It needs no `agent_schedules` migration: `trigger_type`
+  is plain `text` with a TS-only enum and no value CHECK, and both shape
+  CHECKs are `<>`-guarded. The cron tick and the generic event matcher filter
+  their own `trigger_type` explicitly, so neither observes a mention row.
+  Behavior is owned by [`agent-mentions.md`](agent-mentions.md).
 
   **Project Automations extension (Implemented, ADR-139):** the existing project-agent PATCH
   remains the only binding editor and reconciles stable binding IDs under a
@@ -651,7 +662,9 @@ single-active-run guards.
   model, budget terminal path, `*FromSnapshot` resolvers).
 - **Triggers:** [`scheduler.md`](scheduler.md) (`agent_tick.dispatcher`),
   [`domain-events.md`](domain-events.md) (`agent_triggers` consumer,
-  `task.triage_requeued` emitter), [`run-schedules.md`](run-schedules.md).
+  `task.triage_requeued` emitter), [`run-schedules.md`](run-schedules.md),
+  [`agent-mentions.md`](agent-mentions.md) (`trigger_type='mention'` bindings
+  and the directed `@<agentId>` summon branch, ADR-151).
 - **Tasks surface:** [`tasks.md`](tasks.md) (simple-intent creation, verdict
   columns, `unconfigured`, card pre-launch editing).
 - **External surface:** [`external-operations.md`](external-operations.md) (triage

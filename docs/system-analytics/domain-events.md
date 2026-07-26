@@ -37,8 +37,9 @@ borrows ([scheduler.md](scheduler.md)).
   consumer: `{ consumer_id (PK), cursor_event_id, lease_expires_at?,
   last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
   mechanics below. See [db/domain-events.md](../db/domain-events.md).
-- **Kind taxonomy** (Implemented) — exactly 10 kinds:
-  `task.created`, `task.comment_added`, `task.triage_requeued`, `run.done`,
+- **Kind taxonomy** (Implemented) — exactly 11 kinds:
+  `task.created`, `task.comment_added`, `task.triage_requeued`,
+  `task.clarification_answered`, `run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`, `run.review`, `run.escalated`,
   `gate.failed`. `run.review` (M37, ADR-100) is the settled-not-terminal signal a
   delegated child emits on reaching Review (wakes a parked orchestrator).
@@ -66,6 +67,12 @@ borrows ([scheduler.md](scheduler.md)).
   top-level Review emits nothing). It wakes a parked orchestrator to
   collect/promote/rework and drives as-plan auto-promote. The payload stays
   ids/keys/statuses only (no secrets).
+  **(ADR-151 — Designed)** `task.comment_added` has its `payload` **widened**
+  with an optional `mentionedAgentIds: string[]` (deduped resolved agent ids,
+  omitted when empty) — a migration-free widening, since the payload is
+  free-form jsonb with no runtime validation. It carries directed summons to
+  the `agent_triggers` consumer's additive mention branch; see
+  [agent-mentions.md](agent-mentions.md).
 - **`domain_event_dispatch` job kind** (Implemented) — singleton dispatcher on
   the M24 clock (one seeded `domain_event_dispatch.default` job, cadence 60s,
   budget `domainEventDispatch: 1`, not user-creatable). See
@@ -247,7 +254,7 @@ flowchart TD
 - `domain_events` MUST be append-only: no UPDATE or DELETE application paths;
   any future pruning MUST honor `min(cursor_event_id)` across registered
   consumers (no pruning in this stage).
-- `domain_events.kind` MUST be one of the 10 taxonomy kinds (CHECK-enforced);
+- `domain_events.kind` MUST be one of the 11 taxonomy kinds (CHECK-enforced);
   `task.triage_requeued` MUST be emitted only by the M34 "Send to triage"
   action (Implemented) — no other emitter.
 - The dispatch read window MUST be exactly `id > cursor_event_id AND tx_id <

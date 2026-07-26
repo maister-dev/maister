@@ -35,13 +35,15 @@ inbox substrate. (Implemented)
   `event_kind ∈ {task_created, comment_added, task_mentioned,
   relation_added, relation_removed, run_launched, triage_set,
   triage_requeued, agent_quarantined, experiment_concluded,
-  run_pr_merged, evaluation_decided}` and a jsonb `payload`
+  run_pr_merged, evaluation_decided, agent_summon_suppressed}` and a jsonb
+  `payload`
   (`triage_set`/`triage_requeued`/`agent_quarantined` added by M34 platform
   agents; `experiment_concluded` by ADR-124; `run_pr_merged` added by
   ADR-140/141's `pr_state_scan` merged edge; `evaluation_decided` by
-  ADR-142's human verdict mirror). Written only by the domain layer
-  (`web/lib/social/*` via `recordTaskActivity` plus the named service
-  write-sites).
+  ADR-142's human verdict mirror; `agent_summon_suppressed` by ADR-151's
+  mention branch — see [`agent-mentions.md`](agent-mentions.md)). Written
+  only by the domain layer (`web/lib/social/*` via `recordTaskActivity` plus
+  the named service write-sites).
 - **Subscriber** — `task_subscribers` row: `(task_id, subscriber_type,
   subscriber_id, reason)` with `reason ∈ {creator, commenter, mentioned,
   manual}` and `subscriber_type ∈ {user, agent}` (`system` never
@@ -97,7 +99,7 @@ sequenceDiagram
     R->>C: addTaskComment({ taskId, body, actor })
     C->>DB: BEGIN
     C->>DB: resolve task + project (server-state)
-    C->>C: expandMentions(body) → expanded body + mentioned[]
+    C->>C: expandMentions(body) → expanded body + mentioned[] + agent mentions
     C->>DB: INSERT task_comments (expanded body, actor pair)
     C->>DB: INSERT task_activity comment_added (commented task)
     C->>DB: INSERT task_activity task_mentioned (each mentioned task)
@@ -112,7 +114,11 @@ sequenceDiagram
 
 Mentions expand at write time; the expanded body is what `task_comments.body`
 stores. Rendering never re-resolves (single render path, immutable history;
-stale links after a project slug rename are accepted).
+stale links after a project slug rename are accepted). **(ADR-151 —
+Designed)** the same segmentation pass carries a second token family,
+`@<agentId>` agent mentions, resolved against the project's summonable agents
+and expanded to `[@<agentId>](/agents/<agentId>)`; behavior is owned by
+[`agent-mentions.md`](agent-mentions.md).
 
 ```mermaid
 flowchart TD
@@ -167,13 +173,17 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 - Every `task_activity` row MUST be written by the domain layer
   (`recordTaskActivity` from `web/lib/social/*` or a named service
   write-site) inside the same transaction as its triggering domain write;
-  route handlers MUST NOT insert activity directly. (Implemented)
+  route handlers MUST NOT insert activity directly. **(ADR-151 restatement —
+  Designed)** `recordTaskActivity` remains the ONLY writer, and a caller is
+  either the originating domain transaction or a system-actored async
+  consumer/job whose write is idempotent by construction (`pr_state_scan`,
+  the mention-summon branch). (Implemented)
 - `task_activity.event_kind` MUST be one of `task_created | comment_added |
   task_mentioned | relation_added | relation_removed | run_launched |
   triage_set | triage_requeued | agent_quarantined | experiment_concluded |
-  run_pr_merged | evaluation_decided`;
+  run_pr_merged | evaluation_decided | agent_summon_suppressed`;
   `run_finished` joins only when a `setRunStatus` choke point exists
-  (Phase 2). (Implemented)
+  (Phase 2). (Implemented; `agent_summon_suppressed` — Designed, ADR-151)
 - Every social-table row MUST satisfy `actor_type ∈ {user, agent, system}`
   and `(actor_type = 'system') = (actor_id IS NULL)`; Stage 1 wrote only
   `user`/`system`, while M34 platform agents write `actor_type = 'agent'`
@@ -229,6 +239,9 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   404s on click; the comment body is never rewritten.
 - **Unresolved `KEY-N`** (typo, foreign project key) — literal text,
   logged at DEBUG, no error.
+- **Unresolved or ambiguous `@<handle>`** — literal text, no error, no
+  summon. Resolution and summon behavior are owned by
+  [`agent-mentions.md`](agent-mentions.md) (ADR-151 — Designed).
 - **Empty or whitespace comment body** — route zod validation rejects →
   `MaisterError("CONFIG")` → 400.
 - **Comment POST against a missing task/number** — server-state resolution
@@ -259,7 +272,9 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 ## Linked artifacts
 
 - ADR: [ADR-083](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
-- Sibling domains: [`tasks.md`](tasks.md) (numbering, relations,
+- Sibling domains: [`agent-mentions.md`](agent-mentions.md) (`@<agentId>`
+  resolution + directed summons, ADR-151),
+  [`tasks.md`](tasks.md) (numbering, relations,
   launchability gate), [`hitl.md`](hitl.md) (the HITL half of "Needs you"),
   [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked),
   [`external-operations.md`](external-operations.md) (ext comment routes,

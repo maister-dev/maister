@@ -2462,6 +2462,19 @@ paths:
         activity → subscription upserts (commenter + mention rule) → inbox
         fanout excluding the actor.
 
+        (ADR-151, Designed) The same write-time pass resolves `@<agentId>`
+        agent handles — canonical `@<packageName>:<stem>` or a bare
+        `@<stem>` that matches exactly one eligible agent in this project.
+        Handles inside fenced code blocks, inline code spans, or existing
+        markdown links are inert; unresolved or ambiguous handles stay
+        literal. Resolved handles are stored expanded as
+        `[@<agentId>](/agents/<agentId>)` and are echoed back in
+        `mentionedAgents` with their write-time `summonable` flag, so a
+        caller learns whether a directed summon was accepted without
+        polling. A summonable mention causes at most one directed agent run
+        per `(agent, comment event)`; see
+        `docs/system-analytics/agent-mentions.md`.
+
         Source: `web/app/api/projects/[slug]/tasks/[number]/comments/route.ts`.
       operationId: postTaskComment
       parameters:
@@ -2483,6 +2496,10 @@ paths:
                 summary: Comment mentioning another task
                 value:
                   body: "Blocked until MAI-12 ships the schema."
+              comment-summoning-an-agent:
+                summary: (ADR-151) Comment summoning a platform agent
+                value:
+                  body: "@core:triager please dedupe this against MAI-12."
       responses:
         "201":
           description: Comment created; stored body has mentions expanded.
@@ -2493,6 +2510,27 @@ paths:
                 required: [comment]
                 properties:
                   comment: { $ref: "#/components/schemas/TaskCommentDTO" }
+                  mentionedAgents:
+                    type: array
+                    description: |
+                      (ADR-151, Designed) Agent handles that RESOLVED in this
+                      body, with their write-time summonability. Omitted
+                      entirely when no handle resolved.
+                    items: { $ref: "#/components/schemas/MentionedAgentDTO" }
+              examples:
+                summon-accepted:
+                  summary: (ADR-151) One resolved, summonable mention
+                  value:
+                    comment:
+                      id: "6f2b1a10-6c9a-4a6b-9a1f-3b1a1f9c2d44"
+                      taskId: "0e2a1b60-2d7a-4a1e-9f2b-6d1c3a5b7e90"
+                      body: "[@core:triager](/agents/core:triager) please dedupe this against [MAI-12](/projects/maister/tasks/12)."
+                      actor: { type: "user", id: "u-1", label: "Albert" }
+                      createdAt: "2026-07-26T10:15:00.000Z"
+                    mentionedAgents:
+                      - id: "core:triager"
+                        name: "Triager"
+                        summonable: true
         "400":
           description: Empty or oversized body, invalid shape (`CONFIG`).
           content:
@@ -14580,6 +14618,25 @@ components:
           description: Markdown; mentions stored expanded.
         actor: { $ref: "#/components/schemas/SocialActor" }
         createdAt: { type: string, format: date-time }
+    MentionedAgentDTO:
+      type: object
+      description: |
+        (ADR-151, Designed) One agent handle that resolved at comment-write
+        time. `summonable` is the write-time truth of
+        `Summonable(agent, project)` — attached, link enabled, agent enabled,
+        not quarantined, definition declares the `domain_event` trigger, and
+        an enabled `agent_schedules` row with `trigger_type = 'mention'`
+        exists. `summonable: false` means the handle expanded to a chip but
+        nothing will launch; a project `admin` enables a mention trigger in
+        project settings to change that. The consumer re-checks eligibility
+        at consume time, so this flag is a report, not a guarantee.
+      required: [id, name, summonable]
+      properties:
+        id:
+          type: string
+          description: Package-qualified agent id, `<packageName>:<stem>`.
+        name: { type: string }
+        summonable: { type: boolean }
     SocialActor:
       type: object
       description: |

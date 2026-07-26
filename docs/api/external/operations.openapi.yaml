@@ -360,10 +360,19 @@ paths:
         transaction: mention expansion → comment insert → activity →
         subscription upserts → inbox fanout).
 
-        Actor mapping (ADR-078 D12): a user-owned token acts as
-        `('user', ownerUserId)` via `actorUserIdForToken`; an ownerless
-        project token acts as `('system', NULL)` with
+        Actor mapping (ADR-078 D12, extended by ADR-089): the actor comes
+        from `socialActorForToken` — an **agent token** acts as
+        `('agent', agentId)`, a user-owned token as `('user', ownerUserId)`,
+        and an ownerless project token as `('system', NULL)` with
         `{via: 'ext', tokenId}` recorded in the comment-activity payload.
+        (Earlier revisions of this spec documented only user/system; agent
+        tokens have written `actor.type = "agent"` since M34.)
+
+        (ADR-151, Designed) `@<agentId>` handles in the body resolve at write
+        time exactly as on the session-auth route and are echoed back in
+        `mentionedAgents`. An agent MUST NEVER summon itself: a mention whose
+        resolved id equals this token's own `agentId` still expands in the
+        body but never launches.
 
         Writes a `token_audit_log` row with scope `comments:create` inside
         the same transaction (success-audit-in-work, ext idiom).
@@ -398,6 +407,13 @@ paths:
                 required: [comment]
                 properties:
                   comment: { $ref: "#/components/schemas/CommentDTO" }
+                  mentionedAgents:
+                    type: array
+                    description: |
+                      (ADR-151, Designed) Agent handles that RESOLVED in this
+                      body, with their write-time summonability. Omitted
+                      entirely when no handle resolved.
+                    items: { $ref: "#/components/schemas/MentionedAgentDTO" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -3090,11 +3106,39 @@ components:
             inline code, and existing links are expanded to task links at
             write time; unresolved tokens stay literal.
 
+            (ADR-151, Designed) `@<agentId>` handles follow the same
+            inertness rules and expand to
+            `[@<agentId>](/agents/<agentId>)`. Use the canonical
+            `@<packageName>:<stem>` form; a bare `@<stem>` resolves only when
+            exactly one eligible agent in this project carries that stem. A
+            resolved, summonable mention launches at most one directed agent
+            run on this task; the response's `mentionedAgents` reports which
+            handles resolved and whether each was summonable.
+
+    MentionedAgentDTO:
+      type: object
+      description: |
+        (ADR-151, Designed) One agent handle that resolved at comment-write
+        time. `summonable` is the write-time truth of
+        `Summonable(agent, project)`; `false` means the handle expanded to a
+        chip but nothing will launch (a project `admin` enables a mention
+        trigger in project settings to change that). The consumer re-checks
+        eligibility at consume time, so this flag is a report, not a
+        guarantee.
+      required: [id, name, summonable]
+      properties:
+        id:
+          type: string
+          description: Package-qualified agent id, `<packageName>:<stem>`.
+        name: { type: string }
+        summonable: { type: boolean }
+
     CommentDTO:
       type: object
       description: |
         (ADR-078, Implemented) Comment projection. `body` is markdown with
-        mentions already expanded. The actor pair is `('user', id)` for
+        mentions already expanded. The actor pair is `('agent', agentId)` for
+        agent tokens, `('user', id)` for
         user-owned tokens / session users, `('system', null)` for ownerless
         project tokens; `label` is resolved at read time.
       required: [id, taskId, body, actor, createdAt]

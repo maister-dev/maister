@@ -99,6 +99,32 @@ The board is a horizontally scrollable set of columns:
   saving as inherited task fields unless the operator chooses an override. Its
   comments/activity timeline sits below the run history; a threaded hierarchy can
   be added later without changing the current read flow.
+- **Comment composer — agent mentions (Designed, ADR-151).** Typing `@` at a
+  word boundary opens a hand-rolled popover (project convention — no HeroUI
+  Autocomplete anywhere) listing up to 8 **summonable** agents of this
+  project, filtered by id and name, prefix matches before substring matches.
+  It never opens when the project has zero summonable agents, and the
+  composer hint then does not advertise the feature. Keyboard:
+  `ArrowDown`/`ArrowUp` with wrap, `Enter`/`Tab` to select, `Escape` to close
+  keeping the typed text; all keys behave natively while the popover is
+  closed, and key handling is skipped while `nativeEvent.isComposing` (RU/CJK
+  input). ARIA: textarea carries `aria-expanded` / `aria-controls` /
+  `aria-activedescendant`, the list is `role="listbox"` with `role="option"`
+  + `aria-selected`, and a polite live region announces the match count.
+  Selecting replaces the partial token with `@<canonical id>` plus one
+  trailing space and keeps focus. The popover is anchored below the textarea,
+  not caret-tracked.
+- **Comment timeline — chips and summon notes (Designed, ADR-151).** A
+  resolved agent mention renders as a **non-navigating accent pill** with the
+  agent id as its `title` — deliberately not a link, since `/agents` is
+  admin-only; `KEY-N` task mentions keep their existing amber-link treatment
+  so the two mention kinds stay visually distinct. A comment whose mentions
+  resolved but were **not summonable** carries a per-comment footnote naming
+  them with remediation copy ("no mention trigger — a project admin can
+  enable one in project settings"). A suppressed summon (the agent already
+  has an active run on this task) renders as its own
+  `agent_summon_suppressed` timeline event. A **successful** summon gets no
+  extra row — the run itself is the evidence.
 - **Flight cards** show active or latest runs, readiness, assignment/takeover
   state, HITL hints, and lifecycle actions. When PR lifecycle tracking ships
   (Implemented, ADR-140), a card in `Done` / `InDelivery` / `OnReview` also shows a
@@ -209,10 +235,17 @@ to server-stored mode. The board never renders a stale question as answerable.
   `GET/POST /api/account/tokens` and
   `DELETE /api/account/tokens/{tokenId}`.
 
+- Agent mentions (Designed, ADR-151): **no new endpoint**. The task-detail
+  page already loads the project's agents and computes launchability inline,
+  so the composer's mention candidates are derived there and passed as
+  props; the comment `POST` response carries `mentionedAgents` for callers
+  outside the page.
+
 Behavior details live in
 [`../../system-analytics/tasks.md`](../../system-analytics/tasks.md),
-[`../../system-analytics/runs.md`](../../system-analytics/runs.md), and
-[`../../system-analytics/social-board.md`](../../system-analytics/social-board.md).
+[`../../system-analytics/runs.md`](../../system-analytics/runs.md),
+[`../../system-analytics/social-board.md`](../../system-analytics/social-board.md),
+and [`../../system-analytics/agent-mentions.md`](../../system-analytics/agent-mentions.md).
 External token behavior lives in
 [`../../system-analytics/external-operations.md`](../../system-analytics/external-operations.md).
 

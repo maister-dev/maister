@@ -435,7 +435,7 @@ erDiagram
         text project_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
-        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|run_pr_merged (run_pr_merged: ADR-140, 0105; expands both task_activity_event_kind_check and inbox_items_event_kind_check)"
+        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|triage_set|triage_requeued|agent_quarantined|experiment_concluded|run_pr_merged|evaluation_decided|agent_summon_suppressed (run_pr_merged: ADR-140, 0105, expands both task_activity_event_kind_check and inbox_items_event_kind_check; agent_summon_suppressed: ADR-151, 0121, task_activity only)"
         jsonb payload "DEFAULT {}"
         timestamp created_at
     }
@@ -582,6 +582,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   `(task_id, created_at)`; `task_activity_task_created_idx` on
   `(task_id, created_at)` + `task_activity_project_created_idx` on
   `(project_id, created_at)`.
+- **(ADR-151, Designed — migration `0121`)** `task_activity_agent_summon_uq`
+  partial UNIQUE on `(task_id, (payload->>'agentId'),
+  (payload->>'triggerEventId')) WHERE event_kind = 'agent_summon_suppressed'`
+  — the structural backstop that keeps one mention-summon suppression note
+  per `(task, agent, event)` under at-least-once event redelivery.
 - **(ADR-078, Implemented)** `task_subscribers_task_pair_uq` on
   `(task_id, subscriber_type, subscriber_id)` UNIQUE — first subscription
   reason wins.

@@ -175,6 +175,7 @@
 | [ADR-148](#adr-148-run-workspace-lifecycle-cleanup-and-reconciliation) | Run workspace lifecycle cleanup and reconciliation | Implemented | 2026-07-16 |
 | [ADR-149](#adr-149-authored-capability-editor-session-edit-lock) | Authored-capability editor session edit-lock | Implemented | 2026-07-21 |
 | [ADR-150](#adr-150-experiments-cut-over-completion) | Experiments cut-over completion | Implemented | 2026-07-21 |
+| [ADR-151](#adr-151-agent-mentions-in-task-comments-as-directed-summons) | Agent mentions in task comments as directed summons | Accepted | 2026-07-26 |
 
 ---
 
@@ -13119,6 +13120,145 @@ the evaluations namespace; the packagePin concept itself lives on in recipes).
 - _Ship the cut-over without pairwise/standardization_: rejected — leaving a
   fail-closed CONFIG gate and a complete-but-unreachable lib is exactly the
   half-shipped state this plan exists to close.
+
+---
+
+### ADR-151: Agent mentions in task comments as directed summons
+
+**Date:** 2026-07-26
+**Status:** Accepted
+
+**Context:** The M31 social board (ADR-083) already expands `KEY-N` task
+mentions at comment-write time and emits `task.comment_added` onto the ADR-086
+outbox; the M34 platform-agent substrate (ADR-089/090, re-keyed by ADR-106)
+already launches directed agent runs from that bus, and the clarification
+handoff proves the shape end to end. What is missing is the human-facing verb:
+an operator on a task cannot say "@core:triager please dedupe this" and get
+that specific agent, on that specific task, with the comment thread as
+context. Today the only comment-driven trigger is a generic
+`eventMatch.kinds` subscription — it fires on EVERY comment in the project,
+picks its own owner via the lowest-`scheduleId` rule, and cannot be aimed.
+
+**Decision:**
+
+- **A mention is resolved and expanded at WRITE time, never at read time**
+  (D3/D4). The scanner extends `web/lib/social/mentions.ts` with a second
+  token family inside the one existing segmentation pass, so code-fence,
+  inline-code and existing-link inertness is inherited rather than
+  re-implemented. A resolved handle is stored as `[@<agentId>](/agents/<agentId>)`;
+  the renderer detects that shape structurally and draws a non-navigating
+  chip. **The leading `/` is load-bearing** — without it `core:triager` is
+  parsed as a URL scheme by react-markdown's `urlTransform`. A read-time
+  text-node regex was rejected: it would re-resolve mentions against a mutable
+  catalog and lose the write-time truth the activity payload records.
+- **The binding is an `agent_schedules` row with `trigger_type = 'mention'`**
+  (D1), at most one enabled per `(agent, project)`. This keeps every launch
+  path in one table with one outcome audit (`last_outcome` / `last_error_code`
+  / `last_run_id`) and one `schedulesRevision`-fenced save. A boolean on
+  `agent_project_links` was rejected: it loses the audit, the one-table
+  visibility, and the prefill symmetry with cron/event bindings.
+  **Finding, recorded so a reviewer does not "helpfully" add one: this needs
+  NO `agent_schedules` migration.** `trigger_type` is plain `text` with a
+  TS-only enum and no value CHECK, and both shape CHECKs
+  (`agent_schedules_cron_shape_check`, `agent_schedules_event_shape_check`)
+  are `<>`-guarded, so a mention row with all-null cron/event columns passes
+  unchanged.
+- **The launch source stays `'domain_event'`** (D2) — no new
+  `AgentTriggerSource`, no `runs.trigger_source` value, no context-block
+  routing fan-out. The trigger payload is
+  `{source:'domain_event', eventId, payload:{kind, payload, mentionedBy}}`;
+  the `{kind, payload}` core matches the clarification handoff so
+  `taskCommentTriggerContextBlock` routes unchanged and `mentionedBy` is an
+  additive sibling. The consequence is deliberate: a definition must declare
+  `domain_event` in `triggers:` to be summonable, enforced by the existing
+  `trigger_missing` launch gate.
+- **The consumer branch is additive and does NOT `continue`** (D5). It runs
+  before the generic matcher, fans out to N deduped ids, and evaluates the
+  frozen decision table per agent; generic `eventMatch.kinds` subscribers keep
+  firing exactly as before, including the lowest-`scheduleId`-wins
+  single-owner rule. The clarification branch's `continue` stays
+  clarification-only.
+- **Suppression idempotency is structural, not read-then-write.** A mentioned
+  agent already holding a run on that task in `MENTION_SUPPRESSION_STATUSES`
+  is skipped and noted, and the note is inserted with `onConflictDoNothing`
+  behind a partial unique index `task_activity_agent_summon_uq` on
+  `(task_id, payload->>'agentId', payload->>'triggerEventId') WHERE
+  event_kind = 'agent_summon_suppressed'` (migration `0121`). This mirrors the
+  `runs_agent_trigger_event_uq` philosophy — the unique is the backstop — and
+  removes the TOCTOU window a check-before-insert would leave.
+  `MENTION_SUPPRESSION_STATUSES` is a per-concern predicate, NOT
+  `ACTIVE_RUN_STATUSES`: `Pending` is included so a queued summon is not
+  double-queued, while `Review` and `Crashed` are excluded because
+  re-mentioning after a finished or dead attempt is the intended rework loop.
+- **This is the first domain-event consumer to write `task_activity`**, so
+  ADR-078 D7's one-writer invariant is restated rather than quietly bent:
+  *`recordTaskActivity` remains the only writer; callers are either the
+  originating domain transaction or a system-actored async consumer/job whose
+  write is idempotent by construction.* The nearest sanctioned precedent is
+  the `pr_state_scan` job (ADR-140), which already writes `run_pr_merged` from
+  its own transaction under a system actor.
+- **Authorization is the binding, and it is admin-gated** (D12). Verified,
+  not assumed: `commentTask` and `launchRun` are BOTH `member`, so no session
+  user gains launch power they lacked; creating or enabling a mention binding
+  requires `editSettings` — project `admin`. On the ext surface a
+  `comments:create` token can therefore cause a launch without holding
+  `runs:launch`. **That property already exists today** for generic
+  `task.comment_added` event bindings; it is recorded here rather than
+  introduced, with the admin-curated binding set as the containment. Storm
+  containment is the per-task-per-agent suppression plus the
+  `MAISTER_MAX_CONCURRENT_AGENTS` cap, whose over-cap path queues as
+  `Pending` and never throws.
+- **Both comment POST responses report the resolved mentions** (D11) as
+  `mentionedAgents: [{id, name, summonable}]`, omitted when empty. The
+  assistant-over-MCP is a first-class author of summoning comments and would
+  otherwise have to parse markdown links to learn whether its summon was
+  accepted. This is write-time truth the pipeline already computed — zero
+  extra queries. Scope guard: POST responses only; `CommentDTO` and the GET
+  list stay untouched (deriving this for historical comments would need an
+  activity join).
+- **`recommended.mention` lands now** (D13), and the Studio frontmatter editor
+  MUST learn it in the same change: `editRecommended` rebuilds the whole
+  `recommended` object from known sub-fields and writes it back, so an unknown
+  key is **silently dropped** on any Studio edit. Any future `recommended.*`
+  field carries the same obligation.
+- **No new endpoint** (D10). The task-detail page already loads the project's
+  agents and computes launchability inline; the composer's mention candidates
+  are derived there and passed as props, filtered to summonable agents only —
+  offering an agent that cannot be launched is a design defect, not a
+  discoverability feature.
+
+**Consequences:**
+
+- Migration `0121` is additive only: it re-adds
+  `task_activity_event_kind_check` with `agent_summon_suppressed` and creates
+  the partial unique index. No backfill, no data-bearing DROP.
+  `inbox_items_event_kind_check` is deliberately NOT widened — the kind never
+  fans out (its pre-existing staleness is tracked separately).
+- A comment can now cause compute spend. The observable containment is three
+  layered facts, each testable: the binding is admin-granted, an active run on
+  the task suppresses a re-summon, and the agent pool cap queues the excess.
+- A hand-typed `[@fake](/agents/fake)` renders as a chip with no run behind
+  it. Accepted: the authoritative signals are the activity payload and the
+  run row, never the chip — identical to today's hand-typed `KEY-N` links.
+- A successful summon writes NO activity row; the run itself is the evidence.
+  Only suppression writes a row, because "nothing happened" is the state a
+  reader cannot otherwise infer.
+
+**Alternatives Considered:**
+
+- _A new `mention` trigger kind on the agent definition_: rejected — it fans
+  out through the definition zod, `AgentTriggerSource`, `runs.trigger_source`,
+  and prompt-context routing for zero behavioral gain, since
+  `taskCommentTriggerContextBlock` already keys on `task.comment_added`.
+- _A boolean `mentions_enabled` column on `agent_project_links`_: rejected —
+  see D1; no outcome audit and no prefill symmetry.
+- _Re-resolving mentions in the renderer_: rejected — see D3/D4; it makes
+  rendering depend on the current catalog and silently rewrites history.
+- _Recording an activity row for every successful summon_: rejected — the run
+  row is the evidence, and a second record invites the two to disagree.
+- _Letting the mention branch `continue` past the generic matcher_: rejected —
+  it would silently disable existing generic `task.comment_added`
+  subscriptions the moment anyone types an `@`.
 
 ---
 

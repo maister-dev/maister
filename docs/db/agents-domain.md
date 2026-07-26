@@ -85,7 +85,7 @@ erDiagram
         text id PK "uuid — reworked in place from the dead M24 shape"
         text agent_id FK "NOT NULL -> agents(id) CASCADE (was text agent_ref)"
         text project_id FK "NOT NULL -> projects(id) CASCADE"
-        text trigger_type "cron|event"
+        text trigger_type "cron|event|mention (mention: ADR-151, no migration - plain text, no value CHECK)"
         text cron_expr "cron rows: NOT NULL, 5-field croner-validated"
         text timezone "cron rows: NOT NULL, IANA"
         timestamptz next_fire_at "cron rows: NOT NULL — atomic-claim key"
@@ -129,7 +129,7 @@ not trust a request body for an agent identifier.
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
 | `agent_project_links` | `UNIQUE` | `(agent_id, project_id)` | One attachment per pair. |
-| `agent_schedules` | `CHECK` | cron rows: `cron_expr/timezone/next_fire_at NOT NULL`; event rows: `event_match NOT NULL` | Row shape per `trigger_type`. |
+| `agent_schedules` | `CHECK` | cron rows: `cron_expr/timezone/next_fire_at NOT NULL`; event rows: `event_match NOT NULL` | Row shape per `trigger_type`. Both CHECKs are `<>`-guarded, so **(ADR-151 — Designed)** `trigger_type='mention'` rows (all-null cron/event columns) pass unchanged and need NO migration; `trigger_type` itself carries no value CHECK. At most one ENABLED mention row per `(agent_id, project_id)` is enforced in `updateAgentLink`, not by a constraint. |
 | `runs` | partial `UNIQUE` | `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` | Outbox→spawn no-dup claim (at-least-once redelivery converges to one run). |
 | `project_tokens` | `CHECK` | `(token_kind='agent') = (agent_id IS NOT NULL)` | Agent tokens always carry the agent identity. |
 
