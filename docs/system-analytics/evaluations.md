@@ -354,14 +354,31 @@ only — every check is exact-or-superset, never a lossy coercion.
 | `slot_intent_unsatisfiable` | a runner *intent* matches no catalog candidate |
 | `overlay_ref_unknown` | a capability overlay names an unknown rule/skill/mcp/subagent |
 
-There are two warning codes. `slot_intent_soft_mismatch` (`preflight.ts`) fires
-on every satisfiable intent-mode slot, because the launch seam threads only
-`mode: "runner"` hard-pins, so an intent variant falls back to the default
+There are three warning codes. `slot_intent_soft_mismatch` (`preflight.ts`)
+fires on every satisfiable intent-mode slot, because the launch seam threads
+only `mode: "runner"` hard-pins, so an intent variant falls back to the default
 runner chain rather than its declared intent. `slot_runner_pin_not_threaded`
 fires on a `mode: "runner"` hard-pin bound to a non-`session:` slot (e.g. a
 `consensus:` participant): the seam threads only `session:` slots
 (`isSeamThreadableSlot`), so such a pin is not honored and the run uses the
-default runner chain. Warnings never block.
+default runner chain. `recipe_axis_not_threaded` fires per declared recipe
+axis the seam does not thread — `capabilityOverlay`,
+`materializationIntent.packagePins`, `nodeAgentBindings`, `budgets` — and any
+recipe binding one is refused at standardization
+(`axis_not_threaded_*`). Warnings never block a launch.
+
+**Co-evolve boundary (Codex-1, resolved to `C · partial thread`).** The seam
+MUST honor the recipe's pinned `flow.flowRevisionId` (threaded as
+`evaluationFlowRevisionId` — the run's `runs.flow_revision_id` IS the pin, and
+the runner executes it) and the recipe's `inputs.formValues` (pre-written as
+per-form-node `input-<nodeId>.json` artifacts before the run row exists, so
+form nodes answer from the passport instead of pausing). The seam MUST re-run
+the full live preflight immediately before its first side effect and fail
+closed on any hard refusal — a `recipeId` batch item is otherwise vetted only
+at creation time. The four axes above remain declared-but-unthreaded: they
+warn at preflight, refuse at standardization, and a winner whose recorded
+`runIdentity.flowRevisionId` differs from its recipe pin refuses with
+`winner_revision_mismatch`.
 
 A missing catalog MUST surface as a refusal, never a fabricated pass: absence
 of evidence is not evidence of compatibility.
@@ -442,7 +459,8 @@ flowchart LR
 ```
 
 Eligibility refuses with `no_conclusive_winner`, `winner_not_launched_recipe`,
-`recipe_unavailable`, or a prefixed `preflight:<code>` passthrough of any
+`recipe_unavailable`, an `axis_not_threaded_*` unthreaded-axis guard,
+`winner_revision_mismatch`, or a prefixed `preflight:<code>` passthrough of any
 preflight refusal. Two conditions throw instead of refusing: a missing study is
 `PRECONDITION`, and a verdict citing a participant outside its own study is
 `CONFIG`. `standardizeRecipe` re-runs the full eligibility check **inside** its

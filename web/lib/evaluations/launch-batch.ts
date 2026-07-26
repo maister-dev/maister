@@ -586,13 +586,14 @@ export async function runControlledLaunchBatch(
           );
         }
 
-        // ADR-150 provenance: the seam does not thread the recipe's pinned flow
-        // revision yet (co-evolve), so the run resolved its flow from the task's
-        // LIVE enabled revision. Record the ACTUAL revision the run launched with
-        // — never the recipe's declared pin — so evidence never attributes a
-        // result to a revision that did not produce it. `flowRefId` is stable
-        // (only the revision drifts on a package upgrade), so it stays from the
-        // recipe.
+        // ADR-150 provenance: record the ACTUAL revision the run launched with,
+        // read back from the run row — never the recipe's declared pin taken on
+        // faith — so evidence can never attribute a result to a revision that
+        // did not produce it. Since Codex-1 (C) the default seam threads the pin
+        // (`evaluationFlowRevisionId`), so actual == pin by construction; the
+        // read-back stays as the honest recorder for ANY seam implementation.
+        // `flowRefId` is stable (only the revision drifts on a package
+        // upgrade), so it stays from the recipe.
         const [launchedRun] = await tx
           .select({ flowRevisionId: runs.flowRevisionId })
           .from(runs)

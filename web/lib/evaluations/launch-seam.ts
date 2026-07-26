@@ -3,6 +3,9 @@ import "server-only";
 import type { LaunchRunSeam } from "@/lib/evaluations/launch-batch";
 import type { LaunchRunContext } from "@/lib/services/runs";
 
+import { MaisterError } from "@/lib/errors";
+import { livePreflightLoaders } from "@/lib/evaluations/preflight-loaders";
+import { preflightStudyRecipe } from "@/lib/evaluations/recipes";
 import { isSeamThreadableSlot } from "@/lib/evaluations/slot-threading";
 import { launchRun } from "@/lib/services/runs";
 
@@ -31,11 +34,13 @@ import { launchRun } from "@/lib/services/runs";
 // participant) and INTENT-mode bindings (`mode: "intent"`) are NOT threaded here
 // — both fall back to launchRun's default runner chain (resolving a typed intent
 // or a consensus-slot host needs the live catalog and is the remaining
-// co-evolve); the capabilityOverlay and pinned flow-revision are likewise not
-// yet threaded. Preflight WARNS on every intent-mode slot AND every non-session
-// runner pin (`slot_runner_pin_not_threaded`) — never a silent pass — so the
-// author sees the variant runs on the default runner, not its declared
-// runner/intent; the misroute is surfaced, not hidden.
+// co-evolve). Codex-1 (C): the recipe's pinned flow revision and frozen form
+// inputs ARE threaded (`evaluationFlowRevisionId` / `evaluationFormInputs`), so
+// a variant executes ITS recipe's revision with ITS inputs — the passport is
+// honored by construction, not merely recorded. The still-unthreaded axes
+// (capabilityOverlay, materializationIntent.packagePins, nodeAgentBindings,
+// budgets) surface as `recipe_axis_not_threaded` preflight warnings and make
+// the recipe UN-standardizable — never a silent pass.
 function sessionRunnerOverridesFromRecipe(
   recipe: LaunchRunSeamArgs["recipeDefinition"],
 ): Record<string, string> {
@@ -54,9 +59,32 @@ type LaunchRunSeamArgs = Parameters<LaunchRunSeam>[0];
 
 export function defaultLaunchRunSeam(ctx: LaunchRunContext): LaunchRunSeam {
   return async (args) => {
+    // Codex-1 step 9: re-run live preflight immediately before the first launch
+    // side effect, fail-closed on every hard refusal. A `recipeId` batch item
+    // was vetted only at recipe CREATION — trust, enablement, contract digests,
+    // and runner availability can all drift before (or between) drives.
+    const verdict = await preflightStudyRecipe(
+      {
+        studyId: args.studyId,
+        projectId: args.projectId,
+        definition: args.recipeDefinition,
+      },
+      livePreflightLoaders(),
+    );
+
+    if (!verdict.ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `controlled launch preflight failed: ${verdict.refusals
+          .map((r) => r.code)
+          .join(", ")}`,
+      );
+    }
+
     const sessionRunnerOverrides = sessionRunnerOverridesFromRecipe(
       args.recipeDefinition,
     );
+    const formValues = args.recipeDefinition.inputs.formValues;
 
     const { runId } = await launchRun(
       {
@@ -65,6 +93,13 @@ export function defaultLaunchRunSeam(ctx: LaunchRunContext): LaunchRunSeam {
         autoPromote: false,
         evaluationStudyId: args.studyId,
         evaluationBatchItemId: args.launchKey,
+        // Codex-1 step 8: the run pins + executes the RECIPE's flow revision
+        // (never the task's live enabled one) with the recipe's frozen form
+        // inputs pre-written as its input artifacts.
+        evaluationFlowRevisionId: args.recipeDefinition.flow.flowRevisionId,
+        ...(Object.keys(formValues).length
+          ? { evaluationFormInputs: formValues }
+          : {}),
         executionPolicy: args.recipeDefinition.executionPolicy,
         ...(Object.keys(sessionRunnerOverrides).length
           ? { sessionRunnerOverrides }

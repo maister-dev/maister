@@ -82,8 +82,10 @@ export async function POST(
     // unlaunchable flow, unavailable runner, uncovered artifact, contract drift,
     // unknown overlay) blocks the launch BEFORE any recipe/batch write, so a
     // caller that skipped the advisory preview cannot launch an un-vetted
-    // variant. Warnings never block. recipeId items reference recipes already
-    // vetted at their own inline creation.
+    // variant. Warnings never block. recipeId items were vetted at their own
+    // inline creation AND are re-preflighted fail-closed inside the default
+    // seam at drive time (Codex-1 step 9) — contract drift between creation
+    // and drive fails the item, never launches on it.
     const loaders = livePreflightLoaders();
 
     for (const [index, item] of parsed.data.items.entries()) {

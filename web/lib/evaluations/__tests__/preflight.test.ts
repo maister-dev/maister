@@ -117,6 +117,36 @@ describe("preflightControlledRecipe", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("warns on every declared-but-unthreaded recipe axis (Codex-1 co-evolve)", () => {
+    const flow = flowRevision();
+    const recipe = recipeFor(flow, {
+      capabilityOverlay: { rules: { add: ["core:rule-a"] } },
+      nodeAgentBindings: [{ nodeId: "implement", agentId: "core:reviewer" }],
+      materializationIntent: {
+        packagePins: [{ packageInstallId: "pi-1" }],
+        capabilityRequirements: [],
+        allowedProjectOverlays: [],
+      },
+      budgets: { run: {} },
+    });
+
+    const result = preflightControlledRecipe(input({ flow, recipe }));
+
+    // Warnings never block — the recipe stays launchable, loudly.
+    expect(result.ok).toBe(true);
+    const axes = result.warnings
+      .filter((w) => w.code === "recipe_axis_not_threaded")
+      .map((w) => w.axis)
+      .sort();
+
+    expect(axes).toEqual([
+      "budgets",
+      "capabilityOverlay",
+      "nodeAgentBindings",
+      "packagePins",
+    ]);
+  });
+
   it("refuses a cross-project flow revision (ownership)", () => {
     const flow = flowRevision({ projectId: "other-project" });
     const result = preflightControlledRecipe(

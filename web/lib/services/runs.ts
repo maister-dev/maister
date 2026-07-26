@@ -5,6 +5,7 @@ import type { ProjectAction } from "@/lib/authz";
 import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
 
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
@@ -14,8 +15,10 @@ import {
   capabilityRefIdSetsFromRecords,
   firstUnknownCapabilityRef,
   firstUnknownPackageMcpRef,
+  readAndValidateFormSchemaDoc,
   type CapabilityRefRecord,
 } from "@/lib/config";
+import { atomicWriteJson } from "@/lib/atomic";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
 import {
   resolveRunSessions,
@@ -165,6 +168,55 @@ async function appendRunnerResolutionWarningEvents(args: {
   }
 }
 
+// Codex-1 (ADR-150 · C): pre-write a controlled recipe's frozen form inputs as
+// the run's per-node input artifacts. The graph runner's form node consumes an
+// existing `input-<nodeId>.json` (existing-file-wins, runFormCollect) — so a
+// controlled launch answers its forms from the recipe passport instead of
+// pausing for a human. Only fields the node's OWN form_schema declares are
+// written to it; evaluation preflight already guarantees every required field
+// is supplied and every supplied field is known (D16). A form node with no
+// matching field keeps its interactive HITL.
+async function writeEvaluationFormInputs(args: {
+  compiled: ReturnType<typeof compileManifest>;
+  flowInstallPath: string;
+  projectSlug: string;
+  runId: string;
+  formValues: Record<string, unknown>;
+}): Promise<void> {
+  if (Object.keys(args.formValues).length === 0) return;
+
+  const dir = runDirPath(runtimeRoot(), args.projectSlug, args.runId);
+  let dirCreated = false;
+
+  for (const node of args.compiled.nodes.values()) {
+    if (node.nodeType !== "form") continue;
+    const schemaRef = (node.settings as { form_schema?: string } | undefined)
+      ?.form_schema;
+
+    if (typeof schemaRef !== "string" || schemaRef.length === 0) continue;
+
+    const doc = await readAndValidateFormSchemaDoc(
+      args.flowInstallPath,
+      schemaRef,
+    );
+    const subset: Record<string, unknown> = {};
+
+    for (const field of doc.fields) {
+      if (field.name in args.formValues) {
+        subset[field.name] = args.formValues[field.name];
+      }
+    }
+
+    if (Object.keys(subset).length === 0) continue;
+
+    if (!dirCreated) {
+      await mkdir(dir, { recursive: true });
+      dirCreated = true;
+    }
+    await atomicWriteJson(path.join(dir, `input-${node.id}.json`), subset);
+  }
+}
+
 // M13: a launch is refused (CONFIG → 400) when any compiled node's
 // finish.human.role or settings.roles references a Flow role not in the
 // project's active (non-archived) project_flow_roles registry. An empty
@@ -306,6 +358,17 @@ export type LaunchRunInput = {
   // `ephemeralOverrides` the single launch-dialog `runnerId` uses; a concrete
   // override always wins over the default chain. Seam adapter only.
   sessionRunnerOverrides?: Record<string, string>;
+  // Codex-1 (ADR-150 · C): the controlled recipe's pinned flow revision. The
+  // launch resolves + validates THIS revision through the same guards as an
+  // enabled one and the run EXECUTES it (the runner loads the manifest from
+  // runs.flow_revision_id) — the recipe passport is honored by construction,
+  // not merely recorded. Seam adapter only; never a route body field.
+  evaluationFlowRevisionId?: string;
+  // Codex-1 (ADR-150 · C): the recipe's frozen form inputs. Each form node's
+  // declared subset is pre-written as `input-<nodeId>.json` BEFORE the run row
+  // exists, so the graph runner's existing-file-wins branch answers the form
+  // from the passport instead of pausing for a human. Seam adapter only.
+  evaluationFormInputs?: Record<string, unknown>;
   // ADR-121 (INV-9): mark this run as auto-DRAINED — stamps runs.queue_admitted_at
   // at insert so it counts toward the per-project `maxInFlightAuto` share and is
   // distinguishable from manual/scratch/resume runs. Set ONLY by the unified
@@ -599,7 +662,9 @@ export async function* launchRunStaged(
   // The study whose forced `evaluation_study` promotion hold this run carries:
   // an explicit controlled launch (seam adapter) or inherited participation.
   const evaluationHoldStudyId =
-    input.evaluationStudyId ?? inheritedEvaluationParticipation?.studyId ?? null;
+    input.evaluationStudyId ??
+    inheritedEvaluationParticipation?.studyId ??
+    null;
 
   if (inheritedEvaluationParticipation) {
     log.info(
@@ -732,6 +797,33 @@ export async function* launchRunStaged(
     );
   }
 
+  // Codex-1 (ADR-150 · C): the evaluation seam pins the run to the recipe's
+  // exact flow revision. The row flows through the SAME downstream guards as an
+  // ADR-132 packagePin (packageStatus/setupStatus/schema/engine) and the run
+  // insert snapshots it, so the runner executes exactly this revision.
+  // Ownership fails closed: a revision of another flow can never execute here.
+  if (input.evaluationFlowRevisionId) {
+    if (pinnedRevision) {
+      throw new MaisterError(
+        "CONFLICT",
+        "evaluationFlowRevisionId and packagePin cannot target the same launch",
+      );
+    }
+    const evalRevisionRows = await _db
+      .select()
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, input.evaluationFlowRevisionId));
+    const evalRevision = evalRevisionRows[0];
+
+    if (!evalRevision || evalRevision.flowRefId !== flow.flowRefId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `pinned evaluation flow revision ${input.evaluationFlowRevisionId} does not exist for flow "${flow.flowRefId}"`,
+      );
+    }
+    pinnedRevision = evalRevision;
+  }
+
   // M39 Stream B (ADR-107): apply the launcher's version-adopt choices for the
   // project's attached centralized packages BEFORE the enablement check reads
   // flow.enabled_revision_id — adopt/cut_and_adopt advance the project
@@ -799,7 +891,7 @@ export async function* launchRunStaged(
       if (pinnedRevision) {
         throw new MaisterError(
           "CONFLICT",
-          "packagePin and a try_once choice cannot target the same launch",
+          "a pinned revision (packagePin / evaluation pin) and a try_once choice cannot target the same launch",
         );
       }
       for (const tryOnce of tryOncePins) {
@@ -1535,6 +1627,24 @@ export async function* launchRunStaged(
         );
       }
 
+      // Codex-1 (C): pre-write the recipe's frozen form inputs BEFORE the run
+      // row exists — the runner cannot start before the insert + tryStartRun,
+      // so a form node never races its pre-answer; a write failure lands in
+      // the catch below (worktree compensation, no orphaned Pending run).
+      if (input.evaluationFormInputs) {
+        await writeEvaluationFormInputs({
+          compiled,
+          flowInstallPath: revision.installedPath,
+          projectSlug: project.slug,
+          runId,
+          formValues: input.evaluationFormInputs,
+        });
+        log.info(
+          { runId, fields: Object.keys(input.evaluationFormInputs).length },
+          "[FIX:codex-1] controlled-recipe form inputs pre-written",
+        );
+      }
+
       await _db.transaction(async (tx: any) => {
         await ctx.assertLaunchOwnership?.(tx);
 
@@ -1797,7 +1907,10 @@ export async function* launchRunStaged(
         force: true,
       }).catch((rmErr) =>
         log.error(
-          { rmErr: (rmErr as Error).message, worktreePath: createdWorktreePath },
+          {
+            rmErr: (rmErr as Error).message,
+            worktreePath: createdWorktreePath,
+          },
           "adopt-path compensating removeWorktree failed (manual cleanup may be required)",
         ),
       );

@@ -87,6 +87,9 @@ let createControlledRecipe: typeof import("@/lib/evaluations/recipes").createCon
 let createControlledLaunchBatch: typeof import("@/lib/evaluations/launch-batch").createControlledLaunchBatch;
 let runControlledLaunchBatch: typeof import("@/lib/evaluations/launch-batch").runControlledLaunchBatch;
 let maxConcurrentRunsCap: typeof import("@/lib/scheduler").maxConcurrentRunsCap;
+let buildFlowContractProjection!: typeof import("@/lib/evaluations/preflight-loaders").buildFlowContractProjection;
+let computeInputContractDigest!: typeof import("@/lib/evaluations/recipe").computeInputContractDigest;
+let computeArtifactContractDigest!: typeof import("@/lib/evaluations/recipe").computeArtifactContractDigest;
 
 const instructManifest = {
   schemaVersion: 1,
@@ -182,14 +185,23 @@ async function seedLiveRun(taskId: string): Promise<string> {
 
 const ctx = { actorUserId: null, authorize: async () => {} };
 
-function recipeDefinition(): Record<string, unknown> {
+// Codex-1: the default seam now preflights fail-closed against the LIVE
+// contracts, so the recipe must pin the REAL seeded revision with digests
+// derived from the same projection the preflight computes.
+async function recipeDefinition(): Promise<Record<string, unknown>> {
+  const flowRevisionId = `rev-${projectId}`;
+  const projection = await buildFlowContractProjection(
+    { projectId, flowRefId: "bugfix", flowRevisionId },
+    db,
+  );
+
   return {
     schemaVersion: 1,
     flow: {
       flowRefId: "bugfix",
-      flowRevisionId: "rev",
-      inputContractDigest: "d",
-      artifactContractDigest: "d",
+      flowRevisionId,
+      inputContractDigest: computeInputContractDigest(projection),
+      artifactContractDigest: computeArtifactContractDigest(projection),
     },
     inputs: { taskSnapshotRef: "snap", formValues: {} },
     executionPolicy: { preset: "supervised" },
@@ -218,6 +230,12 @@ beforeAll(async () => {
     "@/lib/evaluations/launch-batch"
   ));
   ({ maxConcurrentRunsCap } = await import("@/lib/scheduler"));
+  ({ buildFlowContractProjection } = await import(
+    "@/lib/evaluations/preflight-loaders"
+  ));
+  ({ computeInputContractDigest, computeArtifactContractDigest } = await import(
+    "@/lib/evaluations/recipe"
+  ));
 
   // Silence the unused-binding lint on the imported symbol; the real seam path
   // is what the drive exercises. (launchRun is imported so a future direct-call
@@ -253,7 +271,7 @@ describe("Test-Matrix Row 4 — cap-saturated controlled launch queues Pending",
         projectId,
         key: "a",
         label: "A",
-        definition: recipeDefinition(),
+        definition: await recipeDefinition(),
       },
       db,
     );

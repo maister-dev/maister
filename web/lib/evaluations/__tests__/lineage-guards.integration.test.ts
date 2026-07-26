@@ -635,7 +635,11 @@ describe("C-4 — worktree GC holds open-study evidence", () => {
 });
 
 describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
-  function controlledInput(taskId: string, studyId: string, batchItemId: string) {
+  function controlledInput(
+    taskId: string,
+    studyId: string,
+    batchItemId: string,
+  ) {
     return {
       taskId,
       triggerSource: "manual" as const,
@@ -718,9 +722,30 @@ describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
     const { defaultLaunchRunSeam } = await import(
       "@/lib/evaluations/launch-seam"
     );
+    const { buildFlowContractProjection } = await import(
+      "@/lib/evaluations/preflight-loaders"
+    );
+    const { computeArtifactContractDigest, computeInputContractDigest } =
+      await import("@/lib/evaluations/recipe");
     const taskId = await seedTask();
     const studyId = randomUUID();
     const batchItemId = randomUUID();
+    const flowRevisionId = `rev-${projectId}`;
+
+    // Codex-1: the seam now preflights fail-closed against the LIVE contracts
+    // — the study must exist and the recipe must pin the REAL revision with
+    // projection-derived digests.
+    await db.insert(schema.evaluationStudies).values({
+      id: studyId,
+      projectId,
+      taskId,
+      title: "seam",
+      status: "open",
+    });
+    const projection = await buildFlowContractProjection(
+      { projectId, flowRefId: "bugfix", flowRevisionId },
+      db as never,
+    );
 
     const seam = defaultLaunchRunSeam(ctx);
     const { runId } = await seam({
@@ -732,9 +757,9 @@ describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
         schemaVersion: 1,
         flow: {
           flowRefId: "bugfix",
-          flowRevisionId: "rev",
-          inputContractDigest: "d",
-          artifactContractDigest: "d",
+          flowRevisionId,
+          inputContractDigest: computeInputContractDigest(projection),
+          artifactContractDigest: computeArtifactContractDigest(projection),
         },
         inputs: { taskSnapshotRef: "s", formValues: {} },
         executionPolicy: { preset: "supervised" },

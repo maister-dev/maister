@@ -18528,10 +18528,19 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [code, slotKey, message]
+            required: [code, message]
             properties:
-              code: { type: string, enum: [slot_intent_soft_mismatch] }
+              code:
+                type: string
+                enum:
+                  - slot_intent_soft_mismatch
+                  - slot_runner_pin_not_threaded
+                  - recipe_axis_not_threaded
               slotKey: { type: string }
+              axis:
+                type: string
+                enum:
+                  [capabilityOverlay, packagePins, nodeAgentBindings, budgets]
               message: { type: string }
     EvaluationLaunchBatchCreated:
       type: object
@@ -18639,7 +18648,11 @@ components:
           items: { type: string }
           description: |
             One of `no_conclusive_winner`, `winner_not_launched_recipe`,
-            `recipe_unavailable`, or `preflight:<PreflightRefusalCode>`.
+            `recipe_unavailable`, `axis_not_threaded_capability_overlay`,
+            `axis_not_threaded_package_pins`,
+            `axis_not_threaded_node_agent_bindings`,
+            `axis_not_threaded_budgets`, `winner_revision_mismatch`, or
+            `preflight:<PreflightRefusalCode>`.
         winnerParticipantId: { type: string, nullable: true }
         sourceRecipeId: { type: string, nullable: true }
         sourceVerdictId: { type: string, nullable: true }

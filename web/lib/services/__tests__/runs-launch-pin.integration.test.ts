@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -89,8 +89,10 @@ let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
+let runtimeRootDir: string;
 let originalHome: string | undefined;
 let originalDbUrl: string | undefined;
+let originalRuntimeRoot: string | undefined;
 let userId: string;
 
 // nodes[] DSL only (plan rule — no legacy steps[]). All-instruct settings pass
@@ -116,6 +118,45 @@ const FLOW_YAML = (name: string, marker: string): string =>
 
 const MANIFEST = (name: string, flowId: string): string =>
   `schemaVersion: 1\nname: ${name}\nflows:\n  - { id: ${flowId}, path: flows/${flowId} }\ncapabilities: []\n`;
+
+// A flow whose first node is a form intake — the Codex-1 evaluationFormInputs
+// pre-write targets exactly this node's declared fields.
+const FORM_FLOW_YAML = (name: string): string =>
+  [
+    "schemaVersion: 1",
+    `name: ${name}`,
+    "compat:",
+    "  engine_min: 1.1.0",
+    "nodes:",
+    "  - id: intake",
+    "    type: form",
+    "    settings:",
+    "      form_schema: schemas/intake.json",
+    "    transitions:",
+    "      success: implement",
+    "  - id: implement",
+    "    type: ai_coding",
+    "    action:",
+    '      prompt: "/aif-implement form"',
+    "    transitions:",
+    "      success: done",
+    "    settings:",
+    "      enforcement:",
+    "        mcps: instruct",
+    "",
+  ].join("\n");
+
+const FORM_DOC_JSON = JSON.stringify(
+  {
+    schemaVersion: 1,
+    fields: [
+      { name: "environment", type: "string", required: true },
+      { name: "notes", type: "string" },
+    ],
+  },
+  null,
+  2,
+);
 
 async function buildSourcePackage(
   root: string,
@@ -158,6 +199,9 @@ beforeAll(async () => {
   process.env.HOME = homeDir;
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
+  runtimeRootDir = await mkdtemp(join(tmpdir(), "launchpin-int-rt-"));
+  originalRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
+  process.env.MAISTER_RUNTIME_ROOT = runtimeRootDir;
 
   userId = randomUUID();
   await db
@@ -177,6 +221,9 @@ afterAll(async () => {
   else process.env.HOME = originalHome;
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
+  if (originalRuntimeRoot === undefined)
+    delete process.env.MAISTER_RUNTIME_ROOT;
+  else process.env.MAISTER_RUNTIME_ROOT = originalRuntimeRoot;
   await closeDb();
   await testDatabase?.stop();
 });
@@ -297,6 +344,60 @@ async function forkAttachWithNewerCut(
     cut2InstallId: cut2.installId,
     flowRowId: flowRows[0]!.id as string,
   };
+}
+
+// Create + cut + attach a single-version package whose flow carries a form
+// intake node (Codex-1 form-input pre-write coverage).
+async function attachFormFlow(
+  project: { id: string; slug: string; repoPath: string },
+  sourceName: string,
+  flowId: string,
+): Promise<{ flowRowId: string }> {
+  const { package: created } = await createLocalPackageWithFlow({
+    name: sourceName,
+    createdBy: userId,
+    flow: {
+      id: flowId,
+      metadata: {
+        title: `${flowId} title`,
+        summary: "Form intake flow.",
+        route_when: "A task needs a form intake.",
+      },
+    },
+    db,
+  });
+  const pkg = await getLocalPackage(created.id, db);
+
+  await writeWorkingDirFile(
+    pkg!,
+    `flows/${flowId}/flow.yaml`,
+    FORM_FLOW_YAML(flowId),
+  );
+  // Form-schema docs live at the PACKAGE ROOT `schemas/` (the cut copies them
+  // into every member flow revision — artifact-validate contract).
+  await writeWorkingDirFile(pkg!, "schemas/intake.json", FORM_DOC_JSON);
+  await gitCommitWorkingDir(pkg!.workingDir, "form intake flow");
+  const cut = await cutLocalPackageVersion(pkg!, { db });
+
+  await attachPackage({
+    projectId: project.id,
+    projectSlug: project.slug,
+    packageInstallId: cut.installId,
+    workspaceRoot: project.repoPath,
+    db,
+  });
+
+  const flowRows = await db
+    .select()
+    .from(schema.flows)
+    .where(
+      and(
+        eq(schema.flows.projectId, project.id),
+        eq(schema.flows.flowRefId, flowId),
+      ),
+    );
+
+  return { flowRowId: flowRows[0]!.id as string };
 }
 
 async function seedTask(taskId: string, projectId: string, flowRowId: string) {
@@ -440,6 +541,108 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     ).toHaveLength(0);
     expect(addWorktreeMock).not.toHaveBeenCalled();
     expect(await attachmentRow(fx.attachmentId)).toEqual(before);
+  });
+
+  // Codex-1 (ADR-150 · C): the evaluation seam pins the run to the RECIPE's
+  // exact flow revision — the run must execute that revision (the runner loads
+  // its manifest from runs.flow_revision_id), not the live enabled one.
+  it("honors an evaluationFlowRevisionId pin over the enabled revision (Codex-1)", async () => {
+    const project = await createProject();
+    const fx = await forkAttachWithNewerCut(project, "evalpin", "flow-evalpin");
+
+    await seedTask("task-evalpin-1", project.id, fx.flowRowId);
+    const before = await attachmentRow(fx.attachmentId);
+    const pinned = await revisionOfInstall(fx.cut2InstallId, "flow-evalpin");
+
+    const result = await launchRun(
+      { taskId: "task-evalpin-1", evaluationFlowRevisionId: pinned.id },
+      ctx(),
+      db as never,
+    );
+
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, result.runId));
+
+    expect(run.flowRevisionId).toBe(pinned.id);
+    expect(run.flowRevision).toBe(pinned.resolvedRevision);
+    expect(run.flowVersion).toBe(pinned.versionLabel);
+    expect(await attachmentRow(fx.attachmentId)).toEqual(before);
+  });
+
+  it("refuses an evaluation pin whose revision belongs to another flow — no run, no worktree (Codex-1)", async () => {
+    const project = await createProject();
+    const fx = await forkAttachWithNewerCut(
+      project,
+      "evalforeign",
+      "flow-evalforeign",
+    );
+    const strangerInstallId = await installSource(
+      "evalstranger",
+      "flow-evalstranger",
+    );
+    const foreign = await revisionOfInstall(
+      strangerInstallId,
+      "flow-evalstranger",
+    );
+
+    await seedTask("task-evalforeign-1", project.id, fx.flowRowId);
+
+    await expect(
+      launchRun(
+        {
+          taskId: "task-evalforeign-1",
+          evaluationFlowRevisionId: foreign.id,
+        },
+        ctx(),
+        db as never,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const runRows = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-evalforeign-1"));
+
+    expect(runRows).toHaveLength(0);
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it("pre-writes evaluationFormInputs as the form node's input artifact (Codex-1)", async () => {
+    const project = await createProject();
+    const fx = await attachFormFlow(project, "evalform", "flow-evalform");
+
+    await seedTask("task-evalform-1", project.id, fx.flowRowId);
+
+    const result = await launchRun(
+      {
+        taskId: "task-evalform-1",
+        evaluationFormInputs: {
+          environment: "staging",
+          notes: "controlled run",
+          unknownField: "not declared by the node",
+        },
+      },
+      ctx(),
+      db as never,
+    );
+
+    const artifactPath = join(
+      runtimeRootDir,
+      ".maister",
+      project.slug,
+      "runs",
+      result.runId,
+      "input-intake.json",
+    );
+    const written = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    // Only the node's DECLARED fields are written — never a stray key.
+    expect(written).toEqual({
+      environment: "staging",
+      notes: "controlled run",
+    });
   });
 
   // Test-Matrix Row 5 (feature-experiments-cutover): a pin that is ELIGIBLE

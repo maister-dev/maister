@@ -134,6 +134,7 @@ export async function checkStandardizationEligible(
       id: evaluationParticipants.id,
       sourceType: evaluationParticipants.sourceType,
       recipeId: evaluationParticipants.recipeId,
+      runIdentity: evaluationParticipants.runIdentity,
     })
     .from(evaluationParticipants)
     .where(
@@ -178,6 +179,38 @@ export async function checkStandardizationEligible(
   }
 
   const parsed = parseControlledRecipe(recipe.definition);
+
+  // Codex-1 (C): axes the launch seam does not thread. A winner bound to them
+  // ran WITHOUT them — its recipe is not a faithful passport, so it must not
+  // become the project standard (un-standardizable until the axis is threaded).
+  if (parsed.capabilityOverlay) {
+    refusals.push("axis_not_threaded_capability_overlay");
+  }
+  if (parsed.materializationIntent.packagePins.length > 0) {
+    refusals.push("axis_not_threaded_package_pins");
+  }
+  if (parsed.nodeAgentBindings.length > 0) {
+    refusals.push("axis_not_threaded_node_agent_bindings");
+  }
+  if (parsed.budgets && Object.keys(parsed.budgets).length > 0) {
+    refusals.push("axis_not_threaded_budgets");
+  }
+
+  // Codex-1 (C): the winner's RECORDED revision (the actual one the run
+  // launched with — M4 provenance) must equal the recipe pin. A pre-threading
+  // launch that ran the live enabled revision instead of its pin is not a
+  // faithful execution of this recipe. A legacy participant with no recorded
+  // identity cannot be verified either way and is not refused on this axis.
+  const recordedRevisionId = (
+    participant.runIdentity as { flowRevisionId?: string } | null
+  )?.flowRevisionId;
+
+  if (
+    typeof recordedRevisionId === "string" &&
+    recordedRevisionId !== parsed.flow.flowRevisionId
+  ) {
+    refusals.push("winner_revision_mismatch");
+  }
 
   // Fresh preflight against the LIVE contracts (stale dependency / incompatible
   // Flow / untrusted package all refuse here, before any config write).

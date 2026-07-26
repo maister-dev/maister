@@ -87,8 +87,13 @@ export interface PreflightRefusal {
 }
 
 export interface PreflightWarning {
-  code: "slot_intent_soft_mismatch" | "slot_runner_pin_not_threaded";
-  slotKey: string;
+  code:
+    | "slot_intent_soft_mismatch"
+    | "slot_runner_pin_not_threaded"
+    | "recipe_axis_not_threaded";
+  // Slot-scoped warnings name their slot; axis warnings name the recipe axis.
+  slotKey?: string;
+  axis?: "capabilityOverlay" | "packagePins" | "nodeAgentBindings" | "budgets";
   message: string;
 }
 
@@ -338,6 +343,27 @@ export function preflightControlledRecipe(
         }
       }
     }
+  }
+
+  // 8. Codex-1 (C) co-evolve boundary: recipe axes that are DECLARED but not
+  // threaded by the launch seam — a variant binding them runs WITHOUT them.
+  // WARN on each (never a silent pass, mirroring slot_runner_pin_not_threaded);
+  // the standardization gate refuses such recipes as un-standardizable.
+  const axisWarning = (axis: NonNullable<PreflightWarning["axis"]>): void => {
+    warnings.push({
+      code: "recipe_axis_not_threaded",
+      axis,
+      message: `recipe axis "${axis}" is declared but not threaded by the launch seam yet; the variant runs without it`,
+    });
+  };
+
+  if (overlay) axisWarning("capabilityOverlay");
+  if (recipe.materializationIntent.packagePins.length > 0) {
+    axisWarning("packagePins");
+  }
+  if (recipe.nodeAgentBindings.length > 0) axisWarning("nodeAgentBindings");
+  if (recipe.budgets && Object.keys(recipe.budgets).length > 0) {
+    axisWarning("budgets");
   }
 
   return { ok: refusals.length === 0, refusals, warnings };

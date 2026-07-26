@@ -108,7 +108,13 @@ function recipeDefinition(titleMarker = "x"): Record<string, unknown> {
 
 // Seed a decided Study whose winner is a launched participant with a recipe.
 // `titleMarker` varies the recipe CONTENT so revision digests can differ.
-async function decidedStudyWithLaunchedWinner(titleMarker = "x"): Promise<{
+async function decidedStudyWithLaunchedWinner(
+  titleMarker = "x",
+  opts: {
+    definitionOverride?: (def: Record<string, unknown>) => void;
+    runIdentity?: Record<string, unknown> | null;
+  } = {},
+): Promise<{
   studyId: string;
   recipeId: string;
   participantId: string;
@@ -117,13 +123,16 @@ async function decidedStudyWithLaunchedWinner(titleMarker = "x"): Promise<{
     { projectId, taskId, title: `S-${randomUUID().slice(0, 6)}` },
     db,
   );
+  const definition = recipeDefinition(titleMarker);
+
+  opts.definitionOverride?.(definition);
   const recipe = await createControlledRecipe(
     {
       studyId: study.id as string,
       projectId,
       key: "winner",
       label: "Winner",
-      definition: recipeDefinition(titleMarker),
+      definition,
     },
     db,
   );
@@ -137,6 +146,9 @@ async function decidedStudyWithLaunchedWinner(titleMarker = "x"): Promise<{
     label: "Winner #1",
     replicateOrdinal: 1,
     launchReason: "initial",
+    ...(opts.runIdentity !== undefined
+      ? { runIdentity: opts.runIdentity }
+      : {}),
   });
   await db.insert(schema.evaluationHumanVerdicts).values({
     studyId: study.id as string,
@@ -266,6 +278,67 @@ describe("checkStandardizationEligible", () => {
 
     expect(result.eligible).toBe(false);
     expect(result.refusals.some((r) => r.startsWith("preflight:"))).toBe(true);
+  });
+
+  it("refuses a winner recipe binding unthreaded axes — un-standardizable (Codex-1)", async () => {
+    const { studyId } = await decidedStudyWithLaunchedWinner("axes", {
+      definitionOverride: (def) => {
+        def.materializationIntent = {
+          packagePins: [{ packageInstallId: "pi-1" }],
+          capabilityRequirements: [],
+          allowedProjectOverlays: [],
+        };
+        def.nodeAgentBindings = [
+          { nodeId: "implement", agentId: "core:reviewer" },
+        ];
+      },
+    });
+    const result = await checkStandardizationEligible(
+      { studyId, projectId },
+      loaders(),
+      db,
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.refusals).toContain("axis_not_threaded_package_pins");
+    expect(result.refusals).toContain("axis_not_threaded_node_agent_bindings");
+  });
+
+  it("refuses when the winner's honored revision differs from the recipe pin (Codex-1)", async () => {
+    const { studyId } = await decidedStudyWithLaunchedWinner("revdrift", {
+      runIdentity: {
+        runId: randomUUID(),
+        flowRefId: "bugfix",
+        // The recipe pins rev-1; the run actually launched on another revision.
+        flowRevisionId: "rev-OTHER",
+      },
+    });
+    const result = await checkStandardizationEligible(
+      { studyId, projectId },
+      loaders(),
+      db,
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.refusals).toContain("winner_revision_mismatch");
+  });
+
+  it("stays eligible when the winner's recorded revision matches the recipe pin (Codex-1)", async () => {
+    const { studyId } = await decidedStudyWithLaunchedWinner("revmatch", {
+      runIdentity: {
+        runId: randomUUID(),
+        flowRefId: "bugfix",
+        flowRevisionId: "rev-1",
+      },
+    });
+    const result = await checkStandardizationEligible(
+      { studyId, projectId },
+      loaders(),
+      db,
+    );
+
+    expect(result.eligible).toBe(true);
+    expect(result.refusals).toEqual([]);
   });
 
   it("throws typed CONFIG when the verdict cites a participant of ANOTHER study (no cross-study recipe pull)", async () => {

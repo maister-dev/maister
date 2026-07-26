@@ -4299,7 +4299,8 @@
       },
       "warning": {
         "slot_intent_soft_mismatch": "A slot requests a runner by intent, which the launch does not honor yet — the run uses the default runner, not the requested one.",
-        "slot_runner_pin_not_threaded": "A non-session slot pins a runner the launch does not thread yet — the run uses the default runner, not the pinned one."
+        "slot_runner_pin_not_threaded": "A non-session slot pins a runner the launch does not thread yet — the run uses the default runner, not the pinned one.",
+        "recipe_axis_not_threaded": "The recipe binds an axis (capability overlay, package pins, node-agent bindings, or budgets) the launch does not thread yet — the variant runs without it and cannot be standardized."
       }
     },
     "preview": {
@@ -4457,7 +4458,12 @@
       "refusal": {
         "no_conclusive_winner": "No conclusive winner verdict.",
         "winner_not_launched_recipe": "The winner is an observed run with no reproducible recipe.",
-        "recipe_unavailable": "The winning recipe is no longer available."
+        "recipe_unavailable": "The winning recipe is no longer available.",
+        "axis_not_threaded_capability_overlay": "The recipe binds a capability overlay the launch does not thread yet — the winner ran without it.",
+        "axis_not_threaded_package_pins": "The recipe binds package pins the launch does not thread yet — the winner ran without them.",
+        "axis_not_threaded_node_agent_bindings": "The recipe binds node-agent bindings the launch does not thread yet — the winner ran without them.",
+        "axis_not_threaded_budgets": "The recipe binds a budgets axis the launch does not thread yet — the winner ran without it.",
+        "winner_revision_mismatch": "The winner ran on a different flow revision than the recipe pins — not a faithful execution of this recipe."
       }
     },
     "pairwise": {
