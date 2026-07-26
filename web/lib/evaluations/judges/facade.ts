@@ -4,7 +4,18 @@ import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationExecutionJudgePolicySnapshot } from "@/lib/evaluations/types";
 import type { TokenActor } from "@/lib/tokens/verify";
 
-import { and, asc, count, eq, gt, isNotNull } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  type SQL,
+} from "drizzle-orm";
 import pino from "pino";
 
 import { assignBlindLabels } from "./blinding";
@@ -179,6 +190,45 @@ async function deriveBlinding(bound: BoundAttempt, d: Db): Promise<BlindMap> {
   return { labels, order: order.map((id) => labels[id]) };
 }
 
+// The attempt's real-id match scope for SQL filters — null for a scalar
+// attempt. Never exposed to the judge; only blinded labels leave the facade.
+function matchScope(bound: BoundAttempt): [string, string] | null {
+  return bound.matchA !== null && bound.matchB !== null
+    ? [bound.matchA, bound.matchB]
+    : null;
+}
+
+// The blinded labels of a pairwise attempt's match sides (Codex-2). Fail-closed:
+// a match side with no captured evidence in the bound snapshot has no label —
+// the pair is un-judgeable and is refused, never served half-blind (an
+// unresolved match stays explicit, D11).
+function requirePairLabels(
+  bound: BoundAttempt,
+  blinding: BlindMap,
+): { a: string; b: string } | null {
+  if (bound.matchA === null || bound.matchB === null) return null;
+  const a = blinding.labels[bound.matchA];
+  const b = blinding.labels[bound.matchB];
+
+  if (!a || !b) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `judge attempt ${bound.attemptId} match side has no captured evidence in the bound snapshot`,
+    );
+  }
+
+  return { a, b };
+}
+
+// Evidence visibility for a pairwise attempt: the two match sides plus shared
+// (null-participant) items. Scalar attempts see the whole snapshot.
+function evidencePairFilter(scope: [string, string]): SQL | undefined {
+  return or(
+    inArray(evaluationEvidenceItems.participantId, [...scope]),
+    isNull(evaluationEvidenceItems.participantId),
+  );
+}
+
 export interface EvaluatorContext {
   attempt: { id: string; role: string; ordinal: number };
   method: {
@@ -191,6 +241,10 @@ export interface EvaluatorContext {
     }>;
   } | null;
   candidates: string[];
+  // Pairwise only (ADR-147): which blinded candidate is match side `a` and
+  // which is `b` — the submitted `winner` pick refers to THESE sides, not to
+  // candidate list position. Null for a scalar attempt.
+  match: { a: string; b: string } | null;
   evidence: { itemCount: number; readMaxBytes: number };
   digests: { prompt: string | null; schema: string | null };
 }
@@ -206,6 +260,7 @@ export async function getEvaluatorContext(
   const d = db ?? getDb();
   const bound = await resolveBoundAttempt(actor, d);
   const blinding = await deriveBlinding(bound, d);
+  const match = requirePairLabels(bound, blinding);
 
   let method: EvaluatorContext["method"] = null;
   let promptDigest: string | null = null;
@@ -256,10 +311,18 @@ export async function getEvaluatorContext(
   let itemCount = 0;
 
   if (bound.evidenceSnapshotId) {
+    const scope = matchScope(bound);
     const [row] = await d
       .select({ value: count() })
       .from(evaluationEvidenceItems)
-      .where(eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId));
+      .where(
+        scope
+          ? and(
+              eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId),
+              evidencePairFilter(scope),
+            )
+          : eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId),
+      );
 
     itemCount = row?.value ?? 0;
   }
@@ -267,7 +330,10 @@ export async function getEvaluatorContext(
   return {
     attempt: { id: bound.attemptId, role: bound.role, ordinal: bound.ordinal },
     method,
-    candidates: blinding.order,
+    candidates: match
+      ? blinding.order.filter((label) => label === match.a || label === match.b)
+      : blinding.order,
+    match,
     evidence: { itemCount, readMaxBytes: 65_536 },
     digests: { prompt: promptDigest, schema: schemaDigest },
   };
@@ -301,17 +367,22 @@ export async function listBoundEvidence(
   if (!bound.evidenceSnapshotId) return { items: [], nextCursor: null };
 
   const blinding = await deriveBlinding(bound, d);
+
+  requirePairLabels(bound, blinding);
+  const scope = matchScope(bound);
   const limit = Math.min(
     Math.max(1, Math.floor(opts.limit ?? EVIDENCE_LIST_DEFAULT_LIMIT)),
     EVIDENCE_LIST_MAX_LIMIT,
   );
 
-  const where = opts.cursor
-    ? and(
-        eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId),
-        gt(evaluationEvidenceItems.id, opts.cursor),
-      )
-    : eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId);
+  const conditions: Array<SQL | undefined> = [
+    eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId),
+  ];
+
+  if (scope) conditions.push(evidencePairFilter(scope));
+  if (opts.cursor) conditions.push(gt(evaluationEvidenceItems.id, opts.cursor));
+
+  const where = and(...conditions);
 
   const rows = await d
     .select({
@@ -366,6 +437,34 @@ export async function readBoundEvidenceItem(
     throw new MaisterError("PRECONDITION", "no evidence snapshot is bound");
   }
 
+  const scope = matchScope(bound);
+
+  if (scope) {
+    requirePairLabels(bound, await deriveBlinding(bound, d));
+
+    const [item] = await d
+      .select({ participantId: evaluationEvidenceItems.participantId })
+      .from(evaluationEvidenceItems)
+      .where(
+        and(
+          eq(evaluationEvidenceItems.id, args.itemId),
+          eq(evaluationEvidenceItems.snapshotId, bound.evidenceSnapshotId),
+        ),
+      );
+
+    // One message for absent AND out-of-pair — the facade never confirms that
+    // an item outside the attempt's match exists.
+    if (
+      !item ||
+      (item.participantId !== null && !scope.includes(item.participantId))
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `evidence item not readable by this attempt: ${args.itemId}`,
+      );
+    }
+  }
+
   const read = await readSnapshotItem(
     {
       snapshotId: bound.evidenceSnapshotId,
@@ -413,6 +512,9 @@ export async function getBoundObjectiveResults(
   const bound = await resolveBoundAttempt(actor, d);
   const blinding = await deriveBlinding(bound, d);
 
+  requirePairLabels(bound, blinding);
+  const scope = matchScope(bound);
+
   const checks = await d
     .select({
       participantId: evaluationObjectiveCheckRuns.participantId,
@@ -422,7 +524,17 @@ export async function getBoundObjectiveResults(
       reason: evaluationObjectiveCheckRuns.reason,
     })
     .from(evaluationObjectiveCheckRuns)
-    .where(eq(evaluationObjectiveCheckRuns.executionId, bound.executionId));
+    .where(
+      scope
+        ? and(
+            eq(evaluationObjectiveCheckRuns.executionId, bound.executionId),
+            or(
+              inArray(evaluationObjectiveCheckRuns.participantId, [...scope]),
+              isNull(evaluationObjectiveCheckRuns.participantId),
+            ),
+          )
+        : eq(evaluationObjectiveCheckRuns.executionId, bound.executionId),
+    );
 
   const metrics = await d
     .select({
@@ -434,7 +546,17 @@ export async function getBoundObjectiveResults(
       unit: evaluationMetricResults.unit,
     })
     .from(evaluationMetricResults)
-    .where(eq(evaluationMetricResults.executionId, bound.executionId));
+    .where(
+      scope
+        ? and(
+            eq(evaluationMetricResults.executionId, bound.executionId),
+            or(
+              inArray(evaluationMetricResults.participantId, [...scope]),
+              isNull(evaluationMetricResults.participantId),
+            ),
+          )
+        : eq(evaluationMetricResults.executionId, bound.executionId),
+    );
 
   const toCandidate = (participantId: string | null): string | null =>
     participantId ? (blinding.labels[participantId] ?? null) : null;

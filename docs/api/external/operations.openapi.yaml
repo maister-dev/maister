@@ -729,6 +729,15 @@ paths:
         participant id, peer judge result, host path, or session handle (D10). A
         token not bound to a live judge attempt returns 403 `UNAUTHORIZED`; a
         terminal attempt returns 409.
+
+        **(ADR-147/150) Pairwise attempts:** `match` maps the attempt's match
+        sides to blinded candidate labels — the submitted `winner` pick refers
+        to `match.a`/`match.b`, never to candidate list position. `candidates`
+        and the evidence summary are scoped to the pair under comparison
+        (shared, participant-less items stay visible). A pairwise attempt whose
+        match side has no captured evidence in the bound snapshot is refused
+        with 409 (`PRECONDITION`) — never served half-blind. `match` is null
+        for a scalar attempt.
       operationId: extEvaluationContext
       security:
         - projectToken: ["evaluations:context:read"]
@@ -753,7 +762,8 @@ paths:
         Scope `evaluations:evidence:read`. Cursor-paginated metadata for the
         token-bound evidence snapshot. Each item's real participant id is replaced
         by its blind candidate label; the logical locator and host blob key are
-        never exposed (D10).
+        never exposed (D10). For a pairwise attempt the listing is scoped to the
+        attempt's match pair plus shared (participant-less) items (ADR-147/150).
       operationId: extEvaluationEvidenceList
       security:
         - projectToken: ["evaluations:evidence:read"]
@@ -791,7 +801,10 @@ paths:
         Scope `evaluations:evidence:read`. Reads a server-capped window of one
         evidence item. The `itemId` MUST belong to the token-bound snapshot (an
         item id from `evaluation_evidence_list`); `offset`/`length` are clamped and
-        a read that hits the cap is flagged `truncated` (D10).
+        a read that hits the cap is flagged `truncated` (D10). For a pairwise
+        attempt only items of the attempt's match pair (or shared,
+        participant-less items) are readable — anything else is 409
+        `PRECONDITION` (ADR-147/150).
       operationId: extEvaluationEvidenceRead
       security:
         - projectToken: ["evaluations:evidence:read"]
@@ -834,7 +847,9 @@ paths:
         Scope `evaluations:objective:read`. Structured objective check and metric
         facts for the token-bound execution (D11). A judge may reference these but
         never infer PASS from source appearance; a missing/absent status carries
-        its reason verbatim, never converted to a pass or a zero.
+        its reason verbatim, never converted to a pass or a zero. For a pairwise
+        attempt the facts are scoped to the attempt's match pair plus shared
+        (participant-less) rows (ADR-147/150).
       operationId: extEvaluationObjectiveResults
       security:
         - projectToken: ["evaluations:objective:read"]
@@ -2463,7 +2478,7 @@ components:
     ExtEvaluationContext:
       type: object
       description: Server-derived judge attempt context (ADR-142 D10).
-      required: [attempt, method, candidates, evidence, digests]
+      required: [attempt, method, candidates, match, evidence, digests]
       properties:
         attempt:
           type: object
@@ -2492,8 +2507,21 @@ components:
                       max: { type: integer }
         candidates:
           type: array
-          description: Blind candidate labels in deterministic presentation order.
+          description: |
+            Blind candidate labels in deterministic presentation order. For a
+            pairwise attempt, only the match pair's two labels.
           items: { type: string }
+        match:
+          nullable: true
+          type: object
+          description: |
+            (ADR-147/150) Pairwise only — which blinded candidate is match side
+            `a` and which is `b`; the submitted `winner` pick refers to these
+            sides. Null for a scalar attempt.
+          required: [a, b]
+          properties:
+            a: { type: string }
+            b: { type: string }
         evidence:
           type: object
           properties:

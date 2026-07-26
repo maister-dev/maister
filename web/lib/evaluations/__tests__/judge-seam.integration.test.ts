@@ -9,12 +9,13 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { sealEvidenceSnapshot } from "@/lib/evaluations/evidence/snapshots";
+import { assignBlindLabels } from "@/lib/evaluations/judges/blinding";
 import {
   getBoundObjectiveResults,
   getEvaluatorContext,
@@ -115,6 +116,7 @@ async function seedAttempt(
   executionId: string,
   ordinal: number,
   status: string,
+  match?: { a: string; b: string },
 ): Promise<{ attemptId: string; tokenId: string }> {
   const attemptId = randomUUID();
   const tokenId = randomUUID();
@@ -140,6 +142,8 @@ async function seedAttempt(
     agentId: "core:sdd-judge",
     tokenId,
     status,
+    matchA: match?.a ?? null,
+    matchB: match?.b ?? null,
   });
 
   return { attemptId, tokenId };
@@ -483,6 +487,8 @@ describe("evaluator facade + seal + aggregation seam (T4.1)", () => {
     expect(context.method?.qualifiedId).toBe("core:sdd-quality");
     expect(context.candidates.sort()).toEqual(["Candidate A", "Candidate B"]);
     expect(context.evidence.itemCount).toBe(2);
+    // A scalar attempt carries no match — the pairwise mapping is null.
+    expect(context.match).toBeNull();
 
     const page = await listBoundEvidence(actor, {}, db);
 
@@ -555,6 +561,224 @@ describe("evaluator facade + seal + aggregation seam (T4.1)", () => {
 
     expect(relaunched).toEqual({ launched: 0, adopted: 2 });
     expect(spawnCount).toBe(2);
+  });
+});
+
+describe("pairwise judge context — blinded match mapping + pair scoping (Codex-2)", () => {
+  it("serves a blinded match mapping and scopes context/evidence/objective facts to the pair", async () => {
+    const pA = randomUUID();
+    const pB = randomUUID();
+    const pC = randomUUID();
+
+    await db.insert(schema.evaluationParticipants).values(
+      [pA, pB, pC].map((id, index) => ({
+        id,
+        studyId,
+        sourceType: "observed",
+        label: `Run ${index + 1}`,
+        displayOrder: index + 10,
+      })),
+    );
+
+    const sealed = await sealEvidenceSnapshot(
+      {
+        studyId,
+        participantWatermarks: { [pA]: "wA", [pB]: "wB", [pC]: "wC" },
+        evidenceProtocolDigest: "epd-pairwise",
+        items: [
+          {
+            participantId: pA,
+            kind: "diff",
+            locator: "diff:pA",
+            coverageClass: "captured",
+            bytes: new TextEncoder().encode("diff for first pair side"),
+          },
+          {
+            participantId: pB,
+            kind: "diff",
+            locator: "diff:pB",
+            coverageClass: "captured",
+            bytes: new TextEncoder().encode("diff outside the pair"),
+          },
+          {
+            participantId: pC,
+            kind: "diff",
+            locator: "diff:pC",
+            coverageClass: "captured",
+            bytes: new TextEncoder().encode("diff for second pair side"),
+          },
+          {
+            participantId: null,
+            kind: "task",
+            locator: "task:prompt",
+            coverageClass: "captured",
+            bytes: new TextEncoder().encode("shared task prompt"),
+          },
+        ],
+      },
+      db,
+    );
+
+    const executionId = await seedExecution("judging", {
+      snapshotId: sealed.snapshotId,
+    });
+    const { tokenId } = await seedAttempt(executionId, 1, "running", {
+      a: pA,
+      b: pC,
+    });
+
+    await db.insert(schema.evaluationObjectiveCheckRuns).values([
+      {
+        executionId,
+        participantId: pA,
+        checkId: "gates",
+        checkVersion: "1",
+        status: "passed",
+      },
+      {
+        executionId,
+        participantId: pB,
+        checkId: "gates",
+        checkVersion: "1",
+        status: "failed",
+      },
+    ]);
+
+    // Replicate the facade's blinding derivation (sorted distinct snapshot
+    // participants, execution seed) so the MAPPING itself is asserted — not
+    // just the label format.
+    const expected = assignBlindLabels(
+      [pA, pB, pC].sort(),
+      `seed-${executionId.slice(0, 8)}`,
+      { randomize: true },
+    );
+    const actor = judgeActor(tokenId);
+
+    const context = await getEvaluatorContext(actor, db);
+
+    // The judge is TOLD which blinded candidate is match side a and which is b.
+    expect(context.match).toEqual({
+      a: expected.labels[pA],
+      b: expected.labels[pC],
+    });
+    expect(context.match?.a).toMatch(/^Candidate /);
+    expect(context.match?.b).toMatch(/^Candidate /);
+    expect(context.match?.a).not.toBe(context.match?.b);
+
+    // Candidates are scoped to the pair under comparison (labels only).
+    expect(context.candidates).toHaveLength(2);
+    expect(new Set(context.candidates)).toEqual(
+      new Set([expected.labels[pA], expected.labels[pC]]),
+    );
+
+    // Item count excludes the out-of-pair candidate, keeps the shared item.
+    expect(context.evidence.itemCount).toBe(3);
+
+    const page = await listBoundEvidence(actor, {}, db);
+
+    expect(page.items).toHaveLength(3);
+    const allowedLabels = new Set([
+      expected.labels[pA],
+      expected.labels[pC],
+      null,
+    ]);
+
+    for (const item of page.items) {
+      expect(allowedLabels.has(item.candidate)).toBe(true);
+    }
+
+    // The out-of-pair item is not readable through the bound facade.
+    const [outOfPair] = await db
+      .select({ id: schema.evaluationEvidenceItems.id })
+      .from(schema.evaluationEvidenceItems)
+      .where(
+        and(
+          eq(schema.evaluationEvidenceItems.snapshotId, sealed.snapshotId),
+          eq(schema.evaluationEvidenceItems.participantId, pB),
+        ),
+      );
+
+    await expect(
+      readBoundEvidenceItem(actor, { itemId: outOfPair.id }, db),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    // The shared (null-participant) item stays readable.
+    const shared = page.items.find((i) => i.candidate === null);
+
+    expect(shared).toBeDefined();
+    const read = await readBoundEvidenceItem(actor, { itemId: shared!.id }, db);
+
+    expect(read.content).toContain("shared task prompt");
+
+    // Objective facts are scoped to the pair too — pB's check is invisible.
+    const objective = await getBoundObjectiveResults(actor, db);
+
+    expect(objective.checks).toHaveLength(1);
+    expect(objective.checks[0].candidate).toBe(expected.labels[pA]);
+    expect(objective.checks[0].status).toBe("passed");
+  });
+
+  it("fails closed when a match side has no captured evidence in the bound snapshot", async () => {
+    const pPresent = randomUUID();
+    const pMissing = randomUUID();
+
+    await db.insert(schema.evaluationParticipants).values([
+      {
+        id: pPresent,
+        studyId,
+        sourceType: "observed",
+        label: "Present",
+        displayOrder: 20,
+      },
+      {
+        id: pMissing,
+        studyId,
+        sourceType: "observed",
+        label: "Missing",
+        displayOrder: 21,
+      },
+    ]);
+
+    const sealed = await sealEvidenceSnapshot(
+      {
+        studyId,
+        participantWatermarks: {
+          [pPresent]: "wP",
+          [pMissing]: { unavailable: true },
+        },
+        evidenceProtocolDigest: "epd-missing-side",
+        items: [
+          {
+            participantId: pPresent,
+            kind: "diff",
+            locator: "diff:present",
+            coverageClass: "captured",
+            bytes: new TextEncoder().encode("only captured side"),
+          },
+        ],
+      },
+      db,
+    );
+
+    const executionId = await seedExecution("judging", {
+      snapshotId: sealed.snapshotId,
+    });
+    const { tokenId } = await seedAttempt(executionId, 1, "running", {
+      a: pPresent,
+      b: pMissing,
+    });
+    const actor = judgeActor(tokenId);
+
+    // An un-judgeable pair is refused, never served half-blind.
+    await expect(getEvaluatorContext(actor, db)).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+    await expect(listBoundEvidence(actor, {}, db)).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+    await expect(getBoundObjectiveResults(actor, db)).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
   });
 });
 

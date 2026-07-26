@@ -66,7 +66,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_context_get: {
     description:
-      "Get the token-bound judge attempt context (ADR-145): attempt identity, method rubric, blind candidate order, and evidence/digest summary. Requires evaluations:context:read. The attempt is bound by the token — takes no ids and returns no real participant id, peer result, path, or session handle.",
+      "Get the token-bound judge attempt context (ADR-145): attempt identity, method rubric, blind candidate order, and evidence/digest summary. Requires evaluations:context:read. The attempt is bound by the token — takes no ids and returns no real participant id, peer result, path, or session handle. A pairwise attempt (ADR-147) also gets `match: {a, b}` — which blinded candidate is match side a and which is b (the `winner` pick refers to these sides) — with candidates/evidence scoped to that pair; `match` is null for a scalar attempt.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -74,7 +74,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_evidence_list: {
     description:
-      "List the token-bound evidence snapshot's item metadata, cursor-paginated. Requires evaluations:evidence:read. Real participant ids are blinded to candidate labels; locators/host keys are never exposed.",
+      "List the token-bound evidence snapshot's item metadata, cursor-paginated. Requires evaluations:evidence:read. Real participant ids are blinded to candidate labels; locators/host keys are never exposed. For a pairwise attempt the listing is scoped to the attempt's match pair plus shared (participant-less) items.",
     inputSchema: {
       type: "object",
       properties: {
@@ -85,7 +85,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_evidence_read: {
     description:
-      "Read a server-capped window of one bound-snapshot evidence item. Requires evaluations:evidence:read. itemId must come from evaluation_evidence_list; offset/length are clamped and a capped read is flagged truncated.",
+      "Read a server-capped window of one bound-snapshot evidence item. Requires evaluations:evidence:read. itemId must come from evaluation_evidence_list; offset/length are clamped and a capped read is flagged truncated. For a pairwise attempt only the match pair's items (or shared, participant-less items) are readable.",
     inputSchema: {
       type: "object",
       properties: {
@@ -98,7 +98,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_objective_results: {
     description:
-      "Get structured objective check + metric facts for the token-bound execution (ADR-145). Requires evaluations:objective:read. Missing/absent statuses keep their reason; never infer PASS from source appearance.",
+      "Get structured objective check + metric facts for the token-bound execution (ADR-145). Requires evaluations:objective:read. Missing/absent statuses keep their reason; never infer PASS from source appearance. For a pairwise attempt the facts are scoped to the attempt's match pair plus shared (participant-less) rows.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -106,7 +106,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   evaluation_result_submit: {
     description:
-      "Submit a strict per-criterion judge result for the token-bound attempt (ADR-145/ADR-147). Requires evaluations:result:submit. Always score `criteria`; a pairwise attempt ALSO sends `winner` (a|b|tie) — required for a pairwise attempt, rejected otherwise (422 either way). Attribution is server-derived; extra keys are rejected. An invalid criteria result seals a terminal-invalid attempt (valid:false, HTTP 200).",
+      "Submit a strict per-criterion judge result for the token-bound attempt (ADR-145/ADR-147). Requires evaluations:result:submit. Always score `criteria`; a pairwise attempt ALSO sends `winner` (a|b|tie) — required for a pairwise attempt, rejected otherwise (422 either way). `winner` refers to the context's `match.a`/`match.b` blinded sides, never to candidate list position. Attribution is server-derived; extra keys are rejected. An invalid criteria result seals a terminal-invalid attempt (valid:false, HTTP 200).",
     inputSchema: {
       type: "object",
       properties: {
