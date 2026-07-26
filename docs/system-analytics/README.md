@@ -35,6 +35,7 @@ Every file in this folder follows the structure defined in
 | Workspaces | [`workspaces.md`](workspaces.md) | Worktree lifecycle, promotion policy, reconciliation on startup. |
 | Workbench lifecycle | [`workbench-lifecycle.md`](workbench-lifecycle.md) | Stop, archive, drop, snapshot commit, export, and handoff actions for visible workbenches. |
 | HITL | [`hitl.md`](hitl.md) | Three HITL kinds (permission / form / human), keep-alive activity tracking. |
+| Assistant activity | [`assistant-activity.md`](assistant-activity.md) | Assistant pulse + per-run semantic activity feed over `domain_events`, transcript projection, HITL/clarification asks, and synthesized liveness. |
 | Review comments | [`review-comments.md`](review-comments.md) | Line-anchored review threads on the gate diff, placement, rework compose into `commentsVar`, loop-exhaustion guard (ADR-072). |
 | Assignments | [`assignments.md`](assignments.md) | M13 role-owned work queue, actor identities, claim/release/take-over lifecycle. |
 | Artifacts | [`artifacts.md`](artifacts.md) | Typed evidence artifacts, validity, projections, and graph inputs. |

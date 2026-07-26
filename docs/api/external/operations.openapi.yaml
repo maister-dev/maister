@@ -1978,6 +1978,148 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/ext/activity:
+    get:
+      tags: [activity]
+      summary: Get the assistant pulse for the token-bound project
+      description: |
+        Scope `runs:read`. Returns one assistant-friendly, project-scoped pulse
+        with three blocks:
+
+        - `happened`: persisted domain facts replayed from `domain_events`
+          after the supplied `since` cursor.
+        - `now`: the current snapshot of every active run in the token-bound
+          project.
+        - `needsYou`: pending project-scoped human-attention items built from
+          HITL and clarification state.
+
+        The route never accepts a project slug, filesystem path, or raw
+        protocol payload. No ACP JSON-RPC frames, transport method names,
+        supervisor handles, token material, or absolute paths cross this
+        boundary.
+
+        Bootstrap rule: when `since` is omitted, `happened.items` is empty and
+        `happened.nextCursor` is seeded to the current project tail of
+        `domain_events` so polling can start without replaying historical
+        backlog. `now` and `needsYou` are still fully recomputed on that call.
+
+        `salience` is a minimum filter: `high` returns only `high`, `normal`
+        returns `high` + `normal`, and `low` returns every emitted item.
+
+        This route requires a project-bound token. A global personal token with
+        no bound project returns 403 `UNAUTHORIZED`.
+      operationId: extActivityPulse
+      security:
+        - projectToken: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: |
+            Opaque pulse cursor returned by the previous call. The current
+            implementation seeds it from the token project's `domain_events.id`
+            tail, but callers must treat it as an opaque string.
+          schema:
+            type: string
+        - name: salience
+          in: query
+          required: false
+          description: |
+            Minimum salience to emit. `high` = only `high`; `normal` = `high`
+            + `normal`; `low` = all emitted items. `needsYou` entries are
+            always included because they are human-attention items by design.
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/ExtActivitySalience"
+            default: low
+      responses:
+        "200":
+          description: Project-scoped assistant pulse.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtActivityPulseResponse"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/runs/{runId}/activity:
+    get:
+      tags: [activity]
+      summary: Get semantic assistant activity for one run
+      description: |
+        Scope `runs:read`. Returns a semantic activity feed for the run
+        identified by `runId`, plus the same synthesized `now` snapshot used by
+        the project pulse.
+
+        The run's `projectId` is derived server-side from the run row and MUST
+        match the token's bound project. Cross-project or inaccessible runs
+        return 404 (existence-hide).
+
+        Replay is mutation-horizon based: every item has a stable `id` and a
+        monotonic `lastMutationId`. Supplying `sinceId` returns items whose
+        `lastMutationId` is greater than that horizon, so in-place item
+        mutations resurface on later polls. Omitting `sinceId` starts from the
+        beginning of the run's semantic history.
+
+        The payload is semantic only. Raw ACP JSON-RPC frames, tool payload
+        blobs, diff bodies, token material, supervisor handles, and absolute
+        paths never cross this boundary.
+      operationId: extRunActivity
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: sinceId
+          in: query
+          required: false
+          description: |
+            Forward-only mutation horizon returned by `nextSinceId`. The current
+            implementation derives it from the projected transcript mutation
+            horizon, but callers must treat it as opaque.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of activity items to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+        - name: salience
+          in: query
+          required: false
+          description: Minimum salience to emit in the `items` array.
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/ExtActivitySalience"
+            default: low
+      responses:
+        "200":
+          description: Semantic assistant activity for one run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtRunActivityResponse"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
   /api/v1/ext/runs/{runId}/gates/{gateId}/report:
     post:
       tags: [gates]
@@ -3328,6 +3470,315 @@ components:
             errorCode:
               type: string
               nullable: true
+
+    ExtActivitySalience:
+      type: string
+      description: |
+        Deterministic assistant-activity salience class. `suppressed` is
+        internal-only and never emitted on the wire.
+      enum: [high, normal, low]
+
+    ExtActivityAction:
+      type: object
+      description: Semantic verb/object/outcome reduction shared by pulse and run activity items.
+      required: [verb, object, outcome]
+      additionalProperties: false
+      properties:
+        verb:
+          type: string
+        object:
+          type: string
+        outcome:
+          type: string
+        detail:
+          type: string
+          nullable: true
+
+    ExtActivityLastAction:
+      type: object
+      description: Summary of the latest meaningful semantic action selected for a run snapshot.
+      required: [summary, at, salience]
+      additionalProperties: false
+      properties:
+        summary:
+          type: string
+        at:
+          type: string
+          format: date-time
+        salience:
+          $ref: "#/components/schemas/ExtActivitySalience"
+        nodeId:
+          type: string
+          nullable: true
+        lastMutationId:
+          type: string
+          nullable: true
+
+    ExtActivityLiveness:
+      type: object
+      description: Synthesized active-run liveness state.
+      required: [state, summary, since]
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum: [working, silent, waiting_on_tool, waiting_on_human, stalled]
+        summary:
+          type: string
+        since:
+          type: string
+          format: date-time
+        ageMinutes:
+          type: integer
+          minimum: 0
+          nullable: true
+
+    ExtActivityRunSnapshot:
+      type: object
+      description: One active-run snapshot used by the pulse and per-run activity response.
+      required: [runId, runKind, status, liveness]
+      additionalProperties: false
+      properties:
+        runId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+          nullable: true
+        taskKey:
+          type: string
+          nullable: true
+        taskTitle:
+          type: string
+          nullable: true
+        runKind:
+          type: string
+          enum: [flow, scratch, agent]
+        status:
+          type: string
+          enum: [Running, NeedsInput, NeedsInputIdle, HumanWorking]
+        currentStepId:
+          type: string
+          nullable: true
+        currentAttemptNumber:
+          type: integer
+          minimum: 1
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastAction:
+          allOf:
+            - $ref: "#/components/schemas/ExtActivityLastAction"
+          nullable: true
+        liveness:
+          $ref: "#/components/schemas/ExtActivityLiveness"
+
+    ExtPulseEventKind:
+      type: string
+      enum:
+        - task.created
+        - task.comment_added
+        - task.triage_requeued
+        - task.clarification_answered
+        - run.done
+        - run.failed
+        - run.crashed
+        - run.abandoned
+        - run.review
+        - run.escalated
+        - gate.failed
+
+    ExtActivityPulseItem:
+      type: object
+      description: One persisted project fact replayed through the assistant pulse.
+      required: [id, ts, kind, salience, summary, action]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: Opaque fact identifier returned as part of the pulse cursor progression.
+        ts:
+          type: string
+          format: date-time
+        kind:
+          $ref: "#/components/schemas/ExtPulseEventKind"
+        salience:
+          $ref: "#/components/schemas/ExtActivitySalience"
+        summary:
+          type: string
+        action:
+          $ref: "#/components/schemas/ExtActivityAction"
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+        taskId:
+          type: string
+          format: uuid
+          nullable: true
+        taskKey:
+          type: string
+          nullable: true
+        hitlRequestId:
+          type: string
+          format: uuid
+          nullable: true
+        gateId:
+          type: string
+          nullable: true
+
+    ExtActivityHappenedBlock:
+      type: object
+      description: Persisted fact replay block of the assistant pulse.
+      required: [items, nextCursor, hasMore]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtActivityPulseItem"
+        nextCursor:
+          type: string
+          description: |
+            Opaque cursor for the next pulse call. When `since` is omitted, this
+            is seeded to the current project tail and `items` is empty.
+        hasMore:
+          type: boolean
+          description: True when additional persisted facts remain after `nextCursor`.
+
+    ExtActivityNowBlock:
+      type: object
+      description: Full active-run snapshot for the token-bound project.
+      required: [generatedAt, runs]
+      additionalProperties: false
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtActivityRunSnapshot"
+
+    ExtNeedsYouItem:
+      type: object
+      description: One pending project-scoped human-attention item.
+      required: [runId, hitlRequestId, kind, title, summary, requestedAt]
+      additionalProperties: false
+      properties:
+        runId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+          nullable: true
+        taskKey:
+          type: string
+          nullable: true
+        taskTitle:
+          type: string
+          nullable: true
+        hitlRequestId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [permission, form, human, agent_question, infra_recovery, budget_breach, hook_trip]
+        title:
+          type: string
+        summary:
+          type: string
+        requestedAt:
+          type: string
+          format: date-time
+        criticality:
+          type: string
+          nullable: true
+          enum: [low, medium, high, critical]
+
+    ExtActivityNeedsYouBlock:
+      type: object
+      description: Project-scoped pending human-attention snapshot.
+      required: [generatedAt, items]
+      additionalProperties: false
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtNeedsYouItem"
+
+    ExtActivityPulseResponse:
+      type: object
+      description: Project-scoped assistant pulse.
+      required: [happened, now, needsYou]
+      additionalProperties: false
+      properties:
+        happened:
+          $ref: "#/components/schemas/ExtActivityHappenedBlock"
+        now:
+          $ref: "#/components/schemas/ExtActivityNowBlock"
+        needsYou:
+          $ref: "#/components/schemas/ExtActivityNeedsYouBlock"
+
+    ExtRunActivityKind:
+      type: string
+      enum: [message, reasoning, tool_call, file_change, command, test, hitl, lifecycle, generic]
+
+    ExtRunActivityItem:
+      type: object
+      description: One semantic assistant-safe item from a run activity feed.
+      required: [id, lastMutationId, ts, runId, kind, salience, summary, action]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: Stable item identity within the run activity feed.
+        lastMutationId:
+          type: string
+          description: Monotonic mutation horizon used for replay.
+        ts:
+          type: string
+          format: date-time
+        runId:
+          type: string
+          format: uuid
+        nodeId:
+          type: string
+          nullable: true
+        kind:
+          $ref: "#/components/schemas/ExtRunActivityKind"
+        salience:
+          $ref: "#/components/schemas/ExtActivitySalience"
+        summary:
+          type: string
+        action:
+          $ref: "#/components/schemas/ExtActivityAction"
+
+    ExtRunActivityResponse:
+      type: object
+      description: Semantic assistant activity for one run.
+      required: [items, nextSinceId, hasMore, now]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtRunActivityItem"
+        nextSinceId:
+          type: string
+          description: Opaque forward-only mutation horizon for the next poll.
+        hasMore:
+          type: boolean
+          description: True when additional matching items remain after `nextSinceId`.
+        now:
+          $ref: "#/components/schemas/ExtActivityRunSnapshot"
 
     ExtRunSyncResult:
       type: object

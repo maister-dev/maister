@@ -568,7 +568,11 @@ of node-status text and a single aggregate token count.
   stream content ticks; terminal runs fetch once. Read model:
   `GET /api/runs/{runId}/transcript?node={nodeId}` (`readRepoFiles`/member —
   tool outputs are member-only). → [`scratch-runs.md`](scratch-runs.md) shares
-  the substrate.
+  the substrate. The assistant-facing ext/MCP semantic feed reuses this same
+  projector and `run_messages.supervisor_event_id` horizon, but its
+  client-safe DTO, salience filtering, and liveness synthesis are documented
+  separately in [assistant-activity.md](assistant-activity.md); the raw
+  transcript route remains the internal rail.
 - **Node-status iconography.** Per-node status (`Pending | Running | Succeeded |
   Failed | NeedsInput | Reworked | Stale`) renders as a localized icon
   + accessible tooltip across the three run-detail surfaces (the "Ноды" list,
@@ -1126,7 +1130,7 @@ asking ACP session.
   `MAISTER_HEARTBEAT_INTERVAL_MS`, `MAISTER_KILL_GRACE_MS`.
 - API: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
   [`../api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml).
-- Related: [`hitl.md`](hitl.md), [`workspaces.md`](workspaces.md),
+- Related: [`assistant-activity.md`](assistant-activity.md), [`hitl.md`](hitl.md), [`workspaces.md`](workspaces.md),
   [`tasks.md`](tasks.md), [`flow-graph.md`](flow-graph.md) (M11a rework loop),
   [`workbench-lifecycle.md`](workbench-lifecycle.md).
 - Source: `web/lib/db/schema.ts` (runs table),

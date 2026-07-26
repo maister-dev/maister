@@ -601,6 +601,11 @@ global personal user token whose owner is live, can `answerHitl` on the run
 project, and holds the exact `hitl:respond:human` scope. The `*` wildcard does
 not satisfy that human-response scope.
 
+The assistant pulse's `needsYou` block is a separate, project-scoped read model
+built from these same HITL and clarification rows. It is documented in
+[assistant-activity.md](assistant-activity.md) and is NOT an alias of the
+global personal-token inbox route `GET /api/v1/ext/hitl`.
+
 ```mermaid
 sequenceDiagram
     participant MC as MCP client (agent)
@@ -1209,6 +1214,7 @@ sequenceDiagram
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md),
   [`external-operations.md`](external-operations.md),
+  [`assistant-activity.md`](assistant-activity.md),
   [`flow-graph.md`](flow-graph.md) (M11a review decisions),
   [`review-comments.md`](review-comments.md) (Implemented — ADR-072:
   line-anchored review threads, `{maxLoops, gateAttempt}` schema fields,

@@ -372,6 +372,11 @@ first and then `MAISTER_ACCESS_TOKEN` as a fallback. It forwards the first
 non-empty value to every `/api/v1/ext` call. No per-request bearer extraction
 occurs.
 
+The assistant-facing activity routes are part of the same external trust
+boundary, but their semantic reduction and liveness rules are owned by
+[assistant-activity.md](assistant-activity.md). This domain owns only auth,
+scope, audit, and MCP forwarding for that surface.
+
 ## Expectations
 
 - `project_tokens.token_hash` MUST be `sha256_hex(fullTokenString)` — never
@@ -433,6 +438,11 @@ occurs.
   because the ext routes gate strictly with `z.number()`; a `null`, an
   already-numeric value, or a non-numeric string MUST pass through unchanged so
   genuinely invalid input still surfaces as `422 CONFIG`. (Implemented)
+- `GET /api/v1/ext/activity` and `GET /api/v1/ext/runs/{runId}/activity` MUST
+  stay thin external surfaces over the shared assistant-activity layer:
+  project identity is derived from the token or run row, `runs:read` remains
+  the scope gate, and the external payload MUST NOT expose raw ACP frames,
+  absolute paths, or supervisor-private handles.
 - Session-auth routes MUST NOT accept project tokens; `/api/v1/ext` routes MUST
   NOT accept session cookies. The two auth surfaces are mutually exclusive. (Implemented)
 - Token `scopes` are enforced on every `/api/v1/ext` route. The `*` wildcard is
@@ -510,6 +520,8 @@ a global personal token with exact `hitl:respond:human`; `*` is insufficient.
 - Related domains: [`flow-graph.md`](flow-graph.md) (gate_results,
   markDownstreamStale, markGateOverridden), [`artifacts.md`](artifacts.md)
   (test_report artifact, assertEvidenceReady),
+  [`assistant-activity.md`](assistant-activity.md) (assistant pulse and
+  per-run semantic activity feed),
   [`social-board.md`](social-board.md) (ADR-083 ext comment routes, actor
   mapping, Implemented).
 - Configuration: [`../configuration.md`](../configuration.md)
