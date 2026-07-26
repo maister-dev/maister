@@ -3,19 +3,21 @@ import "server-only";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import type { DomainEventRow } from "@/lib/db/schema";
 
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
+import { MENTION_SUPPRESSION_STATUSES } from "@/lib/agents/summonability";
 import { getDb } from "@/lib/db/client";
 import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { nextFireAt } from "@/lib/run-schedules/cron";
 import { promoteNextPending } from "@/lib/scheduler";
+import { recordTaskActivityOnce } from "@/lib/social/activity";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { agents, agentProjectLinks, agentSchedules } =
+const { agents, agentProjectLinks, agentSchedules, runs } =
   schemaModule as unknown as Record<string, any>;
 
 type Db = any;
@@ -274,6 +276,30 @@ type EligibleTargetAgentRow = {
   projectId: string;
 };
 
+type MentionBindingRow = {
+  scheduleId: string;
+  agentId: string;
+  projectId: string;
+};
+
+// ADR-151: deduped resolved agent ids the comment write recorded. All of them,
+// including ones that were not summonable at write time — eligibility is
+// re-checked here, so enabling a binding during the dispatch window still
+// summons and revoking one still refuses.
+function mentionedAgentIds(event: DomainEventRow): string[] {
+  if (event.kind !== "task.comment_added") return [];
+
+  const raw = (event.payload as Record<string, unknown>).mentionedAgentIds;
+
+  if (!Array.isArray(raw)) return [];
+
+  return [
+    ...new Set(
+      raw.filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+}
+
 function clarificationAnswerTarget(
   event: DomainEventRow,
 ): ClarificationAnswerTarget | null {
@@ -297,6 +323,196 @@ function clarificationAnswerTarget(
   }
 
   return { clarificationId, hitlRequestId, requestingAgentId };
+}
+
+/**
+ * The ADR-151 summon fan-out. Orchestration only — eligibility comes from the
+ * binding query, the busy predicate from `MENTION_SUPPRESSION_STATUSES`, and
+ * the claim from `launchAgentRun`'s existing partial unique. Never throws:
+ * every per-agent decision lands as a binding outcome or a log line, and one
+ * agent's failure never blocks the others named in the same comment.
+ */
+async function summonMentionedAgents(input: {
+  db: Db;
+  launch: LaunchFn;
+  event: DomainEventRow;
+  agentIds: string[];
+}): Promise<void> {
+  const { db: _db, launch, event } = input;
+
+  if (typeof event.taskId !== "string" || event.taskId.length === 0) {
+    log.warn(
+      { eventId: event.id, reason: "no-task-id" },
+      "agent mention summon skipped",
+    );
+
+    return;
+  }
+
+  const taskId = event.taskId;
+  const bindings: MentionBindingRow[] = await _db
+    .select({
+      scheduleId: agentSchedules.id,
+      agentId: agentSchedules.agentId,
+      projectId: agentSchedules.projectId,
+    })
+    .from(agentSchedules)
+    .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
+    .innerJoin(
+      agentProjectLinks,
+      and(
+        eq(agentProjectLinks.agentId, agentSchedules.agentId),
+        eq(agentProjectLinks.projectId, agentSchedules.projectId),
+      ),
+    )
+    .where(
+      and(
+        eq(agentSchedules.triggerType, "mention"),
+        eq(agentSchedules.enabled, true),
+        eq(agentSchedules.projectId, event.projectId),
+        inArray(agentSchedules.agentId, input.agentIds),
+        eq(agents.enabled, true),
+        sql`${agents.quarantinedAt} IS NULL`,
+        eq(agentProjectLinks.enabled, true),
+      ),
+    );
+  const bindingByAgent = new Map(bindings.map((row) => [row.agentId, row]));
+
+  for (const agentId of input.agentIds) {
+    const binding = bindingByAgent.get(agentId);
+
+    // No operator grant → nothing happened, and the comment's write-time
+    // footnote already explains why. Deliberately no record.
+    if (!binding) continue;
+
+    // Self-exclusion (ADR-089 rule, ADR-151 row 3): checked BEFORE the
+    // telemetry claim so a self-mention leaves no misleading attempt marker.
+    if (event.actorType === "agent" && event.actorId === agentId) {
+      log.debug(
+        { eventId: event.id, agentId, reason: "self-mention" },
+        "agent mention summon skipped",
+      );
+      continue;
+    }
+
+    const fence = await claimAgentScheduleTelemetry({
+      db: _db,
+      scheduleId: binding.scheduleId,
+      now: new Date(),
+    });
+
+    try {
+      const busy = await _db
+        .select({ id: runs.id })
+        .from(runs)
+        .where(
+          and(
+            eq(runs.agentId, agentId),
+            eq(runs.taskId, taskId),
+            inArray(runs.status, [...MENTION_SUPPRESSION_STATUSES]),
+            // A REDELIVERY of this same event must not see the run its own
+            // first delivery created and report it as "already busy" — that
+            // would write a false suppression note for a summon that actually
+            // succeeded. Excluding it lets the launch dedup claim answer
+            // instead. `IS DISTINCT FROM` because trigger_event_id is nullable
+            // (a manual run would otherwise be dropped by NULL logic).
+            sql`${runs.triggerEventId} IS DISTINCT FROM ${Number(event.id)}`,
+          ),
+        )
+        .limit(1);
+
+      if (busy.length > 0) {
+        // Idempotent by construction: task_activity_agent_summon_uq collapses
+        // a redelivered event, so no read-then-write window exists.
+        await recordTaskActivityOnce(_db, {
+          taskId,
+          projectId: event.projectId,
+          actor: { type: "system", id: null },
+          eventKind: "agent_summon_suppressed",
+          payload: {
+            agentId,
+            triggerEventId: String(event.id),
+            runId: busy[0].id,
+            commentId:
+              (event.payload as Record<string, unknown>).commentId ?? null,
+          },
+        });
+        await recordAgentScheduleOutcome({
+          db: _db,
+          scheduleId: binding.scheduleId,
+          fence,
+          outcome: "suppressed",
+          runId: busy[0].id,
+          errorCode: "CONFLICT",
+          errorMessage: "The agent already has an active run on this task",
+          now: new Date(),
+        });
+        log.info(
+          { eventId: event.id, agentId, decision: "suppressed" },
+          "agent mention summon settled",
+        );
+        continue;
+      }
+
+      const result = await launch({
+        agentId,
+        projectId: binding.projectId,
+        taskId,
+        trigger: {
+          source: "domain_event",
+          eventId: Number(event.id),
+          payload: {
+            kind: event.kind,
+            payload: event.payload as Record<string, unknown>,
+            mentionedBy: {
+              actorType: event.actorType,
+              actorId: event.actorId,
+            },
+          },
+        },
+        agentScheduleId: binding.scheduleId,
+        db: _db,
+      });
+      const outcome = outcomeForLaunch(result);
+
+      await recordAgentScheduleOutcome({
+        db: _db,
+        scheduleId: binding.scheduleId,
+        fence,
+        outcome: outcome.outcome,
+        runId: outcome.runId,
+        now: new Date(),
+      });
+      log.info(
+        {
+          eventId: event.id,
+          agentId,
+          decision: outcome.outcome,
+          runId: outcome.runId,
+        },
+        "agent mention summon settled",
+      );
+    } catch (err) {
+      await recordAgentScheduleOutcome({
+        db: _db,
+        scheduleId: binding.scheduleId,
+        fence,
+        outcome: isMaisterError(err) ? "refused" : "failed",
+        errorCode: isMaisterError(err) ? err.code : "CRASH",
+        errorMessage: "Agent mention summon was refused",
+        now: new Date(),
+      });
+      log.warn(
+        {
+          eventId: event.id,
+          agentId,
+          code: isMaisterError(err) ? err.code : "CRASH",
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "agent mention summon refused",
+      );
+    }
+  }
 }
 
 // The agent_triggers outbox consumer (ADR-086/087): at-least-once delivery;
@@ -418,6 +634,21 @@ export function buildAgentTriggersConsumer(
           }
 
           continue;
+        }
+
+        // ADR-151 — directed summons. This branch is ADDITIVE: it never
+        // `continue`s, so generic `eventMatch.kinds` subscribers to the same
+        // comment keep firing exactly as before (the (agent, event) partial
+        // unique makes an agent holding BOTH bindings converge on one run).
+        const mentioned = mentionedAgentIds(event);
+
+        if (mentioned.length > 0) {
+          await summonMentionedAgents({
+            db: _db,
+            launch,
+            event,
+            agentIds: mentioned,
+          });
         }
 
         const rows: EventMatchRow[] = await _db

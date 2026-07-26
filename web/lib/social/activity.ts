@@ -25,22 +25,21 @@ export function actorForUserId(userId: string | null | undefined): SocialActor {
   return userId ? { type: "user", id: userId } : { type: "system", id: null };
 }
 
-// THE ONLY task_activity writer. Domain rule (ADR-078 D7): activity rows are
-// written exclusively through this function, inside the same transaction as
-// the triggering domain write — route handlers never insert directly.
-export async function recordTaskActivity(
-  tx: any,
-  input: {
-    taskId: string;
-    projectId: string;
-    actor: SocialActor;
-    eventKind: TaskActivityEventKind;
-    payload?: Record<string, unknown>;
-  },
-): Promise<string> {
-  const id = randomUUID();
+export type TaskActivityInput = {
+  taskId: string;
+  projectId: string;
+  actor: SocialActor;
+  eventKind: TaskActivityEventKind;
+  payload?: Record<string, unknown>;
+};
 
-  await tx.insert(taskActivity).values({
+async function insertActivity(
+  tx: any,
+  input: TaskActivityInput,
+  idempotent: boolean,
+): Promise<string | null> {
+  const id = randomUUID();
+  const values = {
     id,
     taskId: input.taskId,
     projectId: input.projectId,
@@ -48,16 +47,56 @@ export async function recordTaskActivity(
     actorId: input.actor.id,
     eventKind: input.eventKind,
     payload: input.payload ?? {},
-  });
+  };
+  const insert = tx.insert(taskActivity).values(values);
+  let inserted = true;
+
+  if (idempotent) {
+    const rows = await insert
+      .onConflictDoNothing()
+      .returning({ id: taskActivity.id });
+
+    inserted = rows.length > 0;
+  } else {
+    await insert;
+  }
 
   log.debug(
     {
       taskId: input.taskId,
       eventKind: input.eventKind,
       actorType: input.actor.type,
+      inserted,
     },
     "task activity recorded",
   );
 
-  return id;
+  return inserted ? id : null;
+}
+
+// THE ONLY task_activity writer. Domain rule (ADR-078 D7, restated by
+// ADR-151): activity rows are written exclusively through this module, by
+// either the originating domain transaction or a system-actored async
+// consumer/job whose write is idempotent by construction. Route handlers
+// never insert directly.
+export async function recordTaskActivity(
+  tx: any,
+  input: TaskActivityInput,
+): Promise<string> {
+  return (await insertActivity(tx, input, false)) as string;
+}
+
+/**
+ * The idempotent variant for a system-actored async consumer (ADR-151).
+ *
+ * Returns false when a unique backstop collapsed the write — for
+ * `agent_summon_suppressed` that is `task_activity_agent_summon_uq`, which
+ * makes at-least-once event redelivery a no-op WITHOUT a read-then-write
+ * TOCTOU window.
+ */
+export async function recordTaskActivityOnce(
+  tx: any,
+  input: TaskActivityInput,
+): Promise<boolean> {
+  return (await insertActivity(tx, input, true)) !== null;
 }
