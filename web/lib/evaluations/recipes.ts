@@ -90,7 +90,20 @@ export async function createControlledRecipe(
             ),
           );
 
-        if (existing) return existing;
+        // Idempotent replay ONLY when the incoming definition matches the stored
+        // one (same digest). A same-key request carrying a DIFFERENT definition
+        // is a real conflict — returning the old recipe would silently launch the
+        // wrong configuration (Codex-3).
+        if (existing) {
+          if (existing.definitionDigest === contentDigest(definition)) {
+            return existing;
+          }
+
+          throw new MaisterError(
+            "CONFLICT",
+            `recipe key "${args.key}" already exists in study ${args.studyId} with a different definition`,
+          );
+        }
       }
 
       throw new MaisterError(

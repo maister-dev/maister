@@ -1,9 +1,12 @@
 import "server-only";
 
+import type { Db } from "@/lib/evaluations/db";
+
 import { NextResponse, type NextRequest } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { getDb } from "@/lib/db/client";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { resolveProject } from "@/lib/api/project-route-helpers";
 import { getStudyForProject } from "@/lib/evaluations/studies";
@@ -108,43 +111,58 @@ export async function POST(
     // batch's request digest matches (`deduped: true`) instead of leaking a
     // duplicate recipe + a 409 on digest mismatch. Absent an idempotency key
     // there is no retry contract, so a unique key is minted.
-    const items: Array<{ recipeId: string; replicateCount?: number }> = [];
+    //
+    // Codex-3: the inline recipes AND the batch idempotency record commit in ONE
+    // transaction, so a rejected replay (a reused idempotencyKey whose resolved
+    // items digest differs, or an inline key whose definition changed) rolls back
+    // every recipe created in this request instead of leaving orphan rows.
+    const result = await getDb().transaction(async (tx: Db) => {
+      const items: Array<{ recipeId: string; replicateCount?: number }> = [];
 
-    for (const [index, item] of parsed.data.items.entries()) {
-      if (item.recipeId) {
+      for (const [index, item] of parsed.data.items.entries()) {
+        if (item.recipeId) {
+          items.push({
+            recipeId: item.recipeId,
+            ...(item.replicateCount
+              ? { replicateCount: item.replicateCount }
+              : {}),
+          });
+
+          continue;
+        }
+
+        const created = await createControlledRecipe(
+          {
+            studyId,
+            projectId: project.id,
+            key: parsed.data.idempotencyKey
+              ? `inline-${parsed.data.idempotencyKey}-${index}`
+              : `inline-${Date.now()}-${index}`,
+            label: `Variant ${index + 1}`,
+            definition: item.definition,
+            returnExistingOnKeyConflict: true,
+          },
+          tx,
+        );
+
         items.push({
-          recipeId: item.recipeId,
+          recipeId: created.id as string,
           ...(item.replicateCount
             ? { replicateCount: item.replicateCount }
             : {}),
         });
-
-        continue;
       }
 
-      const created = await createControlledRecipe({
-        studyId,
-        projectId: project.id,
-        key: parsed.data.idempotencyKey
-          ? `inline-${parsed.data.idempotencyKey}-${index}`
-          : `inline-${Date.now()}-${index}`,
-        label: `Variant ${index + 1}`,
-        definition: item.definition,
-        returnExistingOnKeyConflict: true,
-      });
-
-      items.push({
-        recipeId: created.id as string,
-        ...(item.replicateCount ? { replicateCount: item.replicateCount } : {}),
-      });
-    }
-
-    const result = await createControlledLaunchBatch({
-      studyId,
-      projectId: project.id,
-      requestedByUserId: session.id,
-      idempotencyKey: parsed.data.idempotencyKey ?? null,
-      items,
+      return createControlledLaunchBatch(
+        {
+          studyId,
+          projectId: project.id,
+          requestedByUserId: session.id,
+          idempotencyKey: parsed.data.idempotencyKey ?? null,
+          items,
+        },
+        tx,
+      );
     });
 
     // Kick the drive AFTER the intent has committed (two-phase). A drive failure

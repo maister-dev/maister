@@ -244,6 +244,35 @@ describe("createControlledRecipe", () => {
 
     expect(second.id).toBe(first.id);
   });
+
+  it("rejects a returnExistingOnKeyConflict reuse whose definition changed (Codex-3)", async () => {
+    // The launch route reuses a deterministic inline key across an idempotent
+    // retry. If the SAME key arrives with a DIFFERENT definition, returning the
+    // stored recipe would silently launch the wrong configuration — it must
+    // CONFLICT on the digest mismatch instead of reusing the old recipe.
+    const study = await createStudy({ projectId, taskId, title: "S6" }, db);
+    const base = {
+      studyId: study.id as string,
+      projectId,
+      key: "idem-b",
+      label: "Idem B",
+      returnExistingOnKeyConflict: true,
+    };
+
+    await createControlledRecipe(
+      { ...base, definition: recipeDefinition(liveFlow()) },
+      db,
+    );
+
+    const changed = {
+      ...recipeDefinition(liveFlow()),
+      executionPolicy: { preset: "assisted" },
+    };
+
+    await expect(
+      createControlledRecipe({ ...base, definition: changed }, db),
+    ).rejects.toThrow(/different definition/i);
+  });
 });
 
 describe("preflightStudyRecipe", () => {
