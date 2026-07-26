@@ -4,7 +4,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { and, asc, desc, eq } from "drizzle-orm";
@@ -258,6 +258,18 @@ export type RunNodeTranscript = {
   usage: { used: number; size: number } | null;
 };
 
+export type WholeRunTranscriptMessage = {
+  id: string;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  supervisorEventId: string;
+};
+
+export type WholeRunTranscriptFeed = {
+  messages: WholeRunTranscriptMessage[];
+  lastEventAt: Date | null;
+};
+
 // Read model: the transcript for a node's LATEST attempt, as the renderer
 // consumes it (raw rows — the shared TranscriptView parses content itself).
 export async function getRunNodeTranscript(
@@ -341,6 +353,43 @@ export async function getAgentRunTranscript(
   runId: string,
   opts: { client?: DbClient; runtimeRoot?: string } = {},
 ): Promise<RunNodeTranscript> {
+  const feed = await getWholeRunTranscriptMessages(runId, opts);
+
+  // The events log carries no per-message wall-clock; `createdAt` is left empty
+  // and the renderer guards it (no timestamp shown) — deliberate, not a gap.
+  const messages: TranscriptMessage[] = feed.messages.map((m) => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    createdAt: "",
+  }));
+
+  let usage: { used: number; size: number } | null = null;
+
+  for (const m of feed.messages) {
+    if (m.role !== "system") continue;
+    try {
+      const parsed = JSON.parse(m.content) as {
+        kind?: string;
+        used?: number;
+        size?: number;
+      };
+
+      if (parsed.kind === "usage") {
+        usage = { used: parsed.used ?? 0, size: parsed.size ?? 0 };
+      }
+    } catch {
+      /* not a JSON usage payload — ignore */
+    }
+  }
+
+  return { messages, usage };
+}
+
+export async function getWholeRunTranscriptMessages(
+  runId: string,
+  opts: { client?: DbClient; runtimeRoot?: string } = {},
+): Promise<WholeRunTranscriptFeed> {
   const client = opts.client ?? db();
   const [run] = await client
     .select({
@@ -355,7 +404,7 @@ export async function getAgentRunTranscript(
 
   const slug = run?.projectSlug ?? run?.localPackageSlug;
 
-  if (!slug) return { messages: [], usage: null };
+  if (!slug) return { messages: [], lastEventAt: null };
 
   const logPath = eventsLogPathForRun(
     opts.runtimeRoot ?? configuredRuntimeRoot(),
@@ -363,12 +412,19 @@ export async function getAgentRunTranscript(
     runId,
   );
   let raw: string;
+  let lastEventAt: Date | null = null;
 
   try {
-    raw = await readFile(logPath, "utf8");
+    const [fileStats, content] = await Promise.all([
+      stat(logPath),
+      readFile(logPath, "utf8"),
+    ]);
+
+    lastEventAt = fileStats.mtime;
+    raw = content;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { messages: [], usage: null };
+      return { messages: [], lastEventAt: null };
     }
 
     throw err;
@@ -388,34 +444,13 @@ export async function getAgentRunTranscript(
     }
   }
 
-  const coalesced = coalesceSessionUpdates(entries);
-  // The events log carries no per-message wall-clock; `createdAt` is left empty
-  // and the renderer guards it (no timestamp shown) — deliberate, not a gap.
-  const messages: TranscriptMessage[] = coalesced.map((m) => ({
-    id: `${runId}:${m.sequence}`,
-    role: m.role,
-    content: m.content,
-    createdAt: "",
-  }));
-
-  let usage: { used: number; size: number } | null = null;
-
-  for (const m of coalesced) {
-    if (m.role !== "system") continue;
-    try {
-      const parsed = JSON.parse(m.content) as {
-        kind?: string;
-        used?: number;
-        size?: number;
-      };
-
-      if (parsed.kind === "usage") {
-        usage = { used: parsed.used ?? 0, size: parsed.size ?? 0 };
-      }
-    } catch {
-      /* not a JSON usage payload — ignore */
-    }
-  }
-
-  return { messages, usage };
+  return {
+    messages: coalesceSessionUpdates(entries).map((message) => ({
+      id: `${runId}:${message.sequence}`,
+      role: message.role,
+      content: message.content,
+      supervisorEventId: message.supervisorEventId,
+    })),
+    lastEventAt,
+  };
 }

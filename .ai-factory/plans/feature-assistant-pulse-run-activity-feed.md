@@ -383,7 +383,7 @@ The feature is not done until all of these hold:
 
 ### Phase 0 - SDD Freeze and Feasibility Proof
 
-- [ ] Task 1: Freeze the external and analyst contracts before code. Create
+- [x] Task 1: Freeze the external and analyst contracts before code. Create
   `docs/system-analytics/assistant-activity.md`; define the two routes, query
   params, DTOs, salience contract, liveness truth table, cursor examples,
   auth/project binding, empty-state semantics, and "no raw ACP frames"
@@ -402,7 +402,7 @@ The feature is not done until all of these hold:
   the spec resolves every open contract choice listed above and
   `CI=true pnpm validate:docs:all` passes.
 
-- [ ] Task 2: Prove or disprove the no-migration path before production code.
+- [x] Task 2: Prove or disprove the no-migration path before production code.
   Write failing tests around domain-event replay, per-run mutation resurfacing,
   standalone agent/scratch behavior, and liveness/needs-you derivation using
   the existing schema and projector seams only.
@@ -419,7 +419,7 @@ The feature is not done until all of these hold:
 
 ### Phase 1 - TDD Slice A: Shared Contract Substrate
 
-- [ ] Task 3 (RED): Add failing tests for shared DTO typing rules, cursor
+- [x] Task 3 (RED): Add failing tests for shared DTO typing rules, cursor
   parsing/serialization, invalid cursor handling, salience filtering, and
   liveness truth-table decisions.
   Files:
@@ -430,7 +430,7 @@ The feature is not done until all of these hold:
   tests fail for the missing or incomplete implementation only, without
   depending on route/MCP layers.
 
-- [ ] Task 4 (GREEN -> REFACTOR): Implement the shared DTO, cursor, salience,
+- [x] Task 4 (GREEN -> REFACTOR): Implement the shared DTO, cursor, salience,
   and liveness helpers so the Phase 1 RED tests pass with minimal logic first,
   then refactor for readability and reuse without changing behavior.
   Files:
@@ -446,7 +446,7 @@ The feature is not done until all of these hold:
 
 ### Phase 2 - TDD Slice B: Semantic Replay and Projection
 
-- [ ] Task 5 (RED): Add failing tests for `domain_events` mapping,
+- [x] Task 5 (RED): Add failing tests for `domain_events` mapping,
   monotonic pulse replay, per-run semantic-item projection, mutation
   resurfacing, and fallback handling for shapes that cannot map cleanly.
   Files:
@@ -457,7 +457,7 @@ The feature is not done until all of these hold:
   failures isolate the semantic replay/projection gap and do not depend on
   route auth or MCP schema wiring.
 
-- [ ] Task 6 (GREEN -> REFACTOR): Implement the shared `happened` mapper and
+- [x] Task 6 (GREEN -> REFACTOR): Implement the shared `happened` mapper and
   per-run semantic feed projector on top of `domain_events`,
   `projectRunTranscript()`, `run_messages.supervisor_event_id`, and
   `getAgentRunTranscript()`; refactor only after the failing tests are green.
@@ -477,7 +477,7 @@ The feature is not done until all of these hold:
 
 ### Phase 3 - TDD Slice C: Pulse Snapshot and Needs-You Composition
 
-- [ ] Task 7 (RED): Add failing tests for active-run selection, `needs-you`
+- [x] Task 7 (RED): Add failing tests for active-run selection, `needs-you`
   composition, empty-state distinctions, and deterministic liveness labeling.
   Files:
   `web/lib/ext-activity/__tests__/pulse.test.ts`,
@@ -487,7 +487,7 @@ The feature is not done until all of these hold:
   failures prove the missing aggregation semantics without needing route-level
   HTTP assertions yet.
 
-- [ ] Task 8 (GREEN -> REFACTOR): Implement the shared pulse builders for
+- [x] Task 8 (GREEN -> REFACTOR): Implement the shared pulse builders for
   `now`, `needsYou`, last-meaningful-action summaries, and any final liveness
   threshold config reads; refactor only after the RED tests are green.
   Files:

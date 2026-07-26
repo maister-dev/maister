@@ -116,6 +116,9 @@ const DEFAULT_AUTO_RETRY_MAX_ATTEMPTS = 3;
 const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
 const DEFAULT_ORCHESTRATOR_MAX_DEPTH = 3;
 const DEFAULT_ORCHESTRATOR_MAX_FANOUT = 16;
+const DEFAULT_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS = 90;
+const DEFAULT_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS = 180;
+const DEFAULT_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS = 900;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
 // this window is considered abandoned (crashed mid-promote) and is reclaimable
@@ -281,6 +284,27 @@ export function reconcileGraceSeconds(): number {
   }
 
   return parsed;
+}
+
+export function assistantActivityWaitingToolAfterSeconds(): number {
+  return positiveIntFromEnv(
+    "MAISTER_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS",
+    DEFAULT_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS,
+  );
+}
+
+export function assistantActivitySilentAfterSeconds(): number {
+  return positiveIntFromEnv(
+    "MAISTER_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS",
+    DEFAULT_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS,
+  );
+}
+
+export function assistantActivityStalledAfterSeconds(): number {
+  return positiveIntFromEnv(
+    "MAISTER_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS",
+    DEFAULT_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS,
+  );
 }
 
 const DEFAULT_NODE_OUTPUT_MAX_BYTES = 262_144;

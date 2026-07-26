@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import {
+  getWholeRunTranscriptMessages,
   getRunNodeTranscript,
   projectRunTranscript,
 } from "@/lib/runs/run-transcript-projector";
@@ -44,6 +45,18 @@ function textLine(nodeAttemptId: string, monotonicId: number, text: string) {
     monotonicId,
     sessionName: "node",
     nodeAttemptId,
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text },
+    },
+  });
+}
+
+function wholeRunTextLine(monotonicId: number, text: string) {
+  return JSON.stringify({
+    type: "session.update",
+    monotonicId,
+    sessionName: "default",
     update: {
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text },
@@ -128,6 +141,31 @@ async function seed(): Promise<{
   ]);
 
   return { runId, slug, planAttemptId, implAttemptId };
+}
+
+async function seedStandaloneAgentRun(): Promise<{ runId: string; slug: string }> {
+  const projectId = randomUUID();
+  const runId = randomUUID();
+  const slug = `agent-${projectId.slice(0, 8)}`;
+
+  await db.insert(schema.projects).values({
+    id: projectId,
+    taskKey: `A${projectId.slice(0, 8)}`.toUpperCase(),
+    slug,
+    name: `Project ${slug}`,
+    repoPath: `/tmp/${slug}`,
+    maisterYamlPath: `/tmp/${slug}/maister.yaml`,
+  });
+  await db.insert(schema.runs).values({
+    id: runId,
+    projectId,
+    runKind: "agent",
+    status: "Running",
+    flowVersion: "v1",
+    flowRevision: "manual",
+  });
+
+  return { runId, slug };
 }
 
 async function writeEvents(slug: string, runId: string, lines: string[]) {
@@ -317,6 +355,37 @@ describe("projectRunTranscript", () => {
     expect(aPlanAfter?.messages.map((m) => m.content)).toEqual([
       "legit A output",
     ]);
+  });
+
+  it("replays standalone whole-run transcripts with a stable monotonic horizon and no DB rows", async () => {
+    const { runId, slug } = await seedStandaloneAgentRun();
+
+    await writeEvents(slug, runId, [
+      wholeRunTextLine(1, "Plan "),
+      wholeRunTextLine(2, "ready"),
+      wholeRunTextLine(3, "!"),
+    ]);
+
+    const feed = await getWholeRunTranscriptMessages(runId, {
+      client: db,
+      runtimeRoot,
+    });
+
+    expect(feed.messages).toHaveLength(1);
+    expect(feed.messages[0]).toMatchObject({
+      id: `${runId}:0`,
+      role: "assistant",
+      content: "Plan ready!",
+      supervisorEventId: "3",
+    });
+    expect(feed.lastEventAt).toBeInstanceOf(Date);
+
+    const rows = await db
+      .select()
+      .from(schema.runMessages)
+      .where(eq(schema.runMessages.runId, runId));
+
+    expect(rows).toEqual([]);
   });
 
   // Codex adversarial finding #1: a partial/failed projection must not advance

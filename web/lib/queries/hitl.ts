@@ -353,9 +353,12 @@ export function isInboxVisibleHitlRow(
   );
 }
 
-export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
+export async function getHitlInbox(
+  projectId: string,
+  deps?: { db?: NodePgDatabase<typeof schema> },
+): Promise<HitlInbox> {
   const now = new Date();
-  const client = db();
+  const client = deps?.db ?? db();
 
   const rows = await client
     .select({
