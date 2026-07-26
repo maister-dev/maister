@@ -12,7 +12,7 @@ the `agent_triggers` consumer turns each id into at most one directed agent
 run. This file owns the mention scanning/resolution rules, the summonability
 predicate, and the per-agent summon decision. It does NOT own comment
 plumbing (social-board), agent launch mechanics (agents), or `@user`
-notification — see Non-goals. (Designed — ADR-151)
+notification — see Non-goals. (Implemented — ADR-151)
 
 ## Domain entities
 
@@ -45,7 +45,7 @@ notification — see Non-goals. (Designed — ADR-151)
 Per mentioned agent id, evaluated in this order by the consumer. The frozen
 decision table below is the contract; every terminal state is observable
 either as a `runs` row, a `task_activity` row, or an `agent_schedules`
-outcome. (Designed)
+outcome. (Implemented)
 
 ```mermaid
 stateDiagram-v2
@@ -99,7 +99,7 @@ still refuses.
 
 ## Process flows
 
-### Write-time resolution and expansion (Designed)
+### Write-time resolution and expansion (Implemented)
 
 Runs inside the ONE `addTaskComment` transaction, beside the existing `KEY-N`
 expansion. No launch happens here — the comment write only records what was
@@ -132,7 +132,7 @@ sequenceDiagram
     R-->>U: 201 { comment, mentionedAgents }
 ```
 
-### Consume-time summon decision (Designed)
+### Consume-time summon decision (Implemented)
 
 The `agent_triggers` consumer runs the mention branch BEFORE the generic
 event matcher and does NOT `continue` — mention summons are additive to
@@ -176,44 +176,44 @@ ON CONFLICT DO NOTHING and record suppressed]
   link), only within the commented task's project, and only when it is a
   canonical `<packageName>:<stem>` id or a bare stem matching exactly one
   eligible in-project candidate; anything else MUST stay literal text.
-  (Designed)
+  (Implemented)
 - A resolved mention MUST be stored expanded as
   `[@<agentId>](/agents/<agentId>)` — the leading `/` is required so no agent
   id is parsed as a URL scheme by the renderer's `urlTransform` — and
-  renderers MUST NEVER re-resolve handles at read time. (Designed)
+  renderers MUST NEVER re-resolve handles at read time. (Implemented)
 - `domain_events.payload.mentionedAgentIds` MUST be deduplicated and MUST be
-  omitted entirely when no handle resolved. (Designed)
+  omitted entirely when no handle resolved. (Implemented)
 - The whole comment write (resolution, expansion, insert, activity, event,
   subscriptions, fanout) MUST remain ONE `db.transaction`; a failure at any
-  step MUST leave no partial writes. (Designed)
+  step MUST leave no partial writes. (Implemented)
 - Agent mentions MUST NEVER create `inbox_items` or `task_subscribers` rows;
-  `recipient_type` MUST stay `'user'` across this feature. (Designed)
+  `recipient_type` MUST stay `'user'` across this feature. (Implemented)
 - At most one run MUST exist per `(agent, comment event)` pair under any
   number of redeliveries, and that run MUST carry `runs.task_id`,
   `runs.trigger_event_id`, and a `trigger_payload` whose `{kind, payload}`
-  core keeps `taskCommentTriggerContextBlock` working unchanged. (Designed)
+  core keeps `taskCommentTriggerContextBlock` working unchanged. (Implemented)
 - A mention MUST NOT launch an agent that has no enabled
   `agent_schedules` row with `trigger_type = 'mention'` on that project
   attachment, and creating or enabling that row MUST require project `admin`
-  (`editSettings`) — the binding IS the authorization. (Designed)
+  (`editSettings`) — the binding IS the authorization. (Implemented)
 - An agent MUST NEVER summon itself through a comment it authored.
-  (Designed)
+  (Implemented)
 - A mentioned agent holding a run on the same task in
   `MENTION_SUPPRESSION_STATUSES` MUST NOT be launched again and MUST record
   exactly one `agent_summon_suppressed` row per `(task, agent,
-  triggerEventId)`, under any number of redeliveries. (Designed)
+  triggerEventId)`, under any number of redeliveries. (Implemented)
 - Mention summons MUST be additive: generic `eventMatch.kinds` subscribers to
   `task.comment_added` MUST keep firing exactly as before (including the
   lowest-`scheduleId`-wins single-owner rule), and `trigger_type = 'mention'`
   rows MUST NEVER be picked up by the cron tick or the generic event matcher.
-  (Designed)
+  (Implemented)
 - A summon over `MAISTER_MAX_CONCURRENT_AGENTS` MUST queue as `Pending` and
   MUST NEVER be dropped or throw; the consumer MUST NEVER throw out of
   `handle`, and one agent's failure MUST NOT block the other agents
-  mentioned in the same event. (Designed)
+  mentioned in the same event. (Implemented)
 - The comment POST response (web and ext) MUST report each resolved mention
   with its write-time summonability, so an API or MCP caller learns whether
-  its summon was accepted without polling. (Designed)
+  its summon was accepted without polling. (Implemented)
 
 ## Edge cases
 
@@ -263,7 +263,7 @@ beyond suppression and dedup · cross-project mentions · widening
 - Screens: [`../screens/projects/project-board.md`](../screens/projects/project-board.md)
   (composer + timeline), [`../screens/projects/project-settings-agents.md`](../screens/projects/project-settings-agents.md)
   (mention binding row).
-- Source (Designed): `web/lib/social/mentions.ts`,
+- Source (Implemented): `web/lib/social/mentions.ts`,
   `web/lib/social/comments.ts`, `web/lib/agents/summonability.ts`,
   `web/lib/agents/triggers.ts`, `web/components/social/comment-composer.tsx`,
   `web/components/social/markdown-body.tsx`.

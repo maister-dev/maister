@@ -99,7 +99,7 @@ The board is a horizontally scrollable set of columns:
   saving as inherited task fields unless the operator chooses an override. Its
   comments/activity timeline sits below the run history; a threaded hierarchy can
   be added later without changing the current read flow.
-- **Comment composer — agent mentions (Designed, ADR-151).** Typing `@` at a
+- **Comment composer — agent mentions (Implemented, ADR-151).** Typing `@` at a
   word boundary opens a hand-rolled popover (project convention — no HeroUI
   Autocomplete anywhere) listing up to 8 **summonable** agents of this
   project, filtered by id and name, prefix matches before substring matches.
@@ -114,7 +114,7 @@ The board is a horizontally scrollable set of columns:
   Selecting replaces the partial token with `@<canonical id>` plus one
   trailing space and keeps focus. The popover is anchored below the textarea,
   not caret-tracked.
-- **Comment timeline — chips and summon notes (Designed, ADR-151).** A
+- **Comment timeline — chips and summon notes (Implemented, ADR-151).** A
   resolved agent mention renders as a **non-navigating accent pill** with the
   agent id as its `title` — deliberately not a link, since `/agents` is
   admin-only; `KEY-N` task mentions keep their existing amber-link treatment
@@ -235,7 +235,7 @@ to server-stored mode. The board never renders a stale question as answerable.
   `GET/POST /api/account/tokens` and
   `DELETE /api/account/tokens/{tokenId}`.
 
-- Agent mentions (Designed, ADR-151): **no new endpoint**. The task-detail
+- Agent mentions (Implemented, ADR-151): **no new endpoint**. The task-detail
   page already loads the project's agents and computes launchability inline,
   so the composer's mention candidates are derived there and passed as
   props; the comment `POST` response carries `mentionedAgents` for callers

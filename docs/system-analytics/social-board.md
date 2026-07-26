@@ -174,7 +174,7 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   (`recordTaskActivity` from `web/lib/social/*` or a named service
   write-site) inside the same transaction as its triggering domain write;
   route handlers MUST NOT insert activity directly. **(ADR-151 restatement —
-  Designed)** `recordTaskActivity` remains the ONLY writer, and a caller is
+  Implemented)** `recordTaskActivity` remains the ONLY writer, and a caller is
   either the originating domain transaction or a system-actored async
   consumer/job whose write is idempotent by construction (`pr_state_scan`,
   the mention-summon branch). (Implemented)
@@ -183,7 +183,7 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   triage_set | triage_requeued | agent_quarantined | experiment_concluded |
   run_pr_merged | evaluation_decided | agent_summon_suppressed`;
   `run_finished` joins only when a `setRunStatus` choke point exists
-  (Phase 2). (Implemented; `agent_summon_suppressed` — Designed, ADR-151)
+  (Phase 2). (Implemented; `agent_summon_suppressed` — Implemented, ADR-151)
 - Every social-table row MUST satisfy `actor_type ∈ {user, agent, system}`
   and `(actor_type = 'system') = (actor_id IS NULL)`; Stage 1 wrote only
   `user`/`system`, while M34 platform agents write `actor_type = 'agent'`
@@ -241,7 +241,7 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   logged at DEBUG, no error.
 - **Unresolved or ambiguous `@<handle>`** — literal text, no error, no
   summon. Resolution and summon behavior are owned by
-  [`agent-mentions.md`](agent-mentions.md) (ADR-151 — Designed).
+  [`agent-mentions.md`](agent-mentions.md) (ADR-151 — Implemented).
 - **Empty or whitespace comment body** — route zod validation rejects →
   `MaisterError("CONFIG")` → 400.
 - **Comment POST against a missing task/number** — server-state resolution

@@ -368,7 +368,7 @@ paths:
         (Earlier revisions of this spec documented only user/system; agent
         tokens have written `actor.type = "agent"` since M34.)
 
-        (ADR-151, Designed) `@<agentId>` handles in the body resolve at write
+        (ADR-151, Implemented) `@<agentId>` handles in the body resolve at write
         time exactly as on the session-auth route and are echoed back in
         `mentionedAgents`. An agent MUST NEVER summon itself: a mention whose
         resolved id equals this token's own `agentId` still expands in the
@@ -410,7 +410,7 @@ paths:
                   mentionedAgents:
                     type: array
                     description: |
-                      (ADR-151, Designed) Agent handles that RESOLVED in this
+                      (ADR-151, Implemented) Agent handles that RESOLVED in this
                       body, with their write-time summonability. Omitted
                       entirely when no handle resolved.
                     items: { $ref: "#/components/schemas/MentionedAgentDTO" }
@@ -3106,7 +3106,7 @@ components:
             inline code, and existing links are expanded to task links at
             write time; unresolved tokens stay literal.
 
-            (ADR-151, Designed) `@<agentId>` handles follow the same
+            (ADR-151, Implemented) `@<agentId>` handles follow the same
             inertness rules and expand to
             `[@<agentId>](/agents/<agentId>)`. Use the canonical
             `@<packageName>:<stem>` form; a bare `@<stem>` resolves only when
@@ -3118,7 +3118,7 @@ components:
     MentionedAgentDTO:
       type: object
       description: |
-        (ADR-151, Designed) One agent handle that resolved at comment-write
+        (ADR-151, Implemented) One agent handle that resolved at comment-write
         time. `summonable` is the write-time truth of
         `Summonable(agent, project)`; `false` means the handle expanded to a
         chip but nothing will launch (a project `admin` enables a mention

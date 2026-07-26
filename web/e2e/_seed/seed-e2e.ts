@@ -7116,6 +7116,7 @@ async function main(): Promise<void> {
        WHERE p.slug = $2`,
       [randomUUID(), BOARD_SLUG],
     );
+
     const scratch = await seedLaunchableProjectFixture(pool, {
       slug: SCRATCH_SLUG,
       projectName: "E2E Acceptance Scratch",
@@ -7172,6 +7173,95 @@ async function main(): Promise<void> {
     );
     const flowViewer = await seedInstalledPackageFixture(pool, admin.id);
     const platformAgents = await seedPlatformAgentsFixture(pool, admin.id);
+
+    // ADR-151 agent-mention fixture (agent-mentions.spec.ts): TWO agents
+    // attached to the BOARD project — `mention-summoner` carries an enabled
+    // mention binding (so the composer popover offers it) and
+    // `mention-bystander` does not (so a hand-typed handle expands to a chip
+    // AND draws the not-summonable footnote).
+    //
+    // They ship from their OWN package_installs row whose installed_path holds
+    // real `maister-agents/<stem>.md` files. That is load-bearing, not
+    // ceremony: `instrumentation.ts` runs `resyncAgents()` on every Next boot,
+    // and the resync DISABLES every agent it cannot re-register from an
+    // Installed package — a bare catalog row (or one whose package lays its
+    // definitions out the pre-ADR-106 way) comes back `enabled = false` and
+    // silently stops being summonable.
+    const mentionPkgRoot = path.join(RUNTIME_ROOT, "packages", "e2e-mentions");
+
+    mkdirSync(path.join(mentionPkgRoot, "maister-agents"), { recursive: true });
+
+    const mentionPkgInstallId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO package_installs
+         (id, source_url, name, version_label, resolved_revision, manifest,
+          manifest_digest, installed_path, package_status, trust_status)
+       VALUES ($1, 'github.com/maister/e2e-mentions-pkg', 'e2e-mentions-pkg',
+               'v1.0.0', 'rev-e2e-mentions', '{}'::jsonb, 'digest', $2,
+               'Installed', 'trusted')`,
+      [mentionPkgInstallId, mentionPkgRoot],
+    );
+    await pool.query(
+      `INSERT INTO project_package_attachments
+         (id, project_id, package_install_id, package_name)
+       SELECT $1, p.id, $2, 'e2e-mentions-pkg'
+         FROM projects p WHERE p.slug = $3`,
+      [randomUUID(), mentionPkgInstallId, BOARD_SLUG],
+    );
+
+    for (const [stem, summonable] of [
+      ["summoner", true],
+      ["bystander", false],
+    ] as const) {
+      const agentId = `e2e-mentions-pkg:${stem}`;
+      const sourcePath = path.join(
+        mentionPkgRoot,
+        "maister-agents",
+        `${stem}.md`,
+      );
+
+      writeFileSync(
+        sourcePath,
+        `---
+name: ${stem}
+description: e2e mention fixture agent
+workspace: none
+mode: session
+triggers:
+  - domain_event
+risk_tier: read_only
+---
+You answer when summoned by an @mention.
+`,
+        "utf8",
+      );
+
+      await pool.query(
+        `INSERT INTO agents
+           (id, package_name, version_label, origin, name, description, workspace,
+            mode, triggers, risk_tier, source_path)
+         VALUES ($1, 'e2e-mentions-pkg', 'v1.0.0', 'git', $2,
+                 'e2e mention fixture agent', 'none', 'session',
+                 '["domain_event"]'::jsonb, 'read_only', $3)
+         ON CONFLICT (id) DO UPDATE
+           SET enabled = true, source_path = EXCLUDED.source_path`,
+        [agentId, stem, sourcePath],
+      );
+      await pool.query(
+        `INSERT INTO agent_project_links (id, agent_id, project_id)
+         SELECT $1, $2, p.id FROM projects p WHERE p.slug = $3`,
+        [randomUUID(), agentId, BOARD_SLUG],
+      );
+      if (summonable) {
+        await pool.query(
+          `INSERT INTO agent_schedules (id, agent_id, project_id, trigger_type)
+           SELECT $1, $2, p.id, 'mention' FROM projects p WHERE p.slug = $3`,
+          [randomUUID(), agentId, BOARD_SLUG],
+        );
+      }
+    }
+
     const orchestrator = await seedOrchestratorE2EFixture(pool, admin.id);
     const m38 = await seedM38DecideFixture(pool, admin.id);
     const m40 = await seedM40Fixture(pool, admin.id);

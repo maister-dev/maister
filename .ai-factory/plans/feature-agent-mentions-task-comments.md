@@ -331,12 +331,12 @@ Phase 0  spec ──► Phase 1  binding foundation ──► Phase 2  resolutio
   GREEN: `markdown-body.tsx` `a` override case; `task-detail.ts` mapping; `task-timeline.tsx` footnote + suppressed-event row; label maps on both pages; EN/RU strings.
   REFACTOR: one chip-detection predicate shared by any future caller (DRY); no styling duplication with task links.
 
-- [ ] **T12. MCP facade + dist**
+- [x] **T12. MCP facade + dist**
   RED: run `pnpm --filter @maister/mcp test` first to confirm the guard is green pre-change (baseline), then update. GREEN: `comment_create` description documents canonical/bare syntax, code-inertness, and that the response reports resolved mentions; rebuild `pnpm --filter @maister/mcp build`. REFACTOR/verify: guard green (request schema unchanged by construction); no TOOL_SPECS field added.
 
 ### Phase 5 — End-to-end + release gates
 
-- [ ] **T13. E2E, docs flip, full gates**
+- [x] **T13. E2E, docs flip, full gates**
   RED→GREEN: new `web/e2e/agent-mentions.spec.ts` seeded like the existing social-board spec — type `@`, pick from the popover, submit, assert the chip renders and a non-summonable mention shows its footnote. Scope boundary: the e2e asserts the **UI contract only**; launch behavior stays owned by T9's integration tests (no overlap).
   Then flip every `(Designed)` tag from T1/T2 to `(Implemented)`, re-verify each contract surface against shipped code, and run all gates:
   `pnpm --filter maister-web typecheck` · `pnpm --filter maister-web exec eslint .` (**check-only — never bare `pnpm lint`, it reformats ~60 files**) · `pnpm --filter maister-web test:unit` · `pnpm --filter maister-web test:integration` · `pnpm --filter maister-web test:e2e` (kill ports 3100/7788 first — shared across worktrees) · `pnpm --filter @maister/mcp test` · `pnpm validate:docs` + the ADR anchor script.

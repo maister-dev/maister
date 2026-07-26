@@ -65,7 +65,7 @@ not contain the package-root `maister-agents/`).
   description, runner_id?, workspace (none|repo_read|worktree), workspace_ref?,
   mode (session|subagent), triggers jsonb, capability_profile jsonb?, risk_tier
   (read_only|standard|destructive), recommended jsonb? (extended with
-  executionPolicy; **ADR-151 — Designed** adds `mention?: boolean`, which
+  executionPolicy; **ADR-151 — Implemented** adds `mention?: boolean`, which
   prefills a `trigger_type='mention'` binding row in the attach/edit modal —
   a recommendation only, never an implicit grant),
   flow_ref? (NEW — same-package flow id), branch_base? (NEW),
@@ -99,7 +99,7 @@ not contain the package-root `maister-agents/`).
   `schedules` patch (delete-all-then-reinsert), seeded in the UI from
   `recommended`. (Implemented — ADR-106) An agent disable cascades `enabled=false`
   onto these rows.
-  **(ADR-151 — Designed)** a third value `trigger_type='mention'` carries NO
+  **(ADR-151 — Implemented)** a third value `trigger_type='mention'` carries NO
   cron and NO `event_match` columns and grants an agent summonability by
   `@<agentId>` in a task comment — at most ONE enabled mention row per
   `(agent, project)`. It needs no `agent_schedules` migration: `trigger_type`

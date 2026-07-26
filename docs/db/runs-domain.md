@@ -582,7 +582,7 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   `(task_id, created_at)`; `task_activity_task_created_idx` on
   `(task_id, created_at)` + `task_activity_project_created_idx` on
   `(project_id, created_at)`.
-- **(ADR-151, Designed — migration `0121`)** `task_activity_agent_summon_uq`
+- **(ADR-151, Implemented — migration `0121`)** `task_activity_agent_summon_uq`
   partial UNIQUE on `(task_id, (payload->>'agentId'),
   (payload->>'triggerEventId')) WHERE event_kind = 'agent_summon_suppressed'`
   — the structural backstop that keeps one mention-summon suppression note

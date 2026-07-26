@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -49,51 +49,70 @@ export async function listMentionCandidateAgents(
 ): Promise<MentionableAgent[]> {
   const _db = (dbOrTx ?? getDb()) as unknown as { select: any };
 
-  const rows = (await _db
+  // THREE single-table reads combined in TS, deliberately NOT one join.
+  // `agents`, `agent_project_links` and `agent_schedules` all carry columns
+  // named `id` and `enabled`, and under this repo's dual drizzle-orm peer-dep
+  // variants (see the FIXME above) a multi-table select mis-mapped those
+  // same-named columns in the APP runtime while mapping correctly against the
+  // test drizzle instance — every agent came back non-summonable, silently.
+  // Flat reads have no ambiguity to get wrong.
+  const links = (await _db
+    .select({
+      agentId: agentProjectLinks.agentId,
+      enabled: agentProjectLinks.enabled,
+    })
+    .from(agentProjectLinks)
+    .where(eq(agentProjectLinks.projectId, projectId))) as Array<{
+    agentId: string;
+    enabled: boolean;
+  }>;
+
+  if (links.length === 0) return [];
+
+  const linkEnabledByAgent = new Map(
+    links.map((row) => [row.agentId, row.enabled]),
+  );
+  const attached = (await _db
     .select({
       id: agents.id,
       name: agents.name,
       packageName: agents.packageName,
-      agentEnabled: agents.enabled,
+      enabled: agents.enabled,
       quarantinedAt: agents.quarantinedAt,
       triggers: agents.triggers,
-      linkEnabled: agentProjectLinks.enabled,
-      mentionBindings: sql<number>`(
-        select count(*) from ${agentSchedules}
-        where ${agentSchedules.agentId} = ${agents.id}
-          and ${agentSchedules.projectId} = ${agentProjectLinks.projectId}
-          and ${agentSchedules.triggerType} = 'mention'
-          and ${agentSchedules.enabled} = true
-      )`,
     })
     .from(agents)
-    .innerJoin(
-      agentProjectLinks,
-      and(
-        eq(agentProjectLinks.agentId, agents.id),
-        eq(agentProjectLinks.projectId, projectId),
-      ),
-    )) as Array<{
+    .where(inArray(agents.id, [...linkEnabledByAgent.keys()]))) as Array<{
     id: string;
     name: string;
     packageName: string;
-    agentEnabled: boolean;
+    enabled: boolean;
     quarantinedAt: Date | null;
     triggers: string[] | null;
-    linkEnabled: boolean;
-    mentionBindings: number | string;
   }>;
 
-  return rows.map((row) => ({
+  const bindings = (await _db
+    .select({ agentId: agentSchedules.agentId })
+    .from(agentSchedules)
+    .where(
+      and(
+        eq(agentSchedules.projectId, projectId),
+        eq(agentSchedules.triggerType, "mention"),
+        eq(agentSchedules.enabled, true),
+      ),
+    )) as Array<{ agentId: string }>;
+  const bound = new Set(bindings.map((row) => row.agentId));
+
+  return attached.map((row) => ({
     id: row.id,
     // The id is `<packageName>:<stem>`; the stem is what a bare handle names.
     stem: row.id.slice(row.packageName.length + 1),
     name: row.name,
     summonable:
-      row.linkEnabled &&
-      row.agentEnabled &&
+      linkEnabledByAgent.get(row.id) === true &&
+      row.enabled &&
       row.quarantinedAt === null &&
       (row.triggers ?? []).includes("domain_event") &&
-      Number(row.mentionBindings) > 0,
+      bound.has(row.id),
   }));
 }

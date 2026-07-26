@@ -506,7 +506,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   comment_create: {
     description:
-      "Add a markdown comment to a task; KEY-N mentions are expanded to task links at write time",
+      "Add a markdown comment to a task; KEY-N mentions are expanded to task links at write time. An `@<agentId>` handle summons that platform agent to this task: use the canonical `@<package>:<stem>` form (a bare `@<stem>` resolves only when exactly one eligible agent in the project carries that stem). Handles inside fenced code blocks, inline code spans, or existing markdown links are inert, and an unresolved handle stays literal text. The response reports every handle that resolved, each with `summonable` — false means it rendered as a chip but nothing will launch until a project admin enables a mention trigger. You cannot summon yourself.",
     inputSchema: {
       type: "object",
       properties: {

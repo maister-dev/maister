@@ -175,7 +175,7 @@
 | [ADR-148](#adr-148-run-workspace-lifecycle-cleanup-and-reconciliation) | Run workspace lifecycle cleanup and reconciliation | Implemented | 2026-07-16 |
 | [ADR-149](#adr-149-authored-capability-editor-session-edit-lock) | Authored-capability editor session edit-lock | Implemented | 2026-07-21 |
 | [ADR-150](#adr-150-experiments-cut-over-completion) | Experiments cut-over completion | Implemented | 2026-07-21 |
-| [ADR-151](#adr-151-agent-mentions-in-task-comments-as-directed-summons) | Agent mentions in task comments as directed summons | Accepted | 2026-07-26 |
+| [ADR-151](#adr-151-agent-mentions-in-task-comments-as-directed-summons) | Agent mentions in task comments as directed summons | Implemented | 2026-07-26 |
 
 ---
 
@@ -13126,7 +13126,7 @@ the evaluations namespace; the packagePin concept itself lives on in recipes).
 ### ADR-151: Agent mentions in task comments as directed summons
 
 **Date:** 2026-07-26
-**Status:** Accepted
+**Status:** Implemented
 
 **Context:** The M31 social board (ADR-083) already expands `KEY-N` task
 mentions at comment-write time and emits `task.comment_added` onto the ADR-086

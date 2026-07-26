@@ -2462,7 +2462,7 @@ paths:
         activity → subscription upserts (commenter + mention rule) → inbox
         fanout excluding the actor.
 
-        (ADR-151, Designed) The same write-time pass resolves `@<agentId>`
+        (ADR-151, Implemented) The same write-time pass resolves `@<agentId>`
         agent handles — canonical `@<packageName>:<stem>` or a bare
         `@<stem>` that matches exactly one eligible agent in this project.
         Handles inside fenced code blocks, inline code spans, or existing
@@ -2513,7 +2513,7 @@ paths:
                   mentionedAgents:
                     type: array
                     description: |
-                      (ADR-151, Designed) Agent handles that RESOLVED in this
+                      (ADR-151, Implemented) Agent handles that RESOLVED in this
                       body, with their write-time summonability. Omitted
                       entirely when no handle resolved.
                     items: { $ref: "#/components/schemas/MentionedAgentDTO" }
@@ -14621,7 +14621,7 @@ components:
     MentionedAgentDTO:
       type: object
       description: |
-        (ADR-151, Designed) One agent handle that resolved at comment-write
+        (ADR-151, Implemented) One agent handle that resolved at comment-write
         time. `summonable` is the write-time truth of
         `Summonable(agent, project)` — attached, link enabled, agent enabled,
         not quarantined, definition declares the `domain_event` trigger, and

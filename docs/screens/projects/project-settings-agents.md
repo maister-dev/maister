@@ -55,7 +55,7 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   **Agent** (`packageName:stem` + name, the `flow_ref` shown as a small "drives
   *flowId*" chip when set), **State** (a green-check `✓` enabled / `—` disabled
   glyph + a quarantine warning glyph when `quarantined_at`), **Triggers** (chips:
-  `cron`, `event` counts and — **Designed, ADR-151** — a `mention` chip when an
+  `cron`, `event` counts and — **Implemented, ADR-151** — a `mention` chip when an
   enabled mention binding exists; `manual`/`webhook`/`flow` are capability badges
   from the definition), **Runner** (override or the resolved default), **Auto-apply**
   (`off` / `permissions` "с чел" / `full` "без чел"), **On budget breach**
@@ -81,7 +81,7 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
     does not add another editor or a synthetic agent Run now action. The
     stable IDs and schedules revision make an unseen concurrent binding change a
     visible conflict rather than a delete-and-reinsert loss.
-    **(Designed, ADR-151)** a third row type, **mention**, takes no cron and no
+    **(Implemented, ADR-151)** a third row type, **mention**, takes no cron and no
     event input — it is the operator's grant that lets anyone with
     `commentTask` summon this agent by writing `@<agentId>` in a task comment
     on this project. At most ONE enabled mention row per agent (`CONFIG` →

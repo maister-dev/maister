@@ -115,7 +115,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `webhook_delivery_attempts`   | **(Implemented, ADR-077, migration `0041`)** Append-only per-attempt audit. `attempt_no` continues from the running total across replay cycles. UNIQUE `(delivery_id, attempt_no)`.                                                                                                                                                            | `webhook_deliveries.id`                                                    |
 | `task_relations`              | **(ADR-083 — Implemented, migration `0043`)** Canonical one-direction typed task relations (`blocks\|depends_on\|parent_of`). UNIQUE `(from_task_id, kind, to_task_id)`; no self-relations; same-project enforced in the domain layer.                                                                                                  | `projects.id`, `tasks.id` (both ends)                                      |
 | `task_comments`               | **(ADR-083 — Implemented, migration `0043`)** Append-only markdown task comments; mentions stored expanded; polymorphic actor pair.                                                                                                                                                                                                     | `tasks.id`, `projects.id`                                                  |
-| `task_activity`               | **(ADR-083 — Implemented, migration `0043`; kind CHECK widened by `0050`/`0090`/`0105`/`0111`/`0121`)** Append-only domain-written task event log (`task_created\|comment_added\|task_mentioned\|relation_added\|relation_removed\|run_launched\|triage_set\|triage_requeued\|agent_quarantined\|experiment_concluded\|run_pr_merged\|evaluation_decided\|agent_summon_suppressed`) with jsonb payload. **(ADR-151 — Designed, migration `0121`)** partial UNIQUE `task_activity_agent_summon_uq` on `(task_id, payload->>'agentId', payload->>'triggerEventId') WHERE event_kind = 'agent_summon_suppressed'` makes the mention-summon suppression note idempotent under event redelivery. | `tasks.id`, `projects.id`                                                  |
+| `task_activity`               | **(ADR-083 — Implemented, migration `0043`; kind CHECK widened by `0050`/`0090`/`0105`/`0111`/`0121`)** Append-only domain-written task event log (`task_created\|comment_added\|task_mentioned\|relation_added\|relation_removed\|run_launched\|triage_set\|triage_requeued\|agent_quarantined\|experiment_concluded\|run_pr_merged\|evaluation_decided\|agent_summon_suppressed`) with jsonb payload. **(ADR-151 — Implemented, migration `0121`)** partial UNIQUE `task_activity_agent_summon_uq` on `(task_id, payload->>'agentId', payload->>'triggerEventId') WHERE event_kind = 'agent_summon_suppressed'` makes the mention-summon suppression note idempotent under event redelivery. | `tasks.id`, `projects.id`                                                  |
 | `task_subscribers`            | **(ADR-083 — Implemented, migration `0043`)** Per-task subscriber set (`user\|agent` pair + reason `creator\|commenter\|mentioned\|manual`). UNIQUE `(task_id, subscriber_type, subscriber_id)`.                                                                                                                                        | `tasks.id`                                                                 |
 | `inbox_items`                 | **(ADR-083 — Implemented, migration `0043`)** Per-recipient inbox fanned out from comment/mention events; `read_at` read marker; `source_ref` jsonb.                                                                                                                                                                                    | `projects.id`, `tasks.id`                                                  |
 ## `users`
@@ -791,7 +791,7 @@ agent_schedules {                  // M34 rework (migration 0049) —
   id, projectId,                   //   the M24 shape was dead code (zero readers)
   agentId,                         // FK -> agents.id CASCADE (was text agentRef)
   triggerType: 'cron' | 'event'    // 'manual'/'continuous' dropped (Mγ later)
-             | 'mention',          // ADR-151 (Designed) — @<agentId> summon grant;
+             | 'mention',          // ADR-151 (Implemented) — @<agentId> summon grant;
                                    //   no cron/event columns; NO migration needed
                                    //   (trigger_type has no value CHECK and both
                                    //   shape CHECKs are `<>`-guarded)
@@ -1194,7 +1194,7 @@ Append-only; written ONLY by the domain layer (`recordTaskActivity` +
 named service write-sites) inside the triggering transaction. Indexed
 `(task_id, created_at)` and `(project_id, created_at)` (project Log page).
 
-**(ADR-151 — Designed, migration `0121`)** `agent_summon_suppressed` is
+**(ADR-151 — Implemented, migration `0121`)** `agent_summon_suppressed` is
 written by the `agent_triggers` domain-event consumer (a system-actored async
 caller, per the ADR-078 D7 restatement) when a mentioned agent already holds
 an active run on the task. Its idempotency is structural: partial UNIQUE

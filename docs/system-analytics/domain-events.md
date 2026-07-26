@@ -67,7 +67,7 @@ borrows ([scheduler.md](scheduler.md)).
   top-level Review emits nothing). It wakes a parked orchestrator to
   collect/promote/rework and drives as-plan auto-promote. The payload stays
   ids/keys/statuses only (no secrets).
-  **(ADR-151 — Designed)** `task.comment_added` has its `payload` **widened**
+  **(ADR-151 — Implemented)** `task.comment_added` has its `payload` **widened**
   with an optional `mentionedAgentIds: string[]` (deduped resolved agent ids,
   omitted when empty) — a migration-free widening, since the payload is
   free-form jsonb with no runtime validation. It carries directed summons to
