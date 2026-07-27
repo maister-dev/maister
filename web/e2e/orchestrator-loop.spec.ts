@@ -19,8 +19,9 @@ import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
-import { singleValue } from "./_seed/db";
+import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
+import { readLaunchResult } from "./_seed/launch-stream";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 
 const CRON_HEADER = "X-Maister-Cron-Token";
@@ -58,6 +59,24 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
 }) => {
   const fx = loadFixtures().byKey.orchestrator;
 
+  // The dispatcher is a SCHEDULER JOB on a 60s cadence
+  // (lib/scheduler/jobs.ts DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS) and
+  // the tick route claims only DUE jobs — `?jobKind=` filters, it does not
+  // force. So the first tick runs a pass and pushes next_run_at 60s out, and
+  // every further tick inside this spec's 30s budget is a silent no-op. Make
+  // the job due again so each call really dispatches.
+  const tickDispatcher = async (): Promise<void> => {
+    await withE2EDb((pool) =>
+      pool.query(
+        `UPDATE scheduler_jobs SET next_run_at = now(), lease_expires_at = NULL
+          WHERE job_kind = 'domain_event_dispatch'`,
+      ),
+    );
+    await request.post("/api/cron/tick?jobKind=domain_event_dispatch", {
+      headers: { [CRON_HEADER]: CRON_TOKEN },
+    });
+  };
+
   // ---- Launch the orchestrator task from the board. ------------------------
   await page.goto(`/projects/${fx.projectSlug}`);
 
@@ -65,7 +84,9 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
     .locator("[data-board]")
     .getByText("Coordinate the delivery")
     .locator("xpath=ancestor::article")
-    .getByRole("button", { name: "Run again", exact: true });
+    // The seeded task has never run, so its card button reads "Launch" —
+    // "Run again" appears only once `runCount > 0` (components/board/board.tsx).
+    .getByRole("button", { name: "Launch", exact: true });
 
   await expect(launchControl).toBeVisible();
   await expect(launchControl).toBeEnabled();
@@ -77,17 +98,31 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   );
 
   await launchControl.click();
-  // The launch popover confirm (mirrors the board "Run again" → confirm flow).
-  const confirm = page.getByRole("button", { name: "Launch", exact: true });
 
-  if (await confirm.isVisible().catch(() => false)) {
-    await confirm.click();
-  }
+  // ADR-087 launch popover: the card button only OPENS the dialog; the POST
+  // fires from its "Create run" confirm. Scope the confirm to the dialog — the
+  // card's own "Launch" button stays in the DOM behind the portaled modal, so a
+  // page-wide "Launch" locator would re-click the trigger instead.
+  const dialog = page.getByTestId("task-launch-dialog");
+
+  await expect(dialog).toBeVisible();
+
+  const createRun = dialog.getByRole("button", {
+    name: "Create run",
+    exact: true,
+  });
+
+  await expect(createRun).toBeEnabled();
+  await createRun.click();
 
   const response = await launchResponse;
 
-  expect([200, 201, 202]).toContain(response.status());
-  const { runId } = (await response.json()) as { runId: string };
+  // The dialog POSTs with `Accept: text/event-stream`, so the launch answers
+  // 200 + a staged progress stream whose terminal frame carries the run (the
+  // JSON 202 shape is the non-stream path only).
+  expect(response.status()).toBe(200);
+
+  const { runId } = await readLaunchResult(response);
 
   expect(runId).toBeTruthy();
 
@@ -103,6 +138,13 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
       { timeout: 30_000 },
     )
     .toBe("WaitingOnChildren");
+
+  // Run one dispatch pass BEFORE the children settle. `orchestrator_resume` is
+  // `startFrom: "now"` and its cursor row is created only inside a dispatch pass
+  // (lib/domain-events/dispatch.ts `ensureConsumerRows`) seeded to
+  // `MAX(domain_events.id)` — so a first pass issued after the children are Done
+  // would seed PAST their run.done events and skip the wake forever.
+  await tickDispatcher();
 
   const childRunIds = await singleValue<string>(
     `SELECT string_agg(id::text, ',') AS value FROM runs WHERE parent_run_id = $1`,
@@ -149,9 +191,7 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   await expect
     .poll(
       async () => {
-        await request.post("/api/cron/tick?jobKind=domain_event_dispatch", {
-          headers: { [CRON_HEADER]: CRON_TOKEN },
-        });
+        await tickDispatcher();
 
         return singleValue<string>(
           `SELECT status AS value FROM runs WHERE id = $1`,

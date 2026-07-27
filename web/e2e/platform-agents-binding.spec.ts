@@ -14,6 +14,7 @@ import { test, expect } from "@playwright/test";
 
 import { singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
+import { readLaunchResult } from "./_seed/launch-stream";
 
 test("flow-bound agent task launches through the gate and queues on the flow pool", async ({
   page,
@@ -28,8 +29,10 @@ test("flow-bound agent task launches through the gate and queues on the flow poo
     .filter({ hasText: "Bound-agent flow target" });
 
   // ADR-087 launch popover: the card button opens a dialog that loads
-  // /api/runs/launch-options; the POST fires from its confirm button.
-  await card.getByRole("button", { name: "Run again", exact: true }).click();
+  // /api/runs/launch-options; the POST fires from its confirm button. The
+  // seeded task has never run, so its card button reads "Launch" — "Run again"
+  // appears only once `runCount > 0` (components/board/board.tsx).
+  await card.getByRole("button", { name: "Launch", exact: true }).click();
 
   const dialog = page.getByTestId("task-launch-dialog");
 
@@ -53,10 +56,13 @@ test("flow-bound agent task launches through the gate and queues on the flow poo
   const response = await launchResponse;
 
   // The launch passed every gate (graph compile with the agent:<id> node,
-  // enforcement, runner resolution, worktree preconditions) — 201/202.
-  expect([201, 202]).toContain(response.status());
+  // enforcement, runner resolution, worktree preconditions). The dialog POSTs
+  // with `Accept: text/event-stream`, so success is 200 + the staged progress
+  // stream whose terminal frame carries the run (the JSON 202 shape is the
+  // non-stream path only).
+  expect(response.status()).toBe(200);
 
-  const { runId } = (await response.json()) as { runId: string };
+  const { runId } = await readLaunchResult(response);
 
   // The run rides the FLOW pool with the bound flow attached; the seeded
   // suite saturates the global cap, so it queues Pending (the agent budget

@@ -19,8 +19,10 @@ test("task creation works and a backlog card exposes a launch control", async ({
     .fill("Create a deterministic e2e backlog task.");
   // M34: flow became optional (simple-intent tasks) and the modal defaults to
   // "no flow"; this spec asserts the one-click launch control, which only a
-  // CONFIGURED task exposes — pick the project's flow explicitly.
-  await page.getByLabel("Flow").selectOption({ index: 1 });
+  // CONFIGURED task exposes — pick the project's flow explicitly. Scope to the
+  // modal: every board card renders a flow chip with `aria-label="Flow <ref>"`,
+  // so a page-wide getByLabel("Flow") is a strict-mode violation.
+  await page.getByRole("dialog").getByLabel("Flow").selectOption({ index: 1 });
 
   const createResponse = page.waitForResponse(
     (response) =>
@@ -43,12 +45,14 @@ test("task creation works and a backlog card exposes a launch control", async ({
   // answers GET /health as ready (e2e/_seed/stub-supervisor.ts) so the board's
   // readiness gate passes and the button renders ENABLED — the disabled
   // "paused" state only appears when /health is unreachable.
-  // ADR-087: the launch control is the popover trigger labeled "Run again".
+  // ADR-087: the launch control is the popover trigger. This task was just
+  // created and has never run, so it reads "Launch" — "Run again" appears only
+  // once `runCount > 0` (components/board/board.tsx).
   const launchControl = page
     .locator("[data-board]")
     .getByText(title)
     .locator("xpath=ancestor::article")
-    .getByRole("button", { name: "Run again", exact: true });
+    .getByRole("button", { name: "Launch", exact: true });
 
   await expect(launchControl).toBeVisible();
   await expect(launchControl).toBeEnabled();
