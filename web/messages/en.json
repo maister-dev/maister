@@ -3355,6 +3355,7 @@
     "scopeRunsSync": "Sync & reopen runs",
     "scopeMemoryRead": "Read project memory",
     "scopeMemoryWrite": "Write project memory",
+    "scopeAgentMemoryWrite": "Write agent memory",
     "audit": {
       "title": "Token activity",
       "description": "Actions performed through API tokens — calls to the external API, not from the web UI.",

@@ -51,10 +51,11 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 40 external tools (incl. assistant activity pulse + run activity)", () => {
+  it("registers all 41 external tools (incl. assistant activity pulse + run activity + agent memory)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "activity_pulse",
+        "agent_memory_write",
         "ask_human",
         "comment_create",
         "comment_list",

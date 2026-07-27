@@ -330,6 +330,8 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeMemoryRead;
     case "memory:write":
       return labels.scopeMemoryWrite;
+    case "agent_memory:write":
+      return labels.scopeAgentMemoryWrite;
   }
 }
 

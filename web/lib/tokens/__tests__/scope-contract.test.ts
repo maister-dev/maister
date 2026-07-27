@@ -5,7 +5,37 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 import { EVALUATION_JUDGE_TOKEN_SCOPES } from "@/lib/agents/tokens";
 import { PROJECT_ACTION_BY_SCOPE } from "@/lib/tokens/ext-handler";
 import { ORCHESTRATOR_TOKEN_SCOPES } from "@/lib/agents/tokens";
+import { PROJECT_ACTION_MIN } from "@/lib/authz";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
+
+// T-C8b (ADR-152 D16): the agent-memory scope moves with FIVE sites, not four.
+// The fifth is mandatory because resolveProjectAction ends in `?? "readBoard"` —
+// an unmapped WRITE scope would silently resolve to the viewer-level action.
+describe("T-C8b — agent_memory:write is registered across all five sites", () => {
+  it("is in TOKEN_SCOPES and in the fixed AGENT_TOKEN_SCOPES grant list", () => {
+    expect(TOKEN_SCOPES).toContain("agent_memory:write");
+    expect(AGENT_TOKEN_SCOPES).toContain("agent_memory:write");
+  });
+
+  it("maps to the dedicated `writeAgentMemory` action — explicitly NOT the readBoard fallback", () => {
+    expect(PROJECT_ACTION_BY_SCOPE["agent_memory:write"]).toBe(
+      "writeAgentMemory",
+    );
+    expect(PROJECT_ACTION_BY_SCOPE["agent_memory:write"]).not.toBe("readBoard");
+  });
+
+  it("`writeAgentMemory` is a real ProjectAction with minimum `member`", () => {
+    expect(PROJECT_ACTION_MIN).toHaveProperty("writeAgentMemory");
+    expect(
+      PROJECT_ACTION_MIN["writeAgentMemory" as keyof typeof PROJECT_ACTION_MIN],
+    ).toBe("member");
+  });
+
+  it("does NOT reuse the Brain write axis — one grant must not open two stores", () => {
+    expect(PROJECT_ACTION_BY_SCOPE["agent_memory:write"]).not.toBe("writeBrain");
+    expect(PROJECT_ACTION_BY_SCOPE["memory:write"]).toBe("writeBrain");
+  });
+});
 
 describe("external token scope contract", () => {
   it("no longer registers the retired experiment scopes (ADR-150)", () => {

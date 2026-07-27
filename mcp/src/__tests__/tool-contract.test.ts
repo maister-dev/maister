@@ -166,6 +166,12 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/projects/{slug}/memory",
   },
+  // ADR-152: the ONE facade tool with no `slug` — the project comes from the
+  // run-bound token (D15/D24).
+  agent_memory_write: {
+    method: "post",
+    path: "/api/v1/ext/agent/memory",
+  },
   hitl_list: { method: "get", path: "/api/v1/ext/runs/{runId}/hitl" },
   hitl_inbox: { method: "get", path: "/api/v1/ext/hitl" },
   hitl_respond: {

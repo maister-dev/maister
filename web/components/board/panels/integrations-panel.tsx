@@ -91,6 +91,7 @@ export interface TokenLabels {
   scopeRunsSync: string;
   scopeMemoryRead: string;
   scopeMemoryWrite: string;
+  scopeAgentMemoryWrite: string;
   errorGeneric: string;
 }
 
@@ -177,6 +178,8 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeMemoryRead;
     case "memory:write":
       return labels.scopeMemoryWrite;
+    case "agent_memory:write":
+      return labels.scopeAgentMemoryWrite;
     default:
       return scope;
   }
@@ -405,6 +408,7 @@ export async function IntegrationsPanel({
     scopeRunsSync: t("scopeRunsSync"),
     scopeMemoryRead: t("scopeMemoryRead"),
     scopeMemoryWrite: t("scopeMemoryWrite"),
+    scopeAgentMemoryWrite: t("scopeAgentMemoryWrite"),
     errorGeneric: t("errorGeneric"),
   };
 

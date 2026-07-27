@@ -741,7 +741,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 ### Phase 5 — B4: write path with CAS
 
-- [ ] **T22. Token scope `agent_memory:write` — the FIVE-point fanout (REQ-C8 AC2, D16).**
+- [x] **T22. Token scope `agent_memory:write` — the FIVE-point fanout (REQ-C8 AC2, D16).**
+  *RED observed:* 3 behavioral failures, one per site.
+  *⚠ A SIXTH site the plan did not list:* `components/board/token-actions.tsx` + `integrations-panel.tsx` hold an EXHAUSTIVE `scopeText` switch over `UserTokenScope` with no fallback — by design, "adding a user scope without a label is a compile-time error". Added `scopeAgentMemoryWrite` there plus EN/RU keys.
 
   **RED.** Extend `web/lib/tokens/__tests__/scope-contract.test.ts` with `T-C8b`:
   - `agent_memory:write` is in `TOKEN_SCOPES` **and** in the `AGENT_TOKEN_SCOPES` grant list;
@@ -754,7 +756,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   **REFACTOR.** n/a.
   *Depends on:* T18.
 
-- [ ] **T23. Route `web/app/api/v1/ext/agent/memory/route.ts` (`GET` + `POST`) (REQ-C7, REQ-C8).**
+- [x] **T23. Route `web/app/api/v1/ext/agent/memory/route.ts` (`GET` + `POST`) (REQ-C7, REQ-C8).**
+  *Validation:* 15/15 first run (route-first, since a behavior-only route stub is meaningless), so the CAS was proved by MUTATION CHECK instead — neutering the hash comparison failed exactly the 4 CAS tests.
+  *Note:* `writeAgentMemoryCas` landed in `memory-store.ts` immediately rather than being extracted at T25 — the second caller is in the same plan, so writing it twice would be pure churn. T25's REFACTOR is satisfied ahead of time.
 
   **RED.** Write `web/app/api/v1/ext/agent/memory/__tests__/route.integration.test.ts` (`integration`):
   - `T-C8a` — the **full 7-row refusal table** from REQ-C8, one case each: non-agent token · null `agentId` · detached · `memory_enabled = false` · missing scope · over-cap (422 `CONFIG`) · stale `ifHash` (409 `CONFLICT` **with** current `{content, hash}` in the body).
@@ -770,7 +774,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging (verbose):* DEBUG on success `{agentId, projectId, runId, sizeChars, priorHash, newHash}`; INFO on CAS loss with both hashes; **never** log `content`.
   *Depends on:* T18, T22.
 
-- [ ] **T24. MCP tool `agent_memory_write` + drift guard (REQ-C7 AC5, D24).**
+- [x] **T24. MCP tool `agent_memory_write` + drift guard (REQ-C7 AC5, D24).**
+  *RED observed:* the TOOL_OP row alone turned the bijection guard red before the tool existed — as a collection-time `TypeError`, not the clean per-item failure the skill-context asks for. That fragility is pre-existing in the guard; left untouched (surgical), flagged for the owner.
+  *Build:* `pnpm --filter @maister/mcp build` run — the facade serves `dist/main.js`, so skipping it would ship the old bundle.
 
   **RED.** Add the `TOOL_OP` row to `mcp/src/__tests__/tool-contract.test.ts`. Because the test asserts a **bijection** (V22), the row alone turns it red until the tool exists — and it will then check properties ≡ the OpenAPI body params, `required` set equality, types, and bounds. Run.
 

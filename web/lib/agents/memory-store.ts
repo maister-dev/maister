@@ -88,16 +88,23 @@ export function hashAgentMemory(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
-export async function readAgentMemory(
+export type AgentMemoryState = {
+  content: string;
+  hash: string | null;
+  sizeChars: number;
+  updatedAt: Date | null;
+};
+
+// The file's ACTUAL state, with NO cap gate. The CAS compares against this: an
+// over-cap file still has a real hash, and comparing against the degraded
+// `null` would let a first-writer `ifHash: null` silently clobber it.
+export async function readAgentMemoryRaw(
   projectSlug: string,
   agentId: string,
-): Promise<{ content: string; hash: string; sizeChars: number } | null> {
+): Promise<AgentMemoryState> {
   const filePath = agentMemoryPath(projectSlug, agentId);
-  let content: string;
 
   try {
-    // A directory (or any non-regular entry) in the file's place must degrade,
-    // not throw EISDIR into a launch.
     const stats = await stat(filePath);
 
     if (!stats.isFile()) {
@@ -106,15 +113,20 @@ export async function readAgentMemory(
         "[agents.memory] memory path is not a regular file",
       );
 
-      return null;
+      return { content: "", hash: null, sizeChars: 0, updatedAt: null };
     }
 
-    content = await readFile(filePath, "utf8");
+    const content = await readFile(filePath, "utf8");
+
+    return {
+      content,
+      hash: hashAgentMemory(content),
+      sizeChars: content.length,
+      updatedAt: stats.mtime,
+    };
   } catch (err) {
     const code = (err as { code?: string }).code;
 
-    // Absent is the normal first-run state and stays quiet; anything else is a
-    // broken read and MUST be distinguishable from a healthy empty one.
     if (code !== "ENOENT" && code !== "ENOTDIR") {
       log.warn(
         { agentId, code, projectSlug, reason: "unreadable" },
@@ -122,19 +134,58 @@ export async function readAgentMemory(
       );
     }
 
-    return null;
+    return { content: "", hash: null, sizeChars: 0, updatedAt: null };
   }
+}
+
+// ADR-152 REQ-C7 / D18: the ONE content-hash CAS, shared by the agent ext route
+// and the owner PUT — a blind human Save must not clobber a concurrent agent
+// write, so the human clears the same bar. Ordering is read-current -> compare
+// -> atomic write -> return the POST-write hash.
+export async function writeAgentMemoryCas(
+  projectSlug: string,
+  agentId: string,
+  content: string,
+  ifHash: string | null,
+): Promise<
+  { ok: true; hash: string } | { ok: false; current: AgentMemoryState }
+> {
+  const current = await readAgentMemoryRaw(projectSlug, agentId);
+
+  if ((current.hash ?? null) !== (ifHash ?? null)) {
+    log.info(
+      { agentId, projectSlug, priorHash: current.hash, ifHash },
+      "[agents.memory] CAS lost",
+    );
+
+    return { ok: false, current };
+  }
+
+  const { hash } = await writeAgentMemory(projectSlug, agentId, content);
+
+  return { ok: true, hash };
+}
+
+// The LAUNCH view: the raw state plus the cap gate. Absent, unreadable, and
+// over-cap all collapse to `null` so a launch can never be blocked by memory.
+export async function readAgentMemory(
+  projectSlug: string,
+  agentId: string,
+): Promise<{ content: string; hash: string; sizeChars: number } | null> {
+  const raw = await readAgentMemoryRaw(projectSlug, agentId);
+
+  if (raw.hash === null) return null;
 
   const max = agentMemoryMaxChars();
 
-  if (content.length > max) {
+  if (raw.sizeChars > max) {
     log.warn(
       {
         agentId,
         max,
         projectSlug,
         reason: "over_cap",
-        sizeChars: content.length,
+        sizeChars: raw.sizeChars,
       },
       "[agents.memory] memory file exceeds the cap — degrading to no memory",
     );
@@ -142,14 +193,12 @@ export async function readAgentMemory(
     return null;
   }
 
-  const hash = hashAgentMemory(content);
-
   log.debug(
-    { agentId, hash, projectSlug, sizeChars: content.length },
+    { agentId, hash: raw.hash, projectSlug, sizeChars: raw.sizeChars },
     "[agents.memory] read",
   );
 
-  return { content, hash, sizeChars: content.length };
+  return { content: raw.content, hash: raw.hash, sizeChars: raw.sizeChars };
 }
 
 export async function writeAgentMemory(

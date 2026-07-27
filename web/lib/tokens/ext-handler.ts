@@ -106,6 +106,9 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "hitl:respond:human": "answerHitl",
   "memory:read": "readBrain",
   "memory:write": "writeBrain",
+  // ADR-152: MUST be mapped — resolveProjectAction ends in `?? "readBoard"`, so
+  // an unmapped write scope silently resolves to the VIEWER-level action.
+  "agent_memory:write": "writeAgentMemory",
 };
 
 function projectActionForScope(scope: string): ProjectAction {

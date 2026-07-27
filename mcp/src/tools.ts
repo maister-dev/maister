@@ -220,6 +220,23 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "content", "kind"],
     },
   },
+  agent_memory_write: {
+    description:
+      "Replace THIS agent's memory file for its bound project (ADR-152), through a content-hash CAS. Pass the `ifHash` you were given; `null` is the first-writer form and succeeds only while the file is absent. A lost CAS returns 409 with the CURRENT content and hash so you can merge and retry rather than clobber. NOTE: unlike every other MAIster tool, this one takes NO `slug` — the project and the agent both come from your run-bound token. This is NOT the Project Brain: `memory_recall`/`memory_retain` remain a separate, project-owned store.",
+    inputSchema: {
+      type: "object",
+      // D24: `dispatchTool` silently drops args it does not destructure, and the
+      // project-scope prompt block tells the agent to always pass `slug` — so a
+      // habitual `slug` here must be a VISIBLE client-side validation failure,
+      // never a silent drop.
+      additionalProperties: false,
+      properties: {
+        content: { type: "string", maxLength: 32768 },
+        ifHash: { type: "string", nullable: true },
+      },
+      required: ["content"],
+    },
+  },
   task_update: {
     description:
       "Update fields on a task (title/prompt — e.g. triage clarify-mode sharpening the statement)",
@@ -904,6 +921,20 @@ function resolveRouting(
         method: "POST",
         path: `/api/v1/ext/projects/${slug}/memory`,
         body,
+      };
+    }
+    case "agent_memory_write": {
+      // No `slug`: the project and agent are derived server-side from the
+      // run-bound token (ADR-152 D15).
+      const { content, ifHash } = args as {
+        content: string;
+        ifHash?: string | null;
+      };
+
+      return {
+        method: "POST",
+        path: "/api/v1/ext/agent/memory",
+        body: { content, ifHash: ifHash ?? null },
       };
     }
     case "task_update": {

@@ -71,6 +71,10 @@ export const PROJECT_ACTION_MIN = {
   // brain_enabled + the can_read_brain/can_write_brain link axes gate further.
   readBrain: "member",
   writeBrain: "member",
+  // ADR-152 (agent memory): a SEPARATE store from Brain, so a distinct action —
+  // sharing `writeBrain` would make a future Brain-permission change silently
+  // move agent memory too.
+  writeAgentMemory: "member",
   manageSchedules: "member",
   manageLocalPackages: "member",
   editSettings: "admin",

@@ -37,6 +37,12 @@ export const TOKEN_SCOPES = [
   // tokens, the can_read_brain / can_write_brain link axes.
   "memory:read",
   "memory:write",
+  // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
+  // store from Project Brain — reusing `memory:write` would make one grant open
+  // two stores, re-coupling exactly the axes ADR-152 separates. Access is
+  // additionally gated by agent_project_links.memory_enabled; neither the scope
+  // nor the flag alone authorizes a write.
+  "agent_memory:write",
   // ADR-145 (Evaluation Lab) D10/D12: attempt-bound evaluator judge scopes. These
   // are minted ONLY on a judge attempt's ephemeral agent token
   // (EVALUATION_JUDGE_TOKEN_SCOPES in lib/agents/tokens.ts) — deliberately NOT in
@@ -72,6 +78,9 @@ export const AGENT_TOKEN_SCOPES = [
   // still gated by can_read_brain / can_write_brain on the agent-project link.
   "memory:read",
   "memory:write",
+  // ADR-152: in the fixed agent-token set; the per-link memory_enabled axis
+  // still gates the actual write.
+  "agent_memory:write",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

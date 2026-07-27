@@ -108,6 +108,7 @@ const labels: TokenLabels = {
   scopeRunsSync: "Sync & reopen runs",
   scopeMemoryRead: "Read project memory",
   scopeMemoryWrite: "Write project memory",
+  scopeAgentMemoryWrite: "Write agent memory",
   errorGeneric: "Something went wrong",
 };
 
