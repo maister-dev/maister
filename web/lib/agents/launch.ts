@@ -41,6 +41,10 @@ import {
   type EffectiveAgentDefinition,
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
+import { readAgentMemory } from "@/lib/agents/memory-store";
+import { atomicWriteText } from "@/lib/atomic";
+import { runDirPath } from "@/lib/flows/graph/mutation-check";
+import { runtimeRoot } from "@/lib/runtime-root";
 import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import {
@@ -1709,10 +1713,121 @@ async function projectScopeBlock(
 // The prompt body comes from the EFFECTIVE definition (the project-pinned
 // package revision, resolved by the caller at spawn time) — never from the
 // catalog index row.
+// ADR-152: the standing maintenance contract shipped with every injected
+// memory block. A module-level const, not interpolated per call site — the
+// wording is the contract the agent is held to.
+const AGENT_MEMORY_MAINTENANCE = [
+  "This file is your ONLY durable cross-run memory for this project — nothing",
+  "else you learn survives the end of this run. Keep it current: rewrite it",
+  "through the `agent_memory_write` tool whenever what you know changes.",
+  "It is content-addressed — pass the `ifHash` you were given, and if the write",
+  "loses the CAS you get the current content back to merge and retry.",
+  "Compact it as it approaches the size cap; prefer durable facts and",
+  "conventions over a running log. Refer to tasks by their `KEY-N` id.",
+  "This is NOT the Project Brain: `memory_recall` remains the separate,",
+  "on-demand, project-owned store and is unaffected by anything you write here.",
+].join(" ");
+
+function memoryBlock(text: string): string {
+  return ["## Agent memory", AGENT_MEMORY_MAINTENANCE, "", text.trim()].join(
+    "\n",
+  );
+}
+
+// ADR-152 D12: resolution happens at the LAUNCH SITE, never inside
+// buildAgentPrompt — `opts.overridePrompt` discards the composed base prompt
+// wholesale, so resolving inside the builder would stamp provenance for a
+// prompt that carried no memory. Gated on run_kind='agent': a flow-bound agent
+// diverts to launchAgentDrivenFlowRun long before this seam, so its
+// run_kind='flow' run can never carry memory.
+export async function resolveAgentMemoryForLaunch(
+  _db: Db,
+  run: Record<string, any>,
+  projectSlug: string,
+): Promise<{ text: string; hash: string } | null> {
+  const agentId = (run.agentId ?? null) as string | null;
+
+  if (run.runKind !== "agent" || !agentId) return null;
+
+  const projectId = (run.projectId ?? null) as string | null;
+
+  if (!projectId) return null;
+
+  // FLAT single-table read (V14): agents / agent_project_links / agent_schedules
+  // all carry columns named `id` and `enabled`, and a multi-table select
+  // mis-maps them in the APP runtime only.
+  const links = await _db
+    .select({ memoryEnabled: agentProjectLinks.memoryEnabled })
+    .from(agentProjectLinks)
+    .where(
+      and(
+        eq(agentProjectLinks.agentId, agentId),
+        eq(agentProjectLinks.projectId, projectId),
+      ),
+    );
+
+  // Detached or disabled: inert. The file itself is untouched either way.
+  if (links[0]?.memoryEnabled !== true) return null;
+
+  // readAgentMemory already degrades (absent / unreadable / over-cap) and WARNs
+  // with the reason, so there is nothing here that can throw into a launch.
+  const memory = await readAgentMemory(projectSlug, agentId);
+
+  if (!memory) return null;
+
+  log.debug(
+    {
+      runId: run.id ?? run.runId,
+      agentId,
+      injected: true,
+      hash: memory.hash,
+      sizeChars: memory.sizeChars,
+    },
+    "[agents.memory] injected at launch",
+  );
+
+  return { text: memory.content, hash: memory.hash };
+}
+
+// ADR-152 D12/REQ-C6: resolution + snapshot + stamp are ONE cohesive step, so
+// the `overridePrompt` condition is expressed exactly once. `skip` is true on
+// the override branch — that branch discards the composed base prompt wholesale,
+// so writing provenance there would claim memory for a prompt that carried none.
+// Returns the text to inject, or null when nothing was injected (and, in that
+// case, nothing was recorded either).
+export async function applyAgentMemoryForLaunch(
+  _db: Db,
+  run: Record<string, any>,
+  projectSlug: string,
+  skip: boolean,
+): Promise<string | null> {
+  if (skip) return null;
+
+  const memory = await resolveAgentMemoryForLaunch(_db, run, projectSlug);
+
+  if (!memory) return null;
+
+  const runId = (run.id ?? run.runId) as string;
+
+  // Human-readable evidence beside the run's other artifacts. GC'd with the run
+  // dir after 7 days, which is exactly why the hash below also lands on the row.
+  await atomicWriteText(
+    path.join(runDirPath(runtimeRoot(), projectSlug, runId), "memory-snapshot.md"),
+    memory.text,
+  );
+  await _db
+    .update(runs)
+    .set({ agentMemoryHash: memory.hash })
+    .where(eq(runs.id, runId));
+
+  return memory.text;
+}
+
 export async function buildAgentPrompt(
   _db: Db,
   parsed: ParsedAgentDefinition,
   run: Record<string, any>,
+  memory?: string | null,
 ): Promise<string> {
   const sections = [parsed.prompt.trim()];
   const scopeBlock = await projectScopeBlock(_db, run);
@@ -1726,6 +1841,9 @@ export async function buildAgentPrompt(
   // ADR-111 (D5): the config block lands right after the persona body and
   // BEFORE the task block — the agent reads its effective config first.
   if (configBlock) sections.push(configBlock);
+  // ADR-152 D13: standing project knowledge belongs WITH standing config, and
+  // the current ask comes after it.
+  if (memory) sections.push(memoryBlock(memory));
   if (taskBlock) sections.push(taskBlock);
   if (commentTriggerBlock) sections.push(commentTriggerBlock);
   sections.push(triggerContextBlock(run));
@@ -3100,7 +3218,21 @@ export async function startAgentSession(
       });
     }
 
-    const basePrompt = await buildAgentPrompt(_db, effective.parsed, run);
+    // ADR-152: resolve + snapshot + stamp in one step, skipped wholesale on the
+    // override branch below (which discards `basePrompt` and would otherwise
+    // record provenance for a prompt that carried no memory).
+    const memoryText = await applyAgentMemoryForLaunch(
+      _db,
+      run,
+      project.slug as string,
+      opts.overridePrompt != null,
+    );
+    const basePrompt = await buildAgentPrompt(
+      _db,
+      effective.parsed,
+      run,
+      memoryText,
+    );
     const prompt =
       opts.overridePrompt ??
       (draftPayload

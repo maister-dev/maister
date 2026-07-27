@@ -702,7 +702,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 ### Phase 4 — B3/B5: launch injection + provenance
 
-- [ ] **T20. `resolveAgentMemoryForLaunch` + prompt injection (REQ-C4, REQ-C5).**
+- [x] **T20. `resolveAgentMemoryForLaunch` + prompt injection (REQ-C4, REQ-C5).**
+  *RED observed:* 2 behavioral failures — `expected null to match object { hash }` and a prompt missing `agent_memory_write`.
+  *Scope note:* proven at `buildAgentPrompt` + `resolveAgentMemoryForLaunch` rather than by driving a supervisor session — every fact ADR-152 owns (resolves / verbatim / position / degradation) lives in those two seams, and a session spawn would re-prove launch mechanics already covered elsewhere (§6.4).
 
   **RED.** Write `web/lib/agents/__tests__/memory-launch.integration.test.ts` (`integration`; precedent: `brain-launch-axes.integration.test.ts`):
   - `T-C4` / `REQ-C4 AC1` — a memory-enabled agent launch composes a prompt containing the file's content **verbatim**, positioned **after** the config block and **before** the task block.
@@ -718,7 +720,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging (verbose):* DEBUG `{runId, agentId, injected: true, hash, sizeChars}` on inject; **WARN** `{runId, agentId, reason: "over_cap"|"unreadable", sizeChars?}` on degradation — this is the visible warning REQ-C5 AC2 requires, and it must state which failure occurred.
   *Depends on:* T18.
 
-- [ ] **T21. Provenance snapshot + hash stamp (REQ-C6).**
+- [x] **T21. Provenance snapshot + hash stamp (REQ-C6).**
+  *RED observed:* 1 behavioral failure — `expected null to be '# Project notes…'`.
 
   **RED.** Extend `memory-launch.integration.test.ts` with `T-C6`:
   - a normal memory-enabled launch writes `memory-snapshot.md` into `runDirPath(...)` **and** stamps `runs.agent_memory_hash` equal to `hashAgentMemory(content)`;
