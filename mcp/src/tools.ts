@@ -231,8 +231,15 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       // never a silent drop.
       additionalProperties: false,
       properties: {
+        // The DEFAULT MAISTER_AGENT_MEMORY_MAX_CHARS. The server is the
+        // authority and may be configured lower or higher; this bound only
+        // stops an obviously oversized payload client-side, and the route still
+        // answers 422 CONFIG against the live cap.
         content: { type: "string", maxLength: 32768 },
-        ifHash: { type: "string", nullable: true },
+        // JSON Schema, not OpenAPI: `nullable: true` is not a keyword here and
+        // a validating client would reject the documented first-writer form.
+        // Same spelling as triage_set's clear-path nullables.
+        ifHash: { type: ["string", "null"] },
       },
       required: ["content"],
     },

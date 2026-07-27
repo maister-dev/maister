@@ -435,6 +435,21 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
   // facade MUST let the agent express null — unlike the gate-report nullables,
   // where null ≡ omit. The generic loop strips null from the base type; this
   // asserts the distinct capability directly.
+  // ADR-152: `ifHash: null` is the FIRST-WRITER form, not an omission — the
+  // agent must be able to express it. The generic loop strips null from the base
+  // type, and `nullable: true` (an OpenAPI keyword) is meaningless in a JSON
+  // Schema inputSchema, so this asserts the JSON-Schema spelling directly.
+  it("agent_memory_write ifHash accepts null (the first-writer form)", () => {
+    const props = toolSpec("agent_memory_write").properties!;
+    const ifHashTypes = Array.isArray(props.ifHash.type)
+      ? props.ifHash.type
+      : [props.ifHash.type];
+
+    expect(ifHashTypes).toContain("string");
+    expect(ifHashTypes).toContain("null");
+    expect(props.ifHash.nullable).toBeUndefined();
+  });
+
   it("triage_set priority/confidence accept null (the clear path)", () => {
     const props = toolSpec("triage_set").properties!;
 
