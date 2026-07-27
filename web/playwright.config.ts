@@ -93,6 +93,12 @@ export default defineConfig({
       // button is enabled and POST /api/runs gets PAST the health check to the
       // settings-enforcement gate (which is what refuses with CONFIG 400).
       MAISTER_SUPERVISOR_URL: STUB_SUPERVISOR_URL,
+      // M37 (ADR-098): the maister MCP facade hands the agent this base url as
+      // `MAISTER_API_BASE_URL` (lib/agents/launch.ts `agentFacadeMcpServer`),
+      // and the orchestrator's delegation POSTs the ext route at it. Its
+      // default is :3000 — the DEV server — so without this the e2e
+      // coordinator's delegate call leaves the harness entirely and fails.
+      MAISTER_API_BASE_URL: BASE_URL,
       // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts). Also gates the
       // outbound-webhooks drain trigger (POST /api/cron/tick).
       MAISTER_CRON_TOKEN,
