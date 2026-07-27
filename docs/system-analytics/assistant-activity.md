@@ -252,8 +252,13 @@ Replay rules:
   `summonBlockedReason === null` ⟺ `summonable === true`. (Implemented — ADR-152)
 - A promotable item MUST NEVER duplicate an entry in `now.runs` (which admits
   only `Running | NeedsInput | NeedsInputIdle | HumanWorking`) or in
-  `needsYou.items` (a `Review` run with an unanswered review-gate HITL is not
-  readiness-green). (Implemented — ADR-152)
+  `needsYou.items`. The `needsYou` guarantee rests on `run_kind`, NOT on
+  readiness: `getHitlInbox` admits a row either when the run is
+  `NeedsInput|NeedsInputIdle` — which `Review` is not — or, regardless of run
+  status, when it is an active `agent_question`, and those are raised only by
+  `run_kind='agent'` runs while `promotable` requires `run_kind='flow'`. Letting
+  a flow run raise an `agent_question` would break this bullet.
+  (Implemented — ADR-152)
 - Readiness for the pulse MUST be bulk-computed with exactly one
   `computeReadinessByRun` call per request over the candidate id set;
   `getRunReadiness` MUST NEVER be reachable from the pulse path.

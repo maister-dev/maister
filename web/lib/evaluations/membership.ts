@@ -13,22 +13,33 @@ import { evaluationParticipants, evaluationStudies } from "@/lib/db/schema";
 // Membership is immutable per run: a tombstoned launched participant still holds
 // its run (the forced evaluation promotion hold is immutable, ADR-146 D15), so
 // `removed_at` is deliberately NOT filtered.
-export async function isLaunchedEvaluationRun(
+export async function launchedEvaluationRunIds(
   db: Db,
-  runId: string,
-): Promise<boolean> {
+  runIds: string[],
+): Promise<Set<string>> {
+  if (runIds.length === 0) return new Set();
+
   const rows = await db
     .select({ runId: evaluationParticipants.runId })
     .from(evaluationParticipants)
     .where(
       and(
-        eq(evaluationParticipants.runId, runId),
+        inArray(evaluationParticipants.runId, runIds),
         eq(evaluationParticipants.sourceType, "launched"),
       ),
-    )
-    .limit(1);
+    );
 
-  return rows.length > 0;
+  return new Set(rows.map((row) => row.runId as string));
+}
+
+// The single-run form composes the batched one so the `source_type='launched'`
+// filter has exactly ONE spelling — a caller classifying a SET (the assistant
+// pulse) must not re-derive the predicate to avoid an N-query.
+export async function isLaunchedEvaluationRun(
+  db: Db,
+  runId: string,
+): Promise<boolean> {
+  return (await launchedEvaluationRunIds(db, [runId])).has(runId);
 }
 
 // The launched-lineage predicate: true for a canonical launched Evaluation
@@ -38,6 +49,13 @@ export async function isLaunchedEvaluationRun(
 // decision. ADR-150 dropped the legacy `experiment_runs` leg: migration 0110
 // already backfilled every historical experiment member into a launched
 // evaluation participant, so they keep their launched semantics here.
+export async function launchedLineageRunIds(
+  db: Db,
+  runIds: string[],
+): Promise<Set<string>> {
+  return launchedEvaluationRunIds(db, runIds);
+}
+
 export async function isLaunchedLineageRun(
   db: Db,
   runId: string,

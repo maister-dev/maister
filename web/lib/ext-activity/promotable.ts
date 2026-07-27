@@ -9,7 +9,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import { launchedLineageRunIds } from "@/lib/evaluations/membership";
 import { isPhaseReady } from "@/lib/flows/graph/readiness-core";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 
@@ -85,7 +85,7 @@ export async function listProjectPromotable(
   deps?: { db?: DbClient },
 ): Promise<PromotionReadyItem[]> {
   const client = deps?.db ?? (getDb() as DbClient);
-  const candidates: CandidateRow[] = await client
+  const joined: CandidateRow[] = await client
     .select({
       runId: runs.id,
       runKind: runs.runKind,
@@ -109,6 +109,15 @@ export async function listProjectPromotable(
         inArray(runs.status, [...PROMOTABLE_RUN_STATUSES]),
       ),
     );
+
+  // `workspaces.run_id` carries no UNIQUE constraint (only `worktree_path` does),
+  // and the orphan-worktree reconcilers can insert a second row for a run — so
+  // the left join is one-to-MANY in principle and would emit the same runId
+  // twice. Collapse to the first row per run: the list is a set of runs, and a
+  // duplicate would also break the deterministic ordering REQ-A2 AC4 promises.
+  const candidates = [
+    ...new Map(joined.map((row) => [row.runId, row])).values(),
+  ];
 
   if (candidates.length === 0) {
     log.debug(
@@ -158,10 +167,16 @@ export async function listProjectPromotable(
   // divergence legible, and what lets the counters below answer "why is my green
   // Review run missing from the list?" without a debugger.
   const unheld = mechanical.filter((entry) => entry.row.promotionHold == null);
-  const lineageFlags = await Promise.all(
-    unheld.map((entry) => isLaunchedLineageRun(client, entry.row.runId)),
+  // ONE batched query, not one per candidate: the pulse is a polling endpoint,
+  // and an N-query here would reintroduce exactly the per-run cost REQ-A3
+  // forbids for readiness two lines above.
+  const lineageRunIds = await launchedLineageRunIds(
+    client,
+    unheld.map((entry) => entry.row.runId),
   );
-  const surviving = unheld.filter((_entry, index) => !lineageFlags[index]);
+  const surviving = unheld.filter(
+    (entry) => !lineageRunIds.has(entry.row.runId),
+  );
 
   const items = surviving
     .map(({ row, readiness }) => ({
@@ -184,7 +199,7 @@ export async function listProjectPromotable(
       candidateCount: candidates.length,
       readyCount: items.length,
       excludedHold: mechanical.length - unheld.length,
-      excludedLineage: lineageFlags.filter(Boolean).length,
+      excludedLineage: unheld.length - surviving.length,
     },
     "[ext-activity.promotable] classified",
   );

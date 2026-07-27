@@ -7,7 +7,7 @@ const readinessMocks = vi.hoisted(() => ({
 }));
 
 const lineageMocks = vi.hoisted(() => ({
-  isLaunchedLineageRun: vi.fn(),
+  launchedLineageRunIds: vi.fn(),
 }));
 
 vi.mock("@/lib/queries/readiness-batch", () => ({
@@ -15,7 +15,7 @@ vi.mock("@/lib/queries/readiness-batch", () => ({
 }));
 
 vi.mock("@/lib/evaluations/membership", () => ({
-  isLaunchedLineageRun: lineageMocks.isLaunchedLineageRun,
+  launchedLineageRunIds: lineageMocks.launchedLineageRunIds,
 }));
 
 import {
@@ -170,8 +170,8 @@ describe("REQ-A2 — the mechanical promotable layer is an allow-list", () => {
 describe("listProjectPromotable", () => {
   beforeEach(() => {
     readinessMocks.computeReadinessByRun.mockReset();
-    lineageMocks.isLaunchedLineageRun.mockReset();
-    lineageMocks.isLaunchedLineageRun.mockResolvedValue(false);
+    lineageMocks.launchedLineageRunIds.mockReset();
+    lineageMocks.launchedLineageRunIds.mockResolvedValue(new Set<string>());
   });
 
   function readiness(entries: Record<string, ReadinessState>) {
@@ -268,8 +268,10 @@ describe("listProjectPromotable", () => {
     ]);
 
     readiness({ "run-plain": "ready", "run-lineage": "ready" });
-    lineageMocks.isLaunchedLineageRun.mockImplementation(
-      async (_db: unknown, runId: string) => runId === "run-lineage",
+    // ONE batched call over the surviving candidate ids, not one per run.
+    lineageMocks.launchedLineageRunIds.mockImplementation(
+      async (_db: unknown, runIds: string[]) =>
+        new Set(runIds.filter((id) => id === "run-lineage")),
     );
 
     const items = await listProjectPromotable("proj-1", {
@@ -277,6 +279,8 @@ describe("listProjectPromotable", () => {
     });
 
     expect(items.map((i) => i.runId)).toEqual(["run-plain"]);
+    // The pulse polls: the lineage drop must stay O(1) queries like readiness.
+    expect(lineageMocks.launchedLineageRunIds).toHaveBeenCalledTimes(1);
   });
 
   it("REQ-A2 AC4 — orders by inReviewSince ascending, runId ascending as tiebreak, nulls last", async () => {
