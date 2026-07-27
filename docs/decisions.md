@@ -13347,8 +13347,10 @@ _A · Promotion readiness in the pulse._
 - **`overridden` is promotable, and the existing exported `isPhaseReady`
   helper is called rather than re-spelled** (D6a). `readiness-core.ts` already
   exports it with the comment *"A run may promote when its readiness is
-  'ready' or 'overridden'"*, and `assertEvidenceReady` agrees — it throws only
-  when a contribution is neither `clear` nor `overridden`. Critically,
+  'ready' or 'overridden'"*, and `assertEvidenceReady` agrees — it records a
+  blocking reason only when a contribution is neither `clear` nor `overridden`.
+  (Per ADR-048 that function returns `{ready, reasons}` and never throws, so the
+  agreement test compares `.ready`, not the absence of a throw.) Critically,
   `overridden` **outranks** `ready` in `READINESS_PRIORITY`, so a run with one
   waived blocking gate rolls up to `overridden`; a `state === 'ready'`
   comparison would have silently dropped genuinely promotable runs.

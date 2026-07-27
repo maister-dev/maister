@@ -24,6 +24,7 @@ import {
 import { mapDomainEventToPulseItem } from "@/lib/ext-activity/domain-events";
 import { deriveActivityLiveness } from "@/lib/ext-activity/liveness";
 import { listProjectNeedsYou } from "@/lib/ext-activity/needs-you";
+import { listProjectPromotable } from "@/lib/ext-activity/promotable";
 import {
   buildSemanticRunActivityItems,
   pageRunActivityItems,
@@ -342,7 +343,13 @@ export async function getActivityPulse(
 ): Promise<ActivityPulseResponse> {
   const client = input.client ?? db();
   const now = input.now ?? new Date();
-  const needsYou = await listProjectNeedsYou(projectId, { db: client });
+  // `needsYou` is a required input to buildRunSnapshot below, so it cannot move
+  // past the snapshot loop — but it has no dependency on `promotable`, so the
+  // two synthesized blocks are fetched as one wave rather than in series.
+  const [needsYou, promotable] = await Promise.all([
+    listProjectNeedsYou(projectId, { db: client }),
+    listProjectPromotable(projectId, { db: client }),
+  ]);
   const committedHorizon = sql`${domainEvents.txId} < pg_snapshot_xmin(pg_current_snapshot())`;
   const maxIdRows = await client
     .select({ id: domainEvents.id })
@@ -418,6 +425,7 @@ export async function getActivityPulse(
     needsYou: {
       generatedAt: now,
       items: needsYou,
+      promotable,
     },
   };
 }
@@ -502,6 +510,10 @@ export function serializePulseResponse(response: ActivityPulseResponse) {
       items: response.needsYou.items.map((item) => ({
         ...item,
         requestedAt: item.requestedAt.toISOString(),
+      })),
+      promotable: response.needsYou.promotable.map((item) => ({
+        ...item,
+        inReviewSince: item.inReviewSince?.toISOString() ?? null,
       })),
     },
   };

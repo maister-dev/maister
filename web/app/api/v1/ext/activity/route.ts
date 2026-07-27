@@ -60,7 +60,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             salience,
             happenedCount: response.happened.items.length,
             nowCount: response.now.runs.length,
+            // ADR-152 D4: `needsYouCount` stays HITL-only. Folding promotable
+            // runs into it would silently change the meaning of an existing
+            // telemetry series, so the new blocks get their own counters.
             needsYouCount: response.needsYou.items.length,
+            promotableCount: response.needsYou.promotable.length,
           },
           "served ext activity pulse",
         );

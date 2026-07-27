@@ -1,5 +1,6 @@
 import type { HitlRequest, RunStatus } from "@/lib/db/schema";
 import type { DomainEventKind } from "@/lib/domain-events/taxonomy";
+import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 
 export type ActivitySalience = "high" | "normal" | "low";
 
@@ -100,6 +101,19 @@ export type NeedsYouItem = {
   criticality: "low" | "medium" | "high" | "critical" | null;
 };
 
+// ADR-152: a `Review` flow run that is readiness-green and waiting only on a
+// human promote decision. A sibling of `needsYou.items`, never a widened
+// `NeedsYouItem` — `hitlRequestId` there is non-null for every consumer.
+export type PromotionReadyItem = {
+  runId: string;
+  taskId: string | null;
+  taskKey: string | null;
+  taskTitle: string | null;
+  targetBranch: string | null;
+  readiness: ReadinessState;
+  inReviewSince: Date | null;
+};
+
 export type ActivityLastAction = {
   summary: string;
   at: Date | null;
@@ -135,5 +149,6 @@ export type ActivityPulseResponse = {
   needsYou: {
     generatedAt: Date;
     items: NeedsYouItem[];
+    promotable: PromotionReadyItem[];
   };
 };

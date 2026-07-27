@@ -72,6 +72,16 @@ function makeRequest(query = "", token = "secret"): NextRequest {
   return req;
 }
 
+function emptyPulse() {
+  const generatedAt = new Date("2026-07-27T12:00:00.000Z");
+
+  return {
+    happened: { items: [], nextCursor: 12n, hasMore: false },
+    now: { generatedAt, runs: [] },
+    needsYou: { generatedAt, items: [], promotable: [] },
+  };
+}
+
 function projectActor(overrides: Record<string, unknown> = {}) {
   return {
     tokenId: "tok-1",
@@ -195,6 +205,26 @@ describe("GET /api/v1/ext/activity", () => {
             criticality: "high",
           },
         ],
+        promotable: [
+          {
+            runId: "run-2",
+            taskId: "task-2",
+            taskKey: "OPS-15",
+            taskTitle: "Ready to ship",
+            targetBranch: "main",
+            readiness: "overridden",
+            inReviewSince: new Date("2026-07-26T10:30:00.000Z"),
+          },
+          {
+            runId: "run-3",
+            taskId: null,
+            taskKey: null,
+            taskTitle: null,
+            targetBranch: null,
+            readiness: "ready",
+            inReviewSince: null,
+          },
+        ],
       },
     });
 
@@ -269,8 +299,89 @@ describe("GET /api/v1/ext/activity", () => {
             criticality: "high",
           },
         ],
+        // T-A1w / REQ-A1 AC1+AC3: `promotable` is a required sibling of
+        // `items`; `inReviewSince` serializes as an ISO string or null and
+        // `targetBranch` is nullable — matching ExtPromotionReadyItem exactly,
+        // with no extra keys (the whole body is compared with toEqual).
+        promotable: [
+          {
+            runId: "run-2",
+            taskId: "task-2",
+            taskKey: "OPS-15",
+            taskTitle: "Ready to ship",
+            targetBranch: "main",
+            readiness: "overridden",
+            inReviewSince: "2026-07-26T10:30:00.000Z",
+          },
+          {
+            runId: "run-3",
+            taskId: null,
+            taskKey: null,
+            taskTitle: null,
+            targetBranch: null,
+            readiness: "ready",
+            inReviewSince: null,
+          },
+        ],
       },
     });
+  });
+
+  it("T-A1w / REQ-A1 AC1 — emits needsYou.promotable as [] rather than omitting it", async () => {
+    routeMocks.verifyToken.mockResolvedValue(projectActor());
+    routeMocks.getActivityPulse.mockResolvedValue(emptyPulse());
+
+    const res = await GET(makeRequest());
+    const body = (await res.json()) as {
+      needsYou: { promotable: unknown[] };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.needsYou.promotable).toEqual([]);
+    expect(Object.keys(body.needsYou).sort()).toEqual([
+      "generatedAt",
+      "items",
+      "promotable",
+    ]);
+  });
+
+  it("T-A5 / REQ-A5 — replay is unaffected: `happened` is byte-identical and nextCursor unchanged whether or not promotable rows are present", async () => {
+    routeMocks.verifyToken.mockResolvedValue(projectActor());
+
+    const withoutPromotable = emptyPulse();
+
+    routeMocks.getActivityPulse.mockResolvedValue(withoutPromotable);
+
+    const first = (await (await GET(makeRequest("?since=12"))).json()) as {
+      happened: unknown;
+    };
+
+    routeMocks.getActivityPulse.mockResolvedValue({
+      ...withoutPromotable,
+      needsYou: {
+        ...withoutPromotable.needsYou,
+        promotable: [
+          {
+            runId: "run-2",
+            taskId: "task-2",
+            taskKey: "OPS-15",
+            taskTitle: "Ready to ship",
+            targetBranch: "release",
+            readiness: "ready",
+            inReviewSince: new Date("2026-07-26T10:30:00.000Z"),
+          },
+        ],
+      },
+    });
+
+    const second = (await (await GET(makeRequest("?since=12"))).json()) as {
+      happened: { nextCursor: string };
+    };
+
+    expect(JSON.stringify(second.happened)).toBe(
+      JSON.stringify(first.happened),
+    );
+    expect(second.happened.nextCursor).toBe("12");
   });
 
   it("returns 422 for an invalid cursor or salience value", async () => {

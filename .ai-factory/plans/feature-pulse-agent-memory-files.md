@@ -39,7 +39,7 @@ Both are a **globally sequential shared namespace**. Owner confirmed (2026-07-27
 | V6 | `computeReadinessByRun(client, runIds): Promise<Map<string, ReadinessState>>` — **4 batched `inArray` queries total, no N+1**, shared verbatim by board/portfolio/project read models, same contributions as the merge guard | `web/lib/queries/readiness-batch.ts:36` |
 | V7 | `getRunReadiness()` (behind `readiness_get`) is `5 + 2×externalGates + 1×requiredArtifactDefs` queries — **must not** be looped per run | `web/lib/queries/readiness.ts` |
 | V8 | `ReadinessState = "ready" \| "blocked" \| "stale" \| "failed" \| "waiting" \| "overridden"` | `web/lib/flows/graph/readiness-core.ts:85` |
-| V9 | The auto-promotion lane's green test is `assertEvidenceReady(runId,"review",db)` not throwing | `web/lib/auto-promotion/readers.ts:123` |
+| **V9ʹ** | **⚠ CORRECTED during T11 (2026-07-27).** `assertEvidenceReady(runId, phase, db)` **NEVER throws** — it returns `EvidenceReadinessResult = {ready: boolean, reasons: string[]}` (`evidence-readiness.ts:61,231`), and every correct consumer reads `.ready` (`promote.ts:726`, `runner-graph.ts:908`). So "not throwing" is NOT the green test; `.ready === true` is. **Separately: `readinessGreen()` at `auto-promotion/readers.ts:123` is a pre-existing DEFECT** — it `await`s the call inside a `try` and returns `true` whenever nothing throws, discarding `.ready`, so the ADR-126 lane's own readiness gate is inert (the `promoteRun` re-gate at `promote.ts:726` is what actually stops a blocked auto-promote). **Out of scope for this plan — flagged, not fixed.** | `web/lib/flows/graph/evidence-readiness.ts:61,231`, `web/lib/auto-promotion/readers.ts:123` |
 | **V10ʹ** | **⚠ CORRECTED.** `promoteRun`'s `promotionHold` and `isLaunchedLineageRun` refusals are **conditional on unattended attribution**: `isUnattendedPromotion(input) = input.autoOnReady === true \|\| input.attribution?.source === "auto_promotion"` gates the lineage guard, and `attribution?.source === "auto_promotion"` alone gates the hold check. The code comment is verbatim: *"Only HUMAN promotes set neither flag, so they are allowed."* A human/assistant promote of a held or launched-lineage run **succeeds**. Only the `status='Review'` CAS is unconditional. | `web/lib/runs/promote.ts:125,575,623` |
 | V11 | **The summonability predicate already exists**: `listMentionCandidateAgents(dbOrTx, projectId): Promise<MentionableAgent[]>` → `{id, stem, name, summonable}` | `web/lib/agents/summonability.ts:46` |
 | V12 | `summonable` = 5 conjuncts: link `enabled` ∧ `agents.enabled` ∧ `quarantinedAt === null` ∧ `agents.triggers` includes `"domain_event"` ∧ an enabled `agent_schedules` mention row exists | `web/lib/agents/summonability.ts:111-116` |
@@ -110,7 +110,7 @@ AC2: `nextCursor` is unchanged by the new blocks.
 Spec: `assistant-activity.md` Expectations.
 
 **REQ-A6 — The batched classifier and the merge guard agree on the mechanical layer.**
-AC1: across **all six** `ReadinessState` values, `isPhaseReady(computeReadinessByRun→state)` ⟺ `assertEvidenceReady(runId,'review',db)` does not throw.
+AC1: across **all six** `ReadinessState` values, `isPhaseReady(computeReadinessByRun→state)` ⟺ `(await assertEvidenceReady(runId,'review',db)).ready` (⚠ corrected per V9ʹ — the function never throws, so "does not throw" would be a vacuous test).
 AC2: the `overridden` case is explicitly covered (this is the case a `state === 'ready'` comparison would have lost).
 Spec: ADR-152 rationale; `assistant-activity.md` Expectations.
 
@@ -474,7 +474,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 ### Phase 1 — A1: promotion readiness in the pulse
 
-- [ ] **T9. `web/lib/ext-activity/promotable.ts` — the single promotable predicate (REQ-A2, REQ-A3).**
+- [x] **T9. `web/lib/ext-activity/promotable.ts` — the single promotable predicate (REQ-A2, REQ-A3).**
+  *RED observed:* 7 failed / 4 passed, all behavioral (`expected [] to deeply equal [ 'run-plain' ]`, wrong ordering, missing assembled fields) — no module-resolution or type error.
+  *Deviation:* the `promotion_hold` drop lives in TS as one named Layer-2 step beside the lineage drop, not in the candidate SQL — the plan's own `excludedHold` log field is uncomputable if held rows never enter the candidate set, and D5ʹ's "keep the two layers visibly separate" is better served by one step.
 
   **RED.** Write `web/lib/ext-activity/__tests__/promotable.test.ts` (`unit`) covering, per §6.1, with REQ ids in the test names:
   - `REQ-A2 AC1` — a mechanically-qualifying row is included; each of `run_kind ≠ 'flow'`, `status ≠ 'Review'`, and `¬isPhaseReady` excludes it.
@@ -492,7 +494,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging (verbose):* `log.debug({projectId, candidateCount, readyCount, excludedHold, excludedLineage}, "[ext-activity.promotable] classified")`; `log.warn` when `computeReadinessByRun` returns no entry for a candidate id (a shape regression, not a normal state).
   *Depends on:* T1–T8.
 
-- [ ] **T10. Wire `promotable` into the pulse response and the wire serializer (REQ-A1, REQ-A4).**
+- [x] **T10. Wire `promotable` into the pulse response and the wire serializer (REQ-A1, REQ-A4).**
+  *RED observed:* 2 behavioral failures — `listProjectPromotable` spy never called; `response.needsYou.promotable` undefined (`TypeError: Cannot read properties of undefined (reading 'map')`).
 
   **RED.** Extend `web/lib/ext-activity/__tests__/pulse.test.ts`:
   - `REQ-A1 AC1` — `needsYou.promotable` is `[]`, not omitted and not `undefined`, on a project with no candidates.
@@ -507,7 +510,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging:* `getActivityPulse` logs total elapsed ms at DEBUG so a slow readiness pass is visible without a profiler.
   *Depends on:* T9.
 
-- [ ] **T11. Classifier-agreement + suppression-divergence integration proof (REQ-A6, REQ-A2 AC2, REQ-A3).**
+- [x] **T11. Classifier-agreement + suppression-divergence integration proof (REQ-A6, REQ-A2 AC2, REQ-A3).**
+  *RED observed:* only a fixture failure (`null value in column "task_id" of relation "evaluation_studies"`); the 7 behavioral assertions passed first run — T9's implementation was already correct, exactly as this task predicted. No production change was needed.
+  *Runnability:* `vitest list --project integration <file>` lists all 8 cases under `[integration]`.
 
   **RED.** Write `web/lib/ext-activity/__tests__/promotable.db.integration.test.ts` (`integration`, real PG via `test-support/pg-container.ts`):
   - `T-A6` / `REQ-A6` — a fixture matrix over **all six** `ReadinessState` values (V8), including an `overridden` run with one waived blocking gate, asserting the **biconditional**: `listProjectPromotable` includes the run ⟺ `assertEvidenceReady(runId,'review',db)` does not throw. This is Layer 1 only.
@@ -522,7 +527,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Runner:* `integration` — matches `lib/**/*.integration.test.ts` (V41); confirm with `vitest list` before calling it delivered.
   *Depends on:* T9.
 
-- [ ] **T12. Route-contract proof (REQ-A1 AC1/AC3, REQ-A5).**
+- [x] **T12. Route-contract proof (REQ-A1 AC1/AC3, REQ-A5).**
+  *RED observed:* the existing exact-JSON assertion failed with `TypeError: Cannot read properties of undefined (reading 'length')` — the §9.4 assertion migration, performed in the phase that broke it.
 
   **RED.** Extend `web/app/api/v1/ext/activity/__tests__/route.integration.test.ts`:
   - `T-A1w` — the exact serialized JSON now carries `needsYou.promotable` with `inReviewSince` as an ISO string (or `null`) and `targetBranch` nullable, matching `ExtPromotionReadyItem`.
@@ -538,6 +544,25 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   <!-- Commit checkpoint: T9–T12 -->
 
 **Phase 1 exit:** `pnpm --filter maister-web test:unit && pnpm --filter maister-web test:integration` green; REQ-A1…A6 rows in §5 all have a passing test.
+
+> **⚠ Recorded integration baseline (measured 2026-07-27, before any Phase-1 code).**
+> `pnpm typecheck` clean; `test:unit` **708 files / 6981 tests, 0 failures**.
+> `test:integration` is **NOT green on this branch and was not green before it**:
+> a `git stash`-proved baseline at `a72cb5d6a` (docs-only commit) fails
+> **63–65 tests across 23 files**, and the count varies run-to-run, so the suite is
+> also flaky. With Phase 1 applied the run is **62–65 failures across 22–23 files**,
+> and `comm -13 baseline mine` over the sorted failing-test-NAME sets is **empty** —
+> i.e. **every** test failing with these changes was already failing without them,
+> while the diff adds **+10 passing tests** (8 in `promotable.db.integration.test.ts`,
+> 2 in the activity route test). Failing areas — git/worktree, sync recovery,
+> dirty-watchdog, packages/local-packages, observatory, gc, enforcement,
+> hitl/webhooks (the last two are *collection* errors: a `@/lib/supervisor-client`
+> mock missing `listSessions`, which also breaks a bare `vitest list --project
+> integration`). None of these files is touched by this plan.
+> **Not quarantined** — quarantining 65 unrelated tests would be a large unrequested
+> change; the honest record is this baseline plus the zero-regression proof. Every
+> later phase re-proves the same way: compare failing-test NAME sets, never counts.
+> Evidence: `scratchpad/{baseline,mine}-int-fails.txt`.
 
 ---
 

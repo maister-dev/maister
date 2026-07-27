@@ -6,6 +6,10 @@ const needsYouMocks = vi.hoisted(() => ({
   listProjectNeedsYou: vi.fn(),
 }));
 
+const promotableMocks = vi.hoisted(() => ({
+  listProjectPromotable: vi.fn(),
+}));
+
 const transcriptMocks = vi.hoisted(() => ({
   projectRunTranscript: vi.fn(async () => ({
     status: "unchanged" as const,
@@ -20,6 +24,10 @@ const transcriptMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/ext-activity/needs-you", () => ({
   listProjectNeedsYou: needsYouMocks.listProjectNeedsYou,
+}));
+
+vi.mock("@/lib/ext-activity/promotable", () => ({
+  listProjectPromotable: promotableMocks.listProjectPromotable,
 }));
 
 vi.mock("@/lib/runs/run-transcript-projector", () => ({
@@ -90,6 +98,8 @@ function makeClient(responses: QueryRows[]): {
 describe("assistant activity pulse service", () => {
   beforeEach(() => {
     needsYouMocks.listProjectNeedsYou.mockReset();
+    promotableMocks.listProjectPromotable.mockReset();
+    promotableMocks.listProjectPromotable.mockResolvedValue([]);
     transcriptMocks.projectRunTranscript.mockClear();
     transcriptMocks.getWholeRunTranscriptMessages.mockClear();
   });
@@ -298,5 +308,77 @@ describe("assistant activity pulse service", () => {
       taskKey: "OPS-27",
       status: "Done",
     });
+  });
+
+  it("REQ-A1 AC1 — emits needsYou.promotable as [] rather than omitting it when nothing qualifies", async () => {
+    const client = makeClient([[{ id: 3 }], []]);
+
+    needsYouMocks.listProjectNeedsYou.mockResolvedValue([]);
+
+    const response = await getActivityPulse("proj-1", {
+      since: null,
+      salience: "low",
+      now: new Date("2026-07-27T12:00:00.000Z"),
+      client: client as never,
+    });
+
+    expect(promotableMocks.listProjectPromotable).toHaveBeenCalledWith(
+      "proj-1",
+      { db: client },
+    );
+    expect(response.needsYou.promotable).toEqual([]);
+    expect(response.needsYou).toHaveProperty("promotable");
+  });
+
+  it("REQ-A4 AC1/AC2 — a promotable run appears in neither now.runs nor needsYou.items", async () => {
+    const client = makeClient([
+      [{ id: 3 }],
+      [
+        {
+          runId: "run-active",
+          projectId: "proj-1",
+          runKind: "flow",
+          status: "Running",
+          currentStepId: "implement",
+          startedAt: new Date("2026-07-27T11:00:00.000Z"),
+          taskId: "task-active",
+          taskTitle: "Still working",
+          projectTaskKey: "OPS",
+          taskNumber: 3,
+        },
+      ],
+      [],
+      [{ attempt: 1 }],
+    ]);
+
+    needsYouMocks.listProjectNeedsYou.mockResolvedValue([]);
+    promotableMocks.listProjectPromotable.mockResolvedValue([
+      {
+        runId: "run-promotable",
+        taskId: "task-promotable",
+        taskKey: "OPS-9",
+        taskTitle: "Ready to ship",
+        targetBranch: "main",
+        readiness: "ready",
+        inReviewSince: new Date("2026-07-27T10:00:00.000Z"),
+      },
+    ]);
+
+    const response = await getActivityPulse("proj-1", {
+      since: null,
+      salience: "low",
+      now: new Date("2026-07-27T12:00:00.000Z"),
+      client: client as never,
+    });
+
+    expect(response.needsYou.promotable.map((item) => item.runId)).toEqual([
+      "run-promotable",
+    ]);
+    expect(response.now.runs.map((run) => run.runId)).not.toContain(
+      "run-promotable",
+    );
+    expect(response.needsYou.items.map((item) => item.runId)).not.toContain(
+      "run-promotable",
+    );
   });
 });
