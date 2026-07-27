@@ -6461,10 +6461,14 @@ function writeAgentDefinition(args: {
   triggers: string[];
   body: string;
 }): string {
-  // ADR-089 rework: ids are package-qualified `<pkg>:<stem>`; the definition
-  // file is `agents/<stem>.md` (the seed mimics an installed package dir).
+  // ADR-106: ids are package-qualified `<pkg>:<stem>` and the definition file
+  // is `maister-agents/<stem>.md` at the package ROOT — the one layout
+  // `registry.ts` (listAgentFileStems) and `effective.ts` scan off
+  // `package_installs.installed_path`. The pre-ADR-106 `agents/<stem>.md` here
+  // made every boot `resyncAgents()` fail to re-register these fixtures and
+  // flip them to `enabled = false`.
   const stem = args.id.split(":").pop() ?? args.id;
-  const dir = path.join(args.agentsRoot, "agents");
+  const dir = path.join(args.agentsRoot, "maister-agents");
 
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${stem}.md`);
@@ -6510,8 +6514,10 @@ async function seedPlatformAgentsFixture(
       .rows[0].number,
   );
 
-  // A package-shaped dir holding the fixture agents/<stem>.md definitions —
-  // `agents.source_path` points straight at these files (ADR-089 rework).
+  // The package ROOT of the fixture install: it holds the
+  // maister-agents/<stem>.md definitions `agents.source_path` points at, and
+  // is the `installed_path` both the boot resync and the launch-time
+  // definition resolver scan (ADR-106).
   const agentsRoot = path.join(RUNTIME_ROOT, "agents");
   const helperPath = writeAgentDefinition({
     agentsRoot,
@@ -6560,6 +6566,33 @@ async function seedPlatformAgentsFixture(
     [agentsPkgRevisionId, agentsRoot],
   );
 
+  // (ADR-106) Agent registration and effective-definition resolution run off
+  // `package_installs` + `project_package_attachments`, NOT the flow rows
+  // above. Both are load-bearing, not ceremony: `instrumentation.ts` runs
+  // `resyncAgents()` on every Next boot, which re-registers the
+  // `<installed_path>/maister-agents/*.md` of the newest Installed install per
+  // package NAME and DISABLES every catalog row it cannot re-register — so a
+  // bare `agents` row comes back `enabled = false` and drops out of the task
+  // page's "Run agent" picker. `resolveEffectiveAgentDefinition` then reads
+  // the definition through the consuming project's attachment.
+  const agentsPkgInstallId = randomUUID();
+
+  await pool.query(
+    `DELETE FROM project_package_attachments WHERE package_name = 'e2e-agents-pkg'`,
+  );
+  await pool.query(
+    `DELETE FROM package_installs WHERE name = 'e2e-agents-pkg'`,
+  );
+  await pool.query(
+    `INSERT INTO package_installs
+       (id, source_url, name, version_label, resolved_revision, manifest,
+        manifest_digest, installed_path, package_status, trust_status)
+     VALUES ($1, 'github.com/maister/e2e-agents-pkg', 'e2e-agents-pkg',
+             'v1.0.0', 'rev-e2e-agents', '{}'::jsonb, 'digest', $2,
+             'Installed', 'trusted')`,
+    [agentsPkgInstallId, agentsRoot],
+  );
+
   const pinAgentsPkg = async (projectId: string): Promise<void> => {
     await pool.query(
       `INSERT INTO flows
@@ -6569,6 +6602,12 @@ async function seedPlatformAgentsFixture(
        VALUES ($1, $2, 'e2e-agents-pkg', 'github.com/maister/e2e-agents-pkg',
                'v1.0.0', $3, '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
       [randomUUID(), projectId, agentsRoot, agentsPkgRevisionId],
+    );
+    await pool.query(
+      `INSERT INTO project_package_attachments
+         (id, project_id, package_install_id, package_name)
+       VALUES ($1, $2, $3, 'e2e-agents-pkg')`,
+      [randomUUID(), projectId, agentsPkgInstallId],
     );
   };
 
@@ -6760,6 +6799,32 @@ async function seedOrchestratorE2EFixture(
      VALUES ($1, $2, 'e2e-orc-pkg', 'github.com/maister/e2e-orc-pkg', 'v1.0.0',
              $3, '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
     [randomUUID(), base.projectId, agentsRoot, orcPkgRevisionId],
+  );
+  // (ADR-106) Same contract as the platform-agents fixture: the boot
+  // `resyncAgents()` re-registers agents from Installed `package_installs`
+  // rows and DISABLES every catalog row it cannot re-register, and the
+  // delegate route resolves the effective definition through the project's
+  // attachment. Without both, the coordinator's delegation is refused with
+  // PRECONDITION `agent "e2e-orc-pkg:e2e-worker" is disabled`.
+  const orcPkgInstallId = randomUUID();
+
+  await pool.query(
+    `DELETE FROM project_package_attachments WHERE package_name = 'e2e-orc-pkg'`,
+  );
+  await pool.query(`DELETE FROM package_installs WHERE name = 'e2e-orc-pkg'`);
+  await pool.query(
+    `INSERT INTO package_installs
+       (id, source_url, name, version_label, resolved_revision, manifest,
+        manifest_digest, installed_path, package_status, trust_status)
+     VALUES ($1, 'github.com/maister/e2e-orc-pkg', 'e2e-orc-pkg', 'v1.0.0',
+             'rev-e2e-orc', '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
+    [orcPkgInstallId, agentsRoot],
+  );
+  await pool.query(
+    `INSERT INTO project_package_attachments
+       (id, project_id, package_install_id, package_name)
+     VALUES ($1, $2, $3, 'e2e-orc-pkg')`,
+    [randomUUID(), base.projectId, orcPkgInstallId],
   );
   await pool.query(
     `INSERT INTO agent_project_links (id, agent_id, project_id) VALUES ($1, $2, $3)`,
