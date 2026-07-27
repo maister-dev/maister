@@ -10,6 +10,10 @@ const promotableMocks = vi.hoisted(() => ({
   listProjectPromotable: vi.fn(),
 }));
 
+const summonabilityMocks = vi.hoisted(() => ({
+  listMentionCandidateAgents: vi.fn(),
+}));
+
 const transcriptMocks = vi.hoisted(() => ({
   projectRunTranscript: vi.fn(async () => ({
     status: "unchanged" as const,
@@ -28,6 +32,10 @@ vi.mock("@/lib/ext-activity/needs-you", () => ({
 
 vi.mock("@/lib/ext-activity/promotable", () => ({
   listProjectPromotable: promotableMocks.listProjectPromotable,
+}));
+
+vi.mock("@/lib/agents/summonability", () => ({
+  listMentionCandidateAgents: summonabilityMocks.listMentionCandidateAgents,
 }));
 
 vi.mock("@/lib/runs/run-transcript-projector", () => ({
@@ -100,6 +108,8 @@ describe("assistant activity pulse service", () => {
     needsYouMocks.listProjectNeedsYou.mockReset();
     promotableMocks.listProjectPromotable.mockReset();
     promotableMocks.listProjectPromotable.mockResolvedValue([]);
+    summonabilityMocks.listMentionCandidateAgents.mockReset();
+    summonabilityMocks.listMentionCandidateAgents.mockResolvedValue([]);
     transcriptMocks.projectRunTranscript.mockClear();
     transcriptMocks.getWholeRunTranscriptMessages.mockClear();
   });
@@ -328,6 +338,108 @@ describe("assistant activity pulse service", () => {
     );
     expect(response.needsYou.promotable).toEqual([]);
     expect(response.needsYou).toHaveProperty("promotable");
+  });
+
+  it("REQ-B1 AC1 — emits a top-level agents block with [] items when nothing is attached", async () => {
+    const client = makeClient([[{ id: 3 }], []]);
+
+    needsYouMocks.listProjectNeedsYou.mockResolvedValue([]);
+
+    const response = await getActivityPulse("proj-1", {
+      since: null,
+      salience: "low",
+      now: new Date("2026-07-27T12:00:00.000Z"),
+      client: client as never,
+    });
+
+    expect(
+      summonabilityMocks.listMentionCandidateAgents,
+    ).toHaveBeenCalledWith(client, "proj-1");
+    expect(response.agents).toEqual({
+      generatedAt: new Date("2026-07-27T12:00:00.000Z"),
+      items: [],
+    });
+  });
+
+  it("REQ-B2 AC1/AC2 — reports every attached agent, keeps non-summonable ones, and `enabled` is the ATTACHMENT axis", async () => {
+    const client = makeClient([[{ id: 3 }], []]);
+
+    needsYouMocks.listProjectNeedsYou.mockResolvedValue([]);
+    // The pinning fixture: the LINK is enabled while the CATALOG row is
+    // disabled. A naive implementation that reports `agents.enabled` would emit
+    // `enabled: false` here and only accidentally agree elsewhere.
+    summonabilityMocks.listMentionCandidateAgents.mockResolvedValue([
+      {
+        id: "core:triager",
+        stem: "triager",
+        name: "Triager",
+        summonable: false,
+        blockedReason: "agent_disabled",
+        linkEnabled: true,
+      },
+      {
+        id: "core:reviewer",
+        stem: "reviewer",
+        name: "Reviewer",
+        summonable: true,
+        blockedReason: null,
+        linkEnabled: true,
+      },
+    ]);
+
+    const response = await getActivityPulse("proj-1", {
+      since: null,
+      salience: "low",
+      now: new Date("2026-07-27T12:00:00.000Z"),
+      client: client as never,
+    });
+
+    expect(response.agents.items).toEqual([
+      {
+        agentId: "core:triager",
+        stem: "triager",
+        displayName: "Triager",
+        enabled: true,
+        summonable: false,
+        summonBlockedReason: "agent_disabled",
+      },
+      {
+        agentId: "core:reviewer",
+        stem: "reviewer",
+        displayName: "Reviewer",
+        enabled: true,
+        summonable: true,
+        summonBlockedReason: null,
+      },
+    ]);
+  });
+
+  it("REQ-B2 AC2 — a disabled attachment reports `enabled: false` with the link_disabled reason", async () => {
+    const client = makeClient([[{ id: 3 }], []]);
+
+    needsYouMocks.listProjectNeedsYou.mockResolvedValue([]);
+    summonabilityMocks.listMentionCandidateAgents.mockResolvedValue([
+      {
+        id: "core:paused",
+        stem: "paused",
+        name: "Paused",
+        summonable: false,
+        blockedReason: "link_disabled",
+        linkEnabled: false,
+      },
+    ]);
+
+    const response = await getActivityPulse("proj-1", {
+      since: null,
+      salience: "low",
+      now: new Date("2026-07-27T12:00:00.000Z"),
+      client: client as never,
+    });
+
+    expect(response.agents.items[0]).toMatchObject({
+      enabled: false,
+      summonBlockedReason: "link_disabled",
+    });
   });
 
   it("REQ-A4 AC1/AC2 — a promotable run appears in neither now.runs nor needsYou.items", async () => {

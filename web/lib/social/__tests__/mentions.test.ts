@@ -180,14 +180,30 @@ describe("expandResolvedMentions", () => {
 // ADR-151 — agent handles ride the SAME segmentation pass as KEY-N, so
 // code/link inertness is inherited rather than re-implemented.
 const AGENTS: MentionableAgent[] = [
-  { id: "core:triager", stem: "triager", name: "Triager", summonable: true },
+  {
+    id: "core:triager",
+    stem: "triager",
+    name: "Triager",
+    summonable: true,
+    blockedReason: null,
+    linkEnabled: true,
+  },
   {
     id: "core:reviewer",
     stem: "reviewer",
     name: "Reviewer",
     summonable: false,
+    blockedReason: "mention_binding_missing",
+    linkEnabled: true,
   },
-  { id: "aif:reviewer", stem: "reviewer", name: "AIF Reviewer", summonable: true },
+  {
+    id: "aif:reviewer",
+    stem: "reviewer",
+    name: "AIF Reviewer",
+    summonable: true,
+    blockedReason: null,
+    linkEnabled: true,
+  },
 ];
 
 describe("collectAgentMentionCandidates", () => {
@@ -365,7 +381,14 @@ describe("expandResolvedMentions with agent mentions", () => {
   // be rewritten by the task-mention branch inside the agent handle.
   it("mixes KEY-N and @agent in one body without cross-rewriting", () => {
     const mixed = resolveAgentMentions(["core:MAI-1"], [
-      { id: "core:MAI-1", stem: "MAI-1", name: "Odd", summonable: true },
+      {
+        id: "core:MAI-1",
+        stem: "MAI-1",
+        name: "Odd",
+        summonable: true,
+        blockedReason: null,
+        linkEnabled: true,
+      },
     ]);
     const out = expandResolvedMentions(
       segmentMarkdown("fix MAI-1 with @core:MAI-1"),

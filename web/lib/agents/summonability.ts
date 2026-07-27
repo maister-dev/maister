@@ -4,7 +4,10 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { type MentionableAgent } from "@/lib/social/mentions";
+import {
+  type MentionableAgent,
+  type SummonBlockedReason,
+} from "@/lib/social/mentions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents, agentProjectLinks, agentSchedules } =
@@ -103,16 +106,32 @@ export async function listMentionCandidateAgents(
     )) as Array<{ agentId: string }>;
   const bound = new Set(bindings.map((row) => row.agentId));
 
-  return attached.map((row) => ({
-    id: row.id,
-    // The id is `<packageName>:<stem>`; the stem is what a bare handle names.
-    stem: row.id.slice(row.packageName.length + 1),
-    name: row.name,
-    summonable:
-      linkEnabledByAgent.get(row.id) === true &&
-      row.enabled &&
-      row.quarantinedAt === null &&
-      (row.triggers ?? []).includes("domain_event") &&
-      bound.has(row.id),
-  }));
+  return attached.map((row) => {
+    // ADR-152: ONE first-match evaluation of the five conjuncts. Expressing the
+    // precedence as an ordered list rather than a chain of ifs means a sixth
+    // conjunct cannot silently land at the wrong precedence, and deriving
+    // `summonable` from the SAME result is what makes
+    // `blockedReason === null ⟺ summonable` true by construction rather than by
+    // two predicates that happen to agree today.
+    const linkEnabled = linkEnabledByAgent.get(row.id) === true;
+    const failed: Array<[boolean, SummonBlockedReason]> = [
+      [!linkEnabled, "link_disabled"],
+      [!row.enabled, "agent_disabled"],
+      [row.quarantinedAt !== null, "quarantined"],
+      [!(row.triggers ?? []).includes("domain_event"), "trigger_missing"],
+      [!bound.has(row.id), "mention_binding_missing"],
+    ];
+    const blockedReason =
+      failed.find(([isFailing]) => isFailing)?.[1] ?? null;
+
+    return {
+      id: row.id,
+      // The id is `<packageName>:<stem>`; the stem is what a bare handle names.
+      stem: row.id.slice(row.packageName.length + 1),
+      name: row.name,
+      summonable: blockedReason === null,
+      blockedReason,
+      linkEnabled,
+    };
+  });
 }

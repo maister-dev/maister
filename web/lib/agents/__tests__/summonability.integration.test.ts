@@ -129,7 +129,14 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
     await mentionBinding(id, projectId);
 
     expect(await listMentionCandidateAgents(db, projectId)).toEqual([
-      { id, stem: "triager", name: "triager", summonable: true },
+      {
+        id,
+        stem: "triager",
+        name: "triager",
+        summonable: true,
+        blockedReason: null,
+        linkEnabled: true,
+      },
     ]);
   });
 
@@ -149,7 +156,16 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
     await mentionBinding(id, projectId);
 
     expect(await listMentionCandidateAgents(db, projectId)).toEqual([
-      { id, stem: "linkoff", name: "linkoff", summonable: false },
+      {
+        id,
+        stem: "linkoff",
+        name: "linkoff",
+        summonable: false,
+        blockedReason: "link_disabled",
+        // ADR-152: the attachment axis the pulse reports, distinct from
+        // `agents.enabled` — a disabled LINK is what makes this row blocked.
+        linkEnabled: false,
+      },
     ]);
   });
 
@@ -251,6 +267,86 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
 
     expect(rows.map((r) => r.id).sort()).toEqual([aif, core].sort());
     expect(rows.every((r) => r.stem === "reviewer")).toBe(true);
+  });
+});
+
+// ADR-152 REQ-B4: the block reason is a closed enum whose precedence is
+// deterministic, not incidental — the assistant pulse reports it verbatim.
+describe("REQ-B4 — summonBlockedReason is a closed enum with deterministic precedence", () => {
+  async function reasonFor(id: string): Promise<string | null | undefined> {
+    const rows = await listMentionCandidateAgents(db, projectId);
+
+    return rows.find((row) => row.id === id)?.blockedReason;
+  }
+
+  it("REQ-B4 AC1 — each conjunct failing ALONE yields its own reason", async () => {
+    const linkOff = await seedAgent({ stem: "c1" });
+    const agentOff = await seedAgent({ stem: "c2", enabled: false });
+    const quarantined = await seedAgent({ stem: "c3", quarantined: true });
+    const triggerMissing = await seedAgent({ stem: "c4", triggers: ["manual"] });
+    const bindingMissing = await seedAgent({ stem: "c5" });
+
+    await link(linkOff, projectId, false);
+    await mentionBinding(linkOff, projectId);
+    await link(agentOff, projectId);
+    await mentionBinding(agentOff, projectId);
+    await link(quarantined, projectId);
+    await mentionBinding(quarantined, projectId);
+    await link(triggerMissing, projectId);
+    await mentionBinding(triggerMissing, projectId);
+    await link(bindingMissing, projectId);
+
+    expect(await reasonFor(linkOff)).toBe("link_disabled");
+    expect(await reasonFor(agentOff)).toBe("agent_disabled");
+    expect(await reasonFor(quarantined)).toBe("quarantined");
+    expect(await reasonFor(triggerMissing)).toBe("trigger_missing");
+    expect(await reasonFor(bindingMissing)).toBe("mention_binding_missing");
+  });
+
+  it("REQ-B4 AC2 — with ALL FIVE conjuncts failing, the highest-precedence reason wins", async () => {
+    const id = await seedAgent({
+      stem: "allbad",
+      enabled: false,
+      quarantined: true,
+      triggers: ["manual"],
+    });
+
+    await link(id, projectId, false);
+
+    expect(await reasonFor(id)).toBe("link_disabled");
+  });
+
+  it("REQ-B4 AC2 — with conjuncts 3 and 4 failing, `quarantined` outranks `trigger_missing`", async () => {
+    const id = await seedAgent({
+      stem: "quarplustrigger",
+      quarantined: true,
+      triggers: ["manual"],
+    });
+
+    await link(id, projectId);
+    await mentionBinding(id, projectId);
+
+    expect(await reasonFor(id)).toBe("quarantined");
+  });
+
+  it("REQ-B4 AC3 — blockedReason === null ⟺ summonable === true, in both directions", async () => {
+    const good = await seedAgent({ stem: "good" });
+    const bad = await seedAgent({ stem: "bad" });
+
+    await link(good, projectId);
+    await mentionBinding(good, projectId);
+    await link(bad, projectId);
+
+    const rows = await listMentionCandidateAgents(db, projectId);
+
+    expect(rows).toHaveLength(2);
+
+    for (const row of rows) {
+      expect(row.summonable).toBe(row.blockedReason === null);
+    }
+
+    expect(rows.find((r) => r.id === good)?.summonable).toBe(true);
+    expect(rows.find((r) => r.id === bad)?.summonable).toBe(false);
   });
 });
 

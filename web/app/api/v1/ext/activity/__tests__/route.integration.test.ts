@@ -79,6 +79,7 @@ function emptyPulse() {
     happened: { items: [], nextCursor: 12n, hasMore: false },
     now: { generatedAt, runs: [] },
     needsYou: { generatedAt, items: [], promotable: [] },
+    agents: { generatedAt, items: [] },
   };
 }
 
@@ -226,6 +227,27 @@ describe("GET /api/v1/ext/activity", () => {
           },
         ],
       },
+      agents: {
+        generatedAt: new Date("2026-07-26T12:00:00.000Z"),
+        items: [
+          {
+            agentId: "core:triager",
+            stem: "triager",
+            displayName: "Triager",
+            enabled: true,
+            summonable: false,
+            summonBlockedReason: "agent_disabled",
+          },
+          {
+            agentId: "core:reviewer",
+            stem: "reviewer",
+            displayName: "Reviewer",
+            enabled: true,
+            summonable: true,
+            summonBlockedReason: null,
+          },
+        ],
+      },
     });
 
     const res = await GET(makeRequest("?since=12&salience=normal"));
@@ -324,7 +346,91 @@ describe("GET /api/v1/ext/activity", () => {
           },
         ],
       },
+      // T-B1w / REQ-B1 + REQ-C12: the agents block matches
+      // ExtActivityAgentsBlock / ExtPulseAgentItem EXACTLY. Because the whole
+      // body is compared with toEqual, this doubles as the structural guard
+      // that no memory content, size, or hash ever appears in the pulse.
+      agents: {
+        generatedAt: "2026-07-26T12:00:00.000Z",
+        items: [
+          {
+            agentId: "core:triager",
+            stem: "triager",
+            displayName: "Triager",
+            enabled: true,
+            summonable: false,
+            summonBlockedReason: "agent_disabled",
+          },
+          {
+            agentId: "core:reviewer",
+            stem: "reviewer",
+            displayName: "Reviewer",
+            enabled: true,
+            summonable: true,
+            summonBlockedReason: null,
+          },
+        ],
+      },
     });
+  });
+
+  it("T-B1w / REQ-B1 AC1 — the agents block is present with [] items and the exact key set", async () => {
+    routeMocks.verifyToken.mockResolvedValue(projectActor());
+    routeMocks.getActivityPulse.mockResolvedValue(emptyPulse());
+
+    const res = await GET(makeRequest());
+    const body = (await res.json()) as {
+      agents: { generatedAt: string; items: unknown[] };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.agents.items).toEqual([]);
+    expect(Object.keys(body.agents).sort()).toEqual(["generatedAt", "items"]);
+  });
+
+  it("T-B1w / REQ-B4 — every summonBlockedReason enum member serializes verbatim, and null stays null", async () => {
+    const reasons = [
+      "link_disabled",
+      "agent_disabled",
+      "quarantined",
+      "trigger_missing",
+      "mention_binding_missing",
+    ] as const;
+    const base = emptyPulse();
+
+    routeMocks.verifyToken.mockResolvedValue(projectActor());
+    routeMocks.getActivityPulse.mockResolvedValue({
+      ...base,
+      agents: {
+        ...base.agents,
+        items: [
+          ...reasons.map((reason, index) => ({
+            agentId: `core:a${index}`,
+            stem: `a${index}`,
+            displayName: `A${index}`,
+            enabled: true,
+            summonable: false,
+            summonBlockedReason: reason,
+          })),
+          {
+            agentId: "core:ok",
+            stem: "ok",
+            displayName: "Ok",
+            enabled: true,
+            summonable: true,
+            summonBlockedReason: null,
+          },
+        ],
+      },
+    });
+
+    const body = (await (await GET(makeRequest())).json()) as {
+      agents: { items: Array<{ summonBlockedReason: string | null }> };
+    };
+
+    expect(
+      body.agents.items.map((item) => item.summonBlockedReason),
+    ).toEqual([...reasons, null]);
   });
 
   it("T-A1w / REQ-A1 AC1 — emits needsYou.promotable as [] rather than omitting it", async () => {

@@ -23,6 +23,7 @@ import {
 } from "@/lib/ext-activity/cursor";
 import { mapDomainEventToPulseItem } from "@/lib/ext-activity/domain-events";
 import { deriveActivityLiveness } from "@/lib/ext-activity/liveness";
+import { listMentionCandidateAgents } from "@/lib/agents/summonability";
 import { listProjectNeedsYou } from "@/lib/ext-activity/needs-you";
 import { listProjectPromotable } from "@/lib/ext-activity/promotable";
 import {
@@ -346,9 +347,10 @@ export async function getActivityPulse(
   // `needsYou` is a required input to buildRunSnapshot below, so it cannot move
   // past the snapshot loop — but it has no dependency on `promotable`, so the
   // two synthesized blocks are fetched as one wave rather than in series.
-  const [needsYou, promotable] = await Promise.all([
+  const [needsYou, promotable, mentionCandidates] = await Promise.all([
     listProjectNeedsYou(projectId, { db: client }),
     listProjectPromotable(projectId, { db: client }),
+    listMentionCandidateAgents(client, projectId),
   ]);
   const committedHorizon = sql`${domainEvents.txId} < pg_snapshot_xmin(pg_current_snapshot())`;
   const maxIdRows = await client
@@ -426,6 +428,19 @@ export async function getActivityPulse(
       generatedAt: now,
       items: needsYou,
       promotable,
+    },
+    agents: {
+      generatedAt: now,
+      // Every attached agent, non-summonable ones INCLUDED with their reason —
+      // an assistant that cannot see a blocked agent cannot explain the block.
+      items: mentionCandidates.map((agent) => ({
+        agentId: agent.id,
+        stem: agent.stem,
+        displayName: agent.name,
+        enabled: agent.linkEnabled,
+        summonable: agent.summonable,
+        summonBlockedReason: agent.blockedReason,
+      })),
     },
   };
 }
@@ -515,6 +530,10 @@ export function serializePulseResponse(response: ActivityPulseResponse) {
         ...item,
         inReviewSince: item.inReviewSince?.toISOString() ?? null,
       })),
+    },
+    agents: {
+      generatedAt: response.agents.generatedAt.toISOString(),
+      items: response.agents.items,
     },
   };
 }

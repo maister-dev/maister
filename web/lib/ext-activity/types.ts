@@ -1,6 +1,7 @@
 import type { HitlRequest, RunStatus } from "@/lib/db/schema";
 import type { DomainEventKind } from "@/lib/domain-events/taxonomy";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
+import type { SummonBlockedReason } from "@/lib/social/mentions";
 
 export type ActivitySalience = "high" | "normal" | "low";
 
@@ -114,6 +115,18 @@ export type PromotionReadyItem = {
   inReviewSince: Date | null;
 };
 
+// ADR-152: one `agent_project_links` row as the pulse reports it. Carries no
+// memory content, size, or hash (REQ-C12).
+export type PulseAgentItem = {
+  agentId: string;
+  stem: string;
+  displayName: string;
+  // The ATTACHMENT axis, not `agents.enabled`.
+  enabled: boolean;
+  summonable: boolean;
+  summonBlockedReason: SummonBlockedReason | null;
+};
+
 export type ActivityLastAction = {
   summary: string;
   at: Date | null;
@@ -150,5 +163,9 @@ export type ActivityPulseResponse = {
     generatedAt: Date;
     items: NeedsYouItem[];
     promotable: PromotionReadyItem[];
+  };
+  agents: {
+    generatedAt: Date;
+    items: PulseAgentItem[];
   };
 };

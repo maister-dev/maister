@@ -568,7 +568,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 ### Phase 2 — A2: summonable-agents metadata
 
-- [ ] **T13. Extend `listMentionCandidateAgents` with a block reason (REQ-B3, REQ-B4).**
+- [x] **T13. Extend `listMentionCandidateAgents` with a block reason (REQ-B3, REQ-B4).**
+  *RED observed:* 6 behavioral failures — `expected undefined to be 'link_disabled'` (×3), `expected true to be false`, plus 2 exact-shape mismatches migrated per §9.4.
+  *REQ-B3 AC2 proven:* `git status` on `lib/social/comments.ts` and `lib/queries/task-detail.ts` is empty — zero consumer edits.
 
   **RED.** Extend `web/lib/agents/__tests__/summonability.integration.test.ts`:
   - `REQ-B4 AC1` — five cases, each failing exactly one conjunct, each yielding its own reason.
@@ -585,7 +587,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging (verbose):* `log.debug({projectId, attached, summonable, reasonHistogram}, "[agents.summonability] resolved")`.
   *Verify (REQ-B3 AC2):* `social/comments.ts` and `queries/task-detail.ts` compile untouched and their existing suites stay green — the field is additive.
 
-- [ ] **T14. Add the `agents` block to the pulse (REQ-B1, REQ-B2, REQ-C12).**
+- [x] **T14. Add the `agents` block to the pulse (REQ-B1, REQ-B2, REQ-C12).**
+  *RED observed:* 3 behavioral failures — the summonability spy was never called and `response.agents` was `undefined`.
+  *Note:* `MentionableAgent` gained `linkEnabled` so the pulse reports the ATTACHMENT axis directly; deriving it from `blockedReason === "link_disabled"` is exact today only because that reason is first in precedence, and would break silently if precedence changed.
 
   **RED.** Extend `web/lib/ext-activity/__tests__/pulse.test.ts`:
   - `REQ-B1 AC1` — `agents` is present with `{generatedAt, items}` and `items === []` when nothing is attached.
@@ -599,7 +603,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Files:* `web/lib/ext-activity/{types,service}.ts`, `web/app/api/v1/ext/activity/route.ts`.
   *Depends on:* T13.
 
-- [ ] **T15. A2 route-contract proof (REQ-B1 AC1).**
+- [x] **T15. A2 route-contract proof (REQ-B1 AC1).**
+  *RED observed:* 3 behavioral failures (`Cannot read properties of undefined (reading 'items')`).
+  *Phase gate caught a real miss:* two T13 exact-equality assertions went stale when T14 added `linkEnabled` — green in isolation, red in the full suite. Fixed before the phase closed.
 
   **RED.** Extend `route.integration.test.ts`: the serialized `agents` block matches `ExtActivityAgentsBlock`/`ExtPulseAgentItem` exactly — enum members present, `summonBlockedReason` nullable, **no field carrying memory or content** (REQ-C12's structural guard). Serialization only (§6.4).
 

@@ -65,6 +65,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             // telemetry series, so the new blocks get their own counters.
             needsYouCount: response.needsYou.items.length,
             promotableCount: response.needsYou.promotable.length,
+            agentCount: response.agents.items.length,
+            summonableCount: response.agents.items.filter(
+              (agent) => agent.summonable,
+            ).length,
           },
           "served ext activity pulse",
         );

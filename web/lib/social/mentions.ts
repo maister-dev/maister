@@ -227,11 +227,30 @@ export function collectAgentMentionCandidates(
 }
 
 /** One project-attached agent a handle may resolve to. */
+// ADR-152: why an attached agent is not summonable — one member per conjunct of
+// the ADR-151 predicate. Declaration order IS the precedence order.
+export const SUMMON_BLOCKED_REASONS = [
+  "link_disabled",
+  "agent_disabled",
+  "quarantined",
+  "trigger_missing",
+  "mention_binding_missing",
+] as const;
+
+export type SummonBlockedReason = (typeof SUMMON_BLOCKED_REASONS)[number];
+
 export type MentionableAgent = {
   id: string;
   stem: string;
   name: string;
   summonable: boolean;
+  // Null exactly when `summonable` is true — the two are derived from ONE
+  // evaluation, so they can never disagree.
+  blockedReason: SummonBlockedReason | null;
+  // ADR-152: the ATTACHMENT axis (`agent_project_links.enabled`), distinct from
+  // the catalog axis (`agents.enabled`). The assistant pulse reports this one,
+  // so a catalog-disabled agent on a live attachment still reads as attached.
+  linkEnabled: boolean;
 };
 
 export type ResolvedAgentMention = {
